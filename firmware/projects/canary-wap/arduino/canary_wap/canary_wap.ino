@@ -129,6 +129,9 @@
 #include "sd_storage.h"
 #include "nvs_store.h"
 #include "api_auth.h"
+#include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
+                                     // auto-generated prototype for
+                                     // wifi_change_authorize()
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
 // instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
@@ -719,6 +722,12 @@ static bool g_wifi_scan_in_progress = false;
 // failures even with correct credentials.
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
+
+// Set true once the BLE/Bluetooth init has been ATTEMPTED (regardless of
+// outcome), so the self-test can tell "not up yet / skipped in safe mode"
+// (SKIP) apart from "init ran and the stack genuinely failed" (FAIL). Read
+// by selftest_api.h's probe_bluetooth; non-static so its extern resolves.
+volatile bool g_ble_init_attempted = false;
 
 // Camera state
 #if FEATURE_CAMERA_PEEK
@@ -4685,8 +4694,14 @@ static uint32_t g_scan_cache_at_ms = 0;
 
 // Non-zero = first-boot setup finished with a live WiFi join; reboot into
 // steady state once this deadline passes (see the deferred-reboot block in
-// loop() and provisioning_logic::deferred_reboot_due).
+// loop() and provisioning_logic::deferred_reboot_due). Written by loop()
+// AND by the /api/selftest handler (HTTP task) to hold the reboot off while
+// the user is on the wizard's final step, so all accesses are atomic.
 static uint32_t g_setup_grace_reboot_at_ms = 0;
+
+// Minimum runway to keep after a step-5 self-test poll: enough for the user
+// to read every row and tap "Run again" once before the steady-state reboot.
+static const uint32_t SELFTEST_REBOOT_MIN_MS = 90000;
 
 static const char* wifi_auth_mode_name(wifi_auth_mode_t authMode) {
   if (authMode == WIFI_AUTH_OPEN) return "open";
@@ -4842,8 +4857,47 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   return send_scan_cache_json(req, false, now);
 }
 
+// Credential gate shared by /api/wifi/connect and /api/wifi/ap-only. The
+// wizard carries a live pair token; the settings panel carries an admin
+// credential (session cookie / Bearer) instead. A *presented* admin
+// credential is validated through the lockout-aware `api_auth_check` so
+// Bearer guessing is throttled exactly like every other admin route —
+// `api_auth_check_optional` (used before) skipped the 429 backoff and never
+// recorded a failure, turning this fallback into an unthrottled token
+// oracle: an on-AP/LAN client could spray Authorization guesses and tell a
+// valid token from the handler proceeding. A bare pair-token miss (no
+// admin credential presented at all) stays a friendly `invalid_token` so
+// the wizard can silently re-issue its RAM-backed token and retry.
+// (WifiChangeAuth is declared in wifi_provisioning_auth.h — included at the
+// top — so arduino-cli's hoisted prototype for this function sees the type.)
+static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,
+                                            const char* pair_token) {
+  if (csi_integration::pair_token_valid(pair_token)) return WifiChangeAuth::PROCEED;
+  const bool has_bearer = httpd_req_get_hdr_value_len(req, "Authorization") > 0;
+  const bool has_cookie = (cv_session_validate && cv_session_validate(req));
+  if (has_bearer || has_cookie) {
+    // api_auth_check enforces the lockout, records failures for
+    // presented-but-wrong tokens, and sends its own 401/403/429 response,
+    // so on failure the caller just returns ESP_OK.
+    return api_auth_check(req, g_device.api_token_str)
+               ? WifiChangeAuth::PROCEED
+               : WifiChangeAuth::RESPONDED;
+  }
+  return WifiChangeAuth::INVALID_TOKEN;  // wizard self-heal path
+}
+
+static esp_err_t wifi_change_send_invalid_token(httpd_req_t* req) {
+  JsonDocument doc;
+  doc["ok"] = false;
+  doc["code"] = "invalid_token";
+  doc["error"] = "This setup link has expired. Reconnect to the SecuraCV network to start over.";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
 // "Use without home WiFi": the explicit standalone exit from the setup
-// wizard. Same pairing-token gate as /api/wifi/connect (the choice changes
+// wizard. Same credential gate as /api/wifi/connect (the choice changes
 // how the device runs, so it deserves the same posture as a credential
 // save). Persists the AP-only preference, completes first-boot setup — no
 // more 15-minute reboot loop — and leaves the SoftAP up as the product.
@@ -4857,15 +4911,14 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
   if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
+  // Pair token (wizard) OR a lockout-throttled admin credential (settings
+  // panel). See wifi_change_authorize — the admin fallback must go through
+  // the throttled path so it can't be used as a token-guessing oracle.
   const char* token = body["token"] | "";
-  if (!csi_integration::pair_token_valid(token)) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["code"] = "invalid_token";
-    doc["error"] = "This setup link has expired. Reconnect to the SecuraCV network to start over.";
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
+  switch (wifi_change_authorize(req, token)) {
+    case WifiChangeAuth::PROCEED: break;
+    case WifiChangeAuth::RESPONDED: return ESP_OK;  // auth helper already replied
+    case WifiChangeAuth::INVALID_TOKEN: return wifi_change_send_invalid_token(req);
   }
 
   NvsManager& nvs = NvsManager::instance();
@@ -4925,25 +4978,23 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
-  // Pairing-token gate. The captive-portal QR + manual fallback link
-  // both bake a fresh pairing token into /companion?token=<hex>, and
-  // the wizard JS forwards that token in the body of every POST here.
-  // We accept credentials only when the token is still in the live slot
-  // table — i.e. it was issued by THIS device within the last 10 minutes
-  // (see pair_token_valid + the PAIRING TOKENS doc block in
-  // csi_integration.h). pair_token_valid() rejects empty/short/wrong-hex
-  // input too, so a single call covers missing, malformed, and expired.
-  // We validate without consuming so the wizard can retry within the TTL
-  // (e.g. user mistyped the password); the token ages out on its own.
+  // Pairing-token gate. The captive-portal QR + manual fallback link both
+  // bake a fresh pairing token into /companion?token=<hex>, and the wizard
+  // JS forwards that token in the body of every POST here. pair_token_valid
+  // rejects empty/short/wrong-hex too, and validates WITHOUT consuming so
+  // the wizard can retry within the TTL (e.g. mistyped password).
+  //
+  // Settings-panel path: no pair token, but an admin credential (session
+  // cookie / Bearer). wifi_change_authorize routes that through the
+  // lockout-aware api_auth_check so it can't become a token-guessing oracle;
+  // a bare pair-token miss still returns invalid_token so the wizard
+  // self-heals. (Without any admin fallback the panel's Connect could never
+  // succeed post-setup — it holds no pair token.)
   const char* token = body["token"] | "";
-  if (!csi_integration::pair_token_valid(token)) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["code"] = "invalid_token";
-    doc["error"] = "This setup link has expired. Reconnect to the SecuraCV network to start over.";
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
+  switch (wifi_change_authorize(req, token)) {
+    case WifiChangeAuth::PROCEED: break;
+    case WifiChangeAuth::RESPONDED: return ESP_OK;  // auth helper already replied
+    case WifiChangeAuth::INVALID_TOKEN: return wifi_change_send_invalid_token(req);
   }
 
   const char* ssid = body["ssid"] | "";
@@ -5596,8 +5647,30 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   return http_send_json(req, "{\"ok\":true,\"scanning\":true}");
 }
 
+// Status/stop share the start handler's credential model: a live pair
+// token (the wizard sends ?token=<hex>) or an authenticated admin
+// credential. Without a gate, any on-AP peer could read the scanned SSID
+// or cancel a user's in-flight QR scan — POST already required the token,
+// so the read/cancel sides matching it is just closing the same door.
+static bool qr_scan_request_allowed(httpd_req_t* req) {
+  char qs[192];
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
+    char tok[csi_integration::PAIR_TOKEN_HEX_LEN + 2];
+    if (httpd_query_key_value(qs, "token", tok, sizeof(tok)) == ESP_OK &&
+        csi_integration::pair_token_valid(tok)) {
+      return true;
+    }
+  }
+  return api_auth_check_optional(req, g_device.api_token_str);
+}
+
 static esp_err_t handle_qr_scan_status(httpd_req_t* req) {
   g_health.http_requests++;
+
+  if (!qr_scan_request_allowed(req)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"forbidden\"}");
+  }
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5615,6 +5688,10 @@ static esp_err_t handle_qr_scan_status(httpd_req_t* req) {
 
 static esp_err_t handle_qr_scan_stop(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!qr_scan_request_allowed(req)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"forbidden\"}");
+  }
   g_qr_scan_active = false;
   return http_send_json(req, "{\"ok\":true}");
 }
@@ -5627,9 +5704,16 @@ static esp_err_t handle_qr_scan_stop(httpd_req_t* req) {
 
 #if FEATURE_BLE
 
+// All three BLE Discovery handlers are Bearer/session-gated like the rest
+// of the admin API. They historically shipped without a check and were only
+// unreachable because they overflowed the handler table — the capacity fix
+// resurrects them, so an unauthenticated LAN peer must not be able to read
+// nearby-device inventory or trigger chirp broadcasts.
+
 // GET /api/ble/status — BLE subsystem status
 static esp_err_t handle_ble_status(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   String json = ble_manager::statusJson();
   return http_send_json(req, json.c_str());
 }
@@ -5637,6 +5721,7 @@ static esp_err_t handle_ble_status(httpd_req_t* req) {
 // GET /api/nearby — Nearby Canary devices
 static esp_err_t handle_ble_nearby(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   String json = ble_manager::nearbyJson();
   return http_send_json(req, json.c_str());
 }
@@ -5644,6 +5729,7 @@ static esp_err_t handle_ble_nearby(httpd_req_t* req) {
 // POST /api/chirp/send — Trigger a manual chirp alert
 static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
 
   if (!ble_manager::isAvailable()) {
     return http_send_error(req, 503, "ble_unavailable");
@@ -6321,21 +6407,98 @@ static void register_api_routes(httpd_handle_t server) {
                          g_device.fingerprint_hex);
 }
 
+// GET /api/selftest wrapper: while the user is on the wizard's final step
+// polling the health check, hold off the deferred post-provisioning reboot
+// so "Run again" keeps working. The deadline is only ARMED after setup
+// completed with a live join, so this only ever widens an already-pending
+// window — it never schedules a reboot that wasn't due, and never touches a
+// disarmed (0) deadline (reboot_deadline_extend guards both). The selftest
+// endpoint itself stays unauthenticated (the AP is its boundary, like
+// /api/wifi/scan) — this wrapper adds no data path.
+static esp_err_t handle_selftest_wrap(httpd_req_t* req) {
+  // Compare-and-swap so this read-modify-write can't clobber a concurrent
+  // update from loop() — critically, if loop() disarms the deadline (stores
+  // 0) between our load and store, the CAS fails, reloads dl == 0, and the
+  // guard drops out WITHOUT re-arming a reboot loop() just cancelled. Only
+  // extends an already-armed deadline; reboot_deadline_extend never pulls it
+  // sooner, so a lost race can at worst leave a slightly longer window.
+  uint32_t dl = __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE);
+  while (dl != 0) {
+    uint32_t extended = provisioning_logic::reboot_deadline_extend(
+        dl, millis(), SELFTEST_REBOOT_MIN_MS);
+    if (extended == dl) break;  // already far enough out
+    // desired is passed BY VALUE; on failure dl is reloaded to the current
+    // value and we recompute against it.
+    if (__atomic_compare_exchange_n(&g_setup_grace_reboot_at_ms, &dl, extended,
+                                    /*weak=*/false, __ATOMIC_RELEASE,
+                                    __ATOMIC_ACQUIRE)) {
+      break;
+    }
+  }
+  return selftest::handle_selftest(req);
+}
+
 static void start_http_server() {
-  // Calculate max URI handlers based on feature usage
-  const int base_handlers = 40;       // UI (/ + /admin + /settings), API (auth + public), WiFi provisioning, captive/connectivity probes (Apple x2, Android x2, Windows x2), /api/selftest, /api/diagnostics, /api/battery/history, /api/ota/{status,check,install,config}, /api/pairing-qr
+  // Max URI handlers, itemized to match what the active server actually
+  // registers. esp_http_server SILENTLY drops every registration past this
+  // budget (ESP_ERR_HTTPD_HANDLERS_FULL, and none of the register call
+  // sites check the return), so an under-count 404s whole API families —
+  // which is exactly how the Presence, Household, Bluetooth-clear, Chirp
+  // and BLE routes disappeared: 154 registrations against an old 123-slot
+  // budget dropped the last 31. Each category is gated on the SAME feature
+  // flag its registrations are, so the budget tracks the build.
+  //
+  // The exact per-config counts are enforced by
+  //   tests_host/check_route_budget.py  (CI: firmware.yml)
+  // which emulates the preprocessor for FULL/S3, DEV/S3 and FULL/C3 and
+  // asserts >= 8 free slots. If it fails, RAISE a number here — never lower.
+  const int base_handlers = 46;       // register_api_routes core + the always-on
+                                       // register_extra_routes singles (WiFi
+                                       // provisioning, OTA x4, identify,
+                                       // device-name, selftest, fleet/pairing QR,
+                                       // sys-monitor, battery) + captive probes
+  const int csi_handlers = 23;        // csi_integration::init (stream/window/events/
+                                       // calibrate/settings/mqtt/tune/pair-token/…)
+  const int wifi_presence_handlers = 4;   // /api/presence/{combined,wifi,wifi/start,wifi/stop}
+  const int household_handlers = 6;       // /api/household* + /api/presence override
+  const int audible_chirp_handlers = 4;   // /api/audible-chirp{,/play,/test,/config}
 #if FEATURE_ACOUSTIC_EVENTS
-  const int audio_handlers = 7;       // /api/audio/{status,mute,transitions}, /api/audio/selftest + /api/audio/config (GET + POST each)
+  const int audio_handlers = 7;       // /api/audio/{status,mute,transitions,selftest,config x2}
 #else
   const int audio_handlers = 0;
 #endif
+#if FEATURE_CAMERA_PEEK
   const int camera_handlers = 9;      // Camera peek endpoints
-  const int mesh_handlers = 12;       // Mesh network endpoints
-  const int bluetooth_handlers = 23;  // Bluetooth API endpoints
-  const int ble_discovery_handlers = 3; // BLE discovery (Opera/Chirp/Nearby) endpoints
-  const int csi_handlers = 23;       // /api/csi/stream, /api/csi/window, /api/events/today, /api/events/dismiss, /api/csi/calibrate/{start,status,apply}, /sense, /api/settings (GET + POST), /api/privacy-budget, /manifest.webmanifest, /sw.js, /tune, /api/tune/coefficients (GET + POST), /api/tune/preset (GET + POST), /api/pair/token, /api/mqtt/config (GET + POST), /api/mqtt/test, /mqtt
-  const int handler_headroom = 6;     // Reserve for future additions
-  const int total_handlers = base_handlers + audio_handlers + camera_handlers + mesh_handlers + bluetooth_handlers + ble_discovery_handlers + csi_handlers + handler_headroom;
+#else
+  const int camera_handlers = 0;
+#endif
+#if FEATURE_QR_PROVISION
+  const int qr_handlers = 3;          // /api/wifi/qr-scan POST/GET/DELETE
+#else
+  const int qr_handlers = 0;
+#endif
+#if FEATURE_MESH_NETWORK
+  const int mesh_handlers = 12;       // Mesh network (opera) endpoints
+  const int chirp_handlers = 13;      // chirp_api::register_routes (/api/chirp/*)
+#else
+  const int mesh_handlers = 0;
+  const int chirp_handlers = 0;
+#endif
+#if FEATURE_BLUETOOTH
+  const int bluetooth_handlers = 24;  // bluetooth_api::register_routes
+#else
+  const int bluetooth_handlers = 0;
+#endif
+#if FEATURE_BLE
+  const int ble_discovery_handlers = 3; // /api/ble/status, /api/nearby, /api/ble/chirp/send
+#else
+  const int ble_discovery_handlers = 0;
+#endif
+  const int handler_headroom = 24;    // Reserve for future additions
+  const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
+      + household_handlers + audible_chirp_handlers + audio_handlers
+      + camera_handlers + qr_handlers + mesh_handlers + chirp_handlers
+      + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
@@ -6492,7 +6655,7 @@ register_extra_routes:
 
   // Wizard pre-flight self-test (no auth — must be reachable on AP
   // before any post-pair token exists, identical to /api/wifi/scan).
-  httpd_uri_t selftest = { .uri = "/api/selftest", .method = HTTP_GET, .handler = selftest::handle_selftest };
+  httpd_uri_t selftest = { .uri = "/api/selftest", .method = HTTP_GET, .handler = handle_selftest_wrap };
   httpd_register_uri_handler(active_server, &selftest);
 
 #if FEATURE_QR_PROVISION
@@ -8189,6 +8352,18 @@ void setup() {
     } else {
       Serial.println("[--] Mesh network init failed");
     }
+
+    // Community Chirp channel (v0.2, ESP-NOW). Its /api/chirp/* routes are
+    // registered under FEATURE_MESH_NETWORK, but init() was never called, so
+    // enable() short-circuited on !g_initialized and the Community > Chirp
+    // toggle could never turn on. init() is pure state setup (it does NOT
+    // start any radio); the ESP-NOW transport only comes up when the user
+    // enables the channel, so this just makes the opt-in reachable.
+    if (chirp_channel::init()) {
+      Serial.println("[OK] Community chirp channel ready (disabled until enabled)");
+    } else {
+      Serial.println("[--] Community chirp channel init failed");
+    }
   } else {
     Serial.println("[--] Mesh network init skipped (safe mode)");
   }
@@ -8197,6 +8372,7 @@ void setup() {
   // Initialize Bluetooth (legacy channel)
   #if FEATURE_BLUETOOTH
   if (!in_safe_mode) {
+    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
     Serial.println("[..] Initializing Bluetooth Low Energy...");
     // Push device metadata into bluetooth_channel BEFORE init(). The DIS
     // characteristics get baked during service creation; setting these
@@ -8238,6 +8414,7 @@ void setup() {
   // Initialize BLE Discovery (Opera/Chirp/Nearby)
   #if FEATURE_BLE
   if (!in_safe_mode) {
+    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
     Serial.println("[..] Initializing BLE Discovery subsystem...");
 
     // Build device ID hash hex string from pubkey fingerprint
@@ -8537,7 +8714,8 @@ void loop() {
   setup_wizard::dns_process();
   if (setup_wizard::is_active()) {
     setup_wizard::check_timeout();
-    if (WiFi.status() == WL_CONNECTED && g_setup_grace_reboot_at_ms == 0) {
+    if (WiFi.status() == WL_CONNECTED &&
+        __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE) == 0) {
       // The join succeeded, but the provisioning phone is mid-handoff: the
       // single radio just dragged the SoftAP to the STA's channel, and the
       // phone needs to re-associate + poll /api/wifi to render the success
@@ -8549,11 +8727,14 @@ void loop() {
       // mark_complete() stops the captive DNS; the phone still needs
       // canary.local through the grace window.
       setup_wizard::start_captive_portal();
-      g_setup_grace_reboot_at_ms = millis() + AP_DROP_GRACE_MS;
+      __atomic_store_n(&g_setup_grace_reboot_at_ms, millis() + AP_DROP_GRACE_MS,
+                       __ATOMIC_RELEASE);
       Serial.println("[OK] Setup complete — WiFi connected; rebooting after the provisioning grace window...");
     }
-  } else if (provisioning_logic::deferred_reboot_due(millis(), g_setup_grace_reboot_at_ms)) {
-    g_setup_grace_reboot_at_ms = 0;
+  } else if (provisioning_logic::deferred_reboot_due(
+                 millis(),
+                 __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE))) {
+    __atomic_store_n(&g_setup_grace_reboot_at_ms, 0u, __ATOMIC_RELEASE);
     Serial.println("[OK] Provisioning grace elapsed — rebooting into steady state...");
     delay(500);
     ESP.restart();
@@ -8735,6 +8916,9 @@ void loop() {
   // Update mesh network
   #if FEATURE_MESH_NETWORK
   mesh_network::update();
+  // Service the community chirp channel too (no-op until the user enables
+  // it; needed so cooldowns, bloom-filter resets and relay TTLs advance).
+  chirp_channel::update();
   {
     static uint32_t s_last_replay_save_ms = 0;
     uint32_t now = millis();

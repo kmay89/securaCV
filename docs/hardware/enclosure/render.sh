@@ -115,6 +115,23 @@ devstl dev_jbox_body.stl     canary_jbox.scad -D 'part="body"'
 devstl dev_jbox_lid.stl      canary_jbox.scad -D 'part="lid"'
 devstl dev_sign.stl          canary_sign.scad -D 'part="sign"' 
 
+# --- User tools (fit coupon, bench fixture, dock, shop tools) ---------------
+devstl dev_coupon_base.stl   canary_fit_coupon.scad    -D 'part="base"'
+devstl dev_coupon_mate.stl   canary_fit_coupon.scad    -D 'part="mate"'
+devstl dev_coupon_strip.stl  canary_fit_coupon.scad    -D 'part="strip"'
+devstl dev_fixture_plate.stl  canary_bench_fixture.scad -D 'part="plate"'
+devstl dev_fixture_slider.stl canary_bench_fixture.scad -D 'part="slider"'
+devstl dev_dock.stl          canary_dock.scad
+devstl dev_insert_guide.stl  canary_shop_tools.scad -D 'part="insert_guide"'
+devstl dev_button_ring.stl   canary_shop_tools.scad -D 'part="button_ring"'
+
+# --- 1:1 paper install templates (SVG — print at 100% scale) ----------------
+svg() { local out=$1; shift; echo "Rendering $out ..."
+  "$OPENSCAD" -o "$out" "$@" canary_templates_2d.scad; }
+svg template_studs.svg    -D 'mode="studs"'
+svg template_bracket.svg  -D 'mode="bracket"'
+svg template_doorbell.svg -D 'mode="doorbell"' 
+
 if [[ "${1:-}" != "--no-png" ]]; then
   # one preview per printable variant — these drive the README's variant-picker gallery
   png "preview_all.png"     -D 'preset="battery_full"'    -D 'part="all"'
@@ -141,6 +158,9 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_inserts.scad";         png "preview_dev_inserts.png"  -D 'part="horn"')
   (SRC="canary_jbox.scad";            png "preview_dev_jbox.png"     -D 'part="all"')
   (SRC="canary_sign.scad";            png "preview_dev_sign.png"     -D 'part="sign"')
+  (SRC="canary_fit_coupon.scad";    png "preview_dev_coupon.png"  -D 'part="all"')
+  (SRC="canary_bench_fixture.scad"; png "preview_dev_fixture.png" -D 'part="all"')
+  (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 28 dev renders + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 36 dev renders + 3 SVG templates + previews."

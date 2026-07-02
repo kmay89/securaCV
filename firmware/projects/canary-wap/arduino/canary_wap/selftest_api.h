@@ -53,6 +53,7 @@
 #include "ble_manager.h"
 #include "hardware_state.h"
 #include "sd_storage.h"
+#include "selftest_logic.h"
 // Optional-peripheral probes. All three are header-only and self-guard on
 // their FEATURE_* flags (power_monitor is always compiled; audible_chirp
 // ships a no-op stub namespace when FEATURE_AUDIBLE_CHIRP is 0), so it is
@@ -60,6 +61,11 @@
 #include "power_monitor.h"
 #include "audible_chirp.h"
 #include "build_config.h"
+#if FEATURE_BLUETOOTH
+// After build_config.h so FEATURE_BLUETOOTH is defined; gives the
+// bluetooth probe the pairing-channel status accessors on DEV/FULL builds.
+#include "bluetooth_channel.h"
+#endif
 #if FEATURE_ACOUSTIC_EVENTS
 #include "securacv_audio.h"
 #endif
@@ -77,6 +83,11 @@
 #ifndef SELFTEST_BOOT_BUTTON_GPIO
 #define SELFTEST_BOOT_BUTTON_GPIO 0
 #endif
+
+// Set by setup() once BLE/Bluetooth init has been attempted, so the
+// bluetooth probe can tell "not up yet / skipped in safe mode" (SKIP)
+// from "init ran and the stack failed" (FAIL). Owned by the .ino.
+extern volatile bool g_ble_init_attempted;
 
 namespace selftest {
 
@@ -150,28 +161,39 @@ inline void probe_wifi(ProbeResult* r, JsonObject metric) {
   metric["sta_connected"] = sta_up;
   metric["mode"]         = (int)m;
 
-  if (sta_up) {
-    const int32_t rssi = WiFi.RSSI();
-    metric["rssi_dbm"] = rssi;
-    metric["ssid"]     = WiFi.SSID();
-    metric["ip"]       = WiFi.localIP().toString();
-    metric["channel"]  = WiFi.channel();
-    r->status = Status::PASS;
-    r->code   = rssi;
-    set_detail(r, "Joined %s · %lddBm",
-               WiFi.SSID().c_str(), (long)rssi);
-  } else if (ap_up) {
-    // During wizard step 1-3 we expect AP-only; that's a SKIP, not a
-    // failure. The wizard will run the self-test AFTER WiFi joins, but
-    // we want this endpoint to be honest about state at any moment.
-    metric["ap_clients"] = (int)WiFi.softAPgetStationNum();
-    r->status = Status::SKIP;
-    r->code   = 0;
-    set_detail(r, "Hotspot active · waiting for home Wi-Fi");
-  } else {
-    r->status = Status::FAIL;
-    r->code   = -1;
-    set_detail(r, "Wi-Fi radio off");
+  const bool radio_off = (m == WIFI_OFF);
+  const selftest_logic::WifiKind kind =
+      selftest_logic::wifi_kind(sta_up, ap_up, radio_off);
+  r->status = (Status)selftest_logic::wifi_status(kind);
+
+  switch (kind) {
+    case selftest_logic::WifiKind::JOINED: {
+      const int32_t rssi = WiFi.RSSI();
+      metric["rssi_dbm"] = rssi;
+      metric["ssid"]     = WiFi.SSID();
+      metric["ip"]       = WiFi.localIP().toString();
+      metric["channel"]  = WiFi.channel();
+      r->code = rssi;
+      set_detail(r, "Joined %s · %lddBm", WiFi.SSID().c_str(), (long)rssi);
+      break;
+    }
+    case selftest_logic::WifiKind::HOTSPOT:
+      // Wizard steps 1-3 run before the home join — SKIP, not failure.
+      metric["ap_clients"] = (int)WiFi.softAPgetStationNum();
+      r->code = 0;
+      set_detail(r, "Hotspot active · waiting for home Wi-Fi");
+      break;
+    case selftest_logic::WifiKind::LINK_DOWN:
+      // The radio is ON — the home link merely dropped. Saying "radio
+      // off" here (the old text) sent users chasing the wrong fault.
+      r->code = -1;
+      set_detail(r, "Home Wi-Fi link down");
+      break;
+    case selftest_logic::WifiKind::RADIO_OFF:
+    default:
+      r->code = -1;
+      set_detail(r, "Wi-Fi radio off");
+      break;
   }
 }
 
@@ -208,36 +230,56 @@ inline void probe_bluetooth(ProbeResult* r, JsonObject metric) {
   r->name  = "bluetooth";
   r->label = "Bluetooth";
 
+  // "Compiled in" means the radio is in this build — discovery OR the
+  // pairing channel. Keying on FEATURE_BLE alone made a DEV build (pairing
+  // channel up, discovery off) claim Bluetooth was "not built in".
+#if FEATURE_BLE || FEATURE_BLUETOOTH
+  const bool compiled_in = true;
+  const bool safe_mode   = g_hw.safe_mode;
+  const bool init_done   = g_ble_init_attempted;
+
+  bool avail = false;
+  bool any_active = false;
 #if FEATURE_BLE
-  const bool avail  = ble_manager::isAvailable();
   const bool opera  = ble_manager::isOperaActive();
   const bool chirp  = ble_manager::isChirpActive();
   const bool nearby = ble_manager::isNearbyActive();
+  avail |= ble_manager::isAvailable();
+  any_active = any_active || opera || chirp || nearby;
+  metric["discovery_available"] = ble_manager::isAvailable();
+  metric["opera"]  = opera;
+  metric["chirp"]  = chirp;
+  metric["nearby"] = nearby;
+#endif
+#if FEATURE_BLUETOOTH
+  avail |= bluetooth_channel::is_initialized();
+  any_active = any_active || bluetooth_channel::is_advertising();
+  metric["channel_up"]         = bluetooth_channel::is_initialized();
+  metric["channel_advertising"] = bluetooth_channel::is_advertising();
+#endif
+  metric["available"]      = avail;
+  metric["init_attempted"] = init_done;
+  metric["safe_mode"]      = safe_mode;
 
-  metric["available"]    = avail;
-  metric["opera"]        = opera;
-  metric["chirp"]        = chirp;
-  metric["nearby"]       = nearby;
-
-  if (!avail) {
-    r->status = Status::FAIL;
-    r->code   = -1;
-    set_detail(r, "NimBLE init failed");
-    return;
-  }
-  // At least one subsystem must be live for "Bluetooth works".
-  if (opera || chirp || nearby) {
-    r->status = Status::PASS;
-    r->code   = 0;
-    set_detail(r, "Radio up · %s%s%s",
-               opera  ? "advertising "  : "",
-               nearby ? "scanning "     : "",
-               chirp  ? "chirping"      : "");
-  } else {
-    // Stack is up but every feature is gated off. Honest SKIP.
-    r->status = Status::SKIP;
-    r->code   = 0;
-    set_detail(r, "Radio up · all features disabled");
+  r->status = (Status)selftest_logic::bluetooth_status(
+      compiled_in, init_done, avail, safe_mode, any_active);
+  r->code = 0;
+  switch (r->status) {
+    case Status::PASS:
+      set_detail(r, "Radio up · paired-ready");
+      break;
+    case Status::FAIL:
+      r->code = -1;
+      set_detail(r, "NimBLE init failed");
+      break;
+    case Status::SKIP:
+      if (safe_mode)        set_detail(r, "Skipped in safe mode");
+      else if (!init_done)  set_detail(r, "Starting up…");
+      else                  set_detail(r, "Radio up · all features idle");
+      break;
+    default:
+      set_detail(r, "Bluetooth state unknown");
+      break;
   }
 #else
   metric["compiled_in"] = false;
@@ -514,7 +556,7 @@ inline bool run_to_json(JsonDocument& doc) {
   JsonArray probes = doc["probes"].to<JsonArray>();
   ProbeResult tmp{};
 
-  uint8_t pass_n = 0, fail_n = 0, absent_n = 0;
+  uint8_t pass_n = 0, fail_n = 0, absent_n = 0, skip_n = 0;
   auto push = [&](void (*fn)(ProbeResult*, JsonObject)) {
     JsonObject row    = probes.add<JsonObject>();
     JsonObject metric = row["metric"].to<JsonObject>();
@@ -528,6 +570,7 @@ inline bool run_to_json(JsonDocument& doc) {
     if (tmp.status == Status::PASS)        pass_n++;
     else if (tmp.status == Status::FAIL)   fail_n++;
     else if (tmp.status == Status::ABSENT) absent_n++;
+    else if (tmp.status == Status::SKIP)   skip_n++;
   };
 
   push(probe_wifi);
@@ -548,19 +591,27 @@ inline bool run_to_json(JsonDocument& doc) {
   doc["pass_count"]   = pass_n;
   doc["fail_count"]   = fail_n;
   doc["absent_count"] = absent_n;
+  doc["skip_count"]   = skip_n;
+  // Safe mode (rapid-reboot recovery) skips every peripheral init, so on a
+  // healthy unit it produces a wall of SKIP/ABSENT rows that looks like
+  // mass failure. Surface it so the UI can explain the grey rows instead
+  // of letting the user read a recovering device as a broken one.
+  doc["safe_mode"]    = g_hw.safe_mode;
   // "all_passed" excludes ABSENT/SKIP — those aren't problems, they're
   // just rows the user should see to know the device's full picture.
-  doc["all_passed"]   = (fail_n == 0);
+  doc["all_passed"]   = selftest_logic::all_passed(fail_n);
 
   // Single short summary line the wizard uses for its aria-live
   // announcement so screen-reader users hear a verdict, not a wall of
   // metrics. Mirrors the existing announce() pattern in companion_pwa.h.
   char summary[96];
   if (fail_n == 0) {
+    // Count SKIP with ABSENT so the arithmetic covers all ten rows — the
+    // old "%u of %u" quietly dropped SKIP and read as "5 of 5" on a
+    // ten-probe run.
     snprintf(summary, sizeof(summary),
-             "All checks passed (%u of %u, %u not present)",
-             (unsigned)pass_n, (unsigned)(pass_n + fail_n),
-             (unsigned)absent_n);
+             "All checks passed (%u active, %u not in use)",
+             (unsigned)pass_n, (unsigned)(absent_n + skip_n));
   } else {
     // Verb has to agree with the count: "1 check needs" vs "2 checks need".
     snprintf(summary, sizeof(summary),

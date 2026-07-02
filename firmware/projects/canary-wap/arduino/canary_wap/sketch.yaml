@@ -29,9 +29,11 @@ profiles:
     platforms:
       - platform: esp32:esp32 (3.3.8)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-    # esp_camera and NimBLE ship inside the esp32 core (3.x) — only the two
-    # external libraries below need declaring. This matches the set the CI
-    # arduino-cli build installs.
+    # esp_camera ships inside the esp32 core (3.x), but NimBLE-Arduino (2.x)
+    # is a separate library the FULL profile's BLE stack needs — ble_config.h
+    # errors at compile time without it. This matches the set the CI
+    # arduino-cli build installs (Crypto, ArduinoJson, NimBLE-Arduino).
     libraries:
       - ArduinoJson
       - Crypto
+      - NimBLE-Arduino

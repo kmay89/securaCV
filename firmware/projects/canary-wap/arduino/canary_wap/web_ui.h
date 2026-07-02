@@ -1057,6 +1057,22 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Device Self-Test Card — the same GET /api/selftest the setup
+           wizard runs, re-runnable here so the "re-run from the dashboard"
+           promise is real. -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Device self-test</div>
+            <div class="card-subtitle">Camera, radios, storage, power — re-run any time</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="runSettingsSelftest()">↻ Run checks</button>
+        </div>
+        <p id="selftestSafeMode" style="display:none;font-size:0.8rem;color:var(--warning,#b8860b);margin:0 0 0.5rem;"></p>
+        <div id="selftestSummary" style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem;">Tap “Run checks” to test this Canary’s hardware.</div>
+        <div id="selftestRows"></div>
+      </div>
+
       <!-- Hash Chain Card -->
       <div class="card">
         <div class="card-header">
@@ -2456,6 +2472,34 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <script>
     const API_BASE = '';
 
+    /* WEBUI_LOGIC:BEGIN — pure, DOM-free helpers for the admin dashboard.
+       Extracted verbatim and unit-tested under Node by web_ui_logic.test.js
+       (module.exports at the end), so it must NOT touch the DOM, window, or
+       any page state — it takes values in and returns values out. */
+    const WebUiLogic = (function () {
+      // The camera peek endpoints authenticate via api_auth_check_or_query:
+      // session cookie FIRST, then Bearer, then ?token=. When the page rode
+      // in on a cv_session cookie apiToken is null, and the old code appended
+      // "&token=null" — a literal string that only "worked" because the
+      // cookie was validated first. Omit the token param entirely when there
+      // is no real token so the cookie path is used cleanly and no failed
+      // "token=null" query attempt is made.
+      function peekStreamUrl(base, path, apiToken, ts) {
+        let u = base + path + '?t=' + ts;
+        if (apiToken) u += '&token=' + encodeURIComponent(apiToken);
+        return u;
+      }
+      // Bound the MJPEG onerror retry loop. Unbounded (the old behavior) it
+      // re-hit a failing stream every 2 s forever after a cookie expired.
+      const PEEK_MAX_RETRIES = 5;
+      function shouldRetryPeek(attempt) { return attempt < PEEK_MAX_RETRIES; }
+      // BLE Discovery chirp endpoint (NOT the ESP-NOW community /api/chirp/send).
+      const BLE_CHIRP_ENDPOINT = '/api/ble/chirp/send';
+      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT };
+    })();
+    if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
+    /* WEBUI_LOGIC:END */
+
     // ═══════════════════════════════════════════════════════════════
     // AUTH — Token stored ONLY in JS variable. No localStorage/cookies.
     // ═══════════════════════════════════════════════════════════════
@@ -2999,73 +3043,77 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
-    async function refreshRfStatus() {
-      const data = await api('/api/rf/status');
-      if (!data.state) return;
+    // A few controls front subsystems that are present in the UI but not
+    // yet wired into this firmware build — RF signal sensing (needs Wi-Fi
+    // promiscuous mode + a bench validation pass), on-SD log rotation (the
+    // rotate routine is still a stub), and runtime record/bucket tuning
+    // (the time bucket is a privacy-coarsening floor, so it can't be a plain
+    // user setting). Rather than fire a request that 404s and report a
+    // confusing failure, these say so plainly. Tracked for follow-up.
+    function featureNotWired(name) {
+      alert(name + ' isn\'t available on this firmware build yet. ' +
+            'Everything else on this page works — this control is coming in a later update.');
+    }
 
-      document.getElementById('rfEnabled').checked = data.enabled;
-      document.getElementById('rfState').textContent = data.state;
-      document.getElementById('rfConfidence').textContent = data.confidence;
-      document.getElementById('rfDeviceCount').textContent = data.device_count;
-      document.getElementById('rfDwellClass').textContent = data.dwell_class;
+    // Device self-test card: the SAME GET /api/selftest the setup wizard
+    // runs (unauthenticated — the AP is its boundary, like /api/wifi/scan).
+    // Renders a compact row per probe plus the safe-mode banner, so a user
+    // can re-check hardware from Settings without redoing setup.
+    const SELFTEST_GLYPH = { pass: '✓', fail: '!', skip: '–', absent: '–', unknown: '·' };
+    async function runSettingsSelftest() {
+      const rows = document.getElementById('selftestRows');
+      const summ = document.getElementById('selftestSummary');
+      const safe = document.getElementById('selftestSafeMode');
+      if (summ) summ.textContent = 'Running checks…';
+      if (rows) rows.innerHTML = '';
+      if (safe) safe.style.display = 'none';
+      let j;
+      try {
+        const resp = await fetch(API_BASE + '/api/selftest', { cache: 'no-store' });
+        j = await resp.json();
+      } catch (e) {
+        if (summ) summ.textContent = 'Could not reach the self-test endpoint. Try again.';
+        return;
+      }
+      if (safe && j.safe_mode) {
+        safe.textContent = 'This Canary is in recovery mode after a few quick restarts, so cameras, storage and radios are paused. This clears on its own once it runs steadily — the greyed rows below aren’t faults.';
+        safe.style.display = 'block';
+      }
+      if (summ) summ.textContent = j.summary || (j.all_passed ? 'All checks passed.' : 'Some checks need attention.');
+      const probes = Array.isArray(j.probes) ? j.probes : [];
+      rows.innerHTML = probes.map(p => {
+        const g = SELFTEST_GLYPH[p.status] || '·';
+        const color = p.status === 'pass' ? 'var(--success,#2e7d32)'
+                    : p.status === 'fail' ? 'var(--danger,#c62828)'
+                    : 'var(--muted,#888)';
+        return '<div style="display:flex;gap:0.5rem;align-items:baseline;padding:0.25rem 0;border-top:1px solid var(--border,#eee);">'
+             + '<span style="color:' + color + ';font-weight:700;width:1.2em;text-align:center;">' + g + '</span>'
+             + '<span style="min-width:6.5em;font-weight:600;">' + escapeHtml(p.label || p.name || '') + '</span>'
+             + '<span style="color:var(--muted);font-size:0.85rem;">' + escapeHtml(p.detail || '') + '</span>'
+             + '</div>';
+      }).join('');
+    }
 
+    function refreshRfStatus() {
+      // RF sensing is not wired into this build; show the static
+      // "not available" state instead of polling a route that 404s.
       const badge = document.getElementById('rfStateBadge');
       const text = document.getElementById('rfStateText');
-      if (data.state === 'present' || data.state === 'dwelling') {
-        badge.className = 'badge success';
-        text.textContent = data.state;
-      } else if (data.state === 'absent') {
-        badge.className = 'badge info';
-        text.textContent = 'Absent';
-      } else {
-        badge.className = 'badge info';
-        text.textContent = data.enabled ? data.state : 'Disabled';
-      }
-
-      // Update header badge
+      if (badge && text) { badge.className = 'badge info'; text.textContent = 'Not on this build'; }
       const rfBadge = document.getElementById('rfBadge');
       const rfStatus = document.getElementById('rfStatus');
-      if (data.enabled && data.device_count > 0) {
-        rfBadge.className = 'badge success';
-        rfStatus.textContent = data.device_count + ' RF';
-      } else {
-        rfBadge.className = 'badge info';
-        rfStatus.textContent = 'RF';
-      }
+      if (rfBadge && rfStatus) { rfBadge.className = 'badge info'; rfStatus.textContent = 'RF'; }
     }
 
-    async function toggleRfEnabled() {
-      const enabled = document.getElementById('rfEnabled').checked;
-      await api(enabled ? '/api/rf/enable' : '/api/rf/disable', 'POST');
-      refreshRfStatus();
+    function toggleRfEnabled() {
+      const el = document.getElementById('rfEnabled');
+      if (el) el.checked = false;  // stays off — the subsystem isn't wired
+      featureNotWired('RF signal presence');
     }
 
-    async function loadRfSettings() {
-      const data = await api('/api/rf/settings');
-      if (data.presence_threshold_sec) {
-        document.getElementById('rfPresenceThreshold').value = data.presence_threshold_sec;
-        document.getElementById('rfDwellThreshold').value = data.dwell_threshold_sec;
-        document.getElementById('rfLostTimeout').value = data.lost_timeout_sec;
-        document.getElementById('rfEmitImpulse').checked = data.emit_impulse_events;
-      }
-    }
-
-    async function saveRfSettings() {
-      const settings = {
-        presence_threshold_sec: parseInt(document.getElementById('rfPresenceThreshold').value),
-        dwell_threshold_sec: parseInt(document.getElementById('rfDwellThreshold').value),
-        lost_timeout_sec: parseInt(document.getElementById('rfLostTimeout').value),
-        emit_impulse_events: document.getElementById('rfEmitImpulse').checked
-      };
-      const data = await api('/api/rf/settings', 'POST', settings);
-      alert(data.success ? 'RF settings saved!' : 'Failed: ' + (data.error || 'Unknown'));
-    }
-
-    async function rotateRfSession() {
-      const data = await api('/api/rf/rotate', 'POST');
-      alert(data.success ? 'Session rotated!' : 'Failed');
-      refreshRfStatus();
-    }
+    function loadRfSettings() { /* no-op: RF sensing not wired on this build */ }
+    function saveRfSettings() { featureNotWired('RF signal presence'); }
+    function rotateRfSession() { featureNotWired('RF signal presence'); }
 
     function updateGps(gps) {
       // Backend emits gps.fix (bool) — gps.valid never existed; the previous
@@ -3274,13 +3322,29 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     function togglePeek() { peekActive ? stopPeek() : startPeek(); }
 
+    let peekRetries = 0;
     async function startPeek() {
       if (!cameraReady) { alert('Camera not available'); return; }
       const stream = document.getElementById('peekStream');
       document.getElementById('peekStatus').textContent = 'Connecting…';
-      stream.src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
-      stream.onload = () => { peekActive = true; updatePeekUI(); startCamInfoPolling(); setTimeout(refreshPeekStatus, 300); };
-      stream.onerror = () => { if (peekActive) setTimeout(() => { if (peekActive) stream.src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken); }, 2000); };
+      peekRetries = 0;
+      stream.src = WebUiLogic.peekStreamUrl(API_BASE, '/api/peek/stream', apiToken, Date.now());
+      stream.onload = () => { peekActive = true; peekRetries = 0; updatePeekUI(); startCamInfoPolling(); setTimeout(refreshPeekStatus, 300); };
+      // Bounded retry: after PEEK_MAX_RETRIES failures (e.g. the session
+      // cookie expired) stop hammering — an endless 2 s reload loop just
+      // wastes the radio and used to keep re-authing a dead credential.
+      stream.onerror = () => {
+        if (!peekActive) return;
+        if (!WebUiLogic.shouldRetryPeek(peekRetries)) {
+          document.getElementById('peekStatus').textContent = 'Stream lost — tap Start to retry';
+          stopPeek();
+          return;
+        }
+        peekRetries++;
+        setTimeout(() => {
+          if (peekActive) stream.src = WebUiLogic.peekStreamUrl(API_BASE, '/api/peek/stream', apiToken, Date.now());
+        }, 2000);
+      };
       peekActive = true; updatePeekUI();
       startCamInfoPolling();
     }
@@ -3322,7 +3386,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function takeSnapshot() {
       if (!cameraReady) { alert('Camera not available'); return; }
       const img = document.getElementById('snapshotImg');
-      img.src = API_BASE + '/api/peek/snapshot?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
+      img.src = WebUiLogic.peekStreamUrl(API_BASE, '/api/peek/snapshot', apiToken, Date.now());
       img.onload = () => { document.getElementById('snapshotPreview').style.display = 'block'; };
     }
 
@@ -3338,7 +3402,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const data = await api('/api/peek/resolution', 'POST', { size });
       if (data.ok) {
         currentResolution = size; updateResolutionUI();
-        if (peekActive) document.getElementById('peekStream').src = API_BASE + '/api/peek/stream?t=' + Date.now() + '&token=' + encodeURIComponent(apiToken);
+        if (peekActive) document.getElementById('peekStream').src = WebUiLogic.peekStreamUrl(API_BASE, '/api/peek/stream', apiToken, Date.now());
       }
     }
 
@@ -4359,7 +4423,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const result = document.getElementById('bleChirpResult');
       result.textContent = 'Sending…';
       try {
-        const resp = await secureFetch('/api/chirp/send', {
+        // BLE Discovery chirp lives at /api/ble/chirp/send. /api/chirp/send
+        // is the ESP-NOW community handler and hard-requires template_id, so
+        // this {type} body always 400'd there.
+        const resp = await secureFetch(WebUiLogic.BLE_CHIRP_ENDPOINT, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({type: type})
@@ -4737,19 +4804,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     // DEVICE CONFIG
     // ══════════════════════════════════════════════════════════════════
-    async function saveConfig() {
-      const config = {
-        record_interval_ms: parseInt(document.getElementById('configRecordInterval').value),
-        time_bucket_ms: parseInt(document.getElementById('configTimeBucket').value),
-        log_level: parseInt(document.getElementById('configLogLevel').value)
-      };
-      const data = await api('/api/config', 'POST', config);
-      alert(data.ok ? 'Settings saved.' : 'Could not save settings. Try again.');
+    function saveConfig() {
+      // The record interval and, especially, the time bucket are privacy
+      // parameters (the bucket coarsens event timing — Invariant III), so
+      // they aren't a plain runtime setting and there is no POST /api/config
+      // yet. Be honest rather than 404.
+      featureNotWired('Recording/log configuration');
     }
 
     async function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.')) { try { await api('/api/reboot', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting…'); } }
     async function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { try { await api('/api/safe-mode/retry', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting into full operation…'); } }
-    async function rotateOldLogs() { if (confirm('Delete log entries older than 30 days? This cannot be undone. Witness records are not affected.')) { const data = await api('/api/logs/rotate', 'POST', { max_age_days: 30 }); alert(data.ok ? `Deleted ${data.deleted_count || 0} old entries` : 'Could not delete old entries'); } }
+    function rotateOldLogs() { featureNotWired('SD log rotation'); }
 
     // ══════════════════════════════════════════════════════════════════
     // UTILITIES

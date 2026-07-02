@@ -153,6 +153,49 @@
 - **Process:** When adding UI elements, always implement the API endpoint
   in the same commit
 
+### `max_uri_handlers` silently drops routes past the budget
+- **What happened:** The canary-wap dashboard's Presence tab, speaker,
+  Chirp, and BLE routes all 404'd on the default build even though they were
+  registered — "half the settings panel does nothing".
+- **Root cause:** `esp_http_server` returns `ESP_ERR_HTTPD_HANDLERS_FULL`
+  for every `httpd_register_uri_handler` past `config.max_uri_handlers`, and
+  no call site checked the return value. The budget was hand-summed to 123
+  while the active server registered 154, so the last 31 routes never
+  installed — silently.
+- **Fix:** Itemize the budget per feature flag so it tracks the build, size
+  it to fit with headroom.
+- **Regression check:** `firmware/projects/canary-wap/tests_host/check_route_budget.py`
+  emulates the preprocessor for FULL/S3, DEV/S3 and FULL/C3 and fails CI if
+  the budget doesn't cover the registrations with margin.
+- **Date learned:** 2026-07
+
+### A missing auth header must not feed the brute-force lockout
+- **What happened:** A correct pasted token was rejected with "Too many
+  failed attempts" — the device 429'd everything, including valid clients.
+- **Root cause:** `api_auth_check` counted a *missing* `Authorization`
+  header as a failed guess. One dashboard tab left open after its (RAM-only)
+  session cookie died polled `/api/status` every 5 s with no credentials,
+  arming the shared exponential lockout. A credential-less request carries
+  no guess, so counting it is a self-DoS, not brute-force protection.
+- **Fix:** `auth_logic::counts_toward_lockout` — NO_CREDENTIAL never counts;
+  MALFORMED and WRONG_TOKEN still do.
+- **Regression check:** `tests_host/test_auth_logic.cpp` (host).
+- **Date learned:** 2026-07
+
+### Self-test probes must not FAIL a subsystem that merely hasn't started
+- **What happened:** The pre-flight health check showed "almost everything
+  failing" on a healthy XIAO S3.
+- **Root cause:** The Bluetooth probe hard-FAILed "NimBLE init failed"
+  during the boot window before init ran and *permanently* in safe mode
+  (where radio inits are skipped by design), and safe mode wasn't reported
+  at all, so a recovering-but-fine device was indistinguishable from broken.
+- **Fix:** `selftest_logic::bluetooth_status` returns SKIP for the
+  not-yet-initialized and safe-mode states; `run_to_json` emits `safe_mode`
+  and counts SKIP rows.
+- **Regression check:** `tests_host/test_selftest_logic.cpp` +
+  `selftest_ui.test.js`.
+- **Date learned:** 2026-07
+
 ---
 
 ## GPS & Time

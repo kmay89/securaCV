@@ -605,6 +605,47 @@ jobs:
           /tmp/provisioning_logic | tee /tmp/provisioning_logic.log
           grep -q "ALL .* PASSED" /tmp/provisioning_logic.log
 
+      - name: Build + run canary-wap self-test-logic host test
+        # The pre-flight health check's verdicts (Bluetooth SKIP vs FAIL vs
+        # ABSENT across boot window / safe mode / DEV builds, Wi-Fi link-down
+        # vs radio-off) live in selftest_logic.h so the "almost everything
+        # failing" false-negatives can't come back.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_selftest_logic.cpp \
+              -o /tmp/selftest_logic
+          /tmp/selftest_logic | tee /tmp/selftest_logic.log
+          grep -q "ALL .* PASSED" /tmp/selftest_logic.log
+
+      - name: Build + run canary-wap auth-logic host test
+        # Which failed-auth shapes feed the brute-force lockout. A
+        # credential-less request must NOT count — counting it let one
+        # open dashboard tab 429-lock the operator's correct token.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_auth_logic.cpp \
+              -o /tmp/auth_logic
+          /tmp/auth_logic | tee /tmp/auth_logic.log
+          grep -q "ALL .* PASSED" /tmp/auth_logic.log
+
+      - name: Build + run canary-wap Bluetooth-defaults host test
+        # The BLE pairing channel ships ENABLED by default (was disabled,
+        # which read as a dead Bluetooth panel). This pins that the radio
+        # is on out of the box AND that PIN confirmation stays required, so
+        # "on by default" never regresses into "pairs silently".
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_bt_defaults.cpp \
+              -o /tmp/bt_defaults
+          /tmp/bt_defaults | tee /tmp/bt_defaults.log
+          grep -q "ALL .* PASSED" /tmp/bt_defaults.log
+
       - name: Build + run pull-OTA engine logic host test
         # The OTA engine's pure-logic subset (semantic version compare,
         # anti-rollback update decision, URL transport policy, the
@@ -648,6 +689,25 @@ jobs:
         run: |
           python3 -m pip install --quiet pytest cryptography
           python3 -m pytest firmware/scripts/test_ota_release.py -q
+
+      - name: Check canary-wap route security (every route gated or allowlisted)
+        # Static fail-closed guard: every HTTP route the sketch registers
+        # must carry a credential gate (Bearer/session/pair-token/BOOT
+        # gate) unless it is on the documented public allowlist. Catches a
+        # new — or resurrected — endpoint slipping onto the unauthenticated
+        # surface (three /api/ble routes once shipped ungated, hidden only
+        # by the handler-table overflow).
+        run: |
+          python3 firmware/projects/canary-wap/tests_host/check_route_security.py
+
+      - name: Check canary-wap handler-table budget (no silent route drops)
+        # esp_http_server drops registrations past max_uri_handlers and the
+        # sketch ignores the error, so an under-sized budget 404s whole API
+        # families. This emulates the preprocessor for every shipped build
+        # config and asserts total_handlers covers the registrations with
+        # margin — the guard that keeps the settings panel's routes alive.
+        run: |
+          python3 firmware/projects/canary-wap/tests_host/check_route_budget.py
 
       - name: Build + run canary-wap project host tests
         # The canary-wap project keeps its own host-test Makefile (mesh
