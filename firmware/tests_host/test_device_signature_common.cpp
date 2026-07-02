@@ -109,6 +109,14 @@ void test_sense_canonical_occupancy_change() {
            "occupancy canonical matches reference");
 }
 
+void test_chain_canonical_null_hash_returns_zero() {
+  char out[256] = "sentinel";
+  const size_t n = device_signature::build_chain_canonical(
+      42, /*latest_hash_32=*/nullptr, "abc123", out, sizeof(out));
+  check(n == 0, "null chain hash returns 0");
+  check(out[0] == '\0', "null chain hash clears the buffer");
+}
+
 void test_canonical_truncation_returns_zero() {
   char out[16];
   const size_t n = device_signature::build_sense_canonical(
@@ -173,6 +181,7 @@ int main() {
   test_counts_canonical_known_input();
   test_sense_canonical_known_input();
   test_sense_canonical_occupancy_change();
+  test_chain_canonical_null_hash_returns_zero();
   test_canonical_truncation_returns_zero();
   test_b64url_known_vectors();
   test_b64url_url_alphabet();

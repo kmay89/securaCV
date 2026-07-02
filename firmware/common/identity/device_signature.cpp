@@ -86,7 +86,7 @@ bool    s_ready                 = false;
  * >= 2*in_len + 1. Lowercase, no separators. */
 void hex_encode(const uint8_t* in, size_t in_len, char* out, size_t out_cap) {
   static const char H[] = "0123456789abcdef";
-  if (!out || out_cap < 2 * in_len + 1) {
+  if (!in || !out || out_cap < 2 * in_len + 1) {
     if (out && out_cap) out[0] = '\0';
     return;
   }
@@ -162,7 +162,10 @@ size_t build_chain_canonical(uint32_t      length,
                              const char*   device_id,
                              char*         out,
                              size_t        cap) {
-  if (!out || cap == 0) return 0;
+  if (!latest_hash_32 || !out || cap == 0) {
+    if (out && cap) out[0] = '\0';
+    return 0;
+  }
   char hash_hex[65];
   hex_encode(latest_hash_32, 32, hash_hex, sizeof(hash_hex));
   int n = snprintf(out, cap, "%s|v%d|chain|%s|%lu|%s",

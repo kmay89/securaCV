@@ -713,6 +713,11 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
         """Handle event message."""
         try:
             data = json.loads(msg.payload)
+            if not isinstance(data, dict):
+                # A bare JSON scalar/list would AttributeError out of the
+                # @callback on data.get() and stall the entity; route it
+                # into the except arm like the health handler does.
+                raise TypeError("Event payload is not a JSON object")
             self._attr_native_value = data.get(
                 "event_type", data.get("type", data.get("event", "unknown"))
             )

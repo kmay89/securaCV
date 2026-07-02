@@ -98,10 +98,18 @@ bool load_or_generate_keypair() {
     // canary-wap tree's generate_keypair.
     esp_fill_random(s_priv, sizeof(s_priv));
     if (prefs.putBytes(KEY_PRIV, s_priv, sizeof(s_priv)) != sizeof(s_priv)) {
-      log_line("WITNESS", "Key persist FAILED — identity will not survive reboot.");
-    } else {
-      log_line("WITNESS", "Generated new Ed25519 identity (first boot).");
+      // An unpersisted key would rotate on every reboot, and each
+      // rotation reads as a "Fingerprint changed without rotation"
+      // security alert in HA. Unsigned publishes degrade gracefully
+      // there; a flapping identity does not — so fail closed.
+      log_line("WITNESS",
+               "Key persist FAILED — signing disabled (an ephemeral key "
+               "would flap the fingerprint every reboot).");
+      secure_zero(s_priv, sizeof(s_priv));
+      prefs.end();
+      return false;
     }
+    log_line("WITNESS", "Generated new Ed25519 identity (first boot).");
   }
 
   prefs.end();
@@ -157,6 +165,9 @@ bool init() {
   fp_hex[16] = '\0';
 
   device_signature::init(s_priv, s_pub, canary::cfg::get().device_id, fp_hex);
+  // device_signature keeps its own copy; scrub ours so exactly one copy
+  // of the private key stays resident.
+  secure_zero(s_priv, sizeof(s_priv));
   load_or_start_chain();
   s_ready = true;
 
