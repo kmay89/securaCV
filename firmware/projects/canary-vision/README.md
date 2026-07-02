@@ -57,6 +57,24 @@ A ready-made dashboard for these entities ships at
 automations at
 [`homeassistant/automations/securacv_vision_presence.yaml`](../../../homeassistant/automations/securacv_vision_presence.yaml).
 
+## Runtime robustness (ESP32-S3 tree parity)
+
+Ported from the ACTIVE `firmware/canary` (ESP32-S3) tree, 2026-07:
+
+- **Supervised WiFi STA** — non-blocking reconnect with exponential backoff
+  (2 s → 30 s cap) on link loss, and a reboot as the recovery of last resort
+  after a 5-minute outage. The blocking MQTT reconnect defers to this
+  supervisor whenever the link is down instead of spinning.
+- **WiFi power policy** — optional modem sleep (`WIFI_POWER_SAVE`) and a TX
+  power cap (`WIFI_TX_POWER_QDBM`), off/default by default; see
+  `include/canary/config.h`.
+- **Heap health monitor** — S3-tree thresholds (30 k warn / 15 k critical /
+  10 k emergency, 5 k hysteresis). Under pressure the inference cadence is
+  stretched (2× critical, 5× emergency) so SSCMA invokes never OOM the
+  device; the level rides the status heartbeat.
+- **HA diagnostic entities** — WiFi RSSI and free heap appear under the
+  device's Diagnostic section via MQTT discovery.
+
 ## MQTT Topics
 
 Base:

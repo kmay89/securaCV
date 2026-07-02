@@ -128,6 +128,24 @@ jobs:
           HEADER
           pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3
 
+      - name: Build canary-sense (release)
+        working-directory: firmware/projects/canary-sense
+        run: |
+          # Generic release build: placeholder secrets ON PURPOSE — same
+          # NVS-backed runtime-config scheme as canary-vision above.
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic OTA release build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          pio run -e canary-sense-default -e canary-sense-wellbeing
+
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2
 
@@ -211,6 +229,25 @@ jobs:
               "/tmp/release/canary-vision${SUFFIX}-${VERSION}.bin"
           done
 
+          # canary-sense (generic builds — identity/credentials come from NVS).
+          # One OTA product per flavor: the presence-only and wellbeing images
+          # must never cross-install (different privacy surface) — the
+          # engine's product check enforces it.
+          for F in default wellbeing; do
+            if [ "$F" = default ]; then SUFFIX=""; else SUFFIX="-$F"; fi
+            cp "firmware/projects/canary-sense/.pio/build/canary-sense-${F}/firmware.bin" \
+              "/tmp/release/canary-sense${SUFFIX}-${VERSION}.bin"
+            python firmware/scripts/ota_release.py manifest \
+              --private-key /tmp/releaser.pem \
+              --product "securacv-canary-sense${SUFFIX}" \
+              --version "${VERSION}" \
+              --url "${DL}/canary-sense${SUFFIX}-${VERSION}.bin" \
+              --release-notes "$NOTES" \
+              --release-url "$RELURL" \
+              --out "/tmp/release/manifest-canary-sense${SUFFIX}.json" \
+              "/tmp/release/canary-sense${SUFFIX}-${VERSION}.bin"
+          done
+
           # Variant index (tooling + future variants)
           python firmware/scripts/ota_release.py index \
             "securacv-canary=${DL}/manifest-canary.json" \
@@ -218,6 +255,8 @@ jobs:
             "securacv-canary-vision=${DL}/manifest-canary-vision.json" \
             "securacv-canary-vision-xiao-c3=${DL}/manifest-canary-vision-xiao-c3.json" \
             "securacv-canary-vision-xiao-s3=${DL}/manifest-canary-vision-xiao-s3.json" \
+            "securacv-canary-sense=${DL}/manifest-canary-sense.json" \
+            "securacv-canary-sense-wellbeing=${DL}/manifest-canary-sense-wellbeing.json" \
             --out /tmp/release/manifest-index.json
 
           # Verify every signature against the COMMITTED public key before
@@ -236,6 +275,12 @@ jobs:
               --manifest "/tmp/release/manifest-canary-vision${B}.json" \
               "/tmp/release/canary-vision${B}-${VERSION}.bin"
           done
+          for B in "" "-wellbeing"; do
+            python firmware/scripts/ota_release.py verify \
+              --pubkey firmware/common/ota/src/ota_release_key.h \
+              --manifest "/tmp/release/manifest-canary-sense${B}.json" \
+              "/tmp/release/canary-sense${B}-${VERSION}.bin"
+          done
 
           # Guard against a forgotten version bump: the compiled-in
           # FIRMWARE_VERSION literal must match the manifest version, or
@@ -253,6 +298,12 @@ jobs:
           for B in "" "-xiao-c3" "-xiao-s3"; do
             if ! strings "/tmp/release/canary-vision${B}-${VERSION}.bin" | grep -qFx "${VERSION}"; then
               echo "::error::canary-vision${B} binary does not contain the version string '${VERSION}'. Bump CANARY_FW_VERSION in firmware/projects/canary-vision/include/canary/version.h before tagging."
+              exit 1
+            fi
+          done
+          for B in "" "-wellbeing"; do
+            if ! strings "/tmp/release/canary-sense${B}-${VERSION}.bin" | grep -qFx "${VERSION}"; then
+              echo "::error::canary-sense${B} binary does not contain the version string '${VERSION}'. Bump CANARY_FW_VERSION in firmware/projects/canary-sense/include/canary/version.h before tagging."
               exit 1
             fi
           done
@@ -286,10 +337,14 @@ jobs:
             /tmp/release/canary-vision-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-vision-xiao-c3-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-vision-xiao-s3-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-sense-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-sense-wellbeing-${{ steps.ver.outputs.version }}.bin
             /tmp/release/manifest-canary.json
             /tmp/release/manifest-canary-wap.json
             /tmp/release/manifest-canary-vision.json
             /tmp/release/manifest-canary-vision-xiao-c3.json
             /tmp/release/manifest-canary-vision-xiao-s3.json
+            /tmp/release/manifest-canary-sense.json
+            /tmp/release/manifest-canary-sense-wellbeing.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt
