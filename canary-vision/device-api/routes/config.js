@@ -93,8 +93,28 @@ function unknownKeyErrors(config, section, data) {
   const isPlainObject = (v) =>
     v !== null && typeof v === 'object' && !Array.isArray(v);
 
+  // typeof [] === 'object', so an array body would slip past the route
+  // handlers' object check and Object.assign would merge its INDICES into
+  // the stored config. Reject arrays outright, at every nesting level where
+  // an object is expected.
+  if (Array.isArray(data)) {
+    errors.push('request body must be a JSON object, not an array');
+    return errors;
+  }
+
   const checkKeys = (known, candidate, prefix) => {
-    if (!isPlainObject(candidate)) return;
+    if (!isPlainObject(candidate)) {
+      errors.push(`${prefix.replace(/\.$/, '')} must be a JSON object`);
+      return;
+    }
+    if (!isPlainObject(known)) {
+      // Section missing from the live config: nothing is known, so every
+      // candidate key is unknown (and `key in known` would throw).
+      for (const key of Object.keys(candidate)) {
+        errors.push(`unknown key: ${prefix}${key}`);
+      }
+      return;
+    }
     for (const key of Object.keys(candidate)) {
       if (!(key in known)) {
         errors.push(`unknown key: ${prefix}${key}`);

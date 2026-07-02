@@ -130,4 +130,26 @@ describe('Config API', () => {
     assert.equal(res.status, 400);
     assert.match(res.json.message, /cooldown_secondz/);
   });
+
+  // typeof [] === 'object': a JSON array must not slip past the body-object
+  // check and have its indices merged into the stored config.
+
+  it('PUT /api/v1/config/:section rejects a JSON array body', async () => {
+    const res = await client.put('/api/v1/config/detection', [1, 2, 3]);
+    assert.equal(res.status, 400);
+    // Array indices must not have been merged into the section.
+    const after = await client.get('/api/v1/config/detection');
+    assert.equal(after.json['0'], undefined);
+  });
+
+  it('PUT /api/v1/config rejects a JSON array body', async () => {
+    const res = await client.put('/api/v1/config', [1, 2, 3]);
+    assert.equal(res.status, 400);
+    assert.match(res.json.message, /array/i);
+  });
+
+  it('PUT /api/v1/config rejects an array where a section object belongs', async () => {
+    const res = await client.put('/api/v1/config', { privacy: [1, 2] });
+    assert.equal(res.status, 400);
+  });
 });
