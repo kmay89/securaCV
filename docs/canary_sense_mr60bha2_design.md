@@ -358,6 +358,11 @@ flavor + one new claim mapping discussion, since "fall" has no current
 `EventType` and would need a contract-review, the only place this program
 touches the frozen contract).
 
+Separately tracked: the kernel export stamping `attestation`
+(`adapter-attested` / `ha-bridged`) on Track B events — the field the
+Phase 3 timeline chips render once populated — is issue #800, not part
+of the Phase 4 scope above.
+
 Total: ~4 engineering weeks to a shippable canary-sense product with the
 Track B funnel live in week 1.
 
