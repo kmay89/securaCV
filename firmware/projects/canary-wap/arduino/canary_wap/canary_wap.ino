@@ -440,6 +440,12 @@ static const char* NVS_KEY_LOGSEQ   = "logseq";
 static const char* NVS_KEY_WIFI_SSID = "wifi_ssid";
 static const char* NVS_KEY_WIFI_PASS = "wifi_pass";
 static const char* NVS_KEY_WIFI_EN   = "wifi_en";
+// Explicit standalone mode: the user chose "use without home WiFi" in the
+// wizard. The device runs permanently on its own SoftAP — no STA join
+// attempts, and the AP is never torn down for radio stability. Cleared
+// automatically the moment real credentials are saved.
+static const char* NVS_KEY_WIFI_AP_ONLY = "wifi_ap_only";
+static bool g_wifi_ap_only = false;
 static const char* NVS_KEY_API_TKN  = "api_tkn";
 static const char* NVS_KEY_TLS_CERT = "tls_cert";
 static const char* NVS_KEY_TLS_KEY  = "tls_key";
@@ -4641,6 +4647,7 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   doc["rssi"] = g_wifi_status.rssi;
   doc["configured"] = g_wifi_creds.configured;
   doc["enabled"] = g_wifi_creds.enabled;
+  doc["ap_only"] = g_wifi_ap_only;
   doc["connect_attempts"] = g_wifi_status.connect_attempts;
   doc["fail_reason"] = g_wifi_status.last_fail_reason;
 
@@ -4825,6 +4832,58 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   WiFi.scanDelete();
 
   return send_scan_cache_json(req, false, now);
+}
+
+// "Use without home WiFi": the explicit standalone exit from the setup
+// wizard. Same pairing-token gate as /api/wifi/connect (the choice changes
+// how the device runs, so it deserves the same posture as a credential
+// save). Persists the AP-only preference, completes first-boot setup — no
+// more 15-minute reboot loop — and leaves the SoftAP up as the product.
+static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
+  g_health.http_requests++;
+  setup_wizard::touch();
+
+  char content[256] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  JsonDocument body;
+  if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+  }
+  const char* token = body["token"] | "";
+  if (!csi_integration::pair_token_valid(token)) {
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["code"] = "invalid_token";
+    doc["error"] = "This setup link has expired. Reconnect to the SecuraCV network to start over.";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  NvsManager& nvs = NvsManager::instance();
+  if (nvs.beginReadWrite()) {
+    nvs.putBool(NVS_KEY_WIFI_AP_ONLY, true);
+    nvs.end();
+  }
+  g_wifi_ap_only = true;
+  g_wifi_creds.enabled = false;
+  g_wifi_status.state = WIFI_PROV_AP_ONLY;
+  setup_wizard::mark_complete();
+  // mark_complete() stops the captive DNS as part of closing the first-boot
+  // wizard — but in standalone mode the AP (and canary.local on it) IS the
+  // product, so bring the resolver right back up. dns_process() in the main
+  // loop services it whenever it's running.
+  setup_wizard::start_captive_portal();
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "Standalone (AP-only) mode chosen in setup wizard", nullptr);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["ap_only"] = true;
+  doc["message"] = "Running standalone on the SecuraCV network";
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
 }
 
 static esp_err_t handle_wifi_connect(httpd_req_t* req) {
@@ -6394,6 +6453,10 @@ register_extra_routes:
   httpd_uri_t wifi_pair_token = { .uri = "/api/wifi/pair-token", .method = HTTP_GET, .handler = handle_wifi_pair_token };
   httpd_register_uri_handler(active_server, &wifi_pair_token);
 
+  // Standalone mode: pairing-token-gated like /api/wifi/connect.
+  httpd_uri_t wifi_ap_only = { .uri = "/api/wifi/ap-only", .method = HTTP_POST, .handler = handle_wifi_ap_only };
+  httpd_register_uri_handler(active_server, &wifi_ap_only);
+
   httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
   httpd_register_uri_handler(active_server, &wifi_connect);
 
@@ -6598,6 +6661,9 @@ static bool wifi_load_credentials() {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadOnly()) return false;
 
+  // Standalone preference loads regardless of whether creds exist.
+  g_wifi_ap_only = nvs.getBool(NVS_KEY_WIFI_AP_ONLY, false);
+
   size_t ssid_len = nvs.getBytesLength(NVS_KEY_WIFI_SSID);
   if (ssid_len > 0 && ssid_len <= 32) {
     nvs.getBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len);
@@ -6624,8 +6690,11 @@ static bool wifi_save_credentials() {
   nvs.putBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, strlen(g_wifi_creds.ssid));
   nvs.putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, strlen(g_wifi_creds.password));
   nvs.putBool(NVS_KEY_WIFI_EN, g_wifi_creds.enabled);
+  // Saving real credentials is an explicit exit from standalone mode.
+  nvs.putBool(NVS_KEY_WIFI_AP_ONLY, false);
 
   nvs.end();
+  g_wifi_ap_only = false;
   g_wifi_creds.configured = true;
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
@@ -6675,7 +6744,9 @@ static void wifi_update_status() {
 }
 
 static void wifi_connect_to_home() {
-  if (!g_wifi_creds.configured || !g_wifi_creds.enabled) {
+  if (!provisioning_logic::sta_join_allowed(g_wifi_ap_only,
+                                            g_wifi_creds.configured,
+                                            g_wifi_creds.enabled)) {
     g_wifi_status.state = WIFI_PROV_AP_ONLY;
     return;
   }
@@ -6820,11 +6891,14 @@ static void wifi_check_connection() {
         // reachable for reconfiguration while it retries the home network.
         wifi_raise_ap();
       } else if ((WiFi.getMode() & WIFI_MODE_AP) &&
-                 now - g_wifi_status.connected_since_ms > AP_DROP_GRACE_MS) {
+                 provisioning_logic::ap_teardown_due(
+                     g_wifi_ap_only, true, now,
+                     g_wifi_status.connected_since_ms, AP_DROP_GRACE_MS)) {
         // F4: STA has held the home link past the grace window — drop the AP so
         // the radio runs the stable STA+BLE coexistence combo. The grace window
         // lets the just-provisioned phone see the "connected" result before its
-        // AP association is dropped.
+        // AP association is dropped. Never fires in standalone (AP-only) mode,
+        // where the AP is the product.
         wifi_drop_ap();
       }
       break;

@@ -351,6 +351,10 @@ footer a{color:var(--accent);text-decoration:none}
         <p style="color:var(--muted);font-size:.8rem;margin:0 0 .4rem">or</p>
         <button class="btn btn-secondary" id="wiz-qr-start" style="font-size:.85rem">I have a WiFi QR code</button>
       </div>
+      <div style="text-align:center;margin-top:.75rem">
+        <button class="btn btn-secondary" id="wiz-ap-only" style="font-size:.85rem">Use without home WiFi</button>
+        <p style="color:var(--muted);font-size:.72rem;margin:.4rem 0 0;line-height:1.4">Your Canary keeps its own SecuraCV network and works fully offline. You can add home WiFi later.</p>
+      </div>
     </div>
     <div id="wiz-qr-mode" class="hidden">
       <h2 class="wiz-h" tabindex="-1">Show the QR code</h2>
@@ -401,6 +405,12 @@ footer a{color:var(--accent);text-decoration:none}
       <h2 class="wiz-h" tabindex="-1">Your Canary is online.</h2>
       <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Running one quick check that the sensors are awake.</p>
       <p class="wiz-sub">The SecuraCV setup network turns itself off in about two minutes — reconnect this phone to your home WiFi and find your Canary at <strong>canary.local</strong>.</p>
+    </div>
+    <div id="wiz-step-4-standalone" class="hidden">
+      <div class="wiz-tick">✓</div>
+      <h2 class="wiz-h" tabindex="-1">Running standalone.</h2>
+      <p class="wiz-sub">Your Canary keeps its own <strong>SecuraCV</strong> network &mdash; no home WiFi needed, nothing leaves the device. Join that network anytime and open <strong>canary.local</strong> for the dashboard.</p>
+      <p class="wiz-sub">Change your mind later? Settings &rsaquo; WiFi lets you join a home network.</p>
     </div>
     <div id="wiz-step-4-failure" class="hidden">
       <div class="wiz-cross">!</div>
@@ -795,6 +805,37 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     const el = $w(k); if (el) el.classList.add('hidden');
   });
 
+  // "Use without home WiFi": persists the standalone preference, completes
+  // first-boot setup, and leaves the device living on its own SoftAP. Same
+  // token gate (and silent one-shot refresh) as the credential save.
+  $w('wiz-ap-only').addEventListener('click', async () => {
+    setStep(4);
+    showProgress('Setting up standalone mode.');
+    const post = () => fetch('/api/wifi/ap-only', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: token }),
+    });
+    try {
+      let r = await post();
+      let j = await r.json();
+      let out = WizardLogic.connectOutcome(r.ok, j, false);
+      if (out.action === 'refresh-retry' && await refreshToken()) {
+        r = await post();
+        j = await r.json();
+        out = WizardLogic.connectOutcome(r.ok, j, true);
+      }
+      if (out.action !== 'proceed') {
+        showFailure((j && j.error) ? j.error : ('HTTP ' + r.status),
+                    out.isTokenErr ? { raw: true } : undefined);
+        return;
+      }
+      showStandalone();
+    } catch (e) {
+      showFailure(e.message);
+    }
+  });
+
   // Never let the typed WiFi password linger for the next person who picks
   // up the phone: wipe the field whenever the page is backgrounded or
   // navigated away. (The app never stores it — Safari's page cache is what
@@ -1155,9 +1196,23 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     const wasHidden = prog.classList.contains('hidden');
     prog.classList.remove('hidden');
     $w('wiz-step-4-success').classList.add('hidden');
+    $w('wiz-step-4-standalone').classList.add('hidden');
     $w('wiz-step-4-failure').classList.add('hidden');
     if (msg) $w('wiz-progress-text').textContent = msg;
     if (wasHidden) requestAnimationFrame(() => focusActiveStepHeading());
+  }
+
+  function showStandalone() {
+    $w('wiz-step-4-progress').classList.add('hidden');
+    $w('wiz-step-4-success').classList.add('hidden');
+    $w('wiz-step-4-failure').classList.add('hidden');
+    $w('wiz-step-4-standalone').classList.remove('hidden');
+    [4].forEach(i => {
+      const dot = $w('wiz-prog-' + i);
+      dot.classList.remove('now');
+      dot.classList.add('done');
+    });
+    requestAnimationFrame(() => focusActiveStepHeading());
   }
   // staIp captured here is reused on step 5 for the IP fallback link
   // — the device may not be reachable as canary.local on networks
@@ -1192,6 +1247,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
   function showFailure(reason, opts) {
     $w('wiz-step-4-progress').classList.add('hidden');
     $w('wiz-step-4-success').classList.add('hidden');
+    $w('wiz-step-4-standalone').classList.add('hidden');
     $w('wiz-step-4-failure').classList.remove('hidden');
     const raw = opts && opts.raw === true;
     let text;
