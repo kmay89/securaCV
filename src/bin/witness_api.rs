@@ -35,6 +35,7 @@ fn main() -> Result<()> {
     let api_config = ApiConfig {
         addr: config.api_addr.clone(),
         token_path: config.api_token_path.clone(),
+        rate_limit_per_minute: config.api_rate_limit_per_minute,
         ..ApiConfig::default()
     };
     let api_handle = ApiServer::new(api_config, cfg.clone()).spawn()?;

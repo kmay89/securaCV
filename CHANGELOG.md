@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### API hardening: per-IP rate limit + at-rest encryption pinned
+
+- **Event API rate limiting**: every endpoint except `/health` is now capped
+  per client IP (fixed one-minute window, default 120/min, 429 with
+  `retry_after`). Applies before token validation, so neither a tokenless
+  hammer nor a leaked capability token can drive the single-threaded API
+  (`POST /verify` walks the whole sealed log). Configure via
+  `[api] rate_limit_per_minute` or `WITNESS_API_RATE_LIMIT_PER_MINUTE`
+  (0 disables); complements the existing auth-failure lockout.
+- **At-rest encryption documented and pinned**: the kernel database has
+  always been SQLCipher-encrypted with a seed-derived key — an early audit
+  note claiming "unencrypted by default" was wrong. Now stated in
+  SECURITY_MODEL.md and docs/why_secure.md, and pinned by regression tests
+  (kernel DBs are never plaintext SQLite; opening without the key fails).
+
 ### Export & diagnosis follow-ups: one-click download, scheduling, inspectors, break-glass UX
 
 - **One-click "Download my events"**: token-gated `GET /export/bundle` on the

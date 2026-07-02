@@ -14,6 +14,9 @@ ruleset_id = "ruleset:v1.0"
 [api]
 addr = "127.0.0.1:8799"    # Loopback only by default for security
 # token_path = "/run/witness/api_token"  # Optional: write token to file
+# Per-IP request cap on every endpoint except /health (0 disables).
+# Also overridable via WITNESS_API_RATE_LIMIT_PER_MINUTE.
+# rate_limit_per_minute = 120
 
 # Ingest backend selection ("file", "rtsp", "v4l2", or "esp32")
 [ingest]

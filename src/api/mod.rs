@@ -61,7 +61,17 @@ pub struct ApiConfig {
     pub tls: Option<ApiTlsConfig>,
     /// Allow plaintext HTTP without TLS. Logs a conformance alarm if true.
     pub allow_insecure: bool,
+    /// Max requests per client IP per minute on every endpoint except
+    /// `/health` (fixed window). Applies before token validation, so a
+    /// stolen-or-not client cannot hammer `/events` or `POST /verify`
+    /// (which walks the whole sealed log). 0 disables the limit.
+    pub rate_limit_per_minute: u32,
 }
+
+/// Generous for legitimate clients — the HA coordinator polls every 30 s and
+/// the panel is human-driven — while capping what a leaked capability token
+/// is worth for resource exhaustion.
+pub const DEFAULT_API_RATE_LIMIT_PER_MINUTE: u32 = 120;
 
 impl Default for ApiConfig {
     fn default() -> Self {
@@ -71,6 +81,7 @@ impl Default for ApiConfig {
             token_path: None,
             tls: None,
             allow_insecure: false,
+            rate_limit_per_minute: DEFAULT_API_RATE_LIMIT_PER_MINUTE,
         }
     }
 }
@@ -295,6 +306,63 @@ impl AuthFailureTracker {
     }
 }
 
+/// Per-IP fixed-window request limiter for everything except `/health`.
+///
+/// The auth-failure tracker above throttles clients that *fail* auth; this
+/// caps how fast a client that *holds* the capability token can drive the
+/// single-threaded API (each `/events` re-exports, `POST /verify` walks the
+/// whole sealed log). A fixed one-minute window is deliberately simple: the
+/// worst-case burst is 2× the configured rate at a window boundary.
+struct RateLimiter {
+    limit_per_minute: u32,
+    windows: HashMap<std::net::IpAddr, RateWindow>,
+}
+
+struct RateWindow {
+    window_start_ms: u64,
+    count: u32,
+}
+
+const RATE_WINDOW_MS: u64 = 60_000;
+/// Backstop against per-IP state growth from address-rotating clients.
+const RATE_MAX_TRACKED_IPS: usize = 4096;
+
+impl RateLimiter {
+    fn new(limit_per_minute: u32) -> Self {
+        Self {
+            limit_per_minute,
+            windows: HashMap::new(),
+        }
+    }
+
+    /// Count one request. Returns `Some(retry_after_s)` when over the limit.
+    fn check(&mut self, ip: std::net::IpAddr) -> Option<u64> {
+        if self.limit_per_minute == 0 {
+            return None;
+        }
+        let now = AuthFailureTracker::now_ms();
+        if self.windows.len() >= RATE_MAX_TRACKED_IPS {
+            self.windows
+                .retain(|_, w| now.saturating_sub(w.window_start_ms) < RATE_WINDOW_MS);
+        }
+        let window = self.windows.entry(ip).or_insert(RateWindow {
+            window_start_ms: now,
+            count: 0,
+        });
+        if now.saturating_sub(window.window_start_ms) >= RATE_WINDOW_MS {
+            window.window_start_ms = now;
+            window.count = 0;
+        }
+        window.count = window.count.saturating_add(1);
+        if window.count > self.limit_per_minute {
+            let elapsed = now.saturating_sub(window.window_start_ms);
+            Some((RATE_WINDOW_MS - elapsed).div_ceil(1000).max(1))
+        } else {
+            None
+        }
+    }
+}
+
 fn run_api(
     listener: TcpListener,
     cfg: ApiConfig,
@@ -308,6 +376,7 @@ fn run_api(
     let kernel_version = kernel_cfg.kernel_version.clone();
     let retention = kernel_cfg.retention;
     let mut auth_tracker = AuthFailureTracker::new();
+    let mut rate_limiter = RateLimiter::new(cfg.rate_limit_per_minute);
     // Most recent POST /verify outcome, surfaced in /digest so consumers
     // get chain status without re-running verification on every request.
     let mut last_verify: Option<VerifyReport> = None;
@@ -327,6 +396,7 @@ fn run_api(
                     storage_health.as_ref(),
                     retention,
                     &mut auth_tracker,
+                    &mut rate_limiter,
                     &mut last_verify,
                 ) {
                     log::warn!("event api request rejected: {}", err);
@@ -353,6 +423,7 @@ fn handle_connection(
     storage_health: Option<&SharedStorageHealth>,
     retention: Duration,
     auth_tracker: &mut AuthFailureTracker,
+    rate_limiter: &mut RateLimiter,
     last_verify: &mut Option<VerifyReport>,
 ) -> Result<()> {
     let peer = stream.peer_addr()?;
@@ -410,6 +481,17 @@ fn handle_connection(
             write_json_response(&mut stream, 404, r#"{"error":"not_found"}"#)?;
             return Ok(());
         }
+    }
+
+    // Rate limit everything past `/health`, before any token work — the
+    // constant-time compare and the handlers below are all budgeted.
+    if let Some(retry_after) = rate_limiter.check(peer.ip()) {
+        let body = format!(
+            r#"{{"error":"rate_limited","retry_after":{}}}"#,
+            retry_after
+        );
+        write_json_response(&mut stream, 429, &body)?;
+        return Ok(());
     }
 
     if request.has_query_token() {
