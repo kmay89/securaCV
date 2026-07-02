@@ -605,6 +605,19 @@ jobs:
           /tmp/provisioning_logic | tee /tmp/provisioning_logic.log
           grep -q "ALL .* PASSED" /tmp/provisioning_logic.log
 
+      - name: Build + run canary-wap auth-logic host test
+        # Which failed-auth shapes feed the brute-force lockout. A
+        # credential-less request must NOT count — counting it let one
+        # open dashboard tab 429-lock the operator's correct token.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_auth_logic.cpp \
+              -o /tmp/auth_logic
+          /tmp/auth_logic | tee /tmp/auth_logic.log
+          grep -q "ALL .* PASSED" /tmp/auth_logic.log
+
       - name: Build + run pull-OTA engine logic host test
         # The OTA engine's pure-logic subset (semantic version compare,
         # anti-rollback update decision, URL transport policy, the
