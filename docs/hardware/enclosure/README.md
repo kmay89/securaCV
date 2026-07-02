@@ -56,6 +56,11 @@ measurements welcome.
 | **Functional inserts** — buzzer horn (louder chirp), matte anti-glare ring, 3-part printed cable gland (TPU bush) | glue-in / press-in parts | <img src="./preview_dev_inserts.png" width="230"> | [`canary_inserts.scad`](./canary_inserts.scad) |
 | **Covert junction box** — compact WAP disguised as utility hardware; aperture hidden in a mock knockout | pair with the signage plate | <img src="./preview_dev_jbox.png" width="230"> | [`canary_jbox.scad`](./canary_jbox.scad) |
 | **Witness signage plate** — "presence sensing in use / no video stored", debossed, 3 parametric lines | check local signage rules | <img src="./preview_dev_sign.png" width="230"> | [`canary_sign.scad`](./canary_sign.scad) |
+| **Universal fit coupon** — ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
+| **Bench bring-up fixture** — labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md)) | wire channels per §5 pin map | <img src="./preview_dev_fixture.png" width="230"> | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) |
+| **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
+| **Shop tools** — heat-set insert press guide (keeps inserts square) + doorbell button accent ring | tiny prints | — | [`canary_shop_tools.scad`](./canary_shop_tools.scad) |
+| **Paper install templates** — 1:1 SVGs ([studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg)): print ON PAPER at 100 % (verify the 20 mm square), tape to the wall, drill | no plastic needed | — | [`canary_templates_2d.scad`](./canary_templates_2d.scad) |
 
 ## Engineering & materials (security build)
 
