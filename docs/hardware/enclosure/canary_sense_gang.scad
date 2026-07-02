@@ -1,0 +1,113 @@
+// ============================================================================
+//  Canary Sense — IN-WALL SINGLE-GANG FLUSH MOUNT  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Radar works through plastic, so the Sense witness can live INSIDE the wall:
+//  a one-piece faceplate that mounts to a US single-gang old-work box on the
+//  standard 6-32 device screws (83.3 mm spacing). The MR60BHA2 carrier +
+//  stacked XIAO ride clip rails on the BACK of the plate; the plate's centre
+//  is the RADOME (thin flat membrane). Looks like a smart switch/keypad —
+//  zero visual footprint. Power: in-box USB (Class-2 low voltage rules apply;
+//  do NOT share a box with mains conductors — check local code).
+//
+//  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated. Measure
+//     your box, carrier, and stack; radome rules as in canary_sense_enclosure.
+// ============================================================================
+
+/* [What to render] */
+part = "plate";      // ["plate"]
+
+/* [Wallplate] — standard US single-gang footprint */
+plate_w  = 70.0;     // wallplate width
+plate_h  = 115.0;    // wallplate height
+plate_t  = 3.2;      // plate thickness outside the radome
+screw_gap = 83.3;    // 6-32 device-screw spacing (single-gang standard)
+dev_screw_d = 3.7;   // 6-32 clearance
+lid_edge = 1.0;      // face edge chamfer
+
+/* [Boards] — MR60BHA2 carrier + stacked XIAO ESP32-C6. MEASURE */
+vm_l     = 44.0;
+vm_w     = 36.0;
+stack_sock_h = 11.5;
+pcb_t    = 1.0;
+board_clear = 0.6;
+
+/* [Radome window] */
+radome_t  = 1.0;
+rad_win_x = 24.0;
+rad_win_y = 24.0;
+rad_dx    = 0.0;
+rad_dy    = 6.0;
+
+/* [Face features] — offsets from the board centre */
+lp_d   = 3.0;  lp_dx  = 13.0;  lp_dy  = -14.0;   // WS2812 light pipe
+lux_d  = 3.5;  lux_dx = -13.0; lux_dy = -14.0;   // BH1750 aperture
+
+/* [Board snap clips] */
+clip_w = 6.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+
+/* [Print tolerances] */
+tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
+
+/* [Quality] */
+$fa = 3; $fs = 0.4;
+
+vm_standoff = 3.0;                    // carrier rides close to the plate; XIAO hangs into the box
+rail_h  = vm_standoff;
+assert(radome_t >= 0.6 && radome_t < plate_t, "radome_t must be printable and thinner than plate_t");
+assert(vm_w + 2*(clip_clear + clip_t) + 2 < plate_w, "carrier too wide for the plate");
+echo(str("Canary Sense single-gang plate v0.1-dev — ", plate_w, " x ", plate_h,
+         " mm, radome ", radome_t, " mm  (IN DEVELOPMENT)"));
+
+module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+module edgeclip(px, py, ang) {        // clip rises from the plate BACK (z=0 = back face plane)
+    bt = rail_h + pcb_t;  tp = bt + clip_hook_h;
+    pts = [ [clip_clear, 0], [clip_clear + clip_t, 0],
+            [clip_clear + clip_t, tp], [clip_clear, tp],
+            [-clip_hook, bt], [0, bt], [clip_clear, bt - clip_clear] ];
+    translate([px, py, 0]) rotate([0, 0, ang - 90])
+        translate([-clip_w/2, 0, 0]) rotate([0, 0, 90]) rotate([90, 0, 0])
+            linear_extrude(clip_w) polygon(pts);
+}
+
+module plate() {
+    union() {
+        // face plate with chamfered edge (prints face-down: back features rise)
+        difference() {
+            union() {
+                linear_extrude(plate_t - lid_edge) rrect2d(plate_w, plate_h, 4);
+                translate([0, 0, plate_t - lid_edge - 0.01]) hull() {
+                    linear_extrude(0.01) rrect2d(plate_w, plate_h, 4);
+                    translate([0, 0, lid_edge]) linear_extrude(0.01)
+                        rrect2d(plate_w - 2*lid_edge, plate_h - 2*lid_edge, max(0.5, 4 - lid_edge));
+                }
+            }
+            // NOTE: model z=0 is the BACK of the plate; face at z=plate_t
+            // radome window: blind thinning from the back, flat membrane at the face
+            translate([rad_dx, rad_dy, -0.1])
+                linear_extrude(plate_t - radome_t + 0.1) rrect2d(rad_win_x, rad_win_y, 3);
+            // 6-32 device screws (vertical slots for old-work box tolerance)
+            for (sy = [1, -1]) hull() for (dy = [-1.5, 1.5])
+                translate([0, sy*screw_gap/2 + dy, -0.1]) cylinder(d = dev_screw_d, h = plate_t + 1);
+            for (sy = [1, -1])                                     // head seats on the face
+                hull() for (dy = [-1.5, 1.5])
+                    translate([0, sy*screw_gap/2 + dy, plate_t - 1.6])
+                        cylinder(d1 = dev_screw_d, d2 = dev_screw_d + 3.6, h = 1.7);
+            // light pipe + lux apertures (board centre = plate centre)
+            translate([lp_dx, lp_dy, -0.1]) cylinder(d = lp_d + 2*tol_press, h = plate_t + 1);
+            translate([lux_dx, lux_dy, -0.1]) cylinder(d = lux_d, h = plate_t + 1);
+        }
+        // carrier rails + clips on the BACK (single-gang box opening is ~44.5 x 75:
+        // the carrier + XIAO recess into the box; rails only need to clear the clips)
+        for (s = [1, -1]) {
+            difference() {
+                translate([s*(vm_w/2 - 1.5) - 1.5, -(vm_l - 1)/2, -rail_h])
+                    cube([3, vm_l - 1, rail_h + 0.01]);
+                translate([s*(vm_w/2 - 1.5), 0, -rail_h/2])
+                    cube([5, clip_w + 2, rail_h + 1], center = true);
+            }
+            translate([0, 0, 0]) mirror([0, 0, 1]) edgeclip(s*vm_w/2, 0, s > 0 ? 0 : 180);
+        }
+    }
+}
+
+if (part == "plate") plate();
+else plate();
