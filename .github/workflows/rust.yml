@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@v2
@@ -76,7 +76,7 @@ jobs:
     name: Ingest (ffmpeg file decode)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@v2
@@ -100,7 +100,7 @@ jobs:
       # Pinned MediaMTX (RTSP server) used to serve the fixture over RTSP.
       MEDIAMTX_VERSION: v1.9.3
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@v2
@@ -131,7 +131,7 @@ jobs:
     name: Frigate MQTT (live broker)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@v2
@@ -158,7 +158,7 @@ jobs:
     # adapter integration tests), not just one bin/lib. ingest-v4l2 is included here
     # because the v4l crate builds and links without any system library.
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@v2
@@ -179,7 +179,7 @@ jobs:
     # Compile-gate for the rtsp-gstreamer feature, which needs the GStreamer dev
     # libraries and so cannot live in the optional-features job above.
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
     # after a review-fix push) from full rebuilds to incremental ones.
     - uses: Swatinem/rust-cache@v2

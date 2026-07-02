@@ -40,7 +40,7 @@ jobs:
     name: Perception eval harness
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: Install libseccomp
         run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
@@ -70,7 +70,7 @@ jobs:
             --json detect_eval_report.json
 
       - name: Upload eval report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: detect-eval-report
           path: detect_eval_report.json

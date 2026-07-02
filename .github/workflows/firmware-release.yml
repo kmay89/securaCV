@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Derive version from tag
         id: ver
@@ -48,7 +48,7 @@ jobs:
           echo "Firmware release version: $VERSION"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -90,7 +90,7 @@ jobs:
           echo "Signing key matches the committed release public key."
 
       - name: Cache PlatformIO
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.platformio
           key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
@@ -276,7 +276,7 @@ jobs:
           fi
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Canary Firmware ${{ steps.ver.outputs.version }}
           body_path: /tmp/release_notes.md
