@@ -129,6 +129,9 @@
 #include "sd_storage.h"
 #include "nvs_store.h"
 #include "api_auth.h"
+#include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
+                                     // auto-generated prototype for
+                                     // wifi_change_authorize()
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
 // instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
@@ -4865,7 +4868,8 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 // valid token from the handler proceeding. A bare pair-token miss (no
 // admin credential presented at all) stays a friendly `invalid_token` so
 // the wizard can silently re-issue its RAM-backed token and retry.
-enum class WifiChangeAuth { PROCEED, INVALID_TOKEN, RESPONDED };
+// (WifiChangeAuth is declared in wifi_provisioning_auth.h — included at the
+// top — so arduino-cli's hoisted prototype for this function sees the type.)
 static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,
                                             const char* pair_token) {
   if (csi_integration::pair_token_valid(pair_token)) return WifiChangeAuth::PROCEED;
