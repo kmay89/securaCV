@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+### canary-wap dashboard/settings: revive the whole panel
+
+- **The settings panel is functional again.** On the default Arduino-IDE
+  build the active HTTP server budgeted 123 URI-handler slots but registered
+  154; esp_http_server silently drops everything past the budget, so the
+  last 31 routes 404'd for every client — the entire Presence tab, all
+  `/api/audible-chirp*` (speaker), every `/api/chirp/*`, the three
+  `/api/ble` routes, and Bluetooth "Clear All". The handler table is now
+  itemized per feature flag and sized to fit, guarded by a CI check
+  (`check_route_budget.py`) that emulates the preprocessor for FULL/S3,
+  DEV/S3 and FULL/C3.
+- **Correct credentials stop getting locked out.** A missing `Authorization`
+  header was counted as a brute-force failure, so one dashboard tab left
+  open after its session cookie expired polled the device into a permanent
+  429 that rejected even a correct pasted token. Credential-less requests no
+  longer feed the lockout; real token guesses still do.
+- **Bluetooth is enabled by default** so the pairing channel (offline
+  console, BLE Wi-Fi provisioning, OTA, log/witness export) is reachable out
+  of the box. Pairing still requires an on-device PIN confirmation — the
+  radio is on, not open.
+- **Honest self-test.** The pre-flight health check no longer hard-FAILs
+  Bluetooth during the boot window or in recovery/safe mode (SKIP, with a
+  reason), distinguishes a Wi-Fi link-drop from a radio-off, counts SKIP
+  rows in its summary, and surfaces `safe_mode` so a recovering-but-healthy
+  device stops reading as broken. A "Device self-test" card in Settings
+  re-runs the same checks on demand.
+- **Fixed controls:** BLE Discovery Alert/Heartbeat now POST to
+  `/api/ble/chirp/send` (not the community handler that 400s); the camera
+  peek stream drops the bogus `token=null` and bounds its retry loop;
+  Settings Wi-Fi "Connect"/standalone accept an admin credential (session
+  cookie / Bearer) as an alternative to the wizard's pair token, so they
+  work post-setup; the Community Chirp toggle is wired
+  (`chirp_channel::init`/`update`); the dead "Breath sound" switch is gone;
+  and dashboard `localStorage` access is guarded so a cookie-blocking
+  browser degrades gracefully instead of killing every binding.
+- **Security:** the three `/api/ble` routes (previously unauthenticated,
+  reachable only once the budget fix resurrected them) and the `qr-scan`
+  read/cancel endpoints are now gated; a CI check
+  (`check_route_security.py`) asserts every registered route is credential-
+  gated or on a documented public allowlist.
+- **Honest-labeled** the controls fronting subsystems not wired into this
+  build (RF signal presence, SD log rotation, runtime record/bucket config —
+  the last touches time-coarsening, Invariant III) instead of firing
+  requests that 404. Documented as follow-up feature work.
+- Docs: the Arduino README and `sketch.yaml` now correctly list
+  `NimBLE-Arduino` (2.x) as a required separate library.
+
 ### canary-wap first-run wizard: truthful joins, standalone mode, calm portal
 
 - **A successful WiFi join no longer looks like a failure.** Joining a home
