@@ -27,7 +27,8 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
-#include "captive_dns.h"   // pure DNS response builder (host-tested)
+#include "captive_dns.h"          // pure DNS response builder (host-tested)
+#include "provisioning_logic.h"   // pure timeout/teardown decisions (host-tested)
 
 namespace setup_wizard {
 
@@ -61,6 +62,14 @@ inline bool init() {
 
 inline bool is_first_boot() { return s_first_boot; }
 inline bool is_active() { return s_active; }
+
+// The 15-minute window exists to close an *abandoned* portal, not to reboot
+// the device under a slow human. Any wizard-driven API activity (scan,
+// connect, token refresh) calls touch() so the countdown restarts from the
+// most recent sign of life.
+inline void touch() {
+  if (s_active) s_started_ms = millis();
+}
 
 inline void mark_complete() {
   Preferences prefs;
@@ -113,8 +122,8 @@ inline void dns_process() {
 }
 
 inline void check_timeout() {
-  if (!s_active) return;
-  if ((millis() - s_started_ms) >= SETUP_TIMEOUT_MS) {
+  if (provisioning_logic::setup_timeout_due(s_active, millis(), s_started_ms,
+                                            SETUP_TIMEOUT_MS)) {
     s_active = false;
     stop_captive_portal();
     delay(500);

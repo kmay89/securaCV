@@ -333,7 +333,16 @@ static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for secur
 // the RF-coexistence support matrix rates C1 (supported but unstable) once a
 // client is joined to the AP. The AP is re-raised automatically if the STA
 // link drops (see wifi_raise_ap / wifi_drop_ap). See docs/esp32s3_ble_wap_audit.md.
-static const uint32_t AP_DROP_GRACE_MS = 8000;
+//
+// The grace must cover the provisioning handoff: joining a home AP on a
+// channel != AP_CHANNEL drags the SoftAP (single radio) to that channel,
+// momentarily kicking the provisioning phone. The phone re-associates to the
+// same SSID on the new channel within seconds — but then still needs DHCP and
+// a few /api/wifi polls before the wizard can render its success card. The
+// old 8 s grace lost that race almost every time, so a *successful* join
+// looked like "Couldn't connect" on the phone. Two minutes of the C1 combo
+// during provisioning only is an acceptable trade for a truthful wizard.
+static const uint32_t AP_DROP_GRACE_MS = 120000;
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAMERA CONFIG (XIAO ESP32-S3 Sense only — ESP32-C3 has no camera interface)
@@ -4650,6 +4659,9 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
 
 static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   g_health.http_requests++;
+  // A human is actively driving the wizard — don't reboot the portal
+  // out from under them (the 15-min window is for abandonment only).
+  setup_wizard::touch();
 
   // Check if async scan is complete
   int16_t scanResult = WiFi.scanComplete();
@@ -4718,6 +4730,7 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 
 static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   g_health.http_requests++;
+  setup_wizard::touch();
 
   // Read body (sized for ssid + password + token + optional device_name)
   char content[384] = {0};

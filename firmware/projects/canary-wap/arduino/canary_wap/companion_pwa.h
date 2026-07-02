@@ -396,6 +396,7 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="wiz-tick">✓</div>
       <h2 class="wiz-h" tabindex="-1">Your Canary is online.</h2>
       <p class="wiz-sub">Joined <strong id="wiz-success-ssid">your home WiFi</strong>. Running one quick check that the sensors are awake.</p>
+      <p class="wiz-sub">The SecuraCV setup network turns itself off in about two minutes — reconnect this phone to your home WiFi and find your Canary at <strong>canary.local</strong>.</p>
     </div>
     <div id="wiz-step-4-failure" class="hidden">
       <div class="wiz-cross">!</div>
@@ -1163,10 +1164,13 @@ footer a{color:var(--accent);text-decoration:none}
       } catch (_) { /* the AP may briefly drop while STA bring-up runs */ }
       await new Promise(res => setTimeout(res, STEP_MS));
     }
-    // 90 s elapsed without a definitive answer — most likely the
-    // Canary fell off the AP we were polling on. Tell the user how to
-    // recover rather than blaming WiFi range.
-    showFailure('The Canary stopped answering. Connect to its setup network again and start over.', { raw: true });
+    // 90 s elapsed without a definitive answer. The most common reason is
+    // a GOOD one: the Canary joined a home network on a different channel,
+    // the single radio dragged the setup network along, and this phone
+    // never re-joined in time to see the success. Say so — sending the
+    // user to "start over" after a successful join was the old flow's
+    // worst lie.
+    showFailure('Lost contact while the Canary was switching networks — this usually means it joined successfully. Rejoin your home WiFi, then open canary.local: if the dashboard loads, setup is done. If not, reconnect to the SecuraCV network and try again.', { raw: true });
   }
 
   // ── Card 5: pre-flight self-test ───────────────────────────────────────
