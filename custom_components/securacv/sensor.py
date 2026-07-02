@@ -321,7 +321,17 @@ class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
         """Return additional event attributes."""
         if not (event := self.coordinator.data.get("latest_event")):
             return None
-        keys = ("zone_id", "time_bucket", "confidence", "kernel_version", "ruleset_id")
+        keys = (
+            "zone_id",
+            "time_bucket",
+            "confidence",
+            "kernel_version",
+            "ruleset_id",
+            # Track B provenance ("adapter" / "ha-bridged") stamped by the
+            # kernel export; absent on device/kernel-attested events. The
+            # timeline card renders it as a provenance chip.
+            "attestation",
+        )
         attrs = {key: event[key] for key in keys if key in event}
         # Human-readable label for the coarse claim, for nicer dashboard display.
         attrs["friendly_event"] = event_type_metadata(event.get("event_type"))["label"]

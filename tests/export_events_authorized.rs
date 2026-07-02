@@ -23,6 +23,7 @@ fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
         zone_id: "zone:test".to_string(),
         confidence: 0.5,
         correlation_token: None,
+        attestation: None,
     };
     kernel.append_event_checked(
         &desc,
@@ -188,6 +189,7 @@ fn add_event_at_bucket(kernel: &mut Kernel, cfg: &KernelConfig, start_epoch_s: u
         zone_id: "zone:test".to_string(),
         confidence: 0.5,
         correlation_token: None,
+        attestation: None,
     };
     kernel.append_event_checked(
         &desc,

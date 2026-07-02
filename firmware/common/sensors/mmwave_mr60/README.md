@@ -5,9 +5,13 @@ radar, used by the **canary-sense** firmware. Reads only the radar module's
 pre-digested scalar claims over UART (presence, target count, distance,
 breath/heart rate) — never raw IQ.
 
-This is the **Phase 0 skeleton**: stable public interfaces, real FSM logic, and
-a wire-shaped UART parser whose per-type field decode is a documented TODO
-(see `mr60_uart.cpp`). It compiles and is host-testable today.
+As of **Phase 2** the UART decoder is real: an incremental, byte-at-a-time
+state machine that validates the MR60BHA2 header/data checksums and decodes the
+presence, target-count, distance, breath-rate and heart-rate frames (wire
+format + source URLs documented at the top of `mr60_uart.h`). The presence and
+vitals FSMs are unchanged. Everything compiles and is host-tested today; the
+exact float units (distance metres→cm, BPM) are marked `[BENCH]` in
+`mr60_uart.h` for confirmation against real hardware.
 
 ## Modules
 
@@ -42,13 +46,16 @@ a wire-shaped UART parser whose per-type field decode is a documented TODO
 
 ## Host unit testing
 
-Every header is Arduino-free and compiles with a host C++17 toolchain:
+Every header is Arduino-free and compiles with a host C++17 toolchain. The
+decoder + FSM suite lives in `firmware/tests_host/` and builds/runs with:
 
 ```
-g++ -std=c++17 -DCANARY_SENSE_VITALS \
-    -I firmware/common/sensors/mmwave_mr60 \
-    firmware/common/sensors/mmwave_mr60/*.cpp <your_test>.cpp -o /tmp/mr60_test
+make -C firmware/tests_host
 ```
 
-Drop `-DCANARY_SENSE_VITALS` to verify the presence-only build excludes vitals.
-A `firmware/tests_host/` suite lands in Phase 2 (design doc roadmap).
+It builds twice — presence-only and with `-DCANARY_SENSE_VITALS=1` — under
+`g++ -std=c++17 -Wall -Wextra -Werror`, and covers golden frames for every
+type, byte-at-a-time vs whole-buffer equivalence, corrupted header/data
+checksums, truncation + resync, garbage floods, oversized-length rejection,
+unknown-type skipping, the health counters, and presence/vitals FSM
+integration driven by golden frames.

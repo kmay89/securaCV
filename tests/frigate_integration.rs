@@ -461,6 +461,7 @@ fn kernel_accepts_frigate_event_and_produces_sealed_log() {
         zone_id: zone_id.clone(),
         confidence: parsed.confidence as f32,
         correlation_token: None, // Frigate IDs are stripped
+        attestation: None,
     };
 
     let result = kernel.append_event_checked(
@@ -490,6 +491,7 @@ fn kernel_strips_correlation_tokens_from_frigate_events() {
         zone_id: "zone:test".to_string(),
         confidence: 0.9,
         correlation_token: None, // Must always be None for Frigate events
+        attestation: None,
     };
 
     let event = kernel
@@ -531,6 +533,7 @@ fn multiple_frigate_events_create_hash_chain() {
             zone_id: format!("zone:camera_{}", i),
             confidence: 0.8 + (i as f32 * 0.02),
             correlation_token: None,
+            attestation: None,
         };
 
         kernel
@@ -572,6 +575,7 @@ fn frigate_events_use_coarsened_timestamps_only() {
         zone_id: "zone:test".to_string(),
         confidence: 0.9,
         correlation_token: None,
+        attestation: None,
     };
 
     let event = kernel

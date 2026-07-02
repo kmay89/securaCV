@@ -111,6 +111,36 @@ static void sense_serial_write(const char* str) {
   Serial.print(str);
 }
 
+// ----------------------------------------------------------------------------
+// Drive the presence (and, when built, vitals) FSMs for one frame. Called once
+// per decoded frame, and once with an empty frame when none arrived — the
+// deadline check inside each tick() runs first, so a silent radar still
+// advances the FSMs toward their stall/lost states.
+// ----------------------------------------------------------------------------
+
+static void drive_fsms(const Frame& frame, uint32_t now) {
+  const PresenceEvent pev = g_presence.tick(frame, now);
+  if (pev.state_changed) {
+    led_for_presence(pev.state);
+    const char* s = (pev.state == Presence::Present) ? "present"
+                  : (pev.state == Presence::Clear)   ? "clear"
+                                                     : "unknown";
+    boot_linef("[presence] -> %s%s", s, pev.stalled ? " (radar stall)" : "");
+  }
+
+#ifdef CANARY_SENSE_VITALS
+  // Vitals are suppressed unless exactly one target is present.
+  const bool single_target =
+      (pev.count == securacv::mmwave::CountBucket::One);
+  const auto vev = g_vitals.tick(frame, single_target, now);
+  if (vev.lock_changed) {
+    const char* l = (vev.lock == securacv::mmwave::VitalsLock::Locked) ? "locked"
+                  : "lost";
+    boot_linef("[vitals] breathing %s%s", l, vev.stalled ? " (stall)" : "");
+  }
+#endif
+}
+
 void setup() {
   Serial.begin(115200);
   delay(600);
@@ -186,32 +216,19 @@ void loop() {
     g_parser.push((uint8_t)RadarSerial.read());
   }
 
-  // Pull the next decoded frame (FrameKind::None when nothing is ready — which
-  // is always true today while the decoder is a Phase 0 stub).
-  const Frame frame = g_parser.poll();
-
-  // Advance the presence FSM EVERY loop, frame or not: its deadline check runs
-  // first, so a silent radar still drives presence to Unknown.
-  const PresenceEvent pev = g_presence.tick(frame, now);
-  if (pev.state_changed) {
-    led_for_presence(pev.state);
-    const char* s = (pev.state == Presence::Present) ? "present"
-                  : (pev.state == Presence::Clear)   ? "clear"
-                                                     : "unknown";
-    boot_linef("[presence] -> %s%s", s, pev.stalled ? " (radar stall)" : "");
+  // Drain every frame the parser decoded this loop, advancing the FSMs for
+  // each. If none arrived, tick once with an empty frame so the deadline
+  // checks still run — a silent radar drives presence to Unknown (and, when
+  // built, vitals to Lost) instead of freezing on the last good frame.
+  bool any_frame = false;
+  for (Frame frame = g_parser.poll(); frame.kind != securacv::mmwave::FrameKind::None;
+       frame = g_parser.poll()) {
+    drive_fsms(frame, now);
+    any_frame = true;
   }
-
-#ifdef CANARY_SENSE_VITALS
-  // Vitals are suppressed unless exactly one target is present.
-  const bool single_target =
-      (pev.count == securacv::mmwave::CountBucket::One);
-  const auto vev = g_vitals.tick(frame, single_target, now);
-  if (vev.lock_changed) {
-    const char* l = (vev.lock == securacv::mmwave::VitalsLock::Locked) ? "locked"
-                  : "lost";
-    boot_linef("[vitals] breathing %s%s", l, vev.stalled ? " (stall)" : "");
+  if (!any_frame) {
+    drive_fsms(Frame(), now);
   }
-#endif
 
   // Health heartbeat (HEALTH_CAT_SENSOR territory in Phase 2; a serial line for
   // now so CI/bench can see the loop is alive).

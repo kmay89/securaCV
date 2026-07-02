@@ -1,0 +1,130 @@
+# Canary Sense — After-Hours Presence Alert Blueprint for Home Assistant
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_after_hours_presence.yaml
+#
+# For a canary-sense (MR60BHA2 60GHz radar) witness: fire a notification when
+# the radar presence binary_sensor turns on inside a configured after-hours
+# window (default 22:00-06:00). Optionally require a second, independent
+# witness (e.g. a camera person sensor) to agree before alerting, so a lone
+# radar blip doesn't page you — the two-physics corroboration model from the
+# canary-sense design (radar + camera fail independently).
+
+blueprint:
+  name: "Canary Sense — After-Hours Presence Alert"
+  description: >-
+    Notify when a SecuraCV canary-sense (MR60BHA2 radar) presence sensor turns
+    on during a configured overnight window. Radar sees static, sleeping and
+    covered occupants in total darkness where a camera cannot, which makes it a
+    strong after-hours occupancy witness. Optionally require a corroborating
+    entity (e.g. a camera person sensor) to also be on before alerting — a
+    two-physics agreement that cuts false alarms. Privacy by design: this reads
+    a coarse presence flag only, never video, audio, or identity.
+  domain: automation
+  author: "ERRERlabs"
+  homeassistant:
+    min_version: "2024.6.0"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_after_hours_presence.yaml"
+
+  input:
+    presence_entity:
+      name: "Radar presence sensor"
+      description: >-
+        The canary-sense presence binary_sensor
+        (e.g. binary_sensor.securacv_canary_<id>_presence).
+      selector:
+        entity:
+          domain: binary_sensor
+          integration: securacv
+
+    window_start:
+      name: "Window start"
+      description: "Start of the after-hours window (local time)."
+      selector:
+        time:
+      default: "22:00:00"
+
+    window_end:
+      name: "Window end"
+      description: >-
+        End of the after-hours window (local time). May be earlier than the
+        start — the window then wraps past midnight (e.g. 22:00 -> 06:00).
+      selector:
+        time:
+      default: "06:00:00"
+
+    notify_service:
+      name: "Notification service"
+      description: "Where to send the alert (e.g. notify.mobile_app_your_phone)."
+      selector:
+        text:
+      default: "notify.mobile_app"
+
+    require_corroboration:
+      name: "Require corroboration"
+      description: >-
+        Only alert when the corroborating entity below is also 'on' at the same
+        time. Turns a single-witness radar trip into a corroborated,
+        two-physics event.
+      selector:
+        boolean:
+      default: false
+
+    corroborating_entity:
+      name: "Corroborating entity (optional)"
+      description: >-
+        A second, independent witness that should agree — e.g. a camera person
+        binary_sensor for the same zone. Only used when 'Require corroboration'
+        is on. Leave empty if unused.
+      default:
+      selector:
+        entity:
+
+mode: single
+max_exceeded: silent
+
+variables:
+  presence_entity: !input presence_entity
+  window_start: !input window_start
+  window_end: !input window_end
+  require_corroboration: !input require_corroboration
+  corroborating_entity: !input corroborating_entity
+  # Lexicographic HH:MM:SS compare handles windows that wrap past midnight.
+  now_hms: "{{ now().strftime('%H:%M:%S') }}"
+  in_window: >-
+    {% set s = window_start %}
+    {% set e = window_end %}
+    {% set n = now_hms %}
+    {% if s <= e %}
+    {{ s <= n <= e }}
+    {% else %}
+    {{ n >= s or n <= e }}
+    {% endif %}
+  corroborated: >-
+    {{ corroborating_entity not in [none, '', 'unknown', 'unavailable']
+       and is_state(corroborating_entity, 'on') }}
+
+trigger:
+  - platform: state
+    entity_id: !input presence_entity
+    to: "on"
+
+condition:
+  - condition: template
+    value_template: "{{ in_window | bool }}"
+  - condition: template
+    value_template: "{{ (not require_corroboration) or corroborated }}"
+
+action:
+  - service: !input notify_service
+    data:
+      title: "SecuraCV After-Hours Presence"
+      message: >-
+        Radar presence detected after hours on {{ trigger.entity_id }}
+        {%- if require_corroboration %} (corroborated by
+        {{ corroborating_entity }}){% endif %}.
+      data:
+        tag: securacv-sense-afterhours
+        importance: high
+        channel: securacv_alerts

@@ -49,6 +49,7 @@ fn write_event(kernel: &mut Kernel, zone: &str) -> Result<()> {
         zone_id: zone.to_string(),
         confidence: 0.9,
         correlation_token: None,
+        attestation: None,
     };
     kernel.append_event_checked(
         &module,

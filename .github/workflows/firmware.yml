@@ -644,6 +644,12 @@ jobs:
         # suite — preinstalled on ubuntu-latest.
         run: make -C firmware/projects/canary-wap/tests_host
 
+      - name: Build + run mmWave MR60 host tests
+        # canary-sense radar decoder + presence/vitals FSMs, built twice
+        # (presence-only and -DCANARY_SENSE_VITALS=1) with -Werror; the
+        # suite exits non-zero on any failure.
+        run: make -C firmware/tests_host
+
   microcopy-lint:
     name: Dashboard Microcopy Lint
     runs-on: ubuntu-latest

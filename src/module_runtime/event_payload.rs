@@ -96,6 +96,10 @@ pub fn parse_event_payload(payload: &Value) -> Result<CandidateEvent> {
         zone_id,
         confidence,
         correlation_token: None,
+        // Module payloads never carry provenance — sandboxed modules must not
+        // be able to claim a stronger (or different) attestation than the
+        // kernel assigns.
+        attestation: None,
     })
 }
 
