@@ -98,6 +98,12 @@ Import the SecuraCV Alert Blueprint for one-click notification setup:
 
 Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
 
+**Radar (canary-sense / MR60BHA2) witnesses** get three extra blueprints —
+after-hours presence (with optional two-physics corroboration),
+lights-out-with-presence tamper, and a non-diagnostic welfare check — plus a
+stock-card **wellbeing tile**. See
+[`docs/blueprints/canary_sense_wellbeing.md`](blueprints/canary_sense_wellbeing.md).
+
 ### Step 6: Verify per-device PKI (optional but recommended)
 
 Each Canary signs its `chain`, `events`, and `counts` MQTT publishes

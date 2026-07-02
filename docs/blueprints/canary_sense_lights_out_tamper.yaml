@@ -1,0 +1,117 @@
+# Canary Sense — Lights-Out-With-Presence Tamper Notice Blueprint for HA
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_lights_out_tamper.yaml
+#
+# Radar keeps witnessing in the dark, so a sudden light collapse while a person
+# is still present is a classic tamper tell — the enclosure being covered, or
+# the lights cut to blind a co-located camera. This blueprint pairs the
+# canary-sense BH1750 illuminance sensor with its radar presence sensor and
+# fires a tamper notice when the room goes dark but the occupant does not
+# leave. Maps to the "lights-out + presence" tamper corroboration in the
+# canary-sense design (illuminance -> TamperDetected corroborating attribute).
+
+blueprint:
+  name: "Canary Sense — Lights-Out-With-Presence Tamper Notice"
+  description: >-
+    Notify when a SecuraCV canary-sense illuminance sensor drops below a
+    threshold and stays there for a short window WHILE the radar presence
+    sensor remains on. A person is still in the room but it just went dark —
+    a possible enclosure cover-up or a light cut to blind a co-located camera.
+    Radar is unaffected by the darkness, which is exactly what makes it a good
+    cross-check. Privacy by design: reads a lux value and a presence flag only.
+  domain: automation
+  author: "ERRERlabs"
+  homeassistant:
+    min_version: "2024.6.0"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/canary_sense_lights_out_tamper.yaml"
+
+  input:
+    lux_entity:
+      name: "Illuminance sensor"
+      description: >-
+        The canary-sense BH1750 illuminance sensor
+        (e.g. sensor.securacv_canary_<id>_illuminance).
+      selector:
+        entity:
+          domain: sensor
+          device_class: illuminance
+          integration: securacv
+
+    presence_entity:
+      name: "Radar presence sensor"
+      description: >-
+        The canary-sense presence binary_sensor
+        (e.g. binary_sensor.securacv_canary_<id>_presence).
+      selector:
+        entity:
+          domain: binary_sensor
+          integration: securacv
+
+    lux_threshold:
+      name: "Darkness threshold (lux)"
+      description: >-
+        Alert when illuminance falls below this value. A few lux reads as
+        "effectively dark". Raise it for dim rooms, lower it to only catch a
+        near-total blackout.
+      selector:
+        number:
+          min: 0
+          max: 200
+          step: 1
+          unit_of_measurement: "lx"
+          mode: box
+      default: 5
+
+    drop_window:
+      name: "Drop window"
+      description: >-
+        The light must stay below the threshold, and presence must stay on,
+        for this long before alerting. Short enough to catch a deliberate cut,
+        long enough to ignore a passing shadow or camera flash.
+      selector:
+        duration:
+      default:
+        seconds: 30
+
+    notify_service:
+      name: "Notification service"
+      description: "Where to send the alert (e.g. notify.mobile_app_your_phone)."
+      selector:
+        text:
+      default: "notify.mobile_app"
+
+mode: single
+max_exceeded: silent
+
+variables:
+  lux_entity: !input lux_entity
+  presence_entity: !input presence_entity
+
+trigger:
+  - platform: numeric_state
+    entity_id: !input lux_entity
+    below: !input lux_threshold
+    for: !input drop_window
+
+condition:
+  # Occupant is still there, and has been throughout the darkening window.
+  - condition: state
+    entity_id: !input presence_entity
+    state: "on"
+    for: !input drop_window
+
+action:
+  - service: !input notify_service
+    data:
+      title: "SecuraCV Lights-Out Tamper"
+      message: >-
+        {{ presence_entity }} still reads occupied but the light on
+        {{ lux_entity }} collapsed to
+        {{ states(lux_entity) }} lx. Possible enclosure cover-up or lights
+        cut — radar still sees a person in the dark. Check the device.
+      data:
+        tag: securacv-sense-lightsout
+        importance: high
+        channel: securacv_alerts
