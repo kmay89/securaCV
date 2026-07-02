@@ -11,6 +11,25 @@ Both share the same print-tolerance system, weather-sealing approach (printed
 TPU gasket + drip-edge lid), engineering options and CI gate (every change
 re-renders all presets and mesh-checks the STLs).
 
+## Pick your variant
+
+One row per printable variant. **Every `.stl` link opens in GitHub's
+interactive 3D viewer** — rotate and zoom it in the browser, no download
+needed — and each preview shows the full printed set. Custom combinations
+(other option mixes, `screw_insert`, labels…) render from the `.scad` in
+minutes.
+
+| Variant | For | Preview | Parts (click to view in 3D) |
+|---------|-----|---------|------------------------------|
+| **WAP · compact** | plain XIAO ESP32-S3, USB-powered, smallest box | <img src="./preview_compact.png" width="260"> | [base](./canary_wap_enclosure_compact_base.stl) · [lid](./canary_wap_enclosure_compact_lid.stl) |
+| **WAP · battery** | XIAO Sense camera + LiPo + GPS, indoor | <img src="./preview_all.png" width="260"> | [base](./canary_wap_enclosure_battery_base.stl) · [lid](./canary_wap_enclosure_battery_lid.stl) |
+| **WAP · weather** | battery build + TPU gasket seal, drip-edge lid, keyhole mounts (~IP54) | <img src="./preview_weather.png" width="260"> | [base](./canary_wap_enclosure_weather_base.stl) · [lid](./canary_wap_enclosure_weather_lid.stl) · [gasket](./canary_wap_enclosure_weather_gasket.stl) |
+| **WAP · clip coupon** | **print first** — 15 min snap-fit tuner | <img src="./preview_coupon.png" width="260"> | [coupon](./canary_wap_enclosure_clip_coupon.stl) |
+| **Vision · xiao indoor** | stacked XIAO host (recommended), hinge mount, desk/shelf | <img src="./preview_vision_xiao_indoor.png" width="260"> | [back](./canary_vision_enclosure_xiao_indoor_back.stl) · [front](./canary_vision_enclosure_xiao_indoor_front.stl) |
+| **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
+| **Vision · devkit indoor** | Grove-cabled ESP32-C3-DevKitM-1 host | <img src="./preview_vision_devkit.png" width="260"> | [back](./canary_vision_enclosure_devkit_indoor_back.stl) · [front](./canary_vision_enclosure_devkit_indoor_front.stl) |
+| **Vision · mount kit** | wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob | <img src="./preview_vision_bracket.png" width="180"> <img src="./preview_vision_knob.png" width="120"> | [bracket](./canary_vision_enclosure_bracket.stl) · [knob](./canary_vision_enclosure_knob.stl) |
+
 ## Engineering & materials (security build)
 
 These are housings for a *security* device — the enclosure is the first
@@ -380,7 +399,7 @@ The front face carries the lens aperture (recessed clear-disc seat + optional
 rain hood) and the LED light pipe; the back shell carries the boards and the
 mounts.
 
-![vision_weather preset — back, front, gasket, bracket and knob](./preview_vision.png)
+![vision_weather preset (xiao host) — back, front and gasket](./preview_vision_xiao_weather.png)
 
 ## Why not Seeed's foldable holder?
 
