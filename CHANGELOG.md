@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### canary-wap first-run wizard: truthful joins, standalone mode, calm portal
+
+- **A successful WiFi join no longer looks like a failure.** Joining a home
+  network on a channel other than the SoftAP's dragged the single radio —
+  and the setup network — to that channel, kicking the provisioning phone;
+  the AP was then torn down 8 s after connect, so the wizard timed out and
+  reported "Couldn't connect" on a join that succeeded. The AP now survives
+  120 s after connect (long enough to re-associate and see the success
+  card), wizard activity resets the 15-minute setup window instead of the
+  device rebooting mid-setup, and the timeout copy explains the network
+  handoff honestly.
+- **Standalone (AP-only) mode**: "Use without home WiFi" in the wizard.
+  The device completes setup and lives permanently on its own
+  `SecuraCV-XXXX` network (`canary.local` dashboard, captive DNS stays up,
+  the AP is never torn down, no STA join attempts). Persisted via
+  `wifi_ap_only` in NVS; saving real credentials later exits the mode.
+  New pairing-token-gated `POST /api/wifi/ap-only`; `/api/wifi` reports
+  `ap_only`.
+- **Stale setup links self-heal**: the wizard's pairing token (RAM-backed,
+  10-minute TTL, wiped by reboot) is silently re-issued via the new
+  setup-only `GET /api/wifi/pair-token` and the credentials resent once —
+  "This setup link has expired" now only appears when the wizard truly
+  can't recover. Same Host-gated posture as the `/` redirect that mints
+  the original token.
+- **Scan without kicking the phone off**: the device pre-scans at boot
+  (before anything joins the AP) and serves a cached list (5-min TTL,
+  `cached`/`age_s` in the response); only an explicit "Scan again" sweeps
+  the radio under a live client — the sweep is what used to drop the
+  wizard's scan fetch ("Scan failed: Load failed").
+- **Calm capability note**: the red "insecure origin / Web Bluetooth"
+  banner is now an informational note ("WiFi setup and the dashboard work
+  fine without it") and is gone entirely — along with the Bluefy footer —
+  inside the WiFi wizard, where Web Bluetooth is irrelevant. Real errors
+  still render red.
+- **Password field hygiene**: the typed WiFi password is wiped on
+  page-hide/tab-background (the app never stored it — Safari's page cache
+  restored the form value; verified no credential ever touches
+  localStorage/sessionStorage).
+- **Compatibility**: no wire or NVS breakage — new NVS key and endpoints
+  only; provisioned devices behave as before apart from the longer
+  post-join AP grace.
+
 ### Fail-closed configuration and verification hardening
 
 - **Unknown config keys are now parse errors.** A misspelled key in

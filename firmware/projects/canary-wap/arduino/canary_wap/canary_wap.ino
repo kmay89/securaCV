@@ -333,7 +333,16 @@ static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for secur
 // the RF-coexistence support matrix rates C1 (supported but unstable) once a
 // client is joined to the AP. The AP is re-raised automatically if the STA
 // link drops (see wifi_raise_ap / wifi_drop_ap). See docs/esp32s3_ble_wap_audit.md.
-static const uint32_t AP_DROP_GRACE_MS = 8000;
+//
+// The grace must cover the provisioning handoff: joining a home AP on a
+// channel != AP_CHANNEL drags the SoftAP (single radio) to that channel,
+// momentarily kicking the provisioning phone. The phone re-associates to the
+// same SSID on the new channel within seconds — but then still needs DHCP and
+// a few /api/wifi polls before the wizard can render its success card. The
+// old 8 s grace lost that race almost every time, so a *successful* join
+// looked like "Couldn't connect" on the phone. Two minutes of the C1 combo
+// during provisioning only is an acceptable trade for a truthful wizard.
+static const uint32_t AP_DROP_GRACE_MS = 120000;
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAMERA CONFIG (XIAO ESP32-S3 Sense only — ESP32-C3 has no camera interface)
@@ -431,6 +440,12 @@ static const char* NVS_KEY_LOGSEQ   = "logseq";
 static const char* NVS_KEY_WIFI_SSID = "wifi_ssid";
 static const char* NVS_KEY_WIFI_PASS = "wifi_pass";
 static const char* NVS_KEY_WIFI_EN   = "wifi_en";
+// Explicit standalone mode: the user chose "use without home WiFi" in the
+// wizard. The device runs permanently on its own SoftAP — no STA join
+// attempts, and the AP is never torn down for radio stability. Cleared
+// automatically the moment real credentials are saved.
+static const char* NVS_KEY_WIFI_AP_ONLY = "wifi_ap_only";
+static bool g_wifi_ap_only = false;
 static const char* NVS_KEY_API_TKN  = "api_tkn";
 static const char* NVS_KEY_TLS_CERT = "tls_cert";
 static const char* NVS_KEY_TLS_KEY  = "tls_key";
@@ -4632,6 +4647,7 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   doc["rssi"] = g_wifi_status.rssi;
   doc["configured"] = g_wifi_creds.configured;
   doc["enabled"] = g_wifi_creds.enabled;
+  doc["ap_only"] = g_wifi_ap_only;
   doc["connect_attempts"] = g_wifi_status.connect_attempts;
   doc["fail_reason"] = g_wifi_status.last_fail_reason;
 
@@ -4648,8 +4664,131 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// ── WiFi scan cache ─────────────────────────────────────────────────────
+// A scan hops the single radio across every channel, stalling the SoftAP a
+// provisioning phone is attached to — the classic way the wizard's scan
+// fetch died mid-flight. Results are therefore cached and served for
+// SCAN_CACHE_TTL_MS (a boot-time pre-scan fills the cache before any phone
+// joins); only an explicit ?force=1 ("Scan again") sweeps the radio while a
+// client is on the AP. Freshness decision: provisioning_logic::scan_cache_fresh.
+static const uint32_t SCAN_CACHE_TTL_MS = 5UL * 60UL * 1000UL;
+static const int SCAN_CACHE_MAX = 20;
+struct ScanCacheEntry {
+  char ssid[33];
+  int32_t rssi;
+  int32_t channel;
+  char security[12];
+};
+static ScanCacheEntry g_scan_cache[SCAN_CACHE_MAX];
+static int g_scan_cache_count = 0;
+static uint32_t g_scan_cache_at_ms = 0;
+
+// Non-zero = first-boot setup finished with a live WiFi join; reboot into
+// steady state once this deadline passes (see the deferred-reboot block in
+// loop() and provisioning_logic::deferred_reboot_due).
+static uint32_t g_setup_grace_reboot_at_ms = 0;
+
+static const char* wifi_auth_mode_name(wifi_auth_mode_t authMode) {
+  if (authMode == WIFI_AUTH_OPEN) return "open";
+  if (authMode == WIFI_AUTH_WPA_PSK) return "wpa";
+  if (authMode == WIFI_AUTH_WPA2_PSK) return "wpa2";
+  if (authMode == WIFI_AUTH_WPA_WPA2_PSK) return "wpa/wpa2";
+  if (authMode == WIFI_AUTH_WPA3_PSK) return "wpa3";
+  if (authMode == WIFI_AUTH_WPA2_WPA3_PSK) return "wpa2/wpa3";
+  return "other";
+}
+
+static esp_err_t send_scan_cache_json(httpd_req_t* req, bool from_cache, uint32_t now) {
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["scanning"] = false;
+  doc["count"] = g_scan_cache_count;
+  doc["cached"] = from_cache;
+  if (from_cache) {
+    doc["age_s"] = (uint32_t)(now - g_scan_cache_at_ms) / 1000;
+  }
+  JsonArray networks = doc["networks"].to<JsonArray>();
+  for (int i = 0; i < g_scan_cache_count; i++) {
+    JsonObject net = networks.add<JsonObject>();
+    net["ssid"] = g_scan_cache[i].ssid;
+    net["rssi"] = g_scan_cache[i].rssi;
+    net["channel"] = g_scan_cache[i].channel;
+    net["security"] = g_scan_cache[i].security;
+  }
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// A request that asked for the device by its real name (vs a captive-portal
+// assistant probing a hijacked foreign domain). Same gate the "/" redirect
+// uses before minting a pairing token into the wizard URL.
+static bool request_host_is_direct(httpd_req_t* req) {
+  char host[64] = {0};
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) {
+    return false;
+  }
+  return (strstr(host, "canary.local") != nullptr) ||
+         (strstr(host, "192.168.4.1") != nullptr);
+}
+
+// Re-issue a pairing token to the live wizard. The URL token is RAM-backed
+// (10-min TTL, wiped on reboot, 4-slot eviction); without this, a stale
+// token dead-ends the user at "setup link expired" even with a correct
+// password. Answers ONLY while the first-boot wizard is active and only to
+// a direct-Host browser — the same posture as the "/" redirect that minted
+// the original token. The AP itself remains the security boundary
+// (companion_pwa.h wizard doc block); the token stays a UX gate.
+static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
+  g_health.http_requests++;
+  if (!setup_wizard::is_active() || !request_host_is_direct(req)) {
+    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
+  }
+  setup_wizard::touch();
+  char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+  if (!csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
+  }
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["token"] = tok_hex;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
 static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   g_health.http_requests++;
+  // A human is actively driving the wizard — don't reboot the portal
+  // out from under them (the 15-min window is for abandonment only).
+  setup_wizard::touch();
+
+  // Serve the cache when it's fresh — unless the client explicitly asked
+  // for a live sweep (?force=1, the wizard's "Scan again"). See the cache
+  // doc block above for why sweeping under an attached phone is harmful.
+  uint32_t now = millis();
+  bool force = false;
+  {
+    char qs[32] = {0};
+    if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
+      char val[4] = {0};
+      force = (httpd_query_key_value(qs, "force", val, sizeof(val)) == ESP_OK &&
+               val[0] == '1');
+    }
+  }
+  // Never serve the cache while a sweep is running: a forced rescan's
+  // follow-up polls must keep reporting {scanning:true} until the NEW
+  // results are harvested, not short-circuit back to the stale list.
+  if (!force && !g_wifi_scan_in_progress &&
+      provisioning_logic::scan_cache_fresh(now, g_scan_cache_at_ms,
+                                           g_scan_cache_count > 0,
+                                           SCAN_CACHE_TTL_MS)) {
+    return send_scan_cache_json(req, true, now);
+  }
 
   // Check if async scan is complete
   int16_t scanResult = WiFi.scanComplete();
@@ -4678,39 +4817,82 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
-  // Scan complete - return results
+  // Scan complete — refill the cache and serve from it.
   g_wifi_scan_in_progress = false;
   if (g_wifi_status.state == WIFI_PROV_SCANNING) {
     g_wifi_status.state = g_wifi_creds.configured ? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY;
   }
 
   int n = scanResult;
-  JsonDocument doc;
-  doc["ok"] = true;
-  doc["scanning"] = false;
-  doc["count"] = n;
-
-  JsonArray networks = doc["networks"].to<JsonArray>();
-
-  for (int i = 0; i < n && i < 20; i++) {
-    JsonObject net = networks.add<JsonObject>();
-    net["ssid"] = WiFi.SSID(i);
-    net["rssi"] = WiFi.RSSI(i);
-    net["channel"] = WiFi.channel(i);
-
-    wifi_auth_mode_t authMode = WiFi.encryptionType(i);
-    const char* security = "open";
-    if (authMode == WIFI_AUTH_WPA_PSK) security = "wpa";
-    else if (authMode == WIFI_AUTH_WPA2_PSK) security = "wpa2";
-    else if (authMode == WIFI_AUTH_WPA_WPA2_PSK) security = "wpa/wpa2";
-    else if (authMode == WIFI_AUTH_WPA3_PSK) security = "wpa3";
-    else if (authMode == WIFI_AUTH_WPA2_WPA3_PSK) security = "wpa2/wpa3";
-    else if (authMode != WIFI_AUTH_OPEN) security = "other";
-    net["security"] = security;
+  g_scan_cache_count = 0;
+  for (int i = 0; i < n && i < SCAN_CACHE_MAX; i++) {
+    ScanCacheEntry& e = g_scan_cache[g_scan_cache_count++];
+    strncpy(e.ssid, WiFi.SSID(i).c_str(), sizeof(e.ssid) - 1);
+    e.ssid[sizeof(e.ssid) - 1] = '\0';
+    e.rssi = WiFi.RSSI(i);
+    e.channel = WiFi.channel(i);
+    strncpy(e.security, wifi_auth_mode_name(WiFi.encryptionType(i)),
+            sizeof(e.security) - 1);
+    e.security[sizeof(e.security) - 1] = '\0';
   }
+  g_scan_cache_at_ms = now;
 
   WiFi.scanDelete();
 
+  return send_scan_cache_json(req, false, now);
+}
+
+// "Use without home WiFi": the explicit standalone exit from the setup
+// wizard. Same pairing-token gate as /api/wifi/connect (the choice changes
+// how the device runs, so it deserves the same posture as a credential
+// save). Persists the AP-only preference, completes first-boot setup — no
+// more 15-minute reboot loop — and leaves the SoftAP up as the product.
+static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
+  g_health.http_requests++;
+  setup_wizard::touch();
+
+  char content[256] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  JsonDocument body;
+  if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+  }
+  const char* token = body["token"] | "";
+  if (!csi_integration::pair_token_valid(token)) {
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["code"] = "invalid_token";
+    doc["error"] = "This setup link has expired. Reconnect to the SecuraCV network to start over.";
+    String response;
+    serializeJson(doc, response);
+    return http_send_json(req, response.c_str());
+  }
+
+  NvsManager& nvs = NvsManager::instance();
+  if (nvs.beginReadWrite()) {
+    nvs.putBool(NVS_KEY_WIFI_AP_ONLY, true);
+    nvs.end();
+  }
+  g_wifi_ap_only = true;
+  g_wifi_creds.enabled = false;
+  // Kill any in-flight or auto-reconnect STA attempt (the user may have
+  // tried a network, backed out, then chosen standalone) — the radio is
+  // the SoftAP's alone from here. false = leave WiFi (and the AP) up.
+  WiFi.disconnect(false);
+  g_wifi_status.state = WIFI_PROV_AP_ONLY;
+  setup_wizard::mark_complete();
+  // mark_complete() stops the captive DNS as part of closing the first-boot
+  // wizard — but in standalone mode the AP (and canary.local on it) IS the
+  // product, so bring the resolver right back up. dns_process() in the main
+  // loop services it whenever it's running.
+  setup_wizard::start_captive_portal();
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "Standalone (AP-only) mode chosen in setup wizard", nullptr);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["ap_only"] = true;
+  doc["message"] = "Running standalone on the SecuraCV network";
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -4718,6 +4900,7 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 
 static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   g_health.http_requests++;
+  setup_wizard::touch();
 
   // Read body (sized for ssid + password + token + optional device_name)
   char content[384] = {0};
@@ -6277,6 +6460,15 @@ register_extra_routes:
   httpd_uri_t wifi_scan = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = handle_wifi_scan };
   httpd_register_uri_handler(active_server, &wifi_scan);
 
+  // Setup-wizard-only token re-issue (404s outside first-boot setup; see
+  // handler doc block for the security posture).
+  httpd_uri_t wifi_pair_token = { .uri = "/api/wifi/pair-token", .method = HTTP_GET, .handler = handle_wifi_pair_token };
+  httpd_register_uri_handler(active_server, &wifi_pair_token);
+
+  // Standalone mode: pairing-token-gated like /api/wifi/connect.
+  httpd_uri_t wifi_ap_only = { .uri = "/api/wifi/ap-only", .method = HTTP_POST, .handler = handle_wifi_ap_only };
+  httpd_register_uri_handler(active_server, &wifi_ap_only);
+
   httpd_uri_t wifi_connect = { .uri = "/api/wifi/connect", .method = HTTP_POST, .handler = handle_wifi_connect };
   httpd_register_uri_handler(active_server, &wifi_connect);
 
@@ -6481,6 +6673,9 @@ static bool wifi_load_credentials() {
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadOnly()) return false;
 
+  // Standalone preference loads regardless of whether creds exist.
+  g_wifi_ap_only = nvs.getBool(NVS_KEY_WIFI_AP_ONLY, false);
+
   size_t ssid_len = nvs.getBytesLength(NVS_KEY_WIFI_SSID);
   if (ssid_len > 0 && ssid_len <= 32) {
     nvs.getBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, ssid_len);
@@ -6507,8 +6702,11 @@ static bool wifi_save_credentials() {
   nvs.putBytes(NVS_KEY_WIFI_SSID, g_wifi_creds.ssid, strlen(g_wifi_creds.ssid));
   nvs.putBytes(NVS_KEY_WIFI_PASS, g_wifi_creds.password, strlen(g_wifi_creds.password));
   nvs.putBool(NVS_KEY_WIFI_EN, g_wifi_creds.enabled);
+  // Saving real credentials is an explicit exit from standalone mode.
+  nvs.putBool(NVS_KEY_WIFI_AP_ONLY, false);
 
   nvs.end();
+  g_wifi_ap_only = false;
   g_wifi_creds.configured = true;
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
@@ -6558,7 +6756,9 @@ static void wifi_update_status() {
 }
 
 static void wifi_connect_to_home() {
-  if (!g_wifi_creds.configured || !g_wifi_creds.enabled) {
+  if (!provisioning_logic::sta_join_allowed(g_wifi_ap_only,
+                                            g_wifi_creds.configured,
+                                            g_wifi_creds.enabled)) {
     g_wifi_status.state = WIFI_PROV_AP_ONLY;
     return;
   }
@@ -6703,11 +6903,14 @@ static void wifi_check_connection() {
         // reachable for reconfiguration while it retries the home network.
         wifi_raise_ap();
       } else if ((WiFi.getMode() & WIFI_MODE_AP) &&
-                 now - g_wifi_status.connected_since_ms > AP_DROP_GRACE_MS) {
+                 provisioning_logic::ap_teardown_due(
+                     g_wifi_ap_only, true, now,
+                     g_wifi_status.connected_since_ms, AP_DROP_GRACE_MS)) {
         // F4: STA has held the home link past the grace window — drop the AP so
         // the radio runs the stable STA+BLE coexistence combo. The grace window
         // lets the just-provisioned phone see the "connected" result before its
-        // AP association is dropped.
+        // AP association is dropped. Never fires in standalone (AP-only) mode,
+        // where the AP is the product.
         wifi_drop_ap();
       }
       break;
@@ -6954,6 +7157,18 @@ static void wifi_init_provisioning() {
     Serial.println(setup_wizard::is_active()
                      ? "[OK] Captive DNS active (first-boot setup)"
                      : "[OK] Captive DNS active (AP management)");
+  }
+
+  // First-boot pre-scan: sweep for home networks NOW, before any phone has
+  // joined the SoftAP. A scan hops the single radio across channels and
+  // stalls the AP, so doing it later — under the provisioning phone — is
+  // exactly what dropped the wizard's first /api/wifi/scan fetch ("Scan
+  // failed: Load failed"). The results land in the scan cache on the first
+  // endpoint hit and the phone gets an instant list instead of a radio sweep.
+  if (setup_wizard::is_active()) {
+    g_wifi_scan_in_progress = true;
+    WiFi.scanNetworks(true, false, false, 300);  // async
+    Serial.println("[OK] Pre-scanning WiFi networks for the setup wizard");
   }
 
   char msg[64];
@@ -8322,12 +8537,26 @@ void loop() {
   setup_wizard::dns_process();
   if (setup_wizard::is_active()) {
     setup_wizard::check_timeout();
-    if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED && g_setup_grace_reboot_at_ms == 0) {
+      // The join succeeded, but the provisioning phone is mid-handoff: the
+      // single radio just dragged the SoftAP to the STA's channel, and the
+      // phone needs to re-associate + poll /api/wifi to render the success
+      // card. Rebooting NOW (the old behavior) killed the AP ~1 s after the
+      // join and made every provisioning attempt look failed. Complete setup
+      // immediately, but defer the steady-state reboot past the same grace
+      // window the AP teardown honors.
       setup_wizard::mark_complete();
-      Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
-      delay(1000);
-      ESP.restart();
+      // mark_complete() stops the captive DNS; the phone still needs
+      // canary.local through the grace window.
+      setup_wizard::start_captive_portal();
+      g_setup_grace_reboot_at_ms = millis() + AP_DROP_GRACE_MS;
+      Serial.println("[OK] Setup complete — WiFi connected; rebooting after the provisioning grace window...");
     }
+  } else if (provisioning_logic::deferred_reboot_due(millis(), g_setup_grace_reboot_at_ms)) {
+    g_setup_grace_reboot_at_ms = 0;
+    Serial.println("[OK] Provisioning grace elapsed — rebooting into steady state...");
+    delay(500);
+    ESP.restart();
   }
 
   // ════════════════════════════════════════════════════════════════════════════
