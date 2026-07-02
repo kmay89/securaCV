@@ -2250,11 +2250,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <div class="form-group">
             <label class="form-label">Record Interval (ms)</label>
-            <input type="number" class="form-input" id="configRecordInterval" value="1000" min="100" max="60000">
+            <input type="number" class="form-input" id="configRecordInterval" value="1000" min="250" max="60000">
           </div>
           <div class="form-group">
             <label class="form-label">Time Bucket (ms)</label>
-            <input type="number" class="form-input" id="configTimeBucket" value="5000" min="1000" max="60000">
+            <input type="number" class="form-input" id="configTimeBucket" value="5000" min="5000" max="60000">
+            <p style="font-size:0.7rem;color:var(--muted);margin-top:0.25rem;">Coarsens event timing for privacy. Can only be made larger (coarser) than the 5000 ms minimum, never smaller.</p>
           </div>
           <div class="form-group">
             <label class="form-label">Log Level (min stored)</label>
@@ -2755,7 +2756,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById(`settings-${tab}`).classList.add('active');
       if (tab === 'wifi') loadWifiStatus();
       else if (tab === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); }
-      else if (tab === 'device') refreshOtaStatus();
+      else if (tab === 'device') { refreshOtaStatus(); loadConfig(); }
       else if (tab === 'rf') loadRfSettings();
       if (tab !== 'device') stopOtaPolling();
     }
@@ -3041,18 +3042,6 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('sysMac').textContent = dev.hw_token || '--';
         document.getElementById('sysReset').textContent = (dev.reset_reason || 'unknown').replace(/_/g, ' ');
       }
-    }
-
-    // A few controls front subsystems that are present in the UI but not
-    // yet wired into this firmware build — RF signal sensing (needs Wi-Fi
-    // promiscuous mode + a bench validation pass), on-SD log rotation (the
-    // rotate routine is still a stub), and runtime record/bucket tuning
-    // (the time bucket is a privacy-coarsening floor, so it can't be a plain
-    // user setting). Rather than fire a request that 404s and report a
-    // confusing failure, these say so plainly. Tracked for follow-up.
-    function featureNotWired(name) {
-      alert(name + ' isn\'t available on this firmware build yet. ' +
-            'Everything else on this page works — this control is coming in a later update.');
     }
 
     // Device self-test card: the SAME GET /api/selftest the setup wizard
@@ -4854,12 +4843,32 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     // DEVICE CONFIG
     // ══════════════════════════════════════════════════════════════════
-    function saveConfig() {
-      // The record interval and, especially, the time bucket are privacy
-      // parameters (the bucket coarsens event timing — Invariant III), so
-      // they aren't a plain runtime setting and there is no POST /api/config
-      // yet. Be honest rather than 404.
-      featureNotWired('Recording/log configuration');
+    async function saveConfig() {
+      const config = {
+        record_interval_ms: parseInt(document.getElementById('configRecordInterval').value),
+        time_bucket_ms: parseInt(document.getElementById('configTimeBucket').value),
+        log_level: parseInt(document.getElementById('configLogLevel').value)
+      };
+      const data = await api('/api/config', 'POST', config);
+      if (!data.ok) { alert('Could not save settings. Try again.'); return; }
+      // The server clamps to the safe envelope (e.g. the time bucket can't go
+      // below its privacy floor); reflect the effective values back.
+      document.getElementById('configRecordInterval').value = data.record_interval_ms;
+      document.getElementById('configTimeBucket').value = data.time_bucket_ms;
+      document.getElementById('configLogLevel').value = data.log_level;
+      alert(data.clamped
+        ? 'Saved — some values were adjusted to their safe range (the time bucket can only be made coarser than the ' + (data.time_bucket_floor_ms || 5000) + ' ms privacy floor).'
+        : 'Configuration saved and will persist across reboots.');
+    }
+
+    // Populate the Device-tab config inputs from the server's effective values.
+    async function loadConfig() {
+      const data = await api('/api/config');
+      if (!data.ok) return;
+      document.getElementById('configRecordInterval').value = data.record_interval_ms;
+      document.getElementById('configTimeBucket').value = data.time_bucket_ms;
+      const lvl = document.getElementById('configLogLevel');
+      if (lvl && data.log_level != null) lvl.value = data.log_level;
     }
 
     async function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.')) { try { await api('/api/reboot', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting…'); } }
