@@ -193,6 +193,7 @@ clip_clear  = 0.25;
 
 /* [Aesthetics] */
 lid_edge    = 0.8;   // 45° chamfer around the front's top edge  // [0:0.1:1.5]
+lid_edge2   = 0.0;   // optional second, steeper stage (~66°) that softens the chamfer toward a roundover  // [0:0.1:1.5]
 label_text  = "";    // debossed front label ("" = off; needs the font installed)
 label_size  = 5.0;
 label_depth = 0.5;
@@ -202,7 +203,9 @@ label_rot   = 0;
 label_font  = "Liberation Sans:style=Bold";
 
 /* [Quality] */
-$fn = 64;
+// curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
+// exploding tiny holes into thousands of facets like a large $fn would
+$fa = 3; $fs = 0.4;
 
 // ----------------------------------------------------------------------------
 //  Derived geometry
@@ -274,6 +277,7 @@ assert(mount_extra == 0 || kh_head_h + 1.5 <= floor_t + kh_extra, "keyhole pocke
 assert(mount_extra == 0 || kh_head_h > kh_face, "kh_head_h must exceed kh_face");
 assert(mount_extra == 0 || kh_head_d > kh_shank_d, "kh_head_d must be larger than kh_shank_d");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge must be 0, or between 0.01 and lid_t");
+assert(lid_edge2 >= 0 && lid_edge + lid_edge2 < lid_t, "lid_edge + lid_edge2 must stay below lid_t");
 assert(label_text == "" || (label_depth > 0 && label_depth < lid_t), "label_depth must be between 0 and lid_t");
 assert(host == "devkit" || usb_zc - xiao_usb_drop - usb_h/2 >= floor_t + 1.0,
        "xiao_usb_drop too large — the XIAO port opening would breach the floor");
@@ -367,6 +371,18 @@ module teeth2d() {
         }
 }
 
+// horizontal bore along +X with a 45° teardrop roof + small flat cap: the bore
+// top prints without sagging (a plain horizontal cylinder droops at its crown)
+module tearbore_x(x0, y, z, l, d) {
+    r = d/2; cy = r + 0.75;
+    translate([x0, y, z]) rotate([90, 0, 0]) rotate([0, 90, 0])
+        linear_extrude(l) union() {
+            circle(d = d);
+            polygon([[-r*0.7071, r*0.7071], [-(r*1.4142 - cy), cy],
+                     [ r*1.4142 - cy, cy], [ r*0.7071, r*0.7071]]);
+        }
+}
+
 // one hinge fin on the case top wall, centred at x = xc (tombstone, flat on the bed)
 module case_fin(xc) {
     hull() {
@@ -394,8 +410,7 @@ module case_hinge() {
                 translate([-xo, ax[1], ax[2]]) rotate([0, -90, 0]) linear_extrude(teeth_h) teeth2d();
             }
         }
-        translate([-out_x/2, ax[1], ax[2]]) rotate([0, 90, 0])
-            cylinder(d = hinge_hole, h = out_x);
+        tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
     }
 }
 
@@ -518,12 +533,21 @@ module vent_cluster(x, y) {
 }
 
 module front_plate() {
+    // one 45° stage, plus an optional steeper cap stage (~66°) that softens the
+    // edge toward a roundover — both print face-down without support
     if (lid_edge > 0) union() {
-        rrect(plate_x, plate_y, plate_r, lid_t - lid_edge);
+        rrect(plate_x, plate_y, plate_r, lid_t - lid_edge - lid_edge2);
         hull() {
-            translate([0, 0, lid_t - lid_edge]) rrect(plate_x, plate_y, plate_r, 0.01);
-            translate([0, 0, lid_t - 0.01])
+            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_x, plate_y, plate_r, 0.01);
+            translate([0, 0, lid_t - lid_edge2 - 0.01])
                 rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
+        }
+        if (lid_edge2 > 0) hull() {
+            translate([0, 0, lid_t - lid_edge2])
+                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
+            translate([0, 0, lid_t - 0.01])
+                rrect(plate_x - 2*lid_edge - 0.9*lid_edge2, plate_y - 2*lid_edge - 0.9*lid_edge2,
+                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
         }
     } else rrect(plate_x, plate_y, plate_r, lid_t);
 }
@@ -668,8 +692,8 @@ module bracket() {
                 translate([-xi, 0, az]) rotate([0,  90, 0]) linear_extrude(teeth_h) teeth2d();
             }
         }
-        // M5 bolt bore through all three fins
-        translate([-br_x/2, 0, az]) rotate([0, 90, 0]) cylinder(d = hinge_hole, h = br_x);
+        // M5 bolt bore through all three fins (teardrop roof — no crown sag)
+        tearbore_x(-br_x/2, 0, az, br_x, hinge_hole);
         // countersunk wall screws at the corners
         for (sx = [1, -1], sy = [1, -1]) {
             translate([sx*(br_x/2 - 5), sy*(br_y/2 - 5), -0.1])

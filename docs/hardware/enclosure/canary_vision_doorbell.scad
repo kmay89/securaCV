@@ -123,6 +123,7 @@ plate_screw_d = 4.2;  // wall screws (#8 / M4 countersunk)
 
 /* [Aesthetics] */
 lid_edge    = 1.0;    // face edge chamfer
+lid_edge2   = 0.8;    // second, steeper stage (~66°) — softens the face edge toward a roundover
 label_text  = "";     // debossed face label ("" = off)
 label_size  = 4.5;
 label_depth = 0.5;
@@ -155,7 +156,9 @@ clip_hook_h = 1.2;
 clip_clear  = 0.25;
 
 /* [Quality] */
-$fn = 64;
+// curve quality: $fa/$fs give smooth big arcs (pill corners, hood) without
+// exploding tiny holes into thousands of facets like a large $fn would
+$fa = 3; $fs = 0.4;
 
 // ----------------------------------------------------------------------------
 //  Derived geometry
@@ -203,6 +206,7 @@ assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below t
 assert(cam_disc_d == 0 || cam_disc_d > cam_ap_d, "cam_disc_d must exceed cam_ap_d");
 assert(kh_head_h + 1.5 <= floor_t + kh_extra, "stud pocket too deep — raise kh_extra");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge out of range");
+assert(lid_edge2 >= 0 && lid_edge + lid_edge2 < lid_t, "lid_edge + lid_edge2 must stay below lid_t");
 assert(well_cy + usb_exit_dy - usb_exit_h/2 >= -stud_y + kh_slot_l/2 + (kh_head_d + 0.6)/2 + 0.8,
        "cable exit overlaps the lower T-stud pocket — raise usb_exit_dy or stud_y");
 assert(abs(usb_exit_dx) + usb_exit_w/2 <= inner_x/2 - 1, "cable exit too wide/offset for the cavity");
@@ -330,12 +334,21 @@ module vent_cluster(x, y) {
     }
 }
 module face_plate() {
+    // one 45° stage, plus an optional steeper cap stage (~66°) that softens the
+    // edge toward a roundover — both print face-down without support
     if (lid_edge > 0) union() {
-        rrect(plate_x, plate_y, plate_r, lid_t - lid_edge);
+        rrect(plate_x, plate_y, plate_r, lid_t - lid_edge - lid_edge2);
         hull() {
-            translate([0, 0, lid_t - lid_edge]) rrect(plate_x, plate_y, plate_r, 0.01);
-            translate([0, 0, lid_t - 0.01])
+            translate([0, 0, lid_t - lid_edge - lid_edge2]) rrect(plate_x, plate_y, plate_r, 0.01);
+            translate([0, 0, lid_t - lid_edge2 - 0.01])
                 rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
+        }
+        if (lid_edge2 > 0) hull() {
+            translate([0, 0, lid_t - lid_edge2])
+                rrect(plate_x - 2*lid_edge, plate_y - 2*lid_edge, max(0.1, plate_r - lid_edge), 0.01);
+            translate([0, 0, lid_t - 0.01])
+                rrect(plate_x - 2*lid_edge - 0.9*lid_edge2, plate_y - 2*lid_edge - 0.9*lid_edge2,
+                      max(0.1, plate_r - lid_edge - 0.45*lid_edge2), 0.01);
         }
     } else rrect(plate_x, plate_y, plate_r, lid_t);
 }
@@ -344,14 +357,21 @@ module face() {
         difference() {
             face_plate();
             translate([lens_x, lens_y, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
-            if (cam_disc_t > 0 && cam_disc_d > 0)
+            if (cam_disc_t > 0 && cam_disc_d > 0) {
                 translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
                     cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
-            // button hole + bezel seat
+                // cosmetic 45° lead-in around the seat rim (cleaner edge, easier disc entry)
+                translate([lens_x, lens_y, lid_t - 0.4])
+                    cylinder(d1 = cam_disc_d + 2*tol_slide, d2 = cam_disc_d + 2*tol_slide + 1.0, h = 0.41);
+            }
+            // button hole + bezel seat (+ matching lead-in rim)
             translate([0, btn_cy, -1]) cylinder(d = btn_d + 2*tol_slide, h = lid_t + 2);
-            if (btn_bez_d > 0)
+            if (btn_bez_d > 0) {
                 translate([0, btn_cy, lid_t - btn_bez_t])
                     cylinder(d = btn_bez_d + 2*tol_slide, h = btn_bez_t + 1);
+                translate([0, btn_cy, lid_t - 0.4])
+                    cylinder(d1 = btn_bez_d + 2*tol_slide, d2 = btn_bez_d + 2*tol_slide + 1.0, h = 0.41);
+            }
             if (opt_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);
             if (opt_vent) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
             for (p = post_xy()) {

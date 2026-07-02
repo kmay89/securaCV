@@ -85,4 +85,4 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="$DSRC"; png "preview_doorbell.png" -D 'part="all"')
 fi
 
-echo "Done: WAP (6 STLs + gasket + coupon) + Vision (6 STLs + gasket + bracket + knob)."
+echo "Done: WAP (8) + Vision (9) + Doorbell (5) STLs + previews."
