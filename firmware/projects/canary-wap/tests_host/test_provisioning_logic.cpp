@@ -106,12 +106,31 @@ static void test_deferred_reboot() {
   CHECK(deferred_reboot_due(wrapped_deadline, wrapped_deadline));
 }
 
+static void test_reboot_deadline_extend() {
+  const uint32_t MIN = 90000u;  // keep >= 90 s for the user to finish step 5
+  // Disarmed stays disarmed.
+  CHECK(reboot_deadline_extend(0, 1000, MIN) == 0);
+  CHECK(reboot_deadline_extend(0, 0xFFFFFFFFu, MIN) == 0);
+  // Deadline sooner than now+MIN gets pushed out to exactly now+MIN.
+  CHECK(reboot_deadline_extend(1000 + 5000, 1000, MIN) == 1000 + MIN);
+  // A deadline already further out than now+MIN is left alone (never pulled in).
+  CHECK(reboot_deadline_extend(1000 + MIN + 10000, 1000, MIN) == 1000 + MIN + 10000);
+  // Exactly at the floor: unchanged.
+  CHECK(reboot_deadline_extend(1000 + MIN, 1000, MIN) == 1000 + MIN);
+  // Wrap-safe: now near the wrap, floor wraps past 0.
+  uint32_t near_wrap = 0xFFFFF000u;
+  uint32_t soon = near_wrap + 1000u;              // deadline sooner than floor
+  CHECK(reboot_deadline_extend(soon, near_wrap, MIN) ==
+        (uint32_t)(near_wrap + MIN));
+}
+
 int main() {
   test_setup_timeout();
   test_scan_cache();
   test_sta_join();
   test_ap_teardown();
   test_deferred_reboot();
+  test_reboot_deadline_extend();
   if (g_failures) {
     std::printf("%d check(s) FAILED\n", g_failures);
     return 1;

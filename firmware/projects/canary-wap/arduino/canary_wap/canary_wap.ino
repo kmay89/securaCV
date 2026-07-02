@@ -720,6 +720,12 @@ static bool g_wifi_scan_in_progress = false;
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
 
+// Set true once the BLE/Bluetooth init has been ATTEMPTED (regardless of
+// outcome), so the self-test can tell "not up yet / skipped in safe mode"
+// (SKIP) apart from "init ran and the stack genuinely failed" (FAIL). Read
+// by selftest_api.h's probe_bluetooth; non-static so its extern resolves.
+volatile bool g_ble_init_attempted = false;
+
 // Camera state
 #if FEATURE_CAMERA_PEEK
 static bool g_camera_initialized = false;
@@ -4685,8 +4691,14 @@ static uint32_t g_scan_cache_at_ms = 0;
 
 // Non-zero = first-boot setup finished with a live WiFi join; reboot into
 // steady state once this deadline passes (see the deferred-reboot block in
-// loop() and provisioning_logic::deferred_reboot_due).
+// loop() and provisioning_logic::deferred_reboot_due). Written by loop()
+// AND by the /api/selftest handler (HTTP task) to hold the reboot off while
+// the user is on the wizard's final step, so all accesses are atomic.
 static uint32_t g_setup_grace_reboot_at_ms = 0;
+
+// Minimum runway to keep after a step-5 self-test poll: enough for the user
+// to read every row and tap "Run again" once before the steady-state reboot.
+static const uint32_t SELFTEST_REBOOT_MIN_MS = 90000;
 
 static const char* wifi_auth_mode_name(wifi_auth_mode_t authMode) {
   if (authMode == WIFI_AUTH_OPEN) return "open";
@@ -6368,6 +6380,24 @@ static void register_api_routes(httpd_handle_t server) {
                          g_device.fingerprint_hex);
 }
 
+// GET /api/selftest wrapper: while the user is on the wizard's final step
+// polling the health check, hold off the deferred post-provisioning reboot
+// so "Run again" keeps working. The deadline is only ARMED after setup
+// completed with a live join, so this only ever widens an already-pending
+// window — it never schedules a reboot that wasn't due, and never touches a
+// disarmed (0) deadline (reboot_deadline_extend guards both). The selftest
+// endpoint itself stays unauthenticated (the AP is its boundary, like
+// /api/wifi/scan) — this wrapper adds no data path.
+static esp_err_t handle_selftest_wrap(httpd_req_t* req) {
+  uint32_t dl = __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE);
+  if (dl != 0) {
+    uint32_t extended = provisioning_logic::reboot_deadline_extend(
+        dl, millis(), SELFTEST_REBOOT_MIN_MS);
+    __atomic_store_n(&g_setup_grace_reboot_at_ms, extended, __ATOMIC_RELEASE);
+  }
+  return selftest::handle_selftest(req);
+}
+
 static void start_http_server() {
   // Max URI handlers, itemized to match what the active server actually
   // registers. esp_http_server SILENTLY drops every registration past this
@@ -6585,7 +6615,7 @@ register_extra_routes:
 
   // Wizard pre-flight self-test (no auth — must be reachable on AP
   // before any post-pair token exists, identical to /api/wifi/scan).
-  httpd_uri_t selftest = { .uri = "/api/selftest", .method = HTTP_GET, .handler = selftest::handle_selftest };
+  httpd_uri_t selftest = { .uri = "/api/selftest", .method = HTTP_GET, .handler = handle_selftest_wrap };
   httpd_register_uri_handler(active_server, &selftest);
 
 #if FEATURE_QR_PROVISION
@@ -8290,6 +8320,7 @@ void setup() {
   // Initialize Bluetooth (legacy channel)
   #if FEATURE_BLUETOOTH
   if (!in_safe_mode) {
+    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
     Serial.println("[..] Initializing Bluetooth Low Energy...");
     // Push device metadata into bluetooth_channel BEFORE init(). The DIS
     // characteristics get baked during service creation; setting these
@@ -8331,6 +8362,7 @@ void setup() {
   // Initialize BLE Discovery (Opera/Chirp/Nearby)
   #if FEATURE_BLE
   if (!in_safe_mode) {
+    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
     Serial.println("[..] Initializing BLE Discovery subsystem...");
 
     // Build device ID hash hex string from pubkey fingerprint
@@ -8630,7 +8662,8 @@ void loop() {
   setup_wizard::dns_process();
   if (setup_wizard::is_active()) {
     setup_wizard::check_timeout();
-    if (WiFi.status() == WL_CONNECTED && g_setup_grace_reboot_at_ms == 0) {
+    if (WiFi.status() == WL_CONNECTED &&
+        __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE) == 0) {
       // The join succeeded, but the provisioning phone is mid-handoff: the
       // single radio just dragged the SoftAP to the STA's channel, and the
       // phone needs to re-associate + poll /api/wifi to render the success
@@ -8642,11 +8675,14 @@ void loop() {
       // mark_complete() stops the captive DNS; the phone still needs
       // canary.local through the grace window.
       setup_wizard::start_captive_portal();
-      g_setup_grace_reboot_at_ms = millis() + AP_DROP_GRACE_MS;
+      __atomic_store_n(&g_setup_grace_reboot_at_ms, millis() + AP_DROP_GRACE_MS,
+                       __ATOMIC_RELEASE);
       Serial.println("[OK] Setup complete — WiFi connected; rebooting after the provisioning grace window...");
     }
-  } else if (provisioning_logic::deferred_reboot_due(millis(), g_setup_grace_reboot_at_ms)) {
-    g_setup_grace_reboot_at_ms = 0;
+  } else if (provisioning_logic::deferred_reboot_due(
+                 millis(),
+                 __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE))) {
+    __atomic_store_n(&g_setup_grace_reboot_at_ms, 0u, __ATOMIC_RELEASE);
     Serial.println("[OK] Provisioning grace elapsed — rebooting into steady state...");
     delay(500);
     ESP.restart();

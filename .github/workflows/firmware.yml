@@ -605,6 +605,20 @@ jobs:
           /tmp/provisioning_logic | tee /tmp/provisioning_logic.log
           grep -q "ALL .* PASSED" /tmp/provisioning_logic.log
 
+      - name: Build + run canary-wap self-test-logic host test
+        # The pre-flight health check's verdicts (Bluetooth SKIP vs FAIL vs
+        # ABSENT across boot window / safe mode / DEV builds, Wi-Fi link-down
+        # vs radio-off) live in selftest_logic.h so the "almost everything
+        # failing" false-negatives can't come back.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_selftest_logic.cpp \
+              -o /tmp/selftest_logic
+          /tmp/selftest_logic | tee /tmp/selftest_logic.log
+          grep -q "ALL .* PASSED" /tmp/selftest_logic.log
+
       - name: Build + run canary-wap auth-logic host test
         # Which failed-auth shapes feed the brute-force lockout. A
         # credential-less request must NOT count — counting it let one

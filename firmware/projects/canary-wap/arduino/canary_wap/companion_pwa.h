@@ -442,6 +442,11 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="wiz-check-list" id="wiz-st-list" role="group" aria-label="Pre-flight checks" aria-busy="false"></div>
       <div class="wiz-check-summary" id="wiz-st-summary" role="status" aria-live="polite"></div>
 
+      <!-- Shown only when the device is in recovery/safe mode, where every
+           optional peripheral is paused and the check list is mostly grey
+           on hardware that is actually fine. -->
+      <p class="wiz-sub err note" id="wiz-st-safemode" style="display:none;margin-top:.6rem"></p>
+
       <!-- Shown only when a check fails. Explains that greyed rows are
            normal and that the user is not stuck: they can fix-and-rerun
            or continue to the dashboard anyway. -->
@@ -1375,6 +1380,11 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
       },
       bluetooth: (p) => {
         if (p.status === 'fail') return 'Bluetooth didn\'t start. Unplug the Canary for five seconds and power it back on, then tap Run again. If it keeps failing, this unit\'s Bluetooth may be faulty — you can still continue; Wi-Fi features work without it.';
+        if (p.status === 'skip') {
+          if (p && p.metric && p.metric.safe_mode === true) return 'Bluetooth is paused while the Canary is in recovery mode. It comes back on its own once the device has run steadily — nothing to fix.';
+          if (p && p.metric && p.metric.init_attempted === false) return 'Bluetooth is still starting up. Give it a few seconds, then tap Run again.';
+          return 'Bluetooth is on but idle right now — nothing is paired yet. You can continue and pair later.';
+        }
         if (p.status === 'absent') return 'Bluetooth isn\'t built into this firmware. That\'s expected on minimal builds — you can continue.';
         return '';
       },
@@ -1442,12 +1452,24 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
             sub: 'Open the row below for the detail. Re-run after fixing it.' };
     }
 
-    return { ICON, ICON_LABEL, hintFor, leadFor, verdict };
+    // Recovery-mode banner. After a few rapid reboots (e.g. a marginal USB
+    // supply) the Canary boots into safe mode and skips every optional
+    // peripheral, so the self-test shows a wall of grey "not active" rows
+    // on hardware that is actually fine. Surface that explicitly so the
+    // grey rows read as "paused", not "broken". Returns '' when not in
+    // safe mode so the banner stays hidden.
+    function safeModeNote(j) {
+      return (j && j.safe_mode)
+        ? 'Your Canary is in recovery mode after a few quick restarts, so cameras, storage and radios are paused. This clears on its own once it runs steadily — give it a minute on solid power, then tap Run again. The greyed rows below aren\'t faults.'
+        : '';
+    }
+
+    return { ICON, ICON_LABEL, hintFor, leadFor, verdict, safeModeNote };
   })();
   if (typeof module !== 'undefined' && module.exports) { module.exports = SelftestLogic; }
   /* SELFTEST_LOGIC:END */
 
-  const { ICON, ICON_LABEL, hintFor, leadFor, verdict } = SelftestLogic;
+  const { ICON, ICON_LABEL, hintFor, leadFor, verdict, safeModeNote } = SelftestLogic;
 
   function escText(s) {
     // The detail/metric strings come from the device, but the device
@@ -1540,6 +1562,16 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     summary.classList.remove('pass', 'fail');
     summary.classList.add(j.all_passed ? 'pass' : 'fail');
     summary.textContent = j.summary || (j.all_passed ? 'All checks passed.' : 'Checks failed.');
+
+    // Recovery-mode banner (independent of pass/fail): explains the grey
+    // rows on a device that just rebooted a few times, so a healthy unit
+    // in safe mode doesn't read as broken.
+    const safeNote = $w('wiz-st-safemode');
+    if (safeNote) {
+      const msg = safeModeNote(j);
+      safeNote.textContent = msg;
+      safeNote.style.display = msg ? 'block' : 'none';
+    }
 
     // CTA wiring: mDNS link is always shown (default works on most
     // home routers), IP fallback is only shown when we captured one
