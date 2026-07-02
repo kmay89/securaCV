@@ -163,7 +163,14 @@ pub fn route_message(routes: &[SensorRoute], topic: &str, payload: &[u8]) -> Opt
         }
     }
 
-    let confidence = parsed.confidence.unwrap_or(1.0);
+    // Fail closed on a gated route: a payload that omits (or misspells)
+    // "confidence" must not sail past the floor as full confidence. Ungated
+    // routes keep accepting bare trigger payloads, scored 1.0 as before.
+    let confidence = match parsed.confidence {
+        Some(confidence) => confidence,
+        None if route.min_confidence > 0.0 => return None,
+        None => 1.0,
+    };
     if confidence < route.min_confidence {
         return None;
     }
@@ -327,6 +334,45 @@ mod tests {
                 br#"{"state":"on","confidence":0.2,"kind":"camera_tamper"}"#,
             )
             .is_none());
+    }
+
+    #[test]
+    fn gated_route_rejects_payload_without_confidence() {
+        // A route with a confidence floor must not score a payload that
+        // omits (or misspells) "confidence" as full confidence — that would
+        // let any publisher bypass the floor by simply not naming the field.
+        let mut route = SensorRoute::new(
+            "sensors/garage/acoustic",
+            ClaimKind::AcousticImpulseInZone,
+            "garage",
+        );
+        route.min_confidence = 0.5;
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![route]);
+        assert!(adapter
+            .message_to_claim("sensors/garage/acoustic", br"{}")
+            .is_none());
+        assert!(adapter
+            .message_to_claim("sensors/garage/acoustic", br#"{"confidance":0.9}"#)
+            .is_none());
+        // Stated confidence above the floor still passes.
+        assert!(adapter
+            .message_to_claim("sensors/garage/acoustic", br#"{"confidence":0.9}"#)
+            .is_some());
+    }
+
+    #[test]
+    fn ungated_route_still_accepts_payload_without_confidence() {
+        // No floor configured: bare trigger payloads (plain "ON", empty JSON)
+        // keep working, scored 1.0 as before.
+        let (adapter, _tx) = MqttSensorAdapter::new(vec![SensorRoute::new(
+            "sensors/garage/acoustic",
+            ClaimKind::AcousticImpulseInZone,
+            "garage",
+        )]);
+        let claim = adapter
+            .message_to_claim("sensors/garage/acoustic", br"{}")
+            .expect("claim");
+        assert!((claim.confidence - 1.0).abs() < 1e-6);
     }
 
     #[test]

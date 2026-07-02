@@ -5,8 +5,16 @@
 # docker-compose.yml in this directory.
 #
 # It confirms the parts an operator can observe without secrets: that Frigate is
-# publishing to MQTT and that `frigate_bridge` is ingesting those events into the
-# sealed log. It deliberately does NOT:
+# publishing to MQTT and that `frigate_bridge` is ingesting events into the
+# sealed log RIGHT NOW. Every check is correlated to this run — a stale retained
+# MQTT message, a leftover "Event logged" line from a previous container boot,
+# or a schema-only database cannot produce a false pass:
+#   • the MQTT check excludes retained messages (-R);
+#   • the ingest check publishes one nonce-tagged synthetic event (the same
+#     payload shape ci_smoke.sh uses) and requires a log line for THAT event;
+#   • the database check requires witness.db to have been written after this
+#     script started, not merely to exist.
+# It deliberately does NOT:
 #   • read witness.db directly — the kernel stores it SQLCipher-encrypted, so a
 #     plain sqlite3 query cannot open it;
 #   • expect vault envelopes — `frigate_bridge` sign-seals the append-only log, it
@@ -39,9 +47,19 @@ fi
 MQTT_USER="${MQTT_USER:-}"
 MQTT_PASS="${MQTT_PASS:-}"
 mqtt_auth=()
-if [[ -n "$MQTT_USER" ]]; then
+if [[ -n "$MQTT_USER" && -n "$MQTT_PASS" ]]; then
   mqtt_auth=(-u "$MQTT_USER" -P "$MQTT_PASS")
+elif [[ -n "$MQTT_USER" ]]; then
+  echo "⚠️  MQTT_USER is set but MQTT_PASS is empty; connecting without a password." >&2
+  mqtt_auth=(-u "$MQTT_USER")
 fi
+
+# Correlation nonce: the ingest and database checks below must observe THIS
+# run's activity, never leftovers from an earlier session.
+NONCE="verifysmoke$(date +%s)$$"
+MARKER="/tmp/verify_pipeline_marker"
+# How long (seconds) to wait for the bridge to ingest the nonce event.
+INGEST_RETRIES="${VERIFY_PIPELINE_INGEST_RETRIES:-30}"
 
 step() {
   local name=$1
@@ -56,11 +74,14 @@ step() {
   echo
 }
 
-# Frigate publishes detections to frigate/events. Wait up to 15s for one.
+# 1) Frigate publishes detections to frigate/events. Wait up to 15s for one.
+#    -R drops retained messages: only a live publish within the window counts,
+#    so a stale retained payload can't stand in for a running Frigate.
+#    (Errors from mosquitto_sub stay visible on stderr for diagnosis.)
 check_mqtt_publishes() {
   local output
   output=$("${compose_cmd[@]}" exec -T mosquitto \
-    mosquitto_sub "${mqtt_auth[@]}" -t 'frigate/events' -C 1 -W 15 2>/dev/null || true)
+    mosquitto_sub "${mqtt_auth[@]}" -t 'frigate/events' -R -C 1 -W 15 || true)
   if [[ -n "$output" ]]; then
     printf '%s\n' "$output" | head -n 1
     return 0
@@ -68,26 +89,48 @@ check_mqtt_publishes() {
   return 1
 }
 
-# frigate_bridge logs "Event logged: ..." on every successful append to the
-# sealed log. This works regardless of DB encryption and needs no secrets.
-check_bridge_ingests() {
-  local logs
-  logs=$("${compose_cmd[@]}" logs --tail 200 --no-color securacv 2>/dev/null || true)
-  if printf '%s\n' "$logs" | grep -q "Event logged"; then
-    printf '%s\n' "$logs" | grep "Event logged" | tail -n 1
-    return 0
-  fi
+# 2) The bridge is ingesting NOW: publish one nonce-tagged synthetic event and
+#    require the bridge's "Event logged ... zone=<nonce>" line for it. Grepping
+#    old logs alone could pass on a line from a previous boot while the bridge
+#    is currently wedged. The camera/zone carry the nonce, so the per-bucket
+#    camera+label dedup can't fold it into an earlier event either.
+check_bridge_ingests_live() {
+  local event
+  event=$(printf '{"before":null,"after":{"id":"1719000000.%s","camera":"%s","label":"person","sub_label":null,"score":0.81,"top_score":0.92,"current_zones":["%s"],"entered_zones":["%s"],"false_positive":false,"has_clip":false,"has_snapshot":false},"type":"new"}' \
+    "$NONCE" "$NONCE" "$NONCE" "$NONCE")
+  "${compose_cmd[@]}" exec -T mosquitto \
+    mosquitto_pub "${mqtt_auth[@]}" -t 'frigate/events' -m "$event" || return 1
+  local logs i
+  for ((i = 0; i < INGEST_RETRIES; i++)); do
+    logs=$("${compose_cmd[@]}" logs --tail 200 --no-color securacv 2>/dev/null || true)
+    if printf '%s\n' "$logs" | grep "Event logged" | grep -q "$NONCE"; then
+      printf '%s\n' "$logs" | grep "Event logged" | grep "$NONCE" | tail -n 1
+      return 0
+    fi
+    sleep 1
+  done
   return 1
 }
 
-# The encrypted sealed-log DB exists and is non-empty.
-check_db_exists() {
-  "${compose_cmd[@]}" exec -T securacv sh -c "test -s /data/witness.db"
+# 3) The sealed-log database was WRITTEN during this run — `test -s` alone
+#    passes on a freshly initialized, event-less database. The marker file is
+#    created before the ingest check, so this also cross-checks step 2's event
+#    actually reached storage. The kernel opens SQLite in WAL mode
+#    (PRAGMA journal_mode=WAL), so a fresh append advances witness.db-wal
+#    while the main file can stay older until a checkpoint — freshness on
+#    either file counts.
+check_db_written_this_run() {
+  "${compose_cmd[@]}" exec -T securacv sh -c \
+    "test -s /data/witness.db && find /data/witness.db /data/witness.db-wal -newer $MARKER 2>/dev/null | grep -q ."
 }
 
-step "Confirm MQTT publishes Frigate events" check_mqtt_publishes
-step "Confirm frigate_bridge ingests at least one event" check_bridge_ingests
-step "Confirm the sealed-log database exists" check_db_exists
+# Drop the freshness marker before any activity we want to attribute to this
+# run. If the container is down this fails silently here and loudly in step 3.
+"${compose_cmd[@]}" exec -T securacv sh -c "touch $MARKER" 2>/dev/null || true
+
+step "Confirm MQTT publishes Frigate events (live, retained excluded)" check_mqtt_publishes
+step "Confirm frigate_bridge ingests a nonce-tagged event right now" check_bridge_ingests_live
+step "Confirm the sealed-log database was written during this run" check_db_written_this_run
 
 if [[ $failures -ne 0 ]]; then
   echo "Verification failed: ${failures} step(s) did not pass." >&2

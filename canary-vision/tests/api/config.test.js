@@ -90,4 +90,66 @@ describe('Config API', () => {
     assert.equal(typeof res.json.camera_enabled, 'boolean');
     assert.equal(typeof res.json.camera_peek_enabled, 'boolean');
   });
+
+  // Unknown keys must be rejected, not merged: a typo'd key was previously
+  // stored verbatim while the real setting silently kept its default —
+  // {"privacy":{"auto_purge_hour":1}} left auto-purge on the longer window.
+
+  it('PUT /api/v1/config rejects a typo of a known key', async () => {
+    const res = await client.put('/api/v1/config', {
+      privacy: { auto_purge_hour: 1 },
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error, 'invalid_config');
+    assert.match(res.json.message, /auto_purge_hour/);
+    // The typo'd key must not have been stored either.
+    const after = await client.get('/api/v1/config/privacy');
+    assert.equal(after.json.auto_purge_hour, undefined);
+  });
+
+  it('PUT /api/v1/config rejects an unknown top-level section', async () => {
+    const res = await client.put('/api/v1/config', {
+      privacyy: { auto_purge_hours: 1 },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.json.message, /privacyy/);
+  });
+
+  it('PUT /api/v1/config/:section rejects unknown keys in the section', async () => {
+    const res = await client.put('/api/v1/config/detection', {
+      motion_sensitivty: 5,
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.json.message, /motion_sensitivty/);
+  });
+
+  it('PUT /api/v1/config rejects unknown suppression sub-keys', async () => {
+    const res = await client.put('/api/v1/config', {
+      detection: { suppression: { cooldown_secondz: 10 } },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.json.message, /cooldown_secondz/);
+  });
+
+  // typeof [] === 'object': a JSON array must not slip past the body-object
+  // check and have its indices merged into the stored config.
+
+  it('PUT /api/v1/config/:section rejects a JSON array body', async () => {
+    const res = await client.put('/api/v1/config/detection', [1, 2, 3]);
+    assert.equal(res.status, 400);
+    // Array indices must not have been merged into the section.
+    const after = await client.get('/api/v1/config/detection');
+    assert.equal(after.json['0'], undefined);
+  });
+
+  it('PUT /api/v1/config rejects a JSON array body', async () => {
+    const res = await client.put('/api/v1/config', [1, 2, 3]);
+    assert.equal(res.status, 400);
+    assert.match(res.json.message, /array/i);
+  });
+
+  it('PUT /api/v1/config rejects an array where a section object belongs', async () => {
+    const res = await client.put('/api/v1/config', { privacy: [1, 2] });
+    assert.equal(res.status, 400);
+  });
 });

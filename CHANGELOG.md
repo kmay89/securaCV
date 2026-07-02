@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+### Fail-closed configuration and verification hardening
+
+- **Unknown config keys are now parse errors.** A misspelled key in
+  `adapter_host.toml` or `witness.toml`/`witness_config.json` used to fall
+  back silently to the permissive default — `auth_toke` left the webhook
+  listener unauthenticated, a `tls_key` typo fell back to plaintext, a
+  `cameras` typo processed every camera, and `sensitve` under `[zones]`
+  removed the sensitive-zone policy. All config-file structs now reject
+  unknown keys with an error naming the key, at startup and on SIGHUP
+  reload (reload keeps the running config).
+- **Confidence-gated routes require stated confidence** (`mqtt_sensor` +
+  webhook shared routing): a payload that omits or misspells `confidence`
+  no longer sails past a `min_confidence` floor as 1.0. Routes without a
+  floor keep accepting bare trigger payloads unchanged.
+- **canary-vision config API fails closed**: `PUT /api/v1/config` (and
+  `/:section`) rejects unknown sections/keys with 400 `invalid_config`
+  instead of merging typo'd keys while the real setting kept its default
+  (e.g. `auto_purge_hour` leaving auto-purge on the longer window).
+- **Wizard POST hardening**: a malformed or negative `Content-Length` is a
+  clean 400 (previously an unhandled traceback), and bodies over 1 MiB are
+  refused with 413.
+- **`verify_pipeline.sh` can no longer false-pass**: the live-stack smoke
+  check now excludes retained MQTT messages, publishes a nonce-tagged
+  event and requires the bridge to ingest *that* event, and requires
+  `witness.db` to have been written during the run — stale logs, retained
+  payloads, and schema-only databases all fail. A docker-shim regression
+  suite replays the old false-pass scenarios in CI.
+- New export-boundary absence tests pin that the Frigate object id
+  (embedded precise timestamp) and below-floor confidence values never
+  appear in a serialized export.
+- **Compatibility**: configs carrying stray or misspelled keys now refuse
+  to load, and sensors that never publish `confidence` no longer pass
+  confidence-gated routes — both deliberate fail-closed breaks; correct
+  existing configs and payloads are unaffected.
+
 ### Export & diagnosis follow-ups: one-click download, scheduling, inspectors, break-glass UX
 
 - **One-click "Download my events"**: token-gated `GET /export/bundle` on the
