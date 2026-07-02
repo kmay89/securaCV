@@ -8312,6 +8312,18 @@ void setup() {
     } else {
       Serial.println("[--] Mesh network init failed");
     }
+
+    // Community Chirp channel (v0.2, ESP-NOW). Its /api/chirp/* routes are
+    // registered under FEATURE_MESH_NETWORK, but init() was never called, so
+    // enable() short-circuited on !g_initialized and the Community > Chirp
+    // toggle could never turn on. init() is pure state setup (it does NOT
+    // start any radio); the ESP-NOW transport only comes up when the user
+    // enables the channel, so this just makes the opt-in reachable.
+    if (chirp_channel::init()) {
+      Serial.println("[OK] Community chirp channel ready (disabled until enabled)");
+    } else {
+      Serial.println("[--] Community chirp channel init failed");
+    }
   } else {
     Serial.println("[--] Mesh network init skipped (safe mode)");
   }
@@ -8864,6 +8876,9 @@ void loop() {
   // Update mesh network
   #if FEATURE_MESH_NETWORK
   mesh_network::update();
+  // Service the community chirp channel too (no-op until the user enables
+  // it; needed so cooldowns, bloom-filter resets and relay TTLs advance).
+  chirp_channel::update();
   {
     static uint32_t s_last_replay_save_ms = 0;
     uint32_t now = millis();

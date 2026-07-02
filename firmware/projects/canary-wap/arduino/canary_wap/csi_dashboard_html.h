@@ -1120,10 +1120,6 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
             <span>Sensitivity <span data-tip="sensitivity">ⓘ</span></span>
             <input type="range" id="sensitivitySlider" min="0" max="100" value="50">
           </label>
-          <label>
-            <span>Breath sound <span data-tip="breathAudio">ⓘ</span></span>
-            <span class="switch" id="audioSwitch" role="switch" aria-checked="false" tabindex="0" data-tip="breathAudio"></span>
-          </label>
           <label style="grid-column:1/-1">
             <span>Live numbers <span data-tip="rawVector">ⓘ</span></span>
             <canvas id="rawHeatmap" width="800" height="32" style="width:100%;height:32px;border-radius:6px;display:block;background:rgba(0,0,0,0.04)" aria-hidden="true"></canvas>
@@ -1243,6 +1239,23 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
 
 <script>
 "use strict";
+
+/* ────────────────────────────────────────────────────────────────────────
+ *  Safe localStorage accessors. On browsers configured to block all site
+ *  data (Chrome "Block all cookies", some private/embedded webviews) ANY
+ *  localStorage property access throws SecurityError. The dashboard reads
+ *  localStorage at top level (setMode, sensitivity, pet mode, onboarding),
+ *  so one such throw killed every binding declared after it — the orb froze
+ *  on "Sensing…" with no polling. Routing all access through these helpers
+ *  means a locked-down browser degrades to in-memory defaults instead of a
+ *  dead page. Declared as hoisted functions so they precede every caller.
+ * ──────────────────────────────────────────────────────────────────────── */
+function lsGet(key) {
+  try { return localStorage.getItem(key); } catch (_) { return null; }
+}
+function lsSet(key, val) {
+  try { localStorage.setItem(key, val); } catch (_) { /* storage blocked */ }
+}
 
 /* ────────────────────────────────────────────────────────────────────────
  *  Auth helper — every CSI HTTP handler verifies an HttpOnly cv_session
@@ -2453,15 +2466,15 @@ async function persistPreset(mode) {
 
 function selectMode(mode) {
   setMode(mode);
-  localStorage.setItem('csi.mode', mode);
+  lsSet('csi.mode', mode);
   persistPreset(mode);
 }
 
 modeButtons.forEach(b => b.addEventListener('click', () => selectMode(b.dataset.mode)));
-setMode(localStorage.getItem('csi.mode') || 'balanced');
+setMode(lsGet('csi.mode') || 'balanced');
 /* Resize re-runs setMode() (no persist) so the indicator stays
  * aligned with the active button after viewport changes. */
-window.addEventListener('resize', () => setMode(localStorage.getItem('csi.mode') || 'balanced'));
+window.addEventListener('resize', () => setMode(lsGet('csi.mode') || 'balanced'));
 
 /* Sensitivity slider: 0..100, 50 = neutral. The server maps the value
  * to a ±20-point offset on top of the preset baseline. We debounce the
@@ -2485,7 +2498,7 @@ function persistSensitivity(value) {
 if (sensitivitySlider) {
   /* Restore from localStorage instantly, then let syncSettingsFromServer
    * reconcile if the device's value differs. */
-  const localSens = localStorage.getItem('csi.sensitivity');
+  const localSens = lsGet('csi.sensitivity');
   if (localSens !== null) sensitivitySlider.value = localSens;
   sensitivitySlider.addEventListener('input', () => {
     /* DON'T use `parseInt(...) || 50` here — `0` is falsy in JS and
@@ -2493,7 +2506,7 @@ if (sensitivitySlider) {
      * to the neutral midpoint. <input type="range"> always returns a
      * numeric string, so Number() is safe and preserves 0. */
     const v = Number(sensitivitySlider.value);
-    localStorage.setItem('csi.sensitivity', String(v));
+    lsSet('csi.sensitivity', String(v));
     persistSensitivity(v);
   });
 }
@@ -2507,7 +2520,7 @@ const petSwitch = document.getElementById('petSwitch');
  * (the source of truth that actually changes how core.presence behaves).
  * The localStorage value is the optimistic boot state; we sync from
  * /api/settings as soon as it answers. */
-window.PET_MODE = localStorage.getItem('csi.pet') === '1';
+window.PET_MODE = lsGet('csi.pet') === '1';
 setSwitch(petSwitch, window.PET_MODE);
 
 /* On load, pull every persistent setting from the device and reconcile
@@ -2522,10 +2535,10 @@ setSwitch(petSwitch, window.PET_MODE);
     if (typeof j.pet_mode === 'boolean' && j.pet_mode !== window.PET_MODE) {
       window.PET_MODE = j.pet_mode;
       setSwitch(petSwitch, window.PET_MODE);
-      localStorage.setItem('csi.pet', window.PET_MODE ? '1' : '0');
+      lsSet('csi.pet', window.PET_MODE ? '1' : '0');
     }
-    if (typeof j.preset === 'string' && j.preset !== localStorage.getItem('csi.mode')) {
-      localStorage.setItem('csi.mode', j.preset);
+    if (typeof j.preset === 'string' && j.preset !== lsGet('csi.mode')) {
+      lsSet('csi.mode', j.preset);
       setMode(j.preset);
     }
     if (typeof j.sensitivity === 'number' && sensitivitySlider) {
@@ -2535,7 +2548,7 @@ setSwitch(petSwitch, window.PET_MODE);
       const serverSens = String(Number(j.sensitivity));
       if (serverSens !== sensitivitySlider.value) {
         sensitivitySlider.value = serverSens;
-        localStorage.setItem('csi.sensitivity', serverSens);
+        lsSet('csi.sensitivity', serverSens);
       }
     }
     if (j.quiet_hours && typeof j.quiet_hours === 'object') {
@@ -2568,7 +2581,7 @@ async function persistPetMode(value) {
 function togglePet() {
   window.PET_MODE = !window.PET_MODE;
   setSwitch(petSwitch, window.PET_MODE);
-  localStorage.setItem('csi.pet', window.PET_MODE ? '1' : '0');
+  lsSet('csi.pet', window.PET_MODE ? '1' : '0');
   persistPetMode(window.PET_MODE);
 }
 petSwitch.addEventListener('click', togglePet);
@@ -2669,13 +2682,6 @@ if (qhStart) qhStart.addEventListener('input', () => {
 if (qhEnd) qhEnd.addEventListener('input', () => {
   window.QH_END_MIN = timeStrToMinutes(qhEnd.value);
   persistQuietHours();
-});
-
-const audioSwitch = document.getElementById('audioSwitch');
-window.AUDIO_ON = false;
-audioSwitch.addEventListener('click', () => {
-  window.AUDIO_ON = !window.AUDIO_ON;
-  setSwitch(audioSwitch, window.AUDIO_ON);
 });
 
 const calibrateBtn      = document.getElementById('calibrateBtn');
@@ -2790,7 +2796,7 @@ calibCancelBtn.addEventListener('click', () => {
  *  the existing calibrate flow so the dashboard arrives baseline-aware.
  * ──────────────────────────────────────────────────────────────────────── */
 (function welcomeFlow() {
-  if (localStorage.getItem('csi.onboarding.done') === '1') return;
+  if (lsGet('csi.onboarding.done') === '1') return;
 
   const cards   = COPY.welcome.cards;
   const cardEl  = document.getElementById('welcomeCard');
@@ -2801,7 +2807,7 @@ calibCancelBtn.addEventListener('click', () => {
   // escape hatch — picking it clears the others; picking any specific
   // pet clears "none". Persisted as a comma-separated list in
   // localStorage('csi.pet.kinds').
-  const initialKinds = (localStorage.getItem('csi.pet.kinds') || '')
+  const initialKinds = (lsGet('csi.pet.kinds') || '')
     .split(',').map(s => s.trim()).filter(Boolean);
   const chosenPets = new Set(initialKinds);
 
@@ -2884,11 +2890,11 @@ calibCancelBtn.addEventListener('click', () => {
   }
 
   function finish(launchCalibrate) {
-    localStorage.setItem('csi.onboarding.done', '1');
+    lsSet('csi.onboarding.done', '1');
     // Persist the comma-separated list. Empty Set means the user
     // skipped without answering — leave any previous answer alone.
     if (chosenPets.size > 0) {
-      localStorage.setItem('csi.pet.kinds', Array.from(chosenPets).join(','));
+      lsSet('csi.pet.kinds', Array.from(chosenPets).join(','));
     }
     document.body.classList.remove('is-onboarding');
     if (launchCalibrate) {
@@ -2945,7 +2951,7 @@ calibCancelBtn.addEventListener('click', () => {
       // always toggle Pet Mode from the dashboard switch.
       if (chosenPets.has('cat') || chosenPets.has('small')) {
         window.PET_MODE = true;
-        localStorage.setItem('csi.pet', '1');
+        lsSet('csi.pet', '1');
         const sw = document.getElementById('petSwitch');
         if (sw) sw.setAttribute('aria-checked', 'true');
         // Push to the device too so core.presence honors the choice
