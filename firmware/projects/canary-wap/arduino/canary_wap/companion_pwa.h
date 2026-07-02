@@ -957,7 +957,10 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
   function pollQrScan() {
     qrPollTimer = setInterval(async () => {
       try {
-        const r = await fetch('/api/wifi/qr-scan');
+        // status/stop carry the same pair token the POST used — the
+        // firmware gates all three so an on-AP bystander can't read the
+        // scanned SSID or cancel the scan.
+        const r = await fetch('/api/wifi/qr-scan?token=' + encodeURIComponent(token));
         const j = await r.json();
         if (j.success) {
           clearInterval(qrPollTimer); qrPollTimer = 0;
@@ -1002,7 +1005,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
   if ($w('wiz-qr-back')) {
     $w('wiz-qr-back').addEventListener('click', async () => {
       if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = 0; }
-      try { await fetch('/api/wifi/qr-scan', { method: 'DELETE' }); } catch (e) {}
+      try { await fetch('/api/wifi/qr-scan?token=' + encodeURIComponent(token), { method: 'DELETE' }); } catch (e) {}
       hideQrMode();
       setStep(2);
       startScan();

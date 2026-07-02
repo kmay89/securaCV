@@ -4857,8 +4857,14 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
   if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
+  // A live pair token (wizard path) or an authenticated admin credential
+  // (session cookie / Bearer — strictly stronger than a 10-minute pair
+  // token) may switch the device to standalone. The settings panel holds
+  // the latter and no pair token, so without this alternative its controls
+  // could never work post-setup.
   const char* token = body["token"] | "";
-  if (!csi_integration::pair_token_valid(token)) {
+  if (!csi_integration::pair_token_valid(token) &&
+      !api_auth_check_optional(req, g_device.api_token_str)) {
     JsonDocument doc;
     doc["ok"] = false;
     doc["code"] = "invalid_token";
@@ -4935,8 +4941,14 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // input too, so a single call covers missing, malformed, and expired.
   // We validate without consuming so the wizard can retry within the TTL
   // (e.g. user mistyped the password); the token ages out on its own.
+  // Wizard path: live pair token in the body. Settings-panel path: an
+  // authenticated admin credential (session cookie / Bearer) — strictly
+  // stronger than a 10-minute pair token. Without the alternative, the
+  // panel's Connect button could never succeed (it holds no pair token)
+  // and always reported "This setup link has expired".
   const char* token = body["token"] | "";
-  if (!csi_integration::pair_token_valid(token)) {
+  if (!csi_integration::pair_token_valid(token) &&
+      !api_auth_check_optional(req, g_device.api_token_str)) {
     JsonDocument doc;
     doc["ok"] = false;
     doc["code"] = "invalid_token";
@@ -5596,8 +5608,30 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   return http_send_json(req, "{\"ok\":true,\"scanning\":true}");
 }
 
+// Status/stop share the start handler's credential model: a live pair
+// token (the wizard sends ?token=<hex>) or an authenticated admin
+// credential. Without a gate, any on-AP peer could read the scanned SSID
+// or cancel a user's in-flight QR scan — POST already required the token,
+// so the read/cancel sides matching it is just closing the same door.
+static bool qr_scan_request_allowed(httpd_req_t* req) {
+  char qs[192];
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
+    char tok[csi_integration::PAIR_TOKEN_HEX_LEN + 2];
+    if (httpd_query_key_value(qs, "token", tok, sizeof(tok)) == ESP_OK &&
+        csi_integration::pair_token_valid(tok)) {
+      return true;
+    }
+  }
+  return api_auth_check_optional(req, g_device.api_token_str);
+}
+
 static esp_err_t handle_qr_scan_status(httpd_req_t* req) {
   g_health.http_requests++;
+
+  if (!qr_scan_request_allowed(req)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"forbidden\"}");
+  }
 
   JsonDocument doc;
   doc["ok"] = true;
@@ -5615,6 +5649,10 @@ static esp_err_t handle_qr_scan_status(httpd_req_t* req) {
 
 static esp_err_t handle_qr_scan_stop(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!qr_scan_request_allowed(req)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"forbidden\"}");
+  }
   g_qr_scan_active = false;
   return http_send_json(req, "{\"ok\":true}");
 }
@@ -5627,9 +5665,16 @@ static esp_err_t handle_qr_scan_stop(httpd_req_t* req) {
 
 #if FEATURE_BLE
 
+// All three BLE Discovery handlers are Bearer/session-gated like the rest
+// of the admin API. They historically shipped without a check and were only
+// unreachable because they overflowed the handler table — the capacity fix
+// resurrects them, so an unauthenticated LAN peer must not be able to read
+// nearby-device inventory or trigger chirp broadcasts.
+
 // GET /api/ble/status — BLE subsystem status
 static esp_err_t handle_ble_status(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   String json = ble_manager::statusJson();
   return http_send_json(req, json.c_str());
 }
@@ -5637,6 +5682,7 @@ static esp_err_t handle_ble_status(httpd_req_t* req) {
 // GET /api/nearby — Nearby Canary devices
 static esp_err_t handle_ble_nearby(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   String json = ble_manager::nearbyJson();
   return http_send_json(req, json.c_str());
 }
@@ -5644,6 +5690,7 @@ static esp_err_t handle_ble_nearby(httpd_req_t* req) {
 // POST /api/chirp/send — Trigger a manual chirp alert
 static esp_err_t handle_ble_chirp_send(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
 
   if (!ble_manager::isAvailable()) {
     return http_send_error(req, 503, "ble_unavailable");
