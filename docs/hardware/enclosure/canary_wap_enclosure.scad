@@ -269,7 +269,8 @@ assert(!e_mount || mount_style == "keyhole" || tab_cb_h == 0 || tab_cb_d > tab_h
        "tab_cb_d must be larger than tab_hole_d when counterbored");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t),
        "lid_edge must be 0, or between 0.01 and lid_t");
-assert(lid_edge2 >= 0 && lid_edge + lid_edge2 < lid_t, "lid_edge + lid_edge2 must stay below lid_t");
+assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
+       "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
 assert(label_text == "" || (label_depth > 0 && label_depth < lid_t),
        "label_depth must be between 0 and lid_t");
 assert(batt_wire_w >= 0, "batt_wire_w must be non-negative");

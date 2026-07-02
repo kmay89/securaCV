@@ -277,7 +277,8 @@ assert(mount_extra == 0 || kh_head_h + 1.5 <= floor_t + kh_extra, "keyhole pocke
 assert(mount_extra == 0 || kh_head_h > kh_face, "kh_head_h must exceed kh_face");
 assert(mount_extra == 0 || kh_head_d > kh_shank_d, "kh_head_d must be larger than kh_shank_d");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge must be 0, or between 0.01 and lid_t");
-assert(lid_edge2 >= 0 && lid_edge + lid_edge2 < lid_t, "lid_edge + lid_edge2 must stay below lid_t");
+assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
+       "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
 assert(label_text == "" || (label_depth > 0 && label_depth < lid_t), "label_depth must be between 0 and lid_t");
 assert(host == "devkit" || usb_zc - xiao_usb_drop - usb_h/2 >= floor_t + 1.0,
        "xiao_usb_drop too large — the XIAO port opening would breach the floor");
@@ -374,7 +375,7 @@ module teeth2d() {
 // horizontal bore along +X with a 45° teardrop roof + small flat cap: the bore
 // top prints without sagging (a plain horizontal cylinder droops at its crown)
 module tearbore_x(x0, y, z, l, d) {
-    r = d/2; cy = r + 0.75;
+    r = d/2; cy = min(r + 0.75, r*1.38);   // proportional clamp: cap stays valid at ANY bore size
     translate([x0, y, z]) rotate([90, 0, 0]) rotate([0, 90, 0])
         linear_extrude(l) union() {
             circle(d = d);
