@@ -52,6 +52,16 @@ inline bool ap_teardown_due(bool ap_only, bool sta_connected, uint32_t now_ms,
          (uint32_t)(now_ms - connected_since_ms) > grace_ms;
 }
 
+// Deferred post-provisioning reboot: armed (deadline != 0) once the STA
+// joins during first-boot setup, due when the grace elapses. Rebooting the
+// moment WL_CONNECTED fired killed the AP ~1 s after the join — before the
+// provisioning phone could re-associate and watch the success card — which
+// made the whole AP grace pointless in the very flow it exists for.
+// Wrap-safe signed-window compare.
+inline bool deferred_reboot_due(uint32_t now_ms, uint32_t deadline_ms) {
+  return deadline_ms != 0 && (int32_t)(now_ms - deadline_ms) >= 0;
+}
+
 }  // namespace provisioning_logic
 
 #endif  // SECURACV_PROVISIONING_LOGIC_H

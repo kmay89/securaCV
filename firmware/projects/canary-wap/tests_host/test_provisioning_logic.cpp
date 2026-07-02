@@ -85,11 +85,33 @@ static void test_ap_teardown() {
   CHECK(ap_teardown_due(false, true, near_wrap + GRACE + 1, near_wrap, GRACE));
 }
 
+static void test_deferred_reboot() {
+  const uint32_t GRACE = 120000u;
+  // Unarmed (deadline 0): never due, no matter the clock.
+  CHECK(!deferred_reboot_due(0, 0));
+  CHECK(!deferred_reboot_due(0xFFFFFFFFu, 0));
+  // Armed: not due inside the grace — this is the window in which the
+  // provisioning phone re-associates and reads the success card (rebooting
+  // at WL_CONNECTED, the old behavior, made the grace pointless).
+  uint32_t deadline = 1000 + GRACE;
+  CHECK(!deferred_reboot_due(1000, deadline));
+  CHECK(!deferred_reboot_due(deadline - 1, deadline));
+  // Due at/after the deadline.
+  CHECK(deferred_reboot_due(deadline, deadline));
+  CHECK(deferred_reboot_due(deadline + 5000, deadline));
+  // Wrap-safe: deadline just past the wrap, now just before it.
+  uint32_t near_wrap = 0xFFFFF000u;
+  uint32_t wrapped_deadline = near_wrap + GRACE;  // wraps
+  CHECK(!deferred_reboot_due(near_wrap, wrapped_deadline));
+  CHECK(deferred_reboot_due(wrapped_deadline, wrapped_deadline));
+}
+
 int main() {
   test_setup_timeout();
   test_scan_cache();
   test_sta_join();
   test_ap_teardown();
+  test_deferred_reboot();
   if (g_failures) {
     std::printf("%d check(s) FAILED\n", g_failures);
     return 1;

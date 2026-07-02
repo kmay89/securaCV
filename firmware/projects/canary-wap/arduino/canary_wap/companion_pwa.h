@@ -1094,7 +1094,9 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
       if (!r.ok) throw new Error('scan HTTP ' + r.status);
       const j = await r.json();
       if (j.scanning) {
-        scanTimer = setTimeout(() => pollScan(false), 800);
+        // Keep the force flag across follow-up polls so a "Scan again"
+        // can't be short-circuited back to the cached list mid-sweep.
+        scanTimer = setTimeout(() => pollScan(force), 800);
         return;
       }
       // Server returns either {ok,scanning:false,networks:[...]} or just

@@ -4683,6 +4683,11 @@ static ScanCacheEntry g_scan_cache[SCAN_CACHE_MAX];
 static int g_scan_cache_count = 0;
 static uint32_t g_scan_cache_at_ms = 0;
 
+// Non-zero = first-boot setup finished with a live WiFi join; reboot into
+// steady state once this deadline passes (see the deferred-reboot block in
+// loop() and provisioning_logic::deferred_reboot_due).
+static uint32_t g_setup_grace_reboot_at_ms = 0;
+
 static const char* wifi_auth_mode_name(wifi_auth_mode_t authMode) {
   if (authMode == WIFI_AUTH_OPEN) return "open";
   if (authMode == WIFI_AUTH_WPA_PSK) return "wpa";
@@ -4775,7 +4780,10 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
                val[0] == '1');
     }
   }
-  if (!force &&
+  // Never serve the cache while a sweep is running: a forced rescan's
+  // follow-up polls must keep reporting {scanning:true} until the NEW
+  // results are harvested, not short-circuit back to the stale list.
+  if (!force && !g_wifi_scan_in_progress &&
       provisioning_logic::scan_cache_fresh(now, g_scan_cache_at_ms,
                                            g_scan_cache_count > 0,
                                            SCAN_CACHE_TTL_MS)) {
@@ -8529,12 +8537,26 @@ void loop() {
   setup_wizard::dns_process();
   if (setup_wizard::is_active()) {
     setup_wizard::check_timeout();
-    if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED && g_setup_grace_reboot_at_ms == 0) {
+      // The join succeeded, but the provisioning phone is mid-handoff: the
+      // single radio just dragged the SoftAP to the STA's channel, and the
+      // phone needs to re-associate + poll /api/wifi to render the success
+      // card. Rebooting NOW (the old behavior) killed the AP ~1 s after the
+      // join and made every provisioning attempt look failed. Complete setup
+      // immediately, but defer the steady-state reboot past the same grace
+      // window the AP teardown honors.
       setup_wizard::mark_complete();
-      Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
-      delay(1000);
-      ESP.restart();
+      // mark_complete() stops the captive DNS; the phone still needs
+      // canary.local through the grace window.
+      setup_wizard::start_captive_portal();
+      g_setup_grace_reboot_at_ms = millis() + AP_DROP_GRACE_MS;
+      Serial.println("[OK] Setup complete — WiFi connected; rebooting after the provisioning grace window...");
     }
+  } else if (provisioning_logic::deferred_reboot_due(millis(), g_setup_grace_reboot_at_ms)) {
+    g_setup_grace_reboot_at_ms = 0;
+    Serial.println("[OK] Provisioning grace elapsed — rebooting into steady state...");
+    delay(500);
+    ESP.restart();
   }
 
   // ════════════════════════════════════════════════════════════════════════════
