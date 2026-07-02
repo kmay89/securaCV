@@ -3428,25 +3428,37 @@ static esp_err_t handle_config_post(httpd_req_t* req) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
 
+  // Only persist a field when its clamped value actually differs from the
+  // current setting — re-saving an unchanged config shouldn't burn a flash
+  // write cycle. (A null/missing field fails is<uint32_t>() and is skipped.)
   bool clamped = false;
   if (body["record_interval_ms"].is<uint32_t>()) {
     uint32_t req_v = body["record_interval_ms"].as<uint32_t>();
-    g_record_interval_ms = config_logic::clamp_record_interval_ms(
+    uint32_t v = config_logic::clamp_record_interval_ms(
         req_v, RECORD_INTERVAL_MIN_MS, RECORD_INTERVAL_MAX_MS);
-    clamped = clamped || (g_record_interval_ms != req_v);
-    nvs_store_u32(NVS_KEY_REC_INTERVAL, g_record_interval_ms);
+    clamped = clamped || (v != req_v);
+    if (v != g_record_interval_ms) {
+      g_record_interval_ms = v;
+      nvs_store_u32(NVS_KEY_REC_INTERVAL, v);
+    }
   }
   if (body["time_bucket_ms"].is<uint32_t>()) {
     uint32_t req_v = body["time_bucket_ms"].as<uint32_t>();
-    g_time_bucket_ms = config_logic::clamp_time_bucket_ms(req_v, TIME_BUCKET_MS);
-    clamped = clamped || (g_time_bucket_ms != req_v);
-    nvs_store_u32(NVS_KEY_TIME_BUCKET, g_time_bucket_ms);
+    uint32_t v = config_logic::clamp_time_bucket_ms(req_v, TIME_BUCKET_MS);
+    clamped = clamped || (v != req_v);
+    if (v != g_time_bucket_ms) {
+      g_time_bucket_ms = v;
+      nvs_store_u32(NVS_KEY_TIME_BUCKET, v);
+    }
   }
   if (body["log_level"].is<uint32_t>()) {
     uint32_t req_v = body["log_level"].as<uint32_t>();
-    g_log_min_level = config_logic::clamp_log_level(req_v, LOG_LEVEL_STORE_MAX);
-    clamped = clamped || (g_log_min_level != req_v);
-    nvs_store_u32(NVS_KEY_LOG_LEVEL, g_log_min_level);
+    uint8_t v = config_logic::clamp_log_level(req_v, LOG_LEVEL_STORE_MAX);
+    clamped = clamped || (v != req_v);
+    if (v != g_log_min_level) {
+      g_log_min_level = v;
+      nvs_store_u32(NVS_KEY_LOG_LEVEL, v);
+    }
   }
 
   log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Device config updated", nullptr);

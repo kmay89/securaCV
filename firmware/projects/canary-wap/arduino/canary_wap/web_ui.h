@@ -3138,10 +3138,20 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function saveRfSettings() {
+      const presence = parseInt(document.getElementById('rfPresenceThreshold').value);
+      const dwell = parseInt(document.getElementById('rfDwellThreshold').value);
+      const lost = parseInt(document.getElementById('rfLostTimeout').value);
+      // A blank/invalid field parses to NaN → serializes as JSON null, which
+      // the server reads as 0 and clamps to the minimum — a silent corruption.
+      // Reject before sending so an empty box can't quietly zero a threshold.
+      if (isNaN(presence) || isNaN(dwell) || isNaN(lost)) {
+        alert('Please enter valid numbers for all threshold fields.');
+        return;
+      }
       const settings = {
-        presence_threshold_sec: parseInt(document.getElementById('rfPresenceThreshold').value),
-        dwell_threshold_sec: parseInt(document.getElementById('rfDwellThreshold').value),
-        lost_timeout_sec: parseInt(document.getElementById('rfLostTimeout').value),
+        presence_threshold_sec: presence,
+        dwell_threshold_sec: dwell,
+        lost_timeout_sec: lost,
         emit_impulse_events: document.getElementById('rfEmitImpulse').checked
       };
       const data = await api('/api/rf/settings', 'POST', settings);
@@ -4844,10 +4854,20 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // DEVICE CONFIG
     // ══════════════════════════════════════════════════════════════════
     async function saveConfig() {
+      const interval = parseInt(document.getElementById('configRecordInterval').value);
+      const bucket = parseInt(document.getElementById('configTimeBucket').value);
+      const level = parseInt(document.getElementById('configLogLevel').value);
+      // A blank field parses to NaN → JSON null; guard so we never send a
+      // partial/confusing payload (the server skips null fields, but the user
+      // meant to set a value).
+      if (isNaN(interval) || isNaN(bucket) || isNaN(level)) {
+        alert('Please enter valid numbers for all configuration fields.');
+        return;
+      }
       const config = {
-        record_interval_ms: parseInt(document.getElementById('configRecordInterval').value),
-        time_bucket_ms: parseInt(document.getElementById('configTimeBucket').value),
-        log_level: parseInt(document.getElementById('configLogLevel').value)
+        record_interval_ms: interval,
+        time_bucket_ms: bucket,
+        log_level: level
       };
       const data = await api('/api/config', 'POST', config);
       if (!data.ok) { alert('Could not save settings. Try again.'); return; }
