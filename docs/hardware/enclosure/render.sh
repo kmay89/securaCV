@@ -62,11 +62,17 @@ vstl "canary_vision_enclosure_bracket.stl" -D 'part="bracket"'
 vstl "canary_vision_enclosure_knob.stl"    -D 'part="knob"'
 
 if [[ "${1:-}" != "--no-png" ]]; then
+  # one preview per printable variant — these drive the README's variant-picker gallery
   png "preview_all.png"     -D 'preset="battery_full"'    -D 'part="all"'
   png "preview_compact.png" -D 'preset="compact_plain"'   -D 'part="all"'
   png "preview_weather.png" -D 'preset="battery_weather"' -D 'part="all"'
   png "preview_coupon.png"  -D 'part="coupon"'
-  (SRC="$VSRC"; png "preview_vision.png" -D 'host="xiao"' -D 'preset="vision_weather"' -D 'part="all"')
+  (SRC="$VSRC"
+   png "preview_vision_xiao_indoor.png"  -D 'host="xiao"'   -D 'preset="vision_indoor"'  -D 'part="all"'
+   png "preview_vision_xiao_weather.png" -D 'host="xiao"'   -D 'preset="vision_weather"' -D 'part="all"'
+   png "preview_vision_devkit.png"       -D 'host="devkit"' -D 'preset="vision_indoor"'  -D 'part="all"'
+   png "preview_vision_bracket.png"      -D 'part="bracket"'
+   png "preview_vision_knob.png"         -D 'part="knob"')
 fi
 
 echo "Done: WAP (6 STLs + gasket + coupon) + Vision (6 STLs + gasket + bracket + knob)."
