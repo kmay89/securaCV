@@ -127,6 +127,10 @@ the encrypted DB.
 
 ## Track C — multi-canary fleet (2–3 boards)
 
+> 🖨️ Flashing several boards in sequence? The printable
+> [provisioning dock](./enclosure/canary_dock.scad) holds a numbered row of
+> XIAOs USB-up next to a hub, so board ↔ identity bookkeeping stays straight.
+
 **Goal:** move Opera mesh + Chirp from "code-complete, bench-gated ⚠️" to ✅.
 Prerequisite: each board individually passes Track A steps A1–A3.
 

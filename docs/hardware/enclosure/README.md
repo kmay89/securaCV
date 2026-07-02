@@ -1,17 +1,87 @@
 # Canary — 3D-Printable Enclosures
 
-Four released configurators live here (plus seven in-development designs — see the gallery):
+Printable housings, mounts and workshop tools for every SecuraCV **Canary**
+witness device. Everything is a parametric [OpenSCAD](https://openscad.org)
+"configurator": open a `.scad`, tick the options that match *your* hardware,
+and the model rebuilds itself. Ready-to-print STLs for the common
+configurations are committed next to the sources — **click any `.stl` link
+to spin it in GitHub's 3D viewer, no download needed.**
 
-| Device | Source | What it is |
-|--------|--------|------------|
-| **Canary WAP** (XIAO ESP32-S3 Sense) | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) | box enclosure with peripheral bays — [section below](#canary-wap--enclosure-v07) |
-| **Canary Vision** (Grove Vision AI V2 + OV5647 + stacked-XIAO or DevKit host) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v02) |
-| **Canary Vision · Doorbell** (stacked-XIAO build + 12 mm button) | [`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad) | Wyze/Ring-style doorbell: wall plate + T-studs + hidden security screw — [section below](#canary-vision--doorbell-v01) |
-| **Canary Sense** (MR60BHA2 60 GHz radar + stacked XIAO C6) | [`canary_sense_enclosure.scad`](./canary_sense_enclosure.scad) | RADOME enclosure — thin uniform window the radar sees through — [section below](#canary-sense--radome-enclosure-v01) |
+## New here? Your first hour
 
-All share the same print-tolerance system, weather-sealing approach (printed
-TPU gasket + drip-edge lid), engineering options and CI gate (every change
-re-renders all presets and mesh-checks the STLs).
+You need: a filament printer (PETG recommended), the boards for whichever
+Canary you're building (see the [hardware guide](../README.md)), and 4× M2
+screws per case. Then:
+
+1. **Print the [fit coupon](./canary_fit_coupon.scad)** (~25 min). Its
+   labelled stations test every fit used across this folder; if a station is
+   tight or loose it names the parameter to adjust. Calibrate once, reuse for
+   every part below.
+2. **Pick your case** from the [variant gallery](#pick-your-variant) —
+   released variants have committed STLs; slice and print (flat, open side
+   up, no supports — ever).
+3. **Fit your boards** — every case uses the same snap-clip cradles: boards
+   press in, no screws. Each device section below has its assembly steps.
+4. **Mount it** — print the wall bracket / plate for your case, or print a
+   [paper template](#the-complete-file-map) at 100 % and drill from that.
+
+Going **outdoors**? Read [Weather mode](#weather-mode-opt_seal) and the
+[Engineering & materials](#engineering--materials-security-build) section
+before printing — material choice and the gasket option matter out there.
+
+## Table of contents
+
+- [The complete file map](#the-complete-file-map) — every file, one line each
+- [Pick your variant](#pick-your-variant) — gallery with previews + 3D viewers
+- [Engineering & materials](#engineering--materials-security-build) — durability, materials, thermal kit, finish
+- Device deep-dives: [WAP](#canary-wap--enclosure-v07) · [Vision](#canary-vision--enclosure-v02) · [Doorbell](#canary-vision--doorbell-v01) · [Sense radome](#canary-sense--radome-enclosure-v01)
+
+## The complete file map
+
+**The four devices** (released — committed STLs, print-validated pipeline):
+
+| File | What it makes |
+|------|----------------|
+| [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) | **Canary WAP** box (XIAO ESP32-S3 Sense): peripheral bays for battery/GPS/buzzer/LED, three one-click presets, opt-in weather seal + wall mounts |
+| [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | **Canary Vision** camera unit (Grove Vision AI V2 + OV5647): GoPro-compatible tilt hinge with locking detents, wall bracket + thumbscrew knob |
+| [`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad) | **Doorbell** form of the Vision build (Ring/Wyze size): camera + lit button, wedge-able wall plate, hidden security screw |
+| [`canary_sense_enclosure.scad`](./canary_sense_enclosure.scad) | **Canary Sense** radar witness (MR60BHA2 + XIAO C6): the front is a thin RADOME window the 60 GHz beam passes through |
+
+**In development** (geometry verified, not yet print-validated — render from
+the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
+
+| File | What it makes |
+|------|----------------|
+| [`canary_watch_station.scad`](./canary_watch_station.scad) | Desk **monitoring puck** for the round-display XIAO stack ([display research](../display_research.md)) |
+| [`canary_sense_stand.scad`](./canary_sense_stand.scad) | Weighted **bedside stand** for the Sense unit (wellbeing channel) |
+| [`canary_sense_gang.scad`](./canary_sense_gang.scad) | **In-wall flush mount**: a single-gang faceplate that IS the radome |
+| [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) | **Outlet cradle**: hang any case off a USB wall adapter, zero hardware |
+| [`canary_relay_solar.scad`](./canary_relay_solar.scad) | **Solar LoRa relay pod** for off-grid mesh backhaul (pole-mounted) |
+| [`canary_combo.scad`](./canary_combo.scad) | **Radar + camera combo** witness in one housing |
+| [`canary_hub_din.scad`](./canary_hub_din.scad) | **Server hub**: vented Raspberry Pi 5 box with a DIN-rail clip |
+| [`canary_jbox.scad`](./canary_jbox.scad) | **Covert shell** styled as a utility junction box (lawful use; pair with the sign) |
+| [`canary_sign.scad`](./canary_sign.scad) | **Witness signage plate** — "presence sensing in use, no video stored" |
+| [`canary_hammond_chassis.scad`](./canary_hammond_chassis.scad) | **Chassis plate** carrying any Canary stack inside the off-the-shelf Hammond IP66 box |
+| [`canary_mount_adapters.scad`](./canary_mount_adapters.scad) | **Mount adapters**: corner wedge, magnet plate, pole plate, drill template — all on the shared stud interface |
+
+**Workshop tools** (print/use alongside any build):
+
+| File | What it makes |
+|------|----------------|
+| [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) | **Print first**: one coupon that calibrates every fit in this folder |
+| [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) | Labelled **bring-up plate** holding the XIAO + buzzer/LED/button/reed while you wire and test ([bench guide](../bench_bringup.md)) |
+| [`canary_dock.scad`](./canary_dock.scad) | Numbered **provisioning dock** for flashing a fleet of XIAOs in order |
+| [`canary_inserts.scad`](./canary_inserts.scad) | Small **glue/press-in parts**: buzzer horn, anti-glare ring, printed cable gland |
+| [`canary_shop_tools.scad`](./canary_shop_tools.scad) | Heat-set **insert press guide** + doorbell button accent ring |
+| [`canary_templates_2d.scad`](./canary_templates_2d.scad) → [studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg) | **1:1 paper drill templates** — print the SVG at 100 % (check the 20 mm square), tape to the wall, drill |
+| [`render.sh`](./render.sh) | Regenerates every STL, preview and SVG from source (CI runs it on every change) |
+
+Everything shares one design language, so skills transfer between parts: the
+same three **print-tolerance knobs** (`tol_slide`/`tol_press`/`tol_hole` —
+the fit coupon tunes them), the same **snap-clip board cradles**, the same
+**two-stud wall-hanging interface**, and the same opt-in **weather sealing**
+(printed TPU gasket + drip-edge lid). A CI gate re-renders and mesh-checks
+all ~60 parts on every change, so what's in this folder always builds.
 
 ## Pick your variant
 
