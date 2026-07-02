@@ -6078,6 +6078,43 @@ static esp_err_t handle_ack_all_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_ack_all(req);
 }
+
+// POST /api/logs/rotate — storage housekeeping. Witness export bundles
+// accumulate at /sd/EXPORT/bundle_<ms>.json every time the operator exports,
+// and datamgmt's periodic sweep only bounds /sd/WITNESS and /sd/HEALTH — so
+// EXPORT grows unbounded and is what actually fills the card. This trims it
+// to the newest EXPORT_KEEP_FILES via the tested count-based
+// datamgmt::rotate_dir. It NEVER touches /sd/WITNESS or /sd/CHAIN — export
+// bundles are regenerable disclosure artifacts, the sealed evidence is not
+// (Invariant IV).
+static esp_err_t handle_logs_rotate(httpd_req_t* req) {
+  g_health.http_requests++;
+  JsonDocument doc;
+#if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
+  if (!sd_is_available()) {
+    doc["ok"] = false;
+    doc["error"] = "SD card not available";
+  } else {
+    static const uint32_t EXPORT_KEEP_FILES = 20;  // newest N export bundles kept
+    uint32_t deleted = datamgmt::rotate_dir("/sd/EXPORT", EXPORT_KEEP_FILES);
+    doc["ok"] = true;
+    doc["deleted_count"] = deleted;
+    doc["kept"] = EXPORT_KEEP_FILES;
+    log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "Export bundles rotated", nullptr);
+  }
+#else
+  doc["ok"] = false;
+  doc["error"] = "Storage management not built into this firmware";
+#endif
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+static esp_err_t handle_logs_rotate_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_logs_rotate(req);
+}
+
 static esp_err_t handle_witness_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_witness(req);
@@ -6365,6 +6402,9 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all_auth };
   httpd_register_uri_handler(server, &ack_all);
 
+  httpd_uri_t logs_rotate = { .uri = "/api/logs/rotate", .method = HTTP_POST, .handler = handle_logs_rotate_auth };
+  httpd_register_uri_handler(server, &logs_rotate);
+
   httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness_auth };
   httpd_register_uri_handler(server, &witness);
 
@@ -6463,6 +6503,7 @@ static void start_http_server() {
                                        // calibrate/settings/mqtt/tune/pair-token/…)
   const int wifi_presence_handlers = 4;   // /api/presence/{combined,wifi,wifi/start,wifi/stop}
   const int rf_presence_handlers = 7;     // /api/rf/{status,settings GET/POST,conformance,enable,disable,rotate}
+  const int datamgmt_handlers = 1;        // /api/logs/rotate (registered unconditionally)
   const int household_handlers = 6;       // /api/household* + /api/presence override
   const int audible_chirp_handlers = 4;   // /api/audible-chirp{,/play,/test,/config}
 #if FEATURE_ACOUSTIC_EVENTS
@@ -6499,10 +6540,10 @@ static void start_http_server() {
 #endif
   const int handler_headroom = 24;    // Reserve for future additions
   const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
-      + rf_presence_handlers + household_handlers + audible_chirp_handlers
-      + audio_handlers + camera_handlers + qr_handlers + mesh_handlers
-      + chirp_handlers + bluetooth_handlers + ble_discovery_handlers
-      + handler_headroom;
+      + rf_presence_handlers + datamgmt_handlers + household_handlers
+      + audible_chirp_handlers + audio_handlers + camera_handlers + qr_handlers
+      + mesh_handlers + chirp_handlers + bluetooth_handlers
+      + ble_discovery_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER

@@ -2369,7 +2369,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
           </div>
           <div style="margin-top:1rem;">
-            <button class="btn btn-secondary" onclick="rotateOldLogs()" title="Delete health logs older than 30 days from SD card">Rotate Old Logs (30+ days)</button>
+            <button class="btn btn-secondary" onclick="rotateOldLogs()" title="Delete older witness-export bundles from the SD card to free space. Sealed witness records and the hash chain are never touched.">Clean up old export bundles</button>
           </div>
         </div>
       </div>
@@ -4864,7 +4864,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.')) { try { await api('/api/reboot', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting…'); } }
     async function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { try { await api('/api/safe-mode/retry', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting into full operation…'); } }
-    function rotateOldLogs() { featureNotWired('SD log rotation'); }
+    async function rotateOldLogs() {
+      if (!confirm('Delete older witness-export bundles from the SD card to free space? Sealed witness records and the hash chain are NOT affected — only regenerable export files are removed.')) return;
+      const data = await api('/api/logs/rotate', 'POST', {});
+      if (data.ok) {
+        alert(data.deleted_count > 0
+          ? ('Removed ' + data.deleted_count + ' old export bundle(s); kept the newest ' + (data.kept || 20) + '.')
+          : 'Nothing to clean up — no export bundles beyond the keep limit.');
+      } else {
+        alert('Could not clean up: ' + (data.error || 'unknown error'));
+      }
+    }
 
     // ══════════════════════════════════════════════════════════════════
     // UTILITIES
