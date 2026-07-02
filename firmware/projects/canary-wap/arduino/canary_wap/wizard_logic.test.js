@@ -79,3 +79,24 @@ describe('connectOutcome', () => {
     assert.equal(out.isTokenErr, false);
   });
 });
+
+describe('capabilityNotice', () => {
+  it('is fully hidden in wizard (token) mode — Web Bluetooth is irrelevant there', () => {
+    assert.equal(L.capabilityNotice(true, false, false).show, false);
+    assert.equal(L.capabilityNotice(true, true, true).show, false);
+  });
+  it('insecure origin is an informational note, and never mentions failure', () => {
+    const n = L.capabilityNotice(false, false, false);
+    assert.equal(n.show, true);
+    assert.match(n.text, /work fine/i);
+    assert.doesNotMatch(n.text, /insecure origin/i);
+  });
+  it('missing Web Bluetooth points at Bluefy', () => {
+    const n = L.capabilityNotice(false, true, false);
+    assert.equal(n.show, true);
+    assert.match(n.text, /Bluefy/);
+  });
+  it('capable browser gets no banner', () => {
+    assert.equal(L.capabilityNotice(false, true, true).show, false);
+  });
+});

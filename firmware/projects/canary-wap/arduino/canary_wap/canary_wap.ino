@@ -4657,6 +4657,57 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// ── WiFi scan cache ─────────────────────────────────────────────────────
+// A scan hops the single radio across every channel, stalling the SoftAP a
+// provisioning phone is attached to — the classic way the wizard's scan
+// fetch died mid-flight. Results are therefore cached and served for
+// SCAN_CACHE_TTL_MS (a boot-time pre-scan fills the cache before any phone
+// joins); only an explicit ?force=1 ("Scan again") sweeps the radio while a
+// client is on the AP. Freshness decision: provisioning_logic::scan_cache_fresh.
+static const uint32_t SCAN_CACHE_TTL_MS = 5UL * 60UL * 1000UL;
+static const int SCAN_CACHE_MAX = 20;
+struct ScanCacheEntry {
+  char ssid[33];
+  int32_t rssi;
+  int32_t channel;
+  char security[12];
+};
+static ScanCacheEntry g_scan_cache[SCAN_CACHE_MAX];
+static int g_scan_cache_count = 0;
+static uint32_t g_scan_cache_at_ms = 0;
+
+static const char* wifi_auth_mode_name(wifi_auth_mode_t authMode) {
+  if (authMode == WIFI_AUTH_OPEN) return "open";
+  if (authMode == WIFI_AUTH_WPA_PSK) return "wpa";
+  if (authMode == WIFI_AUTH_WPA2_PSK) return "wpa2";
+  if (authMode == WIFI_AUTH_WPA_WPA2_PSK) return "wpa/wpa2";
+  if (authMode == WIFI_AUTH_WPA3_PSK) return "wpa3";
+  if (authMode == WIFI_AUTH_WPA2_WPA3_PSK) return "wpa2/wpa3";
+  return "other";
+}
+
+static esp_err_t send_scan_cache_json(httpd_req_t* req, bool from_cache, uint32_t now) {
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["scanning"] = false;
+  doc["count"] = g_scan_cache_count;
+  doc["cached"] = from_cache;
+  if (from_cache) {
+    doc["age_s"] = (uint32_t)(now - g_scan_cache_at_ms) / 1000;
+  }
+  JsonArray networks = doc["networks"].to<JsonArray>();
+  for (int i = 0; i < g_scan_cache_count; i++) {
+    JsonObject net = networks.add<JsonObject>();
+    net["ssid"] = g_scan_cache[i].ssid;
+    net["rssi"] = g_scan_cache[i].rssi;
+    net["channel"] = g_scan_cache[i].channel;
+    net["security"] = g_scan_cache[i].security;
+  }
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
 // A request that asked for the device by its real name (vs a captive-portal
 // assistant probing a hijacked foreign domain). Same gate the "/" redirect
 // uses before minting a pairing token into the wizard URL.
@@ -4704,6 +4755,26 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   // out from under them (the 15-min window is for abandonment only).
   setup_wizard::touch();
 
+  // Serve the cache when it's fresh — unless the client explicitly asked
+  // for a live sweep (?force=1, the wizard's "Scan again"). See the cache
+  // doc block above for why sweeping under an attached phone is harmful.
+  uint32_t now = millis();
+  bool force = false;
+  {
+    char qs[32] = {0};
+    if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
+      char val[4] = {0};
+      force = (httpd_query_key_value(qs, "force", val, sizeof(val)) == ESP_OK &&
+               val[0] == '1');
+    }
+  }
+  if (!force &&
+      provisioning_logic::scan_cache_fresh(now, g_scan_cache_at_ms,
+                                           g_scan_cache_count > 0,
+                                           SCAN_CACHE_TTL_MS)) {
+    return send_scan_cache_json(req, true, now);
+  }
+
   // Check if async scan is complete
   int16_t scanResult = WiFi.scanComplete();
 
@@ -4731,42 +4802,29 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
-  // Scan complete - return results
+  // Scan complete — refill the cache and serve from it.
   g_wifi_scan_in_progress = false;
   if (g_wifi_status.state == WIFI_PROV_SCANNING) {
     g_wifi_status.state = g_wifi_creds.configured ? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY;
   }
 
   int n = scanResult;
-  JsonDocument doc;
-  doc["ok"] = true;
-  doc["scanning"] = false;
-  doc["count"] = n;
-
-  JsonArray networks = doc["networks"].to<JsonArray>();
-
-  for (int i = 0; i < n && i < 20; i++) {
-    JsonObject net = networks.add<JsonObject>();
-    net["ssid"] = WiFi.SSID(i);
-    net["rssi"] = WiFi.RSSI(i);
-    net["channel"] = WiFi.channel(i);
-
-    wifi_auth_mode_t authMode = WiFi.encryptionType(i);
-    const char* security = "open";
-    if (authMode == WIFI_AUTH_WPA_PSK) security = "wpa";
-    else if (authMode == WIFI_AUTH_WPA2_PSK) security = "wpa2";
-    else if (authMode == WIFI_AUTH_WPA_WPA2_PSK) security = "wpa/wpa2";
-    else if (authMode == WIFI_AUTH_WPA3_PSK) security = "wpa3";
-    else if (authMode == WIFI_AUTH_WPA2_WPA3_PSK) security = "wpa2/wpa3";
-    else if (authMode != WIFI_AUTH_OPEN) security = "other";
-    net["security"] = security;
+  g_scan_cache_count = 0;
+  for (int i = 0; i < n && i < SCAN_CACHE_MAX; i++) {
+    ScanCacheEntry& e = g_scan_cache[g_scan_cache_count++];
+    strncpy(e.ssid, WiFi.SSID(i).c_str(), sizeof(e.ssid) - 1);
+    e.ssid[sizeof(e.ssid) - 1] = '\0';
+    e.rssi = WiFi.RSSI(i);
+    e.channel = WiFi.channel(i);
+    strncpy(e.security, wifi_auth_mode_name(WiFi.encryptionType(i)),
+            sizeof(e.security) - 1);
+    e.security[sizeof(e.security) - 1] = '\0';
   }
+  g_scan_cache_at_ms = now;
 
   WiFi.scanDelete();
 
-  String response;
-  serializeJson(doc, response);
-  return http_send_json(req, response.c_str());
+  return send_scan_cache_json(req, false, now);
 }
 
 static esp_err_t handle_wifi_connect(httpd_req_t* req) {
@@ -7013,6 +7071,18 @@ static void wifi_init_provisioning() {
     Serial.println(setup_wizard::is_active()
                      ? "[OK] Captive DNS active (first-boot setup)"
                      : "[OK] Captive DNS active (AP management)");
+  }
+
+  // First-boot pre-scan: sweep for home networks NOW, before any phone has
+  // joined the SoftAP. A scan hops the single radio across channels and
+  // stalls the AP, so doing it later — under the provisioning phone — is
+  // exactly what dropped the wizard's first /api/wifi/scan fetch ("Scan
+  // failed: Load failed"). The results land in the scan cache on the first
+  // endpoint hit and the phone gets an instant list instead of a radio sweep.
+  if (setup_wizard::is_active()) {
+    g_wifi_scan_in_progress = true;
+    WiFi.scanNetworks(true, false, false, 300);  // async
+    Serial.println("[OK] Pre-scanning WiFi networks for the setup wizard");
   }
 
   char msg[64];

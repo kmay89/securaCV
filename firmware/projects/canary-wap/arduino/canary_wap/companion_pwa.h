@@ -81,6 +81,10 @@ h1 .sub{display:block;font-size:.75rem;color:var(--muted);font-weight:400;margin
 .badge-disconnected{background:rgba(139,149,168,.15);color:var(--muted)}
 .err{color:var(--danger);font-size:.8rem;margin-top:.5rem;padding:.5rem;background:rgba(245,101,101,.05);border:1px solid rgba(245,101,101,.2);border-radius:8px;display:none}
 .err.show{display:block}
+/* Informational variant of the same banner slot: expected, permanent
+   states (e.g. "no HTTPS here, Bluetooth console unavailable") that are
+   not the user's problem and must not read as an alarm. */
+.err.note{color:var(--muted);background:rgba(139,149,168,.08);border-color:rgba(139,149,168,.25)}
 .hidden{display:none!important}
 .card-title{font-size:.75rem;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:.5rem;display:flex;justify-content:space-between;align-items:center}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--muted);margin-right:.4rem;vertical-align:middle}
@@ -718,6 +722,21 @@ const WizardLogic = (function () {
     return typeof t === 'string' && /^[0-9a-fA-F]{64}$/.test(t);
   }
 
+  // The capability banner under the BLE console. Web Bluetooth is
+  // irrelevant to the HTTP setup wizard (wizardMode), and over plain
+  // http:// served from the device's own AP the missing-HTTPS state is
+  // permanent and expected — an informational note, never an alarm.
+  function capabilityNotice(wizardMode, isSecureContext, hasWebBluetooth) {
+    if (wizardMode) return { show: false, text: '' };
+    if (!isSecureContext) {
+      return { show: true, text: 'Bluetooth features are off on this connection: Web Bluetooth needs HTTPS, and this page is served over plain http:// from the Canary itself. WiFi setup and the dashboard work fine without it.' };
+    }
+    if (!hasWebBluetooth) {
+      return { show: true, text: 'This browser has no Web Bluetooth. On iOS, install Bluefy from the App Store to use the Bluetooth console.' };
+    }
+    return { show: false, text: '' };
+  }
+
   // What should the connect submit do with a /api/wifi/connect response?
   //   'proceed'       — credentials accepted, start polling
   //   'refresh-retry' — stale token and we haven't retried yet: fetch a
@@ -734,7 +753,7 @@ const WizardLogic = (function () {
     return { action: 'fail', isTokenErr: isTokenErr };
   }
 
-  return { isPairToken, connectOutcome };
+  return { isPairToken, connectOutcome, capabilityNotice };
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
 /* WIZARD_LOGIC:END */
@@ -774,6 +793,20 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
   // The BLE flow's tab nav and action card are also irrelevant here.
   ['tab-nav','actions-card'].forEach(k => {
     const el = $w(k); if (el) el.classList.add('hidden');
+  });
+
+  // Never let the typed WiFi password linger for the next person who picks
+  // up the phone: wipe the field whenever the page is backgrounded or
+  // navigated away. (The app never stores it — Safari's page cache is what
+  // restores form values on return, and this defeats that for the one
+  // field that matters.)
+  const wipePassword = () => {
+    const el = $w('wiz-pw');
+    if (el) el.value = '';
+  };
+  window.addEventListener('pagehide', wipePassword);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') wipePassword();
   });
 
   let pickedSsid = '';
@@ -1008,13 +1041,17 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     });
   }
 
-  async function pollScan() {
+  async function pollScan(force) {
     try {
-      const r = await fetch('/api/wifi/scan', { cache: 'no-store' });
+      // force=1 only on an explicit "Scan again": a live sweep hops the
+      // radio and can briefly stall the AP this phone is attached to, so
+      // the default path prefers the device's pre-scanned cache.
+      const r = await fetch('/api/wifi/scan' + (force ? '?force=1' : ''),
+                            { cache: 'no-store' });
       if (!r.ok) throw new Error('scan HTTP ' + r.status);
       const j = await r.json();
       if (j.scanning) {
-        scanTimer = setTimeout(pollScan, 800);
+        scanTimer = setTimeout(() => pollScan(false), 800);
         return;
       }
       // Server returns either {ok,scanning:false,networks:[...]} or just
@@ -1038,16 +1075,16 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     }
   }
 
-  function startScan() {
+  function startScan(force) {
     setErr(2, '');
     const list = $w('wiz-nets');
     list.setAttribute('aria-busy', 'true');
     list.innerHTML = '<div class="wiz-spin">Looking for networks…</div>';
     if (scanTimer) clearTimeout(scanTimer);
-    pollScan();
+    pollScan(!!force);
   }
 
-  $w('wiz-rescan').addEventListener('click', startScan);
+  $w('wiz-rescan').addEventListener('click', () => startScan(true));
 
   // ── Card 3: password + connect ─────────────────────────────────────────
   $w('wiz-back-2').addEventListener('click', () => setStep(2));
@@ -1766,7 +1803,7 @@ let otaInProgress = false;
 let lastOtaState = 'idle';
 
 const $ = (id) => document.getElementById(id);
-function showErr(msg){const e=$('err-msg');e.textContent=msg;e.classList.add('show');}
+function showErr(msg){const e=$('err-msg');e.classList.remove('note');e.textContent=msg;e.classList.add('show');}
 function clearErr(){$('err-msg').classList.remove('show');}
 
 function fmtUptime(sec){
@@ -2784,17 +2821,25 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 // (1) insecure context → tell them to use HTTPS; (2) no Web Bluetooth
 // API → tell iOS users to install Bluefy.
 (function checkCapabilities(){
-  const btn = $('connect-btn');
-  const disable = (msg) => {
-    btn.disabled = true;
-    btn.style.opacity = '0.5';
-    showErr(msg);
-  };
-  if (!window.isSecureContext) {
-    disable('This page is loaded over an insecure origin. Web Bluetooth requires HTTPS or localhost — open over https:// to connect.');
-  } else if (!navigator.bluetooth) {
-    disable('Web Bluetooth is not available in this browser. On iOS, install Bluefy from the App Store and reopen this page in it.');
+  const wizardMode = WizardLogic.isPairToken(
+    new URLSearchParams(window.location.search).get('token'));
+  if (wizardMode) {
+    // The WiFi wizard neither needs Web Bluetooth nor should it show
+    // BLE-console chrome — hide the Bluefy footer along with the banner.
+    const f = document.querySelector('footer');
+    if (f) f.classList.add('hidden');
+    return;
   }
+  const n = WizardLogic.capabilityNotice(wizardMode, window.isSecureContext,
+                                         !!navigator.bluetooth);
+  if (!n.show) return;
+  const btn = $('connect-btn');
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  const e = $('err-msg');
+  e.textContent = n.text;
+  e.classList.add('note');   // informational styling, not an alarm
+  e.classList.add('show');
 })();
 
 if ('serviceWorker' in navigator) {
