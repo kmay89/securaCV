@@ -25,6 +25,10 @@ usb_ang  = 270;      // XIAO USB direction, degrees (0 = +X; 270 = -Y = rear/dow
 usb_w    = 10.5;
 usb_h    = 6.5;
 
+/* [Battery] — optional LiPo laid in the drum back (display has JST + charger) */
+opt_batt = false;
+batt_l = 30.0;  batt_w = 20.0;  batt_h = 3.4;   // 302030-class cell — MEASURE
+
 /* [Puck] */
 drum_d   = 52.0;     // drum outer diameter (posts fully clear of the 39 mm disc)
 wall_t   = 2.5;
@@ -69,6 +73,7 @@ post_h  = drum_h - back_t - kh_extra - 1.5;  // posts stop short of the rim (the
 assert(seat_d < cav_d - 1, "display disc too large for the drum bore — grow drum_d");
 assert(bez_ap_d < disc_d - 3, "aperture must land on the display bezel ring");
 assert(kh_head_h + 1.2 <= back_t + kh_extra, "keyhole pocket too deep — raise kh_extra");
+assert(!opt_batt || sqrt(pow(batt_l/2,2) + pow(batt_w/2 + 2,2)) < cav_d/2, "battery too large for the drum bore");
 echo(str("Canary Watch station v0.1-dev — drum ", drum_d, " x ", drum_h + bez_t,
          " mm, stand tilt ", tilt, " deg  (IN DEVELOPMENT)"));
 
@@ -101,6 +106,10 @@ module drum() {
                 translate([0, 0, -0.02]) cylinder(d1 = drum_d - 1.0, d2 = drum_d + 0.12, h = 0.53);
             }
         }
+        // LiPo fence rails on the drum back floor (cell strapped with foam tape)
+        if (opt_batt) for (s2 = [1, -1])
+            translate([-batt_l/2, s2*(batt_w/2 + 1.0) - 1.0, back_t + kh_extra - 0.01])
+                cube([batt_l, 2.0, 2.0]);
         // bezel screw posts INSIDE the bore, fused to the wall — added AFTER the
         // cavity cut so the bore cannot carve them away (review catch)
         for (a = [0, 180]) rotate([0, 0, a])

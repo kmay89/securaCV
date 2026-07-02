@@ -110,7 +110,8 @@ skirt_t       = 1.6;
 
 /* [Wall plate + T-stud hooks + security screw] */
 plate_t     = 4.0;    // plate thickness at the THIN end
-plate_wedge = 0;      // wedge angle so the camera faces the approach  // [0:5:15]
+plate_wedge = 0;      // vertical wedge: camera tilts down the approach  // [0:5:15]
+plate_wedge_x = 0;    // horizontal wedge: aims left/right (corner installs)  // [-15:5:15]
 stud_y      = 26.0;   // T-stud/pocket centres at y = ±stud_y
 kh_head_d   = 7.0;    // pocket head pass (stud head 6.6)
 kh_shank_d  = 4.2;    // pocket slot (stud stem 4.0)
@@ -208,6 +209,7 @@ assert(kh_head_h + 1.5 <= floor_t + kh_extra, "stud pocket too deep — raise kh
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge out of range");
 assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
        "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
+assert(abs(plate_wedge_x) <= 15 && plate_wedge <= 15, "keep wedge angles <= 15 degrees");
 assert(well_cy + usb_exit_dy - usb_exit_h/2 >= -stud_y + kh_slot_l/2 + (kh_head_d + 0.6)/2 + 0.8,
        "cable exit overlaps the lower T-stud pocket — raise usb_exit_dy or stud_y");
 assert(abs(usb_exit_dx) + usb_exit_w/2 <= inner_x/2 - 1, "cable exit too wide/offset for the cavity");
@@ -468,25 +470,27 @@ module tstud(yc, zbase) {
 // thin at the bottom (-Y), thick at the top: the camera tilts DOWN toward
 // the walk-up, the usual doorbell wedge direction
 function plate_z(y) = plate_t + (plate_wedge > 0 ? (y + out_y/2) * tan(plate_wedge) : 0);
+// extra height the horizontal wedge adds at the plate edge
+function plate_zx() = out_x/2 * tan(abs(plate_wedge_x));
 
 module plate() {
-    hmax = plate_z(out_y/2) + 0.1;
+    hmax = plate_z(out_y/2) + plate_zx() + 0.1;
     foot_z = plate_t + kh_extra + 3.0;         // security bore height = body pilot height
     difference() {
         union() {
             // slab with a sloped top: straight prism cut by the wedge plane
             difference() {
                 rrect(out_x, out_y, rr, hmax);
-                translate([0, -out_y/2, plate_t]) rotate([plate_wedge, 0, 0])
-                    translate([-out_x/2 - 1, -1, 0]) cube([out_x + 2, out_y + rr + 2, hmax + out_y]);
+                translate([0, -out_y/2, plate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0])
+                    translate([-out_x - 1, -1, 0]) cube([2*out_x + 2, out_y + rr + 2, hmax + out_y + out_x]);
             }
             // studs, L-foot and (below) the security bore all live in the TILTED
             // frame so they stay aligned with the body resting on the wedge face
-            translate([0, -out_y/2, plate_t]) rotate([plate_wedge, 0, 0]) {
+            translate([0, -out_y/2, plate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0]) {
                 tstud(out_y/2 - stud_y, -0.2);
                 tstud(out_y/2 + stud_y, -0.2);
                 // bottom L-foot: sits under the body's bottom wall, carries the security screw
-                translate([-6, -4, -plate_t]) cube([12, 4.5, foot_z + 4]);
+                translate([-6, -4, -plate_t - plate_zx()]) cube([12, 4.5, foot_z + plate_zx() + 4]);
             }
         }
         // wall screws: through-holes + flat counterbores at a CONSTANT 3 mm from
@@ -502,7 +506,7 @@ module plate() {
             for (s = [1, -1]) translate([s*(usb_exit_w - usb_exit_h)/2, 0, 0])
                 cylinder(d = usb_exit_h + 4, h = hmax + 1);
         // security-screw bore: up through the foot into the body's pilot (tilted frame)
-        translate([0, -out_y/2, plate_t]) rotate([plate_wedge, 0, 0])
+        translate([0, -out_y/2, plate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0])
             translate([0, -4.1, foot_z - plate_t]) rotate([-90, 0, 0])
                 cylinder(d = sec_screw_d + 0.4, h = 5);
     }

@@ -1,0 +1,133 @@
+// ============================================================================
+//  Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  The T-stud/keyhole interface is the de-facto Canary mounting standard:
+//  every case with blind keyhole pockets hangs on two Ø4 studs with Ø6.6
+//  heads. These adapters carry that interface into three more scenarios:
+//    part = "corner"   — 90° inside-corner wedge (two 45° wall faces)
+//    part = "magnet"   — magnet plate (4 x Ø20x3 pockets + steel-surface note)
+//    part = "pole"     — strap plate (hose-clamp/zip-tie channels)
+//    part = "template" — 1 mm drill/hang template (stud + cable marks)
+//
+//  Set stud_gap to the target case's pocket spacing (see the README table:
+//  Vision/Sense = 2*(inner/2 - kh_inset); WAP = 2*kh_x, preset-dependent).
+//
+//  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
+// ============================================================================
+
+/* [What to render] */
+part = "corner";     // ["corner","magnet","pole","template"]
+
+/* [T-stud interface] */
+stud_gap = 30.0;     // stud spacing — match the target case's keyhole pockets
+kh_face  = 1.0;
+
+/* [Plate] */
+ap_w = 36.0;         // adapter plate width
+ap_t = 4.0;          // plate thickness
+screw_d = 4.2;       // wall screws (#8 / M4), counterbored
+
+/* [Magnet plate] */
+mag_d = 20.0;        // magnet pocket diameter (Ø20 x 3 neodymium discs)
+mag_t = 3.0;
+mag_n = 4;
+
+/* [Pole plate] */
+strap_w = 9.0;
+strap_t = 2.2;
+
+/* [Template] */
+cable_oval = true;   // mark the doorbell/relay-style cable oval too
+
+/* [Print tolerances] */
+tol_slide = 0.20;
+tol_press = 0.10;
+tol_hole  = 0.30;
+
+/* [Quality] */
+$fa = 3; $fs = 0.4;
+
+ap_l = stud_gap + 26;
+echo(str("Canary mount adapters v0.1-dev — ", part, ", stud_gap ", stud_gap, "  (IN DEVELOPMENT)"));
+
+module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
+module tstud(yc, zbase) {
+    translate([0, yc, zbase]) {
+        cylinder(d = 4.0, h = kh_face + 0.4);
+        translate([0, 0, kh_face + 0.4]) cylinder(d1 = 4.0, d2 = 6.6, h = 1.2);
+        translate([0, 0, kh_face + 1.6]) cylinder(d = 6.6, h = 0.8);
+    }
+}
+module cb_screw(x, y, t) {           // through-hole + pan-head counterbore from the front
+    translate([x, y, -0.1]) cylinder(d = screw_d, h = t + 3);
+    translate([x, y, t - 2.2]) cylinder(d = screw_d + 4.4, h = 3);
+}
+
+// 90° inside-corner wedge: two 45° wall wings, studs on the outward face
+module corner() {
+    difference() {
+        union() {
+            // prism body: right-isosceles cross-section, studs face the hypotenuse
+            rotate([0, 0, 45]) linear_extrude(ap_l, center = false)
+                polygon([[0, 0], [ap_w*0.9, 0], [0, ap_w*0.9]]);
+            // stud face pad on the hypotenuse
+            rotate([0, 0, 45]) translate([0, 0, ap_l/2]) rotate([0, 0, 45])
+                translate([-ap_w/2, -1.0, -ap_l/2]) cube([ap_w, 1.01, ap_l]);
+        }
+        // wall screws through each wing (two per wing)
+        for (w = [0, 90]) rotate([0, 0, 45]) rotate([0, 0, w == 0 ? 0 : 0])
+            for (zz = [ap_l*0.25, ap_l*0.75])
+                if (w == 0)
+                    translate([ap_w*0.55, 3.5, zz]) rotate([90, 0, 0])
+                        { cylinder(d = screw_d, h = 8); translate([0,0,-2]) cylinder(d = screw_d + 4.4, h = 2.6); }
+                else
+                    translate([3.5, ap_w*0.55, zz]) rotate([0, -90, 0])
+                        { cylinder(d = screw_d, h = 8); translate([0,0,-2]) cylinder(d = screw_d + 4.4, h = 2.6); }
+    }
+    // studs on the hypotenuse face, spaced along the prism axis
+    rotate([0, 0, 45]) translate([0, 0, ap_l/2]) rotate([0, 0, 45]) rotate([90, 0, 0])
+        { tstud( stud_gap/2, 0.9); tstud(-stud_gap/2, 0.9); }
+}
+
+// flat plate with magnet pockets on the back, studs on the front
+module magnet() {
+    difference() {
+        linear_extrude(ap_t) rrect2d(ap_w, ap_l, 5);
+        for (i = [0 : mag_n - 1])
+            translate([0, -ap_l/2 + 10 + i*(ap_l - 20)/(mag_n - 1), -0.1])
+                cylinder(d = mag_d + 2*tol_press, h = mag_t + 0.1);
+    }
+    tstud( stud_gap/2, ap_t - 0.01);
+    tstud(-stud_gap/2, ap_t - 0.01);
+}
+
+// flat plate with strap channels across the back, studs on the front
+module pole() {
+    difference() {
+        linear_extrude(ap_t) rrect2d(ap_w, ap_l, 5);
+        for (sy = [1, -1]) translate([-ap_w/2 - 1, sy*ap_l/4 - strap_w/2, -0.1])
+            cube([ap_w + 2, strap_w, strap_t + 0.1]);
+        cb_screw(0, 0, ap_t);        // optional centre wall screw as backup
+    }
+    tstud( stud_gap/2, ap_t - 0.01);
+    tstud(-stud_gap/2, ap_t - 0.01);
+}
+
+// 1 mm drill/hang template: hold to the wall, mark through the holes
+module template() {
+    difference() {
+        linear_extrude(1.0) rrect2d(ap_w, ap_l + 16, 4);
+        for (s = [1, -1]) translate([0, s*stud_gap/2, -0.1]) cylinder(d = 4.4, h = 1.2);
+        translate([0, 0, -0.1]) cylinder(d = 2.5, h = 1.2);   // centre mark
+        if (cable_oval) translate([5, 6, -0.1]) hull()
+            for (s = [1, -1]) translate([s*2.5, 0, 0]) cylinder(d = 7, h = 1.2);
+        // level line slots
+        for (s = [1, -1]) translate([s*(ap_w/2 - 5), 0, -0.1])
+            linear_extrude(1.2) rrect2d(6, 1.4, 0.6);
+        linear_extrude(0.6) translate([0, ap_l/2 + 4]) text("UP", size = 5, halign = "center");
+    }
+}
+
+if      (part == "corner")   corner();
+else if (part == "magnet")   magnet();
+else if (part == "pole")     pole();
+else if (part == "template") template();
