@@ -6,6 +6,7 @@ Two parametric OpenSCAD configurators live here:
 |--------|--------|------------|
 | **Canary WAP** (XIAO ESP32-S3 Sense) | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) | box enclosure with peripheral bays — [section below](#canary-wap--enclosure-v07) |
 | **Canary Vision** (Grove Vision AI V2 + OV5647 + stacked-XIAO or DevKit host) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v02) |
+| **Canary Vision · Doorbell** (stacked-XIAO build + 12 mm button) | [`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad) | Wyze/Ring-style doorbell: wall plate + T-studs + hidden security screw — [section below](#canary-vision--doorbell-v01) |
 
 Both share the same print-tolerance system, weather-sealing approach (printed
 TPU gasket + drip-edge lid), engineering options and CI gate (every change
@@ -29,6 +30,7 @@ minutes.
 | **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
 | **Vision · devkit indoor** | Grove-cabled ESP32-C3-DevKitM-1 host | <img src="./preview_vision_devkit.png" width="260"> | [back](./canary_vision_enclosure_devkit_indoor_back.stl) · [front](./canary_vision_enclosure_devkit_indoor_front.stl) |
 | **Vision · mount kit** | wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob | <img src="./preview_vision_bracket.png" width="180"> <img src="./preview_vision_knob.png" width="120"> | [bracket](./canary_vision_enclosure_bracket.stl) · [knob](./canary_vision_enclosure_knob.stl) |
+| **Vision · DOORBELL** | Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) |
 
 ## Engineering & materials (security build)
 
@@ -503,6 +505,60 @@ the fin round-overs self-supporting). Gasket in TPU 90–95A.
 > xiao host, **measure your seated stack first** (`stack_sock_h`,
 > `xiao_usb_drop`, `xiao_usb_dx`) — socket and header heights vary between
 > suppliers, and the two USB openings must land on your actual ports.
+
+---
+
+# Canary Vision — Doorbell (v0.1)
+
+The stacked-XIAO Vision build in a **video-doorbell form factor**
+([`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad)): a slim
+vertical pill, **35.8 × 98.2 × 27 mm** — the Ring Wired is 98 × 46 × 22, the
+Wyze 93 × 41 × 22 — with the OV5647 behind a sealed disc at the top, the
+module + stacked XIAO in the middle, and a **12 mm illuminated momentary
+button** (short body, IP65, wired to the multifunction input; its LED ring
+replaces the light pipe) at the bottom.
+
+![doorbell — body, face, plate and gasket](./preview_doorbell.png)
+
+**Mounting is the doorbell pattern, not the hinge.** A thin **wall plate**
+screws to the door frame (4 × #8/M4, counterbored — or print the included
+**15° wedge** variant, `plate_wedge = 0/5/10/15`, to angle the camera toward
+the walk-up). The body drops onto the plate's two **printed T-studs** (the
+same blind, seal-safe pockets as the keyhole system) and locks with a hidden
+**security screw** driven up through the plate's bottom foot into a blind
+boss — Ring-style tool-only removal, and the pilot never breaches the seal
+envelope.
+
+**Power:** USB-C from the stack's ports loops through the internal cable well
+and exits an oval in the **back**, through the matching plate hole, into the
+wall or under trim — use a **right-angle USB-C plug** and seal the pass-through
+with a grommet or silicone. (Native 16–24 VAC doorbell wiring needs a
+rectifier/buck module — out of scope here; USB is the supported path.)
+
+**Weather:** sealed **by default** (`opt_seal = true`): TPU gasket + drip-edge
+face, no side openings at all — the only penetrations are the sealed lens
+disc, the IP65 button, and the rear exit against the wall. Same honest ~IP54
+rating; a porch or doorway soffit is its natural habitat.
+
+**Assembly:** camera to the face posts + bond the disc → seat the XIAO in the
+module (**USB-Cs same direction!**) and click the stack into the rails →
+mount the button through the face, wire button/LED to the XIAO → gasket in
+the groove, face on, 4 × M2 (black-oxide looks best) → plate on the frame,
+cable through, hang the body on the studs, drive the security screw.
+
+| Param | Default | Why you'd change it |
+|-------|--------:|---------------------|
+| `plate_wedge` | 0 | 5/10/15° wedge plate to aim the camera |
+| `btn_d` / `btn_bez_d` / `btn_body_l` | 12 / 16.5 / 18 | match YOUR button (depth is assert-checked against the cavity) |
+| `stack_sock_h`, `lens_dx/dy` | 11.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
+| `usb_exit_*` | 12×7 oval | cable exit size/position (guarded against the stud pocket) |
+| `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
+| `opt_vent` | false | GORE vent cluster for wet climates |
+| engineering trio | on | `lid_ribs`, `foot_cham`, `screw_insert` as on the other cases |
+
+> ⚠️ **v0.1 — verify before printing.** Same rules as the Vision case: measure
+> the seated stack and your button before printing; print the face first and
+> test-fit the button and disc.
 
 ## Links
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance

@@ -61,6 +61,15 @@ vstl "canary_vision_enclosure_xiao_weather_gasket.stl" \
 vstl "canary_vision_enclosure_bracket.stl" -D 'part="bracket"'
 vstl "canary_vision_enclosure_knob.stl"    -D 'part="knob"'
 
+# --- Canary Vision DOORBELL (Wyze/Ring form factor; sealed by default) ------
+DSRC="canary_vision_doorbell.scad"
+dstl() { local out=$1; shift; echo "Rendering $out ..."
+  "$OPENSCAD" --export-format binstl -o "$out" "$@" "$DSRC"; }
+for part in body face plate gasket; do
+  dstl "canary_vision_doorbell_${part}.stl" -D "part=\"$part\""
+done
+dstl "canary_vision_doorbell_plate_wedge15.stl" -D 'plate_wedge=15' -D 'part="plate"'
+
 if [[ "${1:-}" != "--no-png" ]]; then
   # one preview per printable variant — these drive the README's variant-picker gallery
   png "preview_all.png"     -D 'preset="battery_full"'    -D 'part="all"'
@@ -73,6 +82,7 @@ if [[ "${1:-}" != "--no-png" ]]; then
    png "preview_vision_devkit.png"       -D 'host="devkit"' -D 'preset="vision_indoor"'  -D 'part="all"'
    png "preview_vision_bracket.png"      -D 'part="bracket"'
    png "preview_vision_knob.png"         -D 'part="knob"')
+  (SRC="$DSRC"; png "preview_doorbell.png" -D 'part="all"')
 fi
 
 echo "Done: WAP (6 STLs + gasket + coupon) + Vision (6 STLs + gasket + bracket + knob)."

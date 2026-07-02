@@ -19,6 +19,9 @@ Item,RefDes,Qty,Required,Category,Description,Manufacturer,MPN,Mouser,DigiKey,LC
 16,NUT1,1,Optional,Mechanical,"1/4-20 hex nut (tripod mount, captive in bracket)",Generic,NUT-1/4-20,,,,0.15,0.15,Active,Yes,"Drops into the bracket's rear pocket; any standard tripod stud threads in"
 17,CW2,1,Optional,Optomechanical,"Clear disc 14 x 1 mm, PMMA or polycarbonate (lens window)",Generic,DISC-PMMA-14X1,,,,0.60,0.60,Active,Yes,"Bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). For sealing also see WAP BOM items 23-26 (silicone, USB plug, TPU, GORE vent)"
 18,INS1,4,Optional,Mechanical,"M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",Generic,M2-HSI-3.5X4,,,,0.10,0.40,Active,Yes,"Service-grade front threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws for the front corners"
+19,BTN2,1,Optional,Switch,"12mm panel-mount illuminated momentary button, SHORT body, IP65, LED ring",Generic,PBM12-LED-IP65,,,,2.50,2.50,Active,Yes,"Doorbell enclosure face (canary_vision_doorbell.scad): switch to the multifunction input (GPIO9), LED ring to the status LED pin; body+terminals <= 18mm behind panel (btn_body_l is assert-checked)"
+20,SCR8,1,Optional,Mechanical,"M2 x 10 security screw (Torx pin / tri-wing), self-tapping",Generic,M2X10-SEC-TX,,,,0.30,0.30,Active,Yes,"Doorbell anti-theft lock: drives up through the wall plate's foot into the body's blind boss - tool-only removal, Ring-style"
+21,GRM1,1,Optional,Sealing,"Cable grommet / bushing for 12x7mm oval (or seal with neutral-cure silicone)",Generic,GROMMET-12X7,,,,0.40,0.40,Active,Yes,"Doorbell rear cable exit; pair with a right-angle USB-C plug"
 "# SUMMARY (subtotals are indicative; verify live pricing)",,,,,,,,,,,,,,,
 "# Required-only (U1+U2+CBL2+CBL1)",,,,,,,,,,,,41.70,,,"Core Vision device"
 "# Full build (req + LED + button + battery + PC enclosure)",,,,,,,,,,,,71.00,,,"Approx; buzzer unpopulated"
