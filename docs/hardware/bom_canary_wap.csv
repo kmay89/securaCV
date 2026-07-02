@@ -31,6 +31,7 @@ Item,RefDes,Qty,Required,Category,Description,Manufacturer,MPN,Mouser,DigiKey,LC
 24,PLUG1,1,Optional,Sealing,"Silicone USB-C dust plug with flange",Generic,USBC-PLUG-FLG,,,,0.50,0.50,Active,Yes,"Seats in the printed enclosure's USB recess (weather mode); remove to charge/flash"
 25,SCR4,2,Optional,Mechanical,"#6 / M3.5 pan-head screw + wall anchor (keyhole mount)",Generic,M3.5-PAN-ANCHOR,,,,0.30,0.60,Active,Yes,"For the printed enclosure's blind keyhole mounts (opt_mount); head <= 7mm dia, <= 2.5mm tall"
 26,FIL1,1,Optional,Material,"TPU filament 90-95A (printed gasket), ~5g per gasket",Generic,TPU-95A,,,,0.20,0.20,Active,Yes,"Printed perimeter gasket for enclosure/ weather mode; 2 perimeters, 100% infill, slow"
+27,INS1,4,Optional,Mechanical,"M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",Generic,M2-HSI-3.5X4,,,,0.10,0.40,Active,Yes,"Service-grade lid threads: set screw_insert=true in the enclosure (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers"
 "# SUMMARY (subtotals are indicative; verify live pricing)",,,,,,,,,,,,,,,
 "# Required-only (U1+CBL1+SD1)",,,,,,,,,,,,26.90,,,"Bench bring-up"
 "# Indoor full build (req + LiPo + reed + indoor button + single LED + GPS)",,,,,,,,,,,,54.00,,,"Approx; single-choice optionals"

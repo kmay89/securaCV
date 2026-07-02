@@ -5,11 +5,68 @@ Two parametric OpenSCAD configurators live here:
 | Device | Source | What it is |
 |--------|--------|------------|
 | **Canary WAP** (XIAO ESP32-S3 Sense) | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) | box enclosure with peripheral bays — [section below](#canary-wap--enclosure-v07) |
-| **Canary Vision** (ESP32-C3 + Grove Vision AI V2 + OV5647) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v01) |
+| **Canary Vision** (Grove Vision AI V2 + OV5647 + stacked-XIAO or DevKit host) | [`canary_vision_enclosure.scad`](./canary_vision_enclosure.scad) | camera unit with a GoPro-compatible adjustable hinge — [section below](#canary-vision--enclosure-v02) |
 
 Both share the same print-tolerance system, weather-sealing approach (printed
-TPU gasket + drip-edge lid) and CI gate (every change re-renders all presets and
-mesh-checks the STLs).
+TPU gasket + drip-edge lid), engineering options and CI gate (every change
+re-renders all presets and mesh-checks the STLs).
+
+## Engineering & materials (security build)
+
+These are housings for a *security* device — the enclosure is the first
+physical attack surface — so the designs follow FDM packaging-engineering
+practice for **durability, rigidity and low mass**:
+
+- **Stiffness from geometry, not bulk.** Plate stiffness scales with t³: the
+  lids/fronts carry a perimeter **rib ring** (`lid_ribs`, on by default) just
+  inside the lip, auto-routed around every feature — roughly trebling the flat
+  face's bending stiffness against prying for ~1 g of material. Walls stay at
+  2.0 mm (= 5 extrusion widths), with the corner posts gusseted into both walls.
+- **Layup-aware loading.** FDM interlayer (Z) strength is only ~50–70 % of
+  in-plane. Both shells print so the service loads — lid pry, wall impact,
+  screw clamp — act *in-plane*; the bottom edge (the classic delamination
+  initiation site) gets a 45° **`foot_cham`** chamfer that also removes
+  elephant-foot.
+- **Service-grade fastening.** The M2 self-tappers are fine for ~10 open/close
+  cycles at ≤0.3 N·m. For a serviced fleet, set **`screw_insert = true`**: the
+  corner posts auto-fatten (≥1.2 mm wall around the bore) for **M2 brass
+  heat-set inserts** (3.5 × 4.0 short series; install at 220–240 °C for PETG,
+  240–260 °C for ASA, flush to the post top) and use M2 machine screws.
+  Plastic creeps under gasket preload — **re-torque sealed builds after 24 h**,
+  or fit inserts and be done with it.
+- **Anti-lift security.** Keyhole mounts can be defeated by lifting the unit
+  off the wall screws. `kh_lock` (default on with keyholes) adds two blind
+  **knockout bosses** (0.6 mm web — the seal stays intact until used): after
+  hanging, drive #4/M3 screws through them into the wall from *inside* the
+  case, so removal requires opening the lid first. Pair with the tamper
+  magnet/reed option and, if you want tool-only access, security-drive (Torx
+  pin) M2 screws. On the Vision hinge, swap the thumbscrew for an **M5 button
+  head + nyloc** to make the angle tool-only and vibration-proof.
+
+**Material selection** (the housings are unfilled-polymer friendly; the Vision
+*bracket and prongs* are the highest-stressed parts):
+
+| Material | Use for | Why / limits |
+|----------|---------|--------------|
+| **PETG** | default, indoor + sheltered outdoor | tough, easy, low moisture pickup; creeps under sustained clamp — use inserts for sealed builds |
+| **ASA** | outdoor, sun-exposed | UV-stable, HDT ~95 °C; print hot and draft-free |
+| **PC / PC-blend** | maximum impact + heat (vandal-prone spots) | highest toughness/HDT; needs an enclosed printer; pair with neutral-cure silicone only |
+| **CF-PETG / CF-Nylon** | Vision **bracket + knob** | ~2× stiffness for the cantilevered hinge; hardened nozzle required |
+| **TPU 90–95 A** | gaskets | 2 perimeters, 100 % infill, slow |
+| PLA | clip coupon / fit checks **only** | creeps and softens ~55 °C — not for deployed housings |
+
+**Security-build slicing spec:** 0.4 mm nozzle, 0.2 mm layers, **4 perimeters**,
+5 top/bottom layers, **30 % gyroid** infill, ~30 % infill/perimeter overlap,
++5–10 °C over the material's default for interlayer adhesion, minimal cooling
+on ASA/PC. Anneal PETG/PC parts (65 °C / 90 °C, 1 h, supported flat) for a
+further ~20 % creep and stiffness margin if you have an oven.
+
+**Mass budget** (solid-volume upper bounds from the rendered STLs; PETG at
+1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 12 g/pair, WAP battery
+≈ 34 g/pair, WAP weather ≈ 57 g/pair + 0.6 g gasket; Vision xiao ≈ 31 g/pair
+(weather ≈ 51 g), Vision devkit ≈ 42 g/pair, bracket ≈ 10 g, knob ≈ 3 g.
+Even the heaviest full kit stays under ~75 g — wall anchors, not weight,
+size the mounting.
 
 ---
 
@@ -210,7 +267,8 @@ openscad --export-format binstl -o coupon.stl -D 'part="coupon"' canary_wap_encl
 ## Suggested print settings
 
 - **Material:** PETG or ASA for heat/UV exposure (PLA only for indoor/bench).
-  **Gasket:** TPU 90–95A, 2 perimeters, 100 % infill, slow.
+  **Gasket:** TPU 90–95A, 2 perimeters, 100 % infill, slow. Deployed units:
+  use the hardened spec in [Engineering & materials](#engineering--materials-security-build).
 - **Layer height:** 0.2 mm. **Walls:** 3 perimeters. **Infill:** 20–30 %.
 - **Orientation:** both parts flat, open side up — no supports. The lid prints
   **face-down**: the edge chamfer, disc seat and debossed label all land on the
@@ -263,6 +321,13 @@ cutout or bay and **resizes the box**. Added the **clip test coupon**.
 **two transverse ribs**; **lid lip notched at the USB end** so the cable
 plug/overmold can't jam it.
 
+**v0.7.1 — engineering hardening:** perimeter **rib ring** under the lid
+(`lid_ribs`, t³ stiffening, feature-aware routing), **45° bottom-edge chamfer**
+(`foot_cham`), **M2 heat-set insert option** (`screw_insert`, posts auto-fatten),
+and **anti-lift knockouts** beside the keyholes (`kh_lock`, 0.6 mm sealed web).
+See the shared [Engineering & materials](#engineering--materials-security-build)
+section for the material table, security-build slicing spec and mass budget.
+
 **v0.7 — fit, weather & mounting (this release):**
 
 - **Fix — compact case USB was unreachable:** the board was centred when no bay
@@ -299,13 +364,21 @@ plug/overmold can't jam it.
 
 ---
 
-# Canary Vision — Enclosure (v0.1)
+# Canary Vision — Enclosure (v0.2)
 
 Parametric camera unit for the Canary Vision stack — **OV5647 camera**
-(Pi-cam v1.3 form factor) + **Grove Vision AI V2** (25 × 25 mm) +
-**ESP32-C3-DevKitM-1**, joined by the Grove I2C cable. The front face carries
-the lens aperture (recessed clear-disc seat + optional rain hood) and the LED
-light pipe; the back shell carries the boards and the mounts.
+(Pi-cam v1.3 form factor) + **Grove Vision AI V2** (25 × 25 mm) + a selectable
+**host** (the `host` parameter, matching the
+[device guide](../grove_vision_ai_v2_guide.md) §3 options):
+
+| `host` | Build | Case |
+|--------|-------|------|
+| **`xiao`** (default) | XIAO ESP32-C3/S3 **seated in the module's stacking socket** — recommended, zero wiring | compact single column, ≈ **47 × 59 × 24 mm**; the bottom wall carries **both USB-C ports** (module *model port* above, XIAO *firmware port* below) |
+| `devkit` | ESP32-C3-DevKitM-1 joined by the **Grove I2C cable** | two columns, ≈ 80 × 61 × 18 mm |
+
+The front face carries the lens aperture (recessed clear-disc seat + optional
+rain hood) and the LED light pipe; the back shell carries the boards and the
+mounts.
 
 ![vision_weather preset — back, front, gasket, bracket and knob](./preview_vision.png)
 
@@ -357,18 +430,26 @@ pressure equalisation, and treat the result as **rain/splash-resistant
 | **vision_indoor** | hinge mount, LED port, no seal — desk/shelf unit |
 | **vision_weather** | seal + hood + GORE vent + hinge **and** keyholes |
 
-`part` = `back` / `front` / `all` / `gasket` / `bracket` / `knob`.
-Outer size ≈ **80 × 61 × 18 mm** (+20 mm prongs); weather ≈ 81 × 63 × 21 mm.
+`host` is independent of the preset — any combination works. `part` = `back` /
+`front` / `all` / `gasket` / `bracket` / `knob`. Committed STLs:
+`xiao_indoor`, `xiao_weather` (+ gasket) and `devkit_indoor`; other combos
+render via the Customizer or CLI. Outer sizes: xiao ≈ **47 × 59 × 24 mm**
+(weather ≈ 49 × 60 × 30), devkit ≈ 80 × 61 × 18 (+20 mm prongs on all).
 
 ## Assembly
 
 1. Screw the **OV5647** to the four posts inside the front face (M2
    self-tappers, lens through the aperture); bond the clear disc into the seat.
-2. Click the **Vision AI V2** and the **DevKitM-1** into their snap-clip
-   cradles in the back (DevKit USB-C down, aligned to the wall opening). The
+2. *(xiao host)* Seat the **XIAO** in the module's socket — **both USB-C ports
+   must face the same direction; backwards seating feeds power into GPIO and
+   can kill either board** (device guide §3). Click the stack into the tall
+   side rails, module up, both ports aligned to the two bottom-wall openings
+   (model port above, firmware port below).
+   *(devkit host)* Click the **Vision AI V2** and the **DevKitM-1** into their
+   snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the
    module's own USB-C faces the middle gap — open the case to reflash models.
-3. Route the camera FPC to the module's CSI connector and the Grove cable
-   across the middle gap to the DevKit pins.
+3. Route the camera FPC to the module's CSI connector (and, devkit host, the
+   Grove cable across the middle gap to the DevKit pins).
 4. (weather) Seat the TPU gasket in the rim groove.
 5. Close the front (lip nests into the back) and drive the 4 × M2 corner
    screws — snug diagonally, then final quarter-turns.
@@ -379,10 +460,15 @@ Outer size ≈ **80 × 61 × 18 mm** (+20 mm prongs); weather ≈ 81 × 63 × 21
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
+| `host` | `"xiao"` | `"devkit"` for the Grove-cabled DevKitM-1 build |
+| `stack_sock_h` | 11.5 | *(xiao)* module underside → XIAO underside when seated — **measure the stack** |
+| `xiao_usb_drop` | 10.0 | *(xiao)* XIAO port centre below the module port centre — **measure** |
+| `usb_dx` / `xiao_usb_dx` | 0 / 0 | Port offsets along the bottom wall — measure if either port is off-centre |
 | `dk_l/dk_w`, `vm_l/vm_w`, `cam_w/cam_h` | 39×25.4 / 25×25 / 25×24 | **Measure your boards** — DevKit revisions differ |
-| `standoff_h` | 3.0 | **Raise to ~10 if your DevKit has soldered pin headers** |
+| `standoff_h` | 3.0 | *(devkit)* **raise to ~10 if your DevKit has soldered pin headers** |
 | `lens_dx/dy` | 0 / 2.5 | Lens centre offset from the camera-board centre — measure |
 | `cam_hole_x/y` | 21 / 12.5 | Pi-cam v1.3 mounting grid |
+| `lp/vent/mag_dx/dy` | — | Front-face feature offsets **from the module centre** (valid for both hosts) |
 | `hinge_teeth` | true | `false` = smooth GoPro-compatible faces |
 | `tol_slide/press/hole` | 0.20/0.10/0.30 | Same per-printer tolerance trio as the WAP case |
 | `mount_style` | hinge | `keyhole` / `both` |
@@ -392,9 +478,12 @@ Outer size ≈ **80 × 61 × 18 mm** (+20 mm prongs); weather ≈ 81 × 63 × 21
 supports — every part prints flat; the prongs print as part of the shell with
 the fin round-overs self-supporting). Gasket in TPU 90–95A.
 
-> ⚠️ **v0.1 — verify before printing.** Board dimensions are nominal and the
+> ⚠️ **v0.2 — verify before printing.** Board dimensions are nominal and the
 > hinge dimensions target GoPro compatibility but are printed parts: print the
-> `bracket` + `knob` first and check the prong fit, then the shells.
+> `bracket` + `knob` first and check the prong fit, then the shells. For the
+> xiao host, **measure your seated stack first** (`stack_sock_h`,
+> `xiao_usb_drop`, `xiao_usb_dx`) — socket and header heights vary between
+> suppliers, and the two USB openings must land on your actual ports.
 
 ## Links
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance

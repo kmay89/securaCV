@@ -1,7 +1,14 @@
 // ============================================================================
-//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.1
+//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.2
 //  Stack: OV5647 camera (Pi-cam v1.3 form) + Grove Vision AI V2 (25 x 25)
-//         + ESP32-C3-DevKitM-1, Grove I2C cable between them.
+//         + a selectable HOST:
+//    host = "xiao"   — XIAO ESP32-C3/S3 seated in the module's stacking
+//                      socket (recommended; zero wiring — device guide §3).
+//                      Compact single-column case; the bottom wall carries
+//                      BOTH USB-C ports (module "model port" + XIAO
+//                      "firmware port", stacked vertically).
+//    host = "devkit" — ESP32-C3-DevKitM-1 beside the module, joined by the
+//                      Grove I2C cable (two-column case).
 //
 //  A wall/eave camera unit: the FRONT face carries the lens aperture (with a
 //  recessed clear-disc seat and an optional rain hood) and the LED light pipe;
@@ -53,15 +60,20 @@ e_mount  = _pre(opt_mount,  true,  true);
 m_style  = _pre(mount_style, "hinge", "both");
 
 /* [Boards] — measure YOURS; these are nominal */
-dk_l     = 39.0;   // ESP32-C3-DevKitM-1 length (Y, USB end down)
+host     = "xiao"; // ["xiao","devkit"]  stacked XIAO (recommended) or Grove-cabled DevKitM-1
+dk_l     = 39.0;   // ESP32-C3-DevKitM-1 length (Y, USB end down) — devkit host
 dk_w     = 25.4;   // DevKitM-1 width (X)
-vm_l     = 25.0;   // Grove Vision AI V2 (Y)
+vm_l     = 25.0;   // Grove Vision AI V2 (Y; USB edge down)
 vm_w     = 25.0;   // Grove Vision AI V2 (X)
+xiao_l   = 21.0;   // stacked XIAO (Y) — xiao host
+xiao_w   = 17.5;   // stacked XIAO (X)
+stack_sock_h = 11.5; // module underside -> XIAO underside when seated (socket + headers) — MEASURE
+vm_front_h   = 5.0;  // module front-side component height (CSI connector etc.)
 cam_w    = 25.0;   // OV5647 carrier width (X)
 cam_h    = 24.0;   // OV5647 carrier height (Y)
 pcb_t    = 1.0;    // PCB thickness (clips hook over this)
 board_clear = 0.6; // per-side clearance around each PCB
-stack_h  = 9.0;    // tallest top-side component over a PCB (Grove socket / USB boot)
+stack_h  = 9.0;    // tallest top-side component over a PCB (Grove socket / USB boot) — devkit host
 
 /* [Camera mounting] — Pi-cam v1.3 pattern on the FRONT face */
 cam_hole_x = 21.0;  // hole grid (X)
@@ -90,16 +102,31 @@ tol_slide = 0.20;  // sliding fits: front lip, drip skirt, disc seat
 tol_press = 0.10;  // press fits: magnet, light pipe
 tol_hole  = 0.30;  // clearance holes: front screws, hinge bolt
 
+/* [Engineering — durability/rigidity options (see README "Engineering & materials")] */
+screw_insert = false;   // M2 brass heat-set inserts in the corner posts (service-grade threads)
+insert_d     = 3.5;     // insert nominal OD (M2 short series: 3.5 x 4.0)
+insert_h     = 4.0;     // insert length
+lid_ribs     = true;    // perimeter rib ring under the front face (t³ stiffening against pry)
+lid_rib_w    = 2.5;     // rib ring width
+lid_rib_h    = 1.0;     // rib depth — keep <= cav_extra (the component headroom) or raise it
+foot_cham    = 0.5;     // 45° chamfer on the back's bottom edge: elephant-foot + delamination guard (0 = off)
+kh_lock      = true;    // (keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install
+
 /* [Screw posts] (front screws into the back shell corners) */
 post_d       = 5.0;
 screw_d      = 1.6;   // M2 self-tapping pilot
 screw_head_d = 4.0;
 screw_head_h = 2.0;
 
-/* [USB-C port] — DevKit USB on the BOTTOM (-Y) wall */
-usb_w = 10.5;
-usb_h = 6.5;
-usb_z = 0.0;       // extra lift relative to PCB-top centring
+/* [USB-C ports] — on the BOTTOM (-Y) wall. devkit host: one opening (DevKit).
+   xiao host: TWO stacked openings — module "model port" (upper) + XIAO
+   "firmware port" (lower); both face the same edge (device guide §2). */
+usb_w  = 10.5;
+usb_h  = 6.5;
+usb_z  = 0.0;          // extra lift relative to PCB-top centring
+usb_dx = 0.0;          // upper/main port offset along the wall — MEASURE your boards
+xiao_usb_dx   = 0.0;   // XIAO port offset along the wall
+xiao_usb_drop = 10.0;  // XIAO port centre BELOW the module port centre — MEASURE the seated stack
 
 /* [Hinge — GoPro-compatible two prongs on the TOP wall] */
 prong_t     = 3.0;   // fin thickness (GoPro standard)
@@ -140,20 +167,21 @@ usb_cov_dep   = 1.0;
 hood_len      = 9.0;  // rain-hood protrusion from the front face
 hood_t        = 1.8;  // hood wall thickness
 
-/* [Front-face features] — positions are absolute from the CASE centre */
+/* [Front-face features] — offsets are measured FROM THE MODULE CENTRE so they
+   stay valid for both hosts. Measure your build! */
 lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press)
-lp_dx  = -15.7;
-lp_dy  = -24.0;
+lp_dx  = 8.0;
+lp_dy  = -8.0;
 vent_pad_d     = 12.0;  // GORE seat (outer face)
 vent_pad_depth = 0.8;
 vent_hole_d    = 1.6;
 vent_ring_d    = 6.0;
 vent_holes     = 6;
-vent_dx        = 15.5;
-vent_dy        = -22.0;
+vent_dx        = -8.0;
+vent_dy        = -8.0;
 mag_d  = 6.0;      // tamper MAGNET diameter (pocket = mag_d + 2*tol_press)
 mag_h  = 3.2;
-mag_dx = 15.5;
+mag_dx = 8.0;
 mag_dy = 8.0;
 
 /* [Board snap clips] */
@@ -181,30 +209,46 @@ $fn = 64;
 // ----------------------------------------------------------------------------
 wall_eff   = e_seal ? max(wall_t, gasket_w + 1.6) : wall_t;
 clip_stack = clip_clear + clip_t;
-post_corner = post_d + 1.5;
+pd = screw_insert ? max(post_d, insert_d + 2.4) : post_d;  // effective post dia (>=1.2 mm wall around an insert)
+post_corner = pd + 1.5;
+has_dk = (host == "devkit");
 
-// two columns: camera+module (left), DevKit (right); posts in true X-margins
+// xiao host: the module rides tall rails so the stacked XIAO hangs beneath it
+vm_standoff = has_dk ? standoff_h : stack_sock_h + 1.5;
+
+// devkit host: two columns (camera+module | DevKit); xiao host: one column.
+// Posts always sit in true X-margins beside the boards.
 col_cam = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5);
 col_dk  = dk_w + 2*(clip_stack + board_clear) + 0.5;
 mid_gap = 2.0;
-inner_x = col_cam + mid_gap + col_dk + 2*post_corner;
-inner_y = max(3 + cam_h + 2 + vm_l + 1.5 + 1.5, dk_l + 2*board_clear + 6.0);
+inner_x = has_dk ? col_cam + mid_gap + col_dk + 2*post_corner
+                 : col_cam + 2*post_corner;
+inner_y = has_dk ? max(3 + cam_h + 2 + vm_l + 1.5 + 1.5, dk_l + 2*board_clear + 6.0)
+                 : board_clear + vm_l + 2 + cam_h + 3;   // module at the USB wall, camera above
 
-cav_d_min = standoff_h + pcb_t + stack_h + cav_extra;
-cav_d   = e_seal ? max(cav_d_min, standoff_h + pcb_t + usb_h + usb_z + 2.5) : cav_d_min;
+// cavity depth: xiao host is driven by the rail height + module front parts;
+// devkit host by the tallest top-side component
+cav_d_min = has_dk ? standoff_h + pcb_t + stack_h + cav_extra
+                   : vm_standoff + pcb_t + vm_front_h + cav_extra;
+usb_soff  = has_dk ? standoff_h : vm_standoff;            // standoff of the board that owns the USB wall
+cav_d   = e_seal ? max(cav_d_min, usb_soff + pcb_t + usb_h + usb_z + 2.5) : cav_d_min;
 
 out_x  = inner_x + 2*wall_eff;
 out_y  = inner_y + 2*wall_eff;
 base_d = floor_t + cav_d;
 
-cam_cx = -inner_x/2 + post_corner + col_cam/2;
-dk_cx  =  inner_x/2 - post_corner - col_dk/2;
+cam_cx = has_dk ? -inner_x/2 + post_corner + col_cam/2 : 0;
+dk_cx  =  inner_x/2 - post_corner - col_dk/2;                 // devkit host only
 vm_cx  = cam_cx;
-cam_cy = inner_y/2 - 3 - cam_h/2;        // camera at the top (3 mm top margin for the lip)
-vm_cy  = cam_cy - cam_h/2 - 2 - vm_l/2;  // Vision module below it
-dk_cy  = -inner_y/2 + board_clear + dk_l/2;  // DevKit parked at the USB (bottom) wall
+vm_cy_x = -inner_y/2 + board_clear + vm_l/2;                  // xiao host: module at the bottom wall
+cam_cy = has_dk ? inner_y/2 - 3 - cam_h/2                     // camera at the top (3 mm lip margin)
+                : vm_cy_x + vm_l/2 + 2 + cam_h/2;
+vm_cy  = has_dk ? cam_cy - cam_h/2 - 2 - vm_l/2 : vm_cy_x;
+dk_cy  = -inner_y/2 + board_clear + dk_l/2;                   // DevKit parked at the USB (bottom) wall
 lens_x = cam_cx + lens_dx;
 lens_y = cam_cy + lens_dy;
+usb_cx = (has_dk ? dk_cx : vm_cx) + usb_dx;                   // main/upper USB opening centre (X)
+usb_zc = floor_t + usb_soff + pcb_t + usb_h/2 + usb_z;        // and its centre height
 
 mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extra : 0;
 kh_y  = inner_y/2 - kh_inset;
@@ -231,9 +275,11 @@ assert(mount_extra == 0 || kh_head_h > kh_face, "kh_head_h must exceed kh_face")
 assert(mount_extra == 0 || kh_head_d > kh_shank_d, "kh_head_d must be larger than kh_shank_d");
 assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge must be 0, or between 0.01 and lid_t");
 assert(label_text == "" || (label_depth > 0 && label_depth < lid_t), "label_depth must be between 0 and lid_t");
-echo(str("Canary Vision enclosure v0.1 — outer ", out_x, " x ", out_y, " x ",
+assert(host == "devkit" || usb_zc - xiao_usb_drop - usb_h/2 >= floor_t + 1.0,
+       "xiao_usb_drop too large — the XIAO port opening would breach the floor");
+echo(str("Canary Vision enclosure v0.2 — outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r,
-         " mm prongs)  (preset=", preset, ", seal=", e_seal, ", mount=", m_style, ")"));
+         " mm prongs)  (host=", host, ", preset=", preset, ", seal=", e_seal, ", mount=", m_style, ")"));
 if (e_seal && wall_eff > wall_t)
     echo(str("seal mode: walls auto-thickened ", wall_t, " -> ", wall_eff, " mm to host the gasket groove"));
 
@@ -251,10 +297,10 @@ module rim_ring2d(w) {
 }
 
 function post_xy() = [
-    [ inner_x/2 - post_d/2 - 0.2,  inner_y/2 - post_d/2 - 0.2],
-    [-inner_x/2 + post_d/2 + 0.2,  inner_y/2 - post_d/2 - 0.2],
-    [ inner_x/2 - post_d/2 - 0.2, -inner_y/2 + post_d/2 + 0.2],
-    [-inner_x/2 + post_d/2 + 0.2, -inner_y/2 + post_d/2 + 0.2],
+    [ inner_x/2 - pd/2 - 0.2,  inner_y/2 - pd/2 - 0.2],
+    [-inner_x/2 + pd/2 + 0.2,  inner_y/2 - pd/2 - 0.2],
+    [ inner_x/2 - pd/2 - 0.2, -inner_y/2 + pd/2 + 0.2],
+    [-inner_x/2 + pd/2 + 0.2, -inner_y/2 + pd/2 + 0.2],
 ];
 
 // ring pedestal that supports a PCB's underside along its perimeter
@@ -266,10 +312,11 @@ module ringped(cx, cy, l, w) {
 }
 
 // Cantilever snap clip at edge point (px,py); `ang` = outward normal (degrees,
-// pointing AWAY from the board). Same proven profile as the WAP enclosure:
+// pointing AWAY from the board); `soff` = board standoff (the rail/pedestal
+// height the PCB sits on). Same proven profile as the WAP enclosure:
 // flat retention seat over the board + 45° under-chamfer across the gap.
-module edgeclip(px, py, ang) {
-    bt = floor_t + standoff_h + pcb_t;
+module edgeclip(px, py, ang, soff = standoff_h) {
+    bt = floor_t + soff + pcb_t;
     tp = bt + clip_hook_h;
     pts = [ [clip_clear, floor_t], [clip_clear + clip_t, floor_t],
             [clip_clear + clip_t, tp], [clip_clear, tp],
@@ -292,6 +339,20 @@ module keyhole_pocket(yc) {           // blind pocket; slot runs toward +Y (up)
         translate([0, 0, z0 + kh_face]) linear_extrude(kh_head_h - kh_face)
             hull() { translate([0, y0]) circle(d = kh_head_d + 0.6);
                      translate([0, y1]) circle(d = kh_head_d + 0.6); }
+    }
+}
+
+// peripheral wedge that 45°-chamfers the back's bottom edge (subtract from the
+// shell); bounded to the footprint, so the hinge-fin roots lose only a 0.5 mm nick
+module foot_chamfer_cut() {
+    z0 = -mount_extra;
+    difference() {
+        translate([0, 0, z0 - 0.01]) rrect(out_x + 0.04, out_y + 0.04, corner_r, foot_cham + 0.01);
+        hull() {
+            translate([0, 0, z0])
+                rrect(out_x - 2*foot_cham, out_y - 2*foot_cham, max(0.1, corner_r - foot_cham), 0.01);
+            translate([0, 0, z0 + foot_cham]) rrect(out_x, out_y, corner_r, 0.01);
+        }
     }
 }
 
@@ -356,52 +417,90 @@ module back() {
             }
             translate([0, 0, floor_t])
                 rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
-            // USB-C opening, bottom wall, over the DevKit column
-            translate([dk_cx, -out_y/2, floor_t + standoff_h + pcb_t + usb_h/2 + usb_z])
+            // USB-C opening(s), bottom wall: DevKit port, or module "model port"
+            translate([usb_cx, -out_y/2, usb_zc])
                 cube([usb_w, wall_eff*3, usb_h], center = true);
+            // xiao host: second opening below it for the XIAO "firmware port"
+            if (!has_dk)
+                translate([vm_cx + xiao_usb_dx, -out_y/2, usb_zc - xiao_usb_drop])
+                    cube([usb_w, wall_eff*3, usb_h], center = true);
             // gasket groove in the front rim (seal mode)
             if (e_seal)
                 translate([0, 0, base_d - gasket_groove])
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
-            // recess framing the USB opening for a flanged silicone plug
+            // recess framing the USB opening(s) for flanged silicone plugs
+            // (xiao host: one tall recess spans both stacked ports, including
+            // any measured X offset between them)
             if (e_seal && usb_cover) {
-                uz0 = floor_t + standoff_h + pcb_t + usb_z - usb_cov_pad;
-                uz1 = min(floor_t + standoff_h + pcb_t + usb_h + usb_z + usb_cov_pad,
-                          base_d - gasket_groove - 0.5);
-                translate([dk_cx - (usb_w/2 + usb_cov_pad), -out_y/2 - 1, uz0])
-                    cube([usb_w + 2*usb_cov_pad, 1 + usb_cov_dep, uz1 - uz0]);
+                uz0 = (has_dk ? usb_zc : usb_zc - xiao_usb_drop) - usb_h/2 - usb_cov_pad;
+                uz1 = min(usb_zc + usb_h/2 + usb_cov_pad, base_d - gasket_groove - 0.5);
+                ux0 = min(usb_cx, has_dk ? usb_cx : vm_cx + xiao_usb_dx) - (usb_w/2 + usb_cov_pad);
+                ux1 = max(usb_cx, has_dk ? usb_cx : vm_cx + xiao_usb_dx) + (usb_w/2 + usb_cov_pad);
+                translate([ux0, -out_y/2 - 1, uz0])
+                    cube([ux1 - ux0, 1 + usb_cov_dep, uz1 - uz0]);
             }
             // blind keyhole pockets (never reach the cavity — seal-safe)
             if (mount_extra > 0)
                 for (yc = kh_ys) keyhole_pocket(yc);
+            // anti-lift knockouts (0.6 mm web at the back face): after hanging, pierce
+            // with #4/M3 screws into the wall so the case can't be lifted off the
+            // keyholes. Placed in the empty top region, clear of pockets and cradles.
+            if (mount_extra > 0 && kh_lock)
+                for (sx = [1, -1]) translate([sx*10, inner_y/2 - 5, 0]) {
+                    translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
+                    translate([0, 0, floor_t - 1.2]) cylinder(d1 = 3.2, d2 = 6.0, h = 1.21);  // head seat, inside
+                }
+            // 45° bottom-edge chamfer (elephant-foot + first-layer delamination guard)
+            if (foot_cham > 0) foot_chamfer_cut();
         }
 
         // corner screw posts, gusseted to both walls (same pattern as the WAP case)
         difference() {
             union() {
-                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = cav_d);
+                for (p = posts) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_d);
                 for (p = posts) {
                     sx = sign(p[0]); sy = sign(p[1]);
                     hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = gusset_h);
+                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
                         translate([sx*(inner_x/2 - 0.3), p[1], floor_t]) cylinder(d = 2, h = gusset_h);
                     }
                     hull() {
-                        translate([p[0], p[1], floor_t]) cylinder(d = post_d, h = gusset_h);
+                        translate([p[0], p[1], floor_t]) cylinder(d = pd, h = gusset_h);
                         translate([p[0], sy*(inner_y/2 - 0.3), floor_t]) cylinder(d = 2, h = gusset_h);
                     }
                 }
             }
             for (p = posts) translate([p[0], p[1], floor_t + 2.0]) cylinder(d = screw_d, h = cav_d);
+            // heat-set insert bore at the post top (light interference; melt in flush)
+            if (screw_insert)
+                for (p = posts) translate([p[0], p[1], floor_t + cav_d - insert_h - 0.5])
+                    cylinder(d = insert_d - 0.1, h = insert_h + 1);
         }
 
-        // board cradles: perimeter pedestals + snap clips on the X edges
-        ringped(dk_cx, dk_cy, dk_w, dk_l);
-        ringped(vm_cx, vm_cy, vm_w, vm_l);
-        for (s = [1, -1]) {
-            for (dy = [-dk_l/4, dk_l/4])
-                edgeclip(dk_cx + s*dk_w/2, dk_cy + dy, s > 0 ? 0 : 180);
-            edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180);
+        // board cradles + snap clips on the X edges.
+        // devkit host: perimeter pedestals for both boards.
+        // xiao host: two tall side rails under the module's X edges — the rail
+        // gap clears the stacked XIAO hanging beneath it.
+        if (has_dk) {
+            ringped(dk_cx, dk_cy, dk_w, dk_l);
+            ringped(vm_cx, vm_cy, vm_w, vm_l);
+            for (s = [1, -1]) {
+                for (dy = [-dk_l/4, dk_l/4])
+                    edgeclip(dk_cx + s*dk_w/2, dk_cy + dy, s > 0 ? 0 : 180);
+                edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180);
+            }
+        } else {
+            // tall side rails, NOTCHED at the clip so the clip can flex
+            // (a continuous rail sits only clip_clear behind the beam and would fuse to it)
+            for (s = [1, -1]) {
+                difference() {
+                    translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
+                        cube([3, vm_l - 1, vm_standoff]);
+                    translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy, floor_t + vm_standoff/2])
+                        cube([5, clip_w + 2, vm_standoff + 1], center = true);
+                }
+                edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180, vm_standoff);
+            }
         }
     }
 }
@@ -438,8 +537,8 @@ module front() {
             if (cam_disc_t > 0 && cam_disc_d > 0)
                 translate([lens_x, lens_y, lid_t - (cam_disc_t + 0.2)])
                     cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
-            if (e_led) translate([lp_dx, lp_dy, -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);
-            if (e_vent || e_buzzer) vent_cluster(vent_dx, vent_dy);
+            if (e_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -1]) cylinder(d = lp_d + 2*tol_press, h = lid_t + 2);
+            if (e_vent || e_buzzer) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
             for (p = post_xy()) {
                 translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
                 translate([p[0], p[1], lid_t - screw_head_h])
@@ -470,6 +569,36 @@ module front() {
                     translate([0, 0, -0.1]) cylinder(d = cam_screw_d, h = cam_post_h - 0.8);
                 }
 
+        // perimeter rib ring under the front face: t³ stiffening against pry/flex,
+        // cleared around every feature and the screw posts (≈1 g of material)
+        if (lid_ribs) {
+            ro_x = inner_x - 2*tol_slide - 2*lip_t - 0.8;
+            ro_y = inner_y - 2*tol_slide - 2*lip_t - 0.8;
+            difference() {
+                translate([0, 0, -lid_rib_h]) linear_extrude(lid_rib_h + 0.1)
+                    difference() {
+                        rrect2d(ro_x, ro_y, max(0.1, corner_r - wall_eff - lip_t));
+                        rrect2d(ro_x - 2*lid_rib_w, ro_y - 2*lid_rib_w, 0.1);
+                    }
+                for (p = post_xy())
+                    translate([p[0], p[1], -lid_rib_h - 0.1]) cylinder(d = pd + 1.6, h = lid_rib_h + 0.2);
+                // keep-outs: lens/disc seat, camera posts, LED, vent, magnet
+                translate([lens_x, lens_y, -lid_rib_h - 0.1])
+                    cylinder(d = max(cam_ap_d, cam_disc_d) + 3, h = lid_rib_h + 0.2);
+                for (sx = [1, -1], sy = [1, -1])
+                    translate([cam_cx + sx*cam_hole_x/2, cam_cy + sy*cam_hole_y/2, -lid_rib_h - 0.1])
+                        cylinder(d = cam_post_d + 2, h = lid_rib_h + 0.2);
+                if (e_led) translate([vm_cx + lp_dx, vm_cy + lp_dy, -lid_rib_h - 0.1])
+                    cylinder(d = lp_d + 4, h = lid_rib_h + 0.2);
+                if (e_vent || e_buzzer) translate([vm_cx + vent_dx, vm_cy + vent_dy, -lid_rib_h - 0.1])
+                    cylinder(d = vent_pad_d + 3, h = lid_rib_h + 0.2);
+                if (e_tamper) translate([vm_cx + mag_dx, vm_cy + mag_dy, -lid_rib_h - 0.1])
+                    cylinder(d = mag_d + 2*tol_press + 4.8, h = lid_rib_h + 0.2);
+                // keep the USB cable path over the lip notch clear
+                translate([usb_cx, -inner_y/2, 0]) cube([usb_w + 4, 14, 3*lid_rib_h], center = true);
+            }
+        }
+
         // front lip nesting into the back shell, cleared at posts + USB notch
         difference() {
             translate([0, 0, -lip_h])
@@ -480,8 +609,8 @@ module front() {
                           0.1, lip_h + 1);
                 }
             for (p = post_xy())
-                translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = post_d + 1.2, h = lip_h + 0.2);
-            translate([dk_cx, -inner_y/2, -lip_h/2])
+                translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
+            translate([usb_cx, -inner_y/2, -lip_h/2])
                 cube([usb_w + 4, lip_t*4, lip_h + 0.2], center = true);
         }
 
@@ -493,13 +622,13 @@ module front() {
                         rrect2d(plate_x, plate_y, plate_r);
                         rrect2d(out_x + 2*skirt_gap, out_y + 2*skirt_gap, corner_r + skirt_gap);
                     }
-                translate([dk_cx, -(out_y/2 + skirt_gap + skirt_t/2), -skirt_h/2])
+                translate([usb_cx, -(out_y/2 + skirt_gap + skirt_t/2), -skirt_h/2])
                     cube([usb_w + 6, skirt_t*3, skirt_h + 0.4], center = true);
             }
 
         // tamper magnet pocket (press fit; embedded 0.1 so the export is one shell)
         if (e_tamper)
-            translate([mag_dx, mag_dy, -mag_h]) difference() {
+            translate([vm_cx + mag_dx, vm_cy + mag_dy, -mag_h]) difference() {
                 cylinder(d = mag_d + 2*tol_press + 2.4, h = mag_h + 0.1);
                 translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
             }
