@@ -20,17 +20,25 @@ MR60_SRC = $(MR60_DIR)/mr60_uart.cpp \
 # MR60BHA2 UART frame decoder + presence/vitals FSM integration. Built twice:
 # once presence-only (vitals TU compiles to nothing), once with the vitals
 # build flag so the vitals decode path and FSM are compile- and run-tested.
+# Binaries live in an ignored build/ directory (never in the source tree, so
+# CI always proves the sources compile) and depend on the module headers AND
+# this Makefile, so flag changes rebuild too.
+BUILD_DIR       = build
 MR60_TEST_SRC   = test_mr60_uart.cpp
-MR60_BIN        = test_mr60_uart
-MR60_VITALS_BIN = test_mr60_uart_vitals
+MR60_HDRS       = $(wildcard $(MR60_DIR)/*.h)
+MR60_BIN        = $(BUILD_DIR)/test_mr60_uart
+MR60_VITALS_BIN = $(BUILD_DIR)/test_mr60_uart_vitals
 
 .PHONY: all run clean
 all: run
 
-$(MR60_BIN): $(MR60_TEST_SRC) $(MR60_SRC)
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+$(MR60_BIN): $(MR60_TEST_SRC) $(MR60_SRC) $(MR60_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(MR60_DIR) $(MR60_TEST_SRC) $(MR60_SRC) -o $@
 
-$(MR60_VITALS_BIN): $(MR60_TEST_SRC) $(MR60_SRC)
+$(MR60_VITALS_BIN): $(MR60_TEST_SRC) $(MR60_SRC) $(MR60_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCANARY_SENSE_VITALS=1 -I $(MR60_DIR) $(MR60_TEST_SRC) $(MR60_SRC) -o $@
 
 run: $(MR60_BIN) $(MR60_VITALS_BIN)
@@ -38,4 +46,4 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN)
 	./$(MR60_VITALS_BIN)
 
 clean:
-	rm -f $(MR60_BIN) $(MR60_VITALS_BIN)
+	rm -rf $(BUILD_DIR)

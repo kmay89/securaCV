@@ -26,9 +26,11 @@
 #endif
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 using namespace securacv::mmwave;
@@ -331,6 +333,50 @@ void test_unknown_type_skipped_counted() {
     std::printf("PASS test_unknown_type_skipped_counted\n");
 }
 
+void test_hostile_floats_clamped_not_ub() {
+    // Checksums only prove byte integrity — a hostile/corrupt module can
+    // still put NaN/Inf/huge floats on the wire. Those must clamp, never hit
+    // the C++ UB of casting an out-of-range float to an integer type.
+    FrameParser parser;
+    feed(parser, frame_breath(std::numeric_limits<float>::infinity()));
+    feed(parser, frame_heart(std::nanf("")));
+    auto frames = drain(parser);
+    assert(!frames.empty());
+    assert(frames.back().breath_rate == 65535);  // +inf clamps high
+    assert(frames.back().heart_rate == 0);       // NaN rejects to 0
+
+    feed(parser, frame_breath(1e30f));
+    frames = drain(parser);
+    assert(frames.back().breath_rate == 65535);
+
+    feed(parser, frame_distance(std::numeric_limits<float>::infinity()));
+    frames = drain(parser);
+    assert(frames.back().distance_cm == 65535);
+    feed(parser, frame_distance(std::nanf("")));
+    frames = drain(parser);
+    assert(frames.back().distance_cm == 0);
+    feed(parser, frame_distance(-3.0f));
+    frames = drain(parser);
+    assert(frames.back().distance_cm == 0);
+    std::printf("PASS test_hostile_floats_clamped_not_ub\n");
+}
+
+void test_truncated_valid_distance_emits_nothing() {
+    // A distance frame with the valid flag set but a payload too short for
+    // the float is malformed: it must NOT enqueue a Presence frame carrying
+    // stale aggregate data.
+    FrameParser parser;
+    feed(parser, frame_distance(2.0f));
+    auto frames = drain(parser);
+    assert(frames.size() == 1 && frames.back().distance_cm == 200);
+
+    Bytes short_payload;
+    short_payload.push_back(1);  // valid flag, but no float follows
+    feed(parser, build_frame(MR60_TYPE_DISTANCE, short_payload));
+    assert(drain(parser).empty());
+    std::printf("PASS test_truncated_valid_distance_emits_nothing\n");
+}
+
 void test_burst_queue_multiple_frames() {
     FrameParser p;
     Bytes stream;
@@ -446,6 +492,8 @@ int main() {
     test_oversized_length_rejected();
     test_unknown_type_skipped_counted();
     test_burst_queue_multiple_frames();
+    test_hostile_floats_clamped_not_ub();
+    test_truncated_valid_distance_emits_nothing();
     test_presence_fsm_integration();
 #ifdef CANARY_SENSE_VITALS
     test_vitals_fsm_integration();

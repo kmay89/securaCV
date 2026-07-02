@@ -59,7 +59,11 @@ static inline uint16_t clamp_u16(long v) {
 }
 
 static inline uint16_t round_bpm(float bpm) {
+    // The value comes off an untrusted UART stream: reject NaN/negatives and
+    // clamp BEFORE the float->integer cast — casting an out-of-range float
+    // (or +inf) to an integer type is undefined behavior in C++.
     if (!(bpm > 0.0f)) return 0;  // also rejects NaN
+    if (bpm > 65535.0f) return 65535;
     return clamp_u16(static_cast<long>(bpm + 0.5f));
 }
 
@@ -159,11 +163,22 @@ bool FrameParser::decode_and_queue_(size_t payload_len) {
         case MR60_TYPE_DISTANCE: {
             if (n < 1) return false;
             const bool valid = (p[0] != 0);
-            if (valid && n >= 8) {
+            if (valid) {
+                // Valid flag set but payload too short for the float: the
+                // frame is malformed — do not enqueue stale aggregate data.
+                if (n < 8) return false;
                 // [BENCH] float32 assumed metres -> centimetres (×100).
-                const float metres = le_float(p + 4);
-                agg_distance_cm_ = clamp_u16(static_cast<long>(metres * 100.0f + 0.5f));
-            } else if (!valid) {
+                // Range-check before the float->integer cast (UB otherwise
+                // for NaN/inf/out-of-range values off the wire).
+                const float cm = le_float(p + 4) * 100.0f;
+                if (!(cm > 0.0f)) {
+                    agg_distance_cm_ = 0;  // also rejects NaN
+                } else if (cm > 65535.0f) {
+                    agg_distance_cm_ = 65535;
+                } else {
+                    agg_distance_cm_ = clamp_u16(static_cast<long>(cm + 0.5f));
+                }
+            } else {
                 agg_distance_cm_ = 0;
             }
             enqueue_(FrameKind::Presence);
