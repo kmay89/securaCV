@@ -80,7 +80,7 @@ module gland_body() {
         union() {
             cylinder(d = cg_flange, h = 2.0);                            // outer flange
             translate([0, 0, 2.0 - 0.01]) cylinder(d = cg_hole - 2*tol_slide, h = cg_panel + 0.5);
-            translate([0, 0, 2.0 + cg_panel + 0.4]) cylinder(d = cg_hole - 0.6, h = 5);  // nose
+            translate([0, 0, 2.0 + cg_panel + 0.4]) cylinder(d = cg_hole - 2*tol_slide, h = 5);  // nose (>=0.7 mm wall)
             translate([0, 0, 2.0 + cg_panel + 3.6]) cylinder(d1 = cg_hole - 0.2, d2 = cg_hole - 1.2, h = 1.8); // barb
         }
         // two-step bore sized so every wall stays >= 0.7 mm (mesh-check catch:

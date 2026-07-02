@@ -98,6 +98,11 @@ module body() {
             for (p = post_xy()) translate([p[0], p[1], floor_t]) cylinder(d = pd, h = cav_h);
             for (p = post_xy()) translate([p[0], p[1], floor_t + 2]) cylinder(d = screw_d, h = cav_h);
         }
+        // support rails under the board's short edges (clips alone don't set the
+        // PCB height — review catch); board rests at standoff_h, clips retain it
+        for (s = [1, -1])
+            translate([s*(board_l/2 - 1.5) - 1.5, -(board_w - 1)/2, floor_t - 0.01])
+                cube([3, board_w - 1, standoff_h + 0.01]);
         for (s = [1, -1]) for (cx = [-board_l/4, board_l/4]) edgeclip(cx, s*board_w/2, s > 0 ? 90 : 270);
     }
 }

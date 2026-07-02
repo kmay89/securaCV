@@ -474,7 +474,7 @@ function plate_z(y) = plate_t + (plate_wedge > 0 ? (y + out_y/2) * tan(plate_wed
 function plate_zx() = out_x/2 * tan(abs(plate_wedge_x));
 
 module plate() {
-    hmax = plate_z(out_y/2) + plate_zx() + 0.1;
+    hmax = plate_z(out_y/2) + 2*plate_zx() + 0.1;   // covers the HIGH side of the x-wedge too
     foot_z = plate_t + kh_extra + 3.0;         // security bore height = body pilot height
     difference() {
         union() {
@@ -509,6 +509,8 @@ module plate() {
         translate([0, -out_y/2, plate_t + plate_zx()]) rotate([plate_wedge, plate_wedge_x, 0])
             translate([0, -4.1, foot_z - plate_t]) rotate([-90, 0, 0])
                 cylinder(d = sec_screw_d + 0.4, h = 5);
+        // flatten anything the compound wedge tips below the wall plane (z < 0)
+        translate([-out_x, -out_y/2 - 12, -10]) cube([2*out_x, out_y + 24, 10]);
     }
 }
 

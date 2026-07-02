@@ -74,7 +74,7 @@ module corner() {
                 translate([-ap_w/2, -1.0, -ap_l/2]) cube([ap_w, 1.01, ap_l]);
         }
         // wall screws through each wing (two per wing)
-        for (w = [0, 90]) rotate([0, 0, 45]) rotate([0, 0, w == 0 ? 0 : 0])
+        for (w = [0, 90]) rotate([0, 0, 45])
             for (zz = [ap_l*0.25, ap_l*0.75])
                 if (w == 0)
                     translate([ap_w*0.55, 3.5, zz]) rotate([90, 0, 0])
@@ -88,16 +88,19 @@ module corner() {
         { tstud( stud_gap/2, 0.9); tstud(-stud_gap/2, 0.9); }
 }
 
-// flat plate with magnet pockets on the back, studs on the front
+// flat plate with magnet pockets on the back, studs on the front.
+// Thicker than the other plates: the stud bases sit over the pockets, so a
+// >= 3 mm floor is kept between pocket bottom and stud (review catch).
+mag_ap_t = mag_t + 3.0;
 module magnet() {
     difference() {
-        linear_extrude(ap_t) rrect2d(ap_w, ap_l, 5);
+        linear_extrude(mag_ap_t) rrect2d(ap_w, ap_l, 5);
         for (i = [0 : mag_n - 1])
             translate([0, -ap_l/2 + 10 + i*(ap_l - 20)/(mag_n - 1), -0.1])
                 cylinder(d = mag_d + 2*tol_press, h = mag_t + 0.1);
     }
-    tstud( stud_gap/2, ap_t - 0.01);
-    tstud(-stud_gap/2, ap_t - 0.01);
+    tstud( stud_gap/2, mag_ap_t - 0.01);
+    tstud(-stud_gap/2, mag_ap_t - 0.01);
 }
 
 // flat plate with strap channels across the back, studs on the front
@@ -123,7 +126,7 @@ module template() {
         // level line slots
         for (s = [1, -1]) translate([s*(ap_w/2 - 5), 0, -0.1])
             linear_extrude(1.2) rrect2d(6, 1.4, 0.6);
-        linear_extrude(0.6) translate([0, ap_l/2 + 4]) text("UP", size = 5, halign = "center");
+        translate([0, ap_l/2 + 4, 0.4]) linear_extrude(0.7) text("UP", size = 5, halign = "center");  // deboss on the FRONT face (visible in use)
     }
 }
 

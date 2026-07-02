@@ -108,7 +108,7 @@ module drum() {
         }
         // LiPo fence rails on the drum back floor (cell strapped with foam tape)
         if (opt_batt) for (s2 = [1, -1])
-            translate([-batt_l/2, s2*(batt_w/2 + 1.0) - 1.0, back_t + kh_extra - 0.01])
+            translate([-batt_l/2, s2*(batt_w/2 + tol_slide + 1.0) - 1.0, back_t + kh_extra - 0.01])
                 cube([batt_l, 2.0, 2.0]);
         // bezel screw posts INSIDE the bore, fused to the wall — added AFTER the
         // cavity cut so the bore cannot carve them away (review catch)
