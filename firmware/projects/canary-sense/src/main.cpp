@@ -1,5 +1,5 @@
 /*
-  SecuraCV Canary Sense — 60GHz mmWave Radar Witness Firmware (Phase 0)
+  SecuraCV Canary Sense — 60GHz mmWave Radar Witness Firmware (Phase 2)
   --------------------------------------------------------------------
   (c) 2026 Errer Labs / SecuraCV
   errerlabs.com | securacv.com
@@ -7,37 +7,58 @@
 
   License: Apache-2.0 (use repository license unless otherwise specified).
 
-  PHASE 0 "hello-witness" skeleton. Its job is to prove the ESP32-C6 toolchain
-  (pioarduino core 3.x) and the board/config/common layering compile and link,
-  BEFORE the radar kit arrives. It brings up pins + the radar UART, runs the
-  presence FSM against whatever frames the (stubbed) parser yields, drives the
-  WS2812 status LED, and prints a health heartbeat. Network / witness chain /
-  OTA are wired in Phase 2 (see docs/canary_sense_mr60bha2_design.md §3), after
-  the core 2.x/3.x audit of the common/ modules we plan to link.
+  PHASE 2: the radar witness publishes. On top of the Phase 0 sensing core
+  (frame parser + stall-safe presence/vitals FSMs) this composes the same
+  network stack as canary-vision: NVS-backed runtime config, supervised WiFi
+  STA (exponential backoff + outage reboot), MQTT with LWT + Home Assistant
+  discovery, the signed pull-OTA engine (firmware/common/ota) with HA update
+  entity, and heap-health diagnostics.
+
+  Privacy chokepoint (design doc §2): only coarsened claims leave this file —
+  presence as a debounced state, occupant count as a 0/1/2+ bucket, distance
+  as a near/mid/far band. Raw centimetres, per-target data and vitals phases
+  are read and dropped here. Vitals (wellbeing builds) ride the state channel
+  as a binary lock plus P1-gated BPM numerics and NEVER appear in events.
 */
 
 #include <Arduino.h>
+#include <Wire.h>
 
 // Board pin map (boards/xiao-esp32c6-mr60/pins via -I). Pin numbers ONLY here.
 #include "pins.h"
 
-// Build-time configuration (configs/canary-sense/<flavor> via -I). Flags ONLY.
-#include "config.h"
+// Project composition header: flavor config (CS_*) + net/OTA/diag constants.
+#include "canary/config.h"
+#include "canary/version.h"
+#include "canary/log.h"
+#include "canary/topics.h"
+#include "canary/types.h"
+#include "canary/runtime_config.h"
+#include "canary/diagnostics.h"
+#include "canary/net/wifi_mgr.h"
+#include "canary/net/mqtt_mgr.h"
+#include "canary/net/ota_mgr.h"
 
 // Shared, board-agnostic modules (reached via -I .../common).
 #include "boot/boot_banner.h"
+#include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 #include "sensors/mmwave_mr60/mr60_uart.h"
 #include "sensors/mmwave_mr60/mr60_presence.h"
 #ifdef CANARY_SENSE_VITALS
 #include "sensors/mmwave_mr60/mr60_vitals.h"
 #endif
+#if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
+#include "sensors/bh1750/bh1750.h"
+#endif
 
+using securacv::mmwave::CountBucket;
 using securacv::mmwave::Frame;
 using securacv::mmwave::FrameParser;
 using securacv::mmwave::Presence;
 using securacv::mmwave::PresenceConfig;
 using securacv::mmwave::PresenceEvent;
 using securacv::mmwave::PresenceFSM;
+using securacv::mmwave::RangeBand;
 
 // ----------------------------------------------------------------------------
 // Module instances
@@ -62,6 +83,7 @@ static PresenceFSM g_presence(make_presence_config());
 #ifdef CANARY_SENSE_VITALS
 using securacv::mmwave::VitalsConfig;
 using securacv::mmwave::VitalsFSM;
+using securacv::mmwave::VitalsLock;
 
 static VitalsConfig make_vitals_config() {
   VitalsConfig c;
@@ -77,11 +99,80 @@ static VitalsConfig make_vitals_config() {
 static VitalsFSM g_vitals(make_vitals_config());
 #endif
 
+#if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
+static securacv::sensors::BH1750 g_lux;
+#endif
+
+static Topics TOPICS;
+static SenseSnapshot g_snap;
+
+static char g_last_event[32] = "boot";
 static uint32_t g_last_heartbeat_ms = 0;
+static uint32_t g_last_lux_ms = 0;
+static bool g_state_dirty = false;
+
+// Broker reconnect schedule (mirrors the WiFi supervisor's backoff): a broker
+// outage must never pin the loop — the radar witness keeps sensing and each
+// bounded connect attempt happens at most once per backoff window.
+static uint32_t g_mqtt_next_attempt_ms = 0;
+static uint32_t g_mqtt_attempts = 0;
+
+static bool mqtt_supervise(uint32_t now) {
+  if (canary::net::mqtt_connected()) {
+    g_mqtt_attempts = 0;
+    return true;
+  }
+  if (!canary::net::wifi_connected()) return false;  // wifi_loop owns this
+  if ((int32_t)(now - g_mqtt_next_attempt_ms) < 0) return false;
+
+  if (canary::net::mqtt_connect_attempt()) {
+    g_mqtt_attempts = 0;
+    canary::net::publish_status_retained(TOPICS, "online");
+    return true;
+  }
+
+  // Exponential backoff: 2 s -> 4 s -> 8 s -> 16 s -> 30 s cap.
+  uint32_t attempt = g_mqtt_attempts;
+  if (attempt > 4) attempt = 4;
+  uint32_t backoff_ms = 2000UL << attempt;
+  if (backoff_ms > 30000UL) backoff_ms = 30000UL;
+  g_mqtt_attempts++;
+  g_mqtt_next_attempt_ms = now + backoff_ms;
+  return false;
+}
 
 // ----------------------------------------------------------------------------
-// Status LED (WS2812). Uses the Arduino-ESP32 RMT helper so we pull in no extra
-// library for a single pixel. Colour encodes presence state at a glance.
+// Privacy chokepoint: enum -> coarse wire strings. This is the FULL vocabulary
+// that ever leaves the device about what the radar saw.
+// ----------------------------------------------------------------------------
+
+static const char* presence_str(Presence p) {
+  switch (p) {
+    case Presence::Present: return "present";
+    case Presence::Clear:   return "clear";
+    default:                return "unknown";
+  }
+}
+
+static const char* count_str(CountBucket c) {
+  switch (c) {
+    case CountBucket::One:     return "1";
+    case CountBucket::TwoPlus: return "2+";
+    default:                   return "0";
+  }
+}
+
+static const char* range_str(RangeBand r) {
+  switch (r) {
+    case RangeBand::Near: return "near";
+    case RangeBand::Mid:  return "mid";
+    case RangeBand::Far:  return "far";
+    default:              return "unknown";
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Status LED (WS2812). Colour encodes presence state at a glance.
 // ----------------------------------------------------------------------------
 
 static void led_show(uint8_t r, uint8_t g, uint8_t b) {
@@ -112,31 +203,121 @@ static void sense_serial_write(const char* str) {
 }
 
 // ----------------------------------------------------------------------------
+// Publishing
+// ----------------------------------------------------------------------------
+
+static void set_last_event(const char* e) {
+  strncpy(g_last_event, e ? e : "boot", sizeof(g_last_event) - 1);
+  g_last_event[sizeof(g_last_event) - 1] = '\0';
+  g_snap.last_event = g_last_event;
+}
+
+static void refresh_snapshot(uint32_t now_ms) {
+  g_snap.presence  = presence_str(g_presence.state());
+  g_snap.present   = (g_presence.state() == Presence::Present);
+  g_snap.occupants = count_str(g_presence.count());
+  g_snap.range     = range_str(g_presence.range());
+  g_snap.radar_ok  = (g_presence.state() != Presence::Unknown);
+  g_snap.frame_errors = g_parser.error_count();
+  g_snap.uptime_s  = now_ms / 1000;
+  g_snap.ts_ms     = now_ms;
+}
+
+static void publish_state_now(uint32_t now_ms) {
+  refresh_snapshot(now_ms);
+  canary::net::publish_state_retained(TOPICS, g_snap);
+  g_state_dirty = false;
+}
+
+// Witness events: presence transitions and occupancy changes only, with the
+// coarse bucket/band vocabulary. No distance, no vitals, ever. The only time
+// field is uptime coarsened to the project's 10-minute buckets — a precise
+// per-event timestamp would hand the event stream exact activity timing,
+// against the metadata-minimization invariant; `seq` preserves ordering.
+static void publish_event_now(const char* event_name, uint32_t now_ms) {
+  static uint32_t seq = 0;
+  refresh_snapshot(now_ms);
+
+  const uint32_t bucket_uptime_s = (now_ms / 1000UL / 600UL) * 600UL;
+
+  char msg[384];
+  snprintf(msg, sizeof(msg),
+           "{"
+           "\"device_id\":\"%s\","
+           "\"device_type\":\"%s\","
+           "\"event\":\"%s\","
+           "\"seq\":%lu,"
+           "\"bucket_uptime_s\":%lu,"
+           "\"presence\":\"%s\","
+           "\"occupants\":\"%s\","
+           "\"range\":\"%s\""
+           "}",
+           canary::cfg::get().device_id, DEVICE_TYPE,
+           event_name,
+           (unsigned long)(++seq),
+           (unsigned long)bucket_uptime_s,
+           g_snap.presence,
+           g_snap.occupants,
+           g_snap.range);
+
+  canary::net::publish_event(TOPICS, msg);
+}
+
+// ----------------------------------------------------------------------------
 // Drive the presence (and, when built, vitals) FSMs for one frame. Called once
 // per decoded frame, and once with an empty frame when none arrived — the
 // deadline check inside each tick() runs first, so a silent radar still
-// advances the FSMs toward their stall/lost states.
+// advances the FSMs toward their stall deadlines.
 // ----------------------------------------------------------------------------
 
 static void drive_fsms(const Frame& frame, uint32_t now) {
   const PresenceEvent pev = g_presence.tick(frame, now);
   if (pev.state_changed) {
     led_for_presence(pev.state);
-    const char* s = (pev.state == Presence::Present) ? "present"
-                  : (pev.state == Presence::Clear)   ? "clear"
-                                                     : "unknown";
+    const char* s = presence_str(pev.state);
     boot_linef("[presence] -> %s%s", s, pev.stalled ? " (radar stall)" : "");
+
+    if (pev.state == Presence::Present) {
+      set_last_event("presence_detected");
+      if (canary::net::mqtt_connected()) publish_event_now("presence_detected", now);
+    } else if (pev.state == Presence::Clear) {
+      set_last_event("presence_cleared");
+      if (canary::net::mqtt_connected()) publish_event_now("presence_cleared", now);
+    }
+    // Unknown (stall) is radar-link health, not a witness event: it surfaces
+    // through the radar_link problem sensor + health heartbeat instead.
+    g_state_dirty = true;
+  }
+
+  if (pev.count_changed) {
+    // Occupancy bucket moved (0/1/2+). Only newsworthy while someone is here.
+    if (g_presence.state() == Presence::Present) {
+      set_last_event("occupancy_changed");
+      if (canary::net::mqtt_connected()) publish_event_now("occupancy_changed", now);
+    }
+    g_state_dirty = true;
   }
 
 #ifdef CANARY_SENSE_VITALS
   // Vitals are suppressed unless exactly one target is present.
-  const bool single_target =
-      (pev.count == securacv::mmwave::CountBucket::One);
+  const bool single_target = (pev.count == CountBucket::One);
   const auto vev = g_vitals.tick(frame, single_target, now);
+
+  const bool locked = (g_vitals.lock() == VitalsLock::Locked);
   if (vev.lock_changed) {
-    const char* l = (vev.lock == securacv::mmwave::VitalsLock::Locked) ? "locked"
-                  : "lost";
-    boot_linef("[vitals] breathing %s%s", l, vev.stalled ? " (stall)" : "");
+    boot_linef("[vitals] breathing %s%s", locked ? "locked" : "lost",
+               vev.stalled ? " (stall)" : "");
+    g_state_dirty = true;
+  }
+  if (g_snap.breathing_locked != locked ||
+      g_snap.bpm_valid != vev.bpm_valid ||
+      (vev.bpm_valid && (g_snap.breath_bpm != vev.breath_bpm ||
+                         g_snap.heart_bpm != vev.heart_bpm))) {
+    g_snap.breathing_locked = locked;
+    g_snap.bpm_valid  = vev.bpm_valid;
+    g_snap.breath_bpm = vev.breath_bpm;
+    g_snap.heart_bpm  = vev.heart_bpm;
+    g_state_dirty = true;
   }
 #endif
 }
@@ -147,9 +328,12 @@ void setup() {
 
   boot_set_output(sense_serial_write);
 
+  // Privacy (Invariant III): never surface the raw MAC. The stable device
+  // handle is the salted, MAC-free pseudonym shown as "Hardware ID" below;
+  // mac_address is left null so the boot banner skips the MAC line.
   boot_info_t bi = {};
   bi.product_name  = "SecuraCV Canary Sense";
-  bi.fw_version    = "0.0.0-phase0";
+  bi.fw_version    = CANARY_FW_VERSION;
   bi.build_date    = __DATE__;
   bi.build_time    = __TIME__;
   bi.device_type   = CS_DEVICE_TYPE;
@@ -192,26 +376,78 @@ void setup() {
   // Bring up the radar UART (host TX16 / RX17 per the kit reference wiring).
   RadarSerial.begin(RADAR_UART_BAUD, SERIAL_8N1, RADAR_UART_RX, RADAR_UART_TX);
 
-  const uint32_t now = millis();
+  const uint32_t boot_ms = millis();
   g_parser.reset();
-  g_presence.reset(now);
+  g_presence.reset(boot_ms);
 #ifdef CANARY_SENSE_VITALS
-  g_vitals.reset(now);
+  g_vitals.reset(boot_ms);
 #endif
-  g_last_heartbeat_ms = now;
+  g_last_heartbeat_ms = boot_ms;
 
   led_for_presence(Presence::Unknown);
 
+#if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
+  Wire.begin(I2C_PIN_SDA, I2C_PIN_SCL, I2C_FREQ_DEFAULT);
+  if (g_lux.begin(Wire, BH1750_I2C_ADDR)) {
+    boot_kv("BH1750", "ambient light sensor online");
+  } else {
+    boot_kv("BH1750", "not found — illuminance disabled");
+  }
+#endif
+
+  TOPICS = build_topics(canary::cfg::get().device_id);
+
+  canary::net::wifi_init_or_reboot();
+
+  // Seed the heap-health snapshot so the first status publish carries real
+  // numbers instead of zeros.
+  canary::diag::loop(canary::ms_now());
+
+  // Confirm (or roll back) a freshly installed image now — before anything
+  // that can block on external services. See ota_mgr.h.
+  canary::net::ota_boot_validate();
+
+  canary::net::mqtt_init(TOPICS);
+
+  // MQTT connection scene.
+  boot_line("              .   .   .  ))");
+  boot_line("           .  ((( o )))  ))     Connecting to MQTT...");
+  boot_line("              '   '   '");
+  boot_separator();
+  boot_kv("Device ID", canary::cfg::get().device_id);
+  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
+  if (device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex))) {
+    boot_kv("Hardware ID", devid_hex);  // salted pseudonym, not the raw MAC
+  }
+  boot_kvf("Heartbeat", "every %lu ms", (unsigned long)HEARTBEAT_MS);
+  boot_kv("HA prefix", HA_DISCOVERY_PREFIX);
+  boot_blank();
+
+  // ONE bounded connect attempt (it publishes status + HA discovery on
+  // success). A broker that is down at boot must not block the witness:
+  // sensing starts regardless and loop()'s backoff supervisor keeps trying.
+  if (!mqtt_supervise(canary::ms_now())) {
+    canary::log_line("MQTT", "Broker unreachable — sensing starts anyway; retrying in loop().");
+  }
+
+  // Signed pull-OTA: arm the engine (validation already ran right after
+  // WiFi). Daily jittered checks; HA's Install button and auto-update
+  // switch are drained in loop().
+  canary::net::ota_init(TOPICS);
+
+  set_last_event("boot");
+  publish_state_now(canary::ms_now());
+
   boot_scene_ready(
       "It will witness presence over 60GHz radar",
-      "and publish signed claims via MQTT (Phase 2).",
+      "and publish coarse claims via MQTT to Home Assistant.",
       NULL);
 }
 
 void loop() {
-  const uint32_t now = millis();
+  const uint32_t now = canary::ms_now();
 
-  // Pump any received radar bytes into the frame parser.
+  // ── Sensing first: the witness keeps observing with or without a network ──
   while (RadarSerial.available() > 0) {
     g_parser.push((uint8_t)RadarSerial.read());
   }
@@ -230,10 +466,54 @@ void loop() {
     drive_fsms(Frame(), now);
   }
 
-  // Health heartbeat (HEALTH_CAT_SENSOR territory in Phase 2; a serial line for
-  // now so CI/bench can see the loop is alive).
-  if ((int32_t)(now - g_last_heartbeat_ms) >= (int32_t)CS_HEARTBEAT_MS) {
+#if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
+  if (g_lux.present() && (int32_t)(now - g_last_lux_ms) >= (int32_t)LUX_SAMPLE_MS) {
+    g_last_lux_ms = now;
+    const float lux = g_lux.read_lux();
+    // Publish on meaningful change only (>= 5 lx or presence of a reading
+    // where there was none) — the lux channel corroborates tamper, it isn't
+    // a light meter.
+    if (lux >= 0) {
+      if (g_snap.lux < 0 || fabsf(lux - g_snap.lux) >= 5.0f) {
+        g_snap.lux = lux;
+        g_state_dirty = true;
+      }
+    } else if (g_snap.lux >= 0) {
+      // Read failure on a tamper-corroboration channel must be visible:
+      // revert to null in HA rather than freezing the last good reading.
+      g_snap.lux = -1.0f;
+      g_state_dirty = true;
+    }
+  }
+#endif
+
+  // ── Network supervision ──
+  canary::net::wifi_loop(now);
+  canary::diag::loop(now);
+
+  // Bounded, backoff-scheduled broker supervision: while the broker is
+  // unreachable the witness keeps sensing (we already drove the FSMs above)
+  // and simply skips the publish phase.
+  if (!mqtt_supervise(now)) {
+    delay(5);
+    return;
+  }
+
+  canary::net::mqtt_loop();
+  canary::net::ota_loop(now);
+
+  if (g_state_dirty) {
+    publish_state_now(now);
+  }
+
+  // Health heartbeat. Under heap pressure the diagnostics ladder stretches
+  // the cadence (2x at critical, 5x at emergency).
+  const uint32_t heartbeat_ms = HEARTBEAT_MS * canary::diag::period_scale();
+  if ((int32_t)(now - g_last_heartbeat_ms) >= (int32_t)heartbeat_ms) {
     g_last_heartbeat_ms = now;
+    refresh_snapshot(now);
+    canary::net::publish_heartbeat(TOPICS, g_snap);
+    publish_state_now(now);
     boot_linef("[health] up %lus  heap %luKB  frame_errs %lu",
                (unsigned long)(now / 1000),
                (unsigned long)(ESP.getFreeHeap() / 1024),

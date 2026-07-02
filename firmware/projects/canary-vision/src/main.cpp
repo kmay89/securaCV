@@ -21,6 +21,7 @@
 
 #include "canary/runtime_config.h"
 #include "canary/detect_config.h"
+#include "canary/diagnostics.h"
 #include "pins.h"  // board identity (BOARD_NAME) from firmware/boards/<id>/pins
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mqtt_mgr.h"
@@ -214,6 +215,10 @@ void setup() {
 
   canary::net::wifi_init_or_reboot();
 
+  // Seed the heap-health snapshot so the first status publish carries real
+  // numbers instead of zeros.
+  canary::diag::loop(canary::ms_now());
+
   // Confirm (or roll back) a freshly installed image now — before anything
   // that can block on external services. See ota_mgr.h.
   canary::net::ota_boot_validate();
@@ -261,9 +266,19 @@ void setup() {
 }
 
 void loop() {
+  // STA supervision first: backoff reconnects, outage reboot (S3 parity).
+  canary::net::wifi_loop(canary::ms_now());
+  canary::diag::loop(canary::ms_now());
+
   if (!canary::net::mqtt_connected()) {
+    if (!canary::net::wifi_connected()) {
+      // No link, no broker — let wifi_loop() drive recovery.
+      delay(50);
+      return;
+    }
     canary::log_line("MQTT", "Disconnected. Reconnecting...");
     canary::net::mqtt_reconnect_blocking();
+    if (!canary::net::mqtt_connected()) return;  // WiFi dropped mid-attempt
     canary::net::publish_status_retained(TOPICS, "online");
     publish_state_now(canary::ms_now());
     delay(250);
@@ -288,7 +303,11 @@ void loop() {
     publish_state_now(now_ms);
   }
 
-  if ((now_ms - last_invoke_ms) < INVOKE_PERIOD_MS) {
+  // Under heap pressure the diagnostics ladder stretches the vision cadence
+  // (2x at critical, 5x at emergency) so inference never OOMs the stack.
+  const uint32_t invoke_period_ms =
+      INVOKE_PERIOD_MS * canary::diag::period_scale();
+  if ((now_ms - last_invoke_ms) < invoke_period_ms) {
     delay(5);
     return;
   }

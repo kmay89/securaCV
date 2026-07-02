@@ -7,17 +7,23 @@ own DSP; the host MCU only ever sees pre-digested scalar claims over UART.
 
 Design + roadmap: [`docs/canary_sense_mr60bha2_design.md`](../../../docs/canary_sense_mr60bha2_design.md).
 
-> **Status: Phase 0 scaffold.** This is the *hello-witness* skeleton that proves
-> the ESP32-C6 toolchain and the board/config/common layering compile in CI
-> before hardware arrives. The radar UART frame **decoder is a documented stub**
-> (`common/sensors/mmwave_mr60/mr60_uart.cpp`), and the network / witness-chain /
-> OTA layers are **not yet wired** (Phase 2). It builds, links, and runs the
-> presence/vitals FSMs against their stall deadlines; it does not yet publish.
+> **Status: Phase 2 (publishing witness).** On top of the Phase 0 sensing core
+> (UART frame decoder + stall-safe presence/vitals FSMs, host-tested in
+> `firmware/tests_host/`) the firmware now carries the same network stack as
+> canary-vision: NVS-backed runtime config, supervised WiFi STA (exponential
+> backoff + outage reboot), MQTT with LWT + Home Assistant discovery, heap
+> diagnostics with load-shedding, BH1750 illuminance, and the shared signed
+> pull-OTA engine (`firmware/common/ota`) with an HA `update` entity.
+> Remaining Phase 2 design-doc item: Ed25519 witness-chain signing of presence
+> events (today the events are plain MQTT JSON, like canary-vision's).
+> Bench-pending: OTA A/B on real C6 hardware, `[BENCH]` protocol assumptions
+> in `mr60_uart.h`.
 
 ## Quickstart (PlatformIO)
 
 ```
 # from this directory:
+cp secrets/secrets.example.h secrets/secrets.h   # fill WiFi + MQTT fields
 pio run                            # canary-sense-default (presence-only)
 pio run -e canary-sense-wellbeing  # adds vitals (-DCANARY_SENSE_VITALS)
 pio run -e canary-sense-debug      # verbose ESP-IDF logging
@@ -29,55 +35,89 @@ The C6 builds on the pinned **pioarduino** platform fork (arduino-esp32 3.x);
 see `../../envs/platformio/canary-sense.ini` for the pin and the rationale. The
 first `pio run` downloads that platform (~hundreds of MB) — needs network.
 
+Your first USB flash with real `secrets/secrets.h` seeds the unit's NVS;
+generic OTA release builds afterwards inherit that identity + credentials
+(same `runtime_config` scheme as canary-vision).
+
+## MQTT Topics
+
+Base:
+- `securacv/<device_id>/events` (non-retained; presence transitions only)
+- `securacv/<device_id>/state`  (retained; full coarse snapshot)
+- `securacv/<device_id>/status` (retained; availability + health heartbeat)
+- `securacv/<device_id>/update/{state,cmd,auto,auto/cmd}` (signed pull-OTA)
+
+Events are `presence_detected` / `presence_cleared` / `occupancy_changed`,
+carrying only the coarse vocabulary: presence state, 0/1/2+ occupant bucket,
+near/mid/far range band. **No raw distance, no per-target data, no vitals —
+ever** (privacy chokepoint, design doc §2).
+
+## Home Assistant entities (MQTT discovery, retained)
+
+| Entity | Class | Notes |
+|---|---|---|
+| `binary_sensor.<id>_presence` | occupancy | debounced radar presence |
+| `sensor.<id>_occupants` | — | bucketed 0 / 1 / 2+ |
+| `sensor.<id>_range_band` | diagnostic | near/mid/far only |
+| `binary_sensor.<id>_radar_link` | problem, diagnostic | ON while the radar UART is stalled |
+| `sensor.<id>_frame_errors` | diagnostic | UART checksum drops (monotonic) |
+| `sensor.<id>_illuminance` | illuminance | BH1750 lux (tamper corroboration) |
+| `sensor.<id>_last_event` / `_uptime` | — | |
+| `sensor.<id>_rssi` / `_heap_free` | diagnostic | link + heap health heartbeat |
+| `update.<id>_firmware` + `switch.<id>_auto_update` | firmware | signed pull-OTA |
+| `binary_sensor.<id>_breathing` | — | **wellbeing builds only**: P0 breathing lock |
+| `sensor.<id>_breath_rate` / `_heart_rate` | — | **wellbeing + P1 opt-in only**; null unless locked |
+
+The BPM entities are provably absent from a presence-only build — their
+discovery payloads are compiled out with `-DCANARY_SENSE_VITALS`, and vitals
+are hard-suppressed whenever the target count is not exactly one.
+
 ## Layout
 
 ```
 projects/canary-sense/
   platformio.ini          # extra_configs -> common.ini + canary-sense.ini
-  src/main.cpp            # hello-witness skeleton
+  include/canary/         # composition headers (config/topics/net/ha/diag)
+  include/secrets.ci.h    # CI stub; real secrets in secrets/secrets.h
+  src/main.cpp            # sensing core + privacy chokepoint + net stack
+  src/net/                # wifi_mgr (backoff supervisor), mqtt_mgr, ota_mgr
+  src/ha/ha_discovery.cpp # HA MQTT discovery entity set
 boards/xiao-esp32c6-mr60/ # pin map (radar UART, BH1750 I2C, WS2812, BOOT)
 configs/canary-sense/
   default/   config.h     # presence-only
   wellbeing/ config.h     # presence + vitals
-common/sensors/mmwave_mr60/  # board-agnostic parser + FSMs
+common/sensors/mmwave_mr60/  # board-agnostic parser + FSMs (host-tested)
+common/sensors/bh1750/       # minimal BH1750 lux driver
 envs/platformio/canary-sense.ini  # the three build environments
 ```
 
 ## Build flavors
 
-| Env | Config | Vitals | Notes |
-|-----|--------|:------:|-------|
-| `canary-sense-default`   | `configs/canary-sense/default`   | off | CI build + check env |
-| `canary-sense-wellbeing` | `configs/canary-sense/wellbeing` | on  | `-DCANARY_SENSE_VITALS=1` |
-| `canary-sense-debug`     | `configs/canary-sense/default`   | off | `CORE_DEBUG_LEVEL=4` |
+| Env | Config | Vitals | OTA product | Notes |
+|-----|--------|:------:|-------------|-------|
+| `canary-sense-default`   | `configs/canary-sense/default`   | off | `securacv-canary-sense` | CI build + check env |
+| `canary-sense-wellbeing` | `configs/canary-sense/wellbeing` | on  | `securacv-canary-sense-wellbeing` | `-DCANARY_SENSE_VITALS=1` |
+| `canary-sense-debug`     | `configs/canary-sense/default`   | off | `securacv-canary-sense` | `CORE_DEBUG_LEVEL=4` |
+
+The two flavors are distinct OTA products with separate signed manifests, so a
+presence-only unit can never be flipped to the wellbeing image (or back) by
+serving it the other manifest — the engine's product check refuses.
 
 The vitals switch reaches `common/sensors/mmwave_mr60` only as the
 `-DCANARY_SENSE_VITALS` build flag (never a `config.h` include in `common/`),
 per the firmware layering rules (`firmware/ARCHITECTURE.md`).
 
-## Phase 0 spike checklist (design doc §7)
+## Bench checklist (remaining hardware validation)
 
-The exit criterion for Phase 0 is this env compiling a hello-witness binary in
-CI plus bench notes in `docs/hardware/`. Items to validate during the spike:
-
-- [ ] **C6 PlatformIO env builds in CI** (this scaffold; pinned pioarduino fork).
-- [ ] **UART frames parse on bench** — the real decoder is implemented in
-      `mr60_uart.cpp` (incremental state machine, protocol constants from the
-      ESPHome `seeed_mr60bha2` reference; host tests in
-      `firmware/tests_host/`). Bench work: confirm the `[BENCH]`-marked
+- [ ] **UART frames parse on bench** — confirm the `[BENCH]`-marked
       assumptions in `mr60_uart.h` (distance units, BPM units, frame cadence).
-- [ ] **Ed25519 + hardware RNG** on RISC-V C6 (our `Crypto` dep) — Phase 2 link.
-- [ ] **NVS** read/write on C6.
-- [ ] **NimBLE on C6** (if BLE is used downstream).
-- [ ] **WS2812** single-pixel drive on GPIO1 (this skeleton uses
-      `neopixelWrite`).
+- [ ] **OTA A/B on C6** — install + rollback cycle through the HA update
+      entity (the engine is bench-proven on S3/C3; the C6 partition flow is
+      not yet).
 - [ ] **BOOT button pin** confirmed (assumed GPIO9 in `pins.h` — verify).
-- [ ] **core 2.x/3.x API audit** of every `common/` module to be linked into
-      canary-sense (e.g. `mbedtls_sha256` void-vs-int return, LEDC/ADC/WiFi
-      event API drift) — add version-gated shims where needed.
-- [ ] **OTA / partition layout** for the C6's 4 MB flash; add a `size_guard`
-      to `firmware/flavors.json` once the OTA slot size is fixed.
-- [ ] **Go/no-go**: C6 native vs the S3 + bare-module fallback wiring.
+- [ ] **BH1750 lux** readings sane on the kit's I2C bus.
+- [ ] **WS2812** presence colours visible (green present / blue clear /
+      amber no-radar).
 
 ## License
 Apache-2.0 (see repository root).

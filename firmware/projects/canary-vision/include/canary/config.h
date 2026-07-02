@@ -46,6 +46,29 @@ static constexpr uint32_t HEARTBEAT_MS     = 5000;
 static constexpr const char* HA_DISCOVERY_PREFIX = "homeassistant";
 static constexpr size_t MQTT_BUFFER_BYTES        = 1536;  // discovery payloads > 256
 
+// -------------------- WiFi robustness / power --------------------
+// STA supervision (S3-tree parity): non-blocking reconnect with exponential
+// backoff, then a reboot as the recovery of last resort.
+static constexpr uint32_t WIFI_BOOT_TIMEOUT_MS  = 30000;   // blocking boot connect
+static constexpr uint32_t WIFI_RETRY_BASE_MS    = 2000;    // backoff base (doubles)
+static constexpr uint32_t WIFI_RETRY_MAX_MS     = 30000;   // backoff cap
+static constexpr uint32_t WIFI_OUTAGE_REBOOT_MS = 300000;  // 5 min outage -> reboot
+
+// Power policy. Modem sleep (WIFI_PS_MIN_MODEM) saves ~20 mA at the cost of
+// some broker-to-device latency; off by default on a mains-powered witness.
+// TX power is in quarter-dBm (8..84); -1 keeps the radio default.
+static constexpr bool   WIFI_POWER_SAVE    = false;
+static constexpr int8_t WIFI_TX_POWER_QDBM = -1;
+
+// -------------------- Heap health (diagnostics) --------------------
+// Same thresholds as the ESP32-S3 tree's securacv_diagnostics heap monitor.
+// Levels escalate immediately and de-escalate only past +HYSTERESIS, so the
+// degradation state can't flap around a boundary.
+static constexpr uint32_t HEAP_WARN_BYTES      = 30000;
+static constexpr uint32_t HEAP_CRITICAL_BYTES  = 15000;
+static constexpr uint32_t HEAP_EMERGENCY_BYTES = 10000;
+static constexpr uint32_t HEAP_HYSTERESIS      = 5000;
+
 // -------------------- Software updates (signed pull-OTA) --------------------
 // Shared engine at firmware/common/ota — same manifest format, signature
 // scheme, and HA update-entity UX as canary and canary-wap.
