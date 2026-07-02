@@ -879,11 +879,18 @@ bool is_initialized() { return s_initialized; }
 bool enable() {
   if (!s_initialized) return false;
   s_enabled = true;
+  // Keep the settings struct in sync with the live flag. get_settings()
+  // returns s_settings and set_settings() applies s_enabled = settings.enabled,
+  // so without this a later set_settings() (e.g. saving RF thresholds, whose
+  // payload omits `enabled`) would read back the stale s_settings.enabled and
+  // silently turn sensing off.
+  s_settings.enabled = true;
   return true;
 }
 
 void disable() {
   s_enabled = false;
+  s_settings.enabled = false;  // keep struct in sync (see enable())
   // Clear active tokens on disable
   clear_session_tokens();
 }

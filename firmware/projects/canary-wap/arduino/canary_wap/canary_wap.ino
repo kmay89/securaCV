@@ -132,6 +132,7 @@
 #include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
                                      // auto-generated prototype for
                                      // wifi_change_authorize()
+#include "config_logic.h"            // runtime device-config clamps (privacy floor)
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
 // instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
@@ -193,6 +194,8 @@ extern "C" {
 // WiFi Presence Detection (probe request monitoring)
 #include "wifi_presence.h"
 #include "wifi_presence_api.h"
+#include "rf_presence.h"
+#include "rf_presence_api.h"
 
 // Audible Chirp (local alert tones — PWM buzzer / LED blink)
 #include "audible_chirp.h"
@@ -374,9 +377,21 @@ static const uint32_t AP_DROP_GRACE_MS = 120000;
 // TIMING & COARSENING
 // ════════════════════════════════════════════════════════════════════════════
 
-static const uint32_t RECORD_INTERVAL_MS   = 1000;    // Record emission rate
-static const uint32_t TIME_BUCKET_MS       = 5000;    // Time coarsening bucket
+static const uint32_t RECORD_INTERVAL_MS   = 1000;    // Record emission rate (default)
+static const uint32_t TIME_BUCKET_MS       = 5000;    // Time coarsening bucket — the PRIVACY FLOOR (Invariant III)
 static const uint32_t FIX_LOST_TIMEOUT_MS  = 3000;    // GPS fix timeout
+
+// ── Operator-configurable runtime settings (Device tab "Save Configuration",
+// NVS-persisted). The compile-time constants above are the defaults; the time
+// bucket constant is additionally the privacy FLOOR — g_time_bucket_ms may be
+// clamped to at least the floor, so event timing is NEVER finer than the
+// compile-time minimum (see config_logic.h, Invariant III). ──
+static const uint32_t RECORD_INTERVAL_MIN_MS = 250;
+static const uint32_t RECORD_INTERVAL_MAX_MS = 60000;
+static const uint8_t  LOG_LEVEL_STORE_MAX    = SCV_LOG_WARNING;  // never drop ERROR/CRITICAL
+static uint32_t g_record_interval_ms = RECORD_INTERVAL_MS;
+static uint32_t g_time_bucket_ms     = TIME_BUCKET_MS;
+static uint8_t  g_log_min_level      = SCV_LOG_INFO;
 static const uint32_t VERIFY_INTERVAL_SEC  = 60;      // Self-verify every N seconds
 static const uint32_t WATCHDOG_TIMEOUT_SEC = 8;       // Watchdog timeout
 static const uint32_t SD_PERSIST_INTERVAL  = 10;      // Persist every N records
@@ -895,7 +910,7 @@ static void secure_zero(void* p, size_t n) {
 }
 
 static uint32_t time_bucket() {
-  return millis() / TIME_BUCKET_MS;
+  return millis() / g_time_bucket_ms;  // runtime bucket, clamped >= TIME_BUCKET_MS floor
 }
 
 static uint32_t uptime_seconds() {
@@ -2006,8 +2021,10 @@ static bool verify_record_signature(const WitnessRecord* rec) {
 // ════════════════════════════════════════════════════════════════════════════
 
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail) {
-  // Skip DEBUG by default
-  if (level < SCV_LOG_INFO) return;
+  // Store threshold is operator-configurable (Device tab), default INFO.
+  // g_log_min_level is clamped to <= WARNING, so ERROR/CRITICAL are always
+  // stored no matter the setting — a user can quiet noise, not silence faults.
+  if (level < g_log_min_level) return;
   
   HealthLogRingEntry& entry = g_health_log_ring[g_health_log_ring_head];
   entry.seq = ++g_device.log_seq;
@@ -3362,14 +3379,100 @@ static esp_err_t handle_witness(httpd_req_t* req) {
 
 static esp_err_t handle_config_get(httpd_req_t* req) {
   g_health.http_requests++;
-  
+
   JsonDocument doc;
   doc["ok"] = true;
-  doc["record_interval_ms"] = RECORD_INTERVAL_MS;
-  doc["time_bucket_ms"] = TIME_BUCKET_MS;
+  // Effective runtime values (NVS-persisted, clamped on load).
+  doc["record_interval_ms"] = g_record_interval_ms;
+  doc["time_bucket_ms"] = g_time_bucket_ms;
+  doc["time_bucket_floor_ms"] = TIME_BUCKET_MS;  // can't be set finer than this (Invariant III)
   doc["gps_coarsen_decimals"] = gps_coarsen_decimals();  // privacy coarsening (Invariant III)
-  doc["log_level"] = 1;  // Info by default
-  
+  doc["log_level"] = g_log_min_level;
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// NVS keys for the runtime device config (Device tab).
+static const char* NVS_KEY_REC_INTERVAL = "rec_int_ms";
+static const char* NVS_KEY_TIME_BUCKET  = "tbucket_ms";
+static const char* NVS_KEY_LOG_LEVEL    = "log_lvl";
+
+// Load persisted runtime config (called once at boot). Every value is passed
+// through config_logic's clamps, so even a corrupted/hostile NVS value can't
+// push the device out of its safe envelope — most importantly the time bucket
+// is raised to the compile-time floor if smaller (Invariant III).
+static void config_load_runtime() {
+  g_record_interval_ms = config_logic::clamp_record_interval_ms(
+      nvs_load_u32(NVS_KEY_REC_INTERVAL, RECORD_INTERVAL_MS),
+      RECORD_INTERVAL_MIN_MS, RECORD_INTERVAL_MAX_MS);
+  g_time_bucket_ms = config_logic::clamp_time_bucket_ms(
+      nvs_load_u32(NVS_KEY_TIME_BUCKET, TIME_BUCKET_MS), TIME_BUCKET_MS);
+  g_log_min_level = config_logic::clamp_log_level(
+      nvs_load_u32(NVS_KEY_LOG_LEVEL, SCV_LOG_INFO), LOG_LEVEL_STORE_MAX);
+}
+
+// POST /api/config — persist the three Device-tab settings. Each field is
+// optional; only provided fields change. All values are clamped before use
+// AND before persistence, so NVS never holds an out-of-envelope value. The
+// time bucket is clamped to at least its compile-time floor — event timing is
+// never finer than the Invariant III minimum (5000 ms). The operator owns the
+// device and may retune it above that floor in either direction (Invariant
+// IV/sovereignty); the floor is the privacy guarantee, not a one-way ratchet.
+static esp_err_t handle_config_post(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  char content[256] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  JsonDocument body;
+  if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+  }
+
+  // Only persist a field when its clamped value actually differs from the
+  // current setting — re-saving an unchanged config shouldn't burn a flash
+  // write cycle. (A null/missing field fails is<uint32_t>() and is skipped.)
+  bool clamped = false;
+  if (body["record_interval_ms"].is<uint32_t>()) {
+    uint32_t req_v = body["record_interval_ms"].as<uint32_t>();
+    uint32_t v = config_logic::clamp_record_interval_ms(
+        req_v, RECORD_INTERVAL_MIN_MS, RECORD_INTERVAL_MAX_MS);
+    clamped = clamped || (v != req_v);
+    if (v != g_record_interval_ms) {
+      g_record_interval_ms = v;
+      nvs_store_u32(NVS_KEY_REC_INTERVAL, v);
+    }
+  }
+  if (body["time_bucket_ms"].is<uint32_t>()) {
+    uint32_t req_v = body["time_bucket_ms"].as<uint32_t>();
+    uint32_t v = config_logic::clamp_time_bucket_ms(req_v, TIME_BUCKET_MS);
+    clamped = clamped || (v != req_v);
+    if (v != g_time_bucket_ms) {
+      g_time_bucket_ms = v;
+      nvs_store_u32(NVS_KEY_TIME_BUCKET, v);
+    }
+  }
+  if (body["log_level"].is<uint32_t>()) {
+    uint32_t req_v = body["log_level"].as<uint32_t>();
+    uint8_t v = config_logic::clamp_log_level(req_v, LOG_LEVEL_STORE_MAX);
+    clamped = clamped || (v != req_v);
+    if (v != g_log_min_level) {
+      g_log_min_level = v;
+      nvs_store_u32(NVS_KEY_LOG_LEVEL, v);
+    }
+  }
+
+  log_health(SCV_LOG_INFO, SCV_CAT_SYSTEM, "Device config updated", nullptr);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["clamped"] = clamped;  // true if a value was adjusted to its safe range
+  doc["record_interval_ms"] = g_record_interval_ms;
+  doc["time_bucket_ms"] = g_time_bucket_ms;
+  doc["time_bucket_floor_ms"] = TIME_BUCKET_MS;
+  doc["log_level"] = g_log_min_level;
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -6076,6 +6179,43 @@ static esp_err_t handle_ack_all_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_ack_all(req);
 }
+
+// POST /api/logs/rotate — storage housekeeping. Witness export bundles
+// accumulate at /sd/EXPORT/bundle_<ms>.json every time the operator exports,
+// and datamgmt's periodic sweep only bounds /sd/WITNESS and /sd/HEALTH — so
+// EXPORT grows unbounded and is what actually fills the card. This trims it
+// to the newest EXPORT_KEEP_FILES via the tested count-based
+// datamgmt::rotate_dir. It NEVER touches /sd/WITNESS or /sd/CHAIN — export
+// bundles are regenerable disclosure artifacts, the sealed evidence is not
+// (Invariant IV).
+static esp_err_t handle_logs_rotate(httpd_req_t* req) {
+  g_health.http_requests++;
+  JsonDocument doc;
+#if FEATURE_DATA_MGMT && FEATURE_SD_STORAGE
+  if (!sd_is_available()) {
+    doc["ok"] = false;
+    doc["error"] = "SD card not available";
+  } else {
+    static const uint32_t EXPORT_KEEP_FILES = 20;  // newest N export bundles kept
+    uint32_t deleted = datamgmt::rotate_dir("/sd/EXPORT", EXPORT_KEEP_FILES);
+    doc["ok"] = true;
+    doc["deleted_count"] = deleted;
+    doc["kept"] = EXPORT_KEEP_FILES;
+    log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "Export bundles rotated", nullptr);
+  }
+#else
+  doc["ok"] = false;
+  doc["error"] = "Storage management not built into this firmware";
+#endif
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+static esp_err_t handle_logs_rotate_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_logs_rotate(req);
+}
+
 static esp_err_t handle_witness_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_witness(req);
@@ -6083,6 +6223,10 @@ static esp_err_t handle_witness_auth(httpd_req_t* req) {
 static esp_err_t handle_config_get_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_config_get(req);
+}
+static esp_err_t handle_config_post_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_config_post(req);
 }
 static esp_err_t handle_export_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
@@ -6363,11 +6507,17 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t ack_all = { .uri = "/api/logs/ack-all", .method = HTTP_POST, .handler = handle_ack_all_auth };
   httpd_register_uri_handler(server, &ack_all);
 
+  httpd_uri_t logs_rotate = { .uri = "/api/logs/rotate", .method = HTTP_POST, .handler = handle_logs_rotate_auth };
+  httpd_register_uri_handler(server, &logs_rotate);
+
   httpd_uri_t witness = { .uri = "/api/witness", .method = HTTP_GET, .handler = handle_witness_auth };
   httpd_register_uri_handler(server, &witness);
 
   httpd_uri_t config_get = { .uri = "/api/config", .method = HTTP_GET, .handler = handle_config_get_auth };
   httpd_register_uri_handler(server, &config_get);
+
+  httpd_uri_t config_post = { .uri = "/api/config", .method = HTTP_POST, .handler = handle_config_post_auth };
+  httpd_register_uri_handler(server, &config_post);
 
   httpd_uri_t export_bundle = { .uri = "/api/export", .method = HTTP_POST, .handler = handle_export_auth };
   httpd_register_uri_handler(server, &export_bundle);
@@ -6452,7 +6602,8 @@ static void start_http_server() {
   //   tests_host/check_route_budget.py  (CI: firmware.yml)
   // which emulates the preprocessor for FULL/S3, DEV/S3 and FULL/C3 and
   // asserts >= 8 free slots. If it fails, RAISE a number here — never lower.
-  const int base_handlers = 46;       // register_api_routes core + the always-on
+  const int base_handlers = 47;       // register_api_routes core (incl. /api/config
+                                       // GET+POST) + the always-on
                                        // register_extra_routes singles (WiFi
                                        // provisioning, OTA x4, identify,
                                        // device-name, selftest, fleet/pairing QR,
@@ -6460,6 +6611,8 @@ static void start_http_server() {
   const int csi_handlers = 23;        // csi_integration::init (stream/window/events/
                                        // calibrate/settings/mqtt/tune/pair-token/…)
   const int wifi_presence_handlers = 4;   // /api/presence/{combined,wifi,wifi/start,wifi/stop}
+  const int rf_presence_handlers = 7;     // /api/rf/{status,settings GET/POST,conformance,enable,disable,rotate}
+  const int datamgmt_handlers = 1;        // /api/logs/rotate (registered unconditionally)
   const int household_handlers = 6;       // /api/household* + /api/presence override
   const int audible_chirp_handlers = 4;   // /api/audible-chirp{,/play,/test,/config}
 #if FEATURE_ACOUSTIC_EVENTS
@@ -6496,9 +6649,10 @@ static void start_http_server() {
 #endif
   const int handler_headroom = 24;    // Reserve for future additions
   const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
-      + household_handlers + audible_chirp_handlers + audio_handlers
-      + camera_handlers + qr_handlers + mesh_handlers + chirp_handlers
-      + bluetooth_handlers + ble_discovery_handlers + handler_headroom;
+      + rf_presence_handlers + datamgmt_handlers + household_handlers
+      + audible_chirp_handlers + audio_handlers + camera_handlers + qr_handlers
+      + mesh_handlers + chirp_handlers + bluetooth_handlers
+      + ble_discovery_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
@@ -6791,6 +6945,10 @@ register_extra_routes:
 
   // WiFi Presence Detection endpoints
   wifi_presence_api::register_routes(active_server, g_device.api_token_str);
+
+  // RF Presence fusion endpoints (/api/rf/*). Every route Bearer/session
+  // gated via rf_presence_api's auth_gated trampoline.
+  rf_presence_api::register_routes(active_server, g_device.api_token_str);
 
   // Household roles + auto-context (Owner/Family/Guest tagging, presence)
   household_api::register_routes(active_server, g_device.api_token_str);
@@ -7458,6 +7616,11 @@ static bool provision_device() {
   // ── Derive device-unique AP password ──
   Serial.println("[PROV] Deriving device-unique AP password...");
   derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
+
+  // Load operator-configurable runtime settings (Device tab). Clamped on
+  // load, so the record loop, time-coarsening bucket, and log threshold are
+  // in-envelope before they are first read.
+  config_load_runtime();
 
   // Load chain state
   g_device.seq = nvs_load_u32(NVS_KEY_SEQ, 0);
@@ -8465,6 +8628,25 @@ void setup() {
   }
   #endif
 
+  // RF Presence fusion (BLE + WiFi-probe + CSI scoring FSM). init() only
+  // sets up the privacy-preserving session/token state and loads persisted
+  // settings — it does NOT start any radio; enable() (user-driven via the
+  // RF tab, persisted in NVS) is what makes it score. ble_presence already
+  // feeds feed_ble_scan(), which is a no-op until this init runs. Skipped in
+  // safe mode like every other optional subsystem.
+  if (!in_safe_mode) {
+    if (rf_presence::init()) {
+      Serial.println(rf_presence::is_enabled()
+          ? "[OK] RF presence ready (enabled)"
+          : "[OK] RF presence ready (disabled — enable from the RF tab)");
+    } else {
+      Serial.println("[--] RF presence init failed");
+      log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM, "RF presence init failed", nullptr);
+    }
+  } else {
+    Serial.println("[--] RF presence skipped (safe mode)");
+  }
+
   // Initialize Audible Chirp
   #if FEATURE_AUDIBLE_CHIRP
   if (!in_safe_mode) {
@@ -8893,6 +9075,11 @@ void loop() {
   g_health.sd_healthy = sd_is_available();
   #endif
 
+  // Advance the RF-presence fusion FSM (session/token rotation, decay,
+  // baseline bookkeeping). Self-guards on init state and is cheap when the
+  // feature is disabled — the time-based housekeeping still needs to run.
+  rf_presence::update();
+
   // Yield to prevent watchdog issues
   yield();
 
@@ -9283,7 +9470,7 @@ void loop() {
   // WITNESS RECORD CREATION
   // ════════════════════════════════════════════════════════════════════════════
 
-  if (now - g_last_record_ms >= RECORD_INTERVAL_MS) {
+  if (now - g_last_record_ms >= g_record_interval_ms) {
     g_last_record_ms = now;
 
     uint8_t payload[512];

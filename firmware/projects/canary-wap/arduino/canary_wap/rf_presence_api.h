@@ -19,10 +19,33 @@
 
 #include "esp_http_server.h"
 #include "rf_presence.h"
+#include "api_auth.h"
 #include <ArduinoJson.h>
 #include <cstring>  // for strcmp
 
 namespace rf_presence_api {
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH
+// ════════════════════════════════════════════════════════════════════════════
+// Every /api/rf/* route is Bearer/session gated (this module's header note
+// mandates it before the endpoints are exposed). register_routes() stashes
+// the device api token in a module-local static and wraps each real handler
+// in the auth_gated trampoline: it runs api_auth_check (which enforces the
+// lockout + sends the 401/403/429 on failure) and only then delegates.
+// nullptr keeps the legacy open behaviour for non-production callers; the
+// production call site in canary_wap.ino always passes g_device.api_token_str.
+inline const char*& auth_token_storage() {
+  static const char* token = nullptr;
+  return token;
+}
+
+template <esp_err_t (*Real)(httpd_req_t*)>
+static esp_err_t auth_gated(httpd_req_t* req) {
+  const char* tok = auth_token_storage();
+  if (tok && !api_auth_check(req, tok)) return ESP_OK;
+  return Real(req);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -282,18 +305,22 @@ static inline void register_api_handler(httpd_handle_t server, const char* uri,
   httpd_register_uri_handler(server, &route);
 }
 
-// Call this to register all RF Presence API routes with the HTTP server
-inline void register_routes(httpd_handle_t server) {
+// Call this to register all RF Presence API routes with the HTTP server.
+// api_token: the device's persistent api_token_str (must outlive the server);
+// every route is wrapped in auth_gated so a missing/wrong credential is
+// rejected before the handler runs.
+inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {
+  auth_token_storage() = api_token;
   // GET endpoints
-  register_api_handler(server, "/api/rf/status", HTTP_GET, handle_rf_status);
-  register_api_handler(server, "/api/rf/settings", HTTP_GET, handle_rf_settings_get);
-  register_api_handler(server, "/api/rf/conformance", HTTP_GET, handle_rf_conformance);
+  register_api_handler(server, "/api/rf/status", HTTP_GET, auth_gated<handle_rf_status>);
+  register_api_handler(server, "/api/rf/settings", HTTP_GET, auth_gated<handle_rf_settings_get>);
+  register_api_handler(server, "/api/rf/conformance", HTTP_GET, auth_gated<handle_rf_conformance>);
 
   // POST endpoints
-  register_api_handler(server, "/api/rf/enable", HTTP_POST, handle_rf_enable);
-  register_api_handler(server, "/api/rf/disable", HTTP_POST, handle_rf_disable);
-  register_api_handler(server, "/api/rf/rotate", HTTP_POST, handle_rf_rotate);
-  register_api_handler(server, "/api/rf/settings", HTTP_POST, handle_rf_settings_set);
+  register_api_handler(server, "/api/rf/enable", HTTP_POST, auth_gated<handle_rf_enable>);
+  register_api_handler(server, "/api/rf/disable", HTTP_POST, auth_gated<handle_rf_disable>);
+  register_api_handler(server, "/api/rf/rotate", HTTP_POST, auth_gated<handle_rf_rotate>);
+  register_api_handler(server, "/api/rf/settings", HTTP_POST, auth_gated<handle_rf_settings_set>);
 }
 
 } // namespace rf_presence_api

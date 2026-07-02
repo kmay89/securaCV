@@ -2250,11 +2250,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <div class="form-group">
             <label class="form-label">Record Interval (ms)</label>
-            <input type="number" class="form-input" id="configRecordInterval" value="1000" min="100" max="60000">
+            <input type="number" class="form-input" id="configRecordInterval" value="1000" min="250" max="60000">
           </div>
           <div class="form-group">
             <label class="form-label">Time Bucket (ms)</label>
-            <input type="number" class="form-input" id="configTimeBucket" value="5000" min="1000" max="60000">
+            <input type="number" class="form-input" id="configTimeBucket" value="5000" min="5000" max="60000">
+            <p style="font-size:0.7rem;color:var(--muted);margin-top:0.25rem;">Coarsens event timing for privacy. Minimum 5000 ms — finer (more precise) timing than this is never allowed.</p>
           </div>
           <div class="form-group">
             <label class="form-label">Log Level (min stored)</label>
@@ -2369,7 +2370,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
           </div>
           <div style="margin-top:1rem;">
-            <button class="btn btn-secondary" onclick="rotateOldLogs()" title="Delete health logs older than 30 days from SD card">Rotate Old Logs (30+ days)</button>
+            <button class="btn btn-secondary" onclick="rotateOldLogs()" title="Delete older witness-export bundles from the SD card to free space. Sealed witness records and the hash chain are never touched.">Clean up old export bundles</button>
           </div>
         </div>
       </div>
@@ -2755,7 +2756,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById(`settings-${tab}`).classList.add('active');
       if (tab === 'wifi') loadWifiStatus();
       else if (tab === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); }
-      else if (tab === 'device') refreshOtaStatus();
+      else if (tab === 'device') { refreshOtaStatus(); loadConfig(); }
       else if (tab === 'rf') loadRfSettings();
       if (tab !== 'device') stopOtaPolling();
     }
@@ -3043,18 +3044,6 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
-    // A few controls front subsystems that are present in the UI but not
-    // yet wired into this firmware build — RF signal sensing (needs Wi-Fi
-    // promiscuous mode + a bench validation pass), on-SD log rotation (the
-    // rotate routine is still a stub), and runtime record/bucket tuning
-    // (the time bucket is a privacy-coarsening floor, so it can't be a plain
-    // user setting). Rather than fire a request that 404s and report a
-    // confusing failure, these say so plainly. Tracked for follow-up.
-    function featureNotWired(name) {
-      alert(name + ' isn\'t available on this firmware build yet. ' +
-            'Everything else on this page works — this control is coming in a later update.');
-    }
-
     // Device self-test card: the SAME GET /api/selftest the setup wizard
     // runs (unauthenticated — the AP is its boundary, like /api/wifi/scan).
     // Renders a compact row per probe plus the safe-mode banner, so a user
@@ -3094,26 +3083,86 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }).join('');
     }
 
-    function refreshRfStatus() {
-      // RF sensing is not wired into this build; show the static
-      // "not available" state instead of polling a route that 404s.
+    async function refreshRfStatus() {
+      const data = await api('/api/rf/status');
+      if (!data.state) return;   // unauth/disabled: leave placeholders
+
+      document.getElementById('rfEnabled').checked = data.enabled;
+      document.getElementById('rfState').textContent = data.state;
+      document.getElementById('rfConfidence').textContent = data.confidence;
+      document.getElementById('rfDeviceCount').textContent = data.device_count;
+      document.getElementById('rfDwellClass').textContent = data.dwell_class;
+
       const badge = document.getElementById('rfStateBadge');
       const text = document.getElementById('rfStateText');
-      if (badge && text) { badge.className = 'badge info'; text.textContent = 'Not on this build'; }
+      if (data.state === 'present' || data.state === 'dwelling') {
+        badge.className = 'badge success';
+        text.textContent = data.state;
+      } else if (data.state === 'absent') {
+        badge.className = 'badge info';
+        text.textContent = 'Absent';
+      } else {
+        badge.className = 'badge info';
+        text.textContent = data.enabled ? data.state : 'Disabled';
+      }
+
       const rfBadge = document.getElementById('rfBadge');
       const rfStatus = document.getElementById('rfStatus');
-      if (rfBadge && rfStatus) { rfBadge.className = 'badge info'; rfStatus.textContent = 'RF'; }
+      if (data.enabled && data.device_count > 0) {
+        rfBadge.className = 'badge success';
+        rfStatus.textContent = data.device_count + ' RF';
+      } else {
+        rfBadge.className = 'badge info';
+        rfStatus.textContent = 'RF';
+      }
     }
 
-    function toggleRfEnabled() {
-      const el = document.getElementById('rfEnabled');
-      if (el) el.checked = false;  // stays off — the subsystem isn't wired
-      featureNotWired('RF signal presence');
+    async function toggleRfEnabled() {
+      const enabled = document.getElementById('rfEnabled').checked;
+      const data = await api(enabled ? '/api/rf/enable' : '/api/rf/disable', 'POST');
+      if (data.success === false) {
+        document.getElementById('rfEnabled').checked = !enabled;  // revert on failure
+        alert('Failed: ' + (data.error || 'could not change RF sensing'));
+      }
+      refreshRfStatus();
     }
 
-    function loadRfSettings() { /* no-op: RF sensing not wired on this build */ }
-    function saveRfSettings() { featureNotWired('RF signal presence'); }
-    function rotateRfSession() { featureNotWired('RF signal presence'); }
+    async function loadRfSettings() {
+      const data = await api('/api/rf/settings');
+      if (data.presence_threshold_sec) {
+        document.getElementById('rfPresenceThreshold').value = data.presence_threshold_sec;
+        document.getElementById('rfDwellThreshold').value = data.dwell_threshold_sec;
+        document.getElementById('rfLostTimeout').value = data.lost_timeout_sec;
+        document.getElementById('rfEmitImpulse').checked = data.emit_impulse_events;
+      }
+    }
+
+    async function saveRfSettings() {
+      const presence = parseInt(document.getElementById('rfPresenceThreshold').value);
+      const dwell = parseInt(document.getElementById('rfDwellThreshold').value);
+      const lost = parseInt(document.getElementById('rfLostTimeout').value);
+      // A blank/invalid field parses to NaN → serializes as JSON null, which
+      // the server reads as 0 and clamps to the minimum — a silent corruption.
+      // Reject before sending so an empty box can't quietly zero a threshold.
+      if (isNaN(presence) || isNaN(dwell) || isNaN(lost)) {
+        alert('Please enter valid numbers for all threshold fields.');
+        return;
+      }
+      const settings = {
+        presence_threshold_sec: presence,
+        dwell_threshold_sec: dwell,
+        lost_timeout_sec: lost,
+        emit_impulse_events: document.getElementById('rfEmitImpulse').checked
+      };
+      const data = await api('/api/rf/settings', 'POST', settings);
+      alert(data.success ? 'RF settings saved.' : 'Failed: ' + (data.error || 'Unknown'));
+    }
+
+    async function rotateRfSession() {
+      const data = await api('/api/rf/rotate', 'POST');
+      alert(data.success ? 'Session rotated — presence tokens re-keyed.' : 'Failed');
+      refreshRfStatus();
+    }
 
     function updateGps(gps) {
       // Backend emits gps.fix (bool) — gps.valid never existed; the previous
@@ -4804,17 +4853,57 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     // DEVICE CONFIG
     // ══════════════════════════════════════════════════════════════════
-    function saveConfig() {
-      // The record interval and, especially, the time bucket are privacy
-      // parameters (the bucket coarsens event timing — Invariant III), so
-      // they aren't a plain runtime setting and there is no POST /api/config
-      // yet. Be honest rather than 404.
-      featureNotWired('Recording/log configuration');
+    async function saveConfig() {
+      const interval = parseInt(document.getElementById('configRecordInterval').value);
+      const bucket = parseInt(document.getElementById('configTimeBucket').value);
+      const level = parseInt(document.getElementById('configLogLevel').value);
+      // A blank field parses to NaN → JSON null; guard so we never send a
+      // partial/confusing payload (the server skips null fields, but the user
+      // meant to set a value).
+      if (isNaN(interval) || isNaN(bucket) || isNaN(level)) {
+        alert('Please enter valid numbers for all configuration fields.');
+        return;
+      }
+      const config = {
+        record_interval_ms: interval,
+        time_bucket_ms: bucket,
+        log_level: level
+      };
+      const data = await api('/api/config', 'POST', config);
+      if (!data.ok) { alert('Could not save settings. Try again.'); return; }
+      // The server clamps to the safe envelope (e.g. the time bucket can't go
+      // below its privacy floor); reflect the effective values back.
+      document.getElementById('configRecordInterval').value = data.record_interval_ms;
+      document.getElementById('configTimeBucket').value = data.time_bucket_ms;
+      document.getElementById('configLogLevel').value = data.log_level;
+      alert(data.clamped
+        ? 'Saved — some values were adjusted to their safe range (the time bucket must be at least the ' + (data.time_bucket_floor_ms || 5000) + ' ms privacy floor).'
+        : 'Configuration saved and will persist across reboots.');
+    }
+
+    // Populate the Device-tab config inputs from the server's effective values.
+    async function loadConfig() {
+      const data = await api('/api/config');
+      if (!data.ok) return;
+      document.getElementById('configRecordInterval').value = data.record_interval_ms;
+      document.getElementById('configTimeBucket').value = data.time_bucket_ms;
+      const lvl = document.getElementById('configLogLevel');
+      if (lvl && data.log_level != null) lvl.value = data.log_level;
     }
 
     async function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.')) { try { await api('/api/reboot', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting…'); } }
     async function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { try { await api('/api/safe-mode/retry', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting into full operation…'); } }
-    function rotateOldLogs() { featureNotWired('SD log rotation'); }
+    async function rotateOldLogs() {
+      if (!confirm('Delete older witness-export bundles from the SD card to free space? Sealed witness records and the hash chain are NOT affected — only regenerable export files are removed.')) return;
+      const data = await api('/api/logs/rotate', 'POST', {});
+      if (data.ok) {
+        alert(data.deleted_count > 0
+          ? ('Removed ' + data.deleted_count + ' old export bundle(s); kept the newest ' + (data.kept || 20) + '.')
+          : 'Nothing to clean up — no export bundles beyond the keep limit.');
+      } else {
+        alert('Could not clean up: ' + (data.error || 'unknown error'));
+      }
+    }
 
     // ══════════════════════════════════════════════════════════════════
     // UTILITIES

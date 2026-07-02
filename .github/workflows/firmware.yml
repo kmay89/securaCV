@@ -619,6 +619,20 @@ jobs:
           /tmp/selftest_logic | tee /tmp/selftest_logic.log
           grep -q "ALL .* PASSED" /tmp/selftest_logic.log
 
+      - name: Build + run canary-wap config-logic host test
+        # The Device-tab runtime config clamps. Most important: the event-time
+        # coarsening bucket can only be widened past its compile-time floor,
+        # never narrowed (Invariant III), and the log threshold can never rise
+        # above WARNING (ERROR/CRITICAL always stored).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_config_logic.cpp \
+              -o /tmp/config_logic
+          /tmp/config_logic | tee /tmp/config_logic.log
+          grep -q "ALL .* PASSED" /tmp/config_logic.log
+
       - name: Build + run canary-wap auth-logic host test
         # Which failed-auth shapes feed the brute-force lockout. A
         # credential-less request must NOT count — counting it let one

@@ -270,6 +270,8 @@ def main():
                                                  "register_api_handler(server,"),
             r"beacon_api::register_routes\s*\(": ("beacon_api.h",
                                                   "register_api_handler(server,"),
+            r"rf_presence_api::register_routes\s*\(": ("rf_presence_api.h",
+                                                       "register_api_handler(server,"),
         }
         module_total = 0
         for call_re, (fname, needle) in module_calls.items():
