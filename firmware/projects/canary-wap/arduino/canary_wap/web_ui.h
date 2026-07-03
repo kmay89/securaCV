@@ -4678,6 +4678,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (data.advertising) { badge.className = 'badge info'; text.textContent = 'Advertising'; }
       else { badge.className = 'badge info'; text.textContent = data.enabled ? 'Idle' : 'Disabled'; }
 
+      // When init was refused/failed, say WHY in the subtitle instead of
+      // presenting a dead-looking panel ("internal RAM too fragmented…").
+      const subtitle = document.getElementById('btSubtitle');
+      if (subtitle && data.init_fail_reason) {
+        subtitle.textContent = 'Radio off — ' + data.init_fail_reason;
+        badge.className = 'badge warning'; text.textContent = 'Off';
+      }
+
       // Live connection panel (Find My-like card)
       const connEl = document.getElementById('btConnLive');
       if (data.connected && data.connection) {

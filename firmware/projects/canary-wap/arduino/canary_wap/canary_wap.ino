@@ -134,6 +134,7 @@
                                      // wifi_change_authorize()
 #include "config_logic.h"            // runtime device-config clamps (privacy floor)
 #include "peek_stream_logic.h"       // pure, host-tested camera-stream value math
+#include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
 // instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
@@ -744,14 +745,23 @@ static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
 // (SKIP) apart from "init ran and the stack genuinely failed" (FAIL). Read
 // by selftest_api.h's probe_bluetooth; non-static so its extern resolves.
 volatile bool g_ble_init_attempted = false;
-
-// BLE Discovery radio activity is deferred out of the provisioning join window
-// (see ble_discovery_start_if_due / provisioning_logic::ble_discovery_start_due):
-// its 5 s ~99%-duty active scan starves a phone's WPA2 handshake to the SoftAP.
-// _ready = init() succeeded and the subsystems are up (may transmit); _started =
-// operaStart/nearbyStart/boot-chirp have fired; _ready_ms = boot reference for
-// the AP-only settle window.
 #if FEATURE_BLE
+// BLE-init lifecycle witness event, deferred. BLE initializes early in
+// Phase 3 (heap ordering), before csi_integration::init registers the
+// ble.events CSI module — and csi_event_emit before registration is a
+// silent drop. setup() emits the held outcome after the network phase.
+static int8_t g_ble_lifecycle_pending = 0;  // 0=none, 1=initialized, -1=failed
+#endif
+
+// BLE radio activity is deferred out of the provisioning join window
+// (see ble_discovery_start_if_due / provisioning_logic::ble_discovery_start_due):
+// concurrent BLE radio duty starves a phone's WPA2 handshake to the SoftAP —
+// worst with Discovery's 5 s ~99%-duty active scan, but the pairing channel's
+// auto-advertising + continuous presence scan ride the same gate now that
+// their stack init runs early in boot (heap ordering). _ready = init()
+// succeeded and the subsystems are up (may transmit); _started = the deferred
+// radio activity has fired; _ready_ms = boot reference for the settle window.
+#if FEATURE_BLE || FEATURE_BLUETOOTH
 static bool     g_ble_discovery_ready   = false;
 static bool     g_ble_discovery_started = false;
 static uint32_t g_ble_discovery_ready_ms = 0;
@@ -854,6 +864,7 @@ static void wifi_raise_ap();
 static bool resolve_ap_password(char* out_password, size_t out_len);
 static const char* wifi_state_name(WiFiProvState s);
 static void claim_catch_all_hostname();
+static void schedule_catch_all_claim();
 static void generate_mdns_hostname(char* out, size_t cap);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -5619,6 +5630,17 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
   url_decode_inplace(ssid);
   url_decode_inplace(pass);
 
+  // The SECURACV: payload is ';'-delimited and the scanner's parser has no
+  // escape sequence — credentials containing ';' would encode a QR that
+  // silently truncates at scan time. Refuse with a real message instead.
+  if (strchr(ssid, ';') || strchr(pass, ';')) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req,
+        "Network names/passwords containing ';' can't be QR-provisioned yet",
+        -1);
+  }
+
   // Build SECURACV: payload
   char payload[256];
   snprintf(payload, sizeof(payload), "SECURACV:S:%s;P:%s;;", ssid, pass);
@@ -5629,6 +5651,136 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
 static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_fleet_qr(req);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FLEET LAN DISCOVERY — GET /api/fleet/scan
+//
+// Every Canary already advertises a _securacv._tcp mDNS service with TXT
+// records (device_id, name, host, fw, model) — but nothing consumed them:
+// the Fleet sheet listed only ESP-NOW opera-mesh members, so two Canaries
+// sharing home WiFi showed each other as "No other Canaries found yet."
+// This endpoint browses that service and returns every SecuraCV device on
+// the LAN, plus this device's own identity (an mDNS querier does not
+// reliably see its own responder), so the UI can render the whole flock.
+//
+// The browse blocks ~2 s, which must never stall the single httpd task —
+// same trap as the MJPEG stream. It runs on a short-lived worker task; the
+// handler serves the latest cached result immediately and kicks a refresh
+// when the cache is stale. The Fleet sheet's poll picks up fresh results a
+// couple seconds later.
+// ════════════════════════════════════════════════════════════════════════════
+
+static volatile bool     g_fleet_scan_busy    = false;
+static uint32_t          g_fleet_scan_done_ms = 0;      // guarded by mux
+static bool              g_fleet_scan_have    = false;  // guarded by mux
+// Sized for the 8-device browse cap below: each entry serializes to ~200 B
+// worst-case (32-char name, 30-char hostname, TXT fields), so 8 × ~200 B +
+// wrapper ≈ 1.7 KB; 2560 leaves honest slack instead of truncating the whole
+// result at exactly the advertised capacity.
+static char              g_fleet_scan_cache[2560] = ""; // guarded by mux
+static portMUX_TYPE      g_fleet_scan_mux = portMUX_INITIALIZER_UNLOCKED;
+static const uint32_t    FLEET_SCAN_TTL_MS = 10000;
+
+static void fleet_scan_task(void*) {
+  JsonDocument doc;
+  JsonArray arr = doc["canaries"].to<JsonArray>();
+
+  // Blocking browse (~2 s). The mDNS component is internally thread-safe.
+  int n = MDNS.queryService("securacv", "tcp");
+  for (int i = 0; i < n && i < 8; i++) {
+    JsonObject o = arr.add<JsonObject>();
+    o["device_id"] = MDNS.txt(i, "device_id");
+    o["name"]      = MDNS.txt(i, "name");
+    o["mdns_host"] = MDNS.txt(i, "host");
+    o["fw"]        = MDNS.txt(i, "fw");
+    o["model"]     = MDNS.txt(i, "model");
+    o["ip"]        = MDNS.address(i).toString();
+    o["port"]      = MDNS.port(i);
+  }
+
+  // Heap staging (not a function-local static): keeps the one-shot task's
+  // stack small and leaves nothing shared between task instances.
+  char* staging = (char*)malloc(sizeof(g_fleet_scan_cache));
+  if (staging) {
+    size_t written = serializeJson(doc, staging, sizeof(g_fleet_scan_cache));
+    if (written >= sizeof(g_fleet_scan_cache)) {
+      staging[sizeof(g_fleet_scan_cache) - 1] = '\0';
+    }
+
+    portENTER_CRITICAL(&g_fleet_scan_mux);
+    memcpy(g_fleet_scan_cache, staging, sizeof(g_fleet_scan_cache));
+    g_fleet_scan_done_ms = millis();
+    g_fleet_scan_have    = true;
+    portEXIT_CRITICAL(&g_fleet_scan_mux);
+
+    free(staging);
+  }
+
+  __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);
+  vTaskDelete(NULL);
+}
+
+static esp_err_t handle_fleet_scan(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  // Snapshot the cache torn-free (writer runs on the scan worker task).
+  static char snap[sizeof(g_fleet_scan_cache)];
+  bool     have;
+  uint32_t done_ms;
+  portENTER_CRITICAL(&g_fleet_scan_mux);
+  memcpy(snap, g_fleet_scan_cache, sizeof(snap));
+  have    = g_fleet_scan_have;
+  done_ms = g_fleet_scan_done_ms;
+  portEXIT_CRITICAL(&g_fleet_scan_mux);
+
+  const uint32_t now = millis();
+  const bool stale = !have || (uint32_t)(now - done_ms) >= FLEET_SCAN_TTL_MS;
+  bool busy = __atomic_load_n(&g_fleet_scan_busy, __ATOMIC_ACQUIRE);
+  if (stale && !busy) {
+    __atomic_store_n(&g_fleet_scan_busy, true, __ATOMIC_RELEASE);
+    // Internal-RAM stack; the task builds a small JSON doc + mDNS browse.
+    if (xTaskCreate(fleet_scan_task, "fleet_scan", 6144, nullptr, 1, nullptr)
+        != pdPASS) {
+      __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);
+    } else {
+      busy = true;
+    }
+  }
+
+  // Wrap the cached peer list with live self-identity + scan state. The
+  // self entry lets the UI always render this device even before the first
+  // browse completes (and dedupe it out of the browse results).
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["scanning"] = busy;
+  doc["age_ms"] = have ? (uint32_t)(now - done_ms) : 0;
+  JsonObject self = doc["self"].to<JsonObject>();
+  self["device_id"] = (const char*)g_device.device_id;
+  self["name"]      = setup_wizard::get_device_name() ? setup_wizard::get_device_name() : "";
+  self["mdns_host"] = (const char*)g_device.mdns_hostname;
+  self["fw"]        = FIRMWARE_VERSION;
+  IPAddress sta_ip = WiFi.localIP();
+  IPAddress ap_ip  = WiFi.softAPIP();
+  self["ip"] = ((uint32_t)sta_ip != 0) ? sta_ip.toString() : ap_ip.toString();
+  if (have && snap[0]) {
+    JsonDocument cached;
+    if (deserializeJson(cached, snap) == DeserializationError::Ok) {
+      doc["canaries"] = cached["canaries"];
+    }
+  }
+  if (!doc["canaries"].is<JsonArray>()) {
+    doc["canaries"].to<JsonArray>();
+  }
+
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_fleet_scan_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_fleet_scan(req);
 }
 
 /* Pairing QR: SVG QR of the compact provisioning receipt, scanned by the
@@ -6230,7 +6382,7 @@ static void mdns_reannounce() {
   #else
   MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
   #endif
-  claim_catch_all_hostname();
+  schedule_catch_all_claim();  // staggered; performed by catch_all_tick()
 }
 
 // API: rename this device after onboarding. Sets the friendly name (NVS
@@ -6717,12 +6869,13 @@ static void start_http_server() {
   //   tests_host/check_route_budget.py  (CI: firmware.yml)
   // which emulates the preprocessor for FULL/S3, DEV/S3 and FULL/C3 and
   // asserts >= 8 free slots. If it fails, RAISE a number here — never lower.
-  const int base_handlers = 47;       // register_api_routes core (incl. /api/config
+  const int base_handlers = 48;       // register_api_routes core (incl. /api/config
                                        // GET+POST) + the always-on
                                        // register_extra_routes singles (WiFi
                                        // provisioning, OTA x4, identify,
                                        // device-name, selftest, fleet/pairing QR,
-                                       // sys-monitor, battery) + captive probes
+                                       // fleet/scan, sys-monitor, battery)
+                                       // + captive probes
   const int csi_handlers = 23;        // csi_integration::init (stream/window/events/
                                        // calibrate/settings/mqtt/tune/pair-token/…)
   const int wifi_presence_handlers = 4;   // /api/presence/{combined,wifi,wifi/start,wifi/stop}
@@ -6992,6 +7145,10 @@ register_extra_routes:
   // Fleet provisioning QR code
   httpd_uri_t fleet_qr = { .uri = "/api/fleet/qr", .method = HTTP_GET, .handler = handle_fleet_qr_auth };
   httpd_register_uri_handler(active_server, &fleet_qr);
+
+  // Fleet LAN discovery (mDNS _securacv._tcp browse, async + cached)
+  httpd_uri_t fleet_scan = { .uri = "/api/fleet/scan", .method = HTTP_GET, .handler = handle_fleet_scan_auth };
+  httpd_register_uri_handler(active_server, &fleet_scan);
 
   httpd_uri_t pairing_qr = { .uri = "/api/pairing-qr", .method = HTTP_GET, .handler = handle_pairing_qr };
   httpd_register_uri_handler(active_server, &pairing_qr);
@@ -7419,25 +7576,39 @@ static bool resolve_ap_password(char* out_password, size_t out_len) {
 
 // Claim the bare "canary.local" catch-all in ADDITION to our unique
 // canary-<name>.local, so single-device homes keep the easy-to-type URL while
-// multi-device homes never collide. Strategy: first-wins. We probe the
-// network; if another Canary already answers canary.local we leave it alone
-// and rely solely on our unique hostname. Otherwise we register "canary" as a
-// delegated mDNS hostname pointing at our live interface addresses (AP always,
-// STA when joined to home WiFi). The unique hostname set via MDNS.begin() is
-// unaffected either way, so this can only ever ADD reachability.
-static void claim_catch_all_hostname() {
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
-  IPAddress existing = MDNS.queryHost("canary", 600);
-  bool taken_by_other = ((uint32_t)existing != 0) &&
-                        existing != WiFi.softAPIP() &&
-                        existing != WiFi.localIP();
-  if (taken_by_other) {
-    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-               "canary.local catch-all already claimed by a peer",
-               "serving unique hostname only");
-    return;
-  }
+// multi-device homes never collide. Strategy: first-wins, made race-safe by
+// two additions (decision table host-tested in catchall_logic.h):
+//   1. The claim is SCHEDULED with a fingerprint-derived stagger instead of
+//      firing at the STA-join instant — two Canaries powering up together
+//      (power restored) used to probe simultaneously, find silence, and BOTH
+//      claim canary.local. Which device the browser then reached was
+//      arbitrary and could flip mid-session, killing the session cookie.
+//   2. A periodic conflict check while claimed: if another responder shows
+//      up anyway, the deterministic IP tie-break picks exactly one keeper
+//      and the loser withdraws (both sides evaluate the same pair from
+//      opposite ends, so no negotiation is needed).
+// The unique hostname set via MDNS.begin() is unaffected either way, so this
+// can only ever ADD reachability.
+static bool     g_catch_all_claimed        = false;
+static bool     g_catch_all_claim_pending  = false;
+static uint32_t g_catch_all_claim_due_ms   = 0;
+static uint32_t g_catch_all_next_check_ms  = 0;
+static const uint32_t CATCH_ALL_RECHECK_MS = 120000;  // conflict re-probe cadence
 
+// Ask for the catch-all claim to run soon (from the loop tick), after this
+// device's stagger window. Callable from WiFi-event/loop contexts; never
+// blocks the caller.
+static void schedule_catch_all_claim() {
+  g_catch_all_claim_due_ms = millis() +
+      catchall_logic::claim_stagger_ms(g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
+  g_catch_all_claim_pending = true;
+}
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
+// (Re)register the "canary" delegate for our live interface addresses and
+// schedule the next conflict check. quiet=true for the recurring re-adds so
+// the health log isn't spammed every cadence.
+static void catch_all_add_delegate(bool quiet) {
   // Address list lives in static storage; the mDNS component copies it, but
   // keeping it static is harmless and avoids any lifetime ambiguity.
   static mdns_ip_addr_t ap_node;
@@ -7460,22 +7631,95 @@ static void claim_catch_all_hostname() {
     sta_node.next = head;
     head = &sta_node;
   }
-  if (!head) return;
+  if (!head) { g_catch_all_claimed = false; return; }
 
   mdns_delegate_hostname_remove("canary");  // idempotent across re-announce
   if (mdns_delegate_hostname_add("canary", head) == ESP_OK) {
-    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-               "canary.local catch-all claimed", g_device.mdns_hostname);
+    g_catch_all_claimed = true;
+    g_catch_all_next_check_ms = millis() + CATCH_ALL_RECHECK_MS +
+        catchall_logic::recheck_jitter_ms(g_device.pubkey_fp[0],
+                                          g_device.pubkey_fp[1]);
+    if (!quiet) {
+      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                 "canary.local catch-all claimed", g_device.mdns_hostname);
+    }
   } else {
-    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
-               "canary.local catch-all add failed", nullptr);
+    g_catch_all_claimed = false;
+    if (!quiet) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                 "canary.local catch-all add failed", nullptr);
+    }
   }
+}
+#endif
+
+static void claim_catch_all_hostname() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
+  IPAddress existing = MDNS.queryHost("canary", 600);
+  if (catchall_logic::probe_is_conflict((uint32_t)existing,
+                                        (uint32_t)WiFi.softAPIP(),
+                                        (uint32_t)WiFi.localIP())) {
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "canary.local catch-all already claimed by a peer",
+               "serving unique hostname only");
+    g_catch_all_claimed = false;
+    return;
+  }
+
+  catch_all_add_delegate(false);
 #else
   // mdns_delegate_hostname_add requires ESP-IDF >= 4.4. On older cores the
   // device is still reachable at its unique canary-<name>.local; the bare
   // canary.local catch-all is simply not advertised.
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
              "canary.local catch-all unavailable on this core", g_device.mdns_hostname);
+#endif
+}
+
+// Loop-side steward for the catch-all: performs the staggered initial claim,
+// then re-probes every CATCH_ALL_RECHECK_MS while we hold it. On a detected
+// double-claim, the IP tie-break decides who withdraws. The 600 ms blocking
+// probe runs on the loop task at most once per cadence — well inside the
+// watchdog budget.
+static void catch_all_tick() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
+  const uint32_t now = millis();
+
+  if (g_catch_all_claim_pending && catchall_logic::due(now, g_catch_all_claim_due_ms)) {
+    g_catch_all_claim_pending = false;
+    claim_catch_all_hostname();
+    return;  // one blocking probe per tick
+  }
+
+  if (g_catch_all_claimed && catchall_logic::due(now, g_catch_all_next_check_ms)) {
+    g_catch_all_next_check_ms = now + CATCH_ALL_RECHECK_MS;
+    // Withdraw our own delegate for the probe's duration: queryHost returns
+    // a single address, so while we're answering, a double-claiming peer can
+    // hide behind our own echo and the conflict is never detected. With the
+    // delegate down, any answer is genuinely someone else. The ≤600 ms gap
+    // in our canary.local answer is invisible next to the re-check cadence,
+    // and the fingerprint-jittered schedule keeps two devices' probe windows
+    // from overlapping (synchronized withdrawn probes would both see
+    // silence and both re-add).
+    mdns_delegate_hostname_remove("canary");
+    IPAddress answer = MDNS.queryHost("canary", 600);
+    const uint32_t my_ap  = (uint32_t)WiFi.softAPIP();
+    const uint32_t my_sta = (uint32_t)WiFi.localIP();
+    if (catchall_logic::probe_is_conflict((uint32_t)answer, my_ap, my_sta)) {
+      const uint32_t my_ip = my_sta ? my_sta : my_ap;
+      if (!catchall_logic::keep_claim_on_conflict(my_ip, (uint32_t)answer)) {
+        g_catch_all_claimed = false;  // stay withdrawn — the peer keeps it
+        log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                   "canary.local catch-all withdrawn (peer holds it)",
+                   g_device.mdns_hostname);
+        return;
+      }
+      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                 "canary.local double-claim detected — keeping (tie-break)",
+                 nullptr);
+    }
+    catch_all_add_delegate(true);  // still ours — quietly re-register
+  }
 #endif
 }
 
@@ -7535,7 +7779,7 @@ static void wifi_init_provisioning() {
           #else
           MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
           #endif
-          claim_catch_all_hostname();  // re-assert canary.local on the home LAN
+          schedule_catch_all_claim();  // staggered re-assert of canary.local
           log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
                      "mDNS re-announced on STA", g_device.mdns_hostname);
         } else {
@@ -7644,7 +7888,7 @@ static void wifi_init_provisioning() {
     #else
     MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
     #endif
-    claim_catch_all_hostname();  // also answer the bare canary.local if free
+    schedule_catch_all_claim();  // staggered; answers bare canary.local if free
     log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", g_device.mdns_hostname);
   } else {
     log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "mDNS begin failed", g_device.mdns_hostname);
@@ -8410,6 +8654,122 @@ void setup() {
   esp_task_wdt_reset();
   #endif
 
+  // Bluetooth comes SECOND, right after the camera and BEFORE WiFi/HTTP.
+  // The BLE controller allocates a ~30 KB *contiguous internal DMA* block at
+  // init — PSRAM can't host it. This init used to run LAST in Phase 3, after
+  // WiFi + lwIP + httpd + mesh had carved internal RAM into fragments; on a
+  // fully loaded FULL build the heap guard then (correctly) refused to bring
+  // the stack up, and the field symptom was a permanent "NimBLE init failed"
+  // even with PSRAM enabled. Bringing the controller up on a fresh heap
+  // reserves its block once, for the device's lifetime; init here does NOT
+  // transmit (advertising/scan stay deferred, see g_ble_discovery_ready).
+  // BT-controller-before-esp_wifi_init is the supported coexistence order.
+
+  // Initialize Bluetooth (legacy channel)
+  #if FEATURE_BLUETOOTH
+  if (!in_safe_mode) {
+    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
+    Serial.println("[..] Initializing Bluetooth Low Energy...");
+    // Push device metadata into bluetooth_channel BEFORE init(). The DIS
+    // characteristics get baked during service creation; setting these
+    // afterwards has no effect until the next reinit.
+    bluetooth_channel::set_device_metadata(FIRMWARE_VERSION, g_device.fingerprint_hex);
+    // Early init is heap reservation ONLY: auto-advertising + the continuous
+    // presence scan must not transmit inside the provisioning join window
+    // (they'd starve a phone's WPA2 handshake to the SoftAP). The loop's
+    // ble_discovery_start_if_due() lights the radio once the window clears.
+    bluetooth_channel::set_defer_radio(true);
+    if (bluetooth_channel::init()) {
+      Serial.println("[OK] Bluetooth initialized (radio deferred until the join window clears)");
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+      // Arm the deferred-radio gate for builds without FEATURE_BLE too (the
+      // FEATURE_BLE init below re-stamps these; keeping the earliest ready
+      // timestamp is correct either way).
+      if (!g_ble_discovery_ready) {
+        g_ble_discovery_ready    = true;
+        g_ble_discovery_ready_ms = millis();
+      }
+      // Hand the offline-console module the device's short fingerprint
+      // and firmware version so its snapshot JSON identifies us. Both
+      // are owned by the .ino — the module copies into its own buffers.
+      ble_console::set_device_metadata(g_device.fingerprint_hex, FIRMWARE_VERSION);
+
+      // BLE GATT Status Service — register on the shared NimBLE server
+      // created by bluetooth_channel. Exposes battery, health, chain,
+      // and SD status to companion phones over standard GATT.
+      #if FEATURE_BLE_STATUS
+      {
+        NimBLEServer* ble_server = NimBLEDevice::getServer();
+        if (ble_server) {
+          if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
+                               &g_device.seq)) {
+            Serial.println("[OK] BLE GATT status service registered");
+            log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr);
+          } else {
+            Serial.println("[--] BLE GATT status service init failed");
+          }
+        }
+      }
+      #endif
+    } else {
+      Serial.println("[--] Bluetooth init failed");
+    }
+  } else {
+    Serial.println("[--] Bluetooth init skipped (safe mode)");
+  }
+  #endif
+
+  // Initialize BLE Discovery (Opera/Chirp/Nearby). Piggybacks on the NimBLE
+  // stack the channel above brought up (or brings it up itself on builds
+  // without FEATURE_BLUETOOTH — same fresh-heap reasoning applies).
+  #if FEATURE_BLE
+  if (!in_safe_mode) {
+    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
+    Serial.println("[..] Initializing BLE Discovery subsystem...");
+
+    // Build device ID hash hex string from pubkey fingerprint
+    char ble_device_id_hex[20];
+    hex_to_str(ble_device_id_hex, g_device.pubkey_fp, 8);
+
+    if (ble_manager::init(ble_device_id_hex, FIRMWARE_VERSION,
+                          &g_device.seq, g_device.chain_head)) {
+      Serial.println("[OK] BLE Discovery initialized — advertising/scan deferred until the join window clears");
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
+
+      // spec/event_contract.md §10: the lifecycle event must route through
+      // the CSI chokepoint — but BLE now initializes BEFORE the CSI module
+      // registry exists (csi_integration::init runs with the web server),
+      // and csi_event_emit before registration is a silent drop. Hold the
+      // outcome; it's emitted right after the network phase below, the same
+      // point in boot where this event used to originate.
+      g_ble_lifecycle_pending = 1;
+
+      // Defer the radio activity (Opera advertising + Nearby *active* scanning +
+      // boot chirp) out of the provisioning join window. A 5 s, ~99%-duty active
+      // scan on the shared 2.4 GHz radio (pinned to the WiFi/BLE core) starves a
+      // phone's concurrent WPA2 handshake to the SoftAP, so joining the AP fails
+      // intermittently. ble_discovery_start_if_due() (loop) transmits once the
+      // STA has joined home WiFi — the AP is then dropped, leaving the stable
+      // STA+BLE combo — or after an AP-only settle window. init() already stood
+      // up the stack + subsystems; this only gates *when they transmit*.
+      g_ble_discovery_ready    = true;
+      g_ble_discovery_ready_ms = millis();
+    } else {
+      Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
+      Serial.println("[--] Check: Is the BLE antenna connected?");
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
+      g_ble_lifecycle_pending = -1;  // emitted after the CSI registry is up
+    }
+  } else {
+    Serial.println("[--] BLE Discovery init skipped (safe mode)");
+  }
+  #endif
+
+  // Fresh feed after the BLE phase (controller init takes ~0.5-1 s).
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+  #endif
+
   // Initialize SD card storage (with timeout, non-blocking)
   #if FEATURE_SD_STORAGE
   if (!in_safe_mode) {
@@ -8668,87 +9028,17 @@ void setup() {
   }
   #endif
 
-  // Initialize Bluetooth (legacy channel)
-  #if FEATURE_BLUETOOTH
-  if (!in_safe_mode) {
-    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
-    Serial.println("[..] Initializing Bluetooth Low Energy...");
-    // Push device metadata into bluetooth_channel BEFORE init(). The DIS
-    // characteristics get baked during service creation; setting these
-    // afterwards has no effect until the next reinit.
-    bluetooth_channel::set_device_metadata(FIRMWARE_VERSION, g_device.fingerprint_hex);
-    if (bluetooth_channel::init()) {
-      Serial.println("[OK] Bluetooth initialized");
-      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
-      // Hand the offline-console module the device's short fingerprint
-      // and firmware version so its snapshot JSON identifies us. Both
-      // are owned by the .ino — the module copies into its own buffers.
-      ble_console::set_device_metadata(g_device.fingerprint_hex, FIRMWARE_VERSION);
-
-      // BLE GATT Status Service — register on the shared NimBLE server
-      // created by bluetooth_channel. Exposes battery, health, chain,
-      // and SD status to companion phones over standard GATT.
-      #if FEATURE_BLE_STATUS
-      {
-        NimBLEServer* ble_server = NimBLEDevice::getServer();
-        if (ble_server) {
-          if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
-                               &g_device.seq)) {
-            Serial.println("[OK] BLE GATT status service registered");
-            log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr);
-          } else {
-            Serial.println("[--] BLE GATT status service init failed");
-          }
-        }
-      }
-      #endif
-    } else {
-      Serial.println("[--] Bluetooth init failed");
-    }
-  } else {
-    Serial.println("[--] Bluetooth init skipped (safe mode)");
-  }
-  #endif
-
-  // Initialize BLE Discovery (Opera/Chirp/Nearby)
+  // Emit the BLE-init lifecycle event held from the early-BLE phase, now
+  // that csi_integration::init (web-server start) has registered the
+  // ble.events module. If the server never started, this drops silently —
+  // identical to the pre-reorder behavior at this same point in boot.
   #if FEATURE_BLE
-  if (!in_safe_mode) {
-    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
-    Serial.println("[..] Initializing BLE Discovery subsystem...");
-
-    // Build device ID hash hex string from pubkey fingerprint
-    char ble_device_id_hex[20];
-    hex_to_str(ble_device_id_hex, g_device.pubkey_fp, 8);
-
-    if (ble_manager::init(ble_device_id_hex, FIRMWARE_VERSION,
-                          &g_device.seq, g_device.chain_head)) {
-      Serial.println("[OK] BLE Discovery initialized — advertising/scan deferred until the join window clears");
-      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
-
-      // spec/event_contract.md §10: route the lifecycle event through
-      // the CSI chokepoint so the witness-chain row's allow-list is
-      // enforced rather than implicit.
-      ble_events_emit_initialized();
-
-      // Defer the radio activity (Opera advertising + Nearby *active* scanning +
-      // boot chirp) out of the provisioning join window. A 5 s, ~99%-duty active
-      // scan on the shared 2.4 GHz radio (pinned to the WiFi/BLE core) starves a
-      // phone's concurrent WPA2 handshake to the SoftAP, so joining the AP fails
-      // intermittently. ble_discovery_start_if_due() (loop) transmits once the
-      // STA has joined home WiFi — the AP is then dropped, leaving the stable
-      // STA+BLE combo — or after an AP-only settle window. init() already stood
-      // up the stack + subsystems; this only gates *when they transmit*.
-      g_ble_discovery_ready    = true;
-      g_ble_discovery_ready_ms = millis();
-    } else {
-      Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
-      Serial.println("[--] Check: Is the BLE antenna connected?");
-      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
-      ble_events_emit_init_failed("ble_manager_init_returned_false");
-    }
-  } else {
-    Serial.println("[--] BLE Discovery init skipped (safe mode)");
+  if (g_ble_lifecycle_pending == 1) {
+    ble_events_emit_initialized();
+  } else if (g_ble_lifecycle_pending == -1) {
+    ble_events_emit_init_failed("ble_manager_init_returned_false");
   }
+  g_ble_lifecycle_pending = 0;
   #endif
 
   // Initialize WiFi Presence Detection
@@ -9020,12 +9310,14 @@ void setup() {
   print_table_header();
 }
 
-// Bring BLE Discovery's radio activity up once the provisioning join window is
-// clear — deferred out of setup() so its active scan never starves a phone's
-// WPA2 handshake to the SoftAP (see the g_ble_discovery_* note above). Fires
-// once, then latches; a later STA blip won't tear discovery back down.
+// Bring the deferred BLE radio activity up once the provisioning join window
+// is clear — deferred out of setup() so no BLE duty cycle starves a phone's
+// WPA2 handshake to the SoftAP (see the g_ble_discovery_* note above). Covers
+// BLE Discovery's active scan AND the pairing channel's auto-advertising +
+// continuous presence scan (whose stack init runs early for heap ordering).
+// Fires once, then latches; a later STA blip won't tear the radio back down.
 static void ble_discovery_start_if_due() {
-#if FEATURE_BLE
+#if FEATURE_BLE || FEATURE_BLUETOOTH
   if (!g_ble_discovery_ready || g_ble_discovery_started) return;
   // Gate on the AP being DOWN, not merely WL_CONNECTED: the SoftAP is held up
   // for AP_DROP_GRACE_MS after the STA gets an IP so the provisioning phone can
@@ -9041,15 +9333,21 @@ static void ble_discovery_start_if_due() {
           BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
     return;
   }
+#if FEATURE_BLUETOOTH
+  // Pairing channel: auto-advertising (per NVS settings) + presence scan.
+  bluetooth_channel::start_deferred_radio();
+#endif
+#if FEATURE_BLE
   ble_manager::operaStart();
   ble_manager::nearbyStart();
   // Boot chirp. Witness-chain side: chirp_sent through the chokepoint so the
   // wire format respects spec/event_contract.md §10's allow-list.
   ble_manager::sendChirp(CHIRP_BOOT);
   ble_events_emit_chirp_sent("boot");
+#endif
   g_ble_discovery_started = true;
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
-             "BLE discovery started (post-provisioning window)", nullptr);
+             "BLE radio started (post-provisioning window)", nullptr);
 #endif
 }
 
@@ -9247,6 +9545,10 @@ void loop() {
   // ════════════════════════════════════════════════════════════════════════════
   // PERIODIC HARDWARE CHECKS — SD card hot-plug, etc.
   // ════════════════════════════════════════════════════════════════════════════
+
+  // canary.local catch-all steward: staggered initial claim + double-claim
+  // conflict resolution (see claim_catch_all_hostname / catchall_logic.h).
+  catch_all_tick();
 
   #if FEATURE_SD_STORAGE
   // Periodic SD card check (handles hot-plug/unplug). Mount attempts run on

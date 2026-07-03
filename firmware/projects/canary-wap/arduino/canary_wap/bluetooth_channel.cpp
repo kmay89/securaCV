@@ -60,6 +60,19 @@ namespace bluetooth_channel {
 
 static BluetoothState g_state = BT_DISABLED;
 static bool g_initialized = false;
+// Why the last init() attempt left the radio off, in operator language.
+// Empty when initialized (or never attempted). Surfaced by the self-test
+// and /api/bluetooth so "Bluetooth broken" field reports carry the cause.
+static char g_init_fail_reason[96] = "";
+// Radio-activity deferral: init() reserves the controller's contiguous
+// internal block early in boot, but auto-advertising and the continuous
+// presence scan must NOT transmit inside the provisioning join window (a
+// concurrent radio duty cycle starves a phone's WPA2 handshake to the
+// SoftAP — the #818 class of failure). When deferral is armed, init()
+// leaves the radio silent and start_deferred_radio() lights it up once the
+// join window clears (same gate as BLE Discovery).
+static bool g_defer_radio         = false;
+static bool g_radio_start_pending = false;
 
 // Device-info metadata for the SIG Standard Profiles (Device Information
 // Service). canary_wap.ino calls set_device_metadata() before init() to
@@ -650,12 +663,17 @@ bool init() {
                (unsigned)largest, bt_defaults::MIN_INIT_FREE_BLOCK);
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                  "BLE not started: insufficient heap", detail);
+      snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
+               "Not started: internal RAM too fragmented (largest free block %u KB, need %lu KB)",
+               (unsigned)(largest / 1024), bt_defaults::MIN_INIT_FREE_BLOCK / 1024);
       set_state(BT_DISABLED);
       return false;
     }
   }
   if (!NimBLEDevice::init(g_settings.device_name)) {
     log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE init failed", nullptr);
+    snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
+             "NimBLE stack init failed (controller/host bring-up)");
     set_state(BT_DISABLED);
     return false;
   }
@@ -694,6 +712,8 @@ bool init() {
   g_server = NimBLEDevice::createServer();
   if (!g_server) {
     log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE createServer null", nullptr);
+    snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
+             "NimBLE createServer failed (host stack rejected)");
     set_state(BT_DISABLED);
     NimBLEDevice::deinit(true);
     return false;
@@ -793,9 +813,22 @@ bool init() {
   g_scanner->setWindow(SCAN_WINDOW_MS);
 
   g_initialized = true;
+  g_init_fail_reason[0] = '\0';
   set_state(BT_IDLE);
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE initialized", g_settings.device_name);
+
+  // Presence-sensor state setup is transmit-free; scanning starts below or
+  // in start_deferred_radio().
+  ble_presence::init();
+
+  if (g_defer_radio) {
+    // Boot path: stack is up (heap block reserved) but the radio stays
+    // silent until the provisioning join window clears — the loop calls
+    // start_deferred_radio() via the same gate BLE Discovery uses.
+    g_radio_start_pending = true;
+    return true;
+  }
 
   // Auto-start advertising if enabled
   if (g_settings.enabled && g_settings.auto_advertise) {
@@ -808,10 +841,30 @@ bool init() {
   // when the user scan ends. ble_presence is read-only (no advertise, no
   // connect, just listen) so it adds no attack surface beyond what we
   // already have for legitimate scan results.
-  ble_presence::init();
   ble_presence::start();
 
   return true;
+}
+
+void set_defer_radio(bool defer) {
+  g_defer_radio = defer;
+}
+
+void start_deferred_radio() {
+  if (!g_initialized || !g_radio_start_pending) return;
+  g_radio_start_pending = false;
+
+  if (g_settings.enabled && g_settings.auto_advertise) {
+    enable();
+    start_advertising();
+  }
+  // Continuous presence scan (25% duty, listen-only) — deferred for the
+  // same join-window reason as advertising: any extra radio duty during
+  // the SoftAP handoff risks the phone's association.
+  ble_presence::start();
+
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+             "BLE radio activity started (post-provisioning window)", nullptr);
 }
 
 void deinit() {
@@ -836,6 +889,7 @@ void deinit() {
   g_scanner = nullptr;
 
   g_initialized = false;
+  g_radio_start_pending = false;
   set_state(BT_DISABLED);
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE deinitialized", nullptr);
@@ -843,6 +897,10 @@ void deinit() {
 
 bool is_initialized() {
   return g_initialized;
+}
+
+const char* init_fail_reason() {
+  return g_init_fail_reason;
 }
 
 void set_device_metadata(const char* fw_revision, const char* serial) {

@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### canary-wap: two Canaries on one WiFi now coexist — fleet discovery, canary.local dedupe, Bluetooth boot-order fix
+
+Field report with two devices on the same home network: Bluetooth showed
+"NimBLE init failed" on both (PSRAM enabled!), the Fleet sheet said "No other
+Canaries found yet", the WiFi-QR generator rendered a bare red "Failed", and
+`canary.local` reached an arbitrary device that could *change between
+requests* — silently invalidating the session cookie mid-use.
+
+- **Bluetooth initializes right after the camera now, not last.** The BLE
+  controller needs a ~30 KB *contiguous internal DMA* block (PSRAM can't host
+  it), but its init ran at the very end of Phase 3 — after WiFi + lwIP +
+  httpd + mesh had fragmented internal RAM — so the heap guard (correctly)
+  refused and the radio stayed off even on healthy PSRAM builds. Bringing
+  the stack up on a fresh heap reserves the block once, for the device's
+  lifetime; radio *transmission* stays deferred out of the provisioning join
+  window exactly as before. The BLE-init witness event is held until the CSI
+  module registry exists (it would have been silently dropped pre-registry).
+- **The self-test now says WHY Bluetooth is off** instead of the catch-all
+  "NimBLE init failed": `bluetooth_channel::init_fail_reason()` distinguishes
+  the heap-guard refusal ("internal RAM too fragmented (largest free block
+  N KB, need 48 KB)") from a real stack failure, surfaced in `/api/selftest`,
+  `/api/bluetooth`, and the Bluetooth settings tab.
+- **Fleet now discovers Canaries on the LAN.** Every device already
+  advertised a `_securacv._tcp` mDNS service with its identity — nothing
+  consumed it; the Fleet sheet listed only ESP-NOW opera-mesh members (an
+  explicit pairing flow), so WiFi-sharing devices were invisible to each
+  other. New `GET /api/fleet/scan` browses the service from a short-lived
+  worker task (the ~2 s blocking browse never stalls the single httpd task —
+  same lesson as the MJPEG stream) with a 10 s cache; the Fleet sheet lists
+  every Canary (self marked "this one") with name, unique
+  `canary-<name>.local` hostname, IP, and an Open link to its dashboard.
+- **canary.local can no longer be double-claimed.** The bare-hostname
+  catch-all used a single 600 ms first-wins probe at STA join; two devices
+  powering up together (power restored) both probed into silence and BOTH
+  claimed it — the field's session-flip. The claim is now scheduled with a
+  fingerprint-derived stagger (one claims first, the other's probe sees it),
+  and a periodic conflict check applies a deterministic IP tie-break so a
+  surviving double-claim resolves to exactly one keeper (host-tested
+  antisymmetry, `catchall_logic.h` + `test_catchall_logic.cpp`).
+- **WiFi-QR provisioning:** the button's opaque red "Failed" now reports the
+  actual cause (session expired / rate-limited / error N); the generator
+  refuses credentials containing `;` with a clear 400 instead of encoding a
+  QR that silently truncates at scan time (the payload is `;`-delimited with
+  no escape sequence).
+
 ### canary-wap: camera preview no longer freezes the whole dashboard, and its numbers are real
 
 The MJPEG preview handler used to run its frame loop **on esp_http_server's

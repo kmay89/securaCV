@@ -218,6 +218,19 @@ bool init();
 void deinit();
 bool is_initialized();
 
+// Radio-activity deferral for the boot path. Arm BEFORE init(): init() then
+// brings the NimBLE stack up (reserving the controller's contiguous internal
+// heap block early) but keeps the radio silent — no auto-advertising, no
+// continuous presence scan — until start_deferred_radio() is called once the
+// provisioning join window clears. With deferral unarmed, init() behaves as
+// before (advertise + presence scan immediately).
+void set_defer_radio(bool defer);
+void start_deferred_radio();
+
+// Why the last init() attempt left the radio off ("" when initialized or
+// never attempted). Stable storage owned by the module; safe to hold.
+const char* init_fail_reason();
+
 // Push device metadata into the BLE Device Information Service. Optional;
 // must be called BEFORE init() to take effect (init reads the cached
 // strings when registering DIS). Strings are copied — caller-owned
