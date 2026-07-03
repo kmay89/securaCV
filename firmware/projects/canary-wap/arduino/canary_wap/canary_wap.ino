@@ -745,22 +745,20 @@ static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
 // (SKIP) apart from "init ran and the stack genuinely failed" (FAIL). Read
 // by selftest_api.h's probe_bluetooth; non-static so its extern resolves.
 volatile bool g_ble_init_attempted = false;
-#if FEATURE_BLE
-// BLE-init lifecycle witness event, deferred. BLE initializes early in
-// Phase 3 (heap ordering), before csi_integration::init registers the
-// ble.events CSI module — and csi_event_emit before registration is a
-// silent drop. setup() emits the held outcome after the network phase.
-static int8_t g_ble_lifecycle_pending = 0;  // 0=none, 1=initialized, -1=failed
-#endif
 
-// BLE radio activity is deferred out of the provisioning join window
-// (see ble_discovery_start_if_due / provisioning_logic::ble_discovery_start_due):
-// concurrent BLE radio duty starves a phone's WPA2 handshake to the SoftAP —
-// worst with Discovery's 5 s ~99%-duty active scan, but the pairing channel's
-// auto-advertising + continuous presence scan ride the same gate now that
-// their stack init runs early in boot (heap ordering). _ready = init()
-// succeeded and the subsystems are up (may transmit); _started = the deferred
-// radio activity has fired; _ready_ms = boot reference for the settle window.
+// The ENTIRE Bluetooth/BLE bring-up (stack init + radio activity) is deferred
+// out of the provisioning join window and out of setup() (see
+// ble_discovery_start_if_due / provisioning_logic::ble_discovery_start_due).
+// Two reasons, one per resource:
+//   - RADIO: concurrent BLE duty starves a phone's WPA2 handshake to the
+//     SoftAP (worst with Discovery's 5 s ~99%-duty active scan).
+//   - RAM: the stack costs ~55-65 KB of internal memory that WiFi/lwIP/httpd
+//     must get first; deferring until the setup AP is torn down runs init at
+//     the point of maximum free internal heap.
+// _ready = setup() finished and armed the gate (not safe mode); _started =
+// the one-shot bring-up ran (regardless of outcome — the heap guard's
+// verdict is recorded in bluetooth_channel::init_fail_reason());
+// _ready_ms = boot reference for the settle/max-hold windows.
 #if FEATURE_BLE || FEATURE_BLUETOOTH
 static bool     g_ble_discovery_ready   = false;
 static bool     g_ble_discovery_started = false;
@@ -8654,121 +8652,17 @@ void setup() {
   esp_task_wdt_reset();
   #endif
 
-  // Bluetooth comes SECOND, right after the camera and BEFORE WiFi/HTTP.
-  // The BLE controller allocates a ~30 KB *contiguous internal DMA* block at
-  // init — PSRAM can't host it. This init used to run LAST in Phase 3, after
-  // WiFi + lwIP + httpd + mesh had carved internal RAM into fragments; on a
-  // fully loaded FULL build the heap guard then (correctly) refused to bring
-  // the stack up, and the field symptom was a permanent "NimBLE init failed"
-  // even with PSRAM enabled. Bringing the controller up on a fresh heap
-  // reserves its block once, for the device's lifetime; init here does NOT
-  // transmit (advertising/scan stay deferred, see g_ble_discovery_ready).
-  // BT-controller-before-esp_wifi_init is the supported coexistence order.
-
-  // Initialize Bluetooth (legacy channel)
-  #if FEATURE_BLUETOOTH
-  if (!in_safe_mode) {
-    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
-    Serial.println("[..] Initializing Bluetooth Low Energy...");
-    // Push device metadata into bluetooth_channel BEFORE init(). The DIS
-    // characteristics get baked during service creation; setting these
-    // afterwards has no effect until the next reinit.
-    bluetooth_channel::set_device_metadata(FIRMWARE_VERSION, g_device.fingerprint_hex);
-    // Early init is heap reservation ONLY: auto-advertising + the continuous
-    // presence scan must not transmit inside the provisioning join window
-    // (they'd starve a phone's WPA2 handshake to the SoftAP). The loop's
-    // ble_discovery_start_if_due() lights the radio once the window clears.
-    bluetooth_channel::set_defer_radio(true);
-    if (bluetooth_channel::init()) {
-      Serial.println("[OK] Bluetooth initialized (radio deferred until the join window clears)");
-      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
-      // Arm the deferred-radio gate for builds without FEATURE_BLE too (the
-      // FEATURE_BLE init below re-stamps these; keeping the earliest ready
-      // timestamp is correct either way).
-      if (!g_ble_discovery_ready) {
-        g_ble_discovery_ready    = true;
-        g_ble_discovery_ready_ms = millis();
-      }
-      // Hand the offline-console module the device's short fingerprint
-      // and firmware version so its snapshot JSON identifies us. Both
-      // are owned by the .ino — the module copies into its own buffers.
-      ble_console::set_device_metadata(g_device.fingerprint_hex, FIRMWARE_VERSION);
-
-      // BLE GATT Status Service — register on the shared NimBLE server
-      // created by bluetooth_channel. Exposes battery, health, chain,
-      // and SD status to companion phones over standard GATT.
-      #if FEATURE_BLE_STATUS
-      {
-        NimBLEServer* ble_server = NimBLEDevice::getServer();
-        if (ble_server) {
-          if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
-                               &g_device.seq)) {
-            Serial.println("[OK] BLE GATT status service registered");
-            log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr);
-          } else {
-            Serial.println("[--] BLE GATT status service init failed");
-          }
-        }
-      }
-      #endif
-    } else {
-      Serial.println("[--] Bluetooth init failed");
-    }
-  } else {
-    Serial.println("[--] Bluetooth init skipped (safe mode)");
-  }
-  #endif
-
-  // Initialize BLE Discovery (Opera/Chirp/Nearby). Piggybacks on the NimBLE
-  // stack the channel above brought up (or brings it up itself on builds
-  // without FEATURE_BLUETOOTH — same fresh-heap reasoning applies).
-  #if FEATURE_BLE
-  if (!in_safe_mode) {
-    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
-    Serial.println("[..] Initializing BLE Discovery subsystem...");
-
-    // Build device ID hash hex string from pubkey fingerprint
-    char ble_device_id_hex[20];
-    hex_to_str(ble_device_id_hex, g_device.pubkey_fp, 8);
-
-    if (ble_manager::init(ble_device_id_hex, FIRMWARE_VERSION,
-                          &g_device.seq, g_device.chain_head)) {
-      Serial.println("[OK] BLE Discovery initialized — advertising/scan deferred until the join window clears");
-      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
-
-      // spec/event_contract.md §10: the lifecycle event must route through
-      // the CSI chokepoint — but BLE now initializes BEFORE the CSI module
-      // registry exists (csi_integration::init runs with the web server),
-      // and csi_event_emit before registration is a silent drop. Hold the
-      // outcome; it's emitted right after the network phase below, the same
-      // point in boot where this event used to originate.
-      g_ble_lifecycle_pending = 1;
-
-      // Defer the radio activity (Opera advertising + Nearby *active* scanning +
-      // boot chirp) out of the provisioning join window. A 5 s, ~99%-duty active
-      // scan on the shared 2.4 GHz radio (pinned to the WiFi/BLE core) starves a
-      // phone's concurrent WPA2 handshake to the SoftAP, so joining the AP fails
-      // intermittently. ble_discovery_start_if_due() (loop) transmits once the
-      // STA has joined home WiFi — the AP is then dropped, leaving the stable
-      // STA+BLE combo — or after an AP-only settle window. init() already stood
-      // up the stack + subsystems; this only gates *when they transmit*.
-      g_ble_discovery_ready    = true;
-      g_ble_discovery_ready_ms = millis();
-    } else {
-      Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
-      Serial.println("[--] Check: Is the BLE antenna connected?");
-      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
-      g_ble_lifecycle_pending = -1;  // emitted after the CSI registry is up
-    }
-  } else {
-    Serial.println("[--] BLE Discovery init skipped (safe mode)");
-  }
-  #endif
-
-  // Fresh feed after the BLE phase (controller init takes ~0.5-1 s).
-  #if FEATURE_WATCHDOG
-  esp_task_wdt_reset();
-  #endif
+  // NOTE: Bluetooth/BLE is NOT initialized here. The full stack (controller +
+  // NimBLE host + GATT services + discovery subsystems) costs ~55-65 KB of
+  // INTERNAL RAM that WiFi, lwIP and the HTTP server need first — a
+  // BLE-before-network boot starved the network stack on the FULL build:
+  // httpd couldn't create its socket (ENOBUFS), the SoftAP's WPA2 handshake
+  // failed (phones looped on the password prompt), and the heap monitor sat
+  // in EMERGENCY. The whole BLE bring-up runs from the loop's
+  // ble_discovery_start_if_due() once the provisioning join window clears
+  // and the setup AP is torn down — the point of MAXIMUM free internal
+  // memory (the AP interface's buffers are back), and the heap guard's
+  // total-free margin check decides honestly whether BLE fits at all.
 
   // Initialize SD card storage (with timeout, non-blocking)
   #if FEATURE_SD_STORAGE
@@ -9028,17 +8922,18 @@ void setup() {
   }
   #endif
 
-  // Emit the BLE-init lifecycle event held from the early-BLE phase, now
-  // that csi_integration::init (web-server start) has registered the
-  // ble.events module. If the server never started, this drops silently —
-  // identical to the pre-reorder behavior at this same point in boot.
-  #if FEATURE_BLE
-  if (g_ble_lifecycle_pending == 1) {
-    ble_events_emit_initialized();
-  } else if (g_ble_lifecycle_pending == -1) {
-    ble_events_emit_init_failed("ble_manager_init_returned_false");
+  // Arm the deferred BLE bring-up (the init itself runs from the loop's
+  // ble_discovery_start_if_due() once the provisioning join window clears —
+  // see the internal-RAM budgeting note at the top of Phase 3). _ready_ms is
+  // the reference for the AP-only settle / max-hold windows.
+  #if FEATURE_BLE || FEATURE_BLUETOOTH
+  if (!in_safe_mode) {
+    g_ble_discovery_ready    = true;
+    g_ble_discovery_ready_ms = millis();
+    Serial.println("[..] Bluetooth/BLE bring-up deferred until the join window clears");
+  } else {
+    Serial.println("[--] Bluetooth/BLE init skipped (safe mode)");
   }
-  g_ble_lifecycle_pending = 0;
   #endif
 
   // Initialize WiFi Presence Detection
@@ -9310,12 +9205,14 @@ void setup() {
   print_table_header();
 }
 
-// Bring the deferred BLE radio activity up once the provisioning join window
-// is clear — deferred out of setup() so no BLE duty cycle starves a phone's
-// WPA2 handshake to the SoftAP (see the g_ble_discovery_* note above). Covers
-// BLE Discovery's active scan AND the pairing channel's auto-advertising +
-// continuous presence scan (whose stack init runs early for heap ordering).
-// Fires once, then latches; a later STA blip won't tear the radio back down.
+// One-shot Bluetooth/BLE bring-up, deferred out of setup() — both the stack
+// INIT (its ~55-65 KB internal-RAM cost must come after WiFi/lwIP/httpd have
+// taken theirs, and after the setup AP is torn down that memory is back) and
+// the radio ACTIVITY (any BLE duty during the join window starves a phone's
+// WPA2 handshake to the SoftAP). Runs on the loop task; NimBLE init takes
+// ~1 s against the 8 s watchdog, with feeds on both sides. Fires once, then
+// latches; a failed attempt records its reason (self-test + /api/bluetooth)
+// and the operator can retry via the Bluetooth settings tab.
 static void ble_discovery_start_if_due() {
 #if FEATURE_BLE || FEATURE_BLUETOOTH
   if (!g_ble_discovery_ready || g_ble_discovery_started) return;
@@ -9333,21 +9230,91 @@ static void ble_discovery_start_if_due() {
           BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
     return;
   }
-#if FEATURE_BLUETOOTH
-  // Pairing channel: auto-advertising (per NVS settings) + presence scan.
-  bluetooth_channel::start_deferred_radio();
-#endif
-#if FEATURE_BLE
-  ble_manager::operaStart();
-  ble_manager::nearbyStart();
-  // Boot chirp. Witness-chain side: chirp_sent through the chokepoint so the
-  // wire format respects spec/event_contract.md §10's allow-list.
-  ble_manager::sendChirp(CHIRP_BOOT);
-  ble_events_emit_chirp_sent("boot");
-#endif
-  g_ble_discovery_started = true;
-  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
-             "BLE radio started (post-provisioning window)", nullptr);
+  g_ble_discovery_started = true;  // one attempt, whatever the outcome
+
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+  #endif
+
+  // Pairing channel first — it owns NimBLEDevice::init() (GAP name, TX
+  // power, MTU, security) when both features are compiled in.
+  #if FEATURE_BLUETOOTH
+  {
+    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
+    Serial.println("[..] Initializing Bluetooth Low Energy (post-join-window)...");
+    // Push device metadata into bluetooth_channel BEFORE init(). The DIS
+    // characteristics get baked during service creation; setting these
+    // afterwards has no effect until the next reinit.
+    bluetooth_channel::set_device_metadata(FIRMWARE_VERSION, g_device.fingerprint_hex);
+    if (bluetooth_channel::init()) {
+      Serial.println("[OK] Bluetooth initialized");
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+      // Hand the offline-console module the device's short fingerprint
+      // and firmware version so its snapshot JSON identifies us. Both
+      // are owned by the .ino — the module copies into its own buffers.
+      ble_console::set_device_metadata(g_device.fingerprint_hex, FIRMWARE_VERSION);
+
+      // BLE GATT Status Service — register on the shared NimBLE server
+      // created by bluetooth_channel. Exposes battery, health, chain,
+      // and SD status to companion phones over standard GATT.
+      #if FEATURE_BLE_STATUS
+      {
+        NimBLEServer* ble_server = NimBLEDevice::getServer();
+        if (ble_server) {
+          if (ble_status::init(ble_server, g_device.device_id, FIRMWARE_VERSION,
+                               &g_device.seq)) {
+            Serial.println("[OK] BLE GATT status service registered");
+            log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr);
+          } else {
+            Serial.println("[--] BLE GATT status service init failed");
+          }
+        }
+      }
+      #endif
+    } else {
+      Serial.println("[--] Bluetooth init failed (reason recorded for self-test)");
+    }
+  }
+  #endif
+
+  // BLE Discovery (Opera/Chirp/Nearby) — piggybacks on the stack above, or
+  // brings it up itself on builds without FEATURE_BLUETOOTH. The CSI module
+  // registry is up by now (web server started before the window cleared), so
+  // the lifecycle witness events route through the chokepoint directly.
+  #if FEATURE_BLE
+  {
+    g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
+    Serial.println("[..] Initializing BLE Discovery subsystem...");
+
+    // Build device ID hash hex string from pubkey fingerprint
+    char ble_device_id_hex[20];
+    hex_to_str(ble_device_id_hex, g_device.pubkey_fp, 8);
+
+    if (ble_manager::init(ble_device_id_hex, FIRMWARE_VERSION,
+                          &g_device.seq, g_device.chain_head)) {
+      Serial.println("[OK] BLE Discovery initialized");
+      log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
+      // spec/event_contract.md §10: route the lifecycle event through the
+      // CSI chokepoint so the witness-chain row's allow-list is enforced.
+      ble_events_emit_initialized();
+
+      ble_manager::operaStart();
+      ble_manager::nearbyStart();
+      // Boot chirp. Witness-chain side: chirp_sent through the chokepoint so
+      // the wire format respects spec/event_contract.md §10's allow-list.
+      ble_manager::sendChirp(CHIRP_BOOT);
+      ble_events_emit_chirp_sent("boot");
+    } else {
+      Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
+      ble_events_emit_init_failed("ble_manager_init_returned_false");
+    }
+  }
+  #endif
+
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+  #endif
 #endif
 }
 

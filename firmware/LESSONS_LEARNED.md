@@ -118,33 +118,43 @@
 
 ## Memory
 
-### Init ORDER is a heap budget: late BLE init fails even with PSRAM
-- **What happened:** Both field devices, freshly flashed WITH PSRAM enabled,
-  showed "NimBLE init failed" in the self-test. No OOM panic, no boot loop —
-  the #819 heap guard did its job — but the radio never came up.
-- **Root cause:** the BLE controller allocates a ~30 KB *contiguous internal
-  DMA* block at init, and PSRAM cannot host it. Bluetooth initialized LAST in
-  Phase 3 — after camera, SD, audio, WiFi/lwIP, httpd, and mesh — by which
-  point internal RAM was fragmented below the guard's 48 KB threshold on a
-  fully loaded FULL build. PSRAM moves the big allocations, not the
-  fragmentation of what stays internal.
-- **Fix:** bring the NimBLE stack up right after the camera (which has its
-  own documented first-position DMA constraint), BEFORE WiFi/HTTP. The
-  contiguous block is reserved once, early, for the device's lifetime.
-  Radio *activity* (advertising/scanning) stays deferred out of the
-  provisioning join window — init ≠ transmit. BT-controller-init before
-  esp_wifi_init is the supported coexistence order.
-- **Trap for the next reorder:** anything moved before the network phase can
-  no longer emit CSI witness events directly — the module registry
-  (csi_integration::init) comes up with the web server, and csi_event_emit
-  before registration is a *silent drop*. Hold the outcome in a flag and
-  emit at the old point in boot (see g_ble_lifecycle_pending).
-- **Diagnosis rule:** a subsystem that "fails to init" in the field should
-  always record WHY where the UI can reach it —
-  `bluetooth_channel::init_fail_reason()` now distinguishes "internal RAM too
-  fragmented (largest block N KB)" from a real stack failure, in
-  /api/selftest and /api/bluetooth. The old catch-all "NimBLE init failed"
-  label cost a full field-debug cycle.
+### Init ORDER is a heap budget — and the network MUST win it
+- **What happened, round 1:** Both field devices, freshly flashed WITH PSRAM
+  enabled, showed "NimBLE init failed" in the self-test. No OOM panic — the
+  #819 heap guard did its job — but the radio never came up. Cause: the BLE
+  controller needs a ~30 KB *contiguous internal DMA* block (PSRAM can't
+  host it), and Bluetooth initialized LAST in Phase 3, after camera, SD,
+  audio, WiFi/lwIP, httpd, and mesh had fragmented internal RAM below the
+  guard's threshold. PSRAM moves the big allocations, not the fragmentation
+  of what stays internal.
+- **What happened, round 2 (the fix that made it WORSE):** moving BLE init
+  to right after the camera, BEFORE WiFi, made BLE init succeed — and then
+  the network lost the same budget instead: `httpd_server_init: error in
+  creating msg socket (105)` (ENOBUFS — no web server at all), the SoftAP's
+  WPA2 handshake failed so phones looped on the password prompt, and the
+  heap monitor sat in EMERGENCY at 2 KB free. On a FULL/S3 build,
+  camera + audio + WiFi + httpd + the full BLE stack (~55–65 KB total
+  internal: controller + host + six GATT services + discovery) do NOT all
+  fit; the boot order only chooses which subsystem starves. "Bluetooth up,
+  network dead" is strictly worse than "no Bluetooth, honest reason".
+- **The actual fix (two parts):**
+  1. The entire BLE bring-up (stack init AND radio activity) runs one-shot
+     from the loop once the provisioning join window clears and the setup AP
+     is torn down — the point of *maximum* free internal memory, because the
+     AP interface's buffers have been returned. Network first, always.
+  2. The heap guard gained a TOTAL-free axis next to the contiguous-block
+     axis (`bt_defaults::init_has_headroom(largest, total)`,
+     `MIN_INIT_TOTAL_FREE = 96 KB`, host-tested): a successful controller
+     malloc is not consent to spend the system into the ground.
+- **Traps this journey documented:**
+  - csi_event_emit before csi_integration::init registers the module is a
+    *silent drop* — anything that emits witness events must run after the
+    web server phase (the deferred bring-up satisfies this for free).
+  - A subsystem that "fails to init" in the field must record WHY where the
+    UI can reach it — `bluetooth_channel::init_fail_reason()` in
+    /api/selftest and /api/bluetooth. The old catch-all "NimBLE init failed"
+    label cost a full field-debug cycle; the round-2 regression was
+    diagnosed in minutes because the serial log carried errno 105.
 - **Date learned:** 2026-07
 
 ### BLE controller init OOM boot-loops a no-PSRAM build (and defeats safe mode)

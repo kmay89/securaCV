@@ -47,11 +47,26 @@ constexpr bool LONG_RANGE = false;
 // this only keeps a mis-configured build usable as an AP + dashboard.
 constexpr unsigned long MIN_INIT_FREE_BLOCK = 48UL * 1024UL;
 
-// True when there is enough contiguous internal memory to bring the BLE stack
-// up without OOM-panicking. Callers pass the largest free internal DMA-capable
-// block; when false they MUST skip NimBLEDevice::init().
-inline bool init_has_headroom(unsigned long largest_free_internal_block) {
-  return largest_free_internal_block >= MIN_INIT_FREE_BLOCK;
+// The contiguous block is necessary but NOT sufficient. The full stack
+// (controller + NimBLE host + the pairing channel's six GATT services +
+// discovery subsystems) costs ~55-65 KB of internal RAM in total, and the
+// rest of the system needs real operating margin AFTER that — the field
+// lesson: a boot where BLE init succeeded but left the heap near-empty took
+// down the HTTP server (socket ENOBUFS) and even the SoftAP's WPA2
+// handshake, which is strictly worse than "no Bluetooth". Require enough
+// TOTAL free internal memory that post-init steady state keeps a healthy
+// floor: ~65 KB stack cost + ~30 KB margin.
+constexpr unsigned long MIN_INIT_TOTAL_FREE = 96UL * 1024UL;
+
+// True when there is enough internal memory to bring the BLE stack up
+// without OOM-panicking (contiguous block for the controller) AND without
+// starving everything that comes after (total free). Callers pass the
+// largest free internal DMA-capable block and the total free internal
+// memory; when false they MUST skip NimBLEDevice::init().
+inline bool init_has_headroom(unsigned long largest_free_internal_block,
+                              unsigned long total_free_internal) {
+  return largest_free_internal_block >= MIN_INIT_FREE_BLOCK &&
+         total_free_internal >= MIN_INIT_TOTAL_FREE;
 }
 
 }  // namespace bt_defaults

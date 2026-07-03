@@ -10,15 +10,18 @@ Canaries found yet", the WiFi-QR generator rendered a bare red "Failed", and
 `canary.local` reached an arbitrary device that could *change between
 requests* — silently invalidating the session cookie mid-use.
 
-- **Bluetooth initializes right after the camera now, not last.** The BLE
-  controller needs a ~30 KB *contiguous internal DMA* block (PSRAM can't host
-  it), but its init ran at the very end of Phase 3 — after WiFi + lwIP +
-  httpd + mesh had fragmented internal RAM — so the heap guard (correctly)
-  refused and the radio stayed off even on healthy PSRAM builds. Bringing
-  the stack up on a fresh heap reserves the block once, for the device's
-  lifetime; radio *transmission* stays deferred out of the provisioning join
-  window exactly as before. The BLE-init witness event is held until the CSI
-  module registry exists (it would have been silently dropped pre-registry).
+- **Bluetooth initializes from the loop once the provisioning window clears
+  — not from setup() at all.** (Corrected from the first cut of this change,
+  which initialized BLE *before* WiFi: on the FULL build the stack's
+  ~55–65 KB internal-RAM spend then starved the network — httpd couldn't
+  create its socket (`ENOBUFS`), the SoftAP's WPA2 handshake failed so
+  phones looped on the password prompt, and the heap monitor sat in
+  EMERGENCY at 2 KB free.) The whole bring-up now runs one-shot from
+  `ble_discovery_start_if_due()` after the setup AP is torn down — the point
+  of *maximum* free internal memory — and the heap guard gained a total-free
+  axis (`bt_defaults::MIN_INIT_TOTAL_FREE`, host-tested): BLE only starts if
+  it leaves real operating margin, because "Bluetooth up, network dead" is
+  strictly worse than "no Bluetooth, honest reason shown".
 - **The self-test now says WHY Bluetooth is off** instead of the catch-all
   "NimBLE init failed": `bluetooth_channel::init_fail_reason()` distinguishes
   the heap-guard refusal ("internal RAM too fragmented (largest free block
