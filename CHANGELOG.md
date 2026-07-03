@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### canary-wap: camera preview no longer freezes the whole dashboard, and its numbers are real
+
+The MJPEG preview handler used to run its frame loop **on esp_http_server's
+single worker task**, so for as long as a preview streamed, every other HTTP
+request queued behind it: `/api/peek/status` polls (hence "Current: Unknown",
+"THROUGHPUT 0 kbps", "STREAM UPTIME —" *while streaming*), the sensor tuning
+sliders, and every other dashboard tab. Field-reported as "camera settings
+don't even work".
+
+- **Stream moved to a dedicated FreeRTOS worker task** via
+  `httpd_req_async_handler_begin/_complete`, freeing the httpd task
+  immediately — status polls, sliders, and the rest of the dashboard stay
+  live during preview. The worker runs at priority 3 with an unconditional
+  ≥20 ms `vTaskDelay` on every loop path (the WDT-subscribed IDLE tasks stay
+  fed; the pace floor is host-test-pinned), uses an 8 KB internal-RAM stack,
+  and exactly one stream runs at a time (second client → 409 Conflict).
+- **Stream uptime freezes at stream end** instead of collapsing to 0, so
+  "LAST STREAM" throughput/uptime stay truthful (`peek_stream_logic.h`,
+  host-tested: `test_peek_stream_logic.cpp` + CI step).
+- **Resolution controls fixed end-to-end**: the "320×240" button sent
+  framesize 4 (which is 240×240) — now sends QVGA (5); `framesize_name()`
+  learned `FRAMESIZE_240X240` so no supported size reads "unknown";
+  `/api/peek/resolution` and `/api/peek/init` now *wait* for the stream
+  worker to exit (bounded, fail-closed 503 on timeout) instead of a blind
+  100–150 ms sleep, and report `stream_stopped` so the UI reconnects the
+  preview — the old blind `g_peek_active = true` restore couldn't resurrect
+  a finished HTTP response.
+- **Preview looks professional**: live metric chips overlaid on the video
+  (LIVE / resolution / fps / throughput / uptime, straight from
+  `/api/peek/status`), the wall of raw sensor toggles collapsed behind one
+  "Advanced sensor tuning" disclosure, throughput rendered human-readable
+  (`fmtKbps`, node-tested in the WEBUI_LOGIC block), and resolution status
+  falls back to the firmware-reported name for any framesize set via API.
+- **Bluetooth settings tab fixes**: settings toggles (auto-advertise, allow
+  pairing, long-range) now reload every time the tab is opened instead of
+  only at first page load; the enable/disable toggle reverts on failure
+  instead of showing a state the radio isn't in; advertise start/stop decides
+  its verb from live device status instead of a possibly-stale cache.
+
 ### canary-wap: a FULL build without PSRAM no longer compiles (it could never run)
 
 Field evidence from the SD-crash-loop aftermath: a FULL-profile XIAO ESP32-S3

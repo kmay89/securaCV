@@ -133,6 +133,7 @@
                                      // auto-generated prototype for
                                      // wifi_change_authorize()
 #include "config_logic.h"            // runtime device-config clamps (privacy floor)
+#include "peek_stream_logic.h"       // pure, host-tested camera-stream value math
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
 // instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
@@ -794,14 +795,20 @@ static volatile uint32_t g_peek_last_frame_bytes  = 0;  // most recent frame jpe
 static volatile uint32_t g_peek_last_frame_ms     = 0;  // millis() of last frame
 static volatile uint32_t g_peek_stream_start_ms   = 0;  // millis() when stream began
 static volatile uint64_t g_peek_total_bytes       = 0;  // bytes sent in current stream
+static volatile uint32_t g_peek_stream_end_ms     = 0;  // millis() when the last stream ended (0 = never/active)
 // Rolling 1s window for instantaneous FPS (no fabrication: counted from real frame deliveries)
 static volatile uint32_t g_peek_fps_window_start  = 0;
 static volatile uint32_t g_peek_fps_window_count  = 0;
 static volatile uint32_t g_peek_fps_last          = 0;  // FPS measured over last full 1s window
-// Spinlock guarding the metrics block above. Today esp_http_server runs in a
-// single task so the streaming loop and the status handler can't race in
-// practice, but holding this lock around both writers and the reader keeps
-// the snapshot torn-free if the stream ever moves into an async worker task.
+// Single-stream guard: set (with acquire/release semantics) while the MJPEG
+// worker task owns the async request. Only the httpd task sets it (handlers
+// never run concurrently on the single-task server) and only the worker
+// clears it, after httpd_req_async_handler_complete().
+static volatile bool g_peek_stream_task_busy = false;
+// Spinlock guarding the metrics block above. The MJPEG stream runs in a
+// dedicated worker task (peek_stream_task) while /api/peek/status is served
+// by the httpd task, so writer and reader genuinely race — this lock is
+// load-bearing, not defensive.
 static portMUX_TYPE g_peek_metrics_mux = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
@@ -3907,8 +3914,9 @@ static bool set_camera_resolution(framesize_t size) {
 // Get resolution name
 static const char* framesize_name(framesize_t size) {
   switch (size) {
-    case FRAMESIZE_QQVGA: return "160x120";
-    case FRAMESIZE_QVGA:  return "320x240";
+    case FRAMESIZE_QQVGA:   return "160x120";
+    case FRAMESIZE_240X240: return "240x240";
+    case FRAMESIZE_QVGA:    return "320x240";
     case FRAMESIZE_CIF:   return "400x296";
     case FRAMESIZE_VGA:   return "640x480";
     case FRAMESIZE_SVGA:  return "800x600";
@@ -3926,20 +3934,23 @@ static const char* framesize_name(framesize_t size) {
 
 static esp_err_t handle_peek_start(httpd_req_t* req) {
   g_health.http_requests++;
-  
+
   if (!g_camera_initialized) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     const char* resp = "{\"ok\":false,\"error\":\"Camera not initialized\"}";
     return http_send_json(req, resp);
   }
-  
-  g_peek_active = true;
-  
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek started", nullptr);
-  
+
+  // g_peek_active is owned by the stream worker lifecycle now: the stream
+  // handler sets it when a client connects and the worker clears it on exit.
+  // Flipping it here without a worker would make /api/peek/status report a
+  // phantom "active" stream, so this endpoint just confirms readiness.
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek ready", nullptr);
+
   JsonDocument doc;
   doc["ok"] = true;
-  doc["message"] = "Peek stream activated";
+  doc["message"] = "Camera ready; open /api/peek/stream to start";
+  doc["peek_active"] = g_peek_active;
   doc["resolution"] = framesize_name(g_peek_framesize);
   
   String response;
@@ -3948,39 +3959,24 @@ static esp_err_t handle_peek_start(httpd_req_t* req) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PEEK STREAM — FIXED: Now properly manages g_peek_active state
+// PEEK STREAM — async worker task
 //
-// NOTE on concurrency: esp_http_server runs a single task by default, so this
-// long-lived MJPEG handler blocks /api/peek/status polling until the client
-// disconnects. The metrics we update here remain in g_peek_* globals and are
-// rendered by the UI as "LAST STREAM" stats once the stream ends. Moving this
-// loop into a worker task via httpd_req_async_handler_begin/_complete is a
-// separate refactor (tracked outside this PR).
+// esp_http_server runs a single task, so a long-lived MJPEG loop inside the
+// handler used to hold the only worker hostage: /api/peek/status polls, the
+// sensor sliders, and every other tab froze for as long as the preview ran.
+// The handler now detaches the request with httpd_req_async_handler_begin()
+// and hands it to a dedicated FreeRTOS task, freeing the httpd task
+// immediately. Rules the worker lives by:
+//   - priority 3 with an unconditional vTaskDelay(>=20ms) per loop iteration
+//     (every path yields), so the WDT-subscribed IDLE tasks always run
+//   - 8 KB internal-RAM stack (task stacks can't live in PSRAM)
+//   - it is the only writer that CLEARS g_peek_stream_task_busy, and it does
+//     so only after httpd_req_async_handler_complete() releases the socket
+//   - exactly one stream at a time; a second client gets 409 Conflict
 // ════════════════════════════════════════════════════════════════════════════
 
-static esp_err_t handle_peek_stream(httpd_req_t* req) {
-  g_health.http_requests++;
-
-  if (!g_camera_initialized) {
-    httpd_resp_set_status(req, "503 Service Unavailable");
-    return httpd_resp_send(req, "Camera not initialized", HTTPD_RESP_USE_STRLEN);
-  }
-
-  // *** KEY FIX: Set peek_active to true when stream is requested ***
-  g_peek_active = true;
-
-  // Reset per-stream metrics so the UI shows real, fresh values.
-  uint32_t now_ms = millis();
-  portENTER_CRITICAL(&g_peek_metrics_mux);
-  g_peek_frame_count      = 0;
-  g_peek_total_bytes      = 0;
-  g_peek_last_frame_bytes = 0;
-  g_peek_last_frame_ms    = 0;
-  g_peek_stream_start_ms  = now_ms;
-  g_peek_fps_window_start = now_ms;
-  g_peek_fps_window_count = 0;
-  g_peek_fps_last         = 0;
-  portEXIT_CRITICAL(&g_peek_metrics_mux);
+static void peek_stream_task(void* arg) {
+  httpd_req_t* req = (httpd_req_t*)arg;
 
   // ── TCP keepalive on the streaming socket ─────────────────────────
   // The MJPEG response is open-ended, so a vanished client (laptop lid
@@ -4008,18 +4004,26 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   httpd_resp_set_hdr(req, "Connection", "close");
   httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
-  // Note: target pacing is ~12 fps via vTaskDelay below; the actual delivered FPS
-  // is measured at runtime and exposed via /api/peek/status (g_peek_fps_last).
 
   // Stream frames while active
+  uint32_t consecutive_capture_failures = 0;
   while (g_peek_active) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("[PEEK] Frame capture failed");
+      // A camera that died mid-stream (unseated connector, driver wedge)
+      // would otherwise spin this loop forever without ever touching the
+      // socket — so a vanished client is never noticed and the busy flag
+      // blocks every new stream until reboot. Bail after ~1 s of failures.
+      if (peek_stream_logic::capture_should_abort(++consecutive_capture_failures)) {
+        Serial.println("[PEEK] Aborting stream after repeated capture failures");
+        break;
+      }
       vTaskDelay(pdMS_TO_TICKS(100));
-      continue;  // Try again instead of breaking
+      continue;  // Transient failure: try again instead of breaking
     }
-    
+    consecutive_capture_failures = 0;
+
     // Build multipart boundary + headers
     char part_buf[128];
     int part_len = snprintf(
@@ -4030,21 +4034,21 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
       "\r\n",
       (unsigned)fb->len
     );
-    
+
     // Send boundary + headers
     esp_err_t res = httpd_resp_send_chunk(req, part_buf, part_len);
     if (res != ESP_OK) {
       esp_camera_fb_return(fb);
       break;
     }
-    
+
     // Send JPEG data
     res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
     if (res != ESP_OK) {
       esp_camera_fb_return(fb);
       break;
     }
-    
+
     // Capture real metrics for this delivered frame BEFORE returning the buffer
     uint32_t frame_bytes = (uint32_t)fb->len;
 
@@ -4075,28 +4079,88 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
     if (res != ESP_OK) {
       break;
     }
-    
-    // Feed watchdog and yield. Pacing is configurable at runtime via
-    // /api/peek/sensor (frame_delay_ms). Default 40 ms ≈ 25 fps target;
-    // OV2640 will deliver fewer in low light because AEC stretches the
-    // exposure window — that's accurately reflected in the measured FPS.
-    #if FEATURE_WATCHDOG
-    esp_task_wdt_reset();
-    #endif
-    uint32_t pace = g_peek_frame_delay_ms;
-    if (pace < 20)  pace = 20;
-    if (pace > 500) pace = 500;
-    vTaskDelay(pdMS_TO_TICKS(pace));
+
+    // Yield. Pacing is configurable at runtime via /api/peek/sensor
+    // (frame_delay_ms). Default 40 ms ≈ 25 fps target; OV2640 will deliver
+    // fewer in low light because AEC stretches the exposure window — that's
+    // accurately reflected in the measured FPS. This task is not subscribed
+    // to the TWDT (no esp_task_wdt_reset here); the delay is what keeps the
+    // WDT-subscribed IDLE tasks fed.
+    vTaskDelay(pdMS_TO_TICKS(peek_stream_logic::pace_clamp_ms(g_peek_frame_delay_ms)));
   }
-  
-  // *** KEY FIX: Set peek_active to false when stream ends ***
+
   g_peek_active = false;
-  
-  // End chunked response
+
+  // Freeze the uptime clock so /api/peek/status can keep reporting the real
+  // duration of the finished stream ("LAST STREAM" stats) instead of zero.
+  portENTER_CRITICAL(&g_peek_metrics_mux);
+  g_peek_stream_end_ms = millis();
+  portEXIT_CRITICAL(&g_peek_metrics_mux);
+
+  // End chunked response, then release the socket back to the server.
   httpd_resp_send_chunk(req, NULL, 0);
-  
+  httpd_req_async_handler_complete(req);
+
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek stream ended", nullptr);
-  
+
+  // Clear last: handlers wait on this flag before touching the camera driver,
+  // so it must stay set until the request is fully released above.
+  __atomic_store_n(&g_peek_stream_task_busy, false, __ATOMIC_RELEASE);
+  vTaskDelete(NULL);
+}
+
+static esp_err_t handle_peek_stream(httpd_req_t* req) {
+  g_health.http_requests++;
+
+  if (!g_camera_initialized) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_send(req, "Camera not initialized", HTTPD_RESP_USE_STRLEN);
+  }
+
+  // Single stream at a time. Handlers all run on the one httpd task, so this
+  // check-then-set cannot race another handler — only the worker's clear.
+  if (__atomic_load_n(&g_peek_stream_task_busy, __ATOMIC_ACQUIRE)) {
+    httpd_resp_set_status(req, "409 Conflict");
+    return httpd_resp_send(req, "Stream already active", HTTPD_RESP_USE_STRLEN);
+  }
+
+  httpd_req_t* async_req = nullptr;
+  if (httpd_req_async_handler_begin(req, &async_req) != ESP_OK) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    return httpd_resp_send(req, "Failed to detach request", HTTPD_RESP_USE_STRLEN);
+  }
+
+  __atomic_store_n(&g_peek_stream_task_busy, true, __ATOMIC_RELEASE);
+  g_peek_active = true;
+
+  // Reset per-stream metrics so the UI shows real, fresh values.
+  uint32_t now_ms = millis();
+  portENTER_CRITICAL(&g_peek_metrics_mux);
+  g_peek_frame_count      = 0;
+  g_peek_total_bytes      = 0;
+  g_peek_last_frame_bytes = 0;
+  g_peek_last_frame_ms    = 0;
+  g_peek_stream_start_ms  = now_ms;
+  g_peek_stream_end_ms    = 0;
+  g_peek_fps_window_start = now_ms;
+  g_peek_fps_window_count = 0;
+  g_peek_fps_last         = 0;
+  portEXIT_CRITICAL(&g_peek_metrics_mux);
+
+  // Internal-RAM stack (PSRAM task stacks aren't supported by the prebuilt
+  // core); priority 3 is safe because every loop path yields >=20 ms.
+  BaseType_t created = xTaskCreate(peek_stream_task, "peek_stream", 8192,
+                                   async_req, 3, nullptr);
+  if (created != pdPASS) {
+    g_peek_active = false;
+    httpd_resp_set_status(async_req, "503 Service Unavailable");
+    httpd_resp_send(async_req, "Out of memory for stream task", HTTPD_RESP_USE_STRLEN);
+    httpd_req_async_handler_complete(async_req);
+    __atomic_store_n(&g_peek_stream_task_busy, false, __ATOMIC_RELEASE);
+    return ESP_OK;
+  }
+
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek stream started", nullptr);
   return ESP_OK;
 }
 
@@ -4125,17 +4189,41 @@ static esp_err_t handle_peek_snapshot(httpd_req_t* req) {
   return res;
 }
 
+// Stop any in-flight stream and wait for the worker task to fully exit (it
+// clears the busy flag only after releasing its async request). Returns false
+// on timeout — callers must NOT touch the camera driver in that case, because
+// the worker may still be holding a framebuffer. A wedged client socket can
+// stall the worker in httpd_resp_send_chunk for up to send_wait_timeout (30 s),
+// so a bounded wait + refusal is the fail-closed choice.
+static bool peek_stream_stop_and_wait(uint32_t timeout_ms) {
+  g_peek_active = false;
+  uint32_t waited = 0;
+  while (__atomic_load_n(&g_peek_stream_task_busy, __ATOMIC_ACQUIRE)) {
+    if (waited >= timeout_ms) return false;
+    vTaskDelay(pdMS_TO_TICKS(20));
+    waited += 20;
+  }
+  return true;
+}
+
 static esp_err_t handle_peek_stop(httpd_req_t* req) {
   g_health.http_requests++;
-  
-  g_peek_active = false;
-  
+
+  // Wait (bounded) for the worker to record its end timestamp and exit, so
+  // the status poll the UI fires right after this response sees the frozen
+  // uptime instead of racing the worker mid-frame-delay (which rendered the
+  // just-finished stream as 0 kbps / no uptime). The worker's typical exit
+  // latency is one frame pace (<=500 ms); a wedged send can exceed the wait,
+  // in which case status falls back to last_frame_ms (see stream_uptime_ms).
+  bool worker_exited = peek_stream_stop_and_wait(2000);
+
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek stopped", nullptr);
-  
+
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Peek stopped";
-  
+  doc["worker_exited"] = worker_exited;
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -4187,6 +4275,8 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   uint64_t snap_total_bytes;
   uint32_t snap_fps_last;
   uint32_t snap_stream_start_ms;
+  uint32_t snap_stream_end_ms;
+  uint32_t snap_last_frame_ms;
   portENTER_CRITICAL(&g_peek_metrics_mux);
   snap_active           = g_peek_active;
   snap_frame_count      = g_peek_frame_count;
@@ -4194,6 +4284,8 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   snap_total_bytes      = g_peek_total_bytes;
   snap_fps_last         = g_peek_fps_last;
   snap_stream_start_ms  = g_peek_stream_start_ms;
+  snap_stream_end_ms    = g_peek_stream_end_ms;
+  snap_last_frame_ms    = g_peek_last_frame_ms;
   portEXIT_CRITICAL(&g_peek_metrics_mux);
 
   doc["frame_count"]       = snap_frame_count;
@@ -4201,22 +4293,20 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   doc["total_bytes"]       = snap_total_bytes;  // ArduinoJson v7 supports uint64_t natively — no 4GB wrap
   doc["fps"]               = snap_fps_last;     // measured over the last full ~1s window, jitter-normalized
 
-  uint32_t now_ms      = millis();
-  uint32_t uptime_ms   = (snap_stream_start_ms && snap_active)
-                           ? (now_ms - snap_stream_start_ms)
-                           : 0;
+  // Live stream: uptime counts from start to now. Finished stream: uptime is
+  // frozen at its real duration so the UI's "LAST STREAM" throughput/uptime
+  // stay truthful instead of collapsing to zero the moment the stream stops.
+  // last_frame_ms covers the stop-vs-worker-exit race (see the logic header).
+  uint32_t uptime_ms = peek_stream_logic::stream_uptime_ms(
+      snap_active, snap_stream_start_ms, snap_stream_end_ms,
+      snap_last_frame_ms, millis());
   doc["stream_uptime_ms"]  = uptime_ms;
   uint32_t avg_bytes = (snap_frame_count > 0)
                          ? (uint32_t)(snap_total_bytes / snap_frame_count)
                          : 0;
   doc["avg_frame_bytes"]   = avg_bytes;
   // Average throughput in kbps over the entire stream so far (real, computed from totals)
-  uint32_t avg_kbps = 0;
-  if (uptime_ms > 0) {
-    // bytes * 8 / ms -> kbps directly (since /1000ms cancels with *1000 from kbits)
-    avg_kbps = (uint32_t)((snap_total_bytes * 8ULL) / (uint64_t)uptime_ms);
-  }
-  doc["avg_kbps"]          = avg_kbps;
+  doc["avg_kbps"]          = peek_stream_logic::avg_kbps(snap_total_bytes, uptime_ms);
 
   String response;
   serializeJson(doc, response);
@@ -4239,9 +4329,11 @@ static esp_err_t handle_peek_init(httpd_req_t* req) {
 
   // Stop any in-flight stream first so the streaming task isn't holding a
   // framebuffer while we tear the driver down.
-  bool was_active = g_peek_active;
-  g_peek_active = false;
-  if (was_active) vTaskDelay(pdMS_TO_TICKS(150));
+  if (!peek_stream_stop_and_wait(3000)) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    const char* resp = "{\"ok\":false,\"error\":\"Stream is still shutting down; retry in a few seconds\"}";
+    return http_send_json(req, resp);
+  }
 
   Serial.println("[CAMERA] /api/peek/init — runtime re-init requested");
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Camera re-init requested", nullptr);
@@ -4302,20 +4394,22 @@ static esp_err_t handle_peek_resolution(httpd_req_t* req) {
     return http_send_json(req, resp);
   }
   
-  // Stop stream if active
+  // Stop the stream (if any) and wait for the worker to release its request.
+  // The old code restored g_peek_active = true here, but the flag alone can't
+  // resurrect a finished HTTP response — the client must reconnect. We report
+  // stream_stopped so the UI knows to restart its <img> source.
   bool was_active = g_peek_active;
-  g_peek_active = false;
-  vTaskDelay(pdMS_TO_TICKS(100)); // Let stream exit
-  
-  bool success = set_camera_resolution((framesize_t)size);
-  
-  // Restore stream if it was active
-  if (was_active && success) {
-    g_peek_active = true;
+  if (!peek_stream_stop_and_wait(3000)) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    const char* resp = "{\"ok\":false,\"error\":\"Stream is still shutting down; retry in a few seconds\"}";
+    return http_send_json(req, resp);
   }
-  
+
+  bool success = set_camera_resolution((framesize_t)size);
+
   JsonDocument doc;
   doc["ok"] = success;
+  doc["stream_stopped"] = was_active;
   if (success) {
     doc["resolution"] = size;
     doc["resolution_name"] = framesize_name((framesize_t)size);

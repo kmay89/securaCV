@@ -684,6 +684,22 @@ jobs:
           /tmp/sd_mount_logic | tee /tmp/sd_mount_logic.log
           grep -q "ALL .* PASSED" /tmp/sd_mount_logic.log
 
+      - name: Build + run canary-wap peek-stream logic host test
+        # The camera preview's reported numbers: stream uptime freezes at the
+        # recorded end instead of collapsing to 0 (which zeroed the derived
+        # throughput — "0 kbps" for a stream that just ran), avg kbps comes
+        # from real byte totals with no divide-by-zero, and the MJPEG worker's
+        # frame pacing clamps to a >=20ms floor (the yield that keeps the
+        # WDT-subscribed IDLE tasks fed under the priority-3 stream task).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_peek_stream_logic.cpp \
+              -o /tmp/peek_stream_logic
+          /tmp/peek_stream_logic | tee /tmp/peek_stream_logic.log
+          grep -q "ALL .* PASSED" /tmp/peek_stream_logic.log
+
       - name: Build + run pull-OTA engine logic host test
         # The OTA engine's pure-logic subset (semantic version compare,
         # anti-rollback update decision, URL transport policy, the

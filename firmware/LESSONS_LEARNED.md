@@ -54,6 +54,47 @@
   safe-mode gate, the in-flight guard, the recheck interval, and wrap safety.
 - **Date learned:** 2026-07
 
+### esp_http_server is single-task — a streaming handler starves every other endpoint
+- **What happened:** While the camera peek preview streamed, the whole
+  dashboard went dead: `/api/peek/status` polls hung (UI showed "Current:
+  Unknown", "THROUGHPUT 0 kbps", "STREAM UPTIME —" *during* a live stream),
+  sensor-tuning sliders did nothing, and other tabs stalled. Everything
+  "worked" again the moment the stream stopped — which made the individual
+  controls look broken rather than blocked.
+- **Root cause:** `esp_http_server` runs ONE worker task. Any long-lived
+  handler (an MJPEG `while` loop, a long poll, a big upload) occupies it for
+  the connection's whole lifetime, and every other request on every other
+  socket queues behind it. No amount of endpoint-side fixing helps — the
+  requests never reach their handlers.
+- **Fix:** detach long-lived responses with `httpd_req_async_handler_begin()`
+  and serve them from a dedicated FreeRTOS task, calling
+  `httpd_req_async_handler_complete()` on exit (`peek_stream_task` in
+  canary_wap.ino). Rules that made it safe:
+  - The worker must yield on **every** loop path (`vTaskDelay` ≥ 20 ms pace
+    floor, host-pinned in `peek_stream_logic.h`) — both IDLE tasks are
+    subscribed to the 8 s panic TWDT, and a yield-free priority-3 loop would
+    starve them (same trap as the SD worker, opposite priority reasoning:
+    this loop always yields, so priority 3 is fine).
+  - Task stack in internal RAM (the prebuilt Arduino core can't put task
+    stacks in PSRAM); 8 KB covers httpd chunk sends + JPEG headers.
+  - One busy flag with acquire/release atomics: only the httpd task sets it
+    (handlers are serialized on the single server task, so check-then-set
+    can't race another handler), only the worker clears it, and it clears
+    AFTER `httpd_req_async_handler_complete()` — so "busy is clear" means
+    "the driver and the socket are truly free".
+  - Anything that tears down what the worker uses (camera re-init, resolution
+    change) must stop-and-WAIT on that flag with a bounded timeout and fail
+    closed (503) on expiry — a blind `vTaskDelay(100)` "let it exit" sleep is
+    a race, and a wedged client socket can hold the worker in
+    `httpd_resp_send_chunk` for up to `send_wait_timeout` (30 s).
+  - A stopped stream cannot be resumed by flipping its flag back on — the
+    HTTP response is finished. Report `stream_stopped` and let the client
+    reconnect.
+- **Regression check:** `test_peek_stream_logic.cpp` pins the pace floor and
+  the uptime-freeze/throughput math; the UI's throughput formatting is pinned
+  in `web_ui_logic.test.js` (`fmtKbps`).
+- **Date learned:** 2026-07
+
 ---
 
 ## Memory

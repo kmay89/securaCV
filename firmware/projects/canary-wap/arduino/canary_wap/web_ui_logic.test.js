@@ -71,3 +71,26 @@ describe('BLE_CHIRP_ENDPOINT', () => {
     assert.notEqual(L.BLE_CHIRP_ENDPOINT, '/api/chirp/send');
   });
 });
+
+describe('fmtKbps', () => {
+  it('never renders NaN/undefined — missing or invalid input becomes a dash', () => {
+    assert.equal(L.fmtKbps(undefined), '—');
+    assert.equal(L.fmtKbps(null), '—');
+    assert.equal(L.fmtKbps(NaN), '—');
+    assert.equal(L.fmtKbps('800'), '—');   // firmware sends a number; strings are a bug upstream
+    assert.equal(L.fmtKbps(-1), '—');
+    assert.equal(L.fmtKbps(Infinity), '—');
+  });
+  it('formats sub-Mbps rates as whole kbps', () => {
+    assert.equal(L.fmtKbps(0), '0 kbps');
+    assert.equal(L.fmtKbps(1), '1 kbps');
+    assert.equal(L.fmtKbps(999), '999 kbps');
+  });
+  it('switches to Mbps at 1000 kbps and keeps the string short', () => {
+    assert.equal(L.fmtKbps(1000), '1.0 Mbps');
+    assert.equal(L.fmtKbps(2450), '2.5 Mbps');   // typical VGA MJPEG rate
+    assert.equal(L.fmtKbps(9999), '10.0 Mbps');
+    assert.equal(L.fmtKbps(10000), '10 Mbps');
+    assert.equal(L.fmtKbps(54321), '54 Mbps');
+  });
+});
