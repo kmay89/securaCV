@@ -16,13 +16,18 @@ escape it, but during provisioning the AP has to stay up.
 
 Fix: BLE Discovery still initializes at boot, but its radio activity (Opera
 advertising, Nearby active scanning, boot chirp) is now **deferred out of the
-join window** — brought up once the STA has joined home Wi-Fi (steady state, the
-AP is about to drop → the stable STA+BLE combo) or, in AP-only standalone mode,
-after a short settle window so the operator's first association lands cleanly.
-BLE stays on by default; it just doesn't transmit while a phone is mid-join. The
-decision is a pure, wrap-safe predicate (`provisioning_logic::
-ble_discovery_start_due`) with host-test coverage, and the self-test reports the
-pre-start window honestly as "Radio up · all features idle" (SKIP, non-gating).
+join window** — brought up once the management SoftAP has actually been torn
+down (the firmware keeps it up for a grace window after the STA gets an IP so
+the phone can read the success card, *then* drops it to the stable STA+BLE
+combo, so gating on AP-down rather than mere `WL_CONNECTED` also keeps the scan
+out of that protected handoff). In AP-only standalone mode — where the AP is
+permanent — it starts after a short settle so the operator's first association
+lands cleanly, and a normal device whose home Wi-Fi never comes up starts after
+a 5-minute max-hold fallback rather than staying disabled forever. BLE stays on
+by default; it just doesn't transmit while a phone is mid-join. The decision is
+a pure, wrap-safe predicate (`provisioning_logic::ble_discovery_start_due`) with
+host-test coverage, and the self-test reports the pre-start window honestly as
+"Radio up · all features idle" (SKIP, non-gating).
 
 ### canary-sense witness signing: Ed25519 events, hash chain, verified-green in HA
 

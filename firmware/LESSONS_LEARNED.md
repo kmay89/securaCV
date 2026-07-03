@@ -392,13 +392,17 @@
   up *during* provisioning — so BLE scanning was the thing to hold back.
 - **Fix:** BLE Discovery still `init()`s at boot (stack + subsystems up), but
   its radio activity (Opera advertising, Nearby active scanning, boot chirp) is
-  deferred out of the join window — brought up from `loop()` once the STA has
-  joined home Wi-Fi (steady state, AP about to drop → stable STA+BLE) or, in
-  AP-only mode, after a settle window. BLE stays on by default; it just doesn't
-  transmit while a phone is mid-join.
+  deferred out of the join window — brought up from `loop()` once the SoftAP is
+  actually torn down (gate on AP-**down**, not mere `WL_CONNECTED`: the AP is
+  held for a grace window after the STA gets an IP so the phone can read the
+  success card, and the scan must stay out of that handoff too). AP-only mode
+  (AP permanent) starts after a settle; a normal device whose home Wi-Fi never
+  comes up starts after a 5-min max-hold fallback rather than staying disabled
+  forever. BLE stays on by default; it just doesn't transmit mid-join.
 - **Regression check:** `provisioning_logic::ble_discovery_start_due` is a pure
   wrap-safe predicate with host-test coverage in `test_provisioning_logic.cpp`
-  (STA-up → due; provisioning non-AP-only → held; AP-only → held until settle).
+  (AP-down → due; AP-up non-AP-only → held until the max-hold fallback; AP-only
+  → held until the settle window).
 - **Date learned:** 2026-07
 
 ---

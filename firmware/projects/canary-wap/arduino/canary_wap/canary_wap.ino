@@ -758,6 +758,11 @@ static uint32_t g_ble_discovery_ready_ms = 0;
 // via a home-WiFi join. Let the operator's first association to the permanent
 // SoftAP land cleanly, then bring BLE up and accept steady-state coexistence.
 static const uint32_t BLE_DISCOVERY_AP_ONLY_SETTLE_MS = 45000;
+// Fallback so a normal device whose home WiFi is down/gone (STA never connects,
+// AP stays up) doesn't leave BLE Discovery — and its Chirp/Nearby offline
+// features — disabled forever. After this hold, start regardless and accept
+// steady-state coexistence.
+static const uint32_t BLE_DISCOVERY_MAX_HOLD_MS = 300000;  // 5 min
 #endif
 
 // Camera state
@@ -8907,10 +8912,18 @@ void setup() {
 static void ble_discovery_start_if_due() {
 #if FEATURE_BLE
   if (!g_ble_discovery_ready || g_ble_discovery_started) return;
-  const bool sta_connected = (WiFi.status() == WL_CONNECTED);
+  // Gate on the AP being DOWN, not merely WL_CONNECTED: the SoftAP is held up
+  // for AP_DROP_GRACE_MS after the STA gets an IP so the provisioning phone can
+  // re-associate and read the success card, and starting the 99%-duty scan
+  // during that grace would starve the very handoff it protects. Treat a
+  // runtime AP-only/no-STA state (e.g. after /api/wifi/disconnect) as AP-only
+  // too, so it starts on the settle path rather than the long fallback.
+  const bool ap_active = g_wifi_status.ap_active;
+  const bool ap_only_mode =
+      g_wifi_ap_only || (g_wifi_status.state == WIFI_PROV_AP_ONLY);
   if (!provisioning_logic::ble_discovery_start_due(
-          g_wifi_ap_only, sta_connected, millis(), g_ble_discovery_ready_ms,
-          BLE_DISCOVERY_AP_ONLY_SETTLE_MS)) {
+          ap_only_mode, ap_active, millis(), g_ble_discovery_ready_ms,
+          BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
     return;
   }
   ble_manager::operaStart();
