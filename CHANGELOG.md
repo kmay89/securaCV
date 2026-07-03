@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### canary-wap: BLE init no longer boot-loops a low-memory build
+
+A build with PSRAM disabled (Arduino IDE default is easy to miss) boots with
+only ~127 KB of internal heap. Once the WiFi AP and HTTP server are up, no
+contiguous block remains for the BLE controller's ~30 KB init allocation, so
+`NimBLEDevice::init()` fails — but the controller *asserts and panics* rather
+than returning an error, tripping the interrupt watchdog. The device then
+boot-loops on `BLE_INIT: Malloc failed`, and because the crash is below the
+app, even safe mode can't recover it.
+
+Every `NimBLEDevice::init()` call site (the pairing channel, BLE discovery, and
+the CSI BLE Scout — the last of which ran even in safe mode) now checks the
+largest free internal block first and skips the stack, leaving the radio off,
+when there isn't enough room. BLE degrades to "off" instead of bricking, so the
+device always comes up as a reachable AP + dashboard. The threshold and
+decision are a pure, host-tested predicate (`bt_defaults::init_has_headroom`);
+the heap read is thin glue (`ble_heap_guard.h`). Enabling PSRAM (Tools > PSRAM
+> "OPI PSRAM") remains the real fix — this just makes a mis-set build fail safe
+instead of unrecoverable.
+
 ### canary-wap provisioning: BLE scan no longer starves the SoftAP join
 
 Joining the device's setup Wi-Fi was intermittently failing — the phone's

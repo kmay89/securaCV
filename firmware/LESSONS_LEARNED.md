@@ -7,6 +7,37 @@
 
 ---
 
+## Memory
+
+### BLE controller init OOM boot-loops a no-PSRAM build (and defeats safe mode)
+- **What happened:** A XIAO ESP32-S3 flashed with **PSRAM disabled** in the
+  Arduino IDE boot-looped forever on `E BLE_INIT: Malloc failed` /
+  `BLE assert emi.c 164` / `Interrupt wdt timeout`. Safe mode did not recover
+  it — every boot, including safe-mode boots, crashed at the same point.
+- **Root cause:** With PSRAM off, internal heap is ~127 KB. After the WiFi AP
+  and HTTP server come up, no contiguous ~30 KB block (0x7800) remains for the
+  BLE controller's init allocation. `NimBLEDevice::init()` doesn't return false
+  here — the controller **asserts and panics**, so the graceful "init returned
+  false → degrade" paths never run. The BLE Scout's `nimble_scan_init()` (via
+  the CSI tick) brought the stack up even in safe mode, so safe mode crashed
+  too. Enabling BLE by default (the dead-panel fix) assumed PSRAM was on.
+- **Fix:** Guard every `NimBLEDevice::init()` call site
+  (`bluetooth_channel.cpp`, `ble_manager.h`, `ble_scout_nimble.cpp`) with a
+  free-memory check *before* calling init: if the largest free internal
+  DMA-capable block is below `bt_defaults::MIN_INIT_FREE_BLOCK` (48 KB), skip
+  the stack and leave the radio off. BLE degrades to "off" instead of bricking;
+  the device always boots to a reachable AP + dashboard.
+- **Regression check:** `bt_defaults::init_has_headroom` is a pure, wrap-safe
+  predicate with host-test coverage in `test_bt_defaults.cpp` (below threshold
+  → skip; at/above → allow; threshold clears the ~30 KB controller alloc).
+- **The real fix is on the user's side:** Arduino IDE → Tools → PSRAM → "OPI
+  PSRAM". The XIAO ESP32-S3 has 8 MB PSRAM; "PSRAM not found" in the boot
+  banner means it's disabled in the build. The guard only keeps a mis-set
+  build usable.
+- **Date learned:** 2026-07
+
+---
+
 ## ESP32 Arduino Core 3.x Migration
 
 ### mbedTLS API changes — NO `_ret` suffix

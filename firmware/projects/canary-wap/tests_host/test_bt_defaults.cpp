@@ -37,6 +37,17 @@ int main() {
   // Long-range stays opt-in (power/regulatory).
   CHECK(bt_defaults::LONG_RANGE == false);
 
+  // BLE init heap guard: below the minimum contiguous internal block, the
+  // stack must NOT be brought up — a no-PSRAM build otherwise OOM-panics the
+  // controller into a boot loop that even safe mode can't escape. At/above, ok.
+  CHECK(!bt_defaults::init_has_headroom(0));
+  CHECK(!bt_defaults::init_has_headroom(bt_defaults::MIN_INIT_FREE_BLOCK - 1));
+  CHECK(bt_defaults::init_has_headroom(bt_defaults::MIN_INIT_FREE_BLOCK));
+  CHECK(bt_defaults::init_has_headroom(bt_defaults::MIN_INIT_FREE_BLOCK + 200000UL));
+  // The threshold must clear the controller's ~30 KB largest allocation with
+  // margin, so passing the guard is a real guarantee rather than a coin-flip.
+  CHECK(bt_defaults::MIN_INIT_FREE_BLOCK >= 30UL * 1024UL);
+
   if (g_failures) {
     std::printf("%d check(s) FAILED\n", g_failures);
     return 1;

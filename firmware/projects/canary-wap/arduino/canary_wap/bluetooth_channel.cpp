@@ -12,6 +12,7 @@
 
 #include "bluetooth_channel.h"
 #include "bt_defaults.h"
+#include "ble_heap_guard.h"
 #include "nvs_store.h"
 
 // NimBLE headers must come before health_log.h to allow #undef of conflicting macros
@@ -631,6 +632,24 @@ bool init() {
   // ignored and the code marched on to createServer() — which then returned
   // null and crashed on the first g_server->... deref. Treat a failed init as a
   // hard failure so the caller degrades gracefully (the documented contract).
+  // Fail closed on low memory BEFORE calling init(). The controller malloc
+  // failure inside NimBLEDevice::init() asserts and panics rather than
+  // returning false, so the graceful-false path below never runs on a
+  // no-PSRAM build — the device just boot-loops. Skip the stack instead and
+  // leave the radio off; the panel reports Bluetooth idle, the AP stays up.
+  {
+    size_t largest = 0;
+    if (!ble_heap_guard::can_init(&largest)) {
+      char detail[80];
+      snprintf(detail, sizeof(detail),
+               "largest internal block %uB < %luB min; enable PSRAM",
+               (unsigned)largest, bt_defaults::MIN_INIT_FREE_BLOCK);
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                 "BLE not started: insufficient heap", detail);
+      set_state(BT_DISABLED);
+      return false;
+    }
+  }
   if (!NimBLEDevice::init(g_settings.device_name)) {
     log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE init failed", nullptr);
     set_state(BT_DISABLED);
