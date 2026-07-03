@@ -52,6 +52,17 @@ inline uint32_t pace_clamp_ms(uint32_t requested_ms) {
   return requested_ms;
 }
 
+// Abort the stream after this many CONSECUTIVE esp_camera_fb_get() failures
+// (~1 s at the 100 ms retry pace). Without a cap, a camera that dies
+// mid-stream (unseated Sense connector, driver wedge) spins the worker
+// forever: the failure path never touches the socket, so a vanished client
+// is never noticed, g_peek_active stays true (blocking QR scan), and the
+// busy flag blocks every new stream until reboot.
+const uint32_t MAX_CONSECUTIVE_CAPTURE_FAILURES = 10;
+inline bool capture_should_abort(uint32_t consecutive_failures) {
+  return consecutive_failures >= MAX_CONSECUTIVE_CAPTURE_FAILURES;
+}
+
 }  // namespace peek_stream_logic
 
 #endif  // SECURACV_PEEK_STREAM_LOGIC_H

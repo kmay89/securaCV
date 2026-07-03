@@ -80,10 +80,25 @@ static void test_pace_clamp() {
   CHECK(pace_clamp_ms(0xFFFFFFFFu) == 500);
 }
 
+static void test_capture_abort() {
+  // A dead camera must not spin the stream worker forever: the failure path
+  // never touches the socket, so without a cap a vanished client is never
+  // noticed and the single-stream busy flag blocks new streams until reboot.
+  CHECK(!capture_should_abort(0));
+  CHECK(!capture_should_abort(1));
+  CHECK(!capture_should_abort(MAX_CONSECUTIVE_CAPTURE_FAILURES - 1));
+  CHECK(capture_should_abort(MAX_CONSECUTIVE_CAPTURE_FAILURES));
+  CHECK(capture_should_abort(MAX_CONSECUTIVE_CAPTURE_FAILURES + 1));
+  // The cap is finite and small (~1 s at the 100 ms retry pace).
+  CHECK(MAX_CONSECUTIVE_CAPTURE_FAILURES >= 3 &&
+        MAX_CONSECUTIVE_CAPTURE_FAILURES <= 50);
+}
+
 int main() {
   test_stream_uptime();
   test_avg_kbps();
   test_pace_clamp();
+  test_capture_abort();
 
   if (g_failures != 0) {
     std::printf("%d CHECK(S) FAILED\n", g_failures);

@@ -3180,9 +3180,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function toggleRfEnabled() {
       const enabled = document.getElementById('rfEnabled').checked;
       const data = await api(enabled ? '/api/rf/enable' : '/api/rf/disable', 'POST');
-      if (data.success === false) {
+      // Strict check (same reasoning as toggleBtEnabled): a transport-level
+      // failure has no success field and must revert the checkbox too.
+      if (!data || data.success !== true) {
         document.getElementById('rfEnabled').checked = !enabled;  // revert on failure
-        alert('Failed: ' + (data.error || 'could not change RF sensing'));
+        alert('Failed: ' + ((data && data.error) || 'could not change RF sensing'));
       }
       refreshRfStatus();
     }
@@ -4758,9 +4760,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function toggleBtEnabled() {
       const enabled = document.getElementById('btEnabled').checked;
       const data = await api(enabled ? '/api/bluetooth/enable' : '/api/bluetooth/disable', 'POST');
-      if (data && data.success === false) {
+      // Strict check: a network/auth failure returns {ok:false} with no
+      // success field at all — that must revert the checkbox too, not just
+      // an explicit success:false from the firmware.
+      if (!data || data.success !== true) {
         document.getElementById('btEnabled').checked = !enabled;  // revert on failure
-        alert('Bluetooth: ' + (data.error || 'could not change Bluetooth state'));
+        alert('Bluetooth: ' + ((data && data.error) || 'could not change Bluetooth state'));
       }
       refreshBtStatus();
     }
@@ -4775,8 +4780,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         : !!(btState && btState.advertising);
       const ep = isAdv ? '/api/bluetooth/advertise/stop' : '/api/bluetooth/advertise/start';
       const data = await api(ep, 'POST');
-      if (data && data.success === false) {
-        alert('Bluetooth: ' + (data.error || 'unknown error'));
+      if (!data || data.success !== true) {
+        alert('Bluetooth: ' + ((data && data.error) || 'unknown error'));
       }
       refreshBtStatus();
     }

@@ -4006,13 +4006,23 @@ static void peek_stream_task(void* arg) {
   httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
 
   // Stream frames while active
+  uint32_t consecutive_capture_failures = 0;
   while (g_peek_active) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("[PEEK] Frame capture failed");
+      // A camera that died mid-stream (unseated connector, driver wedge)
+      // would otherwise spin this loop forever without ever touching the
+      // socket — so a vanished client is never noticed and the busy flag
+      // blocks every new stream until reboot. Bail after ~1 s of failures.
+      if (peek_stream_logic::capture_should_abort(++consecutive_capture_failures)) {
+        Serial.println("[PEEK] Aborting stream after repeated capture failures");
+        break;
+      }
       vTaskDelay(pdMS_TO_TICKS(100));
-      continue;  // Try again instead of breaking
+      continue;  // Transient failure: try again instead of breaking
     }
+    consecutive_capture_failures = 0;
 
     // Build multipart boundary + headers
     char part_buf[128];
