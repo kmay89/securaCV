@@ -218,6 +218,10 @@ bool init();
 void deinit();
 bool is_initialized();
 
+// Why the last init() attempt left the radio off ("" when initialized or
+// never attempted). Stable storage owned by the module; safe to hold.
+const char* init_fail_reason();
+
 // Push device metadata into the BLE Device Information Service. Optional;
 // must be called BEFORE init() to take effect (init reads the cached
 // strings when registering DIS). Strings are copied — caller-owned

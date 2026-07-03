@@ -60,6 +60,10 @@ namespace bluetooth_channel {
 
 static BluetoothState g_state = BT_DISABLED;
 static bool g_initialized = false;
+// Why the last init() attempt left the radio off, in operator language.
+// Empty when initialized (or never attempted). Surfaced by the self-test
+// and /api/bluetooth so "Bluetooth broken" field reports carry the cause.
+static char g_init_fail_reason[96] = "";
 
 // Device-info metadata for the SIG Standard Profiles (Device Information
 // Service). canary_wap.ino calls set_device_metadata() before init() to
@@ -650,12 +654,17 @@ bool init() {
                (unsigned)largest, bt_defaults::MIN_INIT_FREE_BLOCK);
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                  "BLE not started: insufficient heap", detail);
+      snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
+               "Not started: internal RAM too fragmented (largest free block %u KB, need %lu KB)",
+               (unsigned)(largest / 1024), bt_defaults::MIN_INIT_FREE_BLOCK / 1024);
       set_state(BT_DISABLED);
       return false;
     }
   }
   if (!NimBLEDevice::init(g_settings.device_name)) {
     log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE init failed", nullptr);
+    snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
+             "NimBLE stack init failed (controller/host bring-up)");
     set_state(BT_DISABLED);
     return false;
   }
@@ -694,6 +703,8 @@ bool init() {
   g_server = NimBLEDevice::createServer();
   if (!g_server) {
     log_health(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE createServer null", nullptr);
+    snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
+             "NimBLE createServer failed (host stack rejected)");
     set_state(BT_DISABLED);
     NimBLEDevice::deinit(true);
     return false;
@@ -793,6 +804,7 @@ bool init() {
   g_scanner->setWindow(SCAN_WINDOW_MS);
 
   g_initialized = true;
+  g_init_fail_reason[0] = '\0';
   set_state(BT_IDLE);
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE initialized", g_settings.device_name);
@@ -843,6 +855,10 @@ void deinit() {
 
 bool is_initialized() {
   return g_initialized;
+}
+
+const char* init_fail_reason() {
+  return g_init_fail_reason;
 }
 
 void set_device_metadata(const char* fw_revision, const char* serial) {

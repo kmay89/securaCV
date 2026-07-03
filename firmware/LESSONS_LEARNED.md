@@ -54,6 +54,25 @@
   safe-mode gate, the in-flight guard, the recheck interval, and wrap safety.
 - **Date learned:** 2026-07
 
+### A shared mDNS hostname is a session killer, not just a naming nit
+- **What happened:** With two Canaries on one WiFi, `canary.local` reached an
+  arbitrary device — and could switch devices BETWEEN REQUESTS of one page
+  session. The page loads from device A (cookie set by A), a later fetch
+  resolves to device B, B rejects A's session cookie → 401. Field symptoms
+  looked unrelated: Fleet QR button showing a bare "Failed", dashboards
+  "logging out" randomly.
+- **Root cause:** both devices claimed the bare `canary` delegated hostname.
+  The first-wins probe (600 ms, at STA join) is racy for devices that boot
+  together — power-restored-after-outage is the NORMAL multi-device boot.
+- **Fix pattern (catchall_logic.h, host-tested):** (1) stagger the claim by a
+  fingerprint-derived delay so simultaneous boots serialize; (2) while
+  claimed, periodically re-probe and resolve a detected double-claim with a
+  deterministic tie-break both sides compute identically from the same pair
+  (lower IP keeps) — antisymmetry means exactly one withdraws, no protocol.
+  And never surface only the shared name in UIs: the Fleet list shows each
+  device's unique `canary-<name>.local`.
+- **Date learned:** 2026-07
+
 ### esp_http_server is single-task — a streaming handler starves every other endpoint
 - **What happened:** While the camera peek preview streamed, the whole
   dashboard went dead: `/api/peek/status` polls hung (UI showed "Current:
@@ -98,6 +117,35 @@
 ---
 
 ## Memory
+
+### Init ORDER is a heap budget: late BLE init fails even with PSRAM
+- **What happened:** Both field devices, freshly flashed WITH PSRAM enabled,
+  showed "NimBLE init failed" in the self-test. No OOM panic, no boot loop —
+  the #819 heap guard did its job — but the radio never came up.
+- **Root cause:** the BLE controller allocates a ~30 KB *contiguous internal
+  DMA* block at init, and PSRAM cannot host it. Bluetooth initialized LAST in
+  Phase 3 — after camera, SD, audio, WiFi/lwIP, httpd, and mesh — by which
+  point internal RAM was fragmented below the guard's 48 KB threshold on a
+  fully loaded FULL build. PSRAM moves the big allocations, not the
+  fragmentation of what stays internal.
+- **Fix:** bring the NimBLE stack up right after the camera (which has its
+  own documented first-position DMA constraint), BEFORE WiFi/HTTP. The
+  contiguous block is reserved once, early, for the device's lifetime.
+  Radio *activity* (advertising/scanning) stays deferred out of the
+  provisioning join window — init ≠ transmit. BT-controller-init before
+  esp_wifi_init is the supported coexistence order.
+- **Trap for the next reorder:** anything moved before the network phase can
+  no longer emit CSI witness events directly — the module registry
+  (csi_integration::init) comes up with the web server, and csi_event_emit
+  before registration is a *silent drop*. Hold the outcome in a flag and
+  emit at the old point in boot (see g_ble_lifecycle_pending).
+- **Diagnosis rule:** a subsystem that "fails to init" in the field should
+  always record WHY where the UI can reach it —
+  `bluetooth_channel::init_fail_reason()` now distinguishes "internal RAM too
+  fragmented (largest block N KB)" from a real stack failure, in
+  /api/selftest and /api/bluetooth. The old catch-all "NimBLE init failed"
+  label cost a full field-debug cycle.
+- **Date learned:** 2026-07
 
 ### BLE controller init OOM boot-loops a no-PSRAM build (and defeats safe mode)
 - **What happened:** A XIAO ESP32-S3 flashed with **PSRAM disabled** in the

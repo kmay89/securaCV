@@ -700,6 +700,22 @@ jobs:
           /tmp/peek_stream_logic | tee /tmp/peek_stream_logic.log
           grep -q "ALL .* PASSED" /tmp/peek_stream_logic.log
 
+      - name: Build + run canary-wap catch-all logic host test
+        # Who owns the shared canary.local catch-all when several Canaries
+        # share a LAN: the fingerprint-staggered claim window, the
+        # detect-own-echo probe classification, and the IP tie-break whose
+        # antisymmetry guarantees exactly one device keeps a double-claim
+        # (both keeping = session-cookie-killing hostname flapping; both
+        # withdrawing = canary.local goes dark).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_catchall_logic.cpp \
+              -o /tmp/catchall_logic
+          /tmp/catchall_logic | tee /tmp/catchall_logic.log
+          grep -q "ALL .* PASSED" /tmp/catchall_logic.log
+
       - name: Build + run pull-OTA engine logic host test
         # The OTA engine's pure-logic subset (semantic version compare,
         # anti-rollback update decision, URL transport policy, the

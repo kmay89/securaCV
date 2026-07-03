@@ -670,6 +670,11 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
   }
   .rssi-bar span.on { opacity: 1; background: var(--accent); }
   .fleet-peer-empty { color: var(--fg-mute); font-size: 14px; padding: 8px 0; }
+  .fleet-open {
+    color: var(--accent); text-decoration: none; font-size: 14px;
+    padding: 6px 10px; border: 1px solid var(--hairline); border-radius: 10px;
+    white-space: nowrap;
+  }
   .fleet-form { display: grid; gap: 12px; }
   .fleet-field {
     display: grid; gap: 4px;
@@ -2281,31 +2286,56 @@ function rssiBars(rssi) {
   ).join('')}</span>`;
 }
 
+/* One card per Canary on the LAN. `self` renders first without a link;
+ * every other device links to its own dashboard by unique hostname (with
+ * the raw IP as the visible fallback path). Data comes from
+ * /api/fleet/scan — an mDNS browse of the _securacv._tcp service every
+ * Canary advertises — NOT the opera-mesh peer list this sheet used to
+ * show, which only contained explicitly paired mesh members and left two
+ * WiFi-sharing Canaries invisible to each other. */
+function fleetPeerCard(p, isSelf) {
+  const label = escapeHTML(p.name || p.device_id || 'Canary');
+  const id    = escapeHTML(p.device_id || '');
+  const host  = escapeHTML(p.mdns_host || '');
+  const ip    = escapeHTML(p.ip || '');
+  const model = escapeHTML((p.model || '').replace('XIAO ', ''));
+  const meta  = [id, host ? host + '.local' : '', ip, model]
+    .filter(Boolean).join(' · ');
+  if (isSelf) {
+    return `<div class="fleet-peer"><div><div class="name">${label} <span style="opacity:.6;font-weight:400">(this one)</span></div><div class="meta">${meta}</div></div></div>`;
+  }
+  const href = host ? `http://${host}.local/` : (ip ? `http://${ip}/` : '');
+  const open = href ? `<a class="fleet-open" href="${href}" target="_blank" rel="noopener">Open &rarr;</a>` : '';
+  return `<div class="fleet-peer"><div><div class="name">${label}</div><div class="meta">${meta}</div></div><div>${open}</div></div>`;
+}
+
 async function fetchFleetPeers(signal) {
   const el = document.getElementById('fleetPeerList');
   try {
-    const r = await cvFetch('/api/mesh/peers', {cache: 'no-store', signal});
+    const r = await cvFetch('/api/fleet/scan', {cache: 'no-store', signal});
     if (!r.ok) {
-      el.innerHTML = '<p class="fleet-peer-empty">Mesh not available.</p>';
+      el.innerHTML = '<p class="fleet-peer-empty">Discovery not available' +
+                     (r.status === 401 ? ' — session expired, reload the page.' : '.') + '</p>';
       return;
     }
     const j = await r.json();
-    if (!j.peers || j.peers.length === 0) {
-      el.innerHTML = '<p class="fleet-peer-empty">No other Canaries found yet.</p>';
-      return;
+    const self = j.self || null;
+    const selfId = self ? self.device_id : null;
+    const others = (j.canaries || []).filter(p => p.device_id && p.device_id !== selfId);
+    let html = '';
+    if (self) html += fleetPeerCard(self, true);
+    html += others.map(p => fleetPeerCard(p, false)).join('');
+    if (others.length === 0) {
+      html += j.scanning
+        ? '<p class="fleet-peer-empty">Scanning the network&hellip;</p>'
+        : '<p class="fleet-peer-empty">No other Canaries found yet.</p>';
     }
-    el.innerHTML = j.peers.map(p => {
-      const name = escapeHTML(p.name || 'Unknown');
-      const fp = escapeHTML((p.fingerprint || '').slice(0, 8));
-      const state = p.state === 'connected' ? '' :
-        ` &middot; <span style="opacity:.6">${escapeHTML(p.state)}</span>`;
-      return `<div class="fleet-peer"><div><div class="name">${name}</div><div class="meta">${fp}${state}</div></div><div>${rssiBars(p.rssi)}</div></div>`;
-    }).join('');
+    el.innerHTML = html;
   } catch (e) {
     /* A reopen aborts the prior in-flight request — that's expected, not
      * an error, so leave the existing list in place. */
     if (e && e.name === 'AbortError') return;
-    el.innerHTML = '<p class="fleet-peer-empty">Could not reach the mesh service.</p>';
+    el.innerHTML = '<p class="fleet-peer-empty">Could not reach the device.</p>';
   }
 }
 
@@ -2363,11 +2393,20 @@ document.getElementById('fleetGenBtn').addEventListener('click', async () => {
   const params = new URLSearchParams({ssid, pass});
   try {
     const r = await cvFetch(`/api/fleet/qr?${params}`, {cache: 'no-store'});
-    if (!r.ok) { img.innerHTML = '<p style="color:#c00;padding:20px">Failed</p>'; wrap.style.display = ''; return; }
+    if (!r.ok) {
+      /* Say WHY, not just "Failed" — the old opaque label hid a session
+       * expiry (401) behind what looked like a broken generator. */
+      const hint = r.status === 401 ? 'Session expired &mdash; reload this page and try again.'
+                 : r.status === 429 ? 'Too many attempts &mdash; wait a minute, then retry.'
+                 : 'Could not generate (error ' + r.status + '). Re-check the network name.';
+      img.innerHTML = `<p style="color:#c00;padding:20px">${hint}</p>`;
+      wrap.style.display = '';
+      return;
+    }
     img.innerHTML = await r.text();
     wrap.style.display = '';
   } catch {
-    img.innerHTML = '<p style="color:#c00;padding:20px">Network error</p>';
+    img.innerHTML = '<p style="color:#c00;padding:20px">Network error &mdash; is the Canary still reachable?</p>';
     wrap.style.display = '';
   }
 });

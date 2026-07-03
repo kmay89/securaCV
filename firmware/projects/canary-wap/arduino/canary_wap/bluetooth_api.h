@@ -97,6 +97,11 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   doc["state"] = bluetooth_channel::state_name(status.state);
   doc["enabled"] = status.enabled;
   doc["advertising"] = status.advertising;
+  // Why the radio is off, when init was refused/failed — lets the settings
+  // tab say "internal RAM too fragmented" instead of a dead-looking panel.
+  if (bluetooth_channel::init_fail_reason()[0]) {
+    doc["init_fail_reason"] = bluetooth_channel::init_fail_reason();
+  }
   doc["scanning"] = status.scanning;
   doc["connected"] = status.connected;
   doc["device_name"] = status.device_name;

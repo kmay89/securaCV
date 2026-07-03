@@ -256,6 +256,9 @@ inline void probe_bluetooth(ProbeResult* r, JsonObject metric) {
   any_active = any_active || bluetooth_channel::is_advertising();
   metric["channel_up"]         = bluetooth_channel::is_initialized();
   metric["channel_advertising"] = bluetooth_channel::is_advertising();
+  if (bluetooth_channel::init_fail_reason()[0]) {
+    metric["init_fail_reason"] = bluetooth_channel::init_fail_reason();
+  }
 #endif
   metric["available"]      = avail;
   metric["init_attempted"] = init_done;
@@ -270,6 +273,15 @@ inline void probe_bluetooth(ProbeResult* r, JsonObject metric) {
       break;
     case Status::FAIL:
       r->code = -1;
+      // Prefer the channel's recorded cause ("internal RAM too fragmented…",
+      // "NimBLE stack init failed…") over the old catch-all label — the
+      // field report "NimBLE init failed" hid a heap-guard refusal.
+#if FEATURE_BLUETOOTH
+      if (bluetooth_channel::init_fail_reason()[0]) {
+        set_detail(r, "%s", bluetooth_channel::init_fail_reason());
+        break;
+      }
+#endif
       set_detail(r, "NimBLE init failed");
       break;
     case Status::SKIP:
