@@ -36,13 +36,19 @@
   table in `sd_mount_logic.h`); setup() feeds the WDT between Phase-3 steps;
   mount-success provisioning (mkdir + csi_event_log) moved to the loop-side
   mount transition so late mounts aren't half-initialized.
-- **Two traps for future radio/storage work on the XIAO ESP32-S3:**
+- **Three traps for future radio/storage work on the XIAO ESP32-S3:**
   - `LED_BUILTIN == GPIO21 == SD_CS`. Any LED write while another task is
     mid-SPI-transaction glitches chip-select. Check `sd_mount_in_flight()`
     before driving the LED.
   - Never call `SD.end()` (or tear down the bus) while a mount attempt is in
     flight on another task — `SDFS::end` frees the card struct under the
     driver (use-after-free). Wait for the attempt to conclude.
+  - Never gate SD usability on raw `SD.cardType()`: during a background
+    mount the card struct is mid-initialization and `cardType()` can read a
+    garbage non-`CARD_NONE` value, so the follow-up `SD.open()` races
+    `f_mount` on the worker. Gate on `sd_is_available()` (false until the
+    loop adopts the result) or check `sd_mount_in_flight()` first — the
+    csi_event_log and beacon-audit paths do both now (Codex P1 on #820).
 - **Regression check:** `sd_mount_logic::periodic_action` +
   `mount_wait_expired` host tests (`test_sd_mount_logic.cpp`) pin the
   safe-mode gate, the in-flight guard, the recheck interval, and wrap safety.
