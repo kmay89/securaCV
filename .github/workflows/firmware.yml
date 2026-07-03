@@ -256,10 +256,14 @@ jobs:
           # field devices (BLE refused, SD writes failing, dashboard timing
           # out) — build_config.h now #errors on FULL+S3 without PSRAM, and
           # CI must validate the configuration devices actually run.
+          # NOTE: overriding build.extra_flags REPLACES the board's default
+          # expansion, which is what carries {build.defines} — i.e. the
+          # -DBOARD_HAS_PSRAM that PSRAM=opi sets. Re-add it explicitly or
+          # the PSRAM guard in build_config.h (correctly) fails the build.
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DBOARD_HAS_PSRAM" \
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
@@ -292,7 +296,7 @@ jobs:
           arduino-cli compile \
             --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
   csi-sketch-sync:

@@ -78,8 +78,12 @@ jobs:
           # -D flag that drops one csi_module_register() call. Build
           # success means the remaining modules don't depend on the
           # disabled one's registration.
+          # PSRAM=opi + explicit -DBOARD_HAS_PSRAM: FULL/S3 requires PSRAM
+          # (build_config.h #errors without it), and overriding
+          # build.extra_flags drops the board expansion that carries the
+          # define. Mirrors the main Arduino CLI Build job.
           arduino-cli compile \
-            --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
-            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -D${{ matrix.flag }}=1" \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -D${{ matrix.flag }}=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino

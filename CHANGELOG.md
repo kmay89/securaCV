@@ -17,9 +17,15 @@ kept recurring.
   `BOARD_HAS_PSRAM`, with the exact fix in the error message (Tools > PSRAM >
   "OPI PSRAM" / `--fqbn ...:PSRAM=opi` / `--profile xiao_sense`). Experts can
   define `SECURACV_ALLOW_NO_PSRAM` to bypass.
-- The CI Arduino build now compiles with `PSRAM=opi` — the bare board FQBN it
-  used before defaults to PSRAM=Disabled, so CI was validating exactly the
-  broken-in-the-field configuration instead of the one devices should run.
+- Every CI/release Arduino build now compiles with `PSRAM=opi` — the bare
+  board FQBN used before defaults to PSRAM=Disabled, so CI was validating
+  exactly the broken-in-the-field configuration, **and the release workflow
+  was shipping OTA binaries built without PSRAM**. Fixed in `firmware.yml`,
+  `csi_module_disable_matrix.yml`, and `firmware-release.yml`; where a job
+  overrides `build.extra_flags` (which replaces the board expansion carrying
+  `-DBOARD_HAS_PSRAM`), the define is re-added explicitly. The guard itself
+  is gated on `ESP_PLATFORM` so host g++ test builds that include
+  `build_config.h` are exempt.
 
 ### canary-wap: a slow or wedged SD card can no longer crash-loop the device
 

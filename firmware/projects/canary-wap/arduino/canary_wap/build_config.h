@@ -86,7 +86,11 @@
 //   PlatformIO  : already pinned (qio_opi + -DBOARD_HAS_PSRAM)
 // Experts who genuinely want a FULL no-PSRAM build can define
 // SECURACV_ALLOW_NO_PSRAM to bypass, accepting the degraded behavior above.
-#if defined(HARDWARE_XIAO_ESP32S3) && defined(BUILD_PROFILE_FULL) && \
+// Gated on ESP_PLATFORM (defined by the ESP32 toolchain) so host g++ test
+// builds — which include this header with the same S3+FULL defaults but no
+// board menu at all — are exempt: the guard is about real devices.
+#if defined(ESP_PLATFORM) && \
+    defined(HARDWARE_XIAO_ESP32S3) && defined(BUILD_PROFILE_FULL) && \
     !defined(BOARD_HAS_PSRAM) && !defined(SECURACV_ALLOW_NO_PSRAM)
   #error "FULL profile on XIAO ESP32-S3 requires PSRAM: Arduino IDE Tools > PSRAM > 'OPI PSRAM' (see build_config.h)"
 #endif
