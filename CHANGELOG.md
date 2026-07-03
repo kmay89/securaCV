@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### canary-wap provisioning: BLE scan no longer starves the SoftAP join
+
+Joining the device's setup Wi-Fi was intermittently failing — the phone's
+"enter password" sheet looping instead of associating. Root cause: BLE
+Discovery's Nearby scanner runs a 5-second, ~99%-duty **active** scan
+(window 99 / interval 100) pinned to the shared WiFi/BLE core, and the first
+burst fired at boot. When a phone's WPA2 4-way handshake to the provisioning
+SoftAP overlapped a burst, the handshake frames were starved and the join
+failed; catch a gap and it worked — hence the flaky loop. The firmware itself
+already rates AP + STA + BLE as unstable and drops the AP once the STA is up to
+escape it, but during provisioning the AP has to stay up.
+
+Fix: BLE Discovery still initializes at boot, but its radio activity (Opera
+advertising, Nearby active scanning, boot chirp) is now **deferred out of the
+join window** — brought up once the management SoftAP has actually been torn
+down (the firmware keeps it up for a grace window after the STA gets an IP so
+the phone can read the success card, *then* drops it to the stable STA+BLE
+combo, so gating on AP-down rather than mere `WL_CONNECTED` also keeps the scan
+out of that protected handoff). In AP-only standalone mode — where the AP is
+permanent — it starts after a short settle so the operator's first association
+lands cleanly, and a normal device whose home Wi-Fi never comes up starts after
+a 5-minute max-hold fallback rather than staying disabled forever. BLE stays on
+by default; it just doesn't transmit while a phone is mid-join. The decision is
+a pure, wrap-safe predicate (`provisioning_logic::ble_discovery_start_due`) with
+host-test coverage, and the self-test reports the pre-start window honestly as
+"Radio up · all features idle" (SKIP, non-gating).
+
 ### canary-sense witness signing: Ed25519 events, hash chain, verified-green in HA
 
 Completes the canary-sense design doc's Phase 2 trust items, reusing the

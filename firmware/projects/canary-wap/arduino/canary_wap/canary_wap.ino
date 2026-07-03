@@ -744,6 +744,27 @@ static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
 // by selftest_api.h's probe_bluetooth; non-static so its extern resolves.
 volatile bool g_ble_init_attempted = false;
 
+// BLE Discovery radio activity is deferred out of the provisioning join window
+// (see ble_discovery_start_if_due / provisioning_logic::ble_discovery_start_due):
+// its 5 s ~99%-duty active scan starves a phone's WPA2 handshake to the SoftAP.
+// _ready = init() succeeded and the subsystems are up (may transmit); _started =
+// operaStart/nearbyStart/boot-chirp have fired; _ready_ms = boot reference for
+// the AP-only settle window.
+#if FEATURE_BLE
+static bool     g_ble_discovery_ready   = false;
+static bool     g_ble_discovery_started = false;
+static uint32_t g_ble_discovery_ready_ms = 0;
+// AP-only standalone has no STA to wait on, so the join window never "clears"
+// via a home-WiFi join. Let the operator's first association to the permanent
+// SoftAP land cleanly, then bring BLE up and accept steady-state coexistence.
+static const uint32_t BLE_DISCOVERY_AP_ONLY_SETTLE_MS = 45000;
+// Fallback so a normal device whose home WiFi is down/gone (STA never connects,
+// AP stays up) doesn't leave BLE Discovery — and its Chirp/Nearby offline
+// features — disabled forever. After this hold, start regardless and accept
+// steady-state coexistence.
+static const uint32_t BLE_DISCOVERY_MAX_HOLD_MS = 300000;  // 5 min
+#endif
+
 // Camera state
 #if FEATURE_CAMERA_PEEK
 static bool g_camera_initialized = false;
@@ -8586,7 +8607,7 @@ void setup() {
 
     if (ble_manager::init(ble_device_id_hex, FIRMWARE_VERSION,
                           &g_device.seq, g_device.chain_head)) {
-      Serial.println("[OK] BLE Discovery initialized — Opera advertising, Nearby scanning");
+      Serial.println("[OK] BLE Discovery initialized — advertising/scan deferred until the join window clears");
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
 
       // spec/event_contract.md §10: route the lifecycle event through
@@ -8594,13 +8615,16 @@ void setup() {
       // enforced rather than implicit.
       ble_events_emit_initialized();
 
-      ble_manager::operaStart();
-      ble_manager::nearbyStart();
-
-      // Boot chirp. Witness-chain side: chirp_sent through the chokepoint
-      // so the wire format respects spec §10's allow-list.
-      ble_manager::sendChirp(CHIRP_BOOT);
-      ble_events_emit_chirp_sent("boot");
+      // Defer the radio activity (Opera advertising + Nearby *active* scanning +
+      // boot chirp) out of the provisioning join window. A 5 s, ~99%-duty active
+      // scan on the shared 2.4 GHz radio (pinned to the WiFi/BLE core) starves a
+      // phone's concurrent WPA2 handshake to the SoftAP, so joining the AP fails
+      // intermittently. ble_discovery_start_if_due() (loop) transmits once the
+      // STA has joined home WiFi — the AP is then dropped, leaving the stable
+      // STA+BLE combo — or after an AP-only settle window. init() already stood
+      // up the stack + subsystems; this only gates *when they transmit*.
+      g_ble_discovery_ready    = true;
+      g_ble_discovery_ready_ms = millis();
     } else {
       Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
       Serial.println("[--] Check: Is the BLE antenna connected?");
@@ -8881,6 +8905,39 @@ void setup() {
   print_table_header();
 }
 
+// Bring BLE Discovery's radio activity up once the provisioning join window is
+// clear — deferred out of setup() so its active scan never starves a phone's
+// WPA2 handshake to the SoftAP (see the g_ble_discovery_* note above). Fires
+// once, then latches; a later STA blip won't tear discovery back down.
+static void ble_discovery_start_if_due() {
+#if FEATURE_BLE
+  if (!g_ble_discovery_ready || g_ble_discovery_started) return;
+  // Gate on the AP being DOWN, not merely WL_CONNECTED: the SoftAP is held up
+  // for AP_DROP_GRACE_MS after the STA gets an IP so the provisioning phone can
+  // re-associate and read the success card, and starting the 99%-duty scan
+  // during that grace would starve the very handoff it protects. Treat a
+  // runtime AP-only/no-STA state (e.g. after /api/wifi/disconnect) as AP-only
+  // too, so it starts on the settle path rather than the long fallback.
+  const bool ap_active = g_wifi_status.ap_active;
+  const bool ap_only_mode =
+      g_wifi_ap_only || (g_wifi_status.state == WIFI_PROV_AP_ONLY);
+  if (!provisioning_logic::ble_discovery_start_due(
+          ap_only_mode, ap_active, millis(), g_ble_discovery_ready_ms,
+          BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
+    return;
+  }
+  ble_manager::operaStart();
+  ble_manager::nearbyStart();
+  // Boot chirp. Witness-chain side: chirp_sent through the chokepoint so the
+  // wire format respects spec/event_contract.md §10's allow-list.
+  ble_manager::sendChirp(CHIRP_BOOT);
+  ble_events_emit_chirp_sent("boot");
+  g_ble_discovery_started = true;
+  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+             "BLE discovery started (post-provisioning window)", nullptr);
+#endif
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // LOOP
 // ════════════════════════════════════════════════════════════════════════════
@@ -8921,6 +8978,11 @@ void loop() {
     delay(500);
     ESP.restart();
   }
+
+  // Start BLE Discovery's radio activity once the SoftAP join window is clear
+  // (STA joined home WiFi, or AP-only settle elapsed) — deferred from setup()
+  // so its active scan can't starve a provisioning phone's WPA2 handshake.
+  ble_discovery_start_if_due();
 
   // ════════════════════════════════════════════════════════════════════════════
   // HARDWARE STATE MANAGEMENT — Update safe mode, track stability

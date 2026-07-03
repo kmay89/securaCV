@@ -124,6 +124,41 @@ static void test_reboot_deadline_extend() {
         (uint32_t)(near_wrap + MIN));
 }
 
+static void test_ble_discovery_start() {
+  const uint32_t SETTLE = 45000u;
+  const uint32_t MAXHOLD = 300000u;
+  // Args: (ap_only, ap_active, now, boot_ref, settle, max_hold).
+  // Normal mode, AP torn down → due (steady STA+BLE combo; the AP grace/handoff
+  // window the phone needed is over). This is the clean steady-state start.
+  CHECK(ble_discovery_start_due(false, false, 0, 0, SETTLE, MAXHOLD));
+  CHECK(ble_discovery_start_due(false, false, 1000, 0, SETTLE, MAXHOLD));
+  // Normal mode, AP still up (provisioning / STA connected but still in the AP
+  // grace, or home WiFi not joined): held below the fallback so the 99%-duty
+  // scan never fights the phone's SoftAP handshake or the post-join handoff.
+  CHECK(!ble_discovery_start_due(false, true, 1000, 0, SETTLE, MAXHOLD));
+  CHECK(!ble_discovery_start_due(false, true, MAXHOLD - 1, 0, SETTLE, MAXHOLD));
+  // ...but never held FOREVER: past the max-hold, start regardless so Chirp/
+  // Nearby offline features aren't permanently disabled on a WiFi-down device.
+  CHECK(ble_discovery_start_due(false, true, MAXHOLD, 0, SETTLE, MAXHOLD));     // boundary >=
+  CHECK(ble_discovery_start_due(false, true, MAXHOLD + 5000, 0, SETTLE, MAXHOLD));
+  // AP-only (persisted standalone, or runtime AP-only): AP is permanent, no STA
+  // to wait on. Held during the shorter settle so the operator's first join
+  // lands cleanly, then due — the max-hold is irrelevant here.
+  CHECK(!ble_discovery_start_due(true, true, SETTLE - 1, 0, SETTLE, MAXHOLD));
+  CHECK(ble_discovery_start_due(true, true, SETTLE, 0, SETTLE, MAXHOLD));       // boundary >=
+  CHECK(ble_discovery_start_due(true, true, SETTLE + 5000, 0, SETTLE, MAXHOLD));
+  // Windows measured from the boot reference, not absolute time.
+  CHECK(!ble_discovery_start_due(true, true, 100000 + SETTLE - 1, 100000, SETTLE, MAXHOLD));
+  CHECK(ble_discovery_start_due(true, true, 100000 + SETTLE, 100000, SETTLE, MAXHOLD));
+  CHECK(!ble_discovery_start_due(false, true, 100000 + MAXHOLD - 1, 100000, SETTLE, MAXHOLD));
+  CHECK(ble_discovery_start_due(false, true, 100000 + MAXHOLD, 100000, SETTLE, MAXHOLD));
+  // Wrap-safe: boot reference just before the millis() wrap, now just after.
+  uint32_t near_wrap = 0xFFFFF000u;
+  CHECK(!ble_discovery_start_due(true, true, near_wrap + 1000u /* wraps */, near_wrap, SETTLE, MAXHOLD));
+  CHECK(ble_discovery_start_due(true, true, near_wrap + SETTLE, near_wrap, SETTLE, MAXHOLD));
+  CHECK(ble_discovery_start_due(false, true, near_wrap + MAXHOLD, near_wrap, SETTLE, MAXHOLD));
+}
+
 int main() {
   test_setup_timeout();
   test_scan_cache();
@@ -131,6 +166,7 @@ int main() {
   test_ap_teardown();
   test_deferred_reboot();
   test_reboot_deadline_extend();
+  test_ble_discovery_start();
   if (g_failures) {
     std::printf("%d check(s) FAILED\n", g_failures);
     return 1;
