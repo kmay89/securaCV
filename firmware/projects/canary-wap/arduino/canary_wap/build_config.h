@@ -71,6 +71,30 @@
 #else
   #define SECURACV_RELEASE_BUILD 0
 #endif
+
+// FULL profile on the XIAO ESP32-S3 REQUIRES PSRAM. Field evidence: flashed
+// without it, internal heap hits EMERGENCY (<1 KB free) once WiFi + HTTP +
+// camera + CSI are up — BLE can't start (the heap guard refuses), SD writes
+// fail until the card is marked failed, mDNS/dashboard requests time out,
+// and the device limps instead of witnessing. The Arduino IDE toggle
+// silently defaults to PSRAM=Disabled (and reverts when the board selection
+// changes), so refuse to compile with a clear message rather than produce a
+// device that boots but can't serve its own dashboard.
+//   Arduino IDE : Tools > PSRAM > "OPI PSRAM"
+//   arduino-cli : --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi
+//                 (or: arduino-cli compile --profile xiao_sense)
+//   PlatformIO  : already pinned (qio_opi + -DBOARD_HAS_PSRAM)
+// Experts who genuinely want a FULL no-PSRAM build can define
+// SECURACV_ALLOW_NO_PSRAM to bypass, accepting the degraded behavior above.
+// Gated on ESP_PLATFORM (defined by the ESP32 toolchain) so host g++ test
+// builds — which include this header with the same S3+FULL defaults but no
+// board menu at all — are exempt: the guard is about real devices.
+#if defined(ESP_PLATFORM) && \
+    defined(HARDWARE_XIAO_ESP32S3) && defined(BUILD_PROFILE_FULL) && \
+    !defined(BOARD_HAS_PSRAM) && !defined(SECURACV_ALLOW_NO_PSRAM)
+  #error "FULL profile on XIAO ESP32-S3 requires PSRAM: Arduino IDE Tools > PSRAM > 'OPI PSRAM' (see build_config.h)"
+#endif
+
 // Sanity checks
 // Compiler output guidance — only emit once, from the main sketch TU.
 // (canary_wap.ino defines SECURACV_EMIT_BUILD_BANNER before including this

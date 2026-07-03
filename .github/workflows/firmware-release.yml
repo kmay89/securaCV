@@ -162,8 +162,13 @@ jobs:
 
       - name: Build canary-wap (arduino-cli)
         run: |
+          # PSRAM=opi is REQUIRED (build_config.h #errors on FULL/S3
+          # without it). The bare FQBN's default is PSRAM=Disabled — release
+          # binaries built that way heap-starve in the field (BLE refused,
+          # SD writes failing, dashboard timing out). No extra_flags override
+          # here, so the board menu's -DBOARD_HAS_PSRAM flows normally.
           arduino-cli compile \
-            --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino

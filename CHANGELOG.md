@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### canary-wap: a FULL build without PSRAM no longer compiles (it could never run)
+
+Field evidence from the SD-crash-loop aftermath: a FULL-profile XIAO ESP32-S3
+build flashed with the Arduino IDE's default **PSRAM=Disabled** boots, but
+internal heap collapses to EMERGENCY (<1 KB free) once WiFi + HTTP + camera +
+CSI are up — BLE can't start (the heap guard refuses), SD writes fail until
+the card is marked failed, mDNS/`canary.local` times out, dashboard pages
+half-render, and the device limps instead of witnessing. The IDE toggle also
+silently reverts when the board selection changes, so this misconfiguration
+kept recurring.
+
+- `build_config.h` now **refuses to compile** FULL + XIAO_ESP32S3 without
+  `BOARD_HAS_PSRAM`, with the exact fix in the error message (Tools > PSRAM >
+  "OPI PSRAM" / `--fqbn ...:PSRAM=opi` / `--profile xiao_sense`). Experts can
+  define `SECURACV_ALLOW_NO_PSRAM` to bypass.
+- Every CI/release Arduino build now compiles with `PSRAM=opi` — the bare
+  board FQBN used before defaults to PSRAM=Disabled, so CI was validating
+  exactly the broken-in-the-field configuration, **and the release workflow
+  was shipping OTA binaries built without PSRAM**. Fixed in `firmware.yml`,
+  `csi_module_disable_matrix.yml`, and `firmware-release.yml`; where a job
+  overrides `build.extra_flags` (which replaces the board expansion carrying
+  `-DBOARD_HAS_PSRAM`), the define is re-added explicitly. The guard itself
+  is gated on `ESP_PLATFORM` so host g++ test builds that include
+  `build_config.h` are exempt.
+
 ### canary-wap: a slow or wedged SD card can no longer crash-loop the device
 
 `SD.begin()` is a chain of yield-free CPU spin loops in the SPI SD driver
