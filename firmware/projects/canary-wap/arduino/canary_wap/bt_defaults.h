@@ -35,6 +35,25 @@ constexpr bool REQUIRE_PIN = true;
 // Long-range (coded PHY) is an explicit opt-in.
 constexpr bool LONG_RANGE = false;
 
+// The BLE controller's largest single internal allocation at init is ~30 KB
+// (0x7800 — the size in the "BLE_INIT: Malloc failed / emi.c" panic). On a
+// board with PSRAM DISABLED the internal heap is ~127 KB and, once the WiFi AP
+// and HTTP server are up, no contiguous block that large remains — the malloc
+// fails, the controller asserts, the interrupt watchdog fires, and the device
+// boot-loops (and, because it aborts below the app, even safe mode can't
+// recover). So require a comfortable contiguous headroom before bringing the
+// stack up; below it, skip BLE and leave the radio off rather than brick.
+// Enabling PSRAM (Arduino IDE: Tools > PSRAM > "OPI PSRAM") is the real fix —
+// this only keeps a mis-configured build usable as an AP + dashboard.
+constexpr unsigned long MIN_INIT_FREE_BLOCK = 48UL * 1024UL;
+
+// True when there is enough contiguous internal memory to bring the BLE stack
+// up without OOM-panicking. Callers pass the largest free internal DMA-capable
+// block; when false they MUST skip NimBLEDevice::init().
+inline bool init_has_headroom(unsigned long largest_free_internal_block) {
+  return largest_free_internal_block >= MIN_INIT_FREE_BLOCK;
+}
+
 }  // namespace bt_defaults
 
 #endif  // SECURACV_BT_DEFAULTS_H

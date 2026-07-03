@@ -26,6 +26,7 @@
 #include "ble_opera.h"
 #include "ble_chirp.h"
 #include "ble_nearby.h"
+#include "ble_heap_guard.h"
 
 namespace ble_manager {
 
@@ -103,6 +104,18 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
     // won't reach far. XIAO ESP32-C3 REQUIRES the antenna; XIAO ESP32-S3 has an
     // onboard antenna (external improves range).
     if (!NimBLEDevice::isInitialized()) {
+        // Fail closed on low memory: the controller malloc failure inside
+        // init() panics (it doesn't return false), so on a no-PSRAM build the
+        // check below never runs — the device boot-loops. Skip the stack and
+        // operate without BLE discovery instead.
+        size_t largest = 0;
+        if (!ble_heap_guard::can_init(&largest)) {
+            Serial.printf("[BLE] Discovery skipped: insufficient heap "
+                          "(largest internal block %u B; enable PSRAM)\n",
+                          (unsigned)largest);
+            g_ble_available = false;
+            return false;
+        }
         if (!NimBLEDevice::init(bleName)) {
             Serial.println("[BLE] NimBLE init failed — BLE Discovery unavailable");
             g_ble_available = false;

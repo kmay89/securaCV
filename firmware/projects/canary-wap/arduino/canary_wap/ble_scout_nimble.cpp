@@ -38,6 +38,7 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <NimBLEScan.h>
+#include "ble_heap_guard.h"
 
 namespace ble_scout {
 
@@ -78,6 +79,15 @@ ScoutScanCallbacks s_callbacks;
 
 bool nimble_scan_init() {
   if (s_scanner) return true;
+
+  /* Fail closed on low memory: if the stack isn't already up and there's no
+   * room for the ~30 KB controller allocation, don't call init() — it would
+   * assert and boot-loop the device (the "BLE_INIT: Malloc failed" panic seen
+   * on no-PSRAM builds). Skip the Scout instead; enabling PSRAM is the fix. */
+  if (!NimBLEDevice::isInitialized() && !ble_heap_guard::can_init(nullptr)) {
+    Serial.println("[SCOUT] BLE stack not started: insufficient heap (enable PSRAM)");
+    return false;
+  }
 
   /* Bring up the NimBLE stack. NimBLEDevice::init() is documented as
    * idempotent in NimBLE-Arduino 2.x — safe to call even if another
