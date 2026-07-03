@@ -124,6 +124,31 @@ static void test_reboot_deadline_extend() {
         (uint32_t)(near_wrap + MIN));
 }
 
+static void test_ble_discovery_start() {
+  const uint32_t SETTLE = 45000u;
+  // STA joined → always due (steady state, AP about to drop → stable STA+BLE),
+  // regardless of ap_only or how early in the boot it is.
+  CHECK(ble_discovery_start_due(false, true, 0, 0, SETTLE));
+  CHECK(ble_discovery_start_due(true, true, 0, 0, SETTLE));
+  // Normal (non-AP-only) device still provisioning: STA not up → NOT due, so
+  // the active scan never fights the phone's SoftAP handshake. This is the bug
+  // being fixed — before, discovery scanned from boot during the join window.
+  CHECK(!ble_discovery_start_due(false, false, 1000, 0, SETTLE));
+  CHECK(!ble_discovery_start_due(false, false, SETTLE * 10, 0, SETTLE));  // never, without STA
+  // AP-only standalone: no STA to wait on. Held during the settle window so the
+  // operator's first association lands cleanly, then due.
+  CHECK(!ble_discovery_start_due(true, false, SETTLE - 1, 0, SETTLE));
+  CHECK(ble_discovery_start_due(true, false, SETTLE, 0, SETTLE));       // boundary: >=
+  CHECK(ble_discovery_start_due(true, false, SETTLE + 5000, 0, SETTLE));
+  // Settle measured from the boot reference, not absolute time.
+  CHECK(!ble_discovery_start_due(true, false, 100000 + SETTLE - 1, 100000, SETTLE));
+  CHECK(ble_discovery_start_due(true, false, 100000 + SETTLE, 100000, SETTLE));
+  // Wrap-safe: boot reference just before the millis() wrap, now just after.
+  uint32_t near_wrap = 0xFFFFF000u;
+  CHECK(!ble_discovery_start_due(true, false, near_wrap + 1000u /* wraps */, near_wrap, SETTLE));
+  CHECK(ble_discovery_start_due(true, false, near_wrap + SETTLE, near_wrap, SETTLE));
+}
+
 int main() {
   test_setup_timeout();
   test_scan_cache();
@@ -131,6 +156,7 @@ int main() {
   test_ap_teardown();
   test_deferred_reboot();
   test_reboot_deadline_extend();
+  test_ble_discovery_start();
   if (g_failures) {
     std::printf("%d check(s) FAILED\n", g_failures);
     return 1;

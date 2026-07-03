@@ -62,6 +62,25 @@ inline bool deferred_reboot_due(uint32_t now_ms, uint32_t deadline_ms) {
   return deadline_ms != 0 && (int32_t)(now_ms - deadline_ms) >= 0;
 }
 
+// BLE discovery (Opera advertising + Nearby *active* scanning) shares the one
+// 2.4 GHz radio with the SoftAP. The Nearby scanner holds the radio at ~99%
+// duty for 5 s bursts (window 99 / interval 100), pinned to the WiFi/BLE core —
+// and the first burst fires at boot. If a phone's WPA2 handshake to the
+// provisioning AP overlaps a burst, the handshake frames are starved and the
+// join fails intermittently ("broken loop" of retries). So hold BLE discovery
+// until the join window is clear: once the STA has joined home WiFi (steady
+// state — the AP is about to drop, leaving the stable STA+BLE combo), or, in
+// AP-only standalone mode where the STA never joins, after a settle window that
+// lets the operator's first association land cleanly. Start-only: once BLE
+// discovery is up we never stop it here, so a later STA blip won't tear it down.
+// Wrap-safe unsigned time math.
+inline bool ble_discovery_start_due(bool ap_only, bool sta_connected,
+                                    uint32_t now_ms, uint32_t boot_ref_ms,
+                                    uint32_t ap_only_settle_ms) {
+  if (sta_connected) return true;
+  return ap_only && (uint32_t)(now_ms - boot_ref_ms) >= ap_only_settle_ms;
+}
+
 // Keep an armed post-provisioning reboot from firing while the user is
 // still actively working the wizard's final step (running the self-test,
 // reading the recovery-kit card). Given an armed deadline, returns a
