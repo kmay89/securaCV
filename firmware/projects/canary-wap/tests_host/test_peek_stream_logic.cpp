@@ -25,34 +25,44 @@ static int g_failures = 0;
   } while (0)
 
 static void test_stream_uptime() {
-  // Args: (active, start_ms, end_ms, now_ms)
+  // Args: (active, start_ms, end_ms, last_frame_ms, now_ms)
 
   // Never streamed: no uptime, regardless of the other inputs.
-  CHECK(stream_uptime_ms(false, 0, 0, 123456) == 0);
-  CHECK(stream_uptime_ms(true,  0, 0, 123456) == 0);
+  CHECK(stream_uptime_ms(false, 0, 0, 0, 123456) == 0);
+  CHECK(stream_uptime_ms(true,  0, 0, 0, 123456) == 0);
 
   // Live stream: counts from start to now.
-  CHECK(stream_uptime_ms(true, 10000, 0, 10000) == 0);
-  CHECK(stream_uptime_ms(true, 10000, 0, 73000) == 63000);
+  CHECK(stream_uptime_ms(true, 10000, 0, 0, 10000) == 0);
+  CHECK(stream_uptime_ms(true, 10000, 0, 45000, 73000) == 63000);
 
   // THE BUG THIS PINS: a finished stream used to report 0 (the old code was
   // `(start && active) ? now - start : 0`), which zeroed the derived avg
   // throughput too — "THROUGHPUT 0 kbps / STREAM UPTIME —" for a stream that
   // had just run for a minute. Finished streams report their frozen duration.
-  CHECK(stream_uptime_ms(false, 10000, 73000, 999999) == 63000);
+  CHECK(stream_uptime_ms(false, 10000, 73000, 72960, 999999) == 63000);
   // ...and the frozen value does not drift as now_ms advances.
-  CHECK(stream_uptime_ms(false, 10000, 73000, 5000000) == 63000);
+  CHECK(stream_uptime_ms(false, 10000, 73000, 72960, 5000000) == 63000);
 
-  // Stopped with no recorded end (metrics were reset for a new stream that
-  // then failed to start): report 0, never a fabricated duration.
-  CHECK(stream_uptime_ms(false, 10000, 0, 99999) == 0);
+  // THE STOP RACE (Codex P2 on #822): a stop request clears the active flag
+  // while the worker is still inside its frame delay — a status poll landing
+  // in that window sees active=false with NO recorded end. Freeze
+  // provisionally at the last delivered frame instead of collapsing to 0.
+  CHECK(stream_uptime_ms(false, 10000, 0, 72960, 73050) == 62960);
+  // Once the worker records the true end, it wins over the provisional value.
+  CHECK(stream_uptime_ms(false, 10000, 73000, 72960, 73500) == 63000);
+
+  // Stopped, no end recorded, and no frame was ever delivered (stream that
+  // failed before its first frame): report 0, never a fabricated duration.
+  CHECK(stream_uptime_ms(false, 10000, 0, 0, 99999) == 0);
 
   // millis() wrap: live stream spanning the 32-bit wrap still reports the
   // true elapsed time (unsigned subtraction).
   uint32_t near_wrap = 0xFFFFF000u;
-  CHECK(stream_uptime_ms(true, near_wrap, 0, near_wrap + 30000u /* wraps */) == 30000);
+  CHECK(stream_uptime_ms(true, near_wrap, 0, 0, near_wrap + 30000u /* wraps */) == 30000);
   // Frozen duration across the wrap too.
-  CHECK(stream_uptime_ms(false, near_wrap, near_wrap + 30000u, 0) == 30000);
+  CHECK(stream_uptime_ms(false, near_wrap, near_wrap + 30000u, near_wrap + 29900u, 0) == 30000);
+  // Provisional (last-frame) freeze across the wrap.
+  CHECK(stream_uptime_ms(false, near_wrap, 0, near_wrap + 29900u, 0) == 29900);
 }
 
 static void test_avg_kbps() {

@@ -4189,17 +4189,41 @@ static esp_err_t handle_peek_snapshot(httpd_req_t* req) {
   return res;
 }
 
+// Stop any in-flight stream and wait for the worker task to fully exit (it
+// clears the busy flag only after releasing its async request). Returns false
+// on timeout — callers must NOT touch the camera driver in that case, because
+// the worker may still be holding a framebuffer. A wedged client socket can
+// stall the worker in httpd_resp_send_chunk for up to send_wait_timeout (30 s),
+// so a bounded wait + refusal is the fail-closed choice.
+static bool peek_stream_stop_and_wait(uint32_t timeout_ms) {
+  g_peek_active = false;
+  uint32_t waited = 0;
+  while (__atomic_load_n(&g_peek_stream_task_busy, __ATOMIC_ACQUIRE)) {
+    if (waited >= timeout_ms) return false;
+    vTaskDelay(pdMS_TO_TICKS(20));
+    waited += 20;
+  }
+  return true;
+}
+
 static esp_err_t handle_peek_stop(httpd_req_t* req) {
   g_health.http_requests++;
-  
-  g_peek_active = false;
-  
+
+  // Wait (bounded) for the worker to record its end timestamp and exit, so
+  // the status poll the UI fires right after this response sees the frozen
+  // uptime instead of racing the worker mid-frame-delay (which rendered the
+  // just-finished stream as 0 kbps / no uptime). The worker's typical exit
+  // latency is one frame pace (<=500 ms); a wedged send can exceed the wait,
+  // in which case status falls back to last_frame_ms (see stream_uptime_ms).
+  bool worker_exited = peek_stream_stop_and_wait(2000);
+
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "Peek stopped", nullptr);
-  
+
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Peek stopped";
-  
+  doc["worker_exited"] = worker_exited;
+
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
@@ -4252,6 +4276,7 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   uint32_t snap_fps_last;
   uint32_t snap_stream_start_ms;
   uint32_t snap_stream_end_ms;
+  uint32_t snap_last_frame_ms;
   portENTER_CRITICAL(&g_peek_metrics_mux);
   snap_active           = g_peek_active;
   snap_frame_count      = g_peek_frame_count;
@@ -4260,6 +4285,7 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   snap_fps_last         = g_peek_fps_last;
   snap_stream_start_ms  = g_peek_stream_start_ms;
   snap_stream_end_ms    = g_peek_stream_end_ms;
+  snap_last_frame_ms    = g_peek_last_frame_ms;
   portEXIT_CRITICAL(&g_peek_metrics_mux);
 
   doc["frame_count"]       = snap_frame_count;
@@ -4270,8 +4296,10 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   // Live stream: uptime counts from start to now. Finished stream: uptime is
   // frozen at its real duration so the UI's "LAST STREAM" throughput/uptime
   // stay truthful instead of collapsing to zero the moment the stream stops.
+  // last_frame_ms covers the stop-vs-worker-exit race (see the logic header).
   uint32_t uptime_ms = peek_stream_logic::stream_uptime_ms(
-      snap_active, snap_stream_start_ms, snap_stream_end_ms, millis());
+      snap_active, snap_stream_start_ms, snap_stream_end_ms,
+      snap_last_frame_ms, millis());
   doc["stream_uptime_ms"]  = uptime_ms;
   uint32_t avg_bytes = (snap_frame_count > 0)
                          ? (uint32_t)(snap_total_bytes / snap_frame_count)
@@ -4295,23 +4323,6 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
 // initialized state is currently present. Returns the resulting status so
 // the UI can show success/failure inline.
 // ════════════════════════════════════════════════════════════════════════════
-
-// Stop any in-flight stream and wait for the worker task to fully exit (it
-// clears the busy flag only after releasing its async request). Returns false
-// on timeout — callers must NOT touch the camera driver in that case, because
-// the worker may still be holding a framebuffer. A wedged client socket can
-// stall the worker in httpd_resp_send_chunk for up to send_wait_timeout (30 s),
-// so a bounded wait + refusal is the fail-closed choice.
-static bool peek_stream_stop_and_wait(uint32_t timeout_ms) {
-  g_peek_active = false;
-  uint32_t waited = 0;
-  while (__atomic_load_n(&g_peek_stream_task_busy, __ATOMIC_ACQUIRE)) {
-    if (waited >= timeout_ms) return false;
-    vTaskDelay(pdMS_TO_TICKS(20));
-    waited += 20;
-  }
-  return true;
-}
 
 static esp_err_t handle_peek_init(httpd_req_t* req) {
   g_health.http_requests++;

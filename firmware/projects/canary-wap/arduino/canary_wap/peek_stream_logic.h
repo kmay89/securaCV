@@ -26,13 +26,22 @@ namespace peek_stream_logic {
 // - Never streamed (start == 0): 0.
 // - Live: elapsed since start (unsigned subtraction is millis()-wrap-safe).
 // - Finished: frozen at the recorded end so "LAST STREAM" stats stay
-//   truthful; 0 only if no end was recorded (metrics were reset).
+//   truthful.
+// - Finished but the worker hasn't recorded its end yet (a stop request has
+//   cleared the active flag while the worker is still inside its frame delay
+//   or a slow send): freeze provisionally at the last delivered frame — the
+//   truthful duration through the last observable activity. Without this, a
+//   status poll racing the worker's exit saw active=false/end=0 and rendered
+//   the just-finished stream as 0 kbps / no uptime.
+// - No frames ever delivered: 0 — never a fabricated duration.
 inline uint32_t stream_uptime_ms(bool active, uint32_t start_ms,
-                                 uint32_t end_ms, uint32_t now_ms) {
+                                 uint32_t end_ms, uint32_t last_frame_ms,
+                                 uint32_t now_ms) {
   if (start_ms == 0) return 0;
   if (active) return (uint32_t)(now_ms - start_ms);
-  if (end_ms == 0) return 0;
-  return (uint32_t)(end_ms - start_ms);
+  if (end_ms != 0) return (uint32_t)(end_ms - start_ms);
+  if (last_frame_ms != 0) return (uint32_t)(last_frame_ms - start_ms);
+  return 0;
 }
 
 // Average stream throughput in kbps from real byte totals. bytes*8/ms is
