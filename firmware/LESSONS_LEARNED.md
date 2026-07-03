@@ -7,6 +7,55 @@
 
 ---
 
+## Blocking I/O vs the Task Watchdog
+
+### SD.begin() has no deadline — a bad card crash-looped the device, and safe mode too
+- **What happened:** A freshly flashed XIAO ESP32-S3 hit `task_wdt: loopTask`
+  ~8 s into "[SD] Attempting mount...", rebooted, and after 3 crashes entered
+  safe mode — which then crashed the same way every ~40 s ("consecutive crash
+  count 7/3…" climbing forever). The AP flapped on every cycle, so the captive
+  portal rendered blank and WiFi "took forever to broadcast".
+- **Root cause (three layers):**
+  1. `SD.begin()` is a chain of yield-free CPU spin loops in the SPI SD
+     driver (500–1000 ms card waits, ×3 retries, two mount speeds, FAT sector
+     reads) with NO overall deadline. `sd_mount_safe`'s `SD_MOUNT_TIMEOUT_MS`
+     was checked only *between* the two blocking attempts — it bounded
+     nothing. A wedged-but-present card exceeds 8 s realistically.
+  2. Everything from `esp_task_wdt_add(NULL)` in setup() to the first loop()
+     pass shared ONE unfed 8 s budget — camera init seconds + the SD mount
+     easily blew it on the first boots after flashing.
+  3. The loop's `sd_periodic_check` re-ran the blocking mount unconditionally
+     — including in SAFE MODE (which had skipped SD init on purpose), at
+     ~38 s, before safe mode's 60 s recovery window. Safe mode could never
+     stabilize.
+- **Fix:** blocking mount work runs on a dedicated worker task at
+  `tskIDLE_PRIORITY` (both IDLE tasks are WDT-subscribed and the driver never
+  yields — any higher priority just moves the panic to IDLE0/IDLE1); the loop
+  task polls with WDT feeds up to a 4 s budget and adopts late results on
+  later passes; the periodic recheck honors safe mode (host-tested decision
+  table in `sd_mount_logic.h`); setup() feeds the WDT between Phase-3 steps;
+  mount-success provisioning (mkdir + csi_event_log) moved to the loop-side
+  mount transition so late mounts aren't half-initialized.
+- **Three traps for future radio/storage work on the XIAO ESP32-S3:**
+  - `LED_BUILTIN == GPIO21 == SD_CS`. Any LED write while another task is
+    mid-SPI-transaction glitches chip-select. Check `sd_mount_in_flight()`
+    before driving the LED.
+  - Never call `SD.end()` (or tear down the bus) while a mount attempt is in
+    flight on another task — `SDFS::end` frees the card struct under the
+    driver (use-after-free). Wait for the attempt to conclude.
+  - Never gate SD usability on raw `SD.cardType()`: during a background
+    mount the card struct is mid-initialization and `cardType()` can read a
+    garbage non-`CARD_NONE` value, so the follow-up `SD.open()` races
+    `f_mount` on the worker. Gate on `sd_is_available()` (false until the
+    loop adopts the result) or check `sd_mount_in_flight()` first — the
+    csi_event_log and beacon-audit paths do both now (Codex P1 on #820).
+- **Regression check:** `sd_mount_logic::periodic_action` +
+  `mount_wait_expired` host tests (`test_sd_mount_logic.cpp`) pin the
+  safe-mode gate, the in-flight guard, the recheck interval, and wrap safety.
+- **Date learned:** 2026-07
+
+---
+
 ## Memory
 
 ### BLE controller init OOM boot-loops a no-PSRAM build (and defeats safe mode)

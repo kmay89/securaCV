@@ -47,6 +47,13 @@
 #include <Preferences.h>
 #include <SD.h>
 #include <mbedtls/sha256.h>
+
+// While the background mount worker (hardware_state.h) is inside SD.begin(),
+// the SD object's card struct is mid-initialization: SD.cardType() can read
+// a garbage non-CARD_NONE value and an SD.open() here would race f_mount on
+// the worker. External-linkage declaration; the definition lives in the
+// sketch TU and resolves at link time.
+bool sd_mount_in_flight();
 #include <Ed25519.h>
 #include <Curve25519.h>
 #include <ChaChaPoly.h>
@@ -564,6 +571,7 @@ static bool audit_unhex(uint8_t* out, const char* in, size_t out_len) {
 // when no SD card is present or the write fails.
 static bool sd_append_audit_entry(const BeaconAuditEntry* entry,
                                   const uint8_t* new_chain_head) {
+  if (sd_mount_in_flight()) return audit_sd_fail("mount in flight");
   if (SD.cardType() == CARD_NONE) return audit_sd_fail("no card");
   if (!SD.exists("/beacon") && !SD.mkdir("/beacon"))
     return audit_sd_fail("mkdir /beacon failed");
@@ -624,6 +632,7 @@ static bool sd_append_audit_entry(const BeaconAuditEntry* entry,
 // the supposedly append-only chain (codex P2 on #748). SD wins on
 // disagreement.
 static bool sd_recover_chain_head(uint8_t out[32]) {
+  if (sd_mount_in_flight()) return false;
   if (SD.cardType() == CARD_NONE) return false;
   File f = SD.open("/beacon/audit.jsonl", FILE_READ);
   if (!f) return false;

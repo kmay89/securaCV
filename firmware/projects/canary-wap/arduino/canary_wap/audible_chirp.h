@@ -32,6 +32,13 @@
 
 #include <Arduino.h>
 
+// The user LED shares GPIO21 with SD chip-select on the XIAO ESP32-S3
+// (LED_BUILTIN == SD_CS). Driving it while the background SD-mount worker is
+// mid-transaction would glitch CS and corrupt the mount, so the LED writes
+// in this module check this first. Global-scope declaration on purpose —
+// the definition lives in hardware_state.h (same translation unit).
+bool sd_mount_in_flight();
+
 namespace audible_chirp {
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -210,12 +217,12 @@ static void begin_note(const ChirpNote* note) {
     // Silence: ensure everything off
     ledcWrite(g_gpio, 0);
     #ifdef LED_BUILTIN
-    digitalWrite(LED_BUILTIN, LOW);
+    if (!sd_mount_in_flight()) digitalWrite(LED_BUILTIN, LOW);
     #endif
   } else if (g_visual_only || note->freq == 1) {
     // Visual chirp (LED blink)
     #ifdef LED_BUILTIN
-    digitalWrite(LED_BUILTIN, HIGH);
+    if (!sd_mount_in_flight()) digitalWrite(LED_BUILTIN, HIGH);
     #endif
   } else {
     // Audio chirp via PWM
@@ -228,7 +235,7 @@ static void begin_note(const ChirpNote* note) {
 static void end_note() {
   ledcWrite(g_gpio, 0);
   #ifdef LED_BUILTIN
-  digitalWrite(LED_BUILTIN, LOW);
+  if (!sd_mount_in_flight()) digitalWrite(LED_BUILTIN, LOW);
   #endif
 }
 

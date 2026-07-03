@@ -35,6 +35,14 @@
  * directly via SD.cardType() gives us the same readiness check
  * without the cross-TU coupling. */
 
+/* One exception to the no-coupling rule, by declaration only: while the
+ * background mount worker (hardware_state.h) is inside SD.begin(), the SD
+ * object's card struct is mid-initialization and SD.cardType() can read a
+ * garbage non-CARD_NONE value — proceeding to SD.open() would race f_mount
+ * on the worker. External-linkage declaration; the definition lives in the
+ * sketch TU and resolves at link time. */
+bool sd_mount_in_flight();
+
 namespace csi_event_log {
 
 namespace {
@@ -74,6 +82,13 @@ void reconcile_truncate_remnants();
  * cleanup pass before any append() can call head_truncate. */
 bool sd_path_ready() {
   static bool s_reconciled = false;
+  /* A background mount attempt owns the global SD object (hardware_state.h
+   * mount worker): the card struct is mid-initialization, so SD.cardType()
+   * can read a garbage non-CARD_NONE value and the SD.open below would race
+   * f_mount on the worker. Not ready until the attempt concludes. */
+  if (sd_mount_in_flight()) {
+    return false;
+  }
   if (SD.cardType() == CARD_NONE) {
     s_reconciled = false;
     return false;
@@ -318,6 +333,7 @@ bool parse_line(const char* line, csi_event_record_t* out) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool init() {
+  if (sd_mount_in_flight()) return true;         /* deferred; not an error */
   if (SD.cardType() == CARD_NONE) return true;   /* deferred; not an error */
   if (!SD.exists(DIR_PATH)) {
     if (!SD.mkdir(DIR_PATH)) {

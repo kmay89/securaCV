@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+### canary-wap: a slow or wedged SD card can no longer crash-loop the device
+
+`SD.begin()` is a chain of yield-free CPU spin loops in the SPI SD driver
+(500–1000 ms card waits, ×3 retries, across two mount speeds plus FAT sector
+reads) with **no overall deadline**. It ran directly on the watchdog-subscribed
+loop task, and `sd_mount_safe`'s "2 s timeout" was checked only *between* the
+two blocking attempts — it bounded nothing. A card that holds the bus (wedged,
+dying, or incompatible) blew the 8 s panic watchdog mid-mount and rebooted the
+device. Worse, the loop's periodic SD recheck re-ran the same blocking mount
+**even in safe mode** at ~38 s — before safe mode's 60 s recovery window — so
+safe mode itself crash-looped forever (observed in the field: `consecutive
+crash count 7/3…` climbing, AP flapping every ~40 s, captive portal blank).
+
+Fixes, layered:
+
+- **All blocking mount work moved to a dedicated worker task** at
+  `tskIDLE_PRIORITY` (both cores' IDLE tasks are watchdog-subscribed and the
+  SD driver never yields — at any higher priority a stuck mount would just
+  move the panic to IDLE0/IDLE1). The loop task polls a state byte, feeding
+  the watchdog, up to a 4 s budget; a result that lands later is adopted by a
+  subsequent loop pass instead of being lost. Only the loop task writes
+  `g_hw`; the worker hands back a private result (single-writer model kept,
+  no 64-bit tearing for httpd readers). Nothing ever cancels a running mount
+  (`SD.end()` under the worker would be use-after-free).
+- **Safe mode now truly skips SD**: the periodic recheck honors the same
+  contract as boot (pure host-tested decision table, `sd_mount_logic.h`).
+- **Watchdog fed between setup Phase-3 steps** (camera → SD → audio →
+  network): they used to share ONE unfed 8 s budget from watchdog-arm to the
+  first loop pass, which is how camera-init seconds plus a slow card panicked
+  the very first boots after flashing.
+- **Late/hot-plug mounts get provisioned**: `/WITNESS`, `/HEALTH`, `/CHAIN`,
+  `/EXPORT` and the CSI event log are created on the mount transition in
+  loop(), so a card that mounts after the boot budget still gets its layout.
+- **GPIO21 hazard guarded**: on the XIAO ESP32-S3 the user LED *is* the SD
+  chip-select pin (`LED_BUILTIN == GPIO21 == SD_CS`). LED writes (provisioning
+  blink, visual chirps) are skipped while a mount is in flight so they can't
+  glitch CS mid-transaction on the worker.
+
 ### canary-wap: BLE init no longer boot-loops a low-memory build
 
 A build with PSRAM disabled (Arduino IDE default is easy to miss) boots with

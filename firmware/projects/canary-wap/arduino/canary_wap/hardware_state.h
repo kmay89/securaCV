@@ -24,6 +24,9 @@
 #include <SPI.h>
 #include <Preferences.h>
 #include <esp_system.h>   // esp_reset_reason()
+#include <esp_task_wdt.h> // fed while waiting on the SD mount worker
+
+#include "sd_mount_logic.h"  // pure, host-tested mount decisions
 
 // ============================================================================
 // CONFIGURATION
@@ -36,7 +39,11 @@ namespace hw_config {
   static const uint32_t GPS_FIX_TIMEOUT_MS      = 5000;   // Mark fix lost after 5s no update
 
   // SD card timeouts and intervals
-  static const uint32_t SD_MOUNT_TIMEOUT_MS     = 2000;   // Max time to attempt SD mount
+  // SD_MOUNT_TIMEOUT_MS is the CALLER'S polling budget for the boot-time
+  // mount wait, not a bound on the driver: the blocking SD.begin() runs on
+  // the dedicated mount worker task and keeps going if the budget expires —
+  // a late result is adopted by a later loop() pass instead of being lost.
+  static const uint32_t SD_MOUNT_TIMEOUT_MS     = 4000;   // Boot wait budget for the mount worker
   static const uint32_t SD_RECHECK_INTERVAL_MS  = 30000;  // Recheck for SD every 30s when absent
   static const uint32_t SD_OP_TIMEOUT_MS        = 1000;   // Timeout for individual SD operations
   static const uint8_t  SD_MAX_RETRIES          = 2;      // Max retries before marking SD failed
@@ -173,16 +180,29 @@ inline GpsState gps_get_state() { return g_hw.gps_state; }
 // ============================================================================
 
 /**
- * Attempt to mount SD card with timeout.
- * Non-blocking - uses polling internally.
- * Sets sd_available and sd_state.
+ * Attempt to mount the SD card, bounded and watchdog-safe.
+ * The blocking SD.begin() runs on a dedicated worker task; this call waits
+ * up to SD_MOUNT_TIMEOUT_MS, feeding the task watchdog while it polls. If
+ * the worker is still probing when the budget expires, this returns false
+ * (state SD_ABSENT) and the eventual result is adopted by a later
+ * sd_periodic_check() pass — a slow or wedged card can delay mounting but
+ * can never crash-loop the device.
  *
  * @param spi      SPI bus instance
  * @param cs_pin   Chip select pin
  * @param speed    SPI speed (Hz), will fall back to slower if needed
- * @return true if mounted successfully
+ * @return true if mounted within the wait budget
  */
 bool sd_mount_safe(SPIClass& spi, int cs_pin, uint32_t speed);
+
+/**
+ * True while a background mount attempt is running on the mount worker task.
+ * While in flight: no new mount requests, no SD teardown (SD.end()), and —
+ * on boards where the user LED shares the SD chip-select pin (XIAO ESP32-S3:
+ * LED_BUILTIN == GPIO21 == SD_CS) — no LED writes, which would glitch CS
+ * mid-transaction and corrupt the mount.
+ */
+bool sd_mount_in_flight();
 
 /**
  * Check if SD card is still present and operational.
@@ -416,63 +436,177 @@ static bool sd_try_mount(SPIClass& spi, int cs_pin, uint32_t speed) {
   return false;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// SD MOUNT WORKER — bounded, watchdog-safe mounting
+// ────────────────────────────────────────────────────────────────────────────
+// SD.begin() is a chain of yield-free CPU spin loops in the SPI SD driver
+// (500–1000 ms card waits, ×3 retries, across two mount speeds plus FAT
+// sector reads) with NO overall deadline — a wedged-but-present or slow card
+// can hold it well past the 8 s panic watchdog. It used to run directly on
+// the WDT-subscribed loop task, where the SD_MOUNT_TIMEOUT_MS checks BETWEEN
+// the two blocking attempts bounded nothing: a bad card panicked the
+// watchdog and crash-looped the device, and the loop()'s periodic remount
+// repeated the same call even in SAFE MODE (~38 s in, before the 60 s
+// safe-mode recovery window) so safe mode itself crash-looped forever.
+//
+// All blocking mount work now runs on this dedicated worker task; the loop
+// task only polls a state byte:
+//   IDLE → REQUESTED (loop posts) → RUNNING (worker) → DONE (worker; result
+//   written first) → IDLE (loop adopts the result into g_hw).
+// Load-bearing details:
+//  * The worker runs at tskIDLE_PRIORITY (0). BOTH cores' IDLE tasks are
+//    subscribed to the panic watchdog and the SD driver's waits never yield
+//    — at any higher priority a stuck mount would starve an IDLE task and
+//    simply move the panic there. At priority 0 the tick time-slicer keeps
+//    the IDLE task (and its watchdog feed) running.
+//  * Only the loop task writes g_hw. The worker fills a private result and
+//    release-stores the state byte, so httpd-task readers keep the single-
+//    writer model they rely on and the 64-bit byte counters can't tear.
+//  * Nothing ever cancels a running mount (no SD.end(), no bus teardown —
+//    that would free driver state under the worker). Every wait in the
+//    driver is count/deadline-bounded, so SD.begin always returns; a result
+//    that lands after the caller's wait budget is adopted by a later loop
+//    pass instead of being discarded.
+
+struct SdMountResult {
+  bool ok;
+  uint64_t total_bytes;
+  uint64_t used_bytes;
+};
+
+enum : uint8_t { SD_MW_IDLE = 0, SD_MW_REQUESTED = 1, SD_MW_RUNNING = 2, SD_MW_DONE = 3 };
+
+static TaskHandle_t s_sd_worker = nullptr;
+static volatile uint8_t s_sd_mount_state = SD_MW_IDLE;
+static SdMountResult s_sd_mount_result = {};
+static SPIClass* s_sd_worker_spi = nullptr;
+static int s_sd_worker_cs = -1;
+static uint32_t s_sd_worker_speed = 0;
+
+static inline uint8_t sd_mount_state() {
+  return __atomic_load_n(&s_sd_mount_state, __ATOMIC_ACQUIRE);
+}
+
+bool sd_mount_in_flight() {
+  uint8_t st = sd_mount_state();
+  return st == SD_MW_REQUESTED || st == SD_MW_RUNNING;
+}
+
+static void sd_mount_worker(void*) {
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (sd_mount_state() != SD_MW_REQUESTED) continue;
+    __atomic_store_n(&s_sd_mount_state, SD_MW_RUNNING, __ATOMIC_RELEASE);
+    SdMountResult r = {};
+    r.ok = sd_try_mount(*s_sd_worker_spi, s_sd_worker_cs, s_sd_worker_speed);
+    if (!r.ok) {
+      r.ok = sd_try_mount(*s_sd_worker_spi, s_sd_worker_cs, s_sd_worker_speed / 4);
+    }
+    if (r.ok) {
+      // Cache card info here so the loop side never blocks on FAT scans.
+      r.total_bytes = SD.totalBytes();
+      r.used_bytes = SD.usedBytes();
+    }
+    s_sd_mount_result = r;  // written BEFORE the release-store below
+    __atomic_store_n(&s_sd_mount_state, SD_MW_DONE, __ATOMIC_RELEASE);
+  }
+}
+
+// Post a mount request (non-blocking). False if a previous attempt is still
+// in flight or the worker can't be created; the caller treats either as
+// "card not available yet" and a later periodic tick retries.
+static bool sd_mount_request(SPIClass& spi, int cs_pin, uint32_t speed) {
+  if (sd_mount_in_flight()) return false;
+  if (!s_sd_worker) {
+    // Priority 0 + 4 KB internal stack (PSRAM task stacks aren't supported
+    // by the prebuilt core); pinned to core 0 so a busy loop task on core 1
+    // can't starve it. See the worker comment block for why priority 0 is
+    // load-bearing.
+    if (xTaskCreatePinnedToCore(sd_mount_worker, "sd_mount", 4096, nullptr,
+                                tskIDLE_PRIORITY, &s_sd_worker, 0) != pdPASS) {
+      s_sd_worker = nullptr;
+      Serial.println("[SD] mount worker create failed - treating card as absent");
+      return false;
+    }
+  }
+  s_sd_worker_spi = &spi;
+  s_sd_worker_cs = cs_pin;
+  s_sd_worker_speed = speed;
+  __atomic_store_n(&s_sd_mount_state, SD_MW_REQUESTED, __ATOMIC_RELEASE);
+  xTaskNotifyGive(s_sd_worker);
+  return true;
+}
+
+// Adopt a completed mount result into g_hw (LOOP TASK ONLY — this is the
+// single g_hw writer). Returns true if a result was applied this call;
+// callers check g_hw.sd_state for the outcome.
+static bool sd_mount_try_adopt() {
+  if (sd_mount_state() != SD_MW_DONE) return false;
+  SdMountResult r = s_sd_mount_result;  // worker is back in its idle wait
+  __atomic_store_n(&s_sd_mount_state, SD_MW_IDLE, __ATOMIC_RELEASE);
+  if (r.ok) {
+    g_hw.sd_available = true;
+    g_hw.sd_state = SD_MOUNTED;
+    g_hw.sd_mount_time_ms = millis();
+    g_hw.sd_last_success_ms = millis();
+    g_hw.sd_consecutive_errors = 0;
+    g_hw.sd_total_bytes = r.total_bytes;
+    // Protect against wraparound if filesystem is corrupted
+    g_hw.sd_free_bytes = (r.total_bytes > r.used_bytes)
+                             ? (r.total_bytes - r.used_bytes) : 0;
+    Serial.printf("[SD] mounted (%llu MB, %llu MB free)\n",
+                  g_hw.sd_total_bytes / (1024 * 1024),
+                  g_hw.sd_free_bytes / (1024 * 1024));
+  } else {
+    g_hw.sd_available = false;
+    g_hw.sd_state = SD_ABSENT;
+    g_hw.sd_consecutive_errors++;
+    Serial.println("[SD] not present or failed");
+  }
+  return true;
+}
+
 bool sd_mount_safe(SPIClass& spi, int cs_pin, uint32_t speed) {
-  uint32_t start = millis();
-
-  Serial.print("[SD] Attempting mount...");
-
-  // First try at requested speed
-  if (sd_try_mount(spi, cs_pin, speed)) {
-    goto mount_success;
+  Serial.println("[SD] Attempting mount (background worker)...");
+  if (!sd_mount_request(spi, cs_pin, speed)) {
+    g_hw.sd_available = false;
+    g_hw.sd_state = SD_ABSENT;
+    return false;
   }
 
-  // Check timeout
-  if (millis() - start > hw_config::SD_MOUNT_TIMEOUT_MS / 2) {
-    Serial.println(" fast mount timeout");
-    goto mount_failed;
+  // Bounded wait: poll the worker in short slices, feeding the task watchdog
+  // each slice — the mount can no longer starve the 8 s panic WDT no matter
+  // how long the driver spins.
+  const uint32_t start = millis();
+  while (!sd_mount_logic::mount_wait_expired(millis(), start,
+                                             hw_config::SD_MOUNT_TIMEOUT_MS)) {
+    esp_task_wdt_reset();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    if (sd_mount_try_adopt()) {
+      return g_hw.sd_state == SD_MOUNTED;
+    }
   }
 
-  // Fallback to slower speed
-  Serial.print(" (trying slower speed)...");
-  if (sd_try_mount(spi, cs_pin, speed / 4)) {
-    goto mount_success;
-  }
-
-  // Check final timeout
-  if (millis() - start > hw_config::SD_MOUNT_TIMEOUT_MS) {
-    Serial.println(" timeout");
-    goto mount_failed;
-  }
-
-mount_failed:
+  // Budget spent and the worker is still inside the blocking driver call.
+  // Report "not available yet" and keep booting — the AP and dashboard come
+  // up regardless, and the eventual result is adopted by a later loop pass
+  // (sd_periodic_check). Deliberately NOT counted as a consecutive error:
+  // the attempt hasn't concluded.
+  Serial.println("[SD] still probing - continuing boot; result adopted when ready");
   g_hw.sd_available = false;
   g_hw.sd_state = SD_ABSENT;
-  g_hw.sd_consecutive_errors++;
-  Serial.println(" not present or failed");
   return false;
-
-mount_success:
-  g_hw.sd_available = true;
-  g_hw.sd_state = SD_MOUNTED;
-  g_hw.sd_mount_time_ms = millis();
-  g_hw.sd_last_success_ms = millis();
-  g_hw.sd_consecutive_errors = 0;
-
-  // Cache card info (only do this once on mount, not on every request)
-  g_hw.sd_total_bytes = SD.totalBytes();
-  uint64_t used = SD.usedBytes();
-  // Protect against wraparound if filesystem is corrupted
-  g_hw.sd_free_bytes = (g_hw.sd_total_bytes > used) ? (g_hw.sd_total_bytes - used) : 0;
-
-  Serial.printf(" mounted (%llu MB, %llu MB free)\n",
-                g_hw.sd_total_bytes / (1024*1024),
-                g_hw.sd_free_bytes / (1024*1024));
-  return true;
 }
 
 bool sd_verify_present() {
   if (!g_hw.sd_available || g_hw.sd_state != SD_MOUNTED) {
     return false;
+  }
+  // Never touch the SD object while the mount worker owns it (state can't
+  // normally be MOUNTED with a mount in flight, but keep the teardown below
+  // impossible by construction — SD.end() under the worker is use-after-free).
+  if (sd_mount_in_flight()) {
+    return true;
   }
 
   // Quick check - try to stat the root directory
@@ -492,15 +626,34 @@ bool sd_verify_present() {
 }
 
 void sd_periodic_check(SPIClass& spi, int cs_pin, uint32_t speed) {
-  uint32_t now = millis();
+  // Adopt any completed background mount first — one atomic read when
+  // nothing is pending, and running it every pass means a result that
+  // outlived a caller's wait budget (boot or a previous tick) lands
+  // promptly instead of waiting out the 30 s interval.
+  if (sd_mount_try_adopt() && g_hw.sd_state == SD_MOUNTED) {
+    Serial.println("[SD] Card detected and mounted");
+    // No deferred-write queue is maintained while the card is absent:
+    // writes that arrived during SD_ABSENT are accounted for in
+    // g_hw.sd_error_count (see sd_op_failure) and dropped by design.
+    // If a RAM ring buffer for deferred writes is ever added, flush it
+    // here right after remount.
+  }
 
-  // Don't check too frequently
-  if (now - g_hw.sd_last_check_ms < hw_config::SD_RECHECK_INTERVAL_MS) {
+  uint32_t now = millis();
+  const sd_mount_logic::PeriodicAction action = sd_mount_logic::periodic_action(
+      g_hw.safe_mode, g_hw.sd_state == SD_MOUNTED, sd_mount_in_flight(),
+      now, g_hw.sd_last_check_ms, hw_config::SD_RECHECK_INTERVAL_MS);
+  // NONE covers: interval not elapsed, an attempt already in flight, and
+  // SAFE MODE — boot skipped SD init on purpose, and this loop path used to
+  // re-run the blocking mount anyway, crash-looping the one mode that
+  // exists to be stable. The decision table is host-tested
+  // (sd_mount_logic.h / test_sd_mount_logic.cpp).
+  if (action == sd_mount_logic::PeriodicAction::NONE) {
     return;
   }
   g_hw.sd_last_check_ms = now;
 
-  if (g_hw.sd_state == SD_MOUNTED) {
+  if (action == sd_mount_logic::PeriodicAction::VERIFY) {
     // Verify still mounted
     if (!sd_verify_present()) {
       Serial.println("[SD] Lost connection, will retry later");
@@ -508,17 +661,13 @@ void sd_periodic_check(SPIClass& spi, int cs_pin, uint32_t speed) {
       // Periodically update space cache
       sd_update_space_cache();
     }
-  } else {
-    // Not mounted - try to mount (card may have been re-inserted)
-    Serial.println("[SD] Periodic check - attempting remount...");
-    if (sd_mount_safe(spi, cs_pin, speed)) {
-      Serial.println("[SD] Card re-detected and mounted");
-      // No deferred-write queue is maintained while the card is absent:
-      // writes that arrived during SD_ABSENT are accounted for in
-      // g_hw.sd_error_count (see sd_op_failure) and dropped by design.
-      // If a RAM ring buffer for deferred writes is ever added, flush it
-      // here right after remount.
-    }
+  } else {  // REMOUNT — card may have been (re-)inserted
+    Serial.println("[SD] Periodic check - background remount attempt...");
+    // Fire-and-forget: the worker does the blocking work; the result is
+    // adopted by the try-adopt pass above on a later loop() iteration. The
+    // loop task never blocks here, so a wedged card can't starve the
+    // watchdog or stall the AP/portal.
+    sd_mount_request(spi, cs_pin, speed);
   }
 }
 
@@ -538,7 +687,7 @@ void sd_op_failure() {
 
   // After multiple consecutive errors, mark card as failed
   if (g_hw.sd_consecutive_errors >= hw_config::SD_MAX_RETRIES) {
-    if (g_hw.sd_state == SD_MOUNTED) {
+    if (g_hw.sd_state == SD_MOUNTED && !sd_mount_in_flight()) {
       Serial.println("[SD] Multiple consecutive errors - marking as error state");
       g_hw.sd_state = SD_ERROR;
       g_hw.sd_available = false;
@@ -548,6 +697,13 @@ void sd_op_failure() {
 }
 
 void sd_unmount_safe() {
+  if (sd_mount_in_flight()) {
+    // A mount attempt owns the SD object; tearing it down now would free
+    // driver state under the worker. Callers of this path (pre-sleep /
+    // hot-unplug) can retry after the attempt concludes.
+    Serial.println("[SD] unmount deferred: mount attempt in flight");
+    return;
+  }
   if (g_hw.sd_state == SD_MOUNTED) {
     Serial.println("[SD] Flushing and unmounting...");
 
