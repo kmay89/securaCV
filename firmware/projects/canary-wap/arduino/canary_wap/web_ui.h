@@ -428,6 +428,45 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       color: var(--muted);
     }
     .peek-offline svg { opacity: 0.5; }
+    /* Status chips overlaid on the live preview (LIVE / resolution / fps /
+       throughput / uptime). pointer-events:none so they never block the
+       image; values come straight from /api/peek/status. */
+    .peek-overlay {
+      position: absolute;
+      top: 0.5rem; left: 0.5rem; right: 0.5rem;
+      display: flex; gap: 0.4rem; flex-wrap: wrap;
+      pointer-events: none;
+    }
+    .peek-chip {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      line-height: 1;
+      padding: 0.28rem 0.55rem;
+      border-radius: 999px;
+      background: rgba(10,14,26,0.72);
+      color: #e5e7eb;
+      border: 1px solid rgba(255,255,255,0.14);
+      display: inline-flex; align-items: center; gap: 0.3rem;
+    }
+    .peek-chip-live { color: #34d399; border-color: rgba(52,211,153,0.45); font-weight: 600; }
+    .peek-chip-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #34d399;
+      animation: peek-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes peek-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    /* Collapsible advanced sensor tuning — keeps the camera panel clean;
+       the raw OV2640/OV3660 registers live behind one <details>. */
+    .adv-tuning { margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
+    .adv-tuning > summary {
+      cursor: pointer; user-select: none;
+      font-size: 0.85rem; color: var(--muted);
+      list-style: none; display: flex; align-items: center; gap: 0.4rem;
+    }
+    .adv-tuning > summary::-webkit-details-marker { display: none; }
+    .adv-tuning > summary::before { content: '▸'; font-size: 0.7rem; transition: transform 0.15s; }
+    .adv-tuning[open] > summary::before { transform: rotate(90deg); }
+    .adv-tuning > summary:hover { color: inherit; }
 
     /* Log list */
     .log-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 500px; overflow-y: auto; }
@@ -1229,6 +1268,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="peek-container">
           <div class="peek-frame">
             <img id="peekStream" class="peek-stream" style="display:none;" alt="Camera preview">
+            <!-- Live metric chips over the preview — populated from /api/peek/status. -->
+            <div id="peekOverlay" class="peek-overlay" style="display:none;">
+              <span class="peek-chip peek-chip-live"><span class="peek-chip-dot"></span>LIVE</span>
+              <span class="peek-chip" id="peekChipRes">—</span>
+              <span class="peek-chip" id="peekChipFps">— fps</span>
+              <span class="peek-chip" id="peekChipKbps">—</span>
+              <span class="peek-chip" id="peekChipUptime">—</span>
+            </div>
             <div id="peekOffline" class="peek-offline">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="48" height="48">
                 <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
@@ -1257,7 +1304,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div style="margin-top:1rem;">
           <div class="form-label">Resolution</div>
           <div class="resolution-selector">
-            <button class="resolution-btn" data-size="4" onclick="setResolution(4)">320×240</button>
+            <button class="resolution-btn" data-size="5" onclick="setResolution(5)">320×240</button>
             <button class="resolution-btn active" data-size="8" onclick="setResolution(8)">640×480</button>
             <button class="resolution-btn" data-size="9" onclick="setResolution(9)">800×600</button>
             <button class="resolution-btn" data-size="10" onclick="setResolution(10)">1024×768</button>
@@ -1268,9 +1315,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <!--
           Sensor tuning panel — every control here writes straight through to
           the OV2640 / OV3660 sensor_t via /api/peek/sensor. Values are read
-          back from the sensor on poll, never fabricated.
+          back from the sensor on poll, never fabricated. Collapsed by default
+          so the everyday panel stays Snapshot + Resolution.
         -->
-        <div style="margin-top:1.25rem;">
+        <details class="adv-tuning">
+          <summary>Advanced sensor tuning <span style="color:var(--muted);font-size:0.72rem;">(exposure, white balance, image cleanup)</span></summary>
+        <div style="margin-top:1rem;">
           <div class="form-label">Picture Quality</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.6rem 1.25rem;font-size:0.82rem;">
             <label>JPEG Quality (lower = sharper, larger): <span id="sensorQualityVal">—</span>
@@ -1350,6 +1400,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <label><input type="checkbox" id="sensorColorbar" onchange="onSensorToggle('colorbar', this.checked)"> Test pattern</label>
           </div>
         </div>
+        </details>
 
         <div id="snapshotPreview" style="margin-top:1rem;display:none;">
           <div class="form-label">Snapshot</div>
@@ -2496,7 +2547,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       function shouldRetryPeek(attempt) { return attempt < PEEK_MAX_RETRIES; }
       // BLE Discovery chirp endpoint (NOT the ESP-NOW community /api/chirp/send).
       const BLE_CHIRP_ENDPOINT = '/api/ble/chirp/send';
-      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT };
+      // Human-readable throughput from the integer avg_kbps the firmware
+      // reports. Returns '—' for missing/invalid input so the UI never shows
+      // "NaN kbps"; switches to Mbps at 1000 to keep the string short.
+      function fmtKbps(kbps) {
+        if (kbps == null || typeof kbps !== 'number' || !isFinite(kbps) || kbps < 0) return '—';
+        if (kbps < 1000) return Math.round(kbps) + ' kbps';
+        return (kbps / 1000).toFixed(kbps < 10000 ? 1 : 0) + ' Mbps';
+      }
+      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps };
     })();
     if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
     /* WEBUI_LOGIC:END */
@@ -2698,6 +2757,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     let peekActive = false;
     let cameraReady = false;
     let currentResolution = 8;
+    let currentResolutionName = null;  // name reported by the firmware for the active framesize
 
     // Navigation
     document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -2755,7 +2815,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.querySelectorAll('#panel-settings .sub-panel').forEach(p => p.classList.remove('active'));
       document.getElementById(`settings-${tab}`).classList.add('active');
       if (tab === 'wifi') loadWifiStatus();
-      else if (tab === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); }
+      else if (tab === 'bluetooth') { refreshBtStatus(); loadBtSettings(); loadBtPairedDevices(); refreshBtOtaStatus(); }
       else if (tab === 'device') { refreshOtaStatus(); loadConfig(); }
       else if (tab === 'rf') loadRfSettings();
       if (tab !== 'device') stopOtaPolling();
@@ -3299,7 +3359,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         setText('camFps', (data.fps != null) ? (data.fps + ' fps') : '—');
         setText('camLastFrame', fmtBytes(data.last_frame_bytes));
         setText('camAvgFrame', fmtBytes(data.avg_frame_bytes));
-        setText('camKbps', (data.avg_kbps != null) ? (data.avg_kbps + ' kbps') : '—');
+        setText('camKbps', WebUiLogic.fmtKbps(data.avg_kbps));
         setText('camFrameCount', String(data.frame_count));
         setText('camUptime', fmtDuration(data.stream_uptime_ms));
         if (live) { live.textContent = 'LIVE'; live.className = 'badge info'; live.style.display = 'inline-flex'; }
@@ -3307,7 +3367,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         setText('camFps', (data.fps != null) ? (data.fps + ' fps') : '—');
         setText('camLastFrame', fmtBytes(data.last_frame_bytes));
         setText('camAvgFrame', fmtBytes(data.avg_frame_bytes));
-        setText('camKbps', (data.avg_kbps != null) ? (data.avg_kbps + ' kbps') : '—');
+        setText('camKbps', WebUiLogic.fmtKbps(data.avg_kbps));
         setText('camFrameCount', String(data.frame_count));
         setText('camUptime', fmtDuration(data.stream_uptime_ms));
         if (live) { live.textContent = 'LAST STREAM'; live.className = 'badge'; live.style.display = 'inline-flex'; }
@@ -3316,6 +3376,21 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           .forEach(id => setText(id, 'idle'));
         if (live) live.style.display = 'none';
       }
+      updatePeekOverlay(data);
+    }
+
+    // Overlay chips on the preview itself: only meaningful while streaming.
+    // fps/kbps warm up over the first second, so show a quiet placeholder
+    // rather than a misleading 0.
+    function updatePeekOverlay(data) {
+      const overlay = document.getElementById('peekOverlay');
+      if (!overlay) return;
+      if (!data || !data.peek_active) { overlay.style.display = 'none'; return; }
+      overlay.style.display = 'flex';
+      setText('peekChipRes', data.resolution_name || '—');
+      setText('peekChipFps', (data.fps != null && data.fps > 0) ? (data.fps + ' fps') : '… fps');
+      setText('peekChipKbps', (data.avg_kbps != null && data.avg_kbps > 0) ? WebUiLogic.fmtKbps(data.avg_kbps) : '…');
+      setText('peekChipUptime', fmtDuration(data.stream_uptime_ms) === '—' ? '0s' : fmtDuration(data.stream_uptime_ms));
     }
 
     function startCamInfoPolling() {
@@ -3332,7 +3407,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const wasReady = cameraReady;
         cameraReady = data.camera_initialized;
         peekActive = data.peek_active;
-        if (typeof data.resolution !== 'undefined') { currentResolution = data.resolution; updateResolutionUI(); }
+        if (typeof data.resolution !== 'undefined') {
+          currentResolution = data.resolution;
+          if (data.resolution_name) currentResolutionName = data.resolution_name;
+          updateResolutionUI();
+        }
         applyCameraInfo(data);
         updatePeekUI();
         if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
@@ -3366,6 +3445,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         status.textContent = 'Ready';
         stream.style.display = 'none'; offline.style.display = 'flex';
         offlineText.textContent = 'Click Start to preview';
+        const overlay = document.getElementById('peekOverlay');
+        if (overlay) overlay.style.display = 'none';
       }
     }
 
@@ -3443,15 +3524,29 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.querySelectorAll('.resolution-btn').forEach(btn => {
         btn.classList.toggle('active', parseInt(btn.dataset.size) === currentResolution);
       });
-      const names = { 4: '320×240', 8: '640×480', 9: '800×600', 10: '1024×768' };
-      document.getElementById('resolutionStatus').textContent = 'Current: ' + (names[currentResolution] || 'Unknown');
+      // Preset labels for the buttons we offer; anything else (set via API)
+      // falls back to the name the firmware itself reports.
+      const names = { 5: '320×240', 8: '640×480', 9: '800×600', 10: '1024×768' };
+      const label = names[currentResolution] || currentResolutionName || 'Unknown';
+      document.getElementById('resolutionStatus').textContent = 'Current: ' + label;
     }
 
     async function setResolution(size) {
+      const status = document.getElementById('resolutionStatus');
+      if (status) status.textContent = 'Applying…';
       const data = await api('/api/peek/resolution', 'POST', { size });
       if (data.ok) {
-        currentResolution = size; updateResolutionUI();
-        if (peekActive) document.getElementById('peekStream').src = WebUiLogic.peekStreamUrl(API_BASE, '/api/peek/stream', apiToken, Date.now());
+        currentResolution = size;
+        if (data.resolution_name) currentResolutionName = data.resolution_name;
+        updateResolutionUI();
+        // Changing resolution ends the MJPEG response on the device
+        // (stream_stopped) — reconnect so the preview continues seamlessly.
+        if (peekActive || data.stream_stopped) {
+          document.getElementById('peekStream').src = WebUiLogic.peekStreamUrl(API_BASE, '/api/peek/stream', apiToken, Date.now());
+        }
+      } else {
+        updateResolutionUI();
+        alert('Resolution change failed: ' + (data.error || 'unknown error'));
       }
     }
 
@@ -4662,12 +4757,22 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function toggleBtEnabled() {
       const enabled = document.getElementById('btEnabled').checked;
-      await api(enabled ? '/api/bluetooth/enable' : '/api/bluetooth/disable', 'POST');
+      const data = await api(enabled ? '/api/bluetooth/enable' : '/api/bluetooth/disable', 'POST');
+      if (data && data.success === false) {
+        document.getElementById('btEnabled').checked = !enabled;  // revert on failure
+        alert('Bluetooth: ' + (data.error || 'could not change Bluetooth state'));
+      }
       refreshBtStatus();
     }
 
     async function toggleBtAdvertising() {
-      const isAdv = btState?.advertising;
+      // Decide start-vs-stop from live device state, not the cached btState —
+      // a stale cache after a missed poll used to invert the verb (POSTing
+      // "start" while already advertising), which the firmware rejects.
+      const st = await api('/api/bluetooth');
+      const isAdv = (st && typeof st.advertising !== 'undefined')
+        ? !!st.advertising
+        : !!(btState && btState.advertising);
       const ep = isAdv ? '/api/bluetooth/advertise/stop' : '/api/bluetooth/advertise/start';
       const data = await api(ep, 'POST');
       if (data && data.success === false) {
