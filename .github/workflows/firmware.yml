@@ -251,8 +251,13 @@ jobs:
           # firmware/common/csi/csi_types.h via library.properties.
           # NimBLE is installed above, so the FULL profile compiles the real
           # BLE stack (FEATURE_BLE=1) rather than the no-radio stub.
+          # PSRAM=opi is REQUIRED: the bare board FQBN defaults to
+          # PSRAM=Disabled, which is the misconfiguration that heap-starved
+          # field devices (BLE refused, SD writes failing, dashboard timing
+          # out) — build_config.h now #errors on FULL+S3 without PSRAM, and
+          # CI must validate the configuration devices actually run.
           arduino-cli compile \
-            --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1" \
             --output-dir /tmp/wap-build \
@@ -285,7 +290,7 @@ jobs:
           # append-only SD audit-log path (AGENTS.md Beacon invariant 9) —
           # can't silently rot.
           arduino-cli compile \
-            --fqbn esp32:esp32:XIAO_ESP32S3 \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
             --libraries firmware/common \
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino

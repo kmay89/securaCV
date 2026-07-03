@@ -83,6 +83,14 @@
   PSRAM". The XIAO ESP32-S3 has 8 MB PSRAM; "PSRAM not found" in the boot
   banner means it's disabled in the build. The guard only keeps a mis-set
   build usable.
+- **Now enforced at compile time:** the misconfiguration recurred in the
+  field (the IDE toggle silently reverts when the board selection changes,
+  and even a non-crashing no-PSRAM FULL build limps at <1 KB free heap —
+  BLE refused, SD writes failing, mDNS timing out). `build_config.h` now
+  `#error`s on FULL + XIAO_ESP32S3 without `BOARD_HAS_PSRAM`
+  (`SECURACV_ALLOW_NO_PSRAM` to bypass), and the CI Arduino build compiles
+  with `PSRAM=opi` instead of the bare board FQBN whose default is
+  PSRAM=Disabled — CI had been validating the broken configuration.
 - **Date learned:** 2026-07
 
 ---
