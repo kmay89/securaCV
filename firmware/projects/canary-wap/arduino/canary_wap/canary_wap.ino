@@ -8307,6 +8307,15 @@ void setup() {
   }
   #endif
 
+  // The watchdog was armed above and its next feed is otherwise the first
+  // loop() pass — ALL of the Phase-3 init (camera, SD, audio, WiFi, HTTP,
+  // BLE) used to share one unfed 8 s budget, so a slow step (camera probe
+  // ladder + a slow SD card) panicked the watchdog mid-boot. Feed at each
+  // heavy step boundary so no single step inherits the others' spend.
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+  #endif
+
   // Initialize SD card storage (with timeout, non-blocking)
   #if FEATURE_SD_STORAGE
   if (!in_safe_mode) {
@@ -8343,6 +8352,12 @@ void setup() {
   } else {
     Serial.println("[--] SD card init skipped (safe mode)");
   }
+  #endif
+
+  // Fresh feed after the SD phase (bounded at SD_MOUNT_TIMEOUT_MS, but the
+  // budget shouldn't come out of the audio/WiFi phases below).
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
   #endif
 
   // Initialize PDM acoustic event detection (T3 smoke / T4 CO cadences).
@@ -8462,6 +8477,12 @@ void setup() {
   } else {
     Serial.println("[--] Acoustic detector init skipped (safe mode)");
   }
+  #endif
+
+  // Fresh feed before the network phase (TLS keygen, AP bring-up, mDNS
+  // probe, HTTP server, BLE) — see the Phase-3 watchdog note above.
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
   #endif
 
   // ── TLS Certificate Initialization ──
@@ -9076,13 +9097,18 @@ void loop() {
       Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
                     (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
       log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");
-      // Blink LED 3x to confirm
+      // Blink LED 3x to confirm. Skipped while an SD mount attempt is in
+      // flight: on the XIAO ESP32-S3 the user LED shares GPIO21 with SD
+      // chip-select, and driving it mid-transaction on the mount worker
+      // would glitch CS and corrupt the mount.
       #ifdef LED_BUILTIN
-      for (int i = 0; i < 3; i++) {
-        digitalWrite(LED_BUILTIN, HIGH);
-        delay(100);
-        digitalWrite(LED_BUILTIN, LOW);
-        delay(100);
+      if (!sd_mount_in_flight()) {
+        for (int i = 0; i < 3; i++) {
+          digitalWrite(LED_BUILTIN, HIGH);
+          delay(100);
+          digitalWrite(LED_BUILTIN, LOW);
+          delay(100);
+        }
       }
       #endif
     }
@@ -9129,12 +9155,30 @@ void loop() {
   // ════════════════════════════════════════════════════════════════════════════
 
   #if FEATURE_SD_STORAGE
-  // Periodic SD card check (handles hot-plug/unplug)
+  // Periodic SD card check (handles hot-plug/unplug). Mount attempts run on
+  // the background mount worker; results are adopted here. Safe mode never
+  // attempts SD work (boot skipped it; the loop path honors the same
+  // contract — the old unconditional remount is what crash-looped safe mode).
   sd_periodic_check(g_sd_spi, SD_CS_PIN, SD_SPI_FAST);
 
-  // Sync SD hardware state to legacy flags
-  g_sd_mounted = sd_is_available();
-  g_health.sd_healthy = sd_is_available();
+  // Sync SD hardware state to legacy flags — and provision the card layout
+  // on a fresh mount transition. This covers mounts that concluded AFTER the
+  // boot-time wait budget (slow card) and cards hot-plugged later: without
+  // it, a late-mounting card would be missing /WITNESS etc. and every
+  // witness write would fail.
+  {
+    const bool sd_now = sd_is_available();
+    if (sd_now && !g_sd_mounted) {
+      if (!SD.exists("/WITNESS")) SD.mkdir("/WITNESS");
+      if (!SD.exists("/HEALTH")) SD.mkdir("/HEALTH");
+      if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
+      if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
+      csi_event_log::init();  // idempotent; self-defers if the card vanished
+      log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
+    }
+    g_sd_mounted = sd_now;
+    g_health.sd_healthy = sd_now;
+  }
   #endif
 
   // Advance the RF-presence fusion FSM (session/token rotation, decay,

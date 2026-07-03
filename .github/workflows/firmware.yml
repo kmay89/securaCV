@@ -660,6 +660,21 @@ jobs:
           /tmp/bt_defaults | tee /tmp/bt_defaults.log
           grep -q "ALL .* PASSED" /tmp/bt_defaults.log
 
+      - name: Build + run canary-wap SD-mount logic host test
+        # The decisions around the SD mount worker: the loop's periodic SD
+        # check never attempts a mount in SAFE MODE (the old unconditional
+        # remount re-ran a blocking SD.begin from loop() and crash-looped
+        # safe mode via the 8s task watchdog), never piles onto an
+        # in-flight attempt, and the caller's bounded wait is wrap-safe.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_sd_mount_logic.cpp \
+              -o /tmp/sd_mount_logic
+          /tmp/sd_mount_logic | tee /tmp/sd_mount_logic.log
+          grep -q "ALL .* PASSED" /tmp/sd_mount_logic.log
+
       - name: Build + run pull-OTA engine logic host test
         # The OTA engine's pure-logic subset (semantic version compare,
         # anti-rollback update decision, URL transport policy, the
