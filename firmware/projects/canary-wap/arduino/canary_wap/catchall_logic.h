@@ -61,6 +61,17 @@ inline bool due(uint32_t now_ms, uint32_t scheduled_ms) {
   return (int32_t)(now_ms - scheduled_ms) >= 0;
 }
 
+// Per-device phase offset for the recurring conflict check. Devices that
+// booted (and claimed) in the same instant would otherwise re-probe in
+// lockstep forever — and because the checker withdraws its own delegate for
+// the probe's duration, two synchronized checkers could each see silence and
+// each re-add, never resolving. A fingerprint-derived offset (up to a quarter
+// of the base cadence per byte pattern, [0, 30000) ms) keeps the two probes
+// far outside each other's 600 ms windows.
+inline uint32_t recheck_jitter_ms(uint8_t fp0, uint8_t fp1) {
+  return (uint32_t)(((uint16_t)fp0 << 8) | fp1) % 30000u;
+}
+
 }  // namespace catchall_logic
 
 #endif  // SECURACV_CATCHALL_LOGIC_H

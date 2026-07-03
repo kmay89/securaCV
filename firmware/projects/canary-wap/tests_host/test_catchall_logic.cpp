@@ -72,6 +72,21 @@ static void test_probe_conflict() {
   CHECK(probe_is_conflict(STA, 0, 0));
 }
 
+static void test_recheck_jitter() {
+  // Bounds + determinism, same contract as the claim stagger.
+  for (int hi = 0; hi < 256; hi += 19) {
+    for (int lo = 0; lo < 256; lo += 11) {
+      uint32_t j = recheck_jitter_ms((uint8_t)hi, (uint8_t)lo);
+      CHECK(j < 30000);
+    }
+  }
+  CHECK(recheck_jitter_ms(0xAB, 0xCD) == recheck_jitter_ms(0xAB, 0xCD));
+  // Two devices with different fingerprint bytes land on different phases —
+  // required because the conflict checker withdraws its own delegate while
+  // probing; synchronized probes would both see silence and both re-add.
+  CHECK(recheck_jitter_ms(0x12, 0x34) != recheck_jitter_ms(0x56, 0x78));
+}
+
 static void test_due() {
   CHECK(due(1000, 1000));
   CHECK(due(1001, 1000));
@@ -86,6 +101,7 @@ int main() {
   test_stagger();
   test_tie_break();
   test_probe_conflict();
+  test_recheck_jitter();
   test_due();
 
   if (g_failures != 0) {

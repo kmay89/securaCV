@@ -753,13 +753,15 @@ volatile bool g_ble_init_attempted = false;
 static int8_t g_ble_lifecycle_pending = 0;  // 0=none, 1=initialized, -1=failed
 #endif
 
-// BLE Discovery radio activity is deferred out of the provisioning join window
+// BLE radio activity is deferred out of the provisioning join window
 // (see ble_discovery_start_if_due / provisioning_logic::ble_discovery_start_due):
-// its 5 s ~99%-duty active scan starves a phone's WPA2 handshake to the SoftAP.
-// _ready = init() succeeded and the subsystems are up (may transmit); _started =
-// operaStart/nearbyStart/boot-chirp have fired; _ready_ms = boot reference for
-// the AP-only settle window.
-#if FEATURE_BLE
+// concurrent BLE radio duty starves a phone's WPA2 handshake to the SoftAP —
+// worst with Discovery's 5 s ~99%-duty active scan, but the pairing channel's
+// auto-advertising + continuous presence scan ride the same gate now that
+// their stack init runs early in boot (heap ordering). _ready = init()
+// succeeded and the subsystems are up (may transmit); _started = the deferred
+// radio activity has fired; _ready_ms = boot reference for the settle window.
+#if FEATURE_BLE || FEATURE_BLUETOOTH
 static bool     g_ble_discovery_ready   = false;
 static bool     g_ble_discovery_started = false;
 static uint32_t g_ble_discovery_ready_ms = 0;
@@ -5672,7 +5674,11 @@ static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
 static volatile bool     g_fleet_scan_busy    = false;
 static uint32_t          g_fleet_scan_done_ms = 0;      // guarded by mux
 static bool              g_fleet_scan_have    = false;  // guarded by mux
-static char              g_fleet_scan_cache[1600] = ""; // guarded by mux
+// Sized for the 8-device browse cap below: each entry serializes to ~200 B
+// worst-case (32-char name, 30-char hostname, TXT fields), so 8 × ~200 B +
+// wrapper ≈ 1.7 KB; 2560 leaves honest slack instead of truncating the whole
+// result at exactly the advertised capacity.
+static char              g_fleet_scan_cache[2560] = ""; // guarded by mux
 static portMUX_TYPE      g_fleet_scan_mux = portMUX_INITIALIZER_UNLOCKED;
 static const uint32_t    FLEET_SCAN_TTL_MS = 10000;
 
@@ -5693,15 +5699,23 @@ static void fleet_scan_task(void*) {
     o["port"]      = MDNS.port(i);
   }
 
-  static char staging[sizeof(g_fleet_scan_cache)];
-  size_t written = serializeJson(doc, staging, sizeof(staging));
-  if (written >= sizeof(staging)) staging[sizeof(staging) - 1] = '\0';
+  // Heap staging (not a function-local static): keeps the one-shot task's
+  // stack small and leaves nothing shared between task instances.
+  char* staging = (char*)malloc(sizeof(g_fleet_scan_cache));
+  if (staging) {
+    size_t written = serializeJson(doc, staging, sizeof(g_fleet_scan_cache));
+    if (written >= sizeof(g_fleet_scan_cache)) {
+      staging[sizeof(g_fleet_scan_cache) - 1] = '\0';
+    }
 
-  portENTER_CRITICAL(&g_fleet_scan_mux);
-  memcpy(g_fleet_scan_cache, staging, sizeof(g_fleet_scan_cache));
-  g_fleet_scan_done_ms = millis();
-  g_fleet_scan_have    = true;
-  portEXIT_CRITICAL(&g_fleet_scan_mux);
+    portENTER_CRITICAL(&g_fleet_scan_mux);
+    memcpy(g_fleet_scan_cache, staging, sizeof(g_fleet_scan_cache));
+    g_fleet_scan_done_ms = millis();
+    g_fleet_scan_have    = true;
+    portEXIT_CRITICAL(&g_fleet_scan_mux);
+
+    free(staging);
+  }
 
   __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);
   vTaskDelete(NULL);
@@ -7590,19 +7604,11 @@ static void schedule_catch_all_claim() {
   g_catch_all_claim_pending = true;
 }
 
-static void claim_catch_all_hostname() {
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
-  IPAddress existing = MDNS.queryHost("canary", 600);
-  if (catchall_logic::probe_is_conflict((uint32_t)existing,
-                                        (uint32_t)WiFi.softAPIP(),
-                                        (uint32_t)WiFi.localIP())) {
-    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-               "canary.local catch-all already claimed by a peer",
-               "serving unique hostname only");
-    g_catch_all_claimed = false;
-    return;
-  }
-
+// (Re)register the "canary" delegate for our live interface addresses and
+// schedule the next conflict check. quiet=true for the recurring re-adds so
+// the health log isn't spammed every cadence.
+static void catch_all_add_delegate(bool quiet) {
   // Address list lives in static storage; the mDNS component copies it, but
   // keeping it static is harmless and avoids any lifetime ambiguity.
   static mdns_ip_addr_t ap_node;
@@ -7625,19 +7631,42 @@ static void claim_catch_all_hostname() {
     sta_node.next = head;
     head = &sta_node;
   }
-  if (!head) return;
+  if (!head) { g_catch_all_claimed = false; return; }
 
   mdns_delegate_hostname_remove("canary");  // idempotent across re-announce
   if (mdns_delegate_hostname_add("canary", head) == ESP_OK) {
     g_catch_all_claimed = true;
-    g_catch_all_next_check_ms = millis() + CATCH_ALL_RECHECK_MS;
-    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-               "canary.local catch-all claimed", g_device.mdns_hostname);
+    g_catch_all_next_check_ms = millis() + CATCH_ALL_RECHECK_MS +
+        catchall_logic::recheck_jitter_ms(g_device.pubkey_fp[0],
+                                          g_device.pubkey_fp[1]);
+    if (!quiet) {
+      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                 "canary.local catch-all claimed", g_device.mdns_hostname);
+    }
   } else {
     g_catch_all_claimed = false;
-    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
-               "canary.local catch-all add failed", nullptr);
+    if (!quiet) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                 "canary.local catch-all add failed", nullptr);
+    }
   }
+}
+#endif
+
+static void claim_catch_all_hostname() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
+  IPAddress existing = MDNS.queryHost("canary", 600);
+  if (catchall_logic::probe_is_conflict((uint32_t)existing,
+                                        (uint32_t)WiFi.softAPIP(),
+                                        (uint32_t)WiFi.localIP())) {
+    log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+               "canary.local catch-all already claimed by a peer",
+               "serving unique hostname only");
+    g_catch_all_claimed = false;
+    return;
+  }
+
+  catch_all_add_delegate(false);
 #else
   // mdns_delegate_hostname_add requires ESP-IDF >= 4.4. On older cores the
   // device is still reachable at its unique canary-<name>.local; the bare
@@ -7664,23 +7693,32 @@ static void catch_all_tick() {
 
   if (g_catch_all_claimed && catchall_logic::due(now, g_catch_all_next_check_ms)) {
     g_catch_all_next_check_ms = now + CATCH_ALL_RECHECK_MS;
+    // Withdraw our own delegate for the probe's duration: queryHost returns
+    // a single address, so while we're answering, a double-claiming peer can
+    // hide behind our own echo and the conflict is never detected. With the
+    // delegate down, any answer is genuinely someone else. The ≤600 ms gap
+    // in our canary.local answer is invisible next to the re-check cadence,
+    // and the fingerprint-jittered schedule keeps two devices' probe windows
+    // from overlapping (synchronized withdrawn probes would both see
+    // silence and both re-add).
+    mdns_delegate_hostname_remove("canary");
     IPAddress answer = MDNS.queryHost("canary", 600);
     const uint32_t my_ap  = (uint32_t)WiFi.softAPIP();
     const uint32_t my_sta = (uint32_t)WiFi.localIP();
     if (catchall_logic::probe_is_conflict((uint32_t)answer, my_ap, my_sta)) {
       const uint32_t my_ip = my_sta ? my_sta : my_ap;
       if (!catchall_logic::keep_claim_on_conflict(my_ip, (uint32_t)answer)) {
-        mdns_delegate_hostname_remove("canary");
-        g_catch_all_claimed = false;
+        g_catch_all_claimed = false;  // stay withdrawn — the peer keeps it
         log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
                    "canary.local catch-all withdrawn (peer holds it)",
                    g_device.mdns_hostname);
-      } else {
-        log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-                   "canary.local double-claim detected — keeping (tie-break)",
-                   nullptr);
+        return;
       }
+      log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                 "canary.local double-claim detected — keeping (tie-break)",
+                 nullptr);
     }
+    catch_all_add_delegate(true);  // still ours — quietly re-register
   }
 #endif
 }
@@ -8636,9 +8674,21 @@ void setup() {
     // characteristics get baked during service creation; setting these
     // afterwards has no effect until the next reinit.
     bluetooth_channel::set_device_metadata(FIRMWARE_VERSION, g_device.fingerprint_hex);
+    // Early init is heap reservation ONLY: auto-advertising + the continuous
+    // presence scan must not transmit inside the provisioning join window
+    // (they'd starve a phone's WPA2 handshake to the SoftAP). The loop's
+    // ble_discovery_start_if_due() lights the radio once the window clears.
+    bluetooth_channel::set_defer_radio(true);
     if (bluetooth_channel::init()) {
-      Serial.println("[OK] Bluetooth initialized");
+      Serial.println("[OK] Bluetooth initialized (radio deferred until the join window clears)");
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Bluetooth initialized", nullptr);
+      // Arm the deferred-radio gate for builds without FEATURE_BLE too (the
+      // FEATURE_BLE init below re-stamps these; keeping the earliest ready
+      // timestamp is correct either way).
+      if (!g_ble_discovery_ready) {
+        g_ble_discovery_ready    = true;
+        g_ble_discovery_ready_ms = millis();
+      }
       // Hand the offline-console module the device's short fingerprint
       // and firmware version so its snapshot JSON identifies us. Both
       // are owned by the .ino — the module copies into its own buffers.
@@ -9260,12 +9310,14 @@ void setup() {
   print_table_header();
 }
 
-// Bring BLE Discovery's radio activity up once the provisioning join window is
-// clear — deferred out of setup() so its active scan never starves a phone's
-// WPA2 handshake to the SoftAP (see the g_ble_discovery_* note above). Fires
-// once, then latches; a later STA blip won't tear discovery back down.
+// Bring the deferred BLE radio activity up once the provisioning join window
+// is clear — deferred out of setup() so no BLE duty cycle starves a phone's
+// WPA2 handshake to the SoftAP (see the g_ble_discovery_* note above). Covers
+// BLE Discovery's active scan AND the pairing channel's auto-advertising +
+// continuous presence scan (whose stack init runs early for heap ordering).
+// Fires once, then latches; a later STA blip won't tear the radio back down.
 static void ble_discovery_start_if_due() {
-#if FEATURE_BLE
+#if FEATURE_BLE || FEATURE_BLUETOOTH
   if (!g_ble_discovery_ready || g_ble_discovery_started) return;
   // Gate on the AP being DOWN, not merely WL_CONNECTED: the SoftAP is held up
   // for AP_DROP_GRACE_MS after the STA gets an IP so the provisioning phone can
@@ -9281,15 +9333,21 @@ static void ble_discovery_start_if_due() {
           BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
     return;
   }
+#if FEATURE_BLUETOOTH
+  // Pairing channel: auto-advertising (per NVS settings) + presence scan.
+  bluetooth_channel::start_deferred_radio();
+#endif
+#if FEATURE_BLE
   ble_manager::operaStart();
   ble_manager::nearbyStart();
   // Boot chirp. Witness-chain side: chirp_sent through the chokepoint so the
   // wire format respects spec/event_contract.md §10's allow-list.
   ble_manager::sendChirp(CHIRP_BOOT);
   ble_events_emit_chirp_sent("boot");
+#endif
   g_ble_discovery_started = true;
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
-             "BLE discovery started (post-provisioning window)", nullptr);
+             "BLE radio started (post-provisioning window)", nullptr);
 #endif
 }
 
