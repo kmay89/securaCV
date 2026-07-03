@@ -378,6 +378,29 @@
   uses the STA's resolver, never the local port-53 listener).
 - **Date learned:** 2026-05
 
+### BLE active scanning starves the SoftAP WPA2 join during provisioning
+- **What happened:** Joining the device's setup Wi-Fi was intermittently
+  failing — the phone's "enter password" sheet looped instead of associating.
+  It worked sometimes, failed sometimes: a flaky loop.
+- **Root cause:** BLE Discovery's Nearby scanner runs a 5-second, ~99%-duty
+  **active** scan (window 99 / interval 100, `ble_config.h`) pinned to the
+  shared WiFi/BLE core, and the first burst fires at boot — exactly when the
+  operator is first joining the AP. On the single 2.4 GHz radio, a scan burst
+  that overlaps the phone's WPA2 4-way handshake starves the handshake frames
+  and the association times out. The firmware already rates AP+STA+BLE as
+  unstable and drops the AP once STA is up to escape it, but the AP must stay
+  up *during* provisioning — so BLE scanning was the thing to hold back.
+- **Fix:** BLE Discovery still `init()`s at boot (stack + subsystems up), but
+  its radio activity (Opera advertising, Nearby active scanning, boot chirp) is
+  deferred out of the join window — brought up from `loop()` once the STA has
+  joined home Wi-Fi (steady state, AP about to drop → stable STA+BLE) or, in
+  AP-only mode, after a settle window. BLE stays on by default; it just doesn't
+  transmit while a phone is mid-join.
+- **Regression check:** `provisioning_logic::ble_discovery_start_due` is a pure
+  wrap-safe predicate with host-test coverage in `test_provisioning_logic.cpp`
+  (STA-up → due; provisioning non-AP-only → held; AP-only → held until settle).
+- **Date learned:** 2026-07
+
 ---
 
 ## How to Add an Entry
