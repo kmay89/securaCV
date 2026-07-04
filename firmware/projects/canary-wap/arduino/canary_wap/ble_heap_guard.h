@@ -31,13 +31,23 @@ inline size_t largest_internal_block() {
   return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
 }
 
-// True when the BLE stack can be brought up without OOM-panicking. When false,
-// the caller MUST skip NimBLEDevice::init() and leave the radio off. Optionally
-// reports the measured block so the caller can log it.
-inline bool can_init(size_t* out_largest_block = nullptr) {
+// Total free internal memory — the whole stack's ~55-65 KB spend must leave
+// operating margin for everything else (see bt_defaults::MIN_INIT_TOTAL_FREE).
+inline size_t total_internal_free() {
+  return heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+}
+
+// True when the BLE stack can be brought up without OOM-panicking AND without
+// starving the rest of the system. When false, the caller MUST skip
+// NimBLEDevice::init() and leave the radio off. Optionally reports the
+// measured values so the caller can log them.
+inline bool can_init(size_t* out_largest_block = nullptr,
+                     size_t* out_total_free = nullptr) {
   const size_t block = largest_internal_block();
+  const size_t total = total_internal_free();
   if (out_largest_block) *out_largest_block = block;
-  return bt_defaults::init_has_headroom(block);
+  if (out_total_free)    *out_total_free = total;
+  return bt_defaults::init_has_headroom(block, total);
 }
 
 }  // namespace ble_heap_guard

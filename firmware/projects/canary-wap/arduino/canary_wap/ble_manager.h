@@ -109,10 +109,11 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
         // check below never runs — the device boot-loops. Skip the stack and
         // operate without BLE discovery instead.
         size_t largest = 0;
-        if (!ble_heap_guard::can_init(&largest)) {
+        size_t total   = 0;
+        if (!ble_heap_guard::can_init(&largest, &total)) {
             Serial.printf("[BLE] Discovery skipped: insufficient heap "
-                          "(largest internal block %u B; enable PSRAM)\n",
-                          (unsigned)largest);
+                          "(largest internal block %u B, total free %u B)\n",
+                          (unsigned)largest, (unsigned)total);
             g_ble_available = false;
             return false;
         }

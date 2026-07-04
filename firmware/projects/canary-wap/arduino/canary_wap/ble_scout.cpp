@@ -62,6 +62,16 @@ bool                s_inited       = false;
 bool                s_scan_started = false;   /* tracks NimBLE scan-loop state separately
                                                * so a one-time scan-start failure can
                                                * be retried on the next init() call */
+bool                s_radio_allowed = false;  /* NimBLE bring-up latch. csi_integration
+                                               * calls ble_scout_init() at web-server
+                                               * start — INSIDE the provisioning join
+                                               * window, before the network's memory
+                                               * accounting settles, and even in safe
+                                               * mode. Until the .ino's post-join-window
+                                               * gate flips this, init() does state-only
+                                               * setup (Phase 1) and leaves the radio +
+                                               * its heap spend alone. Device builds
+                                               * only — the host path ignores it. */
 ble_scan::Registry  s_registry;
 PresenceTracker     s_tracker;
 beacon_event_broadcast_fn s_broadcast_cb = nullptr;
@@ -189,6 +199,10 @@ const csi_module_t MODULE = {
  * PUBLIC API
  * ────────────────────────────────────────────────────────────────────────── */
 
+void ble_scout_allow_radio() {
+  s_radio_allowed = true;
+}
+
 bool ble_scout_init() {
   /* Phase 1: load the per-device key + bring up the in-RAM registry
    * and tracker. Idempotent — only runs once. */
@@ -205,14 +219,18 @@ bool ble_scout_init() {
   }
 
 #if BLE_SCOUT_HAS_NIMBLE
-  /* Phase 2: bring up the NimBLE passive scanner. Tracked separately
-   * via s_scan_started so a transient scan-start failure (e.g. the
-   * radio is mid-init during early boot) can be retried by calling
-   * ble_scout_init() again from the next CSI tick. The "ok" event
-   * fires only on the success transition; "scan_unavailable" fires
-   * on each retry attempt but the chokepoint ceiling (6/hour) keeps
+  /* Phase 2: bring up the NimBLE passive scanner — but ONLY once the
+   * .ino's post-join-window gate has allowed radio activity (see
+   * s_radio_allowed above). While disallowed, return silently: this is
+   * the expected deferred state at web-server start, not a failure, so
+   * no "scan_unavailable" event. The gate calls ble_scout_init() again
+   * after flipping the latch; s_inited makes Phase 1 idempotent.
+   * Tracked separately via s_scan_started so a transient scan-start
+   * failure can be retried by a later init() call. The "ok" event
+   * fires only on the success transition; "scan_unavailable" fires on
+   * each real failed attempt but the chokepoint ceiling (6/hour) keeps
    * the wire chatter bounded. */
-  if (!s_scan_started) {
+  if (!s_scan_started && s_radio_allowed) {
     if (nimble_scan_init() && nimble_scan_start()) {
       s_scan_started = true;
       emit_initialized("ok");

@@ -64,15 +64,6 @@ static bool g_initialized = false;
 // Empty when initialized (or never attempted). Surfaced by the self-test
 // and /api/bluetooth so "Bluetooth broken" field reports carry the cause.
 static char g_init_fail_reason[96] = "";
-// Radio-activity deferral: init() reserves the controller's contiguous
-// internal block early in boot, but auto-advertising and the continuous
-// presence scan must NOT transmit inside the provisioning join window (a
-// concurrent radio duty cycle starves a phone's WPA2 handshake to the
-// SoftAP — the #818 class of failure). When deferral is armed, init()
-// leaves the radio silent and start_deferred_radio() lights it up once the
-// join window clears (same gate as BLE Discovery).
-static bool g_defer_radio         = false;
-static bool g_radio_start_pending = false;
 
 // Device-info metadata for the SIG Standard Profiles (Device Information
 // Service). canary_wap.ino calls set_device_metadata() before init() to
@@ -656,16 +647,19 @@ bool init() {
   // refusing here would needlessly kill the pairing/GATT server.
   if (!NimBLEDevice::isInitialized()) {
     size_t largest = 0;
-    if (!ble_heap_guard::can_init(&largest)) {
-      char detail[80];
+    size_t total   = 0;
+    if (!ble_heap_guard::can_init(&largest, &total)) {
+      char detail[96];
       snprintf(detail, sizeof(detail),
-               "largest internal block %uB < %luB min; enable PSRAM",
-               (unsigned)largest, bt_defaults::MIN_INIT_FREE_BLOCK);
+               "largest block %uB (need %lu), total free %uB (need %lu)",
+               (unsigned)largest, bt_defaults::MIN_INIT_FREE_BLOCK,
+               (unsigned)total, bt_defaults::MIN_INIT_TOTAL_FREE);
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                  "BLE not started: insufficient heap", detail);
       snprintf(g_init_fail_reason, sizeof(g_init_fail_reason),
-               "Not started: internal RAM too fragmented (largest free block %u KB, need %lu KB)",
-               (unsigned)(largest / 1024), bt_defaults::MIN_INIT_FREE_BLOCK / 1024);
+               "Not started: internal RAM too low (largest block %u KB/%lu KB, free %u KB/%lu KB)",
+               (unsigned)(largest / 1024), bt_defaults::MIN_INIT_FREE_BLOCK / 1024,
+               (unsigned)(total / 1024), bt_defaults::MIN_INIT_TOTAL_FREE / 1024);
       set_state(BT_DISABLED);
       return false;
     }
@@ -818,19 +812,10 @@ bool init() {
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE initialized", g_settings.device_name);
 
-  // Presence-sensor state setup is transmit-free; scanning starts below or
-  // in start_deferred_radio().
-  ble_presence::init();
-
-  if (g_defer_radio) {
-    // Boot path: stack is up (heap block reserved) but the radio stays
-    // silent until the provisioning join window clears — the loop calls
-    // start_deferred_radio() via the same gate BLE Discovery uses.
-    g_radio_start_pending = true;
-    return true;
-  }
-
-  // Auto-start advertising if enabled
+  // Auto-start advertising if enabled. NOTE: init() is only ever called
+  // AFTER the provisioning join window has cleared (the loop's
+  // ble_discovery_start_if_due gate — the whole BLE bring-up is deferred
+  // there for internal-RAM budgeting), so transmitting immediately is safe.
   if (g_settings.enabled && g_settings.auto_advertise) {
     enable();
     start_advertising();
@@ -841,30 +826,10 @@ bool init() {
   // when the user scan ends. ble_presence is read-only (no advertise, no
   // connect, just listen) so it adds no attack surface beyond what we
   // already have for legitimate scan results.
+  ble_presence::init();
   ble_presence::start();
 
   return true;
-}
-
-void set_defer_radio(bool defer) {
-  g_defer_radio = defer;
-}
-
-void start_deferred_radio() {
-  if (!g_initialized || !g_radio_start_pending) return;
-  g_radio_start_pending = false;
-
-  if (g_settings.enabled && g_settings.auto_advertise) {
-    enable();
-    start_advertising();
-  }
-  // Continuous presence scan (25% duty, listen-only) — deferred for the
-  // same join-window reason as advertising: any extra radio duty during
-  // the SoftAP handoff risks the phone's association.
-  ble_presence::start();
-
-  log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
-             "BLE radio activity started (post-provisioning window)", nullptr);
 }
 
 void deinit() {
@@ -889,7 +854,6 @@ void deinit() {
   g_scanner = nullptr;
 
   g_initialized = false;
-  g_radio_start_pending = false;
   set_state(BT_DISABLED);
 
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE deinitialized", nullptr);

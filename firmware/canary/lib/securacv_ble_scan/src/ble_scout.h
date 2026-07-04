@@ -43,11 +43,21 @@ struct csi_module;
 
 namespace ble_scout {
 
-/* Initialize the Scout: load the per-device key, init the in-RAM
- * registry+tracker, and (on device) start the NimBLE passive scan
- * loop. Returns false if the key store fails. Safe to call twice;
- * second call is a no-op. */
+/* Initialize the Scout: load the per-device key and init the in-RAM
+ * registry+tracker. On device builds the NimBLE passive scan loop
+ * starts ONLY after ble_scout_allow_radio() has been called — the
+ * .ino's post-join-window gate owns when BLE may spend heap and
+ * airtime (csi_integration calls this at web-server start, which is
+ * inside the provisioning join window and would otherwise bring the
+ * whole NimBLE stack up early, bypassing the bluetooth_channel heap
+ * guard). Returns false if the key store fails. Safe to call
+ * repeatedly; each phase is idempotent. */
 bool ble_scout_init();
+
+/* One-way latch: permit the NimBLE scan bring-up. Call ble_scout_init()
+ * again afterwards to complete the deferred Phase 2. Device-only
+ * effect; the host build's init path ignores it. */
+void ble_scout_allow_radio();
 
 /* Pair a beacon. Hashes the raw MAC inside this function — the caller
  * never persists or logs the MAC. Returns true on success (added or
