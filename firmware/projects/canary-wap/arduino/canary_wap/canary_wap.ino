@@ -193,6 +193,13 @@ extern "C" {
 // BLE GATT Status Service (battery/health/chain over GATT)
 #include "ble_status_api.h"
 
+// BLE Scout (CSI room attribution): its NimBLE scan bring-up is completed by
+// the post-join-window gate (ble_discovery_start_if_due), NOT by
+// csi_integration's early state-only init — see ble_scout_allow_radio().
+#if FEATURE_BLE_SCAN
+#include "ble_scout.h"
+#endif
+
 // WiFi Presence Detection (probe request monitoring)
 #include "wifi_presence.h"
 #include "wifi_presence_api.h"
@@ -759,7 +766,7 @@ volatile bool g_ble_init_attempted = false;
 // the one-shot bring-up ran (regardless of outcome — the heap guard's
 // verdict is recorded in bluetooth_channel::init_fail_reason());
 // _ready_ms = boot reference for the settle/max-hold windows.
-#if FEATURE_BLE || FEATURE_BLUETOOTH
+#if FEATURE_BLE || FEATURE_BLUETOOTH || FEATURE_BLE_SCAN
 static bool     g_ble_discovery_ready   = false;
 static bool     g_ble_discovery_started = false;
 static uint32_t g_ble_discovery_ready_ms = 0;
@@ -8926,7 +8933,7 @@ void setup() {
   // ble_discovery_start_if_due() once the provisioning join window clears —
   // see the internal-RAM budgeting note at the top of Phase 3). _ready_ms is
   // the reference for the AP-only settle / max-hold windows.
-  #if FEATURE_BLE || FEATURE_BLUETOOTH
+  #if FEATURE_BLE || FEATURE_BLUETOOTH || FEATURE_BLE_SCAN
   if (!in_safe_mode) {
     g_ble_discovery_ready    = true;
     g_ble_discovery_ready_ms = millis();
@@ -9214,7 +9221,7 @@ void setup() {
 // latches; a failed attempt records its reason (self-test + /api/bluetooth)
 // and the operator can retry via the Bluetooth settings tab.
 static void ble_discovery_start_if_due() {
-#if FEATURE_BLE || FEATURE_BLUETOOTH
+#if FEATURE_BLE || FEATURE_BLUETOOTH || FEATURE_BLE_SCAN
   if (!g_ble_discovery_ready || g_ble_discovery_started) return;
   // Gate on the AP being DOWN, not merely WL_CONNECTED: the SoftAP is held up
   // for AP_DROP_GRACE_MS after the STA gets an IP so the provisioning phone can
@@ -9310,6 +9317,18 @@ static void ble_discovery_start_if_due() {
       ble_events_emit_init_failed("ble_manager_init_returned_false");
     }
   }
+  #endif
+
+  // BLE Scout (CSI room attribution): csi_integration ran its state-only
+  // init at web-server start; permit the radio and complete the deferred
+  // NimBLE scan bring-up now. Ordered LAST so bluetooth_channel's heap
+  // guard ran against a clean NimBLEDevice::isInitialized()==false state —
+  // the Scout starting the stack first is exactly how the guard used to be
+  // bypassed on FULL builds (Codex P1 on #824). Its own nimble_scan_init
+  // guard covers the FEATURE_BLUETOOTH=0 case.
+  #if FEATURE_BLE_SCAN
+  ble_scout::ble_scout_allow_radio();
+  ble_scout::ble_scout_init();
   #endif
 
   #if FEATURE_WATCHDOG
