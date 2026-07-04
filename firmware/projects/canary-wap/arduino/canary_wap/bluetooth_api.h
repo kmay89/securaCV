@@ -175,12 +175,24 @@ inline esp_err_t handle_bluetooth_ota_status(httpd_req_t* req) {
   return send_json_response(req, buffer);
 }
 
+// Compose an operator-actionable error. When the radio never initialized,
+// the recorded refusal reason ("internal RAM too low (largest block N KB…)")
+// beats a generic verb or the old stale "check antenna / NimBLE library"
+// guess — the guard's verdict is the actual answer to "why won't it start".
+inline esp_err_t send_bt_error(httpd_req_t* req, const char* fallback) {
+  const char* reason = bluetooth_channel::init_fail_reason();
+  if (!bluetooth_channel::is_initialized() && reason[0]) {
+    return send_error(req, reason);
+  }
+  return send_error(req, fallback);
+}
+
 // POST /api/bluetooth/enable - Enable Bluetooth
 inline esp_err_t handle_bluetooth_enable(httpd_req_t* req) {
   if (bluetooth_channel::enable()) {
     return send_success(req, "Bluetooth enabled");
   }
-  return send_error(req, "Failed to enable Bluetooth");
+  return send_bt_error(req, "Failed to enable Bluetooth");
 }
 
 // POST /api/bluetooth/disable - Disable Bluetooth
@@ -195,7 +207,7 @@ inline esp_err_t handle_bluetooth_advertise_start(httpd_req_t* req) {
   // Without this the call silently returns false when enabled=false in NVS.
   if (!bluetooth_channel::is_enabled()) {
     if (!bluetooth_channel::enable()) {
-      return send_error(req, "Bluetooth init failed (check antenna / NimBLE library)");
+      return send_bt_error(req, "Bluetooth init failed");
     }
   }
   // Check pre-conditions before issuing the start call so the error message
@@ -242,7 +254,7 @@ inline esp_err_t handle_bluetooth_scan_start(httpd_req_t* req) {
     serializeJson(doc, buffer);
     return send_json_response(req, buffer);
   }
-  return send_error(req, "Failed to start scan");
+  return send_bt_error(req, "Failed to start scan");
 }
 
 // POST /api/bluetooth/scan/stop - Stop scanning
@@ -299,7 +311,7 @@ inline esp_err_t handle_bluetooth_pair_start(httpd_req_t* req) {
   // Auto-enable: same rationale as advertise/start.
   if (!bluetooth_channel::is_enabled()) {
     if (!bluetooth_channel::enable()) {
-      return send_error(req, "Bluetooth init failed (check antenna / NimBLE library)");
+      return send_bt_error(req, "Bluetooth init failed");
     }
   }
   if (bluetooth_channel::start_pairing()) {

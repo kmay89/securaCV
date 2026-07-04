@@ -7688,6 +7688,14 @@ static void claim_catch_all_hostname() {
 // watchdog budget.
 static void catch_all_tick() {
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
+  // Never queue the loop task's blocking mDNS operations (600 ms probe,
+  // delegate remove/add) behind an in-flight fleet browse: the mDNS
+  // component serializes API calls internally, so stacking them behind the
+  // worker's ~3 s _securacv._tcp search parks the loop for the sum — real
+  // watchdog budget, gone. Just retry on a later pass; nothing here is
+  // urgent on a seconds timescale.
+  if (__atomic_load_n(&g_fleet_scan_busy, __ATOMIC_ACQUIRE)) return;
+
   const uint32_t now = millis();
 
   if (g_catch_all_claim_pending && catchall_logic::due(now, g_catch_all_claim_due_ms)) {
@@ -8659,6 +8667,17 @@ void setup() {
   esp_task_wdt_reset();
   #endif
 
+  // Per-phase internal-RAM ledger. The whole multi-radio budget question
+  // ("can Bluetooth fit on this build?") turns on who spends what, and the
+  // field debugging so far reconstructed it from crash forensics. One line
+  // per heavy step makes the budget readable off any boot log.
+  auto log_phase_heap = [](const char* phase) {
+    Serial.printf("[HEAP] after %-7s: internal free=%u largest=%u\n", phase,
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+  };
+  log_phase_heap("camera");
+
   // NOTE: Bluetooth/BLE is NOT initialized here. The full stack (controller +
   // NimBLE host + GATT services + discovery subsystems) costs ~55-65 KB of
   // INTERNAL RAM that WiFi, lwIP and the HTTP server need first — a
@@ -8708,6 +8727,8 @@ void setup() {
     Serial.println("[--] SD card init skipped (safe mode)");
   }
   #endif
+
+  log_phase_heap("sd");
 
   // Fresh feed after the SD phase (bounded at SD_MOUNT_TIMEOUT_MS, but the
   // budget shouldn't come out of the audio/WiFi phases below).
@@ -8834,6 +8855,8 @@ void setup() {
   }
   #endif
 
+  log_phase_heap("audio");
+
   // Fresh feed before the network phase (TLS keygen, AP bring-up, mDNS
   // probe, HTTP server, BLE) — see the Phase-3 watchdog note above.
   #if FEATURE_WATCHDOG
@@ -8921,6 +8944,7 @@ void setup() {
     // enables the channel, so this just makes the opt-in reachable.
     if (chirp_channel::init()) {
       Serial.println("[OK] Community chirp channel ready (disabled until enabled)");
+      log_phase_heap("mesh");
     } else {
       Serial.println("[--] Community chirp channel init failed");
     }
@@ -8938,6 +8962,7 @@ void setup() {
     g_ble_discovery_ready    = true;
     g_ble_discovery_ready_ms = millis();
     Serial.println("[..] Bluetooth/BLE bring-up deferred until the join window clears");
+    log_phase_heap("network");
   } else {
     Serial.println("[--] Bluetooth/BLE init skipped (safe mode)");
   }
@@ -9216,32 +9241,20 @@ void setup() {
 // INIT (its ~55-65 KB internal-RAM cost must come after WiFi/lwIP/httpd have
 // taken theirs, and after the setup AP is torn down that memory is back) and
 // the radio ACTIVITY (any BLE duty during the join window starves a phone's
-// WPA2 handshake to the SoftAP). Runs on the loop task; NimBLE init takes
-// ~1 s against the 8 s watchdog, with feeds on both sides. Fires once, then
-// latches; a failed attempt records its reason (self-test + /api/bluetooth)
-// and the operator can retry via the Bluetooth settings tab.
-static void ble_discovery_start_if_due() {
+// WPA2 handshake to the SoftAP).
+//
+// The bring-up body runs on a ONE-SHOT WORKER TASK, never on the loop task:
+// NimBLE controller/host init synchronizes with the WiFi coexistence layer
+// and can block its caller well past the loop's 8 s watchdog budget (field
+// crash: "task_wdt: loopTask" ~21 s after boot, both cores idle — the loop
+// was parked inside the bring-up while the gate ran it inline). Same worker
+// pattern as the SD mount and the MJPEG stream. Priority 1, internal-RAM
+// stack; the task is not watchdog-subscribed and deletes itself when done.
 #if FEATURE_BLE || FEATURE_BLUETOOTH || FEATURE_BLE_SCAN
-  if (!g_ble_discovery_ready || g_ble_discovery_started) return;
-  // Gate on the AP being DOWN, not merely WL_CONNECTED: the SoftAP is held up
-  // for AP_DROP_GRACE_MS after the STA gets an IP so the provisioning phone can
-  // re-associate and read the success card, and starting the 99%-duty scan
-  // during that grace would starve the very handoff it protects. Treat a
-  // runtime AP-only/no-STA state (e.g. after /api/wifi/disconnect) as AP-only
-  // too, so it starts on the settle path rather than the long fallback.
-  const bool ap_active = g_wifi_status.ap_active;
-  const bool ap_only_mode =
-      g_wifi_ap_only || (g_wifi_status.state == WIFI_PROV_AP_ONLY);
-  if (!provisioning_logic::ble_discovery_start_due(
-          ap_only_mode, ap_active, millis(), g_ble_discovery_ready_ms,
-          BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
-    return;
-  }
-  g_ble_discovery_started = true;  // one attempt, whatever the outcome
-
-  #if FEATURE_WATCHDOG
-  esp_task_wdt_reset();
-  #endif
+static void ble_bringup_task(void*) {
+  Serial.printf("[HEAP] before BLE bring-up: internal free=%u largest=%u\n",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
 
   // Pairing channel first — it owns NimBLEDevice::init() (GAP name, TX
   // power, MTU, security) when both features are compiled in.
@@ -9331,9 +9344,41 @@ static void ble_discovery_start_if_due() {
   ble_scout::ble_scout_init();
   #endif
 
-  #if FEATURE_WATCHDOG
-  esp_task_wdt_reset();
-  #endif
+  Serial.printf("[HEAP] after BLE bring-up: internal free=%u largest=%u\n",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+  vTaskDelete(NULL);
+}
+#endif  // FEATURE_BLE || FEATURE_BLUETOOTH || FEATURE_BLE_SCAN
+
+static void ble_discovery_start_if_due() {
+#if FEATURE_BLE || FEATURE_BLUETOOTH || FEATURE_BLE_SCAN
+  if (!g_ble_discovery_ready || g_ble_discovery_started) return;
+  // Gate on the AP being DOWN, not merely WL_CONNECTED: the SoftAP is held up
+  // for AP_DROP_GRACE_MS after the STA gets an IP so the provisioning phone can
+  // re-associate and read the success card, and starting the 99%-duty scan
+  // during that grace would starve the very handoff it protects. Treat a
+  // runtime AP-only/no-STA state (e.g. after /api/wifi/disconnect) as AP-only
+  // too, so it starts on the settle path rather than the long fallback.
+  const bool ap_active = g_wifi_status.ap_active;
+  const bool ap_only_mode =
+      g_wifi_ap_only || (g_wifi_status.state == WIFI_PROV_AP_ONLY);
+  if (!provisioning_logic::ble_discovery_start_due(
+          ap_only_mode, ap_active, millis(), g_ble_discovery_ready_ms,
+          BLE_DISCOVERY_AP_ONLY_SETTLE_MS, BLE_DISCOVERY_MAX_HOLD_MS)) {
+    return;
+  }
+  g_ble_discovery_started = true;  // one attempt, whatever the outcome
+
+  // Internal-RAM stack (no PSRAM task stacks with the prebuilt core). If the
+  // task can't even be created, record the attempt so the self-test reports
+  // FAIL rather than sitting on "Starting up…" forever.
+  if (xTaskCreate(ble_bringup_task, "ble_bringup", 8192, nullptr, 1, nullptr)
+      != pdPASS) {
+    g_ble_init_attempted = true;
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "BLE bring-up task create failed (out of memory)", nullptr);
+  }
 #endif
 }
 
