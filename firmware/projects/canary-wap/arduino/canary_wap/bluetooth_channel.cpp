@@ -64,6 +64,9 @@ static bool g_initialized = false;
 // Empty when initialized (or never attempted). Surfaced by the self-test
 // and /api/bluetooth so "Bluetooth broken" field reports carry the cause.
 static char g_init_fail_reason[96] = "";
+// True while a caller is inside init()'s body — the bring-up worker and the
+// HTTP task can both reach init() now, and NimBLE init is not reentrant.
+static volatile bool g_init_in_progress = false;
 
 // Device-info metadata for the SIG Standard Profiles (Device Information
 // Service). canary_wap.ino calls set_device_metadata() before init() to
@@ -620,6 +623,23 @@ static DeviceType detect_device_type(const NimBLEAdvertisedDevice* device) {
 
 bool init() {
   if (g_initialized) return true;
+
+  // Concurrency latch: init() can now be entered from the boot bring-up
+  // worker task AND the HTTP task (a user tapping Enable/Advertise/Pair
+  // during the bring-up window auto-calls enable() -> init()). NimBLE init
+  // is not reentrant, so exactly one caller may run the body; the loser
+  // backs off with false and the API layer reports 503 "starting up" while
+  // the state reads BT_INITIALIZING. Cleared on every exit path (RAII).
+  bool expected = false;
+  if (!__atomic_compare_exchange_n(&g_init_in_progress, &expected, true,
+                                   false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    return false;
+  }
+  struct InitLatchClear {
+    ~InitLatchClear() {
+      __atomic_store_n(&g_init_in_progress, false, __ATOMIC_RELEASE);
+    }
+  } latch_clear;
 
   set_state(BT_INITIALIZING);
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Initializing BLE", nullptr);
