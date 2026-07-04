@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### canary-wap: BLE bring-up moves to a worker task (loop watchdog crash fix) + memory-budget instrumentation
+
+Field regression from the deferred bring-up: ~21 s after boot,
+`task_wdt: loopTask` with both cores idle — the loop was parked inside the
+BLE bring-up (NimBLE controller/host init synchronizes with the WiFi
+coexistence layer and can block its caller past the loop's 8 s watchdog
+budget), two crashes from tripping safe mode.
+
+- The deferred Bluetooth/BLE bring-up now runs on a **one-shot worker task**
+  (same pattern as the SD mount worker and the MJPEG stream worker); the
+  loop task only spawns it and can never be blocked by it.
+- The `canary.local` steward skips its blocking mDNS operations while a
+  fleet browse is in flight — the mDNS component serializes API calls, so
+  stacking the loop's delegate ops behind the worker's ~3 s `_securacv._tcp`
+  search parked the loop for the sum.
+- **Memory-budget ledger**: one `[HEAP] after <phase>: internal free/largest`
+  line after each heavy boot step (camera, SD, audio, network, mesh) and
+  around the BLE bring-up, so the "can Bluetooth fit on this build?"
+  question reads directly off any boot log instead of being reconstructed
+  from crash forensics. Field measurement so far: the FULL/S3 profile
+  reaches the BLE gate with ~40 KB free internal where the stack needs
+  ~96 KB — Bluetooth on FULL requires a feature trade or a custom
+  (non-prebuilt-core) build; the guard now proves it per-boot.
+- Bluetooth API errors carry the recorded refusal reason: `/api/bluetooth/
+  enable`, advertise/pair auto-enable, and scan-start now return "internal
+  RAM too low (largest block N KB/48 KB, free N KB/96 KB)" instead of
+  "Failed to enable Bluetooth" or the stale "check antenna / NimBLE
+  library" guess.
+
 ### canary-wap: two Canaries on one WiFi now coexist — fleet discovery, canary.local dedupe, Bluetooth boot-order fix
 
 Field report with two devices on the same home network: Bluetooth showed

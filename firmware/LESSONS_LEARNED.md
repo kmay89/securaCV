@@ -73,6 +73,30 @@
   device's unique `canary-<name>.local`.
 - **Date learned:** 2026-07
 
+### Anything that can block >1 s does NOT belong on the loop task — spawn a worker
+- **What happened:** the deferred BLE bring-up (post-join-window) ran inline
+  from loop(); ~21 s after boot the panic watchdog fired on loopTask with
+  both cores IDLE — the loop was parked inside NimBLE init, which
+  synchronizes with the WiFi coexistence layer and can block its caller far
+  past the 8 s budget. Two consecutive crashes; one more would have tripped
+  safe mode.
+- **The pattern (now used 4×):** SD mount worker (#820), MJPEG stream worker
+  (#822), fleet mDNS browse worker (#823), BLE bring-up worker (this fix).
+  The loop task is WDT-subscribed and owns the periodic state machine; its
+  budget is milliseconds. Any call that *can* wait on another subsystem's
+  semaphore (SD driver, httpd socket, mDNS component, BT controller/coex)
+  runs on a one-shot or dedicated worker at low priority with an
+  internal-RAM stack, communicating back through flags/state — never inline.
+- **Corollary for mDNS specifically:** the mDNS component serializes API
+  calls internally. A loop-side "quick" 600 ms probe queued behind a
+  worker's 3 s service browse waits for both; check the browse's busy flag
+  and skip the tick instead.
+- **Instrumentation beats forensics:** the boot log now prints an internal-
+  heap ledger line after every heavy phase and around the BLE bring-up.
+  The multi-radio budget question ("does BLE fit?") is answered by reading
+  a boot log, not by reconstructing it from ENOBUFS crashes.
+- **Date learned:** 2026-07
+
 ### esp_http_server is single-task — a streaming handler starves every other endpoint
 - **What happened:** While the camera peek preview streamed, the whole
   dashboard went dead: `/api/peek/status` polls hung (UI showed "Current:
