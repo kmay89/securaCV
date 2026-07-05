@@ -61,10 +61,12 @@ jobs:
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
       - name: Dump DRAM symbol ranking
-        # nm section letters: b/B = .bss, d/D = .data — on the ESP32-S3
-        # both live in the 320 KB internal DRAM bank (rodata is 'r' and
-        # stays in flash). Largest symbols print LAST (size-sort is
-        # ascending), so the tail of the log is the hit list.
+        # Filter by ADDRESS, not by nm's section letter: ESP-IDF marks
+        # .flash.rodata writable, so nm reports flash-resident const
+        # tables (the gz web assets, camera register tables) as 'D' and a
+        # letter filter counts flash as DRAM. Internal DRAM on the S3 is
+        # 0x3FC88000..0x3FD00000 (the ELF's .dram0.* sections); anything
+        # in that window is real internal-RAM spend.
         run: |
           set -euo pipefail
           ELF=$(find /tmp/wap-buildpath /tmp/wap-build -name '*.elf' | head -1)
@@ -73,11 +75,17 @@ jobs:
           SIZE=$(find "$HOME/.arduino15/packages/esp32/tools" -name 'xtensa-esp32s3-elf-size' | head -1)
           echo "===== section totals ====="
           "$SIZE" -A "$ELF" | grep -Ei 'dram|bss|data|section|Total' || true
-          echo "===== per-object .bss/.data totals (who to blame) ====="
+          echo "===== per-symbol DRAM totals, largest first (who to blame) ====="
+          # NR<=160 instead of head: head's early exit breaks the pipe and
+          # pipefail turns sort's EPIPE into a job failure.
           "$NM" --print-size --size-sort -C "$ELF" \
-            | awk '$3 ~ /^[bBdD]$/ { print strtonum("0x"$2), $4 }' \
-            | sort -rn | head -120 \
-            | awk '{ printf "%8d B  %s\n", $1, substr($0, index($0,$2)) }'
-          echo "===== grand total of listed .bss/.data symbols ====="
-          "$NM" --print-size --size-sort -C "$ELF" \
-            | awk '$3 ~ /^[bBdD]$/ { s += strtonum("0x"$2) } END { printf "%d bytes across all .bss/.data symbols\n", s }'
+            | awk '{ a = strtonum("0x"$1);
+                     if (a >= 0x3FC88000 && a < 0x3FD00000)
+                       print strtonum("0x"$2), substr($0, index($0,$4)) }' \
+            | sort -rn \
+            | awk 'NR<=160 { printf "%8d B  %s\n", $1, substr($0, index($0,$2)) }'
+          echo "===== DRAM grand total across all sized symbols ====="
+          "$NM" --print-size -C "$ELF" \
+            | awk '{ a = strtonum("0x"$1);
+                     if (a >= 0x3FC88000 && a < 0x3FD00000) s += strtonum("0x"$2) }
+                   END { printf "%d bytes\n", s }'
