@@ -29,6 +29,7 @@
 #include <mbedtls/hkdf.h>
 #include <mbedtls/md.h>
 #include <mbedtls/sha256.h>
+#include <mbedtls/platform_util.h>  /* mbedtls_platform_zeroize */
 
 #include "nvs_store.h"
 #include "health_log.h"
@@ -126,6 +127,10 @@ static void fail_result(const char* reason) {
 }
 
 static void seal_task(void*) {
+  /* Everything lives in a nested scope: vTaskDelete(NULL) never returns, so
+   * C++ destructors (File's shared_ptr, ChaChaPoly) only run if the scope
+   * closes first. */
+  {
   const SealJob job = g_job;  /* private copy; loop won't rewrite while busy */
   memset(&g_result, 0, sizeof(g_result));
   g_result.trigger = job.trigger;
@@ -137,6 +142,11 @@ static void seal_task(void*) {
   char     tmp_path[48];
   char     final_path[48];
   bool     tmp_created = false;
+
+  /* Init here, free in the cleanup block — an early break between starts()
+   * and finish() must not leak the context. */
+  mbedtls_sha256_context ct_sha;
+  mbedtls_sha256_init(&ct_sha);
 
   /* Sensitive material — zeroized on every exit path below. */
   uint8_t eph_priv[32];
@@ -194,8 +204,8 @@ static void seal_task(void*) {
     memcpy(salt + 32, job.pubkey, 32);
     static const char INFO[] = "securacv/vault/seal/v1";
     const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-    if (mbedtls_hkdf(md, salt, sizeof(salt), shared, sizeof(shared),
-                     (const uint8_t*)INFO, sizeof(INFO) - 1, key, 32) != 0) {
+    if (!md || mbedtls_hkdf(md, salt, sizeof(salt), shared, sizeof(shared),
+                            (const uint8_t*)INFO, sizeof(INFO) - 1, key, 32) != 0) {
       fail_result("hkdf");
       break;
     }
@@ -240,8 +250,6 @@ static void seal_task(void*) {
     aead.setIV(h.nonce, vault_logic::NONCE_SIZE);
     aead.addAuthData(header_raw, sizeof(header_raw));
 
-    mbedtls_sha256_context ct_sha;
-    mbedtls_sha256_init(&ct_sha);
     mbedtls_sha256_starts(&ct_sha, 0);
 
     constexpr size_t CHUNK = 4096;
@@ -257,7 +265,6 @@ static void seal_task(void*) {
       if (f.write(outbuf, n) != n) { write_ok = false; break; }
     }
     if (!write_ok) {
-      mbedtls_sha256_free(&ct_sha);
       fail_result("sd_write");
       break;
     }
@@ -266,7 +273,6 @@ static void seal_task(void*) {
     aead.computeTag(tag, sizeof(tag));
     aead.clear();
     if (f.write(tag, sizeof(tag)) != sizeof(tag)) {
-      mbedtls_sha256_free(&ct_sha);
       fail_result("sd_write");
       break;
     }
@@ -274,7 +280,6 @@ static void seal_task(void*) {
 
     uint8_t ct_digest[32];
     mbedtls_sha256_finish(&ct_sha, ct_digest);
-    mbedtls_sha256_free(&ct_sha);
     for (int i = 0; i < 8; i++) {
       sprintf(g_result.ct_hash_hex16 + 2 * i, "%02x", ct_digest[i]);
     }
@@ -291,14 +296,23 @@ static void seal_task(void*) {
   } while (false);
 
   /* Cleanup — every path. The staging held PLAINTEXT (the only raw frame
-   * copy outside the camera driver); zeroize before freeing. */
+   * copy outside the camera driver); wipe before freeing. Wipes use
+   * mbedtls_platform_zeroize, which the compiler cannot elide the way it
+   * may a plain memset of about-to-die storage (CodeQL cpp/memset-may-be-
+   * deleted). */
   if (f) f.close();
   if (tmp_created) SD.remove(tmp_path);
-  if (staging) { memset(staging, 0, staging_len); heap_caps_free(staging); }
+  if (staging) {
+    mbedtls_platform_zeroize(staging, staging_len);
+    heap_caps_free(staging);
+  }
   if (outbuf) heap_caps_free(outbuf);
-  memset(eph_priv, 0, sizeof(eph_priv));
-  memset(shared,   0, sizeof(shared));
-  memset(key,      0, sizeof(key));
+  mbedtls_sha256_free(&ct_sha);
+  mbedtls_platform_zeroize(eph_priv, sizeof(eph_priv));
+  mbedtls_platform_zeroize(shared,   sizeof(shared));
+  mbedtls_platform_zeroize(key,      sizeof(key));
+  }  /* nested scope closes: File / ChaChaPoly destructors run HERE,
+      * before vTaskDelete makes this frame immortal. */
 
   __atomic_store_n(&g_seal_done, true, __ATOMIC_RELEASE);
   /* g_worker_busy stays set until the loop adopts the result, so a second
@@ -310,7 +324,10 @@ static void seal_task(void*) {
 
 void init() {
   NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return;
+  /* On a factory-fresh unit the namespace doesn't exist yet and a pure
+   * read-only open fails; fall back to read-write, which creates it. The
+   * defaults below are the fresh-unit truth either way (all off, no key). */
+  if (!nvs.beginReadOnly() && !nvs.beginReadWrite()) return;
   g_cfg.t3_enabled    = nvs.getBool(NVS_KEY_T3, false);
   g_cfg.t4_enabled    = nvs.getBool(NVS_KEY_T4, false);
   g_cfg.glass_enabled = nvs.getBool(NVS_KEY_GLASS, false);
@@ -409,6 +426,10 @@ void poll_completion() {
 
 bool set_pubkey_hex(const char* hex64) {
   if (!hex64) return false;
+  /* Exact-length gate before any indexed access. (hex_nibble would reject
+   * the terminating NUL and short-circuit anyway, but the explicit check
+   * makes the bound obvious and rejects overlong input up front.) */
+  if (strlen(hex64) != 2 * vault_logic::PUBKEY_SIZE) return false;
   uint8_t pub[vault_logic::PUBKEY_SIZE];
   for (size_t i = 0; i < vault_logic::PUBKEY_SIZE; i++) {
     uint8_t hi, lo;
@@ -417,7 +438,6 @@ bool set_pubkey_hex(const char* hex64) {
     }
     pub[i] = (uint8_t)((hi << 4) | lo);
   }
-  if (hex64[2 * vault_logic::PUBKEY_SIZE] != '\0') return false;
 
   NvsManager& nvs = NvsManager::instance();
   if (!nvs.beginReadWrite()) return false;

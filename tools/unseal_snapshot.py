@@ -136,12 +136,19 @@ def cmd_gen_key(args: argparse.Namespace) -> int:
 
     priv_path = args.out
     pub_path = args.out + ".pub"
-    if os.path.exists(priv_path) and not args.force:
+    # Create the private key 0600 ATOMICALLY (os.open mode, not a post-hoc
+    # chmod): under a permissive umask a plain open() would leave a window
+    # where the file is world-readable — and this key unlocks every snapshot
+    # sealed to it. O_EXCL doubles as the no-overwrite guard.
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if args.force else os.O_EXCL)
+    try:
+        fd = os.open(priv_path, flags, 0o600)
+    except FileExistsError:
         print(f"refusing to overwrite {priv_path} (use --force)", file=sys.stderr)
         return 1
-    with open(priv_path, "w", encoding="ascii") as fh:
+    with os.fdopen(fd, "w", encoding="ascii") as fh:
         fh.write(priv_raw.hex() + "\n")
-    os.chmod(priv_path, 0o600)
+    os.chmod(priv_path, 0o600)  # --force may have reused a laxer existing file
     with open(pub_path, "w", encoding="ascii") as fh:
         fh.write(pub_raw.hex() + "\n")
 

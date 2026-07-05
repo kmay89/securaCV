@@ -250,17 +250,15 @@ static const uint32_t AUDIO_MQTT_EVENT_HOLD_MS = 30000;
 // Sealed alarm snapshots — opt-in camera frames on life-safety acoustic
 // triggers, encrypted to an operator-held key the device never holds
 // (write-only escrow; see vault_snapshot.h and docs/sealed_snapshot_vault.md).
+// NOTE: only includes and variables here — a function DEFINITION this early
+// would become the sketch's first one, moving the Arduino builder's
+// auto-prototype insertion point above the .ino's own type declarations
+// (FixState, GnssFix, WitnessRecord, ...) and breaking the whole build.
+// vault_rotate_dir_hook() is defined next to the vault HTTP handlers.
 #if FEATURE_VAULT_SNAPSHOT
 #include "vault_logic.h"
 #include "vault_snapshot.h"
 #include "vault_events_module.h"
-
-// vault_snapshot.cpp cannot include data_mgmt_api.h (it transitively pulls in
-// the single-TU hardware_state.h, which defines g_hw). This sketch is the one
-// TU that owns both, so it supplies the ring-rotation hook.
-uint32_t vault_rotate_dir_hook(const char* dir, uint32_t keep) {
-  return datamgmt::rotate_dir(dir, keep);
-}
 
 // POST /api/vault/test runs on the HTTP task, but request_capture() is
 // loop-task-only (cooldown stamps, NVS seq, the job struct and the CSI time
@@ -6665,6 +6663,13 @@ static esp_err_t handle_peek_init_auth(httpd_req_t* req) {
 // only capture these routes can start is the explicit TEST one, and even
 // that is deferred to loop() (request_capture is loop-task-only).
 // ════════════════════════════════════════════════════════════════════════════
+
+// vault_snapshot.cpp cannot include data_mgmt_api.h (it transitively pulls in
+// the single-TU hardware_state.h, which defines g_hw). This sketch is the one
+// TU that owns both, so it supplies the ring-rotation hook.
+uint32_t vault_rotate_dir_hook(const char* dir, uint32_t keep) {
+  return datamgmt::rotate_dir(dir, keep);
+}
 
 static esp_err_t handle_vault_status(httpd_req_t* req) {
   g_health.http_requests++;

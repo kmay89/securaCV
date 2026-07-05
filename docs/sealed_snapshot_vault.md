@@ -39,9 +39,13 @@ Mitigations that keep the spirit of "preview only":
   There is no code path that decrypts a `.svlt` file on-device.
 - **The chokepoint never sees image bytes.** The `media.vault` csi_event
   module declares exactly one event (`frame_sealed`) whose field allow-list
-  is state_name (trigger tag) + note (ciphertext SHA-256 prefix) +
-  time_bucket. The allow-list is structural: there is no field that could
-  carry image data.
+  is note (`"<trigger tag> <ciphertext SHA-256 prefix>"`) + time_bucket.
+  The allow-list is structural: there is no field that could carry image
+  data. The event is ANOMALY-category and stateless on purpose: it bypasses
+  the quiet-hours hold (matching the acoustic module's classification of
+  the very triggers that cause a seal — a night-time alarm is exactly when
+  the hash matters) and bypasses the bundler (same-state bundling would
+  fold a second seal into the first row and silently drop its hash).
 - **Local only.** Files stay in `/VAULT` on the SD card, bounded to the
   newest 20 by the same tested `datamgmt::rotate_dir` used for `/EXPORT`.
   Nothing is pushed anywhere; download is an authenticated, operator-initiated

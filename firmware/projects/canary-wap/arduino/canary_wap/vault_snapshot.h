@@ -17,9 +17,9 @@
  *     decision runs inline (pure vault_logic); the blocking capture+seal
  *     runs on a one-shot worker task; the loop adopts the result and emits
  *     the frame_sealed witness event (chokepoint is loop-single-threaded).
- *   - set_*/list/delete/validate: HTTP task is fine (NVS + SD reads; the
- *     pubkey/config handoff to captures is copied into the job on the loop
- *     at request time, so no cross-task tearing).
+ *   - setters, list, delete, validate: HTTP task is fine (NVS + SD reads;
+ *     the pubkey/config handoff to captures is copied into the job on the
+ *     loop at request time, so no cross-task tearing).
  *
  * File format + decision table: vault_logic.h (host-tested).
  */

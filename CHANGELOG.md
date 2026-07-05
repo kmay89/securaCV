@@ -22,8 +22,11 @@ break-glass vault.
 - Capture + seal run on a one-shot worker task (PSRAM staging, framebuffer
   returned immediately, tmp+rename, full zeroize); the loop adopts the
   result and emits a `media.vault/frame_sealed` witness event whose
-  allow-list is trigger tag + ciphertext SHA-256 prefix + time bucket —
-  image bytes structurally cannot cross the chokepoint.
+  allow-list is a `"<trigger tag> <ciphertext SHA-256 prefix>"` note +
+  time bucket — image bytes structurally cannot cross the chokepoint. The
+  event is anomaly-category and stateless so a night-time (quiet-hours)
+  seal still chains its hash and the bundler cannot fold two seals into
+  one row.
 - Ring of newest 20 sealed files via the tested `datamgmt::rotate_dir`;
   512 KB per-frame cap; 10–3600 s per-trigger cooldown (default 60 s).
 - 8 auth-gated routes (`/api/vault/*`: status, config, key set/clear, list,
