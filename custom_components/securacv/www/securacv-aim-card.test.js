@@ -116,6 +116,42 @@ test("discoverSwitchEntity returns null when nothing matches", () => {
   assert.equal(discoverSwitchEntity(null, "canary_vision_001", null), null);
 });
 
+test("discoverSwitchEntity never crosses prefix-colliding device ids", () => {
+  // canary_vision_001 vs canary_vision_0010: a substring match would make
+  // both switches candidates and could pair this card's aim topic with the
+  // OTHER device's switch — aiming one camera while toggling another.
+  const states = {
+    "switch.securacv_canary_vision_canary_vision_0010_aim_assist": {},
+    "switch.securacv_canary_vision_canary_vision_001_aim_assist": {},
+  };
+  assert.equal(
+    discoverSwitchEntity(states, "canary_vision_001", null),
+    "switch.securacv_canary_vision_canary_vision_001_aim_assist"
+  );
+  assert.equal(
+    discoverSwitchEntity(states, "canary_vision_0010", null),
+    "switch.securacv_canary_vision_canary_vision_0010_aim_assist"
+  );
+  // The slug must also be a whole segment: a bare-suffix id still matches…
+  assert.equal(
+    discoverSwitchEntity(
+      { "switch.canary_vision_001_aim_assist": {} },
+      "canary_vision_001",
+      null
+    ),
+    "switch.canary_vision_001_aim_assist"
+  );
+  // …but an id where the slug is glued to other characters does not.
+  assert.equal(
+    discoverSwitchEntity(
+      { "switch.xcanary_vision_001_aim_assist": {} },
+      "canary_vision_001",
+      null
+    ),
+    null
+  );
+});
+
 // ─── statusLine ───────────────────────────────────────────────────────
 
 test("statusLine covers the honest failure and live states", () => {

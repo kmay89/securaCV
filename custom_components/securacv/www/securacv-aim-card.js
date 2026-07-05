@@ -106,12 +106,15 @@
     if (configured) return configured;
     if (!states || !deviceId) return null;
     const slug = String(deviceId).toLowerCase().replace(/[^a-z0-9]+/g, "_");
-    const candidates = Object.keys(states).filter(
-      (id) =>
-        id.startsWith("switch.") &&
-        id.endsWith("_aim_assist") &&
-        id.includes(slug)
-    );
+    // Exact slug segment immediately before _aim_assist — a substring match
+    // would let a prefix-colliding device id (canary_vision_001 vs ..._0010)
+    // pair this card's aim topic with a DIFFERENT device's switch.
+    const suffix = `${slug}_aim_assist`;
+    const candidates = Object.keys(states).filter((id) => {
+      if (!id.startsWith("switch.") || !id.endsWith(suffix)) return false;
+      const pre = id.charAt(id.length - suffix.length - 1);
+      return pre === "_" || pre === ".";
+    });
     return candidates.length ? candidates.sort()[0] : null;
   }
 
