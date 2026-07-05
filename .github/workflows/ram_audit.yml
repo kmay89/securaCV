@@ -1,0 +1,78 @@
+# Manual diagnostic: who owns the canary-wap internal-RAM static budget?
+#
+# The FULL/S3 build reports ~158 KB of DRAM consumed by globals before a
+# single heap allocation (48% of the 320 KB bank), and the runtime heap
+# that's left is what decides whether the BLE stack (~96 KB) can ever
+# start. This workflow builds the exact shipped configuration and prints
+# every .data/.bss symbol over 256 bytes, size-sorted, straight from the
+# ELF — the ground truth a source-level scan can't provide (struct sizes,
+# library statics, alignment).
+#
+# Run it from the Actions tab (workflow_dispatch) on any branch. Output is
+# in the "Dump DRAM symbol ranking" step log.
+
+name: RAM Audit (canary-wap)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ram-audit:
+    name: DRAM static-symbol ranking (FULL/S3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.x
+
+      - name: Configure Arduino CLI
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install "Crypto"
+          arduino-cli lib install "ArduinoJson"
+          arduino-cli lib install "NimBLE-Arduino"
+
+      - name: Compile firmware (same flags as the CI build job)
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
+            --libraries firmware/common \
+            --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DBOARD_HAS_PSRAM" \
+            --output-dir /tmp/wap-build \
+            --build-path /tmp/wap-buildpath \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
+      - name: Dump DRAM symbol ranking
+        # nm section letters: b/B = .bss, d/D = .data — on the ESP32-S3
+        # both live in the 320 KB internal DRAM bank (rodata is 'r' and
+        # stays in flash). Largest symbols print LAST (size-sort is
+        # ascending), so the tail of the log is the hit list.
+        run: |
+          set -euo pipefail
+          ELF=$(find /tmp/wap-buildpath /tmp/wap-build -name '*.elf' | head -1)
+          echo "ELF: $ELF"
+          NM=$(find "$HOME/.arduino15/packages/esp32/tools" -name 'xtensa-esp32s3-elf-nm' | head -1)
+          SIZE=$(find "$HOME/.arduino15/packages/esp32/tools" -name 'xtensa-esp32s3-elf-size' | head -1)
+          echo "===== section totals ====="
+          "$SIZE" -A "$ELF" | grep -Ei 'dram|bss|data|section|Total' || true
+          echo "===== per-object .bss/.data totals (who to blame) ====="
+          "$NM" --print-size --size-sort -C "$ELF" \
+            | awk '$3 ~ /^[bBdD]$/ { print strtonum("0x"$2), $4 }' \
+            | sort -rn | head -120 \
+            | awk '{ printf "%8d B  %s\n", $1, substr($0, index($0,$2)) }'
+          echo "===== grand total of listed .bss/.data symbols ====="
+          "$NM" --print-size --size-sort -C "$ELF" \
+            | awk '$3 ~ /^[bBdD]$/ { s += strtonum("0x"$2) } END { printf "%d bytes across all .bss/.data symbols\n", s }'
