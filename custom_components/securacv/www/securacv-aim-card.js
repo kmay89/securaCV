@@ -173,6 +173,7 @@
       this._lastFrameAt = 0;
       this._unsub = null;
       this._subscribedTopic = null;
+      this._subscribingTopic = null;
       this._subscribeError = null;
       this._staleTimer = null;
       this._built = false;
@@ -227,23 +228,40 @@
     async _maybeSubscribe() {
       if (!this._hass || !this._config.device_id) return;
       const topic = `${this._config.prefix}/${this._config.device_id}/aim`;
-      if (this._subscribedTopic === topic || this._subscribing) return;
-      this._subscribing = true;
+      if (this._subscribedTopic === topic || this._subscribingTopic === topic) return;
+      // Track the in-flight topic and re-check it after the await: a
+      // reconfigure or disconnect while the subscription is in flight must
+      // not commit a stale subscription (wrong topic) or leak the websocket
+      // subscription of a detached element.
+      this._subscribingTopic = topic;
       this._teardownSubscription();
       try {
         // Same websocket command HA's dev-tools "listen to a topic" uses.
         // Requires an admin user; non-admins get a clear message instead.
-        this._unsub = await this._hass.connection.subscribeMessage(
+        const unsub = await this._hass.connection.subscribeMessage(
           (msg) => this._onAimMessage(msg),
           { type: "mqtt/subscribe", topic }
         );
+        if (!this.isConnected || this._subscribingTopic !== topic) {
+          try {
+            unsub();
+          } catch (_e) {
+            /* connection already gone */
+          }
+          return;
+        }
+        this._unsub = unsub;
         this._subscribedTopic = topic;
         this._subscribeError = null;
       } catch (err) {
-        this._subscribeError =
-          err && err.code === "unauthorized" ? "not-admin" : String(err && err.message || err);
+        if (this._subscribingTopic === topic) {
+          this._subscribeError =
+            err && err.code === "unauthorized" ? "not-admin" : String(err && err.message || err);
+        }
       } finally {
-        this._subscribing = false;
+        if (this._subscribingTopic === topic) {
+          this._subscribingTopic = null;
+        }
       }
       this._render();
     }
@@ -342,14 +360,19 @@
       const cols = frame ? frame.cols : 3;
 
       // Voxel cell highlight (the coarse claim the firmware actually emits).
+      // globalAlpha instead of hex-suffix alpha: getComputedStyle resolves
+      // theme colors to rgb(...)/rgba(...), where "+ '33'" is invalid CSS.
       if (frame && frame.present && frame.voxelR >= 0 && frame.voxelC >= 0) {
-        ctx.fillStyle = hotColor + "33"; // ~20% alpha
+        ctx.save();
+        ctx.fillStyle = hotColor;
+        ctx.globalAlpha = 0.2;
         ctx.fillRect(
           (frame.voxelC * W) / cols,
           (frame.voxelR * H) / rows,
           W / cols,
           H / rows
         );
+        ctx.restore();
       }
 
       // Voxel grid lines.
