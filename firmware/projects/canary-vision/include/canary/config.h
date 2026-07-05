@@ -60,6 +60,15 @@ static constexpr uint32_t WIFI_OUTAGE_REBOOT_MS = 300000;  // 5 min outage -> re
 static constexpr bool   WIFI_POWER_SAVE    = false;
 static constexpr int8_t WIFI_TX_POWER_QDBM = -1;
 
+// -------------------- Aim assist (bench/aiming) --------------------
+// Boxes-only live channel for the Lovelace aim card: coordinates and
+// scores at a usable cadence, never pixels. Off by default; a switch in
+// HA turns it on; it turns itself off after AIM_AUTO_OFF_MS so a
+// forgotten toggle can't stream box telemetry forever.
+static constexpr uint32_t AIM_PUBLISH_MS      = 200;     // detection frames (~5 Hz)
+static constexpr uint32_t AIM_IDLE_PUBLISH_MS = 1000;    // empty frames (clears the box)
+static constexpr uint32_t AIM_AUTO_OFF_MS     = 600000;  // 10 min
+
 // -------------------- Heap health (diagnostics) --------------------
 // Same thresholds as the ESP32-S3 tree's securacv_diagnostics heap monitor.
 // Levels escalate immediately and de-escalate only past +HYSTERESIS, so the

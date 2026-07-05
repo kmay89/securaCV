@@ -28,6 +28,16 @@ namespace canary::net {
   bool take_pending_install();   // true exactly once after HA pressed Install
   int take_pending_auto();       // -1 none; 0/1 = switch set off/on
 
+  // ── Aim assist (bench/aiming) ──────────────────────────────────────────
+  // Boxes-only live channel for the Lovelace aim card. publish_aim is
+  // QUIET (no per-publish serial log — it runs at ~5 Hz) and non-retained;
+  // the switch state is retained so HA renders the toggle correctly after
+  // a broker restart. The inbound switch command uses the same
+  // latch-and-drain pattern as the other HA commands.
+  bool publish_aim(const Topics& topics, const char* json_payload);
+  bool publish_aim_state_retained(const Topics& topics, bool enabled);
+  int take_pending_aim();       // -1 none; 0/1 = switch set off/on
+
   // ── Runtime detection settings ─────────────────────────────────────────
   // Same latch-and-drain pattern as the update commands: the callback only
   // parses and latches inbound numbers; main.cpp drains them, applies via

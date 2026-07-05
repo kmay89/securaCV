@@ -278,6 +278,26 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     publish_cfg(mqtt, t, p);
   }
 
+  // Aim assist switch (bench/aiming): streams a boxes-only live channel
+  // (coordinates + scores, never pixels) to securacv/<id>/aim for the
+  // Lovelace aim card. Off by default and auto-off after 10 minutes.
+  {
+    char t[192], p[1024];
+    topic_for("switch", "aim_assist", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Aim assist\","
+             "\"unique_id\":\"%s_aim_assist\","
+             "\"state_topic\":\"%s\","
+             "\"command_topic\":\"%s\","
+             "\"icon\":\"mdi:crosshairs-gps\","
+             "\"entity_category\":\"config\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.aim_state, topics.aim_cmd, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
   // Auto-update opt-in switch. Off by default — a witness device should
   // not restart unattended unless its owner chose that.
   {

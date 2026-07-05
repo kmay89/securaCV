@@ -2,7 +2,8 @@
 
 Privacy-preserving optical witness firmware that publishes semantic signals over MQTT and self-registers in Home Assistant via MQTT Discovery. Inference runs **on the Grove Vision AI V2 module** (Himax HX6538 NPU); the ESP32 host only ever sees boxes/scores over I2C — no pixels cross the wire.
 
-**Device guide (read first for hardware setup):** [`docs/hardware/grove_vision_ai_v2_guide.md`](../../../docs/hardware/grove_vision_ai_v2_guide.md) — covers the module's **two USB-C ports** (model loading vs firmware flashing), the Grove I2C port, loading the initial AI model via SenseCraft, and recovery.
+**First build? Follow the end-to-end walkthrough:** [`docs/hardware/canary_vision_getting_started.md`](../../../docs/hardware/canary_vision_getting_started.md) — unboxing → model load → flash → HA → aiming.
+**Device guide (hardware reference):** [`docs/hardware/grove_vision_ai_v2_guide.md`](../../../docs/hardware/grove_vision_ai_v2_guide.md) — covers the module's **two USB-C ports** (model loading vs firmware flashing), the Grove I2C port, loading the initial AI model via SenseCraft, and recovery.
 **Roadmap:** [`docs/strategy/10-grove-vision-ai-v2-program.md`](../../../docs/strategy/10-grove-vision-ai-v2-program.md)
 
 ## Supported host boards
@@ -56,6 +57,17 @@ A ready-made dashboard for these entities ships at
 (voxel heat grid, tuning view, firmware view) with companion alert
 automations at
 [`homeassistant/automations/securacv_vision_presence.yaml`](../../../homeassistant/automations/securacv_vision_presence.yaml).
+
+## Aim assist (boxes-only live view)
+
+An HA switch (`Aim assist`, off by default) streams the best person box —
+coordinates, score, voxel cell, **never pixels** — at ~5 Hz on
+`securacv/<device_id>/aim` (non-retained) so the dashboard's *Aim camera*
+card (`custom:securacv-aim-card`) can render a live wireframe for aiming
+and threshold tuning after the device is mounted. Empty frames publish at
+1 Hz so the card clears; the switch auto-offs after 10 minutes so a
+forgotten toggle can't stream box telemetry forever. Constants in
+`include/canary/config.h` (`AIM_*`).
 
 ## Runtime robustness (ESP32-S3 tree parity)
 

@@ -36,6 +36,53 @@ static char last_event_name[48] = "boot";
 static uint32_t last_invoke_ms = 0;
 static uint32_t last_heartbeat_ms = 0;
 
+// Aim assist (bench/aiming): boxes-only live channel, toggled from HA.
+// Auto-off after AIM_AUTO_OFF_MS so a forgotten switch can't stream box
+// telemetry indefinitely. Never pixels — coordinates and scores only.
+static bool     g_aim_on = false;
+static uint32_t g_aim_started_ms = 0;
+static uint32_t g_aim_last_pub_ms = 0;
+
+static void aim_set(bool on, uint32_t now_ms) {
+  if (g_aim_on == on) {
+    canary::net::publish_aim_state_retained(TOPICS, g_aim_on);
+    return;
+  }
+  g_aim_on = on;
+  g_aim_started_ms = now_ms;
+  g_aim_last_pub_ms = 0;
+  canary::net::publish_aim_state_retained(TOPICS, g_aim_on);
+  canary::log_line("AIM", on ? "Aim assist ON (auto-off in 10 min)."
+                             : "Aim assist off.");
+}
+
+// Publish one aim frame, throttled: detection frames at AIM_PUBLISH_MS,
+// empty frames at AIM_IDLE_PUBLISH_MS (so the card clears its box without
+// spamming the broker while the room is empty).
+static void aim_publish(const VisionSample& vs, uint32_t now_ms) {
+  const uint32_t period = vs.person_now ? AIM_PUBLISH_MS : AIM_IDLE_PUBLISH_MS;
+  if ((now_ms - g_aim_last_pub_ms) < period) return;
+  g_aim_last_pub_ms = now_ms;
+
+  char msg[256];
+  const int n = snprintf(msg, sizeof(msg),
+           "{"
+           "\"present\":%s,"
+           "\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,"
+           "\"score\":%d,"
+           "\"vr\":%d,\"vc\":%d,\"rows\":%u,\"cols\":%u,"
+           "\"fw\":%d,\"fh\":%d"
+           "}",
+           vs.person_now ? "true" : "false",
+           vs.bbox.x, vs.bbox.y, vs.bbox.w, vs.bbox.h,
+           vs.bbox.score,
+           vs.voxel.r, vs.voxel.c,
+           (unsigned)VOXEL_ROWS, (unsigned)VOXEL_COLS,
+           FRAME_W, FRAME_H);
+  if (n <= 0 || (size_t)n >= sizeof(msg)) return;
+  canary::net::publish_aim(TOPICS, msg);
+}
+
 static void set_last_event(const char* e) {
   strncpy(last_event_name, e ? e : "boot", sizeof(last_event_name) - 1);
   last_event_name[sizeof(last_event_name) - 1] = '\0';
@@ -297,6 +344,17 @@ void loop() {
   // return so slider changes apply at MQTT speed, not vision-tick speed.
   drain_detect_cfg_commands();
 
+  // Aim-assist switch: drain the HA command and enforce the auto-off.
+  {
+    const int aim_cmd = canary::net::take_pending_aim();
+    if (aim_cmd >= 0) aim_set(aim_cmd == 1, now_ms);
+    if (g_aim_on &&
+        (now_ms - g_aim_started_ms) > AIM_AUTO_OFF_MS) {
+      canary::log_line("AIM", "Auto-off (10 min elapsed).");
+      aim_set(false, now_ms);
+    }
+  }
+
   if ((now_ms - last_heartbeat_ms) > HEARTBEAT_MS) {
     last_heartbeat_ms = now_ms;
     publish_heartbeat_now(now_ms);
@@ -315,6 +373,8 @@ void loop() {
 
   VisionSample vs{};
   if (!canary::vision::sample(vs)) return;
+
+  if (g_aim_on) aim_publish(vs, now_ms);
 
   EventMsg ev{};
   const bool emitted = fsm.tick(vs, now_ms, ev);

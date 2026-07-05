@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Canary Vision: unboxing-to-using walkthrough + boxes-only "Aim camera" view
+
+- **Getting-started guide** (`docs/hardware/canary_vision_getting_started.md`):
+  one clean path from a sealed box to a publishing witness — assemble
+  (camera ribbon + XIAO stacking orientation), load the Person Detection
+  model with Seeed's SenseCraft flasher (kept for exactly that one job,
+  per the strategy doc), flash canary-vision, watch MQTT discovery
+  populate HA, import the dashboard, aim, tune, troubleshoot.
+- **Aim assist (firmware)**: a new HA switch streams the best person box —
+  coordinates, score, voxel cell, never pixels — at ~5 Hz on
+  `securacv/<id>/aim` (non-retained; empty frames at 1 Hz so the view
+  clears). Off by default, 10-minute auto-off, quiet publisher (no serial
+  spam at 5 Hz).
+- **Aim camera Lovelace card** (`custom:securacv-aim-card`, auto-served by
+  the integration like the timeline card): draws the live bounding-box
+  wireframe, score, and voxel-grid highlight on a canvas over HA's MQTT
+  websocket, with a Start/Stop aiming button bound to the switch and
+  honest status lines (needs an HA admin user for the live stream; clears
+  to stale after 5 s of silence). Replaces re-plugging a laptop into the
+  module's USB port for SenseCraft preview after deployment — that stays
+  the one-time bench check; in-situ aiming never exports a frame. Node
+  unit tests cover the payload/geometry/discovery helpers (11 cases,
+  wired into CI).
+
 ### canary-wap: sealed alarm snapshots — opt-in, write-only-escrow camera frames on life-safety triggers
 
 New `FEATURE_VAULT_SNAPSHOT` subsystem (FULL/S3 only; needs camera + PDM

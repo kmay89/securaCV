@@ -37,6 +37,11 @@ static char s_update_state_cache[640] = {0};
 static bool s_update_state_set = false;
 static int s_update_auto_cache = -1;
 
+// Inbound aim-assist switch command (latch-and-drain like the OTA auto
+// switch). Retained switch state cached for reconnect republish.
+static volatile int s_pending_aim = -1;
+static int s_aim_state_cache = -1;
+
 // Inbound runtime detection settings (HA number entities). Latched by the
 // callback, drained from the main loop — same pattern as the OTA commands.
 // -1 = nothing pending.
@@ -99,7 +104,8 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
 
   const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
   const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
-  if (!is_install && !is_auto) return;
+  const bool is_aim = (strcmp(topic, g_topics.aim_cmd) == 0);
+  if (!is_install && !is_auto && !is_aim) return;
 
   // Trim leading whitespace/quotes; require a token boundary after the
   // match so a mangled payload can't trigger a flash cycle.
@@ -111,11 +117,25 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
     if (token_at(p, n, "install", 7)) s_pending_install = true;
     return;
   }
+  if (is_aim) {
+    if (token_at(p, n, "ON", 2) || token_at(p, n, "on", 2)) {
+      s_pending_aim = 1;
+    } else if (token_at(p, n, "OFF", 3) || token_at(p, n, "off", 3)) {
+      s_pending_aim = 0;
+    }
+    return;
+  }
   if (token_at(p, n, "ON", 2) || token_at(p, n, "on", 2)) {
     s_pending_auto = 1;
   } else if (token_at(p, n, "OFF", 3) || token_at(p, n, "off", 3)) {
     s_pending_auto = 0;
   }
+}
+
+int take_pending_aim() {
+  const int v = s_pending_aim;
+  s_pending_aim = -1;
+  return v;
 }
 
 bool take_pending_install() {
@@ -254,6 +274,19 @@ void publish_event(const Topics& topics, const char* json_payload) {
   publish_checked("EVENT", topics.events, json_payload, false);
 }
 
+bool publish_aim(const Topics& topics, const char* json_payload) {
+  if (!json_payload || !mqtt.connected()) return false;
+  // Deliberately quiet: this runs at ~5 Hz while aim assist is on, and
+  // publish_checked's per-publish serial line would drown the console.
+  return mqtt.publish(topics.aim, json_payload, false);
+}
+
+bool publish_aim_state_retained(const Topics& topics, bool enabled) {
+  s_aim_state_cache = enabled ? 1 : 0;
+  if (!mqtt.connected()) return false;
+  return publish_checked("AIM", topics.aim_state, enabled ? "ON" : "OFF", true);
+}
+
 void ha_discovery_publish_once(const Topics& topics) {
   if (discovery_done) return;
   canary::ha::publish_discovery(mqtt, topics);
@@ -320,6 +353,12 @@ void mqtt_reconnect_blocking() {
     publish_checked("OTA", g_topics.update_auto,
                     s_update_auto_cache ? "ON" : "OFF", true);
   }
+
+  // Aim assist: re-subscribe the switch command and reconcile the retained
+  // state. Defaults to OFF on a boot where main.cpp hasn't set it yet.
+  mqtt.subscribe(g_topics.aim_cmd, 1);
+  publish_checked("AIM", g_topics.aim_state,
+                  (s_aim_state_cache == 1) ? "ON" : "OFF", true);
 
   // Runtime detection settings: re-subscribe the command topics and
   // reconcile the retained state from the NVS-backed values.
