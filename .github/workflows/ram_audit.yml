@@ -8,13 +8,18 @@
 # ELF — the ground truth a source-level scan can't provide (struct sizes,
 # library statics, alignment).
 #
-# Run it from the Actions tab (workflow_dispatch) on any branch. Output is
-# in the "Dump DRAM symbol ranking" step log.
+# Run it from the Actions tab (workflow_dispatch) on any branch — or touch
+# this file in a PR and it runs there (dispatch needs actions:write, which
+# bot integrations may not have). Output is in the "Dump DRAM symbol
+# ranking" step log.
 
 name: RAM Audit (canary-wap)
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/ram_audit.yml'
 
 permissions:
   contents: read
