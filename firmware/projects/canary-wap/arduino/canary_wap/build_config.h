@@ -168,6 +168,7 @@
   #define FEATURE_QR_PROVISION  0   // Camera-based WiFi QR provisioning
   #define FEATURE_ACOUSTIC_EVENTS     0   // PDM mic T3/T4 alarm cadence detection
   #define FEATURE_ACOUSTIC_TRANSIENTS 0   // Knock/doorbell/glass-break detectors
+  #define FEATURE_VAULT_SNAPSHOT      0   // Sealed alarm snapshots (needs camera + mic)
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -207,6 +208,7 @@
   #define FEATURE_QR_PROVISION  0   // Camera may not be in DEV build
   #define FEATURE_ACOUSTIC_EVENTS     HW_HAS_PDM_MIC  // PDM mic T3/T4 alarm cadence detection
   #define FEATURE_ACOUSTIC_TRANSIENTS 0   // Skip knock/doorbell/glass-break (FULL only)
+  #define FEATURE_VAULT_SNAPSHOT      0   // Sealed alarm snapshots need the camera (FULL only)
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0
@@ -244,6 +246,10 @@
   #define FEATURE_QR_PROVISION  HW_HAS_CAMERA   // Camera-based WiFi QR provisioning
   #define FEATURE_ACOUSTIC_EVENTS     HW_HAS_PDM_MIC  // PDM mic T3/T4 alarm cadence detection
   #define FEATURE_ACOUSTIC_TRANSIENTS FEATURE_ACOUSTIC_EVENTS  // Knock/doorbell/glass-break
+  // Sealed alarm snapshots: acoustic-triggered camera frames encrypted to an
+  // operator-held key (write-only escrow). Needs both the camera (capture)
+  // and the PDM mic (triggers); resolves to 0 on ESP32-C3.
+  #define FEATURE_VAULT_SNAPSHOT      (HW_HAS_CAMERA && HW_HAS_PDM_MIC)
 
   #define DEBUG_NMEA            0
   #define DEBUG_CBOR            0

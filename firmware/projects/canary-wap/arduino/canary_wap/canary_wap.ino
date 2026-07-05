@@ -247,6 +247,29 @@ static bool     g_audio_mqtt_dirty     = false;
 static const uint32_t AUDIO_MQTT_EVENT_HOLD_MS = 30000;
 #endif
 
+// Sealed alarm snapshots — opt-in camera frames on life-safety acoustic
+// triggers, encrypted to an operator-held key the device never holds
+// (write-only escrow; see vault_snapshot.h and docs/sealed_snapshot_vault.md).
+#if FEATURE_VAULT_SNAPSHOT
+#include "vault_logic.h"
+#include "vault_snapshot.h"
+#include "vault_events_module.h"
+
+// vault_snapshot.cpp cannot include data_mgmt_api.h (it transitively pulls in
+// the single-TU hardware_state.h, which defines g_hw). This sketch is the one
+// TU that owns both, so it supplies the ring-rotation hook.
+uint32_t vault_rotate_dir_hook(const char* dir, uint32_t keep) {
+  return datamgmt::rotate_dir(dir, keep);
+}
+
+// POST /api/vault/test runs on the HTTP task, but request_capture() is
+// loop-task-only (cooldown stamps, NVS seq, the job struct and the CSI time
+// bucket are all loop-owned). The handler latches this flag; loop() consumes
+// it and runs the real request there — same deferral pattern as the HA OTA
+// install command.
+static volatile bool g_vault_test_pending = false;
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
@@ -6635,6 +6658,242 @@ static esp_err_t handle_peek_init_auth(httpd_req_t* req) {
 }
 #endif
 
+#if FEATURE_VAULT_SNAPSHOT
+// ════════════════════════════════════════════════════════════════════════════
+// SEALED-SNAPSHOT VAULT — /api/vault/* (vault_snapshot.h)
+// All state mutation goes through vault_snapshot's fail-closed setters; the
+// only capture these routes can start is the explicit TEST one, and even
+// that is deferred to loop() (request_capture is loop-task-only).
+// ════════════════════════════════════════════════════════════════════════════
+
+static esp_err_t handle_vault_status(httpd_req_t* req) {
+  g_health.http_requests++;
+  const vault_logic::VaultConfig cfg = vault_snapshot::get_config();
+  char key_id[17];
+  vault_snapshot::key_id_hex(key_id);
+
+  JsonDocument doc;
+  doc["ok"]         = true;
+  doc["has_key"]    = vault_snapshot::has_pubkey();
+  doc["key_id"]     = key_id;
+  doc["t3_smoke"]   = cfg.t3_enabled;
+  doc["t4_co"]      = cfg.t4_enabled;
+  doc["glass"]      = cfg.glass_enabled;
+  doc["cooldown_s"] = cfg.cooldown_s;
+  doc["sealing"]    = vault_snapshot::worker_busy();
+  doc["sd_ok"]      = sd_is_available();
+  doc["camera_ok"]  = g_camera_initialized;
+  doc["keep_files"] = (uint32_t)vault_logic::KEEP_FILES;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_vault_config(httpd_req_t* req) {
+  g_health.http_requests++;
+  char content[192] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  if (ret <= 0) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"No body\"}");
+  }
+  JsonDocument body;
+  if (deserializeJson(body, content) != DeserializationError::Ok) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+  }
+
+  vault_logic::VaultConfig cfg = vault_snapshot::get_config();
+  if (body["t3_smoke"].is<bool>()) cfg.t3_enabled    = body["t3_smoke"].as<bool>();
+  if (body["t4_co"].is<bool>())    cfg.t4_enabled    = body["t4_co"].as<bool>();
+  if (body["glass"].is<bool>())    cfg.glass_enabled = body["glass"].as<bool>();
+  if (body["cooldown_s"].is<uint32_t>()) {
+    // Clamp BEFORE the uint16 narrowing so an oversized value saturates
+    // instead of wrapping (set_config clamps again to [10, 3600]).
+    uint32_t cool = body["cooldown_s"].as<uint32_t>();
+    if (cool > 3600) cool = 3600;
+    cfg.cooldown_s = (uint16_t)cool;
+  }
+
+  const bool wanted_arm = cfg.t3_enabled || cfg.t4_enabled || cfg.glass_enabled;
+  vault_snapshot::set_config(cfg);  // clamps cooldown; forces triggers off keyless
+  const vault_logic::VaultConfig applied = vault_snapshot::get_config();
+
+  JsonDocument doc;
+  doc["ok"]         = true;
+  doc["t3_smoke"]   = applied.t3_enabled;
+  doc["t4_co"]      = applied.t4_enabled;
+  doc["glass"]      = applied.glass_enabled;
+  doc["cooldown_s"] = applied.cooldown_s;
+  if (wanted_arm && !vault_snapshot::has_pubkey()) {
+    doc["warning"] = "Register an unlock key first — triggers stay off without one";
+  }
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_vault_key_set(httpd_req_t* req) {
+  g_health.http_requests++;
+  char content[160] = {0};
+  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  if (ret <= 0) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"No body\"}");
+  }
+  JsonDocument body;
+  if (deserializeJson(body, content) != DeserializationError::Ok) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+  }
+  const char* pub = body["pubkey"];
+  if (!pub || !vault_snapshot::set_pubkey_hex(pub)) {
+    return http_send_json(req,
+        "{\"ok\":false,\"error\":\"pubkey must be the 64-hex X25519 public key "
+        "printed by unseal_snapshot.py gen-key\"}");
+  }
+  char key_id[17];
+  vault_snapshot::key_id_hex(key_id);
+  JsonDocument doc;
+  doc["ok"]     = true;
+  doc["key_id"] = key_id;
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+static esp_err_t handle_vault_key_clear(httpd_req_t* req) {
+  g_health.http_requests++;
+  vault_snapshot::clear_pubkey();  // also forces every trigger off
+  return http_send_json(req, "{\"ok\":true,\"has_key\":false}");
+}
+
+static esp_err_t handle_vault_list(httpd_req_t* req) {
+  g_health.http_requests++;
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["sd_ok"] = sd_is_available();
+  JsonArray items = doc["items"].to<JsonArray>();
+  if (sd_is_available()) {
+    vault_snapshot::ItemInfo infos[vault_logic::KEEP_FILES + 4];
+    const int n = vault_snapshot::list_items(
+        infos, (int)(sizeof(infos) / sizeof(infos[0])));
+    for (int i = 0; i < n; i++) {
+      JsonObject it = items.add<JsonObject>();
+      it["name"]    = infos[i].name;
+      it["trigger"] = vault_logic::trigger_tag(
+          (vault_logic::Trigger)infos[i].trigger);
+      it["time_bucket"] = infos[i].time_bucket;
+      it["size"]        = infos[i].size;
+    }
+  }
+  String response;
+  serializeJson(doc, response);
+  return http_send_json(req, response.c_str());
+}
+
+// Shared by download + delete: pulls ?name= and rejects anything that isn't
+// a well-formed vault filename (filename_parse is the traversal gate).
+static bool vault_query_name(httpd_req_t* req, char* name, size_t name_len) {
+  char qs[96] = {0};
+  return httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK &&
+         httpd_query_key_value(qs, "name", name, name_len) == ESP_OK &&
+         vault_snapshot::validate_name(name);
+}
+
+static esp_err_t handle_vault_download(httpd_req_t* req) {
+  g_health.http_requests++;
+  char name[40] = {0};
+  if (!vault_query_name(req, name, sizeof(name))) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"name must be a vault filename\"}");
+  }
+  char path[56];
+  snprintf(path, sizeof(path), "/VAULT/%s", name);
+  File f = SD.open(path, FILE_READ);
+  if (!f) {
+    httpd_resp_set_status(req, "404 Not Found");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"No such sealed file\"}");
+  }
+  httpd_resp_set_type(req, "application/octet-stream");
+  char disp[72];
+  snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", name);
+  httpd_resp_set_hdr(req, "Content-Disposition", disp);
+  uint8_t buf[1024];
+  size_t n;
+  while ((n = f.read(buf, sizeof(buf))) > 0) {
+    if (httpd_resp_send_chunk(req, (const char*)buf, (ssize_t)n) != ESP_OK) {
+      f.close();
+      return ESP_FAIL;
+    }
+  }
+  f.close();
+  return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+static esp_err_t handle_vault_item_delete(httpd_req_t* req) {
+  g_health.http_requests++;
+  char name[40] = {0};
+  if (!vault_query_name(req, name, sizeof(name))) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"name must be a vault filename\"}");
+  }
+  if (!vault_snapshot::delete_item(name)) {
+    httpd_resp_set_status(req, "404 Not Found");
+    return http_send_json(req, "{\"ok\":false,\"error\":\"No such sealed file\"}");
+  }
+  log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Sealed snapshot deleted", name);
+  return http_send_json(req, "{\"ok\":true}");
+}
+
+static esp_err_t handle_vault_test(httpd_req_t* req) {
+  g_health.http_requests++;
+  // Fail the obvious gates here for an immediate answer; the authoritative
+  // fail-closed decision still runs on the loop when the flag drains.
+  if (!vault_snapshot::has_pubkey()) {
+    return http_send_json(req,
+        "{\"ok\":false,\"error\":\"No unlock key registered\"}");
+  }
+  if (vault_snapshot::worker_busy()) {
+    return http_send_json(req,
+        "{\"ok\":false,\"error\":\"A seal is already in flight\"}");
+  }
+  g_vault_test_pending = true;
+  return http_send_json(req, "{\"ok\":true,\"queued\":true}");
+}
+
+static esp_err_t handle_vault_status_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_vault_status(req);
+}
+static esp_err_t handle_vault_config_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_vault_config(req);
+}
+static esp_err_t handle_vault_key_set_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_vault_key_set(req);
+}
+static esp_err_t handle_vault_key_clear_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_vault_key_clear(req);
+}
+static esp_err_t handle_vault_list_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_vault_list(req);
+}
+// Browser downloads can't set an Authorization header — accept ?token= too,
+// same as the peek stream/snapshot routes.
+static esp_err_t handle_vault_download_auth(httpd_req_t* req) {
+  if (!api_auth_check_or_query(req, g_device.api_token_str)) return ESP_OK;
+  return handle_vault_download(req);
+}
+static esp_err_t handle_vault_item_delete_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_vault_item_delete(req);
+}
+static esp_err_t handle_vault_test_auth(httpd_req_t* req) {
+  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  return handle_vault_test(req);
+}
+#endif  /* FEATURE_VAULT_SNAPSHOT */
+
 #if FEATURE_SYS_MONITOR
 static esp_err_t handle_system_metrics_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
@@ -6903,6 +7162,12 @@ static void start_http_server() {
 #else
   const int qr_handlers = 0;
 #endif
+#if FEATURE_VAULT_SNAPSHOT
+  const int vault_handlers = 8;       // /api/vault/{status,config,key POST+DELETE,
+                                       // list,download,item,test}
+#else
+  const int vault_handlers = 0;
+#endif
 #if FEATURE_MESH_NETWORK
   const int mesh_handlers = 12;       // Mesh network (opera) endpoints
   const int chirp_handlers = 13;      // chirp_api::register_routes (/api/chirp/*)
@@ -6924,7 +7189,7 @@ static void start_http_server() {
   const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
       + rf_presence_handlers + datamgmt_handlers + household_handlers
       + audible_chirp_handlers + audio_handlers + camera_handlers + qr_handlers
-      + mesh_handlers + chirp_handlers + bluetooth_handlers
+      + vault_handlers + mesh_handlers + chirp_handlers + bluetooth_handlers
       + ble_discovery_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
@@ -7145,6 +7410,33 @@ register_extra_routes:
 
   httpd_uri_t peek_init = { .uri = "/api/peek/init", .method = HTTP_POST, .handler = handle_peek_init_auth };
   httpd_register_uri_handler(active_server, &peek_init);
+#endif
+
+#if FEATURE_VAULT_SNAPSHOT
+  // Sealed-snapshot vault (auth required; download also accepts ?token=)
+  httpd_uri_t vault_status = { .uri = "/api/vault/status", .method = HTTP_GET, .handler = handle_vault_status_auth };
+  httpd_register_uri_handler(active_server, &vault_status);
+
+  httpd_uri_t vault_config = { .uri = "/api/vault/config", .method = HTTP_POST, .handler = handle_vault_config_auth };
+  httpd_register_uri_handler(active_server, &vault_config);
+
+  httpd_uri_t vault_key_set = { .uri = "/api/vault/key", .method = HTTP_POST, .handler = handle_vault_key_set_auth };
+  httpd_register_uri_handler(active_server, &vault_key_set);
+
+  httpd_uri_t vault_key_clear = { .uri = "/api/vault/key", .method = HTTP_DELETE, .handler = handle_vault_key_clear_auth };
+  httpd_register_uri_handler(active_server, &vault_key_clear);
+
+  httpd_uri_t vault_list = { .uri = "/api/vault/list", .method = HTTP_GET, .handler = handle_vault_list_auth };
+  httpd_register_uri_handler(active_server, &vault_list);
+
+  httpd_uri_t vault_download = { .uri = "/api/vault/download", .method = HTTP_GET, .handler = handle_vault_download_auth };
+  httpd_register_uri_handler(active_server, &vault_download);
+
+  httpd_uri_t vault_item_delete = { .uri = "/api/vault/item", .method = HTTP_DELETE, .handler = handle_vault_item_delete_auth };
+  httpd_register_uri_handler(active_server, &vault_item_delete);
+
+  httpd_uri_t vault_test = { .uri = "/api/vault/test", .method = HTTP_POST, .handler = handle_vault_test_auth };
+  httpd_register_uri_handler(active_server, &vault_test);
 #endif
 
   // Fleet provisioning QR code
@@ -8678,6 +8970,18 @@ void setup() {
   };
   log_phase_heap("camera");
 
+  // Sealed-snapshot vault: load the persisted operator key + trigger config
+  // from NVS (pure state load, no hardware). Skipped in safe mode alongside
+  // the camera — without a camera the vault can never arm a capture.
+  #if FEATURE_VAULT_SNAPSHOT
+  if (!in_safe_mode) {
+    vault_snapshot::init();
+    if (vault_snapshot::has_pubkey()) {
+      Serial.println("[OK] Sealed-snapshot vault key loaded");
+    }
+  }
+  #endif
+
   // NOTE: Bluetooth/BLE is NOT initialized here. The full stack (controller +
   // NimBLE host + GATT services + discovery subsystems) costs ~55-65 KB of
   // INTERNAL RAM that WiFi, lwIP and the HTTP server need first — a
@@ -8795,6 +9099,29 @@ void setup() {
         // And into the csi_event chokepoint, which lands it in the Today
         // timeline, the SD event log, and the MQTT /events stream.
         acoustic_events_emit_detection(evt->event_type, evt->confidence);
+        // Sealed-snapshot vault: life-safety triggers may capture ONE frame,
+        // sealed to the operator's key. This callback runs synchronously from
+        // audio_process() on the main loop, satisfying request_capture()'s
+        // loop-task-only contract. Everything is opt-in and fail-closed —
+        // the decision table in vault_logic.h skips silently when the
+        // trigger isn't enabled (the default).
+        #if FEATURE_VAULT_SNAPSHOT
+        {
+          vault_logic::Trigger vt = vault_logic::Trigger::NONE;
+          if      (evt->event_type == AUDIO_EVENT_T3_SMOKE_ALARM) vt = vault_logic::Trigger::T3_SMOKE;
+          else if (evt->event_type == AUDIO_EVENT_T4_CO_ALARM)    vt = vault_logic::Trigger::T4_CO;
+          else if (evt->event_type == AUDIO_EVENT_GLASS_BREAK)    vt = vault_logic::Trigger::GLASS;
+          if (vt != vault_logic::Trigger::NONE) {
+            #if FEATURE_QR_PROVISION
+            const bool vault_qr_busy = g_qr_scan_active;
+            #else
+            const bool vault_qr_busy = false;
+            #endif
+            (void)vault_snapshot::request_capture(vt, g_camera_initialized,
+                                                  vault_qr_busy, sd_is_available());
+          }
+        }
+        #endif
       });
       // Sign every mute / unmute toggle into the witness chain so a later
       // operator can verify when the mic was off and which source flipped
@@ -9464,6 +9791,26 @@ void loop() {
   // (STA joined home WiFi, or AP-only settle elapsed) — deferred from setup()
   // so its active scan can't starve a provisioning phone's WPA2 handshake.
   ble_discovery_start_if_due();
+
+  #if FEATURE_VAULT_SNAPSHOT
+  // Adopt a finished seal worker (emits the frame_sealed witness event and
+  // rotates the /VAULT ring — both loop-owned operations), and drain a
+  // pending dashboard Test capture latched by the HTTP task.
+  vault_snapshot::poll_completion();
+  if (g_vault_test_pending) {
+    g_vault_test_pending = false;
+    #if FEATURE_QR_PROVISION
+    const bool vault_qr_busy = g_qr_scan_active;
+    #else
+    const bool vault_qr_busy = false;
+    #endif
+    const vault_logic::Decision d = vault_snapshot::request_capture(
+        vault_logic::Trigger::TEST, g_camera_initialized, vault_qr_busy,
+        sd_is_available());
+    log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Vault test capture",
+               vault_logic::decision_name(d));
+  }
+  #endif
 
   // ════════════════════════════════════════════════════════════════════════════
   // HARDWARE STATE MANAGEMENT — Update safe mode, track stability

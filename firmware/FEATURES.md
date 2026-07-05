@@ -286,6 +286,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `FEATURE_TAMPER_GPIO` | ✅ | ❌ | ✅ | ⚠️ |
 | `FEATURE_RF_PRESENCE` | ✅ | ❌ | ❌ | ✅ |
 | `FEATURE_CHIRP` | ✅ | ❌ | ❌ | ✅ |
+| `FEATURE_VAULT_SNAPSHOT` | ✅ FULL/S3 only (camera + mic; all triggers off by default) | ❌ | ❌ | ❌ |
 | `FEATURE_OTA_UPDATE` | ❌ | ❌ | ✅ | ❌ |
 | `FEATURE_HA_MQTT` | ❌ | ❌ | ✅ | ❌ |
 | `DEBUG_VERBOSE` / `DEBUG_*` | ✅ (5 flags) | ❌ | ✅ (5 flags) | ⚠️ |

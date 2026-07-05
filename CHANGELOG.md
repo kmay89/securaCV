@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### canary-wap: sealed alarm snapshots — opt-in, write-only-escrow camera frames on life-safety triggers
+
+New `FEATURE_VAULT_SNAPSHOT` subsystem (FULL/S3 only; needs camera + PDM
+mic): on a T3 smoke / T4 CO / glass-break acoustic detection — each trigger
+individually opted in, **all off by default** — the device captures one JPEG
+and seals it to `/VAULT` on the SD card with an X25519 sealed box (ephemeral
+ECDH → HKDF-SHA256 → ChaCha20-Poly1305, 64-byte header as AAD). The device
+stores only the operator's **public** key and cannot decrypt what it wrote;
+unlock happens off-device with the new `tools/unseal_snapshot.py`
+(gen-key / inspect / unseal). Device-side analog of the witness kernel's
+break-glass vault.
+
+- Fail-closed decision table in host-tested `vault_logic.h`: no key (not
+  even the Test capture), no SD, no camera, QR scan active, seal in flight,
+  per-trigger cooldown — every refusal except "not opted in" health-logs
+  its reason; a raw frame is never staged unless the decision is CAPTURE.
+  Clearing the key forces all triggers off.
+- Capture + seal run on a one-shot worker task (PSRAM staging, framebuffer
+  returned immediately, tmp+rename, full zeroize); the loop adopts the
+  result and emits a `media.vault/frame_sealed` witness event whose
+  allow-list is trigger tag + ciphertext SHA-256 prefix + time bucket —
+  image bytes structurally cannot cross the chokepoint.
+- Ring of newest 20 sealed files via the tested `datamgmt::rotate_dir`;
+  512 KB per-frame cap; 10–3600 s per-trigger cooldown (default 60 s).
+- 8 auth-gated routes (`/api/vault/*`: status, config, key set/clear, list,
+  download, delete, test) + a "Sealed Alarm Snapshots" card in the Camera
+  panel (key registration with key-id echo, per-trigger toggles that stay
+  disabled without a key, sealed-file table with download/delete, Test
+  capture). Dashboard/footer copy updated to disclose the opt-in exception
+  honestly.
+- Tests: `test_vault_logic.cpp` (decision matrix incl. millis wrap,
+  malformed-header rejects, golden 64-byte header fixture) and
+  `tools/test_unseal_snapshot.py` (crypto round-trip, wrong-key/tamper/AAD
+  negatives, the same golden fixture verbatim) — both wired into
+  firmware.yml.
+- **Requires maintainer sign-off:** `docs/security/THREAT_MODEL.md:134`
+  says "Camera | Preview only"; this PR does not edit constitutional docs
+  and flags the tension in `docs/sealed_snapshot_vault.md`.
+
 ### canary-wap: BLE bring-up moves to a worker task (loop watchdog crash fix) + memory-budget instrumentation
 
 Field regression from the deferred bring-up: ~21 s after boot,

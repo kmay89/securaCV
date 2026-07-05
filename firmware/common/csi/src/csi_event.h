@@ -186,6 +186,15 @@ void csi_event_set_module_ceiling(const char* module_id, uint8_t override_per_ho
 void csi_event_set_clock_offset_minutes(int32_t offset_minutes);
 
 /**
+ * Current 10-minute wall-clock bucket (0..143) — the exact derivation
+ * coarsen_time_fields() applies to emitted events, exposed so callers that
+ * stamp a coarse bucket into their OWN artifacts (e.g. the sealed-snapshot
+ * vault header) stay consistent with the chokepoint's coarsening. Call from
+ * the main loop task only (reads the loop-owned clock offset).
+ */
+uint8_t csi_event_current_bucket(void);
+
+/**
  * Configure the Quiet Hours window. While `enabled` and the current
  * minute-of-day (derived from monotonic time + clock offset) is inside
  * [start_min, end_min) (inclusive of midnight wrap), the chokepoint
