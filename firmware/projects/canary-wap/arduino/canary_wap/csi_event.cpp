@@ -379,6 +379,17 @@ void csi_event_set_clock_offset_minutes(int32_t offset_minutes) {
   s_clock_offset_minutes = offset_minutes;
 }
 
+uint8_t csi_event_current_bucket(void) {
+  /* Same derivation as coarsen_time_fields() — callers stamping a coarse
+   * bucket into their own artifacts (sealed-snapshot vault header) must
+   * never drift from the chokepoint's coarsening. Loop task only. */
+  const int64_t mono_minutes = (int64_t)(csi_event_now_ms() / 60000u);
+  const int64_t wall_minutes = mono_minutes + s_clock_offset_minutes;
+  int64_t bucket = (wall_minutes / 10) % 144;
+  if (bucket < 0) bucket += 144;
+  return (uint8_t)bucket;
+}
+
 void csi_event_set_quiet_window(uint16_t start_min,
                                 uint16_t end_min,
                                 bool     enabled) {

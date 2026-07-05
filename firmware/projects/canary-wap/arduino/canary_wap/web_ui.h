@@ -1286,7 +1286,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
         <p style="font-size:0.8rem;color:var(--muted);margin-top:0.75rem;">
-          <strong>Note:</strong> This preview is for camera positioning only. No frames are stored — SecuraCV records semantic events, not video.
+          <strong>Note:</strong> This preview is for camera positioning only and is never stored. SecuraCV records semantic events, not video — the one exception is Sealed Alarm Snapshots below, which (only if you enable them) encrypt single alarm-triggered frames that this device cannot itself view.
         </p>
       </div>
 
@@ -1444,6 +1444,80 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div><div style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Stream Uptime</div><div id="camUptime">—</div></div>
         </div>
         <p style="font-size:0.7rem;color:var(--muted);margin-top:0.75rem;">All values are read directly from the on-device camera driver (esp_camera) — no placeholder data.</p>
+      </div>
+
+      <!-- Sealed alarm snapshots: opt-in, event-triggered frames encrypted to
+           an operator-held key. The device stores only the PUBLIC key and is
+           structurally unable to view what it seals; unlock happens off-device
+           with tools/unseal_snapshot.py. Hidden when the build lacks the
+           feature (the status endpoint 404s). -->
+      <div class="card" id="vaultCard" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Sealed Alarm Snapshots</div>
+            <div class="card-subtitle">One encrypted frame per life-safety alarm — viewable only with your offline key</div>
+          </div>
+          <span class="badge info" id="vaultSealingBadge" style="display:none;"><span class="badge-dot"></span>SEALING</span>
+        </div>
+        <p style="font-size:0.8rem;color:var(--muted);margin-bottom:0.9rem;">
+          Off by default. When you enable a trigger, a smoke / CO / glass-break detection captures <strong>one</strong> JPEG and seals it to the SD card, encrypted to the public key you register below. The device keeps no way to decrypt it — download the <code>.svlt</code> file and unlock it on your own computer with <code>tools/unseal_snapshot.py</code>. Only the fact that a frame was sealed (plus its integrity hash) enters the witness timeline.
+        </p>
+
+        <div class="form-group">
+          <div class="form-label">Unlock key</div>
+          <div id="vaultKeyState" style="font-size:0.85rem;margin-bottom:0.5rem;color:var(--muted);">No key registered — all triggers stay off.</div>
+          <div id="vaultKeyEntry" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <input type="text" class="form-input" id="vaultPubkey" placeholder="Paste the 64-hex public key printed by: unseal_snapshot.py gen-key" style="flex:1;min-width:260px;font-family:monospace;font-size:0.78rem;">
+            <button class="btn btn-primary btn-sm" onclick="registerVaultKey()">Register</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="vaultKeyClearBtn" style="display:none;margin-top:0.4rem;" onclick="clearVaultKey()">Remove key (disables all triggers)</button>
+        </div>
+
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-title">Smoke alarm (T3)</div>
+            <div class="toggle-desc">Seal one frame when a T3 smoke-alarm cadence is detected.</div>
+          </div>
+          <label style="cursor:pointer;"><input type="checkbox" id="vaultT3" onchange="saveVaultConfig()" disabled></label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-title">CO alarm (T4)</div>
+            <div class="toggle-desc">Seal one frame when a T4 carbon-monoxide cadence is detected.</div>
+          </div>
+          <label style="cursor:pointer;"><input type="checkbox" id="vaultT4" onchange="saveVaultConfig()" disabled></label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-title">Glass break</div>
+            <div class="toggle-desc">Seal one frame on a glass-break transient.</div>
+          </div>
+          <label style="cursor:pointer;"><input type="checkbox" id="vaultGlass" onchange="saveVaultConfig()" disabled></label>
+        </div>
+
+        <div style="margin-top:0.9rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+          <label for="vaultCooldown" style="font-size:0.85rem;">Cooldown per trigger</label>
+          <select id="vaultCooldown" onchange="saveVaultConfig()" style="font-size:0.85rem;">
+            <option value="30">30 s</option>
+            <option value="60" selected>60 s</option>
+            <option value="120">2 min</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+          </select>
+          <span style="font-size:0.75rem;color:var(--muted);">Alarms re-fire continuously; the cooldown bounds SD writes to one seal per trigger per window.</span>
+        </div>
+
+        <div style="margin-top:0.9rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" id="vaultTestBtn" onclick="testVaultCapture()">Test capture</button>
+          <span id="vaultTestResult" style="font-size:0.85rem;color:var(--muted);">Seals one frame now (needs key + SD + camera), tagged “test”.</span>
+        </div>
+
+        <div style="margin-top:1rem;">
+          <div class="form-label">Sealed files <span style="color:var(--muted);font-weight:normal;">(newest <span id="vaultKeepFiles">20</span> kept)</span></div>
+          <div id="vaultItems" class="log-list" style="max-height:240px;">
+            <p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:0.75rem;">Loading…</p>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2492,7 +2566,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         © 2024-2025 SecuraCV Project Contributors. Licensed under MIT License.
       </p>
       <div style="font-size:0.6rem;color:var(--muted);opacity:0.7;">
-        <p>This device records semantic events, not continuous video. No cloud storage.</p>
+        <p>This device records semantic events, not continuous video. No cloud storage. Optional sealed alarm snapshots stay on the SD card, encrypted so only your offline key can view them.</p>
         <p style="margin-top:0.25rem;">For support and documentation: <a href="https://github.com/securacv" style="color:var(--accent);">github.com/securacv</a></p>
       </div>
     </footer>
@@ -2764,6 +2838,163 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       btn.addEventListener('click', () => switchPanel(btn.dataset.panel));
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // SEALED-SNAPSHOT VAULT — /api/vault/* (camera panel card)
+    // ═══════════════════════════════════════════════════════════════
+    let vaultHasKey = false;
+
+    async function refreshVault() {
+      const card = document.getElementById('vaultCard');
+      try {
+        const resp = await secureFetch('/api/vault/status');
+        if (!resp.ok) { card.style.display = 'none'; return; }  // build without the feature
+        const d = await resp.json();
+        card.style.display = '';
+        vaultHasKey = !!d.has_key;
+
+        const keyState = document.getElementById('vaultKeyState');
+        if (vaultHasKey) {
+          keyState.innerHTML = 'Key registered — id <code>' + d.key_id + '</code>. Keep the matching private key offline.';
+          keyState.style.color = 'var(--success)';
+        } else {
+          keyState.textContent = 'No key registered — all triggers stay off.';
+          keyState.style.color = 'var(--muted)';
+        }
+        document.getElementById('vaultKeyEntry').style.display = vaultHasKey ? 'none' : 'flex';
+        document.getElementById('vaultKeyClearBtn').style.display = vaultHasKey ? '' : 'none';
+
+        for (const [id, val] of [['vaultT3', d.t3_smoke], ['vaultT4', d.t4_co], ['vaultGlass', d.glass]]) {
+          const el = document.getElementById(id);
+          el.checked = !!val;
+          el.disabled = !vaultHasKey;
+        }
+        const cool = document.getElementById('vaultCooldown');
+        // Snap to the nearest offered option so a hand-set API value still renders.
+        const opts = Array.from(cool.options).map(o => parseInt(o.value, 10));
+        cool.value = String(opts.reduce((a, b) => Math.abs(b - d.cooldown_s) < Math.abs(a - d.cooldown_s) ? b : a));
+        document.getElementById('vaultKeepFiles').textContent = d.keep_files;
+        document.getElementById('vaultSealingBadge').style.display = d.sealing ? '' : 'none';
+        document.getElementById('vaultTestBtn').disabled = !vaultHasKey || !d.sd_ok || !d.camera_ok || d.sealing;
+
+        refreshVaultList();
+      } catch (e) { card.style.display = 'none'; }
+    }
+
+    async function refreshVaultList() {
+      const box = document.getElementById('vaultItems');
+      try {
+        const resp = await secureFetch('/api/vault/list');
+        const d = await resp.json();
+        if (!d.ok) throw new Error('list failed');
+        if (!d.sd_ok) {
+          box.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:0.75rem;">SD card unavailable — nothing can be sealed or listed.</p>';
+          return;
+        }
+        if (!d.items.length) {
+          box.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:0.75rem;">No sealed snapshots.</p>';
+          return;
+        }
+        // Filenames are firmware-generated and server-validated
+        // (seal_<8 digits>_<smoke|co|glass|test>.svlt) — safe to inline.
+        box.innerHTML = d.items.map(it => {
+          const bucket = (it.time_bucket >= 0 && it.time_bucket <= 143)
+            ? String(Math.floor(it.time_bucket / 6)).padStart(2, '0') + ':' +
+              String((it.time_bucket % 6) * 10).padStart(2, '0') + '-ish'
+            : '—';
+          return '<div style="display:flex;align-items:center;gap:0.6rem;padding:0.45rem 0.25rem;border-bottom:1px solid var(--border);font-size:0.8rem;">' +
+            '<code style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">' + it.name + '</code>' +
+            '<span style="color:var(--muted);">' + it.trigger + '</span>' +
+            '<span style="color:var(--muted);" title="10-minute time bucket — the only time info stored">' + bucket + '</span>' +
+            '<span style="color:var(--muted);">' + (it.size / 1024).toFixed(0) + ' KB</span>' +
+            '<button class="btn btn-ghost btn-sm" onclick="downloadVaultItem(\'' + it.name + '\')">Download</button>' +
+            '<button class="btn btn-ghost btn-sm" onclick="deleteVaultItem(\'' + it.name + '\')">Delete</button>' +
+            '</div>';
+        }).join('');
+      } catch (e) {
+        box.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;text-align:center;padding:0.75rem;">Could not load the sealed-file list.</p>';
+      }
+    }
+
+    async function saveVaultConfig() {
+      const body = {
+        t3_smoke: document.getElementById('vaultT3').checked,
+        t4_co: document.getElementById('vaultT4').checked,
+        glass: document.getElementById('vaultGlass').checked,
+        cooldown_s: parseInt(document.getElementById('vaultCooldown').value, 10)
+      };
+      try {
+        const resp = await secureFetch('/api/vault/config', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const d = await resp.json();
+        if (d.warning) alert(d.warning);
+      } catch (e) { alert('Failed to save snapshot settings'); }
+      refreshVault();
+    }
+
+    async function registerVaultKey() {
+      const raw = document.getElementById('vaultPubkey').value.trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(raw)) {
+        alert('That is not a 64-hex public key — run unseal_snapshot.py gen-key and paste the printed key.');
+        return;
+      }
+      try {
+        const resp = await secureFetch('/api/vault/key', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pubkey: raw })
+        });
+        const d = await resp.json();
+        if (d.ok) {
+          document.getElementById('vaultPubkey').value = '';
+        } else {
+          alert(d.error || 'Key registration failed');
+        }
+      } catch (e) { alert('Key registration failed'); }
+      refreshVault();
+    }
+
+    async function clearVaultKey() {
+      if (!confirm('Remove the unlock key? All snapshot triggers will be disabled, and files already sealed to this key stay locked to it.')) return;
+      try {
+        await secureFetch('/api/vault/key', { method: 'DELETE' });
+      } catch (e) { alert('Failed to remove the key'); }
+      refreshVault();
+    }
+
+    async function testVaultCapture() {
+      const out = document.getElementById('vaultTestResult');
+      try {
+        const resp = await secureFetch('/api/vault/test', { method: 'POST' });
+        const d = await resp.json();
+        if (d.ok) {
+          out.textContent = 'Capturing + sealing… the file appears below in a few seconds.';
+          setTimeout(refreshVault, 4000);
+        } else {
+          out.textContent = d.error || 'Test capture refused.';
+        }
+      } catch (e) { out.textContent = 'Test capture failed.'; }
+    }
+
+    function downloadVaultItem(name) {
+      let url = API_BASE + '/api/vault/download?name=' + encodeURIComponent(name);
+      if (apiToken) url += '&token=' + encodeURIComponent(apiToken);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    async function deleteVaultItem(name) {
+      if (!confirm('Delete ' + name + '? A sealed frame cannot be recovered after deletion.')) return;
+      try {
+        await secureFetch('/api/vault/item?name=' + encodeURIComponent(name), { method: 'DELETE' });
+      } catch (e) { alert('Delete failed'); }
+      refreshVaultList();
+    }
+
     function switchPanel(panel, loadPanel = true) {
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
       document.querySelector(`[data-panel="${panel}"]`).classList.add('active');
@@ -2773,7 +3004,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (loadPanel) {
         if (panel === 'records') { loadLogs(); loadWitness(); }
-        else if (panel === 'camera') { refreshPeekStatus(); refreshSensorState(); }
+        else if (panel === 'camera') { refreshPeekStatus(); refreshSensorState(); refreshVault(); }
         else if (panel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); refreshAudibleChirpStatus(); }
         else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
         else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }

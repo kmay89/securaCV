@@ -66,6 +66,9 @@
 #include "acoustic_events_module.h"
 
 #include "build_config.h"
+#if FEATURE_VAULT_SNAPSHOT
+#include "vault_events_module.h"
+#endif
 #if FEATURE_BLE_SCAN
 #include "ble_scout.h"
 #endif
@@ -2259,6 +2262,16 @@ void register_v1_modules() {
    * confidence word, and the time bucket — no audio content exists to
    * leak. Gated on the same flag that compiles the detector itself. */
   csi_module_register(acoustic_events_module());
+#endif
+
+#if FEATURE_VAULT_SNAPSHOT
+  /* Sealed-snapshot vault lifecycle. The allow-list is the whole privacy
+   * story: a frame_sealed event may carry the trigger tag (state_name),
+   * the ciphertext SHA-256 prefix (note — integrity data only), and the
+   * coarse time bucket. Image bytes structurally cannot cross the
+   * chokepoint; the frame itself exists only as an encrypted .svlt on SD
+   * that this device cannot decrypt (vault_snapshot.h). */
+  csi_module_register(vault_events_module());
 #endif
 
 #if FEATURE_BLE_SCAN

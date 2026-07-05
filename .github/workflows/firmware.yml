@@ -700,6 +700,32 @@ jobs:
           /tmp/peek_stream_logic | tee /tmp/peek_stream_logic.log
           grep -q "ALL .* PASSED" /tmp/peek_stream_logic.log
 
+      - name: Build + run canary-wap vault logic host test
+        # Sealed-snapshot vault decisions + on-disk format (vault_logic.h):
+        # the fail-closed capture decision table (no key / no SD / no camera /
+        # QR busy / worker busy / cooldown, incl. millis wrap), the byte-exact
+        # 64-byte .svlt header against a golden hex fixture shared verbatim
+        # with tools/test_unseal_snapshot.py, and the ring filename parser
+        # that doubles as the download/delete traversal gate.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_vault_logic.cpp \
+              -o /tmp/vault_logic
+          /tmp/vault_logic | tee /tmp/vault_logic.log
+          grep -q "ALL .* PASSED" /tmp/vault_logic.log
+
+      - name: Run sealed-snapshot unseal tool tests (crypto round-trip)
+        # The python half of the vault (tools/unseal_snapshot.py): X25519 +
+        # HKDF-SHA256 + ChaCha20-Poly1305 seal->unseal round-trip, wrong-key
+        # and tampered-ciphertext/tag/header(AAD) negatives, and the same
+        # golden header fixture as test_vault_logic.cpp so the byte layout
+        # is pinned across both languages.
+        run: |
+          python3 -m pip install --quiet cryptography
+          python3 tools/test_unseal_snapshot.py
+
       - name: Build + run canary-wap catch-all logic host test
         # Who owns the shared canary.local catch-all when several Canaries
         # share a LAN: the fingerprint-staggered claim window, the

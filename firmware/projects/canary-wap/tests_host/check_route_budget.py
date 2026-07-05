@@ -48,7 +48,8 @@ PROFILE = {
         FEATURE_AUDIBLE_CHIRP=1, FEATURE_DATA_MGMT=1, FEATURE_POWER_MONITOR=1,
         FEATURE_POWER_POLICY=1, FEATURE_QR_PROVISION="HW_HAS_CAMERA",
         FEATURE_ACOUSTIC_EVENTS="HW_HAS_PDM_MIC",
-        FEATURE_ACOUSTIC_TRANSIENTS="HW_HAS_PDM_MIC"),
+        FEATURE_ACOUSTIC_TRANSIENTS="HW_HAS_PDM_MIC",
+        FEATURE_VAULT_SNAPSHOT="HW_HAS_CAMERA && HW_HAS_PDM_MIC"),
     "DEV": dict(
         FEATURE_SD_STORAGE=1, FEATURE_WIFI_AP=1, FEATURE_HTTP_SERVER=1,
         FEATURE_CAMERA_PEEK=0, FEATURE_TAMPER_GPIO=0, FEATURE_WATCHDOG=1,
@@ -57,7 +58,8 @@ PROFILE = {
         FEATURE_BLE_STATUS="HW_HAS_BLE", FEATURE_SYS_MONITOR=1,
         FEATURE_WIFI_PRESENCE=1, FEATURE_AUDIBLE_CHIRP=1, FEATURE_DATA_MGMT=1,
         FEATURE_POWER_MONITOR=1, FEATURE_POWER_POLICY=1, FEATURE_QR_PROVISION=0,
-        FEATURE_ACOUSTIC_EVENTS="HW_HAS_PDM_MIC", FEATURE_ACOUSTIC_TRANSIENTS=0),
+        FEATURE_ACOUSTIC_EVENTS="HW_HAS_PDM_MIC", FEATURE_ACOUSTIC_TRANSIENTS=0,
+        FEATURE_VAULT_SNAPSHOT=0),
 }
 
 # Flags defined outside build_config.h profiles.
@@ -76,7 +78,12 @@ def resolve_flags(profile, target):
     flags = dict(STATIC_FLAGS)
     flags.update(HW[target])
     for k, v in PROFILE[profile].items():
-        flags[k] = flags[v] if isinstance(v, str) else v
+        if isinstance(v, str):
+            # Either a bare HW flag name or a small expression over HW flags
+            # (e.g. "HW_HAS_CAMERA && HW_HAS_PDM_MIC"), mirroring build_config.h.
+            flags[k] = flags[v] if v in flags else int(eval_cond(v, flags))
+        else:
+            flags[k] = v
     return flags
 
 
