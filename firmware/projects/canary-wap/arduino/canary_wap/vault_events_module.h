@@ -19,7 +19,7 @@
 #ifndef SECURACV_VAULT_EVENTS_MODULE_H
 #define SECURACV_VAULT_EVENTS_MODULE_H
 
-#include "csi_module.h"
+#include "csi_event.h"   /* values/emit/categories + module types */
 
 #ifdef __cplusplus
 extern "C" {
