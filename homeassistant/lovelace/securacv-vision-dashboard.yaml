@@ -62,6 +62,18 @@ views:
           {% if r < 0 %}_No person in frame._{% endif %}
 
       # -----------------------------------------------------------------------
+      # Aim camera — boxes-only live view (never pixels). Flip the card's
+      # "Start aiming" button (the device's Aim assist switch) and the
+      # firmware streams bounding-box coordinates + scores at ~5 Hz on
+      # securacv/DEVICE_ID/aim; off by default, 10-minute auto-off.
+      # Ships with the SecuraCV integration (auto-registered resource).
+      # NOTE: the live stream needs an HA *admin* user (MQTT websocket).
+      # -----------------------------------------------------------------------
+      - type: custom:securacv-aim-card
+        title: "Aim camera"
+        device_id: DEVICE_ID
+
+      # -----------------------------------------------------------------------
       # Confidence gauge — live score of the best person box
       # -----------------------------------------------------------------------
       # (The % unit comes from the entity itself — the gauge card has no

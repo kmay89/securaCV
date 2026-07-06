@@ -6,6 +6,9 @@ work (including the **two USB-C ports** that trip everyone up), how to load
 the initial AI model onto the module, and how to wire it to each supported
 ESP32 host.
 
+**New to the hardware? Start with the end-to-end walkthrough:**
+[`canary_vision_getting_started.md`](canary_vision_getting_started.md) (unboxing → aimed and publishing).
+
 **Companion docs:**
 [`firmware/projects/canary-vision/README.md`](../../firmware/projects/canary-vision/README.md) (firmware quickstart) ·
 [`bom_canary_vision.csv`](bom_canary_vision.csv) (sourcing) ·
@@ -163,6 +166,12 @@ and host reflashes** — you do not repeat this when you update canary-vision.
 > live preview, I2C results to the host are not delivered concurrently — the
 > module does one job at a time. Unplug the preview before bench-testing the
 > ESP32 event path.
+>
+> **After deployment, don't come back here to aim.** The firmware has a
+> boxes-only *Aim assist* channel (HA switch + `securacv/<id>/aim` topic)
+> and the dashboard ships an *Aim camera* card that draws the live bounding
+> box + voxel grid over the device's normal local MQTT path — no laptop on
+> the module port, no pixels. See the getting-started guide §6.
 
 ### Restoring factory module firmware
 
