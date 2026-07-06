@@ -1955,6 +1955,24 @@ async function pollStream() {
     // counter ticks every second without a new fetch).
     latestStreamJ = j;
 
+    // Signal-supply honesty: with (nearly) no CSI frames arriving the
+    // device has no basis for ANY room claim — the firmware stops
+    // ticking its modules and we park the orb on "Sensing…" with a
+    // plain-language explanation instead of letting a stale "Empty"
+    // stand. fps is frames-per-second in the last 1 s window.
+    const supply = j.supply || null;
+    const starved = supply && supply.fps < 2 &&
+                    (supply.silent_ms < 0 || supply.silent_ms > 3000);
+    if (starved) {
+      setState('sensing', {confidence: 'tentative'});
+      latestStreamJ = j;
+      updateSenseDetail();
+      document.getElementById('frameCount').textContent =
+        'no WiFi signal to sense with — join your home WiFi or add a second Canary';
+      document.body.classList.remove('disconnected');
+      return;
+    }
+
     const isEvent = (j.id !== undefined);
     if (isEvent) {
       // Map server state name -> our state key set
@@ -1983,8 +2001,17 @@ async function pollStream() {
     }
     updateSenseDetail();
 
+    // Footer: live scalars plus the signal-supply chip. 8+ frames/s is
+    // a healthy diet (AP beacons alone give ~10); 2–7 works but slower;
+    // the starved case returned above.
+    let supplyTxt = '';
+    if (supply) {
+      supplyTxt = supply.fps >= 8 ? ` · signal ${supply.fps}/s`
+                                  : ` · weak signal ${supply.fps}/s`;
+      if (supply.probe) supplyTxt += ' · probing';
+    }
     document.getElementById('frameCount').textContent =
-      `motion ${motion} · breathing ${breathing}`;
+      `motion ${motion} · breathing ${breathing}${supplyTxt}`;
     /* Clear the disconnect plate AND the click-to-pair handler the
      * unauthorized branch may have wired in a previous tick. */
     document.body.classList.remove('disconnected');

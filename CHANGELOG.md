@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+### WiFi/CSI sensing overhaul: it detects things now — frame supply fixed, feature math rewritten, RF-presence fusion actually wired
+
+Field report: "currently it doesn't seem to detect much at all." Three
+root causes, all fixed:
+
+**1. The device was starving for frames.** CSI sensing measures
+received WiFi frames; the 50 Hz active probe that was supposed to give
+paired Canaries a deterministic frame supply was never initialized,
+started, or pumped — dead code. It now runs: every Canary broadcasts a
+10 Hz ESP-NOW sensing probe (≈0.03 % airtime) so peer Canaries sense
+off each other; a solo Canary rides the home AP's ~10 Hz beacons. The
+dashboard footer shows the live supply (`signal 11/s · probing`) and
+when genuinely starved (AP-only, no peers) the device now says
+honestly *"no WiFi signal to sense with — join your home WiFi or add a
+second Canary"* instead of confidently reporting "Empty" off zero
+data (module ticks are skipped below 2 frames/window).
+
+**2. The feature math couldn't separate people from physics.**
+Rewritten in the canonical extractor, the wap staged copy, and the
+canary-tree lib, with a host physics test proving each fix:
+- Amplitude motion is now per-subcarrier TEMPORAL variance after
+  per-frame AGC normalization and true-magnitude (√(I²+Q²))
+  conversion. The old pooled variance mostly measured the room's
+  static multipath fingerprint + receiver gain flicker + the L1
+  amplitude's rotation wobble — noise that didn't change when a
+  person moved.
+- "Doppler" is now a CFO-corrected relative band rotation:
+  Im(C_band·conj(C_tot))/|C_tot|², which cancels the ESP32's random
+  per-frame phase offset exactly (the old raw cross-product was
+  offset noise), is gain-invariant, and alias-proof (magnitude
+  accumulation, sign carried separately).
+- Breathing (0.10–0.45 Hz) is now measured where it physically lives:
+  a Goertzel bank over a cross-window envelope ring (~64 s @ 1 Hz).
+  The old code ran 8 numerically identical near-DC filters inside a
+  single 1 s window — 0.2 Hz cannot be resolved in 1 s; its "dominant
+  bin"/BPM was fiction. Bins stay zero until ≥24 windows exist, the
+  bin↔BPM map now matches core_breathing, and the ring is scrubbed on
+  sensing stop (reset_history — same privacy contract as the sample
+  buffers). Empty room now reads ≈0 on every axis in any environment,
+  which is what makes the presets/calibration portable across homes.
+
+**3. CSI → RF presence fusion was never connected.**
+`rf_presence::feed_csi_window()` existed since Phase 2 but
+`set_legacy_features_hook` was never called — the RF presence FSM
+never saw a single CSI window. Wired at boot; the two systems now
+corroborate.
+
+Also: host physics test suite (`test_csi_features.cpp`: static
+channel + random CFO must read empty, ±30 % AGC flicker must read
+empty, a moving scatterer must be detected through CFO, a 0.25 Hz
+breathing envelope must land in bin 3 and dominate, reset_history
+must wipe), signal-supply fields on `/api/csi/stream`, and
+`docs/hardware/csi_sensing_guide.md` (placement, environments,
+calibration, verification, honest limitations). Re-run Calibrate
+after updating — the feature scales changed.
+
 ### Acoustic detection: shipped in release builds + two-stage (tone-gated) matcher
 
 Root-cause fix for the field report "pressed my smoke alarm's TEST

@@ -7130,6 +7130,16 @@ static void register_api_routes(httpd_handle_t server) {
   // by handle_ui below.
   csi_integration::init(server, g_device.api_token_str);
 
+  // Fuse CSI into RF presence: every finalized feature window feeds the
+  // rf_presence FSM's motion/breathing scalars, so WiFi sensing and the
+  // BLE/RF presence pipeline corroborate each other instead of running
+  // as two blind silos. (This hook existed since Phase 2 but was never
+  // registered — rf_presence::feed_csi_window was dead code and the RF
+  // FSM never saw a single CSI window.) feed_csi_window guards its own
+  // initialized/enabled state, so unconditional registration is safe.
+  csi_integration::set_legacy_features_hook(
+      [](const csi_features_t* f) { rf_presence::feed_csi_window(f); });
+
   // Optional MQTT bridge (publishes CSI events / health / chain / counts
   // to a user-supplied broker so custom_components/securacv/ in HA sees
   // live data). init() is a no-op if disabled in NVS, and idempotent —
