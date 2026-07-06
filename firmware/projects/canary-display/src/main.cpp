@@ -119,7 +119,15 @@ static bool mqtt_supervise(uint32_t now) {
     g_mqtt_down_since_ms = 0;  // wifi_loop owns this outage
     return false;
   }
-  if (g_mqtt_down_since_ms == 0) g_mqtt_down_since_ms = now;
+  if (g_mqtt_down_since_ms == 0) {
+    g_mqtt_down_since_ms = now;
+#if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+    // Retract our referral the moment the link drops: gossip is ground
+    // truth in both directions, or a dead/moved broker keeps re-seeding
+    // every rediscovery on the LAN (review catch).
+    canary::net::discovery_clear_broker();
+#endif
+  }
   if ((int32_t)(now - g_mqtt_next_attempt_ms) < 0) return false;
 
   if (canary::net::mqtt_connect_attempt()) {

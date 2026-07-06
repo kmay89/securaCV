@@ -48,15 +48,21 @@ void make_hostname(const char* device_id, char* out, size_t cap) {
 // Resolve a broker host string to something WiFiClient can connect to:
 // `.local` names only exist in mDNS, so look them up here; anything else
 // (IP or plain DNS name) passes through untouched.
+//
+// SECURITY: `host` is an UNAUTHENTICATED LAN TXT record. Reject anything
+// that doesn't fit the local buffer outright — truncating and continuing
+// would either index past the copy (the review-caught stack overflow) or
+// silently connect to a mangled name. No sane broker hostname is 64+ chars.
 bool resolve_if_mdns_local(const char* host, char* out, size_t cap) {
+  char name[64];
   const size_t n = strlen(host);
+  if (n == 0 || n >= sizeof(name)) return false;
   const char suffix[] = ".local";
   const size_t sn = sizeof(suffix) - 1;
   if (n <= sn || strcasecmp(host + n - sn, suffix) != 0) {
     copy_str(out, cap, host);
     return true;
   }
-  char name[64];
   copy_str(name, sizeof(name), host);
   name[n - sn] = '\0';
   const IPAddress ip = MDNS.queryHost(name);
@@ -96,6 +102,17 @@ void discovery_advertise_broker(const char* host, uint16_t port) {
   char p[8];
   snprintf(p, sizeof(p), "%u", (unsigned)port);
   MDNS.addServiceTxt(SVC, PROTO, "bport", p);
+}
+
+void discovery_clear_broker() {
+  if (!s_up) return;
+  // ESPmDNS exposes no txt-item remove; an empty value is the tombstone —
+  // the query side skips zero-length broker TXT. Ground-truth-only gossip
+  // cuts both ways: the moment we can't reach the broker, we must stop
+  // referring others to it, or a dead/moved endpoint keeps re-seeding
+  // every rediscovery on the LAN (review catch).
+  MDNS.addServiceTxt(SVC, PROTO, "broker", "");
+  MDNS.addServiceTxt(SVC, PROTO, "bport", "");
 }
 
 bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out) {

@@ -37,9 +37,12 @@ _securacv._tcp   TXT: role=display  dt=canary-watch  fw=2.2.0
 
 Rules:
 
-1. **Gossip only ground truth.** The `broker=` TXT is added only while the
-   device holds a live connection to that broker — the flock never spreads
-   guesses.
+1. **Gossip only ground truth — in both directions.** The `broker=` TXT is
+   added only while the device holds a live connection to that broker, and
+   is retracted (empty-TXT tombstone) the moment the link drops — the flock
+   never spreads guesses, and never keeps seeding a dead or moved endpoint.
+   Referral strings are bounded (≥64 chars rejected) — mDNS TXT is
+   unauthenticated LAN input.
 2. **Join ladder** for a device that needs a broker:
    - compiled/NVS endpoint if real → use it (hand config always wins at boot);
    - else ask the flock: `_securacv._tcp` referral (`broker=` TXT);

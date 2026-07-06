@@ -29,6 +29,11 @@ bool discovery_init(const char* device_id, const char* device_type,
 // must not gossip guesses. Idempotent (TXT update).
 void discovery_advertise_broker(const char* host, uint16_t port);
 
+// The moment the broker link drops, retract the referral (empty TXT
+// tombstone) so a dead or moved endpoint never re-seeds the LAN's
+// rediscovery. Ground truth only, in both directions.
+void discovery_clear_broker();
+
 // Ask the flock (then any _mqtt._tcp advert) for a broker. Blocking for a
 // few seconds of mDNS query — call it only when the link is already down
 // or unconfigured. `.local` broker names are resolved to an IP here, since
