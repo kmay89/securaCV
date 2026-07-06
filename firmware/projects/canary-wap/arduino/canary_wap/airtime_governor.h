@@ -66,6 +66,10 @@ uint32_t estimate_airtime_us(size_t bytes);
 // Initialize / reset the governor. Optional: pass cap_pct = 0 to keep default.
 void init(uint8_t cap_pct);
 
+/* True when the send-window ring allocated (PSRAM diet, csi_mem.h). The
+ * governor fails open without it; callers should log the degradation. */
+bool ring_ok();
+
 // Attempt to reserve airtime for a routine (non-urgent) send.
 //   now_ms: caller's millisecond clock
 //   bytes:  packet size on the wire

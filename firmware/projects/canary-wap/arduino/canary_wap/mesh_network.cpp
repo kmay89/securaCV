@@ -1265,9 +1265,15 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   }
 
   /* Alert history lives in PSRAM; allocate before anything can store an
-   * alert (store_alert drops records while this is NULL). */
-  if (!g_alert_history)
+   * alert (store_alert drops records while this is NULL). Sizing:
+   * MAX_ALERT_HISTORY (32) x sizeof(MeshAlert) (~92 B) = ~2.9 KB. */
+  if (!g_alert_history) {
     g_alert_history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
+    if (!g_alert_history) {
+      health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                 "mesh: alert history alloc failed — history disabled");
+    }
+  }
 
   g_device_privkey = device_privkey;
   g_device_pubkey = device_pubkey;
@@ -1289,6 +1295,10 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   // Routine traffic (heartbeats, gossip, presence) checks this before TX so
   // multi-Canary deployments don't degrade the home WiFi.
   airtime_governor::init(airtime_governor::DEFAULT_CAP_PCT);
+  if (!airtime_governor::ring_ok()) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "mesh: airtime ring alloc failed — governor fails open");
+  }
 
   // Subscribe to channel changes so we can re-register the ESP-NOW broadcast
   // peer when STA reconnects on a different channel. With peer.channel = 0

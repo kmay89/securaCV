@@ -8856,8 +8856,15 @@ void setup() {
   g_fleet_scan_cache = (char*)csi_large_calloc(FLEET_SCAN_CACHE_SIZE);
   g_fleet_scan_snap  = (char*)csi_large_calloc(FLEET_SCAN_CACHE_SIZE);
   {
+    // Sizing: 2048-byte byte-ring absorbs one loop pass of NMEA at 9600
+    // baud (~960 B/s) with generous slack; the pump also caps reads at
+    // 256 B per cycle, so the ring cannot be outrun in steady state.
     void* gps_mem = csi_large_calloc(sizeof(RingBuffer<2048>));
-    if (gps_mem) g_gps_rb = new (gps_mem) RingBuffer<2048>();
+    if (gps_mem) {
+      g_gps_rb = new (gps_mem) RingBuffer<2048>();
+    } else {
+      Serial.println("[--] GPS ring alloc failed — GPS buffering disabled");
+    }
   }
   if (!g_health_log_ring) {
     Serial.println("[--] health-log ring alloc failed — Serial-only logging");

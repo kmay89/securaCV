@@ -22,12 +22,13 @@ struct Slot {
   uint32_t airtime_us;
 };
 
-/* PSRAM-resident (csi_mem.h): 2 KB, touched only from the loop-task send
- * paths. Allocated in init(); if that ever fails (heap exhausted at boot),
- * record() no-ops and the usage window reads 0 — the governor fails open
- * rather than silencing the alert channels, and the health log carries the
- * boot-time allocation warning from the callers. On the host tests the
- * allocator falls back to plain calloc. */
+/* PSRAM-resident (csi_mem.h): touched only from the loop-task send paths.
+ * Sizing: RING_SIZE (256) slots x sizeof(Slot) (8 B: ts_ms + airtime_us)
+ * = 2 KB. Allocated in init(); if that ever fails (heap exhausted at
+ * boot), record() no-ops and the usage window reads 0 — the governor
+ * fails open rather than silencing the alert channels. This file is
+ * host-compiled (test_mesh_coexistence), so it cannot log itself; callers
+ * check ring_ok() and log the failure (mesh_network::init does). */
 static Slot* g_ring = nullptr;
 static constexpr size_t RING_BYTES = RING_SIZE * sizeof(Slot);
 static size_t g_head = 0;       // next write position
@@ -96,6 +97,10 @@ void init(uint8_t cap_pct) {
     g_beacon_ring[i].airtime_us = 0;
   }
 }
+
+/* True when the send-window ring exists; callers use this to health-log
+ * an allocation failure once at boot (this host-compiled file can't). */
+bool ring_ok() { return g_ring != nullptr; }
 
 static void record(uint32_t now_ms, uint32_t airtime_us) {
   if (!g_ring) return;  /* alloc failed — governor fails open, window reads 0 */
