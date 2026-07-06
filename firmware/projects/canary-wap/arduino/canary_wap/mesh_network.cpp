@@ -12,6 +12,7 @@
 
 #include "mesh_network.h"
 #include "mesh_channel_policy.h"
+#include "csi_mem.h"
 #include "airtime_governor.h"
 #include "log_level.h"
 #include "health_log.h"
@@ -181,7 +182,15 @@ static RekeyState g_rekey = {};
 static PairingSession g_pairing;
 
 // Alert history
-static MeshAlert g_alert_history[MAX_ALERT_HISTORY];
+/* PSRAM-resident (csi_mem.h): ~2.9 KB of semantic alert metadata, loop-task
+ * access only (all rx processing is deferred out of the ESP-NOW callback).
+ * g_peers deliberately stays in internal SRAM: OperaPeer carries session
+ * keys, and key material belongs on-die, not on an externally probeable
+ * PSRAM bus. Allocated in init(); NULL disables alert history (records
+ * dropped, count stays 0). */
+static MeshAlert* g_alert_history = nullptr;
+static constexpr size_t ALERT_HISTORY_BYTES =
+    MAX_ALERT_HISTORY * sizeof(MeshAlert);
 static size_t g_alert_count = 0;
 static size_t g_alert_head = 0;
 
@@ -1238,6 +1247,7 @@ static bool load_peers() {
 }
 
 static void store_alert(const MeshAlert* alert) {
+  if (!g_alert_history) return;  /* alloc failed — history disabled */
   g_alert_history[g_alert_head] = *alert;
   g_alert_head = (g_alert_head + 1) % MAX_ALERT_HISTORY;
   if (g_alert_count < MAX_ALERT_HISTORY) {
@@ -1252,6 +1262,17 @@ static void store_alert(const MeshAlert* alert) {
 bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const char* device_name) {
   if (g_initialized) {
     return true;
+  }
+
+  /* Alert history lives in PSRAM; allocate before anything can store an
+   * alert (store_alert drops records while this is NULL). Sizing:
+   * MAX_ALERT_HISTORY (32) x sizeof(MeshAlert) (~92 B) = ~2.9 KB. */
+  if (!g_alert_history) {
+    g_alert_history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
+    if (!g_alert_history) {
+      health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                 "mesh: alert history alloc failed — history disabled");
+    }
   }
 
   g_device_privkey = device_privkey;
@@ -1274,6 +1295,10 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   // Routine traffic (heartbeats, gossip, presence) checks this before TX so
   // multi-Canary deployments don't degrade the home WiFi.
   airtime_governor::init(airtime_governor::DEFAULT_CAP_PCT);
+  if (!airtime_governor::ring_ok()) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "mesh: airtime ring alloc failed — governor fails open");
+  }
 
   // Subscribe to channel changes so we can re-register the ESP-NOW broadcast
   // peer when STA reconnects on a different channel. With peer.channel = 0
@@ -1848,7 +1873,9 @@ const MeshAlert* get_alerts(size_t* count) {
 void clear_alerts() {
   g_alert_count = 0;
   g_alert_head = 0;
-  memset(g_alert_history, 0, sizeof(g_alert_history));
+  if (!g_alert_history)
+    g_alert_history = (MeshAlert*)csi_large_calloc(ALERT_HISTORY_BYTES);
+  if (g_alert_history) memset(g_alert_history, 0, ALERT_HISTORY_BYTES);
 }
 
 void set_alert_callback(AlertCallback callback) {

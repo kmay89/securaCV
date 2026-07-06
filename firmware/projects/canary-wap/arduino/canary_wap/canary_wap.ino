@@ -135,6 +135,7 @@
 #include "config_logic.h"            // runtime device-config clamps (privacy floor)
 #include "peek_stream_logic.h"       // pure, host-tested camera-stream value math
 #include "csi_mem.h"                 // csi_large_calloc: PSRAM-first big buffers
+#include <new>                       // placement-new for the PSRAM GPS ring
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
@@ -696,7 +697,11 @@ static pre_reboot_fn g_pre_reboot_hook = nullptr;
 
 // NVS access is now encapsulated in NvsManager singleton (see nvs_store.h)
 
-static RingBuffer<2048> g_gps_rb;
+// PSRAM-resident (csi_mem.h): the 2 KB GPS byte ring is pumped and drained
+// on the loop task only (Serial1.read -> push in loop(), pop in the NMEA
+// parser). Placement-new into a PSRAM allocation at the top of setup();
+// NULL (even the fallback failed) disables GPS byte buffering fail-safe.
+static RingBuffer<2048>* g_gps_rb = nullptr;
 static char g_line_buf[256];
 static size_t g_line_len = 0;
 
@@ -2191,7 +2196,7 @@ static void log_state_transition(FixState from, FixState to, const char* reason)
 static bool read_nmea_line(char* out, size_t cap, size_t* len) {
   while (true) {
     uint8_t b;
-    if (!g_gps_rb.pop(b)) {
+    if (!g_gps_rb || !g_gps_rb->pop(b)) {
       return false;
     }
     
@@ -8850,6 +8855,17 @@ void setup() {
       HEALTH_LOG_RING_SIZE * sizeof(HealthLogRingEntry));
   g_fleet_scan_cache = (char*)csi_large_calloc(FLEET_SCAN_CACHE_SIZE);
   g_fleet_scan_snap  = (char*)csi_large_calloc(FLEET_SCAN_CACHE_SIZE);
+  {
+    // Sizing: 2048-byte byte-ring absorbs one loop pass of NMEA at 9600
+    // baud (~960 B/s) with generous slack; the pump also caps reads at
+    // 256 B per cycle, so the ring cannot be outrun in steady state.
+    void* gps_mem = csi_large_calloc(sizeof(RingBuffer<2048>));
+    if (gps_mem) {
+      g_gps_rb = new (gps_mem) RingBuffer<2048>();
+    } else {
+      Serial.println("[--] GPS ring alloc failed — GPS buffering disabled");
+    }
+  }
   if (!g_health_log_ring) {
     Serial.println("[--] health-log ring alloc failed — Serial-only logging");
   }
@@ -9986,7 +10002,8 @@ void loop() {
   bool gps_data_received = false;
   int gps_bytes_read = 0;
   while (Serial1.available() && gps_bytes_read < 256) {  // Limit per-cycle reads
-    g_gps_rb.push((uint8_t)Serial1.read());
+    uint8_t gps_b = (uint8_t)Serial1.read();  // always drain the UART
+    if (g_gps_rb) g_gps_rb->push(gps_b);
     gps_data_received = true;
     gps_bytes_read++;
   }
