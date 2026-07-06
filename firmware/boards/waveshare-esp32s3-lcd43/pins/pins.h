@@ -14,6 +14,18 @@
  *    drawing; verify RGB timings and expander bits against your board
  *    revision before relying on them.
  *
+ * SIBLING BOARDS this map is expected to cover (bench-verify per SKU):
+ *   - ESP32-S3-Touch-LCD-4.3B — same panel/pins + CAN/RS485 terminals.
+ *   - ESP32-S3-Touch-LCD-4.3C ("AI voice", sold w/ case, XYGStudy etc.) —
+ *     same RGB control pins (DE=5 VS=3 HS=46 PCLK=7), same 16-bit data
+ *     GPIO set, same I2C 8/9 with GT911 + CH422G. Differences: ST7701
+ *     panel controller (verify timing values; its LCD_RST rides an extra
+ *     CH422G bit — drive it high at init) and an ES8311/ES7210 audio
+ *     stack this firmware never initializes. NOTE: the C variant has a
+ *     dual-MIC array — physically present even though untouched — so the
+ *     "no microphone by construction" posture does NOT hold on that SKU;
+ *     prefer the plain 4.3/4.3B for the canonical Canary Dash.
+ *
  * @note This file must NOT contain any logic - only pin definitions.
  */
 
