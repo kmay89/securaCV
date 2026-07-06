@@ -113,7 +113,14 @@ devstl dev_gland_bush.stl    canary_inserts.scad -D 'part="gland_bush"'
 devstl dev_gland_cap.stl     canary_inserts.scad -D 'part="gland_cap"'
 devstl dev_jbox_body.stl     canary_jbox.scad -D 'part="body"'
 devstl dev_jbox_lid.stl      canary_jbox.scad -D 'part="lid"'
-devstl dev_sign.stl          canary_sign.scad -D 'part="sign"' 
+devstl dev_sign.stl          canary_sign.scad -D 'part="sign"'
+
+# --- Field case (CER-4 design intent: IP67 + transit drop; field_ratings.md) -
+devstl dev_field_body.stl    canary_field_case.scad -D 'part="body"'
+devstl dev_field_lid.stl     canary_field_case.scad -D 'part="lid"'
+devstl dev_field_boot.stl    canary_field_case.scad -D 'part="boot"'
+devstl dev_field_gasket.stl  canary_field_case.scad -D 'part="gasket"'
+devstl dev_field_bezel.stl   canary_field_case.scad -D 'part="bezel"'
 
 # --- User tools (fit coupon, bench fixture, dock, shop tools) ---------------
 devstl dev_coupon_base.stl   canary_fit_coupon.scad    -D 'part="base"'
@@ -158,9 +165,10 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_inserts.scad";         png "preview_dev_inserts.png"  -D 'part="horn"')
   (SRC="canary_jbox.scad";            png "preview_dev_jbox.png"     -D 'part="all"')
   (SRC="canary_sign.scad";            png "preview_dev_sign.png"     -D 'part="sign"')
+  (SRC="canary_field_case.scad";    png "preview_dev_field.png"   -D 'part="all"')
   (SRC="canary_fit_coupon.scad";    png "preview_dev_coupon.png"  -D 'part="all"')
   (SRC="canary_bench_fixture.scad"; png "preview_dev_fixture.png" -D 'part="all"')
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 36 dev renders + 3 SVG templates + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 41 dev renders + 3 SVG templates + previews."
