@@ -810,6 +810,14 @@ static const uint32_t BLE_DISCOVERY_AP_ONLY_SETTLE_MS = 45000;
 static const uint32_t BLE_DISCOVERY_MAX_HOLD_MS = 300000;  // 5 min
 #endif
 
+// QR scan-in-progress flag. Lives up here (not in the QR section) because
+// the camera power manager and the CSI witness bridge reference it, and
+// the Arduino preprocessor hoists prototypes for functions only — a
+// variable declared below its first use does not compile.
+#if FEATURE_QR_PROVISION
+static volatile bool g_qr_scan_active = false;
+#endif
+
 // Camera state
 #if FEATURE_CAMERA_PEEK
 static bool g_camera_initialized = false;
@@ -6224,7 +6232,6 @@ static esp_err_t handle_captive_probe(httpd_req_t* req) {
 
 #if FEATURE_QR_PROVISION
 
-static volatile bool     g_qr_scan_active  = false;
 static volatile bool     g_qr_scan_success = false;
 static char              g_qr_scanned_ssid[33] = {};
 static char              g_qr_scan_error[64] = {};
