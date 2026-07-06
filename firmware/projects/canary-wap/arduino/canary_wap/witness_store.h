@@ -33,7 +33,10 @@ namespace witness_store {
 
 // One line: {"v":1,"seq":N,"tb":N,"type":N,"ph":64x,"prev":64x,"ch":64x,
 // "sig":128x}\n — 320 hex chars + framing lands well under 512.
-constexpr size_t LINE_MAX = 512;
+// (Named RECORD_LINE_MAX because POSIX LINE_MAX is a numeric macro on
+// newlib/ESP32 — `witness_store::LINE_MAX` would preprocess into
+// `witness_store::2048` and fail to compile on-target.)
+constexpr size_t RECORD_LINE_MAX = 512;
 
 // A 1 KiB tail always contains at least one complete line plus whatever
 // torn final line a power cut left behind.

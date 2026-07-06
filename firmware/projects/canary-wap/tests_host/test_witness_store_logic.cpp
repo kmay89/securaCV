@@ -58,7 +58,7 @@ static void test_line_golden_and_roundtrip() {
   uint8_t ph[32], prev[32], ch[32], sig[64];
   fill_fixture(ph, prev, ch, sig);
 
-  char line[LINE_MAX];
+  char line[RECORD_LINE_MAX];
   const size_t n = line_build(line, sizeof(line), 42, 7, 1, ph, prev, ch, sig);
   CHECK(n == strlen(GOLDEN_LINE));
   CHECK(strcmp(line, GOLDEN_LINE) == 0);
@@ -80,14 +80,14 @@ static void test_tail_parse_picks_newest_complete() {
   uint8_t ph[32], prev[32], ch[32], sig[64];
   fill_fixture(ph, prev, ch, sig);
 
-  char l1[LINE_MAX], l2[LINE_MAX];
+  char l1[RECORD_LINE_MAX], l2[RECORD_LINE_MAX];
   CHECK(line_build(l1, sizeof(l1), 41, 6, 0, ph, prev, ch, sig) > 0);
   ch[0] = 0xEE; /* distinguish the newer head */
   CHECK(line_build(l2, sizeof(l2), 42, 7, 1, ph, prev, ch, sig) > 0);
 
   /* Two complete lines + a torn third (power cut mid-append): the torn
    * line has no trailing newline and must be skipped. */
-  char tail[3 * LINE_MAX];
+  char tail[3 * RECORD_LINE_MAX];
   snprintf(tail, sizeof(tail), "%s%s{\"v\":1,\"seq\":43,\"tb\":8,\"ty", l1, l2);
 
   uint32_t seq = 0;
@@ -103,7 +103,7 @@ static void test_tail_parse_picks_newest_complete() {
 
   /* A malformed-but-complete junk line after the good one must not shadow
    * it: the last WELL-FORMED line wins. */
-  char tail2[3 * LINE_MAX];
+  char tail2[3 * RECORD_LINE_MAX];
   snprintf(tail2, sizeof(tail2), "%sgarbage line without fields\n", l2);
   CHECK(tail_parse(tail2, &seq, head, psig));
   CHECK(seq == 42);
@@ -120,7 +120,7 @@ static void test_line_parse_rejects_malformed() {
                     sig));
 
   /* Non-hex characters in ch. */
-  char bad_hex[LINE_MAX];
+  char bad_hex[RECORD_LINE_MAX];
   uint8_t ph[32], prev[32], ch[32], fsig[64];
   fill_fixture(ph, prev, ch, fsig);
   const size_t n =

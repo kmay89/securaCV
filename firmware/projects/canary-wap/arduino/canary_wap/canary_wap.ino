@@ -1674,7 +1674,7 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
   if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
     return witness_sd_fail("mkdir /WITNESS failed");
 
-  char line[witness_store::LINE_MAX];
+  char line[witness_store::RECORD_LINE_MAX];
   const size_t n = witness_store::line_build(
       line, sizeof(line), rec->seq, rec->time_bucket, (uint8_t)rec->type,
       rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
