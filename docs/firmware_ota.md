@@ -433,12 +433,20 @@ firmware fails signature verification on every future check, forever.
 Rotate in phases:
 
 1. Ship a **transition release** signed with the OLD key whose firmware
-   carries the NEW public key. Do not rotate the secret yet.
+   carries the NEW public key. Concretely: regenerate `ota_release_key.h`
+   from the NEW key, commit the OLD public key alongside it as
+   `firmware/common/ota/src/ota_release_key_previous.h` (same header
+   shape), and keep `OTA_SIGNING_KEY_PEM` on the OLD key. The release
+   workflow's key guard accepts the previous-key file as the signing
+   match during this window (with a loud warning) — without it, an
+   old-key-signed release with a new-key header would be refused.
 2. **Wait for fleet convergence** — devices check daily; with auto-update
    enabled they converge within days. Verify (HA update entities /
    dashboard) that every device you care about is on the transition
    version before proceeding.
-3. Switch `OTA_SIGNING_KEY_PEM` to the new key and release normally.
+3. Switch `OTA_SIGNING_KEY_PEM` to the new key, **delete
+   `ota_release_key_previous.h`** (closing the rotation window — the
+   guard returns to strict single-key), and release normally.
 
 A device that slept through the window is NOT bricked, but it can no
 longer follow `latest`. Recovery without re-tethering: point it at the

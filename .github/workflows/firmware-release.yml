@@ -83,12 +83,27 @@ jobs:
           }
           extract_key_bytes /tmp/expected_key.h > /tmp/expected_bytes
           extract_key_bytes firmware/common/ota/src/ota_release_key.h > /tmp/committed_bytes
-          if ! cmp -s /tmp/expected_bytes /tmp/committed_bytes; then
-            echo "::error::The OTA_SIGNING_KEY_PEM secret's public key does not match firmware/common/ota/src/ota_release_key.h. Devices would reject everything this workflow signs."
+          if cmp -s /tmp/expected_bytes /tmp/committed_bytes; then
+            echo "Signing key matches the committed release public key."
+          # Key rotation window (docs/firmware_ota.md): the TRANSITION release
+          # embeds the NEW public key in ota_release_key.h but must still be
+          # SIGNED with the OLD key so fielded devices accept it. Committing
+          # ota_release_key_previous.h (the OLD public key) opens that window;
+          # delete the file after the fleet converges to close it. Without the
+          # file the guard is strict single-key, exactly as before.
+          elif [ -f firmware/common/ota/src/ota_release_key_previous.h ]; then
+            extract_key_bytes firmware/common/ota/src/ota_release_key_previous.h > /tmp/previous_bytes
+            if cmp -s /tmp/expected_bytes /tmp/previous_bytes; then
+              echo "::warning::KEY ROTATION IN PROGRESS: signing with the PREVIOUS release key (ota_release_key_previous.h). Fielded devices accept this release and learn the new key from it. Delete ota_release_key_previous.h and switch OTA_SIGNING_KEY_PEM to the new key once the fleet has converged."
+            else
+              echo "::error::The OTA_SIGNING_KEY_PEM secret matches neither ota_release_key.h nor ota_release_key_previous.h. Devices would reject everything this workflow signs."
+              exit 1
+            fi
+          else
+            echo "::error::The OTA_SIGNING_KEY_PEM secret's public key does not match firmware/common/ota/src/ota_release_key.h. Devices would reject everything this workflow signs. (If you are rotating keys, commit the old public key as ota_release_key_previous.h — see docs/firmware_ota.md.)"
             diff /tmp/expected_bytes /tmp/committed_bytes || true
             exit 1
           fi
-          echo "Signing key matches the committed release public key."
 
       - name: Cache PlatformIO
         uses: actions/cache@v6
