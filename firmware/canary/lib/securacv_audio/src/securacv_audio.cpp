@@ -272,6 +272,25 @@ static uint16_t compute_rms(const int16_t* samples, size_t n) {
  * enough to catch every UL 217/2034 sounder (3.0–4.0 kHz fundamentals)
  * without admitting voice, TV or motor noise. ~4 float MACs per sample:
  * ≈0.2 % of one 240 MHz core at 16 kHz. */
+
+/* Local sin/cos for the one-time coefficient design. Deliberately NOT
+ * newlib's sinf/cosf: those drag rem_pio2f + kernels (~2 KB) into the
+ * image, and the FULL build rides within ~2 KB of the OTA slot (same
+ * reasoning as the CSI code's pre-computed 2·cos(ω) tables). Taylor
+ * folded to [0, π/2]; valid for x ∈ (0, π), which the s_tone_enabled
+ * guard ensures. |err| < 3e-5 — irrelevant against a Q = 1.8 gate. */
+static void sincos_design(float x, float* sin_out, float* cos_out) {
+  bool fold = false;
+  if (x > (float)M_PI_2) { x = (float)M_PI - x; fold = true; }
+  const float x2 = x * x;
+  const float s = x * (1.0f + x2 * (-1.0f/6 + x2 * (1.0f/120
+                       + x2 * (-1.0f/5040 + x2 * (1.0f/362880)))));
+  const float c = 1.0f + x2 * (-0.5f + x2 * (1.0f/24
+                       + x2 * (-1.0f/720 + x2 * (1.0f/40320))));
+  *sin_out = s;
+  *cos_out = fold ? -c : c;
+}
+
 static void tone_filter_design(void) {
   const float fs = (float)s_cfg.sample_rate_hz;
   const float fc = (float)AUDIO_TONE_FC_HZ;
@@ -285,12 +304,14 @@ static void tone_filter_design(void) {
     s_bq_z1 = s_bq_z2 = 0.0f;
     return;
   }
-  const float w0    = 2.0f * (float)M_PI * fc / fs;
-  const float alpha = sinf(w0) / (2.0f * Q);
+  const float w0 = 2.0f * (float)M_PI * fc / fs;
+  float sin_w0, cos_w0;
+  sincos_design(w0, &sin_w0, &cos_w0);
+  const float alpha = sin_w0 / (2.0f * Q);
   const float a0    = 1.0f + alpha;
   s_bq_b0 =  alpha / a0;
   s_bq_b2 = -alpha / a0;
-  s_bq_a1 = (-2.0f * cosf(w0)) / a0;
+  s_bq_a1 = (-2.0f * cos_w0) / a0;
   s_bq_a2 = (1.0f - alpha) / a0;
   s_bq_z1 = s_bq_z2 = 0.0f;
 }
