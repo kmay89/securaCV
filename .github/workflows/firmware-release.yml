@@ -5,8 +5,9 @@ name: Firmware Release
 #   git tag fw-v2.2.0 && git push origin fw-v2.2.0
 #
 # Produces a GitHub Release carrying, for each supported variant
-# (canary, canary-wap, canary-vision):
-#   - the firmware binary           (canary-<ver>.bin, canary-wap-<ver>.bin, canary-vision-<ver>.bin)
+# (canary, canary-wap, canary-vision incl. xiao-c3/xiao-s3, canary-sense
+# incl. wellbeing — 7 products total):
+#   - the firmware binary           (<variant>-<ver>.bin)
 #   - a signed per-variant manifest (manifest-<variant>.json)
 #   - a variant index               (manifest-index.json)
 #   - sha256 checksums              (sha256sums.txt)

@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### OTA: unified-update audit — partition pin, doc truth, first-release runbook
+
+Survey result across the three field firmwares (canary-wap on XIAO
+ESP32-S3, canary-vision hosting the Grove Vision AI V2, canary-sense
+MR60BHA2 heartbeat on ESP32-C6): all three already consume the shared
+signed pull-OTA engine (`firmware/common/ota/` — Ed25519-signed manifests
+and images, A/B partitions, boot self-test with automatic rollback, NVS
+anti-rollback floor), and the `fw-v*` release workflow builds and signs
+all seven product manifests. What has kept it from working in the field
+is operational, not code: no `fw-v*` release has ever been cut, and the
+committed release public key is still the all-zero placeholder that
+hard-disables installs by design. Both failure modes already report
+honestly on-device ("Release public key not provisioned" / "Failed to
+fetch manifest").
+
+Hardening shipped here:
+
+- canary-vision now PINS its OTA-capable partition tables
+  (`default.csv` on the C3 envs, `default_8MB.csv` on xiao-s3) instead
+  of inheriting whatever the board package defaults to — a silent board
+  default change could have dropped the second app slot.
+- `docs/firmware_ota.md`: covered-variants list now includes
+  canary-sense and the vision board products; documents that the Grove
+  Vision AI V2 module's own firmware/model is SenseCraft/USB-C-loaded
+  and not host-flashable (host ESP32 image only over the air); adds a
+  first-release runbook (keygen -> pubkey header -> OTA_SIGNING_KEY_PEM
+  secret -> `fw-v*` tag -> on-device verification, and key rotation).
+- `firmware-release.yml` header comment no longer omits canary-sense.
 ### canary-wap: PSRAM static diet, wave 2 — ~26 KB more internal DRAM back (running total ~67 KB)
 
 Second sweep of task-context-only statics into PSRAM via `csi_large_calloc`
