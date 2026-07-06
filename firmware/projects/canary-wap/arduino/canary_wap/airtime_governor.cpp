@@ -6,6 +6,7 @@
  */
 
 #include "airtime_governor.h"
+#include "csi_mem.h"
 
 namespace airtime_governor {
 
@@ -21,7 +22,14 @@ struct Slot {
   uint32_t airtime_us;
 };
 
-static Slot g_ring[RING_SIZE];
+/* PSRAM-resident (csi_mem.h): 2 KB, touched only from the loop-task send
+ * paths. Allocated in init(); if that ever fails (heap exhausted at boot),
+ * record() no-ops and the usage window reads 0 — the governor fails open
+ * rather than silencing the alert channels, and the health log carries the
+ * boot-time allocation warning from the callers. On the host tests the
+ * allocator falls back to plain calloc. */
+static Slot* g_ring = nullptr;
+static constexpr size_t RING_BYTES = RING_SIZE * sizeof(Slot);
 static size_t g_head = 0;       // next write position
 static size_t g_count = 0;      // number of valid entries (<= RING_SIZE)
 
@@ -66,6 +74,7 @@ uint32_t estimate_airtime_us(size_t bytes) {
 }
 
 void init(uint8_t cap_pct) {
+  if (!g_ring) g_ring = (Slot*)csi_large_calloc(RING_BYTES);
   g_head = 0;
   g_count = 0;
   g_routine_allowed = 0;
@@ -76,9 +85,11 @@ void init(uint8_t cap_pct) {
   g_beacon_head = 0;
   g_beacon_count = 0;
   g_cap_pct = (cap_pct > 0) ? cap_pct : DEFAULT_CAP_PCT;
-  for (size_t i = 0; i < RING_SIZE; i++) {
-    g_ring[i].ts_ms = 0;
-    g_ring[i].airtime_us = 0;
+  if (g_ring) {
+    for (size_t i = 0; i < RING_SIZE; i++) {
+      g_ring[i].ts_ms = 0;
+      g_ring[i].airtime_us = 0;
+    }
   }
   for (size_t i = 0; i < BEACON_RING_SIZE; i++) {
     g_beacon_ring[i].ts_ms = 0;
@@ -87,6 +98,7 @@ void init(uint8_t cap_pct) {
 }
 
 static void record(uint32_t now_ms, uint32_t airtime_us) {
+  if (!g_ring) return;  /* alloc failed — governor fails open, window reads 0 */
   g_ring[g_head].ts_ms = now_ms;
   g_ring[g_head].airtime_us = airtime_us;
   g_head = (g_head + 1) % RING_SIZE;

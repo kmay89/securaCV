@@ -31,6 +31,9 @@ on:
       - 'firmware/projects/canary-wap/arduino/canary_wap/meta_daily_summary.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mem.h'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/airtime_governor.cpp'
 
 permissions:
   contents: read
@@ -105,13 +108,17 @@ jobs:
                    END { printf "%d bytes\n", s }'
 
       - name: Assert the PSRAM static diet holds (DRAM regression guard)
-        # The fails-before/passes-after test for the wave-1 diet: these
-        # buffers were the top project-owned internal-DRAM statics
-        # (g_health_log_ring 14 KB, emit_summary buffer 11.5 KB,
-        # s_amp_hist 10 KB, fleet cache/snap 2 x 2.5 KB) and now live in
-        # PSRAM via csi_mem.h. If any of them reappears in the internal
-        # DRAM window at >= 1 KB, someone reverted a pointer back to a
-        # static array — fail loudly with the offender named.
+        # The fails-before/passes-after test for the PSRAM diet. Wave 1:
+        # g_health_log_ring 14 KB, emit_summary buffer 11.5 KB, s_amp_hist
+        # 10 KB, fleet cache/snap 2 x 2.5 KB. Wave 2: the chirp tables
+        # (g_recent_chirps 10.8 KB, g_bloom 4 KB, g_nearby_devices,
+        # g_pubkey_rate, g_selftest_seen), mesh g_alert_history 2.9 KB,
+        # the GPS byte ring 2 KB, and airtime_governor::g_ring 2 KB. All
+        # now live in PSRAM via csi_mem.h. Deliberately NOT dieted:
+        # csi_hal::s_ring (hot per-frame WiFi path) and mesh g_peers
+        # (session keys stay in on-die SRAM). If any dieted buffer
+        # reappears in the internal DRAM window at >= 1 KB, someone
+        # reverted a pointer back to a static array — fail loudly.
         run: |
           set -euo pipefail
           command -v gawk >/dev/null || sudo apt-get install -y gawk
@@ -120,7 +127,11 @@ jobs:
           BAD=$("$NM" --print-size -C "$ELF"             | gawk '{ a = strtonum("0x"$1); sz = strtonum("0x"$2);
                       if (a >= 0x3FC88000 && a < 0x3FD00000 && sz >= 1024 &&
                           ($0 ~ /g_health_log_ring/ || $0 ~ /emit_summary/ ||
-                           $0 ~ /s_amp_hist/ || $0 ~ /g_fleet_scan/))
+                           $0 ~ /s_amp_hist/ || $0 ~ /g_fleet_scan/ ||
+                           $0 ~ /g_recent_chirps/ || $0 ~ /chirp_channel::g_bloom/ ||
+                           $0 ~ /g_nearby_devices/ || $0 ~ /g_pubkey_rate/ ||
+                           $0 ~ /g_selftest_seen/ || $0 ~ /g_alert_history/ ||
+                           $0 ~ /g_gps_rb/ || $0 ~ /airtime_governor::g_ring/))
                         print sz " B  " $0 }')
           if [ -n "$BAD" ]; then
             echo "::error::PSRAM-dieted buffer is back in internal DRAM:"

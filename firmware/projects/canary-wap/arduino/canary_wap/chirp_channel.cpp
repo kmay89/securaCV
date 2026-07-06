@@ -36,6 +36,7 @@
 #if FEATURE_MESH_NETWORK
 
 #include "mesh_network.h"
+#include "csi_mem.h"
 #include "airtime_governor.h"
 #include "nvs_store.h"
 #include "health_log.h"
@@ -76,9 +77,18 @@ static bool g_muted = false;
 static uint32_t g_mute_until_ms = 0;
 
 // Storage
-static ReceivedChirp g_recent_chirps[MAX_RECENT_CHIRPS];
+/* PSRAM-resident (csi_mem.h): together these five tables were ~19 KB of
+ * internal DRAM — the biggest wave-2 claim on the bank the BLE stack
+ * competes for. Safe: every access runs from mesh_network::update() on the
+ * loop task (the ESP-NOW recv callback only stages 250 B and sets a flag).
+ * All five allocate in init(); any failure fails init() -> chirp disabled. */
+static ReceivedChirp* g_recent_chirps = nullptr;
+static constexpr size_t RECENT_CHIRPS_BYTES =
+    MAX_RECENT_CHIRPS * sizeof(ReceivedChirp);
 static size_t g_recent_chirp_count = 0;
-static NearbyDevice g_nearby_devices[MAX_NEARBY_CACHE];
+static NearbyDevice* g_nearby_devices = nullptr;
+static constexpr size_t NEARBY_BYTES =
+    MAX_NEARBY_CACHE * sizeof(NearbyDevice);
 static size_t g_nearby_count = 0;
 
 // Nonce deduplication: Bloom filter (audit C9 closure).
@@ -101,7 +111,7 @@ static size_t g_nearby_count = 0;
 static const size_t BLOOM_BITS = 32768;
 static const size_t BLOOM_BYTES = BLOOM_BITS / 8;
 static const uint8_t BLOOM_HASHES = 4;
-static uint8_t g_bloom[BLOOM_BYTES];
+static uint8_t* g_bloom = nullptr;
 static uint32_t g_bloom_reset_ms = 0;
 
 // Per-pubkey rate-limit tracking (audit C14).
@@ -112,7 +122,9 @@ struct PubkeyRateEntry {
   uint8_t  count_in_window;
   bool     valid;
 };
-static PubkeyRateEntry g_pubkey_rate[MAX_PUBKEY_RATE_TRACK];
+static PubkeyRateEntry* g_pubkey_rate = nullptr;
+static constexpr size_t PUBKEY_RATE_BYTES =
+    MAX_PUBKEY_RATE_TRACK * sizeof(PubkeyRateEntry);
 
 // Self-test trouble surface — last selftest received per nearby pubkey.
 struct SelfTestSeenEntry {
@@ -120,7 +132,9 @@ struct SelfTestSeenEntry {
   uint32_t last_seen_ms;
   bool     valid;
 };
-static SelfTestSeenEntry g_selftest_seen[MAX_NEARBY_CACHE];
+static SelfTestSeenEntry* g_selftest_seen = nullptr;
+static constexpr size_t SELFTEST_SEEN_BYTES =
+    MAX_NEARBY_CACHE * sizeof(SelfTestSeenEntry);
 
 // Callbacks
 static ChirpReceivedCallback g_chirp_callback = nullptr;
@@ -1083,13 +1097,30 @@ static void save_settings() {
 
 bool init() {
   if (g_initialized) return true;
+  /* One-time PSRAM allocations (idempotent across a failed first init). */
+  if (!g_recent_chirps)
+    g_recent_chirps = (ReceivedChirp*)csi_large_calloc(RECENT_CHIRPS_BYTES);
+  if (!g_nearby_devices)
+    g_nearby_devices = (NearbyDevice*)csi_large_calloc(NEARBY_BYTES);
+  if (!g_bloom)
+    g_bloom = (uint8_t*)csi_large_calloc(BLOOM_BYTES);
+  if (!g_pubkey_rate)
+    g_pubkey_rate = (PubkeyRateEntry*)csi_large_calloc(PUBKEY_RATE_BYTES);
+  if (!g_selftest_seen)
+    g_selftest_seen = (SelfTestSeenEntry*)csi_large_calloc(SELFTEST_SEEN_BYTES);
+  if (!g_recent_chirps || !g_nearby_devices || !g_bloom || !g_pubkey_rate ||
+      !g_selftest_seen) {
+    health_log(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+               "chirp: table alloc failed — channel disabled");
+    return false;  /* fail-safe: caller treats false as chirp unavailable */
+  }
   memset(&g_session, 0, sizeof(g_session));
-  memset(g_recent_chirps, 0, sizeof(g_recent_chirps));
-  memset(g_nearby_devices, 0, sizeof(g_nearby_devices));
-  memset(g_bloom, 0, sizeof(g_bloom));
+  memset(g_recent_chirps, 0, RECENT_CHIRPS_BYTES);
+  memset(g_nearby_devices, 0, NEARBY_BYTES);
+  memset(g_bloom, 0, BLOOM_BYTES);
   g_bloom_reset_ms = millis();
-  memset(g_pubkey_rate, 0, sizeof(g_pubkey_rate));
-  memset(g_selftest_seen, 0, sizeof(g_selftest_seen));
+  memset(g_pubkey_rate, 0, PUBKEY_RATE_BYTES);
+  memset(g_selftest_seen, 0, SELFTEST_SEEN_BYTES);
   g_recent_chirp_count = 0;
   g_nearby_count = 0;
   load_settings();
