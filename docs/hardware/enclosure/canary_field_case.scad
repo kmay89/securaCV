@@ -19,7 +19,8 @@
 //      board on snap-clips, battery on a foam bed.
 //    - A TPU impact BOOT takes the drops; the shell takes the water.
 //
-//  Parts: body / lid / boot (TPU) / gasket (printed-TPU fallback ring) / all
+//  Parts: body / lid / boot (TPU) / gasket (printed-TPU fallback ring) /
+//         bezel (contrast lens trim ring — hides the disc bond line) / all
 //  Print: body + lid in ASA (outdoor) or PETG, 5-6 perimeters, 40 % gyroid,
 //  0.2 mm layers, flat as modelled — no supports. Boot: TPU 95A, open up.
 //  Hardware: 6x M3 heat-set insert (Ø4.6) + M3x8 pan head; Ø1.5 O-ring cord
@@ -30,7 +31,7 @@
 // ============================================================================
 
 /* [What to render] */
-part = "all";        // ["body","lid","boot","gasket","all"]
+part = "all";        // ["body","lid","boot","gasket","bezel","all"]
 
 /* [Board] — XIAO ESP32-S3 Sense, camera stack up, USB toward +X wall */
 board_l = 21.0;  board_w = 17.5;  board_h = 1.2;
@@ -86,6 +87,14 @@ lan_d = 4.5;  lan_z = 5.0;
 /* [Lid alignment lip] — shear key inboard of the seal */
 lip_w = 1.5;  lip_h = 2.0;
 
+/* [Bezel accent] — contrast-color trim ring hiding the lens bond line */
+bez_on = true;
+bez_o = 19.0;        // bezel outer Ø (= recess Ø in the lid face)
+bez_i = 10.5;        // bezel opening (overlaps the disc edge by ~0.75/side)
+bez_recess = 1.0;    // recess depth in the lid face
+bez_proud = 0.8;     // stand above the face = the inner lip thickness (>= 0.6);
+                     // doubles as a sacrificial lens hood on face drops
+
 /* [Boot] — TPU 95A impact boot; earns the drop rating */
 boot_w    = 2.5;     // boot wall
 boot_floor = 2.5;
@@ -139,6 +148,10 @@ assert(grv_fill <= 0.90, "O-ring groove over-filled (>90%) — widen grv_w");
 assert(g_c - grv_w/2 >= 0.8, "inner groove cheek < 0.8 mm");
 assert(wall_t - g_c - grv_w/2 >= 0.8, "outer groove cheek < 0.8 mm — thicken wall_t");
 assert(lid_t - disc_t - 0.2 >= 1.5, "lens web < 1.5 mm — thicken lid_t or thin disc_t");
+assert(!bez_on || bez_recess < disc_t, "bezel recess deeper than the disc pocket makes the disc unseatable");
+assert(!bez_on || (bez_o >= disc_d + 4 && bez_i < disc_d), "bezel must overlap the disc edge and clear the pocket");
+assert(!bez_on || lid_t - bez_recess >= 1.8, "bezel recess leaves < 1.8 mm lid web");
+assert(!bez_on || bez_proud >= 0.6, "bezel lip (= bez_proud) too thin to print");
 assert(lid_t - cb_h >= 1.8, "counterbore leaves < 1.8 mm lid web");
 assert(floor_t - kh_head_h >= 1.0, "keyhole pocket breaches the floor — seal-unsafe");
 assert(lob_off - wall_t - lan_d/2 >= 1.5, "lanyard bore too close to the pressure wall (< 1.5 mm surround) — raise lob_off");
@@ -235,10 +248,11 @@ module body() {
 module lid() {                          // z=0 is the OUTER face; print face-down
     difference() {
         union() {
-            // stepped edge chamfer (prints face-down: kills elephant foot too)
-            for (k = [0:3])
-                translate([0, 0, k*lid_edge/4]) linear_extrude(lid_edge/4 + 0.01)
-                    offset(r = -(lid_edge - k*lid_edge/4)) outline2d();
+            // bullnose face edge (6-step quarter-round; prints face-down,
+            // kills elephant foot and reads "moulded" instead of "printed")
+            for (k = [0:5])
+                translate([0, 0, k*lid_edge/6]) linear_extrude(lid_edge/6 + 0.01)
+                    offset(r = -(lid_edge - lid_edge*sin(90*(k + 1)/6))) outline2d();
             translate([0, 0, lid_edge]) linear_extrude(lid_t - lid_edge) outline2d();
             // alignment/shear lip, inboard of the seal line
             translate([0, 0, lid_t - 0.01]) linear_extrude(lip_h + 0.01) difference() {
@@ -254,6 +268,9 @@ module lid() {                          // z=0 is the OUTER face; print face-dow
         // lens: disc pocket (disc lands 0.2 sub-flush) + aperture
         translate([lens_x, lens_y, -0.1]) cylinder(d = disc_d + 2*tol_slide, h = disc_t + 0.3);
         translate([lens_x, lens_y, -0.1]) cylinder(d = ap_d, h = lid_t + 0.2);
+        // bezel recess around the lens (press-fit trim ring hides the bond line)
+        if (bez_on)
+            translate([lens_x, lens_y, -0.1]) cylinder(d = bez_o, h = bez_recess + 0.1);
         // vent hole (ePTFE patch adheres to the flat INNER face around it)
         translate([vent_x, vent_y, -0.1]) cylinder(d = vent_d, h = lid_t + 0.2);
         translate([vent_x, vent_y, -0.1]) cylinder(d = vent_d + 2.4, h = 0.9);
@@ -269,6 +286,20 @@ module gasket() {                       // printed-TPU fallback if you skip the 
     linear_extrude(grv_d + 0.6) difference() {
         offset(r = g_c + (grv_w - 0.2)/2) cav2d();
         offset(r = g_c - (grv_w - 0.2)/2) cav2d();
+    }
+}
+
+module bezel() {                        // contrast-color lens trim ring
+    // z0 = the face that lands on the recess floor; print as modelled.
+    // The inner lip floats 0.2 mm above the bonded disc and hides the
+    // silicone bond line — the detail every consumer camera trim ring exists for.
+    difference() {
+        cylinder(d = bez_o - 2*tol_press, h = bez_recess + bez_proud);
+        translate([0, 0, -0.1]) cylinder(d = bez_i, h = bez_recess + bez_proud + 0.2);
+        // relief over the disc: the disc top sits (bez_recess - 0.2) above z0,
+        // so a relief of height bez_recess leaves 0.2 clearance and makes the
+        // inner lip exactly bez_proud thick
+        translate([0, 0, -0.1]) cylinder(d = disc_d + 0.6, h = bez_recess + 0.1);
     }
 }
 
@@ -305,9 +336,11 @@ if      (part == "body")   body();
 else if (part == "lid")    lid();
 else if (part == "boot")   boot();
 else if (part == "gasket") gasket();
+else if (part == "bezel")  bezel();
 else {
     body();
     translate([0, out_w + 2*lob_off + 16, 0]) lid();
     translate([0, -(out_w + 2*lob_off + 22), 0]) boot();
     translate([out_l + 2*lob_off + 20, 0, 0]) gasket();
+    if (bez_on) translate([out_l + 2*lob_off + 20, inner_w + 10, 0]) bezel();
 }

@@ -120,6 +120,7 @@ devstl dev_field_body.stl    canary_field_case.scad -D 'part="body"'
 devstl dev_field_lid.stl     canary_field_case.scad -D 'part="lid"'
 devstl dev_field_boot.stl    canary_field_case.scad -D 'part="boot"'
 devstl dev_field_gasket.stl  canary_field_case.scad -D 'part="gasket"'
+devstl dev_field_bezel.stl   canary_field_case.scad -D 'part="bezel"'
 
 # --- User tools (fit coupon, bench fixture, dock, shop tools) ---------------
 devstl dev_coupon_base.stl   canary_fit_coupon.scad    -D 'part="base"'
@@ -170,4 +171,4 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 40 dev renders + 3 SVG templates + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 41 dev renders + 3 SVG templates + previews."

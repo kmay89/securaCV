@@ -128,7 +128,7 @@ measurements welcome.
 | **Functional inserts** — buzzer horn (louder chirp), matte anti-glare ring, 3-part printed cable gland (TPU bush) | glue-in / press-in parts | <img src="./preview_dev_inserts.png" width="230"> | [`canary_inserts.scad`](./canary_inserts.scad) |
 | **Covert junction box** — compact WAP disguised as utility hardware; aperture hidden in a mock knockout | pair with the signage plate | <img src="./preview_dev_jbox.png" width="230"> | [`canary_jbox.scad`](./canary_jbox.scad) |
 | **Witness signage plate** — "presence sensing in use / no video stored", debossed, 3 parametric lines | check local signage rules | <img src="./preview_dev_sign.png" width="230"> | [`canary_sign.scad`](./canary_sign.scad) |
-| **Field case** — bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), six-lobe clamp, zero external ports (open to charge), bonded PC lens disc, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md) | 72 × 39 × 21 body; boot on ≈ 94 wide | <img src="./preview_dev_field.png" width="230"> | [`canary_field_case.scad`](./canary_field_case.scad) |
+| **Field case** — bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), six-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md) | 72 × 39 × 21 body; boot on ≈ 94 wide | <img src="./preview_dev_field.png" width="230"> | [`canary_field_case.scad`](./canary_field_case.scad) |
 | **Universal fit coupon** — ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
 | **Bench bring-up fixture** — labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md)) | wire channels per §5 pin map | <img src="./preview_dev_fixture.png" width="230"> | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) |
 | **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
@@ -203,6 +203,31 @@ approximates a roundover while still printing face-down without support.
 For the nicest faces, print them on a **textured PEI plate** (the visible
 surface is the first layer) and set the slicer's **seam position to the rear
 edge** of each part.
+
+**Consumer-grade looks — the finish ladder.** Store-bought cases read
+"product" because of four things you can reproduce, in increasing effort:
+
+1. **Free (slicer only)** — A-surfaces face-down on textured PEI (every lid
+   and face here is modelled for it); **fuzzy skin ~0.3 mm on outside walls
+   only** (hides layer lines completely and matches the PEI texture); seam
+   painted to a rear corner; matte filament (matte ASA/PETG reads
+   injection-moulded in a way silk/gloss never does).
+2. **Two-tone (~zero effort)** — the parts are already split along color
+   lines: shell in one color, **TPU boot / gaskets / bezel + button accent
+   rings in a contrast color** (graphite + safety-orange boot is the classic
+   field look; all-black with a graphite bezel is the Wyze/Ring look). The
+   field case's **lens trim ring** (`part="bezel"`) exists exactly for this —
+   it also hides the disc's silicone bond line, which is why real cameras
+   have trim rings.
+3. **Paint-filled deboss (10 min)** — every `label_text` deboss is 0.5 mm
+   deep: brush acrylic into the recess, let it set, wipe the face with
+   isopropyl — crisp printed-on branding.
+4. **Full finish (hours)** — sand 240→400, filler-primer, 600 wet, matte 2K
+   clear (or ASA acetone **vapor smooth** for gloss + extra water sealing —
+   outdoor-safe, but mask the gasket grooves and re-check clip fits after).
+
+Rule of thumb: fuzzy skin + textured first layer + two-tone + paint-filled
+label gets ~90 % of the consumer look for ~0 % extra work.
 
 **Security-build slicing spec:** 0.4 mm nozzle, 0.2 mm layers, **4 perimeters**,
 5 top/bottom layers, **30 % gyroid** infill, ~30 % infill/perimeter overlap,
