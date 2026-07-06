@@ -37,6 +37,14 @@ e_seal  = opt_seal;
 e_mount = opt_mount;
 m_style = mount_style;
 
+/* [Radar flavor] */
+// Both Seeed MR60 kits share this carrier family and 60 GHz radome physics:
+//   bha2 — breathing/presence (wall/stand mount, the default build)
+//   fda2 — FALL DETECTION: mount on the CEILING, 2.4-3.1 m, face straight
+//          down over the fall zone (keyhole mount; check rad_dx/dy against
+//          YOUR carrier — the FDA2 antenna zone may sit differently)
+radar = "bha2";       // ["bha2","fda2"]
+
 /* [Boards] — Seeed MR60BHA2 kit carrier + stacked XIAO ESP32-C6. MEASURE YOURS */
 vm_l     = 44.0;   // carrier length (Y; XIAO/USB edge down)
 vm_w     = 36.0;   // carrier width (X)
@@ -227,10 +235,14 @@ assert(lid_edge == 0 || (lid_edge >= 0.01 && lid_edge < lid_t), "lid_edge out of
 assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge2 < lid_t,
        "lid_edge2 requires lid_edge > 0, and their sum must stay below lid_t");
 assert(2*fin_r <= base_d + 0.01, "fin_r too large — prongs must not exceed the shell depth");
-echo(str("Canary Sense RADOME enclosure v0.1 — outer ", out_x, " x ", out_y, " x ",
+assert(radar == "bha2" || radar == "fda2", "radar must be \"bha2\" or \"fda2\"");
+echo(str("Canary Sense RADOME enclosure v0.1 — MR60", radar == "fda2" ? "FDA2" : "BHA2",
+         ", outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r, " mm prongs)  (radome ",
          radome_t, " mm, ", rad_win_x, "x", rad_win_y, " window, antenna air gap ",
          rad_gap, " mm; seal=", e_seal, ", mount=", m_style, ")"));
+if (radar == "fda2")
+    echo("FDA2 fall-detection: CEILING mount 2.4-3.1 m facing straight down — verify rad_dx/dy against YOUR carrier");
 
 // ----------------------------------------------------------------------------
 //  Helpers (shared idiom with the other Canary enclosures)

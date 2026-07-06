@@ -59,6 +59,16 @@ corroboration model the kernel's contract layer was built for.
 - **Arduino path**: official Seeed Arduino mmWave library
   (`Seeed-Studio/Seeed_Arduino_mmWave`, MR60BHA2 + MR60FDA2) gives us full
   control of the UART frame protocol for a native canary firmware.
+- **Enclosure**: a parametric 3D-printable **RADOME housing** exists —
+  [`docs/hardware/enclosure/canary_sense_enclosure.scad`](./hardware/enclosure/canary_sense_enclosure.scad)
+  ([README section](./hardware/enclosure/README.md#canary-sense--radome-enclosure-v01)).
+  The front over the antenna zone is a thin, flat, uniform membrane (no ribs
+  or labels there — 60 GHz radar transparency demands it; the air gap behind
+  it is computed and asserted in the model). A `radar = "fda2"` flavor covers
+  the fall-detection sibling (ceiling mount, 2.4–3.1 m, facing down); an
+  in-wall single-gang faceplate (`canary_sense_gang.scad`), bedside stand
+  (`canary_sense_stand.scad`) and radar+camera combo (`canary_combo.scad`)
+  are in development in the same folder.
 - **Constraint**: the radar module's own firmware (zone configuration etc.)
   is only modifiable under a Seeed business partnership. We treat the radar
   module as a fixed black-box claim source and do all SecuraCV work on the

@@ -122,6 +122,15 @@ devstl dev_field_boot.stl    canary_field_case.scad -D 'part="boot"'
 devstl dev_field_gasket.stl  canary_field_case.scad -D 'part="gasket"'
 devstl dev_field_bezel.stl   canary_field_case.scad -D 'part="bezel"'
 
+# --- Dash display, vehicle mounts, body-worn clips (all dev) -----------------
+devstl dev_dash_frame.stl    canary_dash_display.scad -D 'part="frame"'
+devstl dev_dash_back.stl     canary_dash_display.scad -D 'part="back"'
+devstl dev_dash_stand.stl    canary_dash_display.scad -D 'part="stand"'
+devstl dev_vehicle_dash.stl  canary_vehicle_mount.scad -D 'part="dash"'
+devstl dev_vehicle_vent.stl  canary_vehicle_mount.scad -D 'part="vent"'
+devstl dev_wear_clip.stl     canary_wear_clip.scad -D 'part="clip"'
+devstl dev_wear_molle.stl    canary_wear_clip.scad -D 'part="molle"'
+
 # --- User tools (fit coupon, bench fixture, dock, shop tools) ---------------
 devstl dev_coupon_base.stl   canary_fit_coupon.scad    -D 'part="base"'
 devstl dev_coupon_mate.stl   canary_fit_coupon.scad    -D 'part="mate"'
@@ -166,9 +175,12 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_jbox.scad";            png "preview_dev_jbox.png"     -D 'part="all"')
   (SRC="canary_sign.scad";            png "preview_dev_sign.png"     -D 'part="sign"')
   (SRC="canary_field_case.scad";    png "preview_dev_field.png"   -D 'part="all"')
+  (SRC="canary_dash_display.scad";  png "preview_dev_dash.png"    -D 'part="all"')
+  (SRC="canary_vehicle_mount.scad"; png "preview_dev_veh.png"     -D 'part="all"')
+  (SRC="canary_wear_clip.scad";     png "preview_dev_wear.png"    -D 'part="all"')
   (SRC="canary_fit_coupon.scad";    png "preview_dev_coupon.png"  -D 'part="all"')
   (SRC="canary_bench_fixture.scad"; png "preview_dev_fixture.png" -D 'part="all"')
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 41 dev renders + 3 SVG templates + previews."
+echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 5 / Sense 2) + 48 dev renders + 3 SVG templates + previews."
