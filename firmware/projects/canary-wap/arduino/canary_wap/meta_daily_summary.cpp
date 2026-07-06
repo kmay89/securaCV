@@ -5,6 +5,7 @@
 
 #include "meta_daily_summary.h"
 #include "csi_event.h"
+#include "csi_mem.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -29,12 +30,21 @@ void emit_summary() {
   /* Walk the event ring; tally active periods and anomalies (P0 only,
    * to stay contract-clean).
    *
-   * Static — sizeof(csi_event_record_t) is ~120 bytes so a 64-row stack
-   * buffer eats ~7.5 KB and would crowd ESP32's 8 KB default main task
-   * stack. The summary fires at most once per day so a single static
-   * scratchpad is the right tradeoff. */
-  static csi_event_record_t buffer[64];
-  size_t n = csi_event_recent(buffer, sizeof(buffer) / sizeof(buffer[0]));
+   * Heap, not stack: at ~180 B per csi_event_record_t a 64-row buffer is
+   * 11.5 KB — too big for the 8 KB loop stack, and as a static it was the
+   * second-biggest CSI claim on the internal DRAM bank the BLE stack
+   * competes for. It lives in PSRAM (csi_mem.h), allocated once on the
+   * first summary (loop task only — no init race); if that allocation ever
+   * fails, the summary is skipped rather than risking either stack or
+   * internal heap. */
+  enum { SUMMARY_ROWS = 64 };
+  static csi_event_record_t* buffer = nullptr;
+  if (buffer == nullptr) {
+    buffer = (csi_event_record_t*)csi_large_calloc(
+        SUMMARY_ROWS * sizeof(csi_event_record_t));
+  }
+  if (buffer == nullptr) return;  /* fail-safe: no summary this cycle */
+  size_t n = csi_event_recent(buffer, SUMMARY_ROWS);
 
   uint16_t active_periods = 0;
   uint16_t anomaly_count  = 0;

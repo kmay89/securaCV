@@ -19,7 +19,13 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      # Its own file (the only bot-triggerable handle) plus the sources that
+      # carry the PSRAM static diet — editing any of them re-proves the
+      # DRAM regression assertion below.
       - '.github/workflows/ram_audit.yml'
+      - 'firmware/common/csi/src/csi_features.cpp'
+      - 'firmware/common/csi/src/meta_daily_summary.cpp'
+      - 'firmware/common/csi/src/csi_mem.h'
 
 permissions:
   contents: read
@@ -61,6 +67,8 @@ jobs:
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
       - name: Dump DRAM symbol ranking
+        # gawk explicitly: strtonum is a GNU extension and Ubuntu's default
+        # awk can be mawk depending on the image (Codex review, PR #834).
         # Filter by ADDRESS, not by nm's section letter: ESP-IDF marks
         # .flash.rodata writable, so nm reports flash-resident const
         # tables (the gz web assets, camera register tables) as 'D' and a
@@ -69,6 +77,7 @@ jobs:
         # in that window is real internal-RAM spend.
         run: |
           set -euo pipefail
+          command -v gawk >/dev/null || sudo apt-get install -y gawk
           ELF=$(find /tmp/wap-buildpath /tmp/wap-build -name '*.elf' | head -1)
           echo "ELF: $ELF"
           NM=$(find "$HOME/.arduino15/packages/esp32/tools" -name 'xtensa-esp32s3-elf-nm' | head -1)
@@ -79,13 +88,38 @@ jobs:
           # NR<=160 instead of head: head's early exit breaks the pipe and
           # pipefail turns sort's EPIPE into a job failure.
           "$NM" --print-size --size-sort -C "$ELF" \
-            | awk '{ a = strtonum("0x"$1);
+            | gawk '{ a = strtonum("0x"$1);
                      if (a >= 0x3FC88000 && a < 0x3FD00000)
                        print strtonum("0x"$2), substr($0, index($0,$4)) }' \
             | sort -rn \
             | awk 'NR<=160 { printf "%8d B  %s\n", $1, substr($0, index($0,$2)) }'
           echo "===== DRAM grand total across all sized symbols ====="
           "$NM" --print-size -C "$ELF" \
-            | awk '{ a = strtonum("0x"$1);
+            | gawk '{ a = strtonum("0x"$1);
                      if (a >= 0x3FC88000 && a < 0x3FD00000) s += strtonum("0x"$2) }
                    END { printf "%d bytes\n", s }'
+
+      - name: Assert the PSRAM static diet holds (DRAM regression guard)
+        # The fails-before/passes-after test for the wave-1 diet: these
+        # buffers were the top project-owned internal-DRAM statics
+        # (g_health_log_ring 14 KB, emit_summary buffer 11.5 KB,
+        # s_amp_hist 10 KB, fleet cache/snap 2 x 2.5 KB) and now live in
+        # PSRAM via csi_mem.h. If any of them reappears in the internal
+        # DRAM window at >= 1 KB, someone reverted a pointer back to a
+        # static array — fail loudly with the offender named.
+        run: |
+          set -euo pipefail
+          command -v gawk >/dev/null || sudo apt-get install -y gawk
+          ELF=$(find /tmp/wap-buildpath /tmp/wap-build -name '*.elf' | head -1)
+          NM=$(find "$HOME/.arduino15/packages/esp32/tools" -name 'xtensa-esp32s3-elf-nm' | head -1)
+          BAD=$("$NM" --print-size -C "$ELF"             | gawk '{ a = strtonum("0x"$1); sz = strtonum("0x"$2);
+                      if (a >= 0x3FC88000 && a < 0x3FD00000 && sz >= 1024 &&
+                          ($0 ~ /g_health_log_ring/ || $0 ~ /emit_summary/ ||
+                           $0 ~ /s_amp_hist/ || $0 ~ /g_fleet_scan/))
+                        print sz " B  " $0 }')
+          if [ -n "$BAD" ]; then
+            echo "::error::PSRAM-dieted buffer is back in internal DRAM:"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "diet holds: none of the wave-1 buffers is in internal DRAM"

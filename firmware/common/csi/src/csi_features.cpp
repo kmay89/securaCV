@@ -21,6 +21,7 @@
  */
 
 #include "csi_features.h"
+#include "csi_mem.h"
 #include <Arduino.h>  /* for millis() */
 #include <string.h>
 #include <stdlib.h>
@@ -51,7 +52,15 @@ static constexpr uint16_t BREATH_FREQ_HZ_X100[BREATH_BINS] = {
  * ────────────────────────────────────────────────────────────────────────── */
 
 /* Per-subcarrier per-frame amplitude history, used for variance + breathing. */
-static int16_t s_amp_hist[MAX_FRAMES][MAX_SC];
+/* PSRAM-resident (csi_mem.h): at 40x128 int16 this is 10 KB — the single
+ * biggest CSI static — and it is only touched from task context, so it has
+ * no business in the 320 KB internal DRAM bank the BLE stack competes for.
+ * Allocated on first reset(); NULL means allocation failed and the feature
+ * pipeline stays disabled (accumulate() refuses frames, so no consumer ever
+ * dereferences it). */
+static int16_t (*s_amp_hist)[MAX_SC] = nullptr;
+static constexpr size_t AMP_HIST_BYTES =
+    MAX_FRAMES * MAX_SC * sizeof(int16_t);
 static uint8_t s_frame_count = 0;
 static uint8_t s_sc_count = 0;  /* locked to first frame's subcarrier count */
 
@@ -142,13 +151,16 @@ void reset() {
 
   /* Scrub history arrays — they previously held scrubbed-but-still-privacy-
    * sensitive per-subcarrier magnitudes. */
-  memset(s_amp_hist, 0, sizeof(s_amp_hist));
+  if (s_amp_hist == nullptr) s_amp_hist =
+      (int16_t (*)[MAX_SC])csi_large_calloc(AMP_HIST_BYTES);
+  if (s_amp_hist != nullptr) memset(s_amp_hist, 0, AMP_HIST_BYTES);
   memset(s_prev_iq, 0, sizeof(s_prev_iq));
 }
 
 void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
                 int8_t rssi_dbm, uint8_t channel, uint8_t bw_code) {
   if (iq == nullptr || subcarrier_cnt == 0) return;
+  if (s_amp_hist == nullptr) return;  /* alloc failed — pipeline disabled */
   if (s_frame_count >= MAX_FRAMES) return;
 
   /* Lock subcarrier count on first frame of the window. */
