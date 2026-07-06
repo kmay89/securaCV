@@ -929,7 +929,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <div class="container">
     <!-- Firmware-update banner: shown when the daily (or manual) check
          found a newer signed release. Dismissal is per-version and lives
-         in a JS variable only (no localStorage — house rule). -->
+         in a JS variable only, never persisted in the browser (house rule). -->
     <div id="otaBanner" style="display:none;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;padding:0.7rem 1rem;border-radius:8px;border:1px solid var(--accent);background:rgba(59,130,246,0.12);">
       <span style="font-size:0.9rem;">Firmware update <strong id="otaBannerVersion">—</strong> is ready to install.</span>
       <span style="flex:1;"></span>
@@ -3031,6 +3031,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const resp = await secureFetch('/api/ota/status');
         if (!resp.ok) return;
         const d = await resp.json();
+        if (!d || d.ok !== true) return;
         otaBannerLatest = d.latest_version || '';
         const show = WebUiLogic.otaBannerVisible(
             !!d.update_available, otaBannerLatest, otaBannerDismissed);
