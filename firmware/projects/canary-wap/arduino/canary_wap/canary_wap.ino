@@ -2215,7 +2215,8 @@ extern "C" bool csi_witness_emit_event(const char* module_id,
   // a presence transition into any occupied state seals one frame
   // (key-gated, cooldown-bounded, off by default). The chokepoint commits
   // on the loop task, satisfying request_capture()'s loop-only contract.
-  if (committed && strcmp(module_id, "core.presence") == 0 &&
+  if (committed && module_id != NULL && type_name != NULL &&
+      state_name != NULL && strcmp(module_id, "core.presence") == 0 &&
       strcmp(type_name, "presence_changed") == 0 &&
       strcmp(state_name, "empty") != 0) {
 #if FEATURE_QR_PROVISION

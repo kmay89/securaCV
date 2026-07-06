@@ -2961,7 +2961,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         glass: document.getElementById('vaultGlass').checked,
         motion: document.getElementById('vaultMotion').checked,
         mesh: document.getElementById('vaultMesh').checked,
-        cooldown_s: parseInt(document.getElementById('vaultCooldown').value, 10)
+        cooldown_s: parseInt(document.getElementById('vaultCooldown').value, 10) || 60
       };
       try {
         const resp = await secureFetch('/api/vault/config', {
