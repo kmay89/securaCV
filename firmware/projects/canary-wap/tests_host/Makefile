@@ -111,6 +111,14 @@ AUDIO_BIN     = test_audio_cadence
 AUDIO_SOURCES = test_audio_cadence.cpp \
                 $(SRC_DIR)/securacv_audio.cpp
 
+# CSI feature extractor: compiles the REAL staged csi_features.cpp against
+# a stub Arduino.h (stubs/csi/) and feeds synthetic frames with known
+# physics — static channel + random CFO must read empty, motion must read
+# as motion, a 0.25 Hz breathing envelope must land in the right bin.
+CSI_FEAT_BIN     = test_csi_features
+CSI_FEAT_SOURCES = test_csi_features.cpp \
+                   $(SRC_DIR)/csi_features.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -156,7 +164,10 @@ $(GPS_COARSEN_BIN): $(GPS_COARSEN_SRC)
 $(AUDIO_BIN): $(AUDIO_SOURCES)
 	$(CXX) $(CXXFLAGS) -I stubs/audio -I $(SRC_DIR) -o $@ $(AUDIO_SOURCES)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN)
+$(CSI_FEAT_BIN): $(CSI_FEAT_SOURCES)
+	$(CXX) $(CXXFLAGS) -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES)
+
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -171,6 +182,7 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(DEVPSEUDO_COMMON_BIN)
 	./$(GPS_COARSEN_BIN)
 	./$(AUDIO_BIN)
+	./$(CSI_FEAT_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(AUDIO_BIN)
+	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)

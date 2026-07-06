@@ -300,7 +300,7 @@ bool init(const Config& cfg) {
    * hal_wifi_init(), we still succeed — we'll register on start(). */
   s_initialized = true;
 
-  CSI_LOG_INFO("CSI HAL initialized (ring capacity 8, scrub barrier active)");
+  CSI_LOG_INFO("CSI HAL initialized (ring capacity 16, scrub barrier active)");
   return true;
 }
 
@@ -414,8 +414,9 @@ void stop() {
   s_start_pending = false;
   if (!s_running) {
     /* Nothing to tear down in the WiFi driver, but we still scrub
-     * extractor state so a subsequent start() begins clean. */
-    csi_features::reset();
+     * extractor state (including the cross-window breathing envelope)
+     * so a subsequent start() begins clean. */
+    csi_features::reset_history();
     secure_wipe(s_ring, sizeof(s_ring));
     return;
   }
@@ -425,12 +426,12 @@ void stop() {
 #endif
   s_running = false;
 
-  /* Drain ring + scrub extractor's static per-window history so no
-   * residual CSI-derived state (s_amp_hist, s_prev_iq, counters) leaks
-   * into a subsequent run. Matches the header-documented behavior. */
+  /* Drain ring + scrub extractor's static history — per-window state
+   * (s_amp_hist, s_prev_iq, counters) AND the cross-window breathing
+   * envelope — so no CSI-derived state leaks into a subsequent run. */
   s_head.store(s_tail.load());
   secure_wipe(s_ring, sizeof(s_ring));
-  csi_features::reset();
+  csi_features::reset_history();
 }
 
 bool is_running() { return s_running; }

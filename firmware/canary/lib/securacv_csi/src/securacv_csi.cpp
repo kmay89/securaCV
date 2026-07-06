@@ -115,18 +115,34 @@ namespace features {
   static constexpr size_t AMP_BANDS   = 8;
   static constexpr size_t DOP_BANDS   = 4;
   static constexpr size_t BREATH_BINS = 8;
+  /* Cross-window breathing envelope ring: one mean-amplitude sample per
+   * finalized window (1 Hz). 64 windows ≈ 6–28 breath cycles. Bins are
+   * meaningless below ~2 cycles of the slowest target, hence the floor. */
+  static constexpr size_t BREATH_RING        = 64;
+  static constexpr size_t BREATH_MIN_WINDOWS = 24;
+  /* Per-frame amplitude normalization target (AGC removal). */
+  static constexpr int32_t AMP_NORM_MEAN = 64;
 
-  /* Per-subcarrier per-frame amplitude history (variance + breathing). */
+  /* Per-subcarrier per-frame amplitude history (variance), AGC-normalized. */
   static int16_t s_amp_hist[MAX_FRAMES][MAX_SC];
   static uint8_t s_frame_count = 0;
   static uint8_t s_sc_count = 0;
 
-  /* Previous frame's I,Q for the cross-product Doppler estimator. */
+  /* Previous frame's I,Q for the CFO-corrected rotation estimator. */
   static int8_t s_prev_iq[MAX_SC * 2];
   static bool   s_have_prev = false;
 
-  /* Signed running sum of Doppler cross-product, per band. */
-  static int32_t s_doppler_sum[DOP_BANDS];
+  /* CFO-corrected per-band rotation: signed sum (direction) + magnitude
+   * sum (detection; alias-proof against fast motion sign flips). */
+  static int32_t  s_doppler_sum[DOP_BANDS];
+  static uint32_t s_doppler_mag_sum[DOP_BANDS];
+
+  /* Cross-window breathing envelope (survives per-window reset(); wiped
+   * by reset_history() when sensing stops — privacy contract). */
+  static int16_t  s_env_ring[BREATH_RING];
+  static uint16_t s_env_ring_head = 0;
+  static uint16_t s_env_ring_len  = 0;
+  static int32_t  s_env_sum = 0;   /* per-window raw row-mean accumulator */
 
   /* RSSI running stats. */
   static int32_t  s_rssi_sum = 0;
@@ -138,12 +154,6 @@ namespace features {
   /* Last-seen channel and bandwidth code. */
   static uint8_t s_last_channel = 0;
   static uint8_t s_last_bw = 0;
-
-  static inline int16_t l1_magnitude(int8_t I, int8_t Q) {
-    int16_t ai = I < 0 ? -(int16_t)I : (int16_t)I;
-    int16_t aq = Q < 0 ? -(int16_t)Q : (int16_t)Q;
-    return ai + aq;
-  }
 
   static inline int8_t clip_i8(int32_t v) {
     if (v >  127) return  127;
@@ -165,6 +175,14 @@ namespace features {
     return root;
   }
 
+  /* True magnitude √(I²+Q²) — NOT the L1 |I|+|Q| shortcut, which wobbles
+   * up to √2 per subcarrier under the ESP32's per-frame common rotation
+   * and read as permanent fake motion. */
+  static inline int16_t magnitude(int8_t I, int8_t Q) {
+    const int32_t i32 = I, q32 = Q;
+    return (int16_t)isqrt_u32((uint32_t)(i32 * i32 + q32 * q32));
+  }
+
   static inline size_t amp_band_of(size_t sc, size_t sc_total) {
     if (sc_total == 0) return 0;
     size_t b = (sc * AMP_BANDS) / sc_total;
@@ -180,7 +198,11 @@ namespace features {
     s_frame_count = 0;
     s_sc_count = 0;
     s_have_prev = false;
-    for (size_t i = 0; i < DOP_BANDS; i++) s_doppler_sum[i] = 0;
+    for (size_t i = 0; i < DOP_BANDS; i++) {
+      s_doppler_sum[i] = 0;
+      s_doppler_mag_sum[i] = 0;
+    }
+    s_env_sum = 0;
     s_rssi_sum = 0;
     s_rssi_sq_sum = 0;
     s_rssi_max = -127;
@@ -194,6 +216,15 @@ namespace features {
     memset(s_prev_iq, 0, sizeof(s_prev_iq));
   }
 
+  /* reset() plus the cross-window breathing envelope. Call when sensing
+   * STOPS so no envelope shape survives a stop/mute boundary. */
+  static void reset_history() {
+    reset();
+    memset(s_env_ring, 0, sizeof(s_env_ring));
+    s_env_ring_head = 0;
+    s_env_ring_len  = 0;
+  }
+
   static void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
                          int8_t rssi_dbm, uint8_t channel, uint8_t bw_code) {
     if (iq == nullptr || subcarrier_cnt == 0) return;
@@ -204,21 +235,60 @@ namespace features {
     }
     const size_t N = s_sc_count;
 
-    /* 1. Amplitude history. */
+    /* 1. Amplitude history — AGC-normalized (mean pinned to AMP_NORM_MEAN
+     * dividing by the high-precision raw_sum, rounded). The raw mean also
+     * feeds the breathing envelope, which the normalized rows can't carry
+     * (their mean is pinned by construction). */
     int16_t* row = s_amp_hist[s_frame_count];
+    int32_t  raw_sum = 0;
     for (size_t k = 0; k < N; k++) {
-      row[k] = l1_magnitude(iq[2*k], iq[2*k + 1]);
+      row[k] = magnitude(iq[2*k], iq[2*k + 1]);
+      raw_sum += row[k];
+    }
+    s_env_sum += raw_sum / (int32_t)N;
+    const int32_t denom = raw_sum > 0 ? raw_sum : 1;
+    const int32_t numer_scale = AMP_NORM_MEAN * (int32_t)N;
+    for (size_t k = 0; k < N; k++) {
+      int32_t a = ((int32_t)row[k] * numer_scale + denom / 2) / denom;
+      if (a > 0x7FFF) a = 0x7FFF;
+      row[k] = (int16_t)a;
     }
 
-    /* 2. Doppler cross-product (sign of I·Q' − Q·I'). */
+    /* 2. CFO-corrected band rotation. Per band b: C_b = Σ z·conj(z_prev);
+     * the all-band C_tot's angle is the frame pair's common phase offset
+     * (CFO/PLL), so each band is scored by its rotation RELATIVE to it:
+     * Im(C_b·conj(C_tot))/|C_tot|² — dimensionless, gain-invariant, and
+     * exactly zero for a static channel under ANY per-frame offset. */
     if (s_have_prev) {
+      int32_t dot_b[DOP_BANDS]   = {0};
+      int32_t cross_b[DOP_BANDS] = {0};
       for (size_t k = 0; k < N; k++) {
-        const int16_t I  = iq[2*k];
-        const int16_t Q  = iq[2*k + 1];
-        const int16_t Ip = s_prev_iq[2*k];
-        const int16_t Qp = s_prev_iq[2*k + 1];
-        const int32_t cross = (int32_t)I * Qp - (int32_t)Q * Ip;
-        s_doppler_sum[dop_band_of(k, N)] += cross;
+        const int32_t I  = iq[2*k];
+        const int32_t Q  = iq[2*k + 1];
+        const int32_t Ip = s_prev_iq[2*k];
+        const int32_t Qp = s_prev_iq[2*k + 1];
+        const size_t  b  = dop_band_of(k, N);
+        dot_b[b]   += I * Ip + Q * Qp;
+        cross_b[b] += I * Qp - Q * Ip;
+      }
+      int64_t dot_t = 0, cross_t = 0;
+      for (size_t b = 0; b < DOP_BANDS; b++) {
+        dot_t   += dot_b[b];
+        cross_t += cross_b[b];
+      }
+      const int64_t mag2 = dot_t * dot_t + cross_t * cross_t;
+      /* Coherence floor: |C_tot| < 64 has no usable common reference. */
+      if (mag2 >= 4096) {
+        const int64_t norm = (mag2 >> 9) + 1;
+        for (size_t b = 0; b < DOP_BANDS; b++) {
+          const int64_t resid = (int64_t)cross_b[b] * dot_t
+                              - (int64_t)dot_b[b]   * cross_t;
+          int64_t c = resid / norm;
+          if (c >  512) c =  512;
+          if (c < -512) c = -512;
+          s_doppler_sum[b]     += (int32_t)c;
+          s_doppler_mag_sum[b] += (uint32_t)(c < 0 ? -c : c);
+        }
       }
     }
     memcpy(s_prev_iq, iq, 2 * N);
@@ -238,80 +308,95 @@ namespace features {
     s_frame_count++;
   }
 
+  /* Per-subcarrier TEMPORAL variance, averaged within each band. The rows
+   * are AGC-normalized, so what survives is genuine per-subcarrier change
+   * over the window (motion) — not the static multipath profile and not
+   * gain flicker. Empty room ≈ 0 in any environment. */
   static void compute_amp_variance(int8_t out[AMP_BANDS]) {
     if (s_frame_count < 2 || s_sc_count == 0) {
       for (size_t i = 0; i < AMP_BANDS; i++) out[i] = 0;
       return;
     }
-    int32_t band_sum[AMP_BANDS] = {0};
-    int32_t band_sq[AMP_BANDS]  = {0};
-    int32_t band_n[AMP_BANDS]   = {0};
-    for (size_t f = 0; f < s_frame_count; f++) {
-      for (size_t k = 0; k < s_sc_count; k++) {
-        const size_t b = amp_band_of(k, s_sc_count);
+    int32_t band_var_sum[AMP_BANDS] = {0};
+    int32_t band_sc_n[AMP_BANDS]    = {0};
+    const int32_t F = (int32_t)s_frame_count;
+    for (size_t k = 0; k < s_sc_count; k++) {
+      int32_t sum = 0;
+      int64_t sq  = 0;   /* a ≤ 64·N ⇒ 40·a² brushes INT32_MAX at HT40 */
+      for (size_t f = 0; f < s_frame_count; f++) {
         const int32_t a = s_amp_hist[f][k];
-        band_sum[b] += a;
-        band_sq[b]  += a * a;
-        band_n[b]++;
+        sum += a;
+        sq  += (int64_t)a * a;
       }
+      /* Single-step variance — no truncated-mean bias. */
+      int32_t var = (int32_t)((sq - ((int64_t)sum * sum) / F) / F);
+      if (var < 0) var = 0;
+      const size_t b = amp_band_of(k, s_sc_count);
+      band_var_sum[b] += var;
+      band_sc_n[b]++;
     }
     for (size_t i = 0; i < AMP_BANDS; i++) {
-      if (band_n[i] <= 1) { out[i] = 0; continue; }
-      const int32_t mean = band_sum[i] / band_n[i];
-      const int32_t var  = (band_sq[i] / band_n[i]) - mean * mean;
-      /* Empty room ≈ a few hundred; human motion ≈ thousands. >>4 lands int8. */
-      out[i] = clip_i8(var >> 4);
+      if (band_sc_n[i] == 0) { out[i] = 0; continue; }
+      /* Quantization noise ⇒ ≲2; walking ⇒ ≈160. >>2 lands int8 nicely. */
+      out[i] = clip_i8((band_var_sum[i] / band_sc_n[i]) >> 2);
     }
   }
 
+  /* Mean per-pair CFO-corrected rotation. Strength from the magnitude sum
+   * (alias-proof); sign from the coherent sum (slow drift direction). */
   static void compute_doppler(int8_t out[DOP_BANDS]) {
     const int32_t n = s_frame_count > 1 ? (s_frame_count - 1) : 1;
     for (size_t i = 0; i < DOP_BANDS; i++) {
-      out[i] = clip_i8(s_doppler_sum[i] / (n * 256));
+      const int32_t mag = (int32_t)(s_doppler_mag_sum[i] / (uint32_t)n);
+      out[i] = clip_i8(s_doppler_sum[i] < 0 ? -mag : mag);
     }
   }
 
+  /* Goertzel bank over the CROSS-WINDOW envelope ring. Breathing
+   * (0.10–0.45 Hz, 6–27 BPM) cannot be resolved inside one 1 s window —
+   * the previous in-window filter bank was eight near-identical DC taps
+   * and its "dominant bin" was noise. Bin i ↔ 0.10+0.05·i Hz ↔ (6+3·i)
+   * BPM, matching core_breathing's bpm_from_bin(). */
   static void compute_breathing(int8_t out[BREATH_BINS]) {
-    if (s_frame_count < 4 || s_sc_count == 0) {
-      for (size_t i = 0; i < BREATH_BINS; i++) out[i] = 0;
-      return;
-    }
+    for (size_t i = 0; i < BREATH_BINS; i++) out[i] = 0;
+    const size_t n = s_env_ring_len;
+    if (n < BREATH_MIN_WINDOWS) return;
 
-    int16_t env[MAX_FRAMES];
-    int32_t env_mean = 0;
-    for (size_t f = 0; f < s_frame_count; f++) {
-      int32_t sum = 0;
-      for (size_t k = 0; k < s_sc_count; k++) sum += s_amp_hist[f][k];
-      env[f] = (int16_t)(sum / (int32_t)s_sc_count);
-      env_mean += env[f];
+    int32_t env[BREATH_RING];
+    int32_t mean = 0;
+    for (size_t j = 0; j < n; j++) {
+      const size_t idx = (s_env_ring_head + BREATH_RING - n + j) % BREATH_RING;
+      env[j] = s_env_ring[idx];
+      mean  += env[j];
     }
-    env_mean /= s_frame_count;
-    for (size_t f = 0; f < s_frame_count; f++) {
-      env[f] = (int16_t)(env[f] - env_mean);
-    }
+    mean /= (int32_t)n;
+    for (size_t j = 0; j < n; j++) env[j] -= mean;
 
-    /* Pre-computed 2·cos(ω) × 256 for each target frequency, assuming
-     * ~20 Hz frame rate. Lower frame rates shift the bins slightly but the
-     * filter bank remains useful. */
+    /* 2·cos(2π·f/fs) × 256 at fs = 1 window/s for f = 0.10 + 0.05·i Hz. */
     static const int16_t TWO_COS_OMEGA_Q8[BREATH_BINS] = {
-      511, 511, 510, 510, 509, 508, 507, 504
+      414, 301, 158, 0, -158, -301, -414, -487
     };
 
     for (size_t i = 0; i < BREATH_BINS; i++) {
-      int32_t s_prev = 0, s_prev2 = 0;
+      int64_t s_prev = 0, s_prev2 = 0;
       const int32_t coef_q8 = TWO_COS_OMEGA_Q8[i];
-      for (size_t f = 0; f < s_frame_count; f++) {
-        const int32_t s = (int32_t)env[f] + ((coef_q8 * s_prev) >> 8) - s_prev2;
+      for (size_t j = 0; j < n; j++) {
+        const int64_t s = (int64_t)env[j] + ((coef_q8 * s_prev) >> 8) - s_prev2;
         s_prev2 = s_prev;
         s_prev  = s;
       }
-      const int64_t mag2 = (int64_t)s_prev * s_prev
-                         + (int64_t)s_prev2 * s_prev2
-                         - (((int64_t)coef_q8 * s_prev * s_prev2) >> 8);
+      int64_t mag2 = s_prev * s_prev
+                   + s_prev2 * s_prev2
+                   - ((coef_q8 * s_prev * s_prev2) >> 8);
+      if (mag2 < 0) mag2 = 0;
+      /* Ring noise (σ≈1) ⇒ mag² ≈ 64 ⇒ 0; ±2-unit envelope ⇒ ≈40;
+       * floored at 0 so |abs| consumers never mistake silence for signal. */
       int32_t log2_mag2 = 0;
       int64_t m = mag2;
       while (m > 1) { m >>= 1; log2_mag2++; }
-      out[i] = clip_i8(log2_mag2 * 4 - 60);
+      int32_t score = (log2_mag2 - 8) * 10;
+      if (score < 0) score = 0;
+      out[i] = clip_i8(score);
     }
   }
 
@@ -322,6 +407,17 @@ namespace features {
     int8_t amp[AMP_BANDS]      = {0};
     int8_t dop[DOP_BANDS]      = {0};
     int8_t breath[BREATH_BINS] = {0};
+
+    /* Append this window's mean raw envelope to the breathing ring before
+     * running the filter bank. No-frame windows push nothing — a supply
+     * gap must not inject a fake step into the spectrum. */
+    if (s_frame_count > 0) {
+      int32_t env = s_env_sum / (int32_t)s_frame_count;
+      if (env > 0x7FFF) env = 0x7FFF;
+      s_env_ring[s_env_ring_head] = (int16_t)env;
+      s_env_ring_head = (uint16_t)((s_env_ring_head + 1) % BREATH_RING);
+      if (s_env_ring_len < BREATH_RING) s_env_ring_len++;
+    }
 
     compute_amp_variance(amp);
     compute_doppler(dop);
@@ -556,7 +652,7 @@ bool start() {
 void stop() {
   s_start_pending = false;
   if (!s_running) {
-    features::reset();
+    features::reset_history();
     secure_wipe(s_ring, sizeof(s_ring));
     return;
   }
@@ -574,7 +670,7 @@ void stop() {
    * so this is well-defined. */
   s_tail.store(s_head.load(std::memory_order_acquire), std::memory_order_release);
   secure_wipe(s_ring, sizeof(s_ring));
-  features::reset();
+  features::reset_history();
 }
 
 bool is_running() { return s_running; }

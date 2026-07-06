@@ -12,3 +12,6 @@ test_captive_dns
 test_captive_probe
 test_device_pseudonym
 test_audio_cadence
+test_device_pseudonym_common
+test_gps_coarsen
+test_csi_features

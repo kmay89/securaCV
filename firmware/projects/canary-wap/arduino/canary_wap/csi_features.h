@@ -9,9 +9,16 @@
  * ALLOCATION-FREE: all state lives in static buffers, sized at compile time.
  *
  * FEATURES PRODUCED (matches csi.h layout):
- *   [ 0..7]  Subcarrier amplitude variance (8 frequency bands)
- *   [ 8..11] Phase-difference Doppler (4 sign-aware bands)
- *   [12..19] Breathing/micro-motion FFT (0.1–0.5 Hz, 8 bins)
+ *   [ 0..7]  Per-subcarrier TEMPORAL amplitude variance, AGC-normalized,
+ *            averaged per band (8 frequency bands) — motion energy
+ *   [ 8..11] CFO-corrected band rotation (4 sign-aware bands) — the
+ *            frame-pair phase rotation of each band RELATIVE to the
+ *            all-band common rotation, so the ESP32's per-frame phase
+ *            offset cancels and a static channel reads 0
+ *   [12..19] Breathing spectrum (0.10–0.45 Hz, 8 Goertzel bins) measured
+ *            over a cross-window envelope ring (~64 s), NOT within one
+ *            window; bin i ↔ 0.10+0.05·i Hz ↔ (6+3·i) BPM. Zero until
+ *            the ring holds ≥ BREATH_MIN_WINDOWS samples.
  *   [20..23] RSSI stats over window: mean, std, max, min
  *   [24..27] Frame-rate health: frames, dropped_estimate, channel, bw_code
  *   [28..31] Reserved for v2.1 (C6 sounding), v2.2 (phase unwrap)
@@ -25,8 +32,15 @@
 
 namespace csi_features {
 
-/* Reset the aggregator at the start of a new window. */
+/* Reset the aggregator at the start of a new window. Keeps the
+ * cross-window breathing envelope ring (it spans windows by design). */
 void reset();
+
+/* Full scrub: reset() plus the cross-window breathing envelope ring.
+ * Call when sensing STOPS (csi_hal stop/deinit) so no envelope shape
+ * survives a mute/stop boundary — same privacy contract as the
+ * amplitude history. */
+void reset_history();
 
 /*
  * Accumulate one CSI frame into the current window.

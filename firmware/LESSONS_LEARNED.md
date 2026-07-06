@@ -620,6 +620,39 @@
 
 ## Sensing & Signal Processing
 
+### A sensor that measures received frames is only as alive as its frame supply
+- **What happened:** CSI/WiFi sensing "didn't detect much at all" in the
+  field. The presence orb sat on "Sensing…" or flickered noise-driven
+  states regardless of who was in the room.
+- **Root cause (three independent breaks):** (1) the CSI active probe —
+  the module that gives paired devices a deterministic frame supply —
+  was never init/start/processed anywhere (dead code behind a ✅
+  feature row); ambient supply was ~10 Hz at best (AP beacons) and ~0
+  in AP-only installs. (2) The feature math measured physics, not
+  people: pooled variance ≈ static multipath fingerprint, raw
+  cross-product "Doppler" ≈ the ESP32's random per-frame CFO, and the
+  in-window "breathing FFT" tried to resolve 0.2 Hz inside 1 s of
+  data (impossible; all 8 Goertzel coefficients were ≈511 ≈ DC). (3)
+  The CSI→rf_presence fusion hook was never registered.
+- **Fix:** wire the probe (10 Hz ESP-NOW broadcast; peers sense each
+  other); AGC-normalized true-magnitude per-subcarrier temporal
+  variance; CFO-cancelling relative band rotation
+  (Im(C_b·conj(C_tot))/|C_tot|²); breathing on a cross-window envelope
+  ring (~64 s); register the fusion hook; refuse to tick presence
+  modules on <2-frame windows (no data ≠ empty room) and surface the
+  supply on the dashboard.
+- **Regression check:** `tests_host/test_csi_features.cpp` — synthetic
+  physics: static channel + random CFO ⇒ all-zero features; ±30 % AGC
+  flicker ⇒ zero; moving scatterer ⇒ detected; 0.25 Hz envelope ⇒
+  breathing bin 3 dominant; reset_history wipes the ring.
+- **Two lessons for future sensing features:** (a) a pipeline can be
+  green end-to-end and still be measuring nothing — write a synthetic-
+  physics test that FAILS when the estimator is replaced with noise;
+  (b) grep for `init(` before marking a module row ✅ — the probe
+  shipped, compiled, and was even pause/resumed by the channel-hop
+  code, without ever being started.
+- **Date learned:** 2026-07
+
 ### A feature that only exists in dev builds fails silently in the field
 - **What happened:** A user pressed their smoke alarm's TEST button next to
   a production Canary; nothing happened — no event, no log, no error. The
