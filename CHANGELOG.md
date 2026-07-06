@@ -30,6 +30,50 @@ Hardening shipped here:
   first-release runbook (keygen -> pubkey header -> OTA_SIGNING_KEY_PEM
   secret -> `fw-v*` tag -> on-device verification, and key rotation).
 - `firmware-release.yml` header comment no longer omits canary-sense.
+
+### Acoustic detection: shipped in release builds + two-stage (tone-gated) matcher
+
+Root-cause fix for the field report "pressed my smoke alarm's TEST
+button, nothing happened": the published `release`/`release_ha` OTA
+images compiled the entire acoustic subsystem **out** — production
+devices had no mic code at all. Alongside shipping it, the detector was
+upgraded to the two-stage structure the industry uses for alarm-sound
+recognition (spectral gate + temporal template — cf. US 9,087,447 /
+US 8,269,625, ISO 8201, and fully-on-device recognizers like HomePod
+Sound Recognition). Applied to the canonical `securacv_audio` module
+and the canary-wap vendored copy in lockstep (sync guard clean).
+
+- **Release builds now include the sensing suite** (`[env:release]`,
+  inherited by `release_ha`/`standalone`): acoustic T3/T4, capacitive
+  touch, IR RMT, temp-tamper, sensing-witness signing. Phase 2b
+  transients (knock/doorbell/glass) stay dev/full opt-in.
+- **DC-removed RMS**: envelope now uses `E[x²]−E[x]²`; a PDM DC offset
+  can no longer pin the envelope ON and blind the matcher.
+- **Alarm-band tone gate**: an RBJ band-pass biquad (fc 3.4 kHz,
+  Q≈1.8 → ≈2.6–4.4 kHz, where UL 217/2034 sounders sit) summarizes each
+  envelope state into a 0..200 tone ratio; T3/T4 beeps must be
+  alarm-band dominant (≥50 normal / ≥30 self-test). Rhythmic slams,
+  voices and TV can fake the cadence but not the spectrum. Known
+  limitation (documented): 520 Hz low-frequency sounders don't gate.
+- **Sample-stream clock**: envelope/cadence timing now advances
+  frames × 20 ms instead of reading `millis()` at drain time, so
+  burst-draining after a stalled loop can't distort beep/gap durations;
+  wall time remains for buckets/deadlines/staleness.
+- **DMA ring 4→8 buffers** (80→160 ms) and `audio_process()` drains up
+  to 8 frames/call — the observed ~100 ms main-loop stalls (TLS, NVS,
+  OTA checks) no longer overflow mid-beep.
+- **Diagnostics**: `audio_transition_t` gains `tone_x100` (layout
+  unchanged — carved from reserved bytes); `/api/audio/level` (canary)
+  and `/api/audio/transitions` (wap) now report per-transition `tone`.
+- **Bench procedure**: `docs/hardware/acoustic_alarm_bench_test.md` —
+  five-minute verification from level meter to self-test to cadence
+  trace, tone-value interpretation table, field check, limitations.
+- **Host tests**: cadence suite extended to 11 cases — off-band (500 Hz)
+  T3 cadence must NOT match, DC offset reads as silence, T3 still
+  matches with a frozen wall clock (stream-clock regression), transition
+  ring exposes the tone ratio; existing T3/T4/knock/doorbell/glass/mute
+  cases re-scripted with spectrally honest waveforms.
+
 ### canary-wap: PSRAM static diet, wave 2 — ~26 KB more internal DRAM back (running total ~67 KB)
 
 Second sweep of task-context-only statics into PSRAM via `csi_large_calloc`

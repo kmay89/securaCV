@@ -3271,29 +3271,43 @@ static esp_err_t handle_audio_config_post(httpd_req_t* req) {
 // GET /api/audio/transitions — recent envelope on/off transitions (newest
 // first). Diagnostic surface for the dashboard's "show me the cadence"
 // view: lets a user see WHY a test press did or didn't match. Carries
-// only {on, age_ms, dur_ms} per entry — same privacy-bounded fields the
-// internal matcher uses, no audio content.
+// only {on, age_ms, dur_ms, tone} per entry — same privacy-bounded fields
+// the internal matcher uses, no audio content. `tone` is the alarm-band
+// ratio ×100 the T3/T4 tone gate checks (≥50 = alarm-band dominant).
 static esp_err_t handle_audio_transitions(httpd_req_t* req) {
   g_health.http_requests++;
 
   audio_transition_t trans[16];
   const size_t n = audio_get_recent_transitions(trans, 16, 0);
 
-  char buf[768];
+  // Explicit remaining-space accounting: every snprintf return value is
+  // validated against the space that was actually available BEFORE pos
+  // advances, so a truncated (or failed) write can never push pos past
+  // the buffer and turn `sizeof(buf) - pos` into an underflowed length.
+  char buf[1024];
   size_t pos = 0;
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-                  "{\"ok\":true,\"running\":%s,\"transitions\":[",
-                  audio_is_running() ? "true" : "false");
-  for (size_t i = 0; i < n && pos < sizeof(buf) - 64; i++) {
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-                    "%s{\"on\":%u,\"age_ms\":%lu,\"dur_ms\":%lu}",
-                    i ? "," : "",
-                    (unsigned)trans[i].is_on,
-                    (unsigned long)trans[i].age_ms,
-                    (unsigned long)trans[i].dur_ms);
+  size_t remaining = sizeof(buf);
+  int w = snprintf(buf, remaining,
+                   "{\"ok\":true,\"running\":%s,\"transitions\":[",
+                   audio_is_running() ? "true" : "false");
+  bool fits = (w > 0 && (size_t)w < remaining);
+  if (fits) { pos += (size_t)w; remaining -= (size_t)w; }
+  for (size_t i = 0; fits && i < n && remaining > 80; i++) {
+    w = snprintf(buf + pos, remaining,
+                 "%s{\"on\":%u,\"age_ms\":%lu,\"dur_ms\":%lu,\"tone\":%u}",
+                 i ? "," : "",
+                 (unsigned)trans[i].is_on,
+                 (unsigned long)trans[i].age_ms,
+                 (unsigned long)trans[i].dur_ms,
+                 (unsigned)trans[i].tone_x100);
+    fits = (w > 0 && (size_t)w < remaining);
+    if (fits) { pos += (size_t)w; remaining -= (size_t)w; }
   }
-  pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
-  if (pos >= sizeof(buf)) {
+  if (fits) {
+    w = snprintf(buf + pos, remaining, "]}");
+    fits = (w > 0 && (size_t)w < remaining);
+  }
+  if (!fits) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
   }
   return http_send_json(req, buf);
@@ -10260,11 +10274,13 @@ void loop() {
   }
   #endif
 
-  // Pump the acoustic pipeline. Drains up to 4×20 ms PDM frames per call
-  // against a 4-deep DMA ring, so the loop must come back within ~80 ms —
+  // Pump the acoustic pipeline. Drains up to 8×20 ms PDM frames per call
+  // against an 8-deep DMA ring, so the loop must come back within ~160 ms —
   // holds here because loop() ends in delay(1) and HTTP runs in the httpd
-  // task. Event/mute callbacks fire synchronously from this call, in the
-  // same task context as the witness-record code above.
+  // task. Envelope timing rides the module's sample-stream clock, so even
+  // a burst-drain after a rare longer stall keeps beep/gap durations
+  // intact. Event/mute callbacks fire synchronously from this call, in
+  // the same task context as the witness-record code above.
   #if FEATURE_ACOUSTIC_EVENTS
   audio_process();
   #endif
