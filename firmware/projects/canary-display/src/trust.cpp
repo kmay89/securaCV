@@ -140,6 +140,15 @@ void init() {
   // Pins hydrate lazily per device (load_pin) — nothing to enumerate here;
   // the RAM table just starts empty each boot.
   for (int i = 0; i < MAX_PINS; i++) s_pins[i] = Pin{};
+#ifdef ARDUINO
+  // Factory-fresh NVS: a pure read-only begin() fails while the namespace
+  // doesn't exist yet, and read-only opens are the hot path (load_pin runs
+  // on every chain/health arrival from a not-yet-pinned device). Touch the
+  // namespace read-write once so every later read-only open succeeds.
+  // (#843 review catch)
+  Preferences prefs;
+  if (prefs.begin("cvtrust", /*readOnly=*/false)) prefs.end();
+#endif
 }
 
 bool note_pubkey(const char* device_id, const char* pubkey_hex) {
