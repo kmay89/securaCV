@@ -264,9 +264,13 @@ static uint16_t compute_rms(const int16_t* samples, size_t n) {
     sum   += s;
     sumsq += (int64_t)s * s;
   }
-  const int64_t mean    = sum / (int64_t)n;
-  int64_t       var     = sumsq / (int64_t)n - mean * mean;
-  if (var < 0) var = 0;                    /* rounding can go −1 */
+  /* Single-step variance: (Σx² − (Σx)²/n) / n. Squaring a pre-truncated
+   * mean instead would inject up to ~2·|mean| of spurious variance —
+   * with a big DC offset that reads as a phantom RMS of up to ~256.
+   * (Σx)² ≤ (32768·320)² ≈ 1.1e14 — comfortably inside int64.
+   * Cauchy–Schwarz keeps the difference ≥ 0; clamp anyway. */
+  int64_t var = (sumsq - (sum * sum) / (int64_t)n) / (int64_t)n;
+  if (var < 0) var = 0;
   /* var ≤ 32768² < 2³² — fits isqrt_u32's domain. */
   uint32_t rms = isqrt_u32((uint32_t)var);
   if (rms > 0xFFFFu) rms = 0xFFFFu;

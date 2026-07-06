@@ -3258,22 +3258,34 @@ static esp_err_t handle_audio_transitions(httpd_req_t* req) {
   audio_transition_t trans[16];
   const size_t n = audio_get_recent_transitions(trans, 16, 0);
 
+  // Explicit remaining-space accounting: every snprintf return value is
+  // validated against the space that was actually available BEFORE pos
+  // advances, so a truncated (or failed) write can never push pos past
+  // the buffer and turn `sizeof(buf) - pos` into an underflowed length.
   char buf[1024];
   size_t pos = 0;
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-                  "{\"ok\":true,\"running\":%s,\"transitions\":[",
-                  audio_is_running() ? "true" : "false");
-  for (size_t i = 0; i < n && pos < sizeof(buf) - 80; i++) {
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-                    "%s{\"on\":%u,\"age_ms\":%lu,\"dur_ms\":%lu,\"tone\":%u}",
-                    i ? "," : "",
-                    (unsigned)trans[i].is_on,
-                    (unsigned long)trans[i].age_ms,
-                    (unsigned long)trans[i].dur_ms,
-                    (unsigned)trans[i].tone_x100);
+  size_t remaining = sizeof(buf);
+  int w = snprintf(buf, remaining,
+                   "{\"ok\":true,\"running\":%s,\"transitions\":[",
+                   audio_is_running() ? "true" : "false");
+  bool fits = (w > 0 && (size_t)w < remaining);
+  if (fits) { pos += (size_t)w; remaining -= (size_t)w; }
+  for (size_t i = 0; fits && i < n && remaining > 80; i++) {
+    w = snprintf(buf + pos, remaining,
+                 "%s{\"on\":%u,\"age_ms\":%lu,\"dur_ms\":%lu,\"tone\":%u}",
+                 i ? "," : "",
+                 (unsigned)trans[i].is_on,
+                 (unsigned long)trans[i].age_ms,
+                 (unsigned long)trans[i].dur_ms,
+                 (unsigned)trans[i].tone_x100);
+    fits = (w > 0 && (size_t)w < remaining);
+    if (fits) { pos += (size_t)w; remaining -= (size_t)w; }
   }
-  pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
-  if (pos >= sizeof(buf)) {
+  if (fits) {
+    w = snprintf(buf + pos, remaining, "]}");
+    fits = (w > 0 && (size_t)w < remaining);
+  }
+  if (!fits) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
   }
   return http_send_json(req, buf);
