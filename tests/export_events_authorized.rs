@@ -1,10 +1,10 @@
 use anyhow::Result;
 use ed25519_dalek::{Signer, SigningKey};
 use witness_kernel::{
-    verify_export_bundle, Approval, BreakGlass, CandidateEvent, EventType, ExportAuthMode,
-    ExportOptions, ExportReceipt, ExportWindow, InferenceBackend, Kernel, KernelConfig,
-    ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId, UnlockRequest, ZonePolicy,
-    EXPORT_EVENTS_ENVELOPE_ID,
+    verify_export_bundle, Approval, BreakGlass, BreakGlassTokenFile, CandidateEvent, EventType,
+    ExportAuthMode, ExportOptions, ExportReceipt, ExportWindow, InferenceBackend, Kernel,
+    KernelConfig, ModuleDescriptor, QuorumPolicy, TimeBucket, TrusteeEntry, TrusteeId,
+    UnlockRequest, ZonePolicy, EXPORT_EVENTS_ENVELOPE_ID,
 };
 
 fn add_test_event(kernel: &mut Kernel, cfg: &KernelConfig) -> Result<()> {
@@ -116,6 +116,68 @@ fn export_succeeds_with_break_glass_token() -> Result<()> {
     )?;
     assert!(!artifact.batches.is_empty());
 
+    let count: i64 = kernel
+        .conn
+        .query_row("SELECT COUNT(*) FROM export_receipts", [], |row| row.get(0))?;
+    assert_eq!(count, 1);
+    Ok(())
+}
+
+#[test]
+fn export_replay_of_token_file_is_refused_across_invocations() -> Result<()> {
+    let cfg = KernelConfig {
+        db_path: ":memory:".to_string(),
+        ruleset_id: "ruleset:test".to_string(),
+        ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+        kernel_version: "0.0.0-test".to_string(),
+        retention: std::time::Duration::from_secs(60),
+        device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+        zone_policy: ZonePolicy::default(),
+    };
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+
+    let bucket = TimeBucket::now(600)?;
+    let (request, approval, policy) = authorize_export(&cfg, bucket)?;
+    let (result, receipt) =
+        BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+    let mut token = result.expect("token");
+    let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;
+
+    // The replay vector: a token FILE always re-parses as unconsumed —
+    // the in-memory `consumed` flag protects nothing across invocations.
+    let token_file = BreakGlassTokenFile::from_token(&token)?;
+    let mut replayed = token_file.into_token()?;
+
+    // First use succeeds and burns the nonce in the durable ledger.
+    kernel.export_events_authorized(
+        cfg.ruleset_hash,
+        ExportOptions {
+            jitter_s: 0,
+            ..ExportOptions::default()
+        },
+        &mut token,
+    )?;
+
+    // Second use with the re-parsed (fresh, unconsumed-looking) token must
+    // be refused by the persisted nonce even inside the validity bucket.
+    let err = kernel
+        .export_events_authorized(
+            cfg.ruleset_hash,
+            ExportOptions {
+                jitter_s: 0,
+                ..ExportOptions::default()
+            },
+            &mut replayed,
+        )
+        .expect_err("replayed token file must be refused");
+    assert!(
+        err.to_string().contains("already consumed"),
+        "unexpected error: {err}"
+    );
+
+    // Exactly one export happened.
     let count: i64 = kernel
         .conn
         .query_row("SELECT COUNT(*) FROM export_receipts", [], |row| row.get(0))?;

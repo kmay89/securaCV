@@ -4,7 +4,8 @@
  * Ported from PIO's securacv_data_mgmt library for the Arduino sketch build.
  *
  * Provides:
- *   - SD log rotation (witness + health directories)
+ *   - SD log rotation (health directory only; /WITNESS and /CHAIN are
+ *     never rotated — Invariant IV)
  *   - Chain backup/restore (NVS <-> /CHAIN/backup.bin on SD)
  *   - Chain integrity verification (hash chain + Ed25519 sigs)
  *   - Witness record export to /EXPORT/
@@ -52,9 +53,12 @@ namespace datamgmt {
 
 // ════════════════════════════════════════════════════════════════════════════
 // ROTATION POLICY
+//
+// /WITNESS and /CHAIN are NEVER rotated — the sealed log and its backup
+// are the tamper-evident record (Invariant IV); only regenerable
+// artifacts are bounded (/HEALTH here, /EXPORT via the operator route).
 // ════════════════════════════════════════════════════════════════════════════
 
-static const uint32_t MAX_WITNESS_FILES   = 500;
 static const uint32_t MAX_HEALTH_FILES    = 200;
 static const uint8_t  SD_USAGE_TARGET_PCT = 85;
 
@@ -280,9 +284,9 @@ inline bool backup_chain(const uint8_t* chain_head, uint32_t seq,
   memcpy(buf + BACKUP_PAYLOAD, hmac, 32);
 
   // Ensure /CHAIN directory exists.
-  if (!SD.exists("/sd/CHAIN")) SD.mkdir("/sd/CHAIN");
+  if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
 
-  File f = SD.open("/sd/CHAIN/backup.bin", FILE_WRITE);
+  File f = SD.open("/CHAIN/backup.bin", FILE_WRITE);
   bool ok = false;
   if (f) {
     ok = (f.write(buf, BACKUP_SIZE) == BACKUP_SIZE);
@@ -313,7 +317,7 @@ inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out,
                           const uint8_t* privkey) {
   if (!sd_is_available()) return false;
 
-  File f = SD.open("/sd/CHAIN/backup.bin", FILE_READ);
+  File f = SD.open("/CHAIN/backup.bin", FILE_READ);
   if (!f) {
     log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE,
                "Chain restore: backup not found", nullptr);
@@ -372,7 +376,7 @@ inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out,
 
 inline bool has_backup() {
   if (!sd_is_available()) return false;
-  return SD.exists("/sd/CHAIN/backup.bin");
+  return SD.exists("/CHAIN/backup.bin");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -394,7 +398,7 @@ inline bool verify_chain(chain_verify_result_t* result,
 
   if (!sd_is_available()) return false;
 
-  File dir = SD.open("/sd/WITNESS");
+  File dir = SD.open("/WITNESS");
   if (!dir || !dir.isDirectory()) {
     if (dir) dir.close();
     return false;
@@ -455,7 +459,7 @@ inline bool verify_chain(chain_verify_result_t* result,
 
   for (size_t i = 0; i < collected; i++) {
     char path[V_NAME + 16];
-    snprintf(path, sizeof(path), "/sd/WITNESS/%s", names[i]);
+    snprintf(path, sizeof(path), "/WITNESS/%s", names[i]);
 
     File rf = SD.open(path, FILE_READ);
     if (!rf) continue;
@@ -525,9 +529,9 @@ inline uint32_t export_records(uint32_t from_seq, uint32_t to_seq) {
   if (!sd_is_available()) return 0;
 
   // Ensure /EXPORT exists
-  if (!SD.exists("/sd/EXPORT")) SD.mkdir("/sd/EXPORT");
+  if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
 
-  File dir = SD.open("/sd/WITNESS");
+  File dir = SD.open("/WITNESS");
   if (!dir || !dir.isDirectory()) {
     if (dir) dir.close();
     return 0;
@@ -556,7 +560,7 @@ inline uint32_t export_records(uint32_t from_seq, uint32_t to_seq) {
       const char* base = slash ? (slash + 1) : n;
 
       char dst[80];
-      snprintf(dst, sizeof(dst), "/sd/EXPORT/%s", base);
+      snprintf(dst, sizeof(dst), "/EXPORT/%s", base);
 
       // Seek back to start and copy
       entry.seek(0);
@@ -598,9 +602,9 @@ inline void init() {
   if (s_initialized) return;
 
   if (sd_is_available()) {
-    s_witness_files = count_files("/sd/WITNESS");
-    s_health_files  = count_files("/sd/HEALTH");
-    s_backup_exists = SD.exists("/sd/CHAIN/backup.bin");
+    s_witness_files = count_files("/WITNESS");
+    s_health_files  = count_files("/HEALTH");
+    s_backup_exists = SD.exists("/CHAIN/backup.bin");
   }
 
   s_files_rotated    = 0;
@@ -632,24 +636,23 @@ inline bool process(const uint8_t* chain_head, uint32_t seq,
   if (!sd_is_available()) return false;
 
   // Refresh file counts
-  s_witness_files = count_files("/sd/WITNESS");
-  s_health_files  = count_files("/sd/HEALTH");
+  s_witness_files = count_files("/WITNESS");
+  s_health_files  = count_files("/HEALTH");
 
-  // Check if rotation is needed
-  bool needs_rotation = (s_witness_files > MAX_WITNESS_FILES) ||
-                        (s_health_files  > MAX_HEALTH_FILES)  ||
-                        (sd_usage_pct()  > SD_USAGE_TARGET_PCT);
+  // Rotation bounds regenerable artifacts only. /WITNESS is the sealed
+  // log of record and is NEVER rotated (Invariant IV) — it is a single
+  // append-only jsonl whose growth is bounded by the record rate, not by
+  // this sweep.
+  bool needs_rotation = (s_health_files > MAX_HEALTH_FILES) ||
+                        (sd_usage_pct() > SD_USAGE_TARGET_PCT);
 
   if (needs_rotation) {
-    uint32_t deleted = 0;
-    deleted += rotate_impl("/sd/WITNESS", MAX_WITNESS_FILES);
-    deleted += rotate_impl("/sd/HEALTH",  MAX_HEALTH_FILES);
+    uint32_t deleted = rotate_impl("/HEALTH", MAX_HEALTH_FILES);
 
     if (deleted > 0) {
       s_files_rotated   += deleted;
       s_last_rotation_ms = millis();
-      s_witness_files    = count_files("/sd/WITNESS");
-      s_health_files     = count_files("/sd/HEALTH");
+      s_health_files     = count_files("/HEALTH");
 
       char detail[32];
       snprintf(detail, sizeof(detail), "%u deleted", (unsigned)deleted);
@@ -696,9 +699,8 @@ inline void print_status() {
   Serial.println("┌─────────────────────────────────────┐");
   Serial.println("│       DATA MANAGEMENT STATUS        │");
   Serial.println("├─────────────────────────────────────┤");
-  Serial.printf("│ Witness files   : %5u / %5u      │\n",
-                (unsigned)stats.witness_files,
-                (unsigned)MAX_WITNESS_FILES);
+  Serial.printf("│ Witness files   : %5u (kept)      │\n",
+                (unsigned)stats.witness_files);
   Serial.printf("│ Health files    : %5u / %5u      │\n",
                 (unsigned)stats.health_files,
                 (unsigned)MAX_HEALTH_FILES);
@@ -742,7 +744,6 @@ inline size_t get_json(char* buf, size_t buf_size) {
     "{"
     "\"ok\":true,"
     "\"witness_files\":%u,"
-    "\"max_witness_files\":%u,"
     "\"health_files\":%u,"
     "\"max_health_files\":%u,"
     "\"files_rotated_total\":%u,"
@@ -752,7 +753,6 @@ inline size_t get_json(char* buf, size_t buf_size) {
     "\"sd_usage_pct\":%u"
     "}",
     (unsigned)stats.witness_files,
-    (unsigned)MAX_WITNESS_FILES,
     (unsigned)stats.health_files,
     (unsigned)MAX_HEALTH_FILES,
     (unsigned)stats.files_rotated_total,

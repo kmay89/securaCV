@@ -80,6 +80,11 @@ impl BreakGlassOps for KernelVaultOps {
         self.kernel
             .sign_break_glass_token(&mut token, receipt_entry_hash)?;
 
+        // Burn-first (durable anti-replay): record the nonce in the
+        // receipts DB before any cleartext exists, so this token — even if
+        // its file form leaks — can never authorize a second unseal.
+        self.kernel.consume_token_durably(&token)?;
+
         // Unseal through the same kernel: device key + receipt lookup both come
         // from it, so no second connection is opened.
         let vault = Vault::new(VaultConfig {

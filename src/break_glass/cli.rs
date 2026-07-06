@@ -676,6 +676,11 @@ fn cmd_unseal(
     let pq_pk = crate::device_pq_public_key_from_db(&conn).ok();
     #[cfg(not(feature = "pqc-signatures"))]
     let pq_pk: Option<crate::crypto::signatures::PqPublicKey> = None;
+    // Burn-first (durable anti-replay): the token file just re-parsed as
+    // unconsumed, so this is THE gate that stops a granted token from
+    // authorizing repeated unseals across separate CLI runs within its
+    // validity bucket. Record the nonce before any cleartext exists.
+    crate::consume_break_glass_token_durably(&conn, &token)?;
     let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
         break_glass_receipt_outcome_for_verifier(&conn, &verifying_key, hash, pq_pk.as_ref())
     })?;

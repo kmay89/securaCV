@@ -2,6 +2,60 @@
 
 ## [Unreleased]
 
+### Audit remediation: witness records now durable on SD; break-glass tokens single-use across invocations
+
+An end-to-end audit of the SD write paths, the device hash chain, the
+vault locking/unlocking crypto, and the kernel quorum design found two
+holes worth fixing immediately — one on each side.
+
+**canary-wap: the sealed log now actually reaches the card.**
+`create_witness_record()`'s "store to SD" branch had only ever
+incremented a counter — every signed witness record lived in RAM alone,
+and only the chain head + sequence survived reboot (via NVS, persisted
+every 10 records). Separately, the whole data-management layer addressed
+`/sd/WITNESS`, `/sd/CHAIN/backup.bin`, `/sd/EXPORT`… — a phantom `sd/`
+subdirectory the mount path never creates (the SD library already roots
+paths at the card), so the hourly HMAC'd chain backup and the export
+bundles were writing into the void. Fixed:
+
+- Every signed record now appends one self-describing JSON line to the
+  append-only `/WITNESS/records.jsonl` (close-per-write crash model,
+  latched health warning when no card — the beacon-audit two-tier
+  pattern). The line carries seq/time-bucket/type/payload-hash/prev/
+  chain-hash/signature, so any off-device tool can re-verify the chain
+  and every Ed25519 signature from the card alone.
+- Boot and hot-mount reconcile the NVS chain-head cache against the SD
+  tail: SD wins only when strictly ahead AND the tail record's signature
+  verifies under this device's public key (a foreign or tampered card
+  can never move the chain head). This also closes the power-cut window
+  where up to 9 records of chain advance were silently lost.
+- All data-management paths are root-level now; the periodic sweep no
+  longer lists /WITNESS as rotatable (Invariant IV: the sealed log is
+  never rotated), and the export-bundle write + rotation target the
+  /EXPORT directory that actually exists.
+- New host test `test_witness_store_logic.cpp` (CI) pins the byte-exact
+  line format, torn-tail recovery, malformed/overflow rejection, and the
+  SD-wins decision.
+
+**Kernel: break-glass tokens are now single-use across process
+boundaries.** The token's `consumed` flag lived only in memory and a
+token FILE re-parses as unconsumed, so within its 10-minute validity
+bucket a granted token could authorize repeated unseals/exports across
+separate CLI invocations. The kernel now burns each token's nonce in a
+`consumed_break_glass_tokens` table (same SQLite DB as the receipts) —
+burn-first, before any cleartext exists — in all three consumer paths
+(CLI `break_glass unseal`, the served backend unseal, and
+`export_events_authorized`). New integration test proves a re-parsed
+token file is refused on second use inside the same bucket.
+
+Not changed (flagged for follow-up decisions): canary-sense's chain-hash
+construction differs from canary-wap's (no seq/time-bucket in the hash;
+different genesis) — aligning it would break the shipped Home Assistant
+verifier and needs a coordinated version bump; canary-vision publishes
+unsigned events (no witness chain at all); and the never-implemented
+`firmware/common/witness/witness_chain.h` C API remains a spec-only
+header.
+
 ### canary-wap: update-available alerting (health log + dashboard banner)
 
 The daily OTA check used to complete silently — a pending update was
