@@ -8,6 +8,15 @@
 > [`bom_canary_display.csv`](./bom_canary_display.csv). The enclosures
 > (`enclosure/canary_watch_station.scad`, `enclosure/canary_dash_display.scad`)
 > remain **IN DEVELOPMENT** (not print-validated).
+>
+> **Bench hardware ORDERED 2026-07-06**: Seeed Round Display for XIAO
+> (watch glass; host XIAO ESP32-S3 required separately) and Waveshare
+> ESP32-S3-Touch-LCD-4.3**B** with-case SKU (dash; the B variant is
+> pin-identical to the 4.3, mic-free, and its bundled case covers the
+> bench build without the printed enclosure). On arrival: flash
+> `canary-display-watch` / `canary-display-dash`, clear the VERIFY notes
+> in both pin maps, and update the DEV-STATUS flags here and in the
+> firmware README.
 
 ## Goal
 
