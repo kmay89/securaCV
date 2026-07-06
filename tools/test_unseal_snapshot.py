@@ -100,7 +100,7 @@ def test_malformed_headers() -> None:
     bad = bytearray(golden); bad[4] = 2
     raises(lambda: us.parse_header(bytes(bad)), "unknown version rejected")
 
-    bad = bytearray(golden); bad[5] = 4
+    bad = bytearray(golden); bad[5] = 6  # 4/5 are motion/mesh now; 6 is unused
     raises(lambda: us.parse_header(bytes(bad)), "unknown trigger rejected")
 
     bad = bytearray(golden); bad[6] = 144

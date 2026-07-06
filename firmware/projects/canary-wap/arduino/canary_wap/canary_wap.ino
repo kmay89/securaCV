@@ -138,6 +138,7 @@
 #include <new>                       // placement-new for the PSRAM GPS ring
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
+#include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
 // instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
@@ -2198,7 +2199,28 @@ extern "C" bool csi_witness_emit_event(const char* module_id,
   // RECORD_WITNESS_EVENT (=1) was reserved in the RecordType enum and
   // unused — adopt it for module-emitted CSI events. RECORD_STATE_CHANGE
   // is reserved for the device-state pipeline already in use elsewhere.
-  return create_witness_record(payload, (size_t)len, RECORD_WITNESS_EVENT, &rec);
+  const bool committed =
+      create_witness_record(payload, (size_t)len, RECORD_WITNESS_EVENT, &rec);
+
+#if FEATURE_VAULT_SNAPSHOT
+  // WiFi-sensing arrivals double as the vault's opt-in "motion" trigger:
+  // a presence transition into any occupied state seals one frame
+  // (key-gated, cooldown-bounded, off by default). The chokepoint commits
+  // on the loop task, satisfying request_capture()'s loop-only contract.
+  if (committed && strcmp(module_id, "core.presence") == 0 &&
+      strcmp(type_name, "presence_changed") == 0 &&
+      strcmp(state_name, "empty") != 0) {
+#if FEATURE_QR_PROVISION
+    const bool vault_qr_busy = g_qr_scan_active;
+#else
+    const bool vault_qr_busy = false;
+#endif
+    (void)vault_snapshot::request_capture(vault_logic::Trigger::MOTION,
+                                          vault_camera_usable(),
+                                          vault_qr_busy, sd_is_available());
+  }
+#endif
+  return committed;
 }
 
 static bool verify_record_signature(const WitnessRecord* rec) {
@@ -4117,13 +4139,148 @@ static const char* framesize_name(framesize_t size) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// CAMERA POWER MANAGER — idle standby, on-demand wake, peek gating
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The Sense's OV2640 has no wired PWDN pin, so "standby" means
+// esp_camera_deinit(): the 20 MHz XCLK stops, the framebuffers are freed,
+// idle current and heat drop. "Wake" re-runs the boot init ladder (~1 s).
+// Decisions are pure and host-tested (camera_gate_logic.h); this block is
+// only the glue. PEEK yields to the battery policy and to thermal
+// protection; VAULT captures (life-safety) and QR provisioning (explicit
+// user action) always may wake the sensor.
+
+static volatile bool g_cam_standby = false;   // parked by choice, not failure
+static uint32_t g_cam_last_use_ms = 0;
+static bool g_cam_shed_latch = false;         // one log line per shed streak
+
+// Function-local static: C++11 guards make the first-call init race-free,
+// so every task (loop / httpd / seal worker) can share the mutex safely.
+static SemaphoreHandle_t cam_lock() {
+  static SemaphoreHandle_t m = xSemaphoreCreateMutex();
+  return m;
+}
+
+static void camera_note_use() { g_cam_last_use_ms = millis(); }
+
+// True when the sensor is up OR only down because the manager parked it
+// (a wake brings it back). False only after a genuine init failure.
+static bool camera_usable() { return g_camera_initialized || g_cam_standby; }
+
+static bool camera_ensure_awake() {
+  if (xSemaphoreTake(cam_lock(), pdMS_TO_TICKS(5000)) != pdTRUE) return false;
+  bool ok = g_camera_initialized;
+  if (!ok) {
+    const bool was_standby = g_cam_standby;
+    ok = init_camera();
+    g_camera_initialized  = ok;
+    g_hw.camera_available = ok;
+    if (ok) {
+      g_hw.camera_ever_init = true;
+      if (was_standby)
+        log_health(SCV_LOG_INFO, SCV_CAT_SENSOR, "Camera woke from standby",
+                   nullptr);
+    }
+    g_cam_standby = false;  // either awake now, or genuinely failed
+  }
+  if (ok) camera_note_use();
+  xSemaphoreGive(cam_lock());
+  return ok;
+}
+
+static void camera_enter_standby(const char* reason) {
+  if (xSemaphoreTake(cam_lock(), pdMS_TO_TICKS(1000)) != pdTRUE) return;
+  bool busy = g_peek_active;
+  #if FEATURE_QR_PROVISION
+  busy = busy || g_qr_scan_active;
+  #endif
+  #if FEATURE_VAULT_SNAPSHOT
+  busy = busy || vault_snapshot::worker_busy();
+  #endif
+  if (g_camera_initialized && !busy) {
+    esp_camera_deinit();
+    g_camera_initialized  = false;
+    g_hw.camera_available = false;
+    g_cam_standby = true;
+    log_health(SCV_LOG_INFO, SCV_CAT_SENSOR, "Camera standby", reason);
+  }
+  xSemaphoreGive(cam_lock());
+}
+
+// Battery policy verdict for the PEEK surface only (vault/QR are never
+// policy-gated). True when no policy is compiled in or none initialized.
+static bool camera_policy_allows_peek() {
+  #if FEATURE_POWER_POLICY
+  const PolicyFeatures* pf = power_policy::get_features();
+  if (pf != nullptr && !pf->camera_peek) return false;
+  #endif
+  return true;
+}
+
+static camera_gate::PeekGate peek_gate_now() {
+  const bool hot_crit =
+      (sys_monitor::get_temp_state() == sys_monitor::TEMP_HOT_CRIT);
+  return camera_gate::peek_gate(camera_usable(), camera_policy_allows_peek(),
+                                hot_crit);
+}
+
+// Send the gate's honest 503. Returns true when the caller must bail
+// (a response has been sent).
+static bool peek_gate_refuse(httpd_req_t* req, camera_gate::PeekGate g) {
+  if (g == camera_gate::PeekGate::ALLOW) return false;
+  httpd_resp_set_status(req, "503 Service Unavailable");
+  char resp[160];
+  snprintf(resp, sizeof(resp), "{\"ok\":false,\"error\":\"%s\"}",
+           camera_gate::peek_gate_reason(g));
+  http_send_json(req, resp);
+  return true;
+}
+
+// Loop-task tick: shed the stream when critically hot or when the battery
+// policy turned the peek surface off, then let the idle timer (or the
+// policy) park the sensor. Cheap enough to run every loop pass.
+static void camera_power_tick() {
+  const bool hot_crit =
+      (sys_monitor::get_temp_state() == sys_monitor::TEMP_HOT_CRIT);
+  const bool policy_ok = camera_policy_allows_peek();
+
+  if (g_peek_active && (hot_crit || !policy_ok)) {
+    if (!g_cam_shed_latch) {
+      g_cam_shed_latch = true;
+      log_health(SCV_LOG_WARNING, SCV_CAT_SENSOR,
+                 hot_crit ? "Peek stream stopped: device too hot"
+                          : "Peek stream stopped: battery saver",
+                 nullptr);
+    }
+    g_peek_active = false;  // the stream worker exits on its next frame
+  }
+  if (!hot_crit && policy_ok) g_cam_shed_latch = false;
+
+  bool in_use = g_peek_active;
+  #if FEATURE_QR_PROVISION
+  in_use = in_use || g_qr_scan_active;
+  #endif
+  #if FEATURE_VAULT_SNAPSHOT
+  in_use = in_use || vault_snapshot::worker_busy();
+  #endif
+
+  if (camera_gate::standby_due(millis(), g_cam_last_use_ms,
+                               g_camera_initialized, in_use,
+                               policy_ok && !hot_crit)) {
+    camera_enter_standby(hot_crit ? "too hot"
+                                  : (policy_ok ? "idle" : "battery saver"));
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // PEEK START — NEW ENDPOINT (POST /api/peek/start)
 // ════════════════════════════════════════════════════════════════════════════
 
 static esp_err_t handle_peek_start(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (!g_camera_initialized) {
+  if (peek_gate_refuse(req, peek_gate_now())) return ESP_OK;
+  if (!camera_ensure_awake()) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     const char* resp = "{\"ok\":false,\"error\":\"Camera not initialized\"}";
     return http_send_json(req, resp);
@@ -4196,6 +4353,7 @@ static void peek_stream_task(void* arg) {
   // Stream frames while active
   uint32_t consecutive_capture_failures = 0;
   while (g_peek_active) {
+    camera_note_use();  // streaming counts as use for the idle timer
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("[PEEK] Frame capture failed");
@@ -4300,7 +4458,8 @@ static void peek_stream_task(void* arg) {
 static esp_err_t handle_peek_stream(httpd_req_t* req) {
   g_health.http_requests++;
 
-  if (!g_camera_initialized) {
+  if (peek_gate_refuse(req, peek_gate_now())) return ESP_OK;
+  if (!camera_ensure_awake()) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     return httpd_resp_send(req, "Camera not initialized", HTTPD_RESP_USE_STRLEN);
   }
@@ -4354,12 +4513,13 @@ static esp_err_t handle_peek_stream(httpd_req_t* req) {
 
 static esp_err_t handle_peek_snapshot(httpd_req_t* req) {
   g_health.http_requests++;
-  
-  if (!g_camera_initialized) {
+
+  if (peek_gate_refuse(req, peek_gate_now())) return ESP_OK;
+  if (!camera_ensure_awake()) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     return httpd_resp_send(req, "Camera not initialized", HTTPD_RESP_USE_STRLEN);
   }
-  
+
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) {
     httpd_resp_set_status(req, "500 Internal Server Error");
@@ -6199,6 +6359,15 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
       "\"error\":\"This setup link has expired. Reconnect to the SecuraCV network to start over.\"}");
   }
 
+  #if FEATURE_CAMERA_PEEK
+  // Explicit user action: wake a standby camera before the scan task
+  // starts (a ~1 s re-init on the httpd task is fine here).
+  if (!camera_ensure_awake()) {
+    return http_send_json(req,
+        "{\"ok\":false,\"error\":\"Camera did not start. Try Reinit on the Camera panel.\"}");
+  }
+  #endif
+
   g_qr_scan_success = false;
   g_qr_scan_error[0] = '\0';
   g_qr_scanned_ssid[0] = '\0';
@@ -6840,6 +7009,26 @@ static esp_err_t handle_peek_init_auth(httpd_req_t* req) {
 // vault_snapshot.cpp cannot include data_mgmt_api.h (it transitively pulls in
 // the single-TU hardware_state.h, which defines g_hw). This sketch is the one
 // TU that owns both, so it supplies the ring-rotation hook.
+// Camera-manager bridges for vault_snapshot.cpp (the .ino owns both
+// subsystems). Wake runs on the seal worker task where a ~1 s re-init is
+// harmless; "usable" feeds the loop-side capture decision so a camera
+// that is merely PARKED (standby) does not read as absent.
+bool vault_camera_wake_hook(void) {
+#if FEATURE_CAMERA_PEEK
+  return camera_ensure_awake();
+#else
+  return g_camera_initialized;
+#endif
+}
+
+static bool vault_camera_usable(void) {
+#if FEATURE_CAMERA_PEEK
+  return camera_usable();
+#else
+  return g_camera_initialized;
+#endif
+}
+
 uint32_t vault_rotate_dir_hook(const char* dir, uint32_t keep) {
   return datamgmt::rotate_dir(dir, keep);
 }
@@ -6857,10 +7046,12 @@ static esp_err_t handle_vault_status(httpd_req_t* req) {
   doc["t3_smoke"]   = cfg.t3_enabled;
   doc["t4_co"]      = cfg.t4_enabled;
   doc["glass"]      = cfg.glass_enabled;
+  doc["motion"]     = cfg.motion_enabled;
+  doc["mesh"]       = cfg.mesh_enabled;
   doc["cooldown_s"] = cfg.cooldown_s;
   doc["sealing"]    = vault_snapshot::worker_busy();
   doc["sd_ok"]      = sd_is_available();
-  doc["camera_ok"]  = g_camera_initialized;
+  doc["camera_ok"]  = vault_camera_usable();
   doc["keep_files"] = (uint32_t)vault_logic::KEEP_FILES;
   String response;
   serializeJson(doc, response);
@@ -6882,7 +7073,9 @@ static esp_err_t handle_vault_config(httpd_req_t* req) {
   vault_logic::VaultConfig cfg = vault_snapshot::get_config();
   if (body["t3_smoke"].is<bool>()) cfg.t3_enabled    = body["t3_smoke"].as<bool>();
   if (body["t4_co"].is<bool>())    cfg.t4_enabled    = body["t4_co"].as<bool>();
-  if (body["glass"].is<bool>())    cfg.glass_enabled = body["glass"].as<bool>();
+  if (body["glass"].is<bool>())    cfg.glass_enabled  = body["glass"].as<bool>();
+  if (body["motion"].is<bool>())   cfg.motion_enabled = body["motion"].as<bool>();
+  if (body["mesh"].is<bool>())     cfg.mesh_enabled   = body["mesh"].as<bool>();
   if (body["cooldown_s"].is<uint32_t>()) {
     // Clamp BEFORE the uint16 narrowing so an oversized value saturates
     // instead of wrapping (set_config clamps again to [10, 3600]).
@@ -6891,7 +7084,9 @@ static esp_err_t handle_vault_config(httpd_req_t* req) {
     cfg.cooldown_s = (uint16_t)cool;
   }
 
-  const bool wanted_arm = cfg.t3_enabled || cfg.t4_enabled || cfg.glass_enabled;
+  const bool wanted_arm = cfg.t3_enabled || cfg.t4_enabled ||
+                          cfg.glass_enabled || cfg.motion_enabled ||
+                          cfg.mesh_enabled;
   vault_snapshot::set_config(cfg);  // clamps cooldown; forces triggers off keyless
   const vault_logic::VaultConfig applied = vault_snapshot::get_config();
 
@@ -6900,6 +7095,8 @@ static esp_err_t handle_vault_config(httpd_req_t* req) {
   doc["t3_smoke"]   = applied.t3_enabled;
   doc["t4_co"]      = applied.t4_enabled;
   doc["glass"]      = applied.glass_enabled;
+  doc["motion"]     = applied.motion_enabled;
+  doc["mesh"]       = applied.mesh_enabled;
   doc["cooldown_s"] = applied.cooldown_s;
   if (wanted_arm && !vault_snapshot::has_pubkey()) {
     doc["warning"] = "Register an unlock key first — triggers stay off without one";
@@ -9333,7 +9530,7 @@ void setup() {
             #else
             const bool vault_qr_busy = false;
             #endif
-            (void)vault_snapshot::request_capture(vt, g_camera_initialized,
+            (void)vault_snapshot::request_capture(vt, vault_camera_usable(),
                                                   vault_qr_busy, sd_is_available());
           }
         }
@@ -9459,6 +9656,29 @@ void setup() {
         snprintf(detail, sizeof(detail), "From %s: %s",
                  alert->sender_name, alert->detail);
         log_health((LogLevel)alert->severity, SCV_CAT_MESH, "Opera alert received", detail);
+
+        #if FEATURE_VAULT_SNAPSHOT
+        // A peer's SECURITY alert (tamper / motion / breach — not battery
+        // housekeeping) can seal one local frame: the opt-in "mesh"
+        // trigger. Mesh frames are processed by update() on the loop
+        // task, satisfying request_capture()'s loop-only contract.
+        const bool security =
+            alert->type == mesh_network::ALERT_TAMPER ||
+            alert->type == mesh_network::ALERT_MOTION ||
+            alert->type == mesh_network::ALERT_BREACH ||
+            alert->type == mesh_network::ALERT_OFFLINE_TAMPER;
+        if (security) {
+          #if FEATURE_QR_PROVISION
+          const bool vault_qr_busy = g_qr_scan_active;
+          #else
+          const bool vault_qr_busy = false;
+          #endif
+          (void)vault_snapshot::request_capture(vault_logic::Trigger::MESH,
+                                                vault_camera_usable(),
+                                                vault_qr_busy,
+                                                sd_is_available());
+        }
+        #endif
       });
 
       mesh_network::load_replay_counters();
@@ -10021,7 +10241,7 @@ void loop() {
     const bool vault_qr_busy = false;
     #endif
     const vault_logic::Decision d = vault_snapshot::request_capture(
-        vault_logic::Trigger::TEST, g_camera_initialized, vault_qr_busy,
+        vault_logic::Trigger::TEST, vault_camera_usable(), vault_qr_busy,
         sd_is_available());
     log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Vault test capture",
                vault_logic::decision_name(d));
@@ -10421,6 +10641,12 @@ void loop() {
   }
   #endif
 
+  // Camera power manager: shed the peek stream on thermal-critical or
+  // battery policy, park the idle sensor, re-arm when conditions clear.
+  #if FEATURE_CAMERA_PEEK
+  camera_power_tick();
+  #endif
+
   // Pump the acoustic pipeline. Drains up to 8×20 ms PDM frames per call
   // against an 8-deep DMA ring, so the loop must come back within ~160 ms —
   // holds here because loop() ends in delay(1) and HTTP runs in the httpd
@@ -10624,7 +10850,17 @@ void loop() {
   // WITNESS RECORD CREATION
   // ════════════════════════════════════════════════════════════════════════════
 
-  if (now - g_last_record_ms >= g_record_interval_ms) {
+  uint32_t effective_record_interval_ms = g_record_interval_ms;
+  #if FEATURE_POWER_POLICY
+  {
+    // On battery the policy stretches the record cadence (5 s / 30 s /
+    // 60 s per mode). The operator setting still applies when slower.
+    const PolicyFeatures* pf = power_policy::get_features();
+    if (pf != nullptr && pf->record_interval_ms > effective_record_interval_ms)
+      effective_record_interval_ms = pf->record_interval_ms;
+  }
+  #endif
+  if (now - g_last_record_ms >= effective_record_interval_ms) {
     g_last_record_ms = now;
 
     uint8_t payload[512];

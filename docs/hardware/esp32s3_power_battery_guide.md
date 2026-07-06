@@ -86,10 +86,37 @@ and prunes features accordingly. Datasheet-typical estimates for a Canary WAP
 | Policy mode | When | CPU | WiFi | Typical avg draw @3.3 V | Notes |
 |---|---|---|---|---|---|
 | `PLUGGED_IN` / `USB_ONLY` | USB power or no battery | 240 MHz | PS off | **~150–250 mA** | All features incl. camera peek; peaks 400–700 mA |
-| `BATTERY_NORMAL` | SoC > 50% | 160 MHz | min modem-sleep | **~90–140 mA** | Camera/vision off |
-| `BATTERY_SAVER` | SoC 15–50% | 80 MHz | max modem-sleep | **~40–80 mA** | CSI/mesh/GNSS off, 30 s record interval |
+| `BATTERY_NORMAL` | SoC > 50% | 160 MHz | min modem-sleep | **~90–140 mA** | Camera preview off (sensor parked); 5 s record interval |
+| `BATTERY_SAVER` | SoC 15–50% | 80 MHz | max modem-sleep | **~40–80 mA** | Camera preview off; 30 s record interval |
 | `LOW_POWER` | SoC 5–15% | 80 MHz | max modem-sleep | **~7–15 mA averaged** | 5 s awake / 55 s deep-sleep duty cycle; STA kept for panic events |
 | `SHUTDOWN` | SoC ≤ 3% | — | — | **~0.1–2 mA** | Graceful shutdown → deep sleep, 30 min wake timer |
+
+### What the policy actually enforces (vs. advisory)
+
+The firmware ENFORCES these per-mode signals at runtime:
+
+- **CPU frequency and WiFi power-save** — applied directly on every mode
+  transition.
+- **Camera preview (`camera_peek`)** — the peek stream/snapshot endpoints
+  answer `503` with an honest reason on battery, any in-flight stream is
+  stopped, and the sensor is parked (`esp_camera_deinit`, stopping its
+  20 MHz clock). Sealed-vault captures (life-safety) and QR provisioning
+  (explicit user action) still wake the camera on demand in every mode.
+- **Record interval** — the policy value acts as a floor: the effective
+  interval is max(operator setting, policy interval).
+- **Deep-sleep duty cycling and shutdown** — as described above.
+
+Independent of the battery policy, the camera also parks itself after
+5 minutes without use, and a critically hot die (≥ 80 °C) stops the peek
+stream and parks the sensor until it cools (vault captures remain
+allowed).
+
+The remaining `PolicyFeatures` fields (`csi`, `vision`, `mqtt`, `mesh`,
+`gnss`, `touch`, `ir_rmt`, `temp_tamper`) are currently ADVISORY — the
+subsystems do not yet consume them, so the per-mode draw estimates above
+assume those features keep running. Acoustic detection is deliberately
+never gated: a Canary that goes deaf to a smoke alarm to save battery has
+failed at its job.
 
 Per-subsystem contributions (typical, for budgeting your own variant):
 

@@ -59,8 +59,14 @@ enum class Trigger : uint8_t {
   T3_SMOKE = 1,
   T4_CO    = 2,
   GLASS    = 3,
+  MOTION   = 4,   /* WiFi/CSI presence change (arrival) */
+  MESH     = 5,   /* security alert received from a mesh peer */
   TEST     = 9,   /* manual /api/vault/test capture */
 };
+
+/* Cooldown bookkeeping array size: covers trigger values 0..5 (TEST
+ * deliberately has no cooldown slot — it bypasses cooldown by design). */
+constexpr uint8_t COOLDOWN_SLOTS = 6;
 
 /* Short tag used in filenames, witness-event state_name, and the UI. */
 inline const char* trigger_tag(Trigger t) {
@@ -68,6 +74,8 @@ inline const char* trigger_tag(Trigger t) {
     case Trigger::T3_SMOKE: return "smoke";
     case Trigger::T4_CO:    return "co";
     case Trigger::GLASS:    return "glass";
+    case Trigger::MOTION:   return "motion";
+    case Trigger::MESH:     return "mesh";
     case Trigger::TEST:     return "test";
     default:                return "none";
   }
@@ -75,7 +83,8 @@ inline const char* trigger_tag(Trigger t) {
 
 inline bool trigger_valid(uint8_t raw) {
   return raw == (uint8_t)Trigger::T3_SMOKE || raw == (uint8_t)Trigger::T4_CO ||
-         raw == (uint8_t)Trigger::GLASS    || raw == (uint8_t)Trigger::TEST;
+         raw == (uint8_t)Trigger::GLASS    || raw == (uint8_t)Trigger::MOTION ||
+         raw == (uint8_t)Trigger::MESH     || raw == (uint8_t)Trigger::TEST;
 }
 
 /* ── Capture decision ───────────────────────────────────────────────── */
@@ -84,6 +93,8 @@ struct VaultConfig {
   bool     t3_enabled;
   bool     t4_enabled;
   bool     glass_enabled;
+  bool     motion_enabled;  /* CSI presence-change arrivals */
+  bool     mesh_enabled;    /* peer security alerts */
   uint16_t cooldown_s;
 };
 
@@ -135,7 +146,9 @@ inline Decision capture_decision(Trigger t, const VaultConfig& cfg,
 
   const bool enabled = (t == Trigger::T3_SMOKE && cfg.t3_enabled) ||
                        (t == Trigger::T4_CO    && cfg.t4_enabled) ||
-                       (t == Trigger::GLASS    && cfg.glass_enabled);
+                       (t == Trigger::GLASS    && cfg.glass_enabled) ||
+                       (t == Trigger::MOTION   && cfg.motion_enabled) ||
+                       (t == Trigger::MESH     && cfg.mesh_enabled);
   if (!enabled)                              return Decision::SKIP_DISABLED;
 
   if (has_last_capture &&
@@ -231,7 +244,8 @@ inline bool filename_parse(const char* name, uint32_t* seq, Trigger* t) {
   size_t tag_len = (size_t)(dot - tag);
   Trigger found = Trigger::NONE;
   static const Trigger ALL[] = {Trigger::T3_SMOKE, Trigger::T4_CO,
-                                Trigger::GLASS, Trigger::TEST};
+                                Trigger::GLASS,    Trigger::MOTION,
+                                Trigger::MESH,     Trigger::TEST};
   for (Trigger cand : ALL) {
     const char* ct = trigger_tag(cand);
     if (strlen(ct) == tag_len && strncmp(tag, ct, tag_len) == 0) {

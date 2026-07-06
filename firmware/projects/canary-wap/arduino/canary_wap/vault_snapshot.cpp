@@ -41,6 +41,11 @@
  * (the one TU that owns both) provides this thin hook. */
 extern uint32_t vault_rotate_dir_hook(const char* dir, uint32_t keep);
 
+/* Camera power manager hook (canary_wap.ino): wakes a standby camera and
+ * stamps last-use. Runs on the seal worker task, where a ~1 s re-init is
+ * harmless; returns false when the camera cannot be brought up. */
+extern bool vault_camera_wake_hook(void);
+
 namespace vault_snapshot {
 
 using vault_logic::Trigger;
@@ -54,6 +59,8 @@ static const char* NVS_KEY_PUB    = "vault_pub";
 static const char* NVS_KEY_T3    = "vault_t3";
 static const char* NVS_KEY_T4    = "vault_t4";
 static const char* NVS_KEY_GLASS = "vault_glass";
+static const char* NVS_KEY_MOT   = "vault_mot";
+static const char* NVS_KEY_MESH  = "vault_mesh";
 static const char* NVS_KEY_COOL  = "vault_cool_s";
 static const char* NVS_KEY_SEQ   = "vault_seq";
 
@@ -65,8 +72,8 @@ static uint8_t g_key_id[vault_logic::KEY_ID_SIZE];
 
 /* Per-trigger cooldown stamps — loop-task-only (written at CAPTURE
  * decision time, read by the next decision). Index by Trigger value 1..3. */
-static uint32_t g_last_capture_ms[4] = {0, 0, 0, 0};
-static bool     g_has_last[4]        = {false, false, false, false};
+static uint32_t g_last_capture_ms[vault_logic::COOLDOWN_SLOTS] = {0};
+static bool     g_has_last[vault_logic::COOLDOWN_SLOTS]        = {false};
 
 /* ── Worker handoff (single in-flight seal) ─────────────────────────── */
 
@@ -116,6 +123,8 @@ static void persist_config() {
   nvs.putBool(NVS_KEY_T3,    g_cfg.t3_enabled);
   nvs.putBool(NVS_KEY_T4,    g_cfg.t4_enabled);
   nvs.putBool(NVS_KEY_GLASS, g_cfg.glass_enabled);
+  nvs.putBool(NVS_KEY_MOT,   g_cfg.motion_enabled);
+  nvs.putBool(NVS_KEY_MESH,  g_cfg.mesh_enabled);
   nvs.putUInt(NVS_KEY_COOL,  g_cfg.cooldown_s);
 }
 
@@ -155,8 +164,11 @@ static void seal_task(void*) {
   uint8_t key[32];
 
   do {
-    /* 1. Grab one frame. Concurrent with the peek stream is fine (fb_get
-     * is a shared queue); QR contention was excluded by the decision. */
+    /* 1. Wake the camera if the idle/battery manager put it in standby,
+     * then grab one frame. Concurrent with the peek stream is fine
+     * (fb_get is a shared queue); QR contention was excluded by the
+     * decision. */
+    if (!vault_camera_wake_hook()) { fail_result("camera_wake"); break; }
     camera_fb_t* fb = nullptr;
     for (int attempt = 0; attempt < 3 && !fb; attempt++) {
       fb = esp_camera_fb_get();
@@ -330,7 +342,9 @@ void init() {
   if (!nvs.beginReadOnly() && !nvs.beginReadWrite()) return;
   g_cfg.t3_enabled    = nvs.getBool(NVS_KEY_T3, false);
   g_cfg.t4_enabled    = nvs.getBool(NVS_KEY_T4, false);
-  g_cfg.glass_enabled = nvs.getBool(NVS_KEY_GLASS, false);
+  g_cfg.glass_enabled  = nvs.getBool(NVS_KEY_GLASS, false);
+  g_cfg.motion_enabled = nvs.getBool(NVS_KEY_MOT, false);
+  g_cfg.mesh_enabled   = nvs.getBool(NVS_KEY_MESH, false);
   uint32_t cool = nvs.getUInt(NVS_KEY_COOL, vault_logic::DEFAULT_COOLDOWN_S);
   if (cool < 10)   cool = 10;
   if (cool > 3600) cool = 3600;
@@ -346,8 +360,10 @@ void init() {
 Decision request_capture(Trigger t, bool camera_ok, bool qr_active,
                          bool sd_ok) {
   const uint8_t idx = (uint8_t)t;
-  const bool has_last = (idx < 4) ? g_has_last[idx] : false;
-  const uint32_t last = (idx < 4) ? g_last_capture_ms[idx] : 0;
+  const bool has_last =
+      (idx < vault_logic::COOLDOWN_SLOTS) ? g_has_last[idx] : false;
+  const uint32_t last =
+      (idx < vault_logic::COOLDOWN_SLOTS) ? g_last_capture_ms[idx] : 0;
 
   const Decision d = vault_logic::capture_decision(
       t, g_cfg, g_has_pubkey, sd_ok, camera_ok, qr_active,
@@ -381,7 +397,7 @@ Decision request_capture(Trigger t, bool camera_ok, bool qr_active,
   /* Stamp the cooldown at request time: the alarm cadence keeps re-firing
    * while the seal is in flight, and worker_busy alone would stop gating
    * the moment the worker finishes. */
-  if (idx < 4) {
+  if (idx < vault_logic::COOLDOWN_SLOTS) {
     g_last_capture_ms[idx] = millis();
     g_has_last[idx]        = true;
   }
@@ -460,6 +476,7 @@ void clear_pubkey() {
   g_has_pubkey = false;
   /* A vault without a recipient must not stay armed. */
   g_cfg.t3_enabled = g_cfg.t4_enabled = g_cfg.glass_enabled = false;
+    g_cfg.motion_enabled = g_cfg.mesh_enabled = false;
   persist_config();
   log_health(SCV_LOG_NOTICE, SCV_CAT_USER,
              "Vault unlock key cleared", "triggers disabled");
@@ -484,6 +501,7 @@ void set_config(const VaultConfig& cfg) {
    * enforce it too (fail closed). */
   if (!g_has_pubkey) {
     g_cfg.t3_enabled = g_cfg.t4_enabled = g_cfg.glass_enabled = false;
+    g_cfg.motion_enabled = g_cfg.mesh_enabled = false;
   }
   persist_config();
 }

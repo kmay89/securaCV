@@ -1469,7 +1469,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <span class="badge info" id="vaultSealingBadge" style="display:none;"><span class="badge-dot"></span>SEALING</span>
         </div>
         <p style="font-size:0.8rem;color:var(--muted);margin-bottom:0.9rem;">
-          Off by default. When you enable a trigger, a smoke / CO / glass-break detection captures <strong>one</strong> JPEG and seals it to the SD card, encrypted to the public key you register below. The device keeps no way to decrypt it — download the <code>.svlt</code> file and unlock it on your own computer with <code>tools/unseal_snapshot.py</code>. Only the fact that a frame was sealed (plus its integrity hash) enters the witness timeline.
+          Off by default. When you enable a trigger, that event captures <strong>one</strong> JPEG and seals it to the SD card, encrypted to the public key you register below. Triggers: smoke, CO, glass break, Wi-Fi motion, and mesh alarms. The device keeps no way to decrypt it — download the <code>.svlt</code> file and unlock it on your own computer with <code>tools/unseal_snapshot.py</code>. Only the fact that a frame was sealed (plus its integrity hash) enters the witness timeline.
         </p>
 
         <div class="form-group">
@@ -1502,6 +1502,20 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <div class="toggle-desc">Seal one frame on a glass-break transient.</div>
           </div>
           <label style="cursor:pointer;"><input type="checkbox" id="vaultGlass" onchange="saveVaultConfig()" disabled></label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-title">Motion (Wi-Fi sensing)</div>
+            <div class="toggle-desc">Seal one frame when Wi-Fi sensing sees the room become occupied. Uses no extra power.</div>
+          </div>
+          <label style="cursor:pointer;"><input type="checkbox" id="vaultMotion" onchange="saveVaultConfig()" disabled></label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-title">Mesh alarm</div>
+            <div class="toggle-desc">Seal one frame when a paired Canary reports tamper, motion, or a breach.</div>
+          </div>
+          <label style="cursor:pointer;"><input type="checkbox" id="vaultMesh" onchange="saveVaultConfig()" disabled></label>
         </div>
 
         <div style="margin-top:0.9rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
@@ -2886,7 +2900,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('vaultKeyEntry').style.display = vaultHasKey ? 'none' : 'flex';
         document.getElementById('vaultKeyClearBtn').style.display = vaultHasKey ? '' : 'none';
 
-        for (const [id, val] of [['vaultT3', d.t3_smoke], ['vaultT4', d.t4_co], ['vaultGlass', d.glass]]) {
+        for (const [id, val] of [['vaultT3', d.t3_smoke], ['vaultT4', d.t4_co],
+                                 ['vaultGlass', d.glass], ['vaultMotion', d.motion],
+                                 ['vaultMesh', d.mesh]]) {
           const el = document.getElementById(id);
           el.checked = !!val;
           el.disabled = !vaultHasKey;
@@ -2943,6 +2959,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         t3_smoke: document.getElementById('vaultT3').checked,
         t4_co: document.getElementById('vaultT4').checked,
         glass: document.getElementById('vaultGlass').checked,
+        motion: document.getElementById('vaultMotion').checked,
+        mesh: document.getElementById('vaultMesh').checked,
         cooldown_s: parseInt(document.getElementById('vaultCooldown').value, 10)
       };
       try {

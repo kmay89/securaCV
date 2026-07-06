@@ -741,6 +741,21 @@ jobs:
           /tmp/witness_store_logic | tee /tmp/witness_store_logic.log
           grep -q "ALL .* PASSED" /tmp/witness_store_logic.log
 
+      - name: Build + run canary-wap camera gate logic host test
+        # Camera power management decisions (camera_gate_logic.h): the
+        # peek-surface gate precedence (broken camera > thermal > battery
+        # policy, each with honest user-facing copy) and the idle-standby
+        # decision (never while streaming/QR/sealing; immediate on policy
+        # deny; wrap-safe idle timer otherwise).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_camera_gate_logic.cpp \
+              -o /tmp/camera_gate_logic
+          /tmp/camera_gate_logic | tee /tmp/camera_gate_logic.log
+          grep -q "ALL .* PASSED" /tmp/camera_gate_logic.log
+
       - name: Build + run canary-wap catch-all logic host test
         # Who owns the shared canary.local catch-all when several Canaries
         # share a LAN: the fingerprint-staggered claim window, the
