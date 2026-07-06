@@ -23,6 +23,16 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
 ## What it does
 
 - **Subscribes** to the fleet: `securacv/+/{status,availability,health,events,tamper,chain,state}`.
+  Every Canary on the household broker appears automatically — retained
+  topics repopulate the whole view in one round-trip. No pairing, ever.
+- **Flock discovery** (`FEATURE_MDNS_DISCOVERY`, see
+  [`display_discovery_and_resilience.md`](../../../docs/hardware/display_discovery_and_resilience.md)):
+  advertises `_securacv._tcp` on the LAN and — once connected — gossips the
+  broker address in its TXT records. A display flashed with **no broker
+  configured asks the flock and adopts the referral** (persisted to NVS);
+  a broker that goes dark for 2 min (moved DHCP lease) triggers re-ask +
+  rebind. Fallback: any `_mqtt._tcp` advert. One hand-provisioned device
+  makes every later one plug-and-play.
 - **Fleet model**: per-witness liveness (online → stale 3 min → lost 10 min),
   last event with severity decay, tamper, battery — pure C++, host-testable.
 - **Verifies on its own silicon**: TOFU-pins each witness pubkey from its
