@@ -46,6 +46,7 @@
 
 #include <csi_hal.h>
 #include <csi_features.h>
+#include <csi_probe.h>
 #include <csi_types.h>
 #include <csi_module.h>
 #include <csi_event.h>
@@ -117,6 +118,9 @@ bool                                    g_hal_ready          = false;
 /* Bearer token expected on all CSI HTTP requests. Pointer into the
  * caller's storage (g_device.api_token_str) — never freed. */
 const char*                             g_api_token          = nullptr;
+/* Defined with the probe pump further down; handle_stream's supply
+ * diagnostics need it first. */
+bool probe_running();
 
 /* Forward decl of the file-scope cv_session_validate trampoline (defined
  * just below the anonymous namespace, near session_validate_cookie). The
@@ -314,6 +318,19 @@ void calibration_finalize() {
   g_calibration.state              = CALIB_READY;
 }
 
+/* Timeout accounting, separated from accumulation so it can run for
+ * EVERY finalized window — including starved (<2 frame) ones that the
+ * honesty gate keeps away from calibration_observe. Without this split
+ * a frame-starved install left /api/csi/calibrate/status "running"
+ * forever instead of reporting timed_out. */
+void calibration_tick_timeout() {
+  if (g_calibration.state != CALIB_RUNNING) return;
+  if ((millis() - g_calibration.started_ms) >= CALIB_TIMEOUT_MS &&
+      g_calibration.samples == 0) {
+    g_calibration.state = CALIB_TIMED_OUT;
+  }
+}
+
 void calibration_observe(const csi_features_t* features) {
   if (g_calibration.state != CALIB_RUNNING) return;
   /* Hard timeout in case the HAL stalls mid-calibration — without this
@@ -346,6 +363,18 @@ void on_csi_window(const csi_features_t* features, void* /*user*/) {
   s_watchdog_consecutive = 0;
   g_latest_window      = *features;
   g_have_latest_window = true;
+  /* HONESTY GATE: a window with (almost) no frames is "no data", not
+   * "empty room". Ticking the modules with an all-zeros vector would
+   * advance core.presence toward a confident "empty" claim it cannot
+   * back — with no home-WiFi beacons and no peer Canary probing, the
+   * device would report every room as confidently empty forever. Skip
+   * the pipeline; the dashboard's supply chip explains the starvation
+   * (the stream endpoint carries fps + silent_ms). Calibration also
+   * must not learn from starved windows — but its TIMEOUT accounting
+   * must still tick, or a starved install would leave the calibrate
+   * status "running" forever. */
+  calibration_tick_timeout();
+  if (features->frames_in_window < 2) return;
   /* Calibration runs in parallel with the normal module pipeline so a
    * user can hit Calibrate without disrupting live presence updates;
    * calibration_observe is a fast accumulator, no allocation. */
@@ -552,7 +581,25 @@ esp_err_t handle_stream(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  char buf[640];
+  /* Signal-supply diagnostics, present in every stream response: the
+   * dashboard's supply chip needs to distinguish "healthy but quiet room"
+   * (fps fine, no motion) from "sensing starved of frames" (fps ≈ 0 —
+   * no home WiFi beacons and no peer Canary probing). fps is the frame
+   * count of the last finalized 1 s window ≡ frames/second. */
+  char supply[96];
+  {
+    /* The never-got-a-frame sentinel UINT32_MAX intentionally prints as
+     * -1 through the int32 cast; the dashboard treats any negative as
+     * "no frames yet". */
+    const uint32_t silent = csi_hal::get_ms_since_last_frame();
+    snprintf(supply, sizeof(supply),
+      "\"supply\":{\"fps\":%u,\"probe\":%s,\"silent_ms\":%d}",
+      (unsigned)(g_have_latest_window ? g_latest_window.frames_in_window : 0),
+      probe_running() ? "true" : "false",
+      (int)(int32_t)silent);
+  }
+
+  char buf[768];
   if (g_snapshot.valid) {
     const Snapshot* s = &g_snapshot;
     const char* cat = (s->category == CSI_CATEGORY_AMBIENT) ? "ambient"
@@ -574,7 +621,8 @@ esp_err_t handle_stream(httpd_req_t* req) {
         "\"bpm\":%u,"
         "\"duration_sec\":%u,"
         "\"bundled\":%u,"
-        "\"time_bucket\":%u"
+        "\"time_bucket\":%u,"
+        "%s"
       "}",
       /* `t` is the relative seconds at which THIS event was committed, not
        * the time of the HTTP request — otherwise consecutive polls of the
@@ -588,7 +636,8 @@ esp_err_t handle_stream(httpd_req_t* req) {
       (unsigned)s->values.breathing_rate_bpm,
       (unsigned)s->values.duration_sec,
       (unsigned)s->values.bundled_count,
-      (unsigned)s->values.time_bucket
+      (unsigned)s->values.time_bucket,
+      supply
     );
   } else {
     /* No committed event yet — surface the latest raw window's two scalars
@@ -612,9 +661,9 @@ esp_err_t handle_stream(httpd_req_t* req) {
     snprintf(buf, sizeof(buf),
       "{\"t\":%lu,\"category\":\"ambient\",\"state\":\"sensing\","
        "\"confidence\":\"tentative\","
-       "\"motion\":%u,\"breathing\":%u}",
+       "\"motion\":%u,\"breathing\":%u,%s}",
       (unsigned long)((millis() - g_stream_started_ms) / 1000u),
-      (unsigned)motion, (unsigned)breathing);
+      (unsigned)motion, (unsigned)breathing, supply);
   }
   httpd_resp_send(req, buf, -1);
   return ESP_OK;
@@ -1978,6 +2027,57 @@ void on_peer_beacon_event_inbound(
 
 constexpr uint32_t WATCHDOG_ESCALATE_AFTER = 3;
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * ACTIVE PROBE PUMP
+ *
+ * The CSI receiver only sees frames somebody transmits. On home WiFi the
+ * AP's beacons supply ~10 Hz; on a Canary-only install (AP mode, no home
+ * network) the air can be nearly silent and sensing starves. The probe
+ * broadcasts a tiny ESP-NOW frame at CSI_PROBE_BROADCAST_HZ so every
+ * OTHER Canary in range gets a deterministic frame supply — two devices
+ * genuinely sense better together, each lighting up the other. (A device
+ * cannot receive its own transmissions; a solo Canary still needs the
+ * home AP's beacons — the dashboard's signal-supply chip says so.)
+ *
+ * Airtime: 10 Hz × ~40 B ESP-NOW broadcast ≈ 0.03 % of the channel —
+ * far below the airtime governor's mesh thresholds.
+ *
+ * The probe shares ESP-NOW with the mesh when FEATURE_MESH_NETWORK is on
+ * (csi_probe::init is idempotent against a prior esp_now_init) and brings
+ * ESP-NOW up itself when the mesh is compiled out. Channel-hop desync
+ * handling already pauses/resumes it (channel_recovery_tick). */
+constexpr uint16_t CSI_PROBE_BROADCAST_HZ = 10;
+
+void probe_pump() {
+  static bool     s_probe_up = false;
+  static uint32_t s_last_try_ms = 0;
+  if (!g_hal_ready) return;
+  if (!s_probe_up) {
+    /* csi_hal running implies the WiFi driver is started, which is what
+     * esp_now_init needs. Retry at 5 s until it sticks. */
+    if (!csi_hal::is_running()) return;
+    const uint32_t now = millis();
+    if ((now - s_last_try_ms) < 5000u) return;
+    s_last_try_ms = now;
+    csi_probe::Config pc = csi_probe::Config::defaults();
+    pc.broadcast_when_no_peers = true;
+    pc.idle_rate_hz            = CSI_PROBE_BROADCAST_HZ;
+    if (!csi_probe::init(pc)) return;   /* ESP-NOW not ready — retry */
+    csi_probe::start();
+    s_probe_up = true;
+    Serial.printf("[CSI] active probe up — %u Hz ESP-NOW broadcast "
+                  "(peer Canaries sense off these frames)\n",
+                  (unsigned)CSI_PROBE_BROADCAST_HZ);
+  } else if (csi_hal::is_running()) {
+    /* Only spend TX airtime while local sensing runs — if csi_hal is
+     * stopped (power policy, watchdog restart window) the radio budget
+     * shouldn't go to lighting up the neighbors. */
+    csi_probe::process();
+  }
+}
+
+bool probe_running() { return csi_probe::is_running() && !csi_probe::is_paused(); }
+
 void on_csi_watchdog(uint32_t silent_ms, uint32_t attempt) {
   ++s_watchdog_consecutive;
   Serial.printf("[csi.watchdog] silent %ums, attempt %u (consecutive %u)\n",
@@ -2826,6 +2926,7 @@ void loop() {
 #endif
 
   csi_hal::process();
+  probe_pump();
 
   /* One-shot boot self-test. The 3-second window is long enough for
    * csi_hal's deferred-start retry (1 Hz) to converge AND for at least
