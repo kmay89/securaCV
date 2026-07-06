@@ -8,7 +8,15 @@ touching it — and why it can't be bricked or fed a forged image along the way.
 - **canary** (PIO, `firmware/canary/`)
 - **canary-wap** (`firmware/projects/canary-wap/` — one sketch built by both
   arduino-cli and PlatformIO, so both toolchains ship the same OTA)
-- **canary-vision** (PIO, `firmware/projects/canary-vision/`)
+- **canary-vision** (PIO, `firmware/projects/canary-vision/` — the Grove
+  Vision AI V2 host; `default`, `xiao-c3` and `xiao-s3` are distinct OTA
+  products so a board can never install another board's image. Note: only
+  the ESP32 host updates over the air — the Grove Vision AI V2 module's own
+  firmware/model loads once over its USB-C port via SenseCraft and is not
+  host-flashable.)
+- **canary-sense** (PIO, `firmware/projects/canary-sense/` — the MR60BHA2
+  mmWave breathing/heartbeat device on XIAO ESP32-C6; `default` and
+  `wellbeing` are distinct OTA products)
 
 Every variant uses the same engine, manifest schema, signature scheme,
 release key, MQTT topic layout, and HA update-entity UX. Future variants
@@ -67,6 +75,9 @@ The engine is canonical at `firmware/common/ota/` and consumed by:
   codebase serves both.
 - **canary-vision (PIO):** as a PlatformIO library via `lib_extra_dirs =
   ../../common` (glue in `src/net/ota_mgr.cpp`).
+- **canary-sense (PIO):** via `build_src_filter` (the pioarduino C6 core
+  forces chain-mode LDF, so `lib_extra_dirs` alone doesn't link the
+  engine); same `src/net/ota_mgr.cpp` glue as canary-vision.
 
 ### Unified versioning
 
@@ -367,3 +378,82 @@ come with the engine — don't reimplement them.
   cert), press Install in HA or the dashboard, watch the progress bar,
   confirm the version flips. Pull power mid-flash to prove rollback; check
   the witness chain for the `fw_update_*` records.
+
+## First-release runbook (turning the key)
+
+Everything above is built and CI-verified, but a device can only install
+what has actually been released. Two owner-held steps make the whole
+system live — until both are done every firmware **fails gracefully and
+honestly**: with the all-zero placeholder key, installs are hard-refused
+with "Release public key not provisioned"; with no `fw-v*` release, the
+daily check reports "Failed to fetch manifest" and the device keeps
+running its current image.
+
+1. **Generate the release keypair** (once, on the release engineer's
+   machine — the private key must never enter the repository or any
+   device):
+
+   ```
+   python firmware/scripts/ota_release.py keygen --private-key releaser.pem
+   python firmware/scripts/ota_release.py pubkey-header \
+     --private-key releaser.pem --out firmware/common/ota/src/ota_release_key.h
+   ```
+
+   Commit the regenerated `ota_release_key.h` (public half only; the
+   canary-wap sketch copy must be re-synced — `check_ota_sync.sh` guards
+   it), and store the full `releaser.pem` in the `OTA_SIGNING_KEY_PEM`
+   GitHub Actions secret. The release workflow refuses to publish if the
+   secret's public half doesn't match the committed header.
+
+2. **Cut the first release** once the key commit is on main:
+
+   ```
+   git tag fw-v<version> && git push origin fw-v<version>
+   ```
+
+   The tag version must match every variant's compiled-in version string
+   (the workflow greps each binary and fails otherwise). A first release
+   at the currently-flashed version is a safe baseline: devices check,
+   verify the signed manifest, and report "up to date". The next version
+   bump then exercises a real over-the-air install end to end.
+
+3. **Verify on-device:** each firmware's daily check (or a manual check —
+   canary-wap: dashboard/`POST /api/ota/check`; canary-vision and
+   canary-sense: the Home Assistant update entity) should flip from
+   "Failed to fetch manifest" to a verified answer. After the first
+   version bump, press Install and watch the A/B swap + boot self-test
+   confirm the new image, with automatic rollback if it doesn't.
+
+### Key rotation (read before rotating — orphaning risk)
+
+The engine trusts a single key, and devices poll one static
+`releases/latest/...` URL. A naive rotation orphans stragglers: once a
+NEW-key release becomes `latest`, any device still running OLD-key
+firmware fails signature verification on every future check, forever.
+Rotate in phases:
+
+1. Ship a **transition release** signed with the OLD key whose firmware
+   carries the NEW public key. Concretely: regenerate `ota_release_key.h`
+   from the NEW key, commit the OLD public key alongside it as
+   `firmware/common/ota/src/ota_release_key_previous.h` (same header
+   shape), and keep `OTA_SIGNING_KEY_PEM` on the OLD key. The release
+   workflow's key guard accepts the previous-key file as the signing
+   match during this window (with a loud warning) — without it, an
+   old-key-signed release with a new-key header would be refused.
+2. **Wait for fleet convergence** — devices check daily; with auto-update
+   enabled they converge within days. Verify (HA update entities /
+   dashboard) that every device you care about is on the transition
+   version before proceeding.
+3. Switch `OTA_SIGNING_KEY_PEM` to the new key, **delete
+   `ota_release_key_previous.h`** (closing the rotation window — the
+   guard returns to strict single-key), and release normally.
+
+A device that slept through the window is NOT bricked, but it can no
+longer follow `latest`. Recovery without re-tethering: point it at the
+transition release's **versioned** URL via the manifest-URL override
+(`releases/download/fw-v<transition>/manifest-<variant>.json` — canary-wap:
+`POST /api/ota/config`; all variants: the NVS override) — it installs the
+OLD-key-signed transition image, learns the new key, then switch the URL
+back to `latest`. Engine-level co-signing (a manifest carrying signatures
+from both keys) would remove the convergence window entirely and is the
+designated future hardening if rotation becomes routine.
