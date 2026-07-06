@@ -1,7 +1,13 @@
 # Display research — ESP32-S3-family screens for a SecuraCV monitoring station
 
-> Status: **selection made** (Option A). The matching enclosure —
-> `enclosure/canary_watch_station.scad` — is **IN DEVELOPMENT**.
+> Status: **selection made** (Option A glance puck + Option B dashboard —
+> both now have firmware). First firmware shipped as
+> [`firmware/projects/canary-display`](../../firmware/projects/canary-display/)
+> (flavors `watch`/`dash`); design goals + market landscape in
+> [`display_ux_design.md`](./display_ux_design.md); parts in
+> [`bom_canary_display.csv`](./bom_canary_display.csv). The enclosures
+> (`enclosure/canary_watch_station.scad`, `enclosure/canary_dash_display.scad`)
+> remain **IN DEVELOPMENT** (not print-validated).
 
 ## Goal
 
@@ -35,10 +41,15 @@ station renders *semantic* status, which tiny displays do well.
 4. **microSD + RTC on the display board** cover event-cache and clock without
    extra parts; JST 1.25 + charger enable a battery-backed station.
 
-**Firmware follow-up (out of enclosure scope):** `canary-watch` project —
-XIAO ESP32-S3 + GC9A01/CST816S (LVGL), MQTT subscribe to the fleet topics,
-verify signatures with the existing verifier vocabulary; flavors gate the
-touch/battery extras like every other Canary.
+**Firmware (SHIPPED, v0.1):** one SPECIALIZED project covers both options —
+[`firmware/projects/canary-display`](../../firmware/projects/canary-display/)
+with flavor `watch` (Option A: GC9A01/CST816S glance ring) and flavor `dash`
+(Option B: 800×480 card grid + timeline). It subscribes to the fleet topics,
+TOFU-pins witness pubkeys and verifies signed chain heads with on-device
+Ed25519 (same canonical as HA's verifier), and renders with the
+timeline-card color vocabulary. v0.1 uses a purpose-built glance renderer
+(Arduino_GFX primitives) rather than full LVGL — see the project README's
+roadmap.
 
 ## Enclosure
 

@@ -186,6 +186,7 @@ See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIAN
 | **Arduino IDE (canary-wap)** | `projects/canary-wap/arduino/canary_wap/` | COMPATIBILITY | Monolithic sketch; full WAP UX |
 | **PlatformIO (canary-wap/)** | `projects/canary-wap/` | COMPATIBILITY | Uses common headers |
 | **canary-vision** | `projects/canary-vision/` | SPECIALIZED | ESP32-C3 + Grove Vision AI + MQTT/HA |
+| **canary-display** | `projects/canary-display/` | SPECIALIZED | Fleet status displays: watch puck (round) + 4.3" dash |
 | **canary-ota** | `projects/canary-ota/` | SPECIALIZED | OTA A/B subsystem |
 | **WAP Snapshot** | _(removed)_ | REMOVED | Frozen 2026-02-20, deleted 2026-05-29; history in git |
 
