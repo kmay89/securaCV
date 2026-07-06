@@ -11,9 +11,10 @@ acoustic alarms. Three changes get more out of it while making it run
 cooler and last longer on battery:
 
 - **Two new opt-in sealed-vault triggers.** "Motion (Wi-Fi sensing)"
-  seals one encrypted frame when CSI presence flips to occupied — the
-  sensing radio is already listening, so this costs no extra power and
-  works in the dark. "Mesh alarm" seals one frame when a paired Canary
+  seals one encrypted frame the moment the presence engine confirms an
+  arrival (the fused CSI+RF "rf_presence_started" transition — immediate,
+  not the bundled witness commit) — the sensing radio is already
+  listening, so this costs no extra power and works in the dark. "Mesh alarm" seals one frame when a paired Canary
   reports tamper / motion / breach (battery housekeeping alerts do not
   fire it). Both ride the existing write-only escrow: key-gated,
   cooldown-bounded, OFF by default, device can't decrypt its own

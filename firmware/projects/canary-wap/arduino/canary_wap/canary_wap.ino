@@ -2207,29 +2207,13 @@ extern "C" bool csi_witness_emit_event(const char* module_id,
   // RECORD_WITNESS_EVENT (=1) was reserved in the RecordType enum and
   // unused — adopt it for module-emitted CSI events. RECORD_STATE_CHANGE
   // is reserved for the device-state pipeline already in use elsewhere.
-  const bool committed =
-      create_witness_record(payload, (size_t)len, RECORD_WITNESS_EVENT, &rec);
-
-#if FEATURE_VAULT_SNAPSHOT
-  // WiFi-sensing arrivals double as the vault's opt-in "motion" trigger:
-  // a presence transition into any occupied state seals one frame
-  // (key-gated, cooldown-bounded, off by default). The chokepoint commits
-  // on the loop task, satisfying request_capture()'s loop-only contract.
-  if (committed && module_id != NULL && type_name != NULL &&
-      state_name != NULL && strcmp(module_id, "core.presence") == 0 &&
-      strcmp(type_name, "presence_changed") == 0 &&
-      strcmp(state_name, "empty") != 0) {
-#if FEATURE_QR_PROVISION
-    const bool vault_qr_busy = g_qr_scan_active;
-#else
-    const bool vault_qr_busy = false;
-#endif
-    (void)vault_snapshot::request_capture(vault_logic::Trigger::MOTION,
-                                          vault_camera_usable(),
-                                          vault_qr_busy, sd_is_available());
-  }
-#endif
-  return committed;
+  //
+  // NOTE: this bridge fires on BUNDLE COMMIT (the chokepoint buffers
+  // same-state events for up to the 10-minute bundle window), so it is
+  // the wrong place for anything that must react to an arrival NOW —
+  // the vault's motion trigger hooks rf_presence's immediate transition
+  // callback instead (codex P1 on #847).
+  return create_witness_record(payload, (size_t)len, RECORD_WITNESS_EVENT, &rec);
 }
 
 static bool verify_record_signature(const WitnessRecord* rec) {
@@ -6367,10 +6351,17 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
       "\"error\":\"This setup link has expired. Reconnect to the SecuraCV network to start over.\"}");
   }
 
+  // Claim the scan BEFORE waking the camera: the loop-side power tick
+  // parks an unused sensor immediately on battery, and the busy flag is
+  // what marks it as in use — waking first would race the park (codex
+  // P2 on #847). Every failure path below must clear the claim.
+  g_qr_scan_active = true;
+
   #if FEATURE_CAMERA_PEEK
   // Explicit user action: wake a standby camera before the scan task
   // starts (a ~1 s re-init on the httpd task is fine here).
   if (!camera_ensure_awake()) {
+    g_qr_scan_active = false;
     return http_send_json(req,
         "{\"ok\":false,\"error\":\"Camera did not start. Try Reinit on the Camera panel.\"}");
   }
@@ -6380,7 +6371,6 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   g_qr_scan_error[0] = '\0';
   g_qr_scanned_ssid[0] = '\0';
   strncpy(g_qr_scan_token, token, sizeof(g_qr_scan_token) - 1);
-  g_qr_scan_active = true;
 
   BaseType_t created = xTaskCreatePinnedToCore(
     qr_scan_task_fn, "qr_scan", 16384, nullptr, 1, &g_qr_scan_task, 0);
@@ -9763,6 +9753,28 @@ void setup() {
   // safe mode like every other optional subsystem.
   if (!in_safe_mode) {
     if (rf_presence::init()) {
+      #if FEATURE_VAULT_SNAPSHOT
+      // The vault's opt-in "motion" trigger rides the presence engine's
+      // IMMEDIATE transition callback — "rf_presence_started" is the
+      // fused CSI+RF arrival, emitted the moment presence is confirmed.
+      // (The CSI witness bridge would be minutes late: the chokepoint
+      // bundles same-state events before committing.) Fires inside
+      // rf_presence::update() on the loop task, satisfying
+      // request_capture()'s loop-only contract.
+      rf_presence::set_event_callback([](const rf_presence::RfEvent* ev) {
+        if (ev == nullptr || ev->event_name == nullptr) return;
+        if (strcmp(ev->event_name, "rf_presence_started") != 0) return;
+        #if FEATURE_QR_PROVISION
+        const bool vault_qr_busy = g_qr_scan_active;
+        #else
+        const bool vault_qr_busy = false;
+        #endif
+        (void)vault_snapshot::request_capture(vault_logic::Trigger::MOTION,
+                                              vault_camera_usable(),
+                                              vault_qr_busy,
+                                              sd_is_available());
+      });
+      #endif
       Serial.println(rf_presence::is_enabled()
           ? "[OK] RF presence ready (enabled)"
           : "[OK] RF presence ready (disabled — enable from the RF tab)");
