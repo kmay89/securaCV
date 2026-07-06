@@ -354,12 +354,14 @@ static void compute_amp_variance(int8_t out[AMP_BANDS]) {
 
   for (size_t k = 0; k < s_sc_count; k++) {
     int32_t sum = 0;
-    int32_t sq  = 0;
+    int64_t sq  = 0;        /* a can reach 64·N (≈7.3k at HT40's 114
+                             * subcarriers) when one subcarrier dominates;
+                             * 40·a² then brushes INT32_MAX — int64 keeps
+                             * the accumulation defined at any N. */
     for (size_t f = 0; f < s_frame_count; f++) {
       const int32_t a = s_amp_hist[f][k];
       sum += a;
-      sq  += a * a;         /* a ≤ ~32k only if one subcarrier carries all
-                             * energy; typical ≤ ~300 ⇒ sq·F ≪ int32 max */
+      sq  += (int64_t)a * a;
     }
     /* Single-step variance (no truncated-mean bias — same lesson as the
      * acoustic RMS): (Σa² − (Σa)²/F) / F. */

@@ -322,11 +322,11 @@ namespace features {
     const int32_t F = (int32_t)s_frame_count;
     for (size_t k = 0; k < s_sc_count; k++) {
       int32_t sum = 0;
-      int32_t sq  = 0;
+      int64_t sq  = 0;   /* a ≤ 64·N ⇒ 40·a² brushes INT32_MAX at HT40 */
       for (size_t f = 0; f < s_frame_count; f++) {
         const int32_t a = s_amp_hist[f][k];
         sum += a;
-        sq  += a * a;
+        sq  += (int64_t)a * a;
       }
       /* Single-step variance — no truncated-mean bias. */
       int32_t var = (int32_t)((sq - ((int64_t)sum * sum) / F) / F);

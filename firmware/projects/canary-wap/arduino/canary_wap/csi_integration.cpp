@@ -318,6 +318,19 @@ void calibration_finalize() {
   g_calibration.state              = CALIB_READY;
 }
 
+/* Timeout accounting, separated from accumulation so it can run for
+ * EVERY finalized window — including starved (<2 frame) ones that the
+ * honesty gate keeps away from calibration_observe. Without this split
+ * a frame-starved install left /api/csi/calibrate/status "running"
+ * forever instead of reporting timed_out. */
+void calibration_tick_timeout() {
+  if (g_calibration.state != CALIB_RUNNING) return;
+  if ((millis() - g_calibration.started_ms) >= CALIB_TIMEOUT_MS &&
+      g_calibration.samples == 0) {
+    g_calibration.state = CALIB_TIMED_OUT;
+  }
+}
+
 void calibration_observe(const csi_features_t* features) {
   if (g_calibration.state != CALIB_RUNNING) return;
   /* Hard timeout in case the HAL stalls mid-calibration — without this
@@ -357,7 +370,10 @@ void on_csi_window(const csi_features_t* features, void* /*user*/) {
    * device would report every room as confidently empty forever. Skip
    * the pipeline; the dashboard's supply chip explains the starvation
    * (the stream endpoint carries fps + silent_ms). Calibration also
-   * must not learn from starved windows. */
+   * must not learn from starved windows — but its TIMEOUT accounting
+   * must still tick, or a starved install would leave the calibrate
+   * status "running" forever. */
+  calibration_tick_timeout();
   if (features->frames_in_window < 2) return;
   /* Calibration runs in parallel with the normal module pipeline so a
    * user can hit Calibrate without disrupting live presence updates;
@@ -572,12 +588,15 @@ esp_err_t handle_stream(httpd_req_t* req) {
    * count of the last finalized 1 s window ≡ frames/second. */
   char supply[96];
   {
+    /* The never-got-a-frame sentinel UINT32_MAX intentionally prints as
+     * -1 through the int32 cast; the dashboard treats any negative as
+     * "no frames yet". */
     const uint32_t silent = csi_hal::get_ms_since_last_frame();
     snprintf(supply, sizeof(supply),
-      "\"supply\":{\"fps\":%u,\"probe\":%s,\"silent_ms\":%ld}",
+      "\"supply\":{\"fps\":%u,\"probe\":%s,\"silent_ms\":%d}",
       (unsigned)(g_have_latest_window ? g_latest_window.frames_in_window : 0),
       probe_running() ? "true" : "false",
-      (silent == UINT32_MAX) ? -1L : (long)silent);
+      (int)(int32_t)silent);
   }
 
   char buf[768];
