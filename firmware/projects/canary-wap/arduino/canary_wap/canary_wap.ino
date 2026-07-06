@@ -1669,6 +1669,7 @@ static bool witness_sd_fail(const char* why) {
 
 static bool sd_append_witness_record(const WitnessRecord* rec) {
 #if FEATURE_SD_STORAGE
+  if (rec == NULL) return witness_sd_fail("null record");
   if (!g_sd_mounted) return witness_sd_fail("no card");
   if (sd_mount_in_flight()) return witness_sd_fail("mount in flight");
   if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
@@ -2069,17 +2070,23 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
   
   g_health.records_created++;
   g_health.records_verified++;
-  
-  // Persist chain state periodically
-  if ((g_device.seq - g_device.seq_persisted) >= SD_PERSIST_INTERVAL) {
-    persist_chain_state();
-  }
-  
-  // Durable tier: append the signed record to the SD log of record.
+
+  // Durable tier FIRST, NVS cache second (codex P1 on #844): if the NVS
+  // seq/head advanced before a failed or torn SD append, reboot would see
+  // NVS ahead of the card, sd_wins() would keep the NVS head, and the next
+  // line appended to the card would chain from a hash the card never got —
+  // an unverifiable gap in exactly the window the recovery path exists
+  // for. Appending first means a crash between the two steps leaves SD
+  // ahead, which is precisely what the SD-wins reconciliation repairs.
   // Best-effort — a missing card keeps chaining in RAM/NVS behind one
   // latched health warning and never blocks the record path.
   if (sd_append_witness_record(out)) {
     g_health.sd_writes++;
+  }
+
+  // Persist chain state periodically
+  if ((g_device.seq - g_device.seq_persisted) >= SD_PERSIST_INTERVAL) {
+    persist_chain_state();
   }
 
   return true;

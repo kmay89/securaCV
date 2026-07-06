@@ -2718,10 +2718,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// Burn the token's nonce in the durable anti-replay ledger — see
     /// `consume_break_glass_token_durably`. Call BEFORE releasing any
     /// cleartext or export artifact.
-    pub fn consume_token_durably(
-        &self,
-        token: &break_glass::BreakGlassToken,
-    ) -> Result<()> {
+    pub fn consume_token_durably(&self, token: &break_glass::BreakGlassToken) -> Result<()> {
         consume_break_glass_token_durably(&self.conn, token)
     }
 
