@@ -723,6 +723,35 @@
   wave-1 buffer reappears in the internal-DRAM window at >= 1 KB.
 - **Date learned:** 2026-07
 
+### Phantom "/sd/" path prefix silently killed every write behind it
+- **What happened:** The witness/chain/export data-management layer
+  (`data_mgmt_api.h`) addressed `/sd/WITNESS`, `/sd/CHAIN/backup.bin`,
+  `/sd/EXPORT`, … while the mount path provisioned root-level `/WITNESS`,
+  `/CHAIN`, `/EXPORT`. The hourly HMAC'd chain backup, the export-bundle
+  write, and the export rotation all targeted directories that never
+  existed — every one failed (the backup loudly, hourly; the rest
+  quietly).
+- **Root cause:** The Arduino-ESP32 `SD` library already roots paths at
+  the card (its VFS mount point is prepended internally), so `"/sd/X"`
+  addresses a literal `sd/` SUBDIRECTORY on the card — and FAT `mkdir`
+  cannot create intermediate directories, so `SD.mkdir("/sd/CHAIN")`
+  failed on the missing parent. The `/sd/` spelling was copied from the
+  ESP-IDF-style mount-point convention in the (stubbed, never-compiled)
+  `sd_storage.h`.
+- **Fix:** Root-level paths everywhere (`/WITNESS`, `/HEALTH`, `/CHAIN`,
+  `/EXPORT`) matching the directories the mount path actually creates.
+  Separately, `create_witness_record()`'s SD branch — which had only ever
+  incremented a counter — now really appends each signed record to the
+  append-only `/WITNESS/records.jsonl` (beacon-audit two-tier pattern),
+  and boot reconciles the NVS chain-head cache against the SD tail
+  (SD wins only when strictly ahead AND the tail signature verifies
+  under this device's key).
+- **Regression check:** `test_witness_store_logic.cpp` pins the jsonl
+  line format, tail recovery, and the SD-wins decision in CI. Paths are
+  now the same strings the mount path mkdirs, so a future drift shows up
+  as a failed write in bench `[HEALTH]` output immediately.
+- **Date learned:** 2026-07
+
 ---
 
 ## How to Add an Entry

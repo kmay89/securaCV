@@ -137,6 +137,7 @@
 #include "csi_mem.h"                 // csi_large_calloc: PSRAM-first big buffers
 #include <new>                       // placement-new for the PSRAM GPS ring
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
+#include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
 // instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
@@ -1642,6 +1643,112 @@ static void persist_chain_state() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// WITNESS SD PERSISTENCE — /WITNESS/records.jsonl, the durable tier
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Two storage tiers, same shape as the beacon audit log
+// (beacon_channel.cpp): SD is the append-only log of record — one
+// self-describing JSON line per signed record, never rotated or truncated
+// (Invariant IV) — and NVS chain-head/seq is the fast-boot cache persisted
+// every SD_PERSIST_INTERVAL records. Best-effort: a device without a card
+// keeps chaining in RAM/NVS behind ONE latched health warning per failure
+// streak; a successful append re-arms the latch.
+
+static bool g_witness_sd_warned = false;
+
+static bool witness_sd_fail(const char* why) {
+  if (!g_witness_sd_warned) {
+    g_witness_sd_warned = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg),
+             "witness log: SD tier unavailable (%s) — NVS cache only", why);
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE, msg, nullptr);
+  }
+  return false;
+}
+
+static bool sd_append_witness_record(const WitnessRecord* rec) {
+#if FEATURE_SD_STORAGE
+  if (rec == NULL) return witness_sd_fail("null record");
+  if (!g_sd_mounted) return witness_sd_fail("no card");
+  if (sd_mount_in_flight()) return witness_sd_fail("mount in flight");
+  if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
+    return witness_sd_fail("mkdir /WITNESS failed");
+
+  char line[witness_store::RECORD_LINE_MAX];
+  const size_t n = witness_store::line_build(
+      line, sizeof(line), rec->seq, rec->time_bucket, (uint8_t)rec->type,
+      rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
+  if (n == 0) return witness_sd_fail("line build failed");
+
+  // FILE_APPEND + close-per-write: a power cut at most loses the in-flight
+  // line, never the file structure (crash model of csi_event_log.cpp and
+  // the beacon audit log).
+  File f = SD.open("/WITNESS/records.jsonl", FILE_APPEND);
+  if (!f) return witness_sd_fail("open failed");
+  const size_t wrote = f.write((const uint8_t*)line, n);
+  f.close();
+  if (wrote != n) return witness_sd_fail("short write (card full?)");
+  g_witness_sd_warned = false;  // healthy again — re-arm the warning latch
+  return true;
+#else
+  (void)rec;
+  return false;
+#endif
+}
+
+// Recover the chain head from the SD log of record at boot / hot-mount.
+// The NVS cache persists only every SD_PERSIST_INTERVAL records, so after
+// a power cut (or an NVS wipe/reflash while the card kept its history) the
+// cached head can be BEHIND the last record actually signed — resuming
+// from it would fork the supposedly append-only chain. SD wins when its
+// tail is strictly ahead AND the tail record's signature verifies under
+// THIS device's public key: a foreign card (another device's history) or
+// a tampered tail must never move our chain head.
+static void witness_recover_from_sd() {
+#if FEATURE_SD_STORAGE
+  File f = SD.open("/WITNESS/records.jsonl", FILE_READ);
+  if (!f) return;
+  const size_t size = f.size();
+  if (size == 0) {
+    f.close();
+    return;
+  }
+
+  char tail[witness_store::TAIL_READ + 1];
+  const size_t want =
+      (size < witness_store::TAIL_READ) ? size : witness_store::TAIL_READ;
+  if (!f.seek(size - want)) {
+    f.close();
+    return;
+  }
+  const size_t got = f.read((uint8_t*)tail, want);
+  f.close();
+  if (got == 0) return;
+  tail[got] = '\0';
+
+  uint32_t sd_seq = 0;
+  uint8_t sd_head[32];
+  uint8_t sd_sig[64];
+  if (!witness_store::tail_parse(tail, &sd_seq, sd_head, sd_sig)) return;
+  if (!witness_store::sd_wins(g_device.seq, sd_seq)) return;
+  if (!verify_signature(g_device.pubkey, sd_head, 32, sd_sig)) {
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+               "Witness SD tail ignored: signature not ours", nullptr);
+    return;
+  }
+
+  g_device.seq = sd_seq;
+  memcpy(g_device.chain_head, sd_head, 32);
+  persist_chain_state();
+  char detail[32];
+  snprintf(detail, sizeof(detail), "seq %u", (unsigned)sd_seq);
+  log_health(SCV_LOG_NOTICE, SCV_CAT_STORAGE,
+             "Witness chain head recovered from SD", detail);
+#endif
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // CBOR PAYLOAD BUILDING (Simple CBOR encoding)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1963,20 +2070,24 @@ static bool create_witness_record(const uint8_t* payload, size_t len, RecordType
   
   g_health.records_created++;
   g_health.records_verified++;
-  
+
+  // Durable tier FIRST, NVS cache second (codex P1 on #844): if the NVS
+  // seq/head advanced before a failed or torn SD append, reboot would see
+  // NVS ahead of the card, sd_wins() would keep the NVS head, and the next
+  // line appended to the card would chain from a hash the card never got —
+  // an unverifiable gap in exactly the window the recovery path exists
+  // for. Appending first means a crash between the two steps leaves SD
+  // ahead, which is precisely what the SD-wins reconciliation repairs.
+  // Best-effort — a missing card keeps chaining in RAM/NVS behind one
+  // latched health warning and never blocks the record path.
+  if (sd_append_witness_record(out)) {
+    g_health.sd_writes++;
+  }
+
   // Persist chain state periodically
   if ((g_device.seq - g_device.seq_persisted) >= SD_PERSIST_INTERVAL) {
     persist_chain_state();
   }
-  
-  // Store to SD if available
-  #if FEATURE_SD_STORAGE
-  if (g_sd_mounted) {
-    // Simplified: just store to health log for now
-    // Full witness storage would go to WITNESS directory
-    g_health.sd_writes++;
-  }
-  #endif
 
   return true;
 }
@@ -3608,7 +3719,11 @@ static esp_err_t handle_export(httpd_req_t* req) {
 
   // Create export bundle
   char export_path[64];
-  snprintf(export_path, sizeof(export_path), "/sd/EXPORT/bundle_%u.json", (unsigned)millis());
+  // Root-level /EXPORT: the SD library already roots paths at the card, so
+  // the old "/sd/EXPORT" spelling addressed a literal "sd" subdirectory
+  // that nothing ever created — every bundle write failed on a card
+  // provisioned with the /EXPORT dir the mount path mkdirs.
+  snprintf(export_path, sizeof(export_path), "/EXPORT/bundle_%u.json", (unsigned)millis());
 
   File file = SD.open(export_path, FILE_WRITE);
   if (!file) {
@@ -6532,11 +6647,11 @@ static esp_err_t handle_ack_all_auth(httpd_req_t* req) {
 }
 
 // POST /api/logs/rotate — storage housekeeping. Witness export bundles
-// accumulate at /sd/EXPORT/bundle_<ms>.json every time the operator exports,
-// and datamgmt's periodic sweep only bounds /sd/WITNESS and /sd/HEALTH — so
-// EXPORT grows unbounded and is what actually fills the card. This trims it
-// to the newest EXPORT_KEEP_FILES via the tested count-based
-// datamgmt::rotate_dir. It NEVER touches /sd/WITNESS or /sd/CHAIN — export
+// accumulate at /EXPORT/bundle_<ms>.json every time the operator exports,
+// and datamgmt's periodic sweep only bounds /HEALTH — so EXPORT grows
+// unbounded and is what actually fills the card. This trims it to the
+// newest EXPORT_KEEP_FILES via the tested count-based
+// datamgmt::rotate_dir. It NEVER touches /WITNESS or /CHAIN — export
 // bundles are regenerable disclosure artifacts, the sealed evidence is not
 // (Invariant IV).
 static esp_err_t handle_logs_rotate(httpd_req_t* req) {
@@ -6548,7 +6663,7 @@ static esp_err_t handle_logs_rotate(httpd_req_t* req) {
     doc["error"] = "SD card not available";
   } else {
     static const uint32_t EXPORT_KEEP_FILES = 20;  // newest N export bundles kept
-    uint32_t deleted = datamgmt::rotate_dir("/sd/EXPORT", EXPORT_KEEP_FILES);
+    uint32_t deleted = datamgmt::rotate_dir("/EXPORT", EXPORT_KEEP_FILES);
     doc["ok"] = true;
     doc["deleted_count"] = deleted;
     doc["kept"] = EXPORT_KEEP_FILES;
@@ -9116,6 +9231,10 @@ void setup() {
       // that's a separate scope.
       csi_event_log::init();
 
+      // Reconcile the chain head against the SD log of record — the NVS
+      // cache lags by up to SD_PERSIST_INTERVAL records after a power cut.
+      witness_recover_from_sd();
+
       Serial.println("[OK] SD card ready for witness records");
       log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
     } else {
@@ -10100,6 +10219,7 @@ void loop() {
       if (!SD.exists("/CHAIN")) SD.mkdir("/CHAIN");
       if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
       csi_event_log::init();  // idempotent; self-defers if the card vanished
+      witness_recover_from_sd();  // NVS may lag the card's chain tail
       log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
     }
     g_sd_mounted = sd_now;

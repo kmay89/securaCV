@@ -1361,6 +1361,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
               authorization BLOB
             );
 
+            CREATE TABLE IF NOT EXISTS consumed_break_glass_tokens (
+              token_nonce BLOB PRIMARY KEY,
+              consumed_at INTEGER NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_created ON sealed_events(created_at);
             CREATE INDEX IF NOT EXISTS idx_receipts_created ON break_glass_receipts(created_at);
             CREATE INDEX IF NOT EXISTS idx_export_receipts_created ON export_receipts(created_at);
@@ -2324,6 +2329,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             &self.device_verifying_key(),
             |hash| self.break_glass_receipt_outcome(hash),
         )?;
+        // Burn-first (durable): a token file re-parses as unconsumed, so
+        // without this ledger a granted token could authorize repeated
+        // exports across separate invocations within its validity bucket.
+        self.consume_token_durably(token)?;
         let artifact = self.export_events_sequential_unchecked(
             expected_ruleset_hash,
             options,
@@ -2704,6 +2713,13 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             return Err(anyhow!("cannot sign break-glass token for denied receipt"));
         }
         token.attach_receipt_signature(receipt_entry_hash, &self.device_key)
+    }
+
+    /// Burn the token's nonce in the durable anti-replay ledger — see
+    /// `consume_break_glass_token_durably`. Call BEFORE releasing any
+    /// cleartext or export artifact.
+    pub fn consume_token_durably(&self, token: &break_glass::BreakGlassToken) -> Result<()> {
+        consume_break_glass_token_durably(&self.conn, token)
     }
 
     pub fn break_glass_receipt_outcome(
@@ -3103,6 +3119,47 @@ fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
+/// Durable anti-replay ledger for break-glass tokens.
+///
+/// The in-memory `BreakGlassToken` `consumed` flag dies with the process,
+/// and a token FILE re-parses as unconsumed
+/// (`BreakGlassTokenFile::into_token`), so within its 10-minute validity
+/// bucket a granted token file could otherwise authorize repeated unseals
+/// across separate CLI invocations. This burns the token's nonce in the
+/// same SQLite database that holds the receipts: a single atomic
+/// `INSERT OR IGNORE` — zero rows changed means the nonce was already
+/// burned and the caller must refuse.
+///
+/// Callers burn the nonce BEFORE releasing any cleartext (fail closed): a
+/// crash mid-unseal wastes the token — trustees re-approve — instead of
+/// leaving it replayable.
+pub fn consume_break_glass_token_durably(
+    conn: &Connection,
+    token: &break_glass::BreakGlassToken,
+) -> Result<()> {
+    // Databases created before this table existed must still fail closed
+    // when a CLI unseal runs against them — create on first use.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS consumed_break_glass_tokens (
+           token_nonce BLOB PRIMARY KEY,
+           consumed_at INTEGER NOT NULL
+         )",
+        [],
+    )?;
+    let consumed_at = i64::try_from(now_s()?).unwrap_or(i64::MAX);
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO consumed_break_glass_tokens \
+         (token_nonce, consumed_at) VALUES (?1, ?2)",
+        params![token.token_nonce().to_vec(), consumed_at],
+    )?;
+    if inserted == 0 {
+        return Err(anyhow!(
+            "break-glass token already consumed (nonce replay across invocations)"
+        ));
+    }
+    Ok(())
+}
+
 pub fn break_glass_receipt_outcome_for_verifier(
     conn: &Connection,
     verifying_key: &VerifyingKey,
@@ -3393,7 +3450,7 @@ pub struct Frame {
 // Re-exports for CLI/tools
 pub use break_glass::{
     approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
-    BreakGlassToken, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
+    BreakGlassToken, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
 };
 
 // -------------------- Conformance Tests --------------------
