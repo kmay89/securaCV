@@ -45,6 +45,34 @@ and the canary-wap vendored copy in lockstep (sync guard clean).
   ring exposes the tone ratio; existing T3/T4/knock/doorbell/glass/mute
   cases re-scripted with spectrally honest waveforms.
 
+### canary-wap: PSRAM static diet, wave 2 — ~26 KB more internal DRAM back (running total ~67 KB)
+
+Second sweep of task-context-only statics into PSRAM via `csi_large_calloc`
+(same fail-safe contract as wave 1: NULL disables the owning feature, an
+ESP32-C3 keeps its old footprint through the internal fallback):
+
+- chirp channel tables (~19 KB): recent-chirps heap, dedup bloom filter,
+  nearby-device cache, pubkey rate-limit LRU, self-test dedup — all
+  allocated in `chirp_channel::init()`, which now fails (channel disabled)
+  if any allocation does. Safe because every access runs from
+  `mesh_network::update()` on the loop task; the ESP-NOW callback only
+  stages 250 B and sets a flag.
+- mesh alert history (2.9 KB) — allocated at mesh `init()`;
+  `store_alert` drops records fail-safe while NULL.
+- GPS byte ring (2 KB) — placement-new into PSRAM at setup; the UART is
+  still drained even if buffering is unavailable.
+- airtime governor send-window ring (2 KB) — allocated in its `init()`;
+  covered by the existing `test_mesh_coexistence` host suite, where the
+  allocator falls back to plain calloc.
+
+Deliberately NOT moved, so this stays a pure win: `csi_hal::s_ring`
+(written per WiFi frame from the CSI callback — the one genuinely hot
+path) and `mesh_network::g_peers` (`OperaPeer` carries session keys;
+key material stays in on-die SRAM rather than on an externally
+probeable PSRAM bus). The RAM Audit workflow's DRAM regression
+assertion now covers all wave-2 buffers and triggers on the touched
+sources.
+
 ### canary-wap: PSRAM static diet, wave 1 — ~41 KB of internal DRAM back for the Bluetooth budget
 
 The ELF-level RAM audit (RAM Audit workflow, PR #834) showed 158 KB of the

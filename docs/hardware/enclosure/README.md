@@ -34,6 +34,7 @@ before printing — material choice and the gasket option matter out there.
 - [The complete file map](#the-complete-file-map) — every file, one line each
 - [Pick your variant](#pick-your-variant) — gallery with previews + 3D viewers
 - [Engineering & materials](#engineering--materials-security-build) — durability, materials, thermal kit, finish
+- [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - Device deep-dives: [WAP](#canary-wap--enclosure-v07) · [Vision](#canary-vision--enclosure-v02) · [Doorbell](#canary-vision--doorbell-v01) · [Sense radome](#canary-sense--radome-enclosure-v01)
 
 ## The complete file map
@@ -63,6 +64,7 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_sign.scad`](./canary_sign.scad) | **Witness signage plate** — "presence sensing in use, no video stored" |
 | [`canary_hammond_chassis.scad`](./canary_hammond_chassis.scad) | **Chassis plate** carrying any Canary stack inside the off-the-shelf Hammond IP66 box |
 | [`canary_mount_adapters.scad`](./canary_mount_adapters.scad) | **Mount adapters**: corner wedge, magnet plate, pole plate, drill template — all on the shared stud interface |
+| [`canary_field_case.scad`](./canary_field_case.scad) | **Field case**: GoPro-class rugged witness — O-ring sealed, no external ports, TPU impact boot; the only CER‑4 (IP67 + drop) intent design ([ratings](./field_ratings.md)) |
 
 **Workshop tools** (print/use alongside any build):
 
@@ -95,7 +97,7 @@ minutes.
 |---------|-----|---------|------------------------------|
 | **WAP · compact** | plain XIAO ESP32-S3, USB-powered, smallest box | <img src="./preview_compact.png" width="260"> | [base](./canary_wap_enclosure_compact_base.stl) · [lid](./canary_wap_enclosure_compact_lid.stl) |
 | **WAP · battery** | XIAO Sense camera + LiPo + GPS, indoor | <img src="./preview_all.png" width="260"> | [base](./canary_wap_enclosure_battery_base.stl) · [lid](./canary_wap_enclosure_battery_lid.stl) |
-| **WAP · weather** | battery build + TPU gasket seal, drip-edge lid, keyhole mounts (~IP54) | <img src="./preview_weather.png" width="260"> | [base](./canary_wap_enclosure_weather_base.stl) · [lid](./canary_wap_enclosure_weather_lid.stl) · [gasket](./canary_wap_enclosure_weather_gasket.stl) |
+| **WAP · weather** | battery build + TPU gasket seal, drip-edge lid, keyhole mounts (CER‑2 / ~IP54 target — [ratings](./field_ratings.md)) | <img src="./preview_weather.png" width="260"> | [base](./canary_wap_enclosure_weather_base.stl) · [lid](./canary_wap_enclosure_weather_lid.stl) · [gasket](./canary_wap_enclosure_weather_gasket.stl) |
 | **WAP · clip coupon** | **print first** — 15 min snap-fit tuner | <img src="./preview_coupon.png" width="260"> | [coupon](./canary_wap_enclosure_clip_coupon.stl) |
 | **Vision · xiao indoor** | stacked XIAO host (recommended), hinge mount, desk/shelf | <img src="./preview_vision_xiao_indoor.png" width="260"> | [back](./canary_vision_enclosure_xiao_indoor_back.stl) · [front](./canary_vision_enclosure_xiao_indoor_front.stl) |
 | **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
@@ -126,6 +128,7 @@ measurements welcome.
 | **Functional inserts** — buzzer horn (louder chirp), matte anti-glare ring, 3-part printed cable gland (TPU bush) | glue-in / press-in parts | <img src="./preview_dev_inserts.png" width="230"> | [`canary_inserts.scad`](./canary_inserts.scad) |
 | **Covert junction box** — compact WAP disguised as utility hardware; aperture hidden in a mock knockout | pair with the signage plate | <img src="./preview_dev_jbox.png" width="230"> | [`canary_jbox.scad`](./canary_jbox.scad) |
 | **Witness signage plate** — "presence sensing in use / no video stored", debossed, 3 parametric lines | check local signage rules | <img src="./preview_dev_sign.png" width="230"> | [`canary_sign.scad`](./canary_sign.scad) |
+| **Field case** — bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), six-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md) | 72 × 39 × 21 body; boot on ≈ 94 wide | <img src="./preview_dev_field.png" width="230"> | [`canary_field_case.scad`](./canary_field_case.scad) |
 | **Universal fit coupon** — ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
 | **Bench bring-up fixture** — labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md)) | wire channels per §5 pin map | <img src="./preview_dev_fixture.png" width="230"> | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) |
 | **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
@@ -136,7 +139,10 @@ measurements welcome.
 
 These are housings for a *security* device — the enclosure is the first
 physical attack surface — so the designs follow FDM packaging-engineering
-practice for **durability, rigidity and low mass**:
+practice for **durability, rigidity and low mass**. (For what these cases
+can honestly claim against IP / MIL‑STD ratings — and the home test
+protocols that earn each level — see
+[**field_ratings.md**](./field_ratings.md).)
 
 - **Stiffness from geometry, not bulk.** Plate stiffness scales with t³: the
   lids/fronts carry a perimeter **rib ring** (`lid_ribs`, on by default) just
@@ -197,6 +203,31 @@ approximates a roundover while still printing face-down without support.
 For the nicest faces, print them on a **textured PEI plate** (the visible
 surface is the first layer) and set the slicer's **seam position to the rear
 edge** of each part.
+
+**Consumer-grade looks — the finish ladder.** Store-bought cases read
+"product" because of four things you can reproduce, in increasing effort:
+
+1. **Free (slicer only)** — A-surfaces face-down on textured PEI (every lid
+   and face here is modelled for it); **fuzzy skin ~0.3 mm on outside walls
+   only** (hides layer lines completely and matches the PEI texture); seam
+   painted to a rear corner; matte filament (matte ASA/PETG reads
+   injection-moulded in a way silk/gloss never does).
+2. **Two-tone (~zero effort)** — the parts are already split along color
+   lines: shell in one color, **TPU boot / gaskets / bezel + button accent
+   rings in a contrast color** (graphite + safety-orange boot is the classic
+   field look; all-black with a graphite bezel is the Wyze/Ring look). The
+   field case's **lens trim ring** (`part="bezel"`) exists exactly for this —
+   it also hides the disc's silicone bond line, which is why real cameras
+   have trim rings.
+3. **Paint-filled deboss (10 min)** — every `label_text` deboss is 0.5 mm
+   deep: brush acrylic into the recess, let it set, wipe the face with
+   isopropyl — crisp printed-on branding.
+4. **Full finish (hours)** — sand 240→400, filler-primer, 600 wet, matte 2K
+   clear (or ASA acetone **vapor smooth** for gloss + extra water sealing —
+   outdoor-safe, but mask the gasket grooves and re-check clip fits after).
+
+Rule of thumb: fuzzy skin + textured first layer + two-tone + paint-filled
+label gets ~90 % of the consumer look for ~0 % extra work.
 
 **Security-build slicing spec:** 0.4 mm nozzle, 0.2 mm layers, **4 perimeters**,
 5 top/bottom layers, **30 % gyroid** infill, ~30 % infill/perimeter overlap,
@@ -730,6 +761,7 @@ exits the bottom wall (`xiao_usb_z` — measure the seated stack).
 > check the radome window lands over the antenna array.
 
 ## Links
+- [Field & environmental ratings](./field_ratings.md) — hardware limits, the CER ladder, home test protocols
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance
 - [Canary Sense design doc](../../canary_sense_mr60bha2_design.md) — the radar witness this houses
 - [Bench bring-up](../bench_bringup.md) — get it chirping before you box it up
