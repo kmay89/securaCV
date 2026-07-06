@@ -1,0 +1,437 @@
+/*
+  SecuraCV Canary Display — Fleet Status Display Firmware (v0.1)
+  --------------------------------------------------------------
+  (c) 2026 Errer Labs / SecuraCV
+  errerlabs.com | securacv.com
+  GitHub: https://github.com/kmay89/securaCV
+
+  License: Apache-2.0 (use repository license unless otherwise specified).
+
+  "A Canary that shows instead of senses." Two flavors of the same app:
+
+    watch  XIAO ESP32-S3 + Seeed Round Display — bedside/desk glance puck
+    dash   Waveshare ESP32-S3-Touch-LCD-4.3   — front-door/kitchen dashboard
+
+  The display subscribes to the fleet's MQTT topics
+  (securacv/+/{status,availability,health,events,tamper,chain,state}),
+  keeps a fleet model, TOFU-pins each witness pubkey from its retained
+  health payload, verifies signed chain heads with on-device Ed25519, and
+  renders the result — timely and relevant, no phone in the loop.
+
+  Honesty rules this firmware enforces on itself (display_ux_design.md):
+    - "Verified" appears only after a real Ed25519 verify against the pin.
+    - Link loss is a first-class alarm (baby-monitor semantics): a silent
+      witness goes amber then red on deadlines, and a dead WiFi/broker link
+      is banner-visible — silence is never rendered as safety.
+    - Acknowledge (long-press) quiets emphasis but leaves a residual chip
+      until the underlying condition clears (Nest pattern). Tamper cannot
+      be dismissed, only quieted.
+    - It witnesses nothing itself: no camera, no microphone, no event
+      publishing — its own MQTT voice is a liveness heartbeat + OTA entity.
+
+  ⚠️ DEV STATUS: compile/CI-verified; NOT yet validated on bench hardware
+     (matching the enclosures' v0.1-dev status). Pin maps carry VERIFY
+     notes where vendor docs are thin.
+*/
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <time.h>
+
+// Board pin map (boards/<board>/pins via -I). Pin numbers ONLY there.
+#include "pins.h"
+
+// Project composition header: flavor config (CD_*) + net/OTA/diag constants.
+#include "canary/config.h"
+#include "canary/version.h"
+#include "canary/log.h"
+#include "canary/topics.h"
+#include "canary/runtime_config.h"
+#include "canary/diagnostics.h"
+#include "canary/trust.h"
+#include "canary/fleet/fleet_instance.h"
+#include "canary/net/wifi_mgr.h"
+#include "canary/net/mqtt_mgr.h"
+#include "canary/net/ota_mgr.h"
+#include "canary/hal/display.h"
+
+#ifdef CD_FLAVOR_WATCH
+#include "canary/ui/glance_ui.h"
+#endif
+#ifdef CD_FLAVOR_DASH
+#include "canary/ui/dash_ui.h"
+#endif
+
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+#include <esp_task_wdt.h>
+#endif
+
+// Shared, board-agnostic modules (reached via -I .../common).
+#include "boot/boot_banner.h"
+#include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
+
+// ----------------------------------------------------------------------------
+// State
+// ----------------------------------------------------------------------------
+
+static Topics TOPICS;
+
+static bool     g_display_ok = false;
+static uint32_t g_last_heartbeat_ms = 0;
+static uint32_t g_last_health_ms = 0;
+static uint32_t g_last_render_ms = 0;
+static uint32_t g_last_diag_ms = 0;
+
+// Touch gesture tracking (tap vs long-press).
+static bool     g_touch_down = false;
+static uint32_t g_touch_down_ms = 0;
+static bool     g_longpress_fired = false;
+
+// Wake window: any touch brings full brightness for CD_TOUCH_WAKE_MS.
+static uint32_t g_wake_until_ms = 0;
+
+#ifdef CD_FLAVOR_WATCH
+static int      g_page = 0;
+static uint32_t g_page_touched_ms = 0;   // auto-return to overview
+#endif
+
+// Broker reconnect schedule (mirrors the WiFi supervisor's backoff): a broker
+// outage must never pin the loop — the display keeps rendering last-known
+// state (clearly bannered) and each bounded connect attempt happens at most
+// once per backoff window.
+static uint32_t g_mqtt_next_attempt_ms = 0;
+static uint32_t g_mqtt_attempts = 0;
+
+static bool mqtt_supervise(uint32_t now) {
+  if (canary::net::mqtt_connected()) {
+    g_mqtt_attempts = 0;
+    return true;
+  }
+  if (!canary::net::wifi_connected()) return false;  // wifi_loop owns this
+  if ((int32_t)(now - g_mqtt_next_attempt_ms) < 0) return false;
+
+  if (canary::net::mqtt_connect_attempt()) {
+    g_mqtt_attempts = 0;
+    canary::net::publish_health_retained(TOPICS);
+    g_last_health_ms = now;
+    canary::fleet::the_fleet().mark_dirty();
+    return true;
+  }
+
+  // Exponential backoff: 2 s -> 4 s -> 8 s -> 16 s -> 30 s cap.
+  uint32_t attempt = g_mqtt_attempts;
+  if (attempt > 4) attempt = 4;
+  uint32_t backoff_ms = 2000UL << attempt;
+  if (backoff_ms > 30000UL) backoff_ms = 30000UL;
+  g_mqtt_attempts++;
+  g_mqtt_next_attempt_ms = now + backoff_ms;
+  return false;
+}
+
+// ----------------------------------------------------------------------------
+// Clock / quiet hours (SNTP; the watch's PCF8563 RTC is a follow-up)
+// ----------------------------------------------------------------------------
+
+static bool local_time(int* hh, int* mm) {
+  time_t t = time(nullptr);
+  if (t < 1700000000) return false;  // clock not synced yet
+  struct tm lt;
+  localtime_r(&t, &lt);
+  if (hh) *hh = lt.tm_hour;
+  if (mm) *mm = lt.tm_min;
+  return true;
+}
+
+static bool in_quiet_hours() {
+  int hh = 0;
+  if (!local_time(&hh, nullptr)) return false;  // unknown time = day mode
+  if (CD_QUIET_START_HOUR == CD_QUIET_END_HOUR) return false;
+  if (CD_QUIET_START_HOUR < CD_QUIET_END_HOUR)
+    return hh >= CD_QUIET_START_HOUR && hh < CD_QUIET_END_HOUR;
+  return hh >= CD_QUIET_START_HOUR || hh < CD_QUIET_END_HOUR;  // wraps midnight
+}
+
+// ----------------------------------------------------------------------------
+// Brightness policy
+// ----------------------------------------------------------------------------
+//
+// Day: full. Quiet hours: near-dark floor (watch, PWM) / off (dash, binary
+// backlight) — EXCEPT that an unacked Alert/Tamper overrides the night
+// floor: the one thing a bedside security glance must never do is sleep
+// through a tamper. Touch opens a full-brightness wake window.
+
+static void apply_brightness(uint32_t now, bool night) {
+  using canary::fleet::Sev;
+  auto& fleet = canary::fleet::the_fleet();
+  const bool wake = (int32_t)(now - g_wake_until_ms) < 0;
+  const bool urgent = fleet.worst(now) >= Sev::Alert && !fleet.ack_active(now);
+
+  uint8_t level;
+  if (wake || urgent || !night) level = CD_BRIGHT_DAY;
+  else                          level = CD_BRIGHT_NIGHT;
+  canary::hal::backlight_set(level);
+}
+
+// ----------------------------------------------------------------------------
+// Touch: tap = wake/page, long-press = acknowledge
+// ----------------------------------------------------------------------------
+
+static void handle_touch(uint32_t now) {
+  const auto s = canary::hal::touch_read();
+  auto& fleet = canary::fleet::the_fleet();
+
+  if (s.touched && !g_touch_down) {
+    g_touch_down = true;
+    g_touch_down_ms = now;
+    g_longpress_fired = false;
+    return;
+  }
+
+  if (s.touched && g_touch_down && !g_longpress_fired &&
+      (int32_t)(now - g_touch_down_ms) >= (int32_t)CD_LONGPRESS_MS) {
+    // Long-press: acknowledge. Quiet, deliberate, works half-asleep.
+    g_longpress_fired = true;
+    fleet.acknowledge(now);
+    g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+    boot_line("[input] long-press -> acknowledge");
+    return;
+  }
+
+  if (!s.touched && g_touch_down) {
+    g_touch_down = false;
+    if (g_longpress_fired) return;
+    // Tap. First tap in the dark only wakes; a lit tap navigates.
+    const bool was_awake = (int32_t)(now - g_wake_until_ms) < 0 || !in_quiet_hours();
+    g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+#ifdef CD_FLAVOR_WATCH
+    if (was_awake) {
+      g_page = (g_page + 1) % canary::ui::glance_page_count();
+      g_page_touched_ms = now;
+    }
+#else
+    (void)was_awake;
+#endif
+    fleet.mark_dirty();
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Render
+// ----------------------------------------------------------------------------
+
+static void render(uint32_t now) {
+  if (!g_display_ok) return;
+  auto& fleet = canary::fleet::the_fleet();
+  const bool night = in_quiet_hours();
+
+#ifdef CD_FLAVOR_WATCH
+  // Auto-return to the overview page after idle.
+  if (g_page != 0 && (int32_t)(now - g_page_touched_ms) >= 20000) g_page = 0;
+
+  canary::ui::GlanceState st;
+  st.page = g_page;
+  st.night = night;
+  st.wifi_ok = canary::net::wifi_connected();
+  st.mqtt_ok = canary::net::mqtt_connected();
+  st.acked = fleet.ack_active(now);
+  st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+  canary::ui::glance_render(canary::hal::gfx(), fleet, now, st);
+#endif
+#ifdef CD_FLAVOR_DASH
+  canary::ui::DashState st;
+  st.night = night;
+  st.wifi_ok = canary::net::wifi_connected();
+  st.mqtt_ok = canary::net::mqtt_connected();
+  st.acked = fleet.ack_active(now);
+  st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+  canary::ui::dash_render(canary::hal::gfx(), fleet, now, st);
+#endif
+
+  canary::hal::display_flush();
+  apply_brightness(now, night);
+}
+
+// ----------------------------------------------------------------------------
+// Boot output redirect (USB-CDC console)
+// ----------------------------------------------------------------------------
+
+static void display_serial_write(const char* str) {
+  Serial.print(str);
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(600);
+
+  boot_set_output(display_serial_write);
+
+  // Privacy (Invariant III): never surface the raw MAC. The stable device
+  // handle is the salted, MAC-free pseudonym shown as "Hardware ID" below.
+  boot_info_t bi = {};
+  bi.product_name  = "SecuraCV Canary Display";
+  bi.fw_version    = CANARY_FW_VERSION;
+  bi.build_date    = __DATE__;
+  bi.build_time    = __TIME__;
+  bi.device_type   = CD_DEVICE_TYPE;
+  bi.model         = CD_MODEL;
+  bi.board_name    = BOARD_NAME;
+  bi.chip_model    = ESP.getChipModel();
+  bi.chip_revision = (uint8_t)ESP.getChipRevision();
+  bi.cpu_freq_mhz  = (uint16_t)ESP.getCpuFreqMHz();
+  bi.cpu_cores     = (uint8_t)ESP.getChipCores();
+  bi.flash_mb      = (uint32_t)(ESP.getFlashChipSize() / (1024 * 1024));
+  bi.heap_free_kb  = (uint32_t)(ESP.getFreeHeap() / 1024);
+  bi.sdk_version   = ESP.getSdkVersion();
+
+  boot_scene_banner(&bi);
+  boot_scene_hardware(&bi);
+
+  // Display-specific boot scene.
+  boot_line("              .--------.");
+  boot_line("              |  o  o  |        The fleet's face:");
+  boot_line("              |  ----  |        it shows, it never watches.");
+  boot_line("              '--------'");
+  boot_separator();
+#ifdef CD_FLAVOR_WATCH
+  boot_kv("Glass",   "GC9A01 1.28\" 240x240 round + CST816S touch");
+  boot_kvf("SPI",    "SCK=%d MOSI=%d CS=%d DC=%d BL=%d(PWM)",
+           TFT_PIN_SCK, TFT_PIN_MOSI, TFT_PIN_CS, TFT_PIN_DC, TFT_PIN_BL);
+#endif
+#ifdef CD_FLAVOR_DASH
+  boot_kv("Glass",   "800x480 RGB565 parallel + GT911 touch (CH422G expander)");
+  boot_kvf("RGB",    "DE=%d VS=%d HS=%d PCLK=%d @ %d Hz",
+           LCD_PIN_DE, LCD_PIN_VSYNC, LCD_PIN_HSYNC, LCD_PIN_PCLK, LCD_PCLK_HZ);
+#endif
+  boot_kvf("Touch",  "I2C SDA=%d SCL=%d  addr 0x%02X",
+           I2C_PIN_SDA, I2C_PIN_SCL, TOUCH_I2C_ADDR);
+  boot_kvf("Fleet",  "up to %d witnesses, stale %lus, lost %lus",
+           CD_FLEET_MAX_DEVICES,
+           (unsigned long)(CD_STALE_AFTER_MS / 1000),
+           (unsigned long)(CD_LOST_AFTER_MS / 1000));
+  boot_kvf("Quiet",  "%02d:00-%02d:00 local (%s)",
+           CD_QUIET_START_HOUR, CD_QUIET_END_HOUR, CD_TZ);
+  boot_blank();
+
+  // Trust store before the network: retained chain payloads replay the
+  // moment the broker accepts our subscriptions.
+  canary::trust::init();
+
+  // Glass before the network too — a display that boots into a visible
+  // "connecting" state beats a black disc while WiFi retries.
+  g_display_ok = canary::hal::display_init();
+  if (g_display_ok) {
+    render(canary::ms_now());
+    canary::hal::backlight_set(CD_BRIGHT_DAY);
+  }
+
+  TOPICS = build_topics(canary::cfg::get().device_id);
+
+  canary::net::wifi_init_or_reboot();
+
+#if defined(FEATURE_SNTP) && FEATURE_SNTP
+  configTzTime(CD_TZ, "pool.ntp.org", "time.nist.gov");
+#endif
+
+  // Seed the heap-health snapshot so the first status publish carries real
+  // numbers instead of zeros.
+  canary::diag::loop(canary::ms_now());
+
+  // Confirm (or roll back) a freshly installed image now — before anything
+  // that can block on external services. See ota_mgr.h.
+  canary::net::ota_boot_validate();
+
+  canary::net::mqtt_init(TOPICS);
+
+  boot_line("              .--------.  ))");
+  boot_line("              |  o  o  |  ))    Connecting to MQTT...");
+  boot_line("              '--------'");
+  boot_separator();
+  boot_kv("Device ID", canary::cfg::get().device_id);
+  char devid_hex[device_pseudonym::HEX_LEN + 1] = {0};
+  if (device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex))) {
+    boot_kv("Hardware ID", devid_hex);  // salted pseudonym, not the raw MAC
+  }
+  boot_kvf("Heartbeat", "every %lu ms", (unsigned long)HEARTBEAT_MS);
+  boot_blank();
+
+  // ONE bounded connect attempt. A broker that is down at boot must not
+  // block the display: it renders "broker down" and loop()'s backoff
+  // supervisor keeps trying.
+  if (!mqtt_supervise(canary::ms_now())) {
+    canary::log_line("MQTT", "Broker unreachable — rendering anyway; retrying in loop().");
+  }
+
+  // Signed pull-OTA: arm the engine (validation already ran right after
+  // WiFi). Daily jittered checks; HA's Install button and auto-update
+  // switch are drained in loop().
+  canary::net::ota_init(TOPICS);
+
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+  // Task watchdog (arduino-esp32 2.0.x / IDF4 API on the S3 envs) — armed
+  // LAST so the blocking boot phases above (WiFi connect up to 30 s) can't
+  // trip it. Timeout must exceed loop()'s worst bounded block (one MQTT
+  // connect attempt against a dead broker).
+  esp_task_wdt_init(CD_WATCHDOG_TIMEOUT_SEC, true);
+  esp_task_wdt_add(NULL);
+  boot_kvf("Watchdog", "%lu s timeout", (unsigned long)CD_WATCHDOG_TIMEOUT_SEC);
+#endif
+
+  boot_scene_ready(
+      "It will watch the witnesses so you don't have to,",
+      "verify their chains on its own silicon, and never phone home.",
+      NULL);
+
+  render(canary::ms_now());
+}
+
+void loop() {
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+#endif
+
+  const uint32_t now = canary::ms_now();
+  auto& fleet = canary::fleet::the_fleet();
+
+  // ── Input + model time first: the face stays honest with or without a
+  //    network (staleness deadlines run locally) ──
+  handle_touch(now);
+  fleet.tick(now);
+
+  // ── Network supervision ──
+  canary::net::wifi_loop(now);
+  if ((int32_t)(now - g_last_diag_ms) >= 1000) {
+    g_last_diag_ms = now;
+    canary::diag::loop(now);
+  }
+
+  const bool broker = mqtt_supervise(now);
+  if (broker) {
+    canary::net::mqtt_loop();
+    canary::net::ota_loop(now);
+
+    if ((int32_t)(now - g_last_heartbeat_ms) >=
+        (int32_t)(HEARTBEAT_MS * canary::diag::period_scale())) {
+      g_last_heartbeat_ms = now;
+      canary::net::publish_status_retained(TOPICS, "online");
+    }
+    if ((int32_t)(now - g_last_health_ms) >= (int32_t)HEALTH_PUBLISH_MS) {
+      g_last_health_ms = now;
+      canary::net::publish_health_retained(TOPICS);
+    }
+  }
+
+  // ── Render: promptly on model change (frame-rate capped), and at a slow
+  //    steady tick so clocks/ages/staleness colors move even when the wire
+  //    is quiet ──
+  static bool s_render_pending = false;
+  if (fleet.take_dirty()) s_render_pending = true;
+  const int32_t since_render = (int32_t)(now - g_last_render_ms);
+  if ((s_render_pending && since_render >= (int32_t)CD_UI_FRAME_MS) ||
+      since_render >= 1000) {
+    s_render_pending = false;
+    g_last_render_ms = now;
+    render(now);
+  }
+
+  delay(5);
+}

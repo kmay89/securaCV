@@ -29,6 +29,7 @@ Purpose: identify which firmware path is currently most active and most user-fri
 | `firmware/projects/_archive/canary-wap-snapshot` _(removed 2026-05-29)_ | REMOVED | Frozen reference of WAP sketch | Archived 2026-02-20, deleted 2026-05-29 | n/a | n/a | **Removed** (history in git) |
 | `firmware/projects/canary-vision` | SPECIALIZED | Vision events + MQTT/HA integration | Active security hardening in 2026-02 | Low (no primary local onboarding UI focus) | Medium (good integration story, less local setup UX) | Medium |
 | `firmware/projects/canary-ota` | SPECIALIZED | OTA framework and rollback safety | Active in 2026-02 | N/A (not a WAP UX product) | N/A | Low/Medium |
+| `firmware/projects/canary-display` | SPECIALIZED | Fleet status displays (watch puck + 4.3" dash): MQTT subscribe, TOFU + Ed25519 chain verify, glance UI | New 2026-07 (v0.1, compile/CI-verified; bench validation pending) | **High** (the product IS an on-device UI) | Low (flashes with compiled secrets; provisioning parity on roadmap) | Medium until bench-validated |
 | `firmware/common` + `firmware/configs` + `firmware/boards` | shared | Shared platform layers | Mixed cadence | N/A | N/A | Low |
 
 ---

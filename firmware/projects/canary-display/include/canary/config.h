@@ -1,0 +1,67 @@
+#pragma once
+#include <stdint.h>
+#include <cstddef>
+
+// Project-level composition header: pulls in the flavor configuration
+// (configs/canary-display/<flavor>/config.h via -I, CD_* macros) and derives
+// the network/OTA/diagnostics constants the net stack consumes. Mirrors the
+// role canary-sense's include/canary/config.h plays, so the projects' net
+// layers stay line-for-line comparable.
+// Angle brackets on purpose: a quoted include would search this header's own
+// directory first and hit THIS file (also named config.h); <config.h> skips
+// the current-file directory and resolves via the -I paths straight to
+// configs/canary-display/<flavor>/config.h.
+#include <config.h>
+
+// -------------------- Identity --------------------
+static constexpr const char* DEVICE_TYPE   = CD_DEVICE_TYPE;
+static constexpr const char* DEVICE_ID     = CD_DEVICE_ID;  // first-boot seed only
+static constexpr const char* MANUFACTURER  = CD_MANUFACTURER;
+static constexpr const char* MODEL         = CD_MODEL;
+
+// -------------------- Timing --------------------
+static constexpr uint32_t HEARTBEAT_MS = CD_HEARTBEAT_MS;
+
+// Health publish cadence (retained; heap/uptime/firmware — a display has no
+// witness pubkey to pin, but fleet tooling still wants the liveness row).
+static constexpr uint32_t HEALTH_PUBLISH_MS = 60000;
+
+// -------------------- MQTT / HA --------------------
+static constexpr const char* HA_DISCOVERY_PREFIX = CD_HA_DISCOVERY_PREFIX;
+static constexpr size_t MQTT_BUFFER_BYTES        = CD_MQTT_BUFFER_BYTES;
+
+// -------------------- WiFi robustness / power --------------------
+// STA supervision (S3-tree parity): non-blocking reconnect with exponential
+// backoff, then a reboot as the recovery of last resort. Same constants as
+// canary-vision.
+static constexpr uint32_t WIFI_BOOT_TIMEOUT_MS  = 30000;   // blocking boot connect
+static constexpr uint32_t WIFI_RETRY_BASE_MS    = 2000;    // backoff base (doubles)
+static constexpr uint32_t WIFI_RETRY_MAX_MS     = 30000;   // backoff cap
+static constexpr uint32_t WIFI_OUTAGE_REBOOT_MS = 300000;  // 5 min outage -> reboot
+
+// Power policy. Modem sleep would add tens of ms latency to pushed alerts —
+// exactly the thing a status display exists to avoid — so it stays off.
+static constexpr bool   WIFI_POWER_SAVE    = false;
+static constexpr int8_t WIFI_TX_POWER_QDBM = -1;
+
+// -------------------- Heap health (diagnostics) --------------------
+// Same thresholds as the ESP32-S3 tree's securacv_diagnostics heap monitor.
+static constexpr uint32_t HEAP_WARN_BYTES      = 30000;
+static constexpr uint32_t HEAP_CRITICAL_BYTES  = 15000;
+static constexpr uint32_t HEAP_EMERGENCY_BYTES = 10000;
+static constexpr uint32_t HEAP_HYSTERESIS      = 5000;
+
+// -------------------- Software updates (signed pull-OTA) --------------------
+// Shared engine at firmware/common/ota — same manifest format, signature
+// scheme, and HA update-entity UX as the other Canary variants. Each flavor
+// is a distinct OTA product (set via build flags in canary-display.ini): a
+// watch image can never install on a dash or vice versa — the engine
+// refuses on product mismatch.
+#ifndef SECURACV_OTA_PRODUCT
+#define SECURACV_OTA_PRODUCT "securacv-canary-display"
+#endif
+static constexpr const char* OTA_PRODUCT = SECURACV_OTA_PRODUCT;
+#ifndef SECURACV_OTA_MANIFEST_URL
+#define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display.json"
+#endif

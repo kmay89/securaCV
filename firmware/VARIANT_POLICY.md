@@ -28,6 +28,7 @@ Every firmware variant is labelled with exactly one of the following statuses:
 | [`firmware/canary/`](./canary) | **ACTIVE** | XIAO ESP32-S3 Sense | Modular PlatformIO firmware, canonical onboarding UI/API | This tree |
 | [`firmware/projects/canary-wap/`](./projects/canary-wap) | **COMPATIBILITY** | XIAO ESP32-S3 Sense | Arduino-IDE-first monolithic sketch, feature-rich WAP UX | Backport from `firmware/canary` when viable |
 | [`firmware/projects/canary-vision/`](./projects/canary-vision) | **SPECIALIZED** | ESP32-C3 DevKit / XIAO ESP32-C3 / XIAO ESP32-S3 + Grove Vision AI V2 | Person detection + MQTT/HA publishing | This tree (scope: vision + MQTT) |
+| [`firmware/projects/canary-display/`](./projects/canary-display) | **SPECIALIZED** | XIAO ESP32-S3 + Round Display (`watch`) / Waveshare ESP32-S3-Touch-LCD-4.3 (`dash`) | Fleet status display: MQTT subscribe + on-device Ed25519 chain verify + glance UI | This tree (scope: display + fleet rendering) |
 | [`firmware/projects/canary-ota/`](./projects/canary-ota) | **SPECIALIZED** | ESP32 family | OTA A/B update subsystem + rollback safety | This tree (scope: OTA) |
 | [`firmware/common/`](./common) | shared | all | Board-agnostic module headers and implementations | ACTIVE tree changes drive this |
 | [`firmware/boards/`](./boards) | shared | all | Pin maps + capability flags per board | Added alongside new board bring-up |
