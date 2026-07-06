@@ -618,6 +618,46 @@
 
 ---
 
+## Sensing & Signal Processing
+
+### A feature that only exists in dev builds fails silently in the field
+- **What happened:** A user pressed their smoke alarm's TEST button next to
+  a production Canary; nothing happened — no event, no log, no error. The
+  device looked healthy the whole time.
+- **Root cause:** `FEATURE_ACOUSTIC_EVENTS` (and the rest of the Phase 2
+  sensing suite) was defined only in `[env:dev]` / `[env:full]`; the
+  published `release`/`release_ha` OTA images compiled the microphone code
+  out entirely. Nothing at runtime can report the absence of code.
+- **Fix:** the sensing suite ships in `[env:release]` (inherited by
+  `release_ha`/`standalone`); the bench-test doc
+  (`docs/hardware/acoustic_alarm_bench_test.md`) starts with a "does your
+  build even have the feature" check.
+- **Regression check:** FEATURES.md dashboard guard covers variant-level
+  drift; the size guard keeps the grown release image inside the A/B slot.
+- **Date learned:** 2026-07
+
+### Envelope detectors need DC removal, and cadence timing needs a stream clock
+- **What happened:** Even on builds WITH the mic code, bench cadences could
+  fail to match: a PDM DC offset inflated the "loudness" the hysteresis saw
+  (potentially pinning it ON forever), and beep/gap durations were stamped
+  with `millis()` at *processing* time, so any main-loop stall (TLS, NVS,
+  OTA check) compressed a burst of queued DMA frames into one instant.
+  Amplitude-only matching also meant any 3-slams-and-quiet rhythm could
+  read as a smoke alarm.
+- **Root cause:** sum-of-squares RMS folds the DC bias in; wall-clock
+  stamping measures when the CPU got around to the frame, not when the
+  audio happened; and a purely temporal template has no spectral evidence.
+- **Fix:** DC-removed RMS (`E[x²]−E[x]²`); a sample-stream clock
+  (frames × frame_ms) for all envelope/cadence math; a stage-1 alarm-band
+  tone gate (3.4 kHz biquad, the 3.0–4.0 kHz band UL sounders use) that
+  T3/T4 beeps must pass; DMA ring deepened 4→8 buffers.
+- **Regression check:** host tests `test_audio_cadence.cpp` — DC segment
+  must produce zero transitions, an off-band (500 Hz) T3-timed cadence must
+  NOT match, and T3 must still match with a frozen wall clock.
+- **Date learned:** 2026-07
+
+---
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
