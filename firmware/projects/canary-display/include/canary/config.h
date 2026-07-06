@@ -11,6 +11,20 @@
 // directory first and hit THIS file (also named config.h); <config.h> skips
 // the current-file directory and resolves via the -I paths straight to
 // configs/canary-display/<flavor>/config.h.
+//
+// Per-site overrides (CD_TZ today) live in secrets/secrets.h next to the
+// credentials, so pull it in AHEAD of the flavor config — its #defines must
+// win over the flavor defaults' #ifndef fallbacks. Same include ladder as
+// runtime_config.cpp. (#843 review catch: the README documented the CD_TZ
+// override but nothing on the config include path actually read secrets.h,
+// so non-UTC quiet hours silently ran on UTC.)
+#if __has_include("secrets.h")
+  #include "secrets.h"
+#elif __has_include("secrets/secrets.h")
+  #include "secrets/secrets.h"
+#else
+  #include "secrets.ci.h"
+#endif
 #include <config.h>
 
 // -------------------- Identity --------------------

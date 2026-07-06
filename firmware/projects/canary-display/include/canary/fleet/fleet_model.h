@@ -168,10 +168,14 @@ class FleetModel {
     Witness* w = upsert(id);
     if (!w) return;
     w->last_seen_ms = now;
-    if (w->tamper != active) dirty_ = true;
+    const bool was = w->tamper;
+    if (was != active) dirty_ = true;
     w->tamper = active;
     copy_str(w->tamper_kind, sizeof(w->tamper_kind), kind);
-    if (active) push_event(id, kind && kind[0] ? kind : "tamper", Sev::Tamper, false, now);
+    // Edge-only: the tamper topic is retained, so every broker reconnect
+    // replays it — pushing on level would spam the log and cancel acks.
+    if (active && !was)
+      push_event(id, kind && kind[0] ? kind : "tamper", Sev::Tamper, false, now);
   }
 
   void on_chain(const char* id, uint32_t length, Badge verdict, uint32_t now) {
@@ -179,9 +183,11 @@ class FleetModel {
     if (!w) return;
     w->last_seen_ms = now;
     if (w->badge != verdict || w->chain_length != length) dirty_ = true;
+    const Badge was = w->badge;
     w->chain_length = length;
     w->badge = verdict;
-    if (verdict == Badge::Failed) {
+    // Edge-only, same retained-replay reasoning as on_tamper.
+    if (verdict == Badge::Failed && was != Badge::Failed) {
       push_event(id, "chain_verify_failed", Sev::Alert, false, now);
     }
   }
@@ -198,7 +204,13 @@ class FleetModel {
       Link next = Link::Online;
       if (silent >= (int32_t)limits_.lost_after_ms)       next = Link::Lost;
       else if (silent >= (int32_t)limits_.stale_after_ms) next = Link::Stale;
-      if (w.link != next) { w.link = next; dirty_ = true; }
+      if (w.link != next) {
+        // Crossing into Lost is a new Alert-grade condition: it must cancel
+        // any standing ack so the display re-demands attention (G5/G8).
+        if (next == Link::Lost) acked_ = false;
+        w.link = next;
+        dirty_ = true;
+      }
     }
   }
 
@@ -237,9 +249,19 @@ class FleetModel {
     Sev s = Sev::Ok;
     if (w.tamper) s = worst_of(s, Sev::Tamper);
     if (w.badge == Badge::Failed) s = worst_of(s, Sev::Alert);
-    if (w.link == Link::Lost)     s = worst_of(s, Sev::Alert);
-    else if (w.link == Link::Stale || w.link == Link::Offline)
+    if (w.link == Link::Lost) {
+      s = worst_of(s, Sev::Alert);
+    } else if (w.link == Link::Offline) {
+      // A retained LWT is an explicit "died on the wire" — it follows the
+      // same amber-then-red ladder as plain silence instead of parking at
+      // Warn forever (#843 review catch). last_seen_ms was stamped when
+      // the LWT arrived, so the clock starts at the drop.
+      const int32_t gone = (int32_t)(now - w.last_seen_ms);
+      s = worst_of(s, gone >= (int32_t)limits_.lost_after_ms ? Sev::Alert
+                                                             : Sev::Warn);
+    } else if (w.link == Link::Stale) {
       s = worst_of(s, Sev::Warn);
+    }
     if (w.battery_present && w.battery_pct >= 0) {
       if (w.battery_pct < 10)      s = worst_of(s, Sev::Warn);
       else if (w.battery_pct < 25) s = worst_of(s, Sev::Notice);
@@ -331,6 +353,13 @@ class FleetModel {
     r.signed_flag = signed_flag;
     ev_head_ = (ev_head_ + 1) % EVENT_CAP;
     if (ev_count_ < EVENT_CAP) ev_count_++;
+    // A newly ingested Alert/Tamper cancels a standing ack: the ack covered
+    // what was known when the user pressed, not whatever comes next. This
+    // is what lets a fresh 3 a.m. tamper punch through the night floor even
+    // inside the ack-hold window (G5/G8; #843 review catch). Callers only
+    // push on edges (see on_tamper/on_chain), so retained replays at broker
+    // reconnect cannot cancel acks.
+    if ((uint8_t)sev >= (uint8_t)Sev::Alert) acked_ = false;
     dirty_ = true;
   }
 
