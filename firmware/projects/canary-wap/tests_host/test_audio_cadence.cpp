@@ -7,8 +7,8 @@
 // and fake DMA.
 //
 // Covered:
-//   1. NFPA 72 T3 smoke cadence (3×0.5 s beeps + 1.5 s pause) fires the
-//      event callback with AUDIO_EVENT_T3_SMOKE_ALARM and conf ≥ 50.
+//   1. NFPA 72 T3 smoke cadence (3×0.5 s alarm-band beeps + 1.5 s pause)
+//      fires the event callback with AUDIO_EVENT_T3_SMOKE_ALARM, conf ≥ 50.
 //   2. UL 2034 T4 CO cadence (4×0.1 s beeps + 5 s pause) fires
 //      AUDIO_EVENT_T4_CO_ALARM.
 //   3. A knock pattern (3 short low-band impulses) fires AUDIO_EVENT_KNOCK.
@@ -17,6 +17,14 @@
 //   6. Hard mute is applied on the next process() tick, stops the stream,
 //      fires the mute callback, and suppresses further events.
 //   7. audio_set_thresholds() validates its arguments.
+//   8. Stage-1 tone gate: a T3-timed cadence whose "beeps" are OFF-BAND
+//      (500 Hz) produces NO event — cadence alone must not read as smoke.
+//   9. DC offset: a loud constant-offset segment produces NO envelope
+//      transitions (the DC-removed RMS sees it as silence).
+//  10. Sample-stream clock: T3 still matches when the wall clock is frozen
+//      (frames drained in a burst after a stalled loop) — timing comes
+//      from frames × frame_ms, not millis() at processing time.
+//  11. audio_get_recent_transitions() reports the per-state tone ratio.
 //
 // Build/run: make (this dir). No Arduino runtime needed.
 
@@ -42,20 +50,26 @@ void log_health(LogLevel, LogCategory, const char*, const char*) {}
 // ── Scripted I2S timeline ───────────────────────────────────────────────
 // The script is a list of (duration_ms, amplitude[, flip_every]) segments.
 // Each i2s_read call delivers one 20 ms frame from the script head and
-// advances the fake clock by 20 ms; an exhausted script returns 0 bytes
-// (the driver's "no DMA buffer ready" path).
+// advances the fake clock by 20 ms (unless frozen — test 10); an exhausted
+// script returns 0 bytes (the driver's "no DMA buffer ready" path).
 //
-// flip_every shapes the band ratio the pipeline's one-tap-difference HPF
-// sees. 0 = constant amplitude (DC: ratio ≈ 0, "low band" — knocks/slams).
-// k > 0 = square wave flipping sign every k samples: the difference signal
-// is ±2A at each flip, so hpf_rms ≈ 2A/√k and the ratio ≈ 200/√k —
-// k=4 (2 kHz at 16 kHz) lands ≈100, the doorbell's mid band; k=1 (8 kHz)
-// lands ≈200, above the glass-break detector's ≥130 high-band gate.
+// flip_every shapes the spectrum. 0 = constant amplitude: pure DC, which
+// the DC-removed RMS reads as SILENCE (test 9). k > 0 = square wave
+// flipping sign every k samples (fundamental fs/2k = 8000/k Hz at 16 kHz):
+//
+//   • one-tap-difference HPF ratio (Phase 2b band_ratio): the difference
+//     signal is ±2A at each flip, so hpf_rms ≈ 2A/√k, ratio ≈ 200/√k.
+//     k=4 (2 kHz) ≈ 100 mid band (doorbell); k=1 (8 kHz) ≈ 200 high band
+//     (glass); k=64 (125 Hz) ≈ 25 low band (knock).
+//   • alarm-band tone ratio (stage-1 gate, biquad fc=3.4 kHz Q=1.8):
+//     k=2 (4 kHz — pure tone at the passband edge) ≈ 86, in-band;
+//     k=16 (500 Hz — only weak harmonics reach the band) ≈ 20, off-band.
 struct Segment { uint32_t dur_ms; int16_t amplitude; uint16_t flip_every = 0; };
 static std::vector<Segment> g_script;
 static size_t g_seg_idx = 0;
 static uint32_t g_seg_consumed_ms = 0;
 static bool g_driver_installed = false;
+static bool g_clock_frozen = false;  // test 10: stalled-main-loop simulation
 
 static void script_load(const std::vector<Segment>& segs) {
   g_script = segs;
@@ -94,7 +108,7 @@ esp_err_t i2s_read(i2s_port_t, void* dest, size_t size, size_t* bytes_read,
   }
   *bytes_read = n * sizeof(int16_t);
   g_seg_consumed_ms += 20;
-  g_now_ms += 20;  // the frame "took" 20 ms of real time
+  if (!g_clock_frozen) g_now_ms += 20;  // the frame "took" 20 ms of real time
   return ESP_OK;
 }
 
@@ -142,11 +156,13 @@ static void reset_pipeline() {
 static void test_t3_smoke_cadence() {
   reset_pipeline();
   const int16_t LOUD = 2000;  // RMS 2000 ≥ ON threshold 800
+  // flip_every=2 → 4 kHz tone: inside the stage-1 alarm band, like a
+  // real UL 217 sounder (3.0–4.0 kHz).
   script_load({
       {2000, 0},      // settle: establish a long initial OFF state
-      {500, LOUD}, {500, 0},   // beep 1 + gap
-      {500, LOUD}, {500, 0},   // beep 2 + gap
-      {500, LOUD},             // beep 3
+      {500, LOUD, 2}, {500, 0},   // beep 1 + gap
+      {500, LOUD, 2}, {500, 0},   // beep 2 + gap
+      {500, LOUD, 2},             // beep 3
       {1600, 0},               // inter-cycle pause; matcher needs ≥ 1000 ms
   });
   pump(/*tail_ms=*/0);
@@ -165,12 +181,12 @@ static void test_t3_smoke_cadence() {
 
 static void test_knock() {
   reset_pipeline();
-  const int16_t LOUD = 2000;  // constant amplitude → near-zero HPF → low band
+  const int16_t LOUD = 2000;  // flip_every=64 → 125 Hz: low band (ratio ≈ 25)
   script_load({
       {2000, 0},
-      {100, LOUD}, {200, 0},   // impulse 1 + gap
-      {100, LOUD}, {200, 0},   // impulse 2 + gap
-      {100, LOUD},             // impulse 3
+      {100, LOUD, 64}, {200, 0},   // impulse 1 + gap
+      {100, LOUD, 64}, {200, 0},   // impulse 2 + gap
+      {100, LOUD, 64},             // impulse 3
       {1200, 0},               // knock needs ≥ 500 ms trailing silence
   });
   pump(/*tail_ms=*/0);
@@ -188,13 +204,14 @@ static void test_t4_co_cadence() {
   reset_pipeline();
   const int16_t LOUD = 2000;
   // UL 2034: 4 beeps of 100 ms with 100 ms gaps, then a 5 s pause. The
-  // matcher declares once 3.5 s of the pause has elapsed.
+  // matcher declares once 3.5 s of the pause has elapsed. Beeps in-band
+  // (flip_every=2 → 4 kHz) to clear the stage-1 tone gate.
   script_load({
       {2000, 0},
-      {100, LOUD}, {100, 0},
-      {100, LOUD}, {100, 0},
-      {100, LOUD}, {100, 0},
-      {100, LOUD},
+      {100, LOUD, 2}, {100, 0},
+      {100, LOUD, 2}, {100, 0},
+      {100, LOUD, 2}, {100, 0},
+      {100, LOUD, 2},
       {4000, 0},
   });
   pump(/*tail_ms=*/0);
@@ -266,10 +283,11 @@ static void test_mute_stops_events() {
   assert(!g_driver_installed && "hard mute must release the I2S driver");
   assert(g_mute_cb_count == 1 && g_mute_cb_last == true);
 
-  // A loud cadence while muted must produce nothing.
+  // A loud in-band cadence while muted must produce nothing.
   g_events.clear();
   script_load({
-      {500, 2000}, {500, 0}, {500, 2000}, {500, 0}, {500, 2000}, {1600, 0},
+      {500, 2000, 2}, {500, 0}, {500, 2000, 2}, {500, 0}, {500, 2000, 2},
+      {1600, 0},
   });
   pump(/*tail_ms=*/0);
   assert(g_events.empty() && "no events may cross the boundary while muted");
@@ -291,6 +309,117 @@ static void test_threshold_validation() {
   printf("ok  threshold validation\n");
 }
 
+// Stage-1 tone gate: exact T3 TIMING, but the "beeps" are a 500 Hz tone
+// (flip_every=16) whose harmonics barely reach the 2.6–4.4 kHz alarm
+// band. Someone rhythmically slamming a door — or a bass line — can
+// reproduce the cadence; only a real sounder reproduces the spectrum.
+static void test_t3_rejects_offband_beeps() {
+  reset_pipeline();
+  const int16_t LOUD = 2000;
+  script_load({
+      {2000, 0},
+      {500, LOUD, 16}, {500, 0},
+      {500, LOUD, 16}, {500, 0},
+      {500, LOUD, 16},
+      {1600, 0},
+  });
+  pump(/*tail_ms=*/0);
+
+  for (const auto& e : g_events) {
+    assert(e.event_type != AUDIO_EVENT_T3_SMOKE_ALARM &&
+           "off-band cadence must NOT read as a smoke alarm");
+    assert(e.event_type != AUDIO_EVENT_T4_CO_ALARM);
+  }
+  // Sanity: the envelope DID see the cadence (this is a spectral
+  // rejection, not a deaf pipeline).
+  audio_stats_t st;
+  assert(audio_get_stats(&st));
+  assert(st.on_transitions >= 3);
+  printf("ok  tone gate rejects off-band (500 Hz) T3 cadence\n");
+}
+
+// DC-removed RMS: a large constant offset (PDM mic DC bias) is not sound.
+// Under the old sum-of-squares RMS this segment read as a permanent ON
+// state that pinned the envelope and blinded the matcher forever.
+static void test_dc_offset_reads_as_silence() {
+  reset_pipeline();
+  script_load({
+      {1000, 2000, 0},   // flip_every=0: pure DC at 2.5× the ON threshold
+      {500, 0},
+  });
+  pump(/*tail_ms=*/0);
+
+  audio_stats_t st;
+  assert(audio_get_stats(&st));
+  assert(st.on_transitions == 0 && "DC offset must not trip the envelope");
+  assert(g_events.empty());
+  printf("ok  DC offset reads as silence\n");
+}
+
+// Sample-stream clock: freeze the wall clock while the whole T3 cycle is
+// delivered — models a stalled main loop draining queued DMA frames in a
+// burst. Under the old millis()-at-processing-time stamping, every frame
+// collapsed onto one instant and no durations survived; with the stream
+// clock (frames × 20 ms) the cadence must still match.
+static void test_stream_clock_survives_frozen_wall_clock() {
+  reset_pipeline();
+  g_clock_frozen = true;
+  const int16_t LOUD = 2000;
+  script_load({
+      {2000, 0},
+      {500, LOUD, 2}, {500, 0},
+      {500, LOUD, 2}, {500, 0},
+      {500, LOUD, 2},
+      {1600, 0},
+  });
+  pump(/*tail_ms=*/0);
+  g_clock_frozen = false;
+
+  bool saw_t3 = false;
+  for (const auto& e : g_events) {
+    if (e.event_type == AUDIO_EVENT_T3_SMOKE_ALARM) saw_t3 = true;
+  }
+  assert(saw_t3 && "cadence must match on the stream clock, not millis()");
+  printf("ok  stream clock survives a frozen wall clock\n");
+}
+
+// Diagnostic surface: the transition ring must expose the per-state tone
+// ratio so the dashboard can show WHY a beep did or didn't gate.
+static void test_transitions_expose_tone_ratio() {
+  reset_pipeline();
+  const int16_t LOUD = 2000;
+  script_load({
+      {2000, 0},
+      {500, LOUD, 2},    // one in-band beep
+      {1200, 0},
+  });
+  pump(/*tail_ms=*/0);
+
+  audio_transition_t trans[4];
+  const size_t n = audio_get_recent_transitions(trans, 4, 0);
+  assert(n >= 2);
+  // Newest = the OFF entry that ended the beep; its tone ratio summarizes
+  // the beep and must clear the stage-1 floor.
+  assert(trans[0].is_on == 0);
+  assert(trans[0].tone_x100 >= AUDIO_TONE_MIN_X100);
+  assert(trans[0].dur_ms >= 400 && trans[0].dur_ms <= 600);
+
+  // Same shape with an off-band beep: the ratio must sit under the floor.
+  reset_pipeline();
+  script_load({
+      {2000, 0},
+      {500, LOUD, 16},   // 500 Hz — off-band
+      {1200, 0},
+  });
+  pump(/*tail_ms=*/0);
+  const size_t m = audio_get_recent_transitions(trans, 4, 0);
+  assert(m >= 2);
+  assert(trans[0].is_on == 0);
+  assert(trans[0].tone_x100 < AUDIO_TONE_MIN_X100);
+  printf("ok  transitions expose the tone ratio (in-band=%u, off-band gated)\n",
+         (unsigned)trans[0].tone_x100);
+}
+
 int main() {
   test_t3_smoke_cadence();
   test_t4_co_cadence();
@@ -299,6 +428,10 @@ int main() {
   test_glass_break();
   test_mute_stops_events();
   test_threshold_validation();
+  test_t3_rejects_offband_beeps();
+  test_dc_offset_reads_as_silence();
+  test_stream_clock_survives_frozen_wall_clock();
+  test_transitions_expose_tone_ratio();
   printf("test_audio_cadence: all tests passed\n");
   return 0;
 }

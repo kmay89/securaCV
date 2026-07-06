@@ -15,6 +15,26 @@
  *           four 100 ms beeps with 100 ms gaps, then 5 s silence
  *           (5.7 s period; common to every UL 2034 CO alarm)
  *
+ * Detection is TWO-STAGE, mirroring published industry practice for
+ * alarm-sound recognition (a spectral gate feeding a temporal template
+ * matcher — the approach documented in e.g. US patents 9,087,447 and
+ * 8,269,625, and consistent with fully-on-device recognizers like
+ * Apple's HomePod Sound Recognition):
+ *
+ *   Stage 1 (spectral): every beep must be ALARM-BAND DOMINANT. A single
+ *   band-pass biquad centered at AUDIO_TONE_FC_HZ (~3.4 kHz, Q≈1.8,
+ *   ≈2.6–4.4 kHz passband) tracks how much of each envelope state's
+ *   energy sits where UL 217 / UL 2034 sounders put their fundamental
+ *   (3.0–4.0 kHz, typically ~3.2 kHz piezo). Voices, TV, door slams and
+ *   vacuum cleaners are broadband or low-band and fail this gate.
+ *
+ *   Stage 2 (temporal): the on/off cadence must fit the published
+ *   T3 (ISO 8201: 0.5 s ± tolerance phases) or T4 (UL 2034) template.
+ *
+ *   Known limitation: 520 Hz low-frequency sounders (NFPA 72 18.4.5 for
+ *   sleeping areas, mostly commercial) fail the stage-1 gate — their
+ *   in-band harmonics are too weak. Documented, not currently supported.
+ *
  * Phase 2b (opt-in, FEATURE_ACOUSTIC_TRANSIENTS=1) adds three transient
  * detectors that use the same 50 Hz envelope plus a single 32-bit
  * HPF-RMS sidebanding scalar per frame:
@@ -27,19 +47,23 @@
  * time by the C-API contract — see audio_event_t below):
  *
  *   1. The PDM driver hands us 16 kHz int16 mono samples. We compute
- *      two scalars per 20 ms window — full-band RMS and a first-order
- *      HPF-RMS (|x[n]-x[n-1]| stream, fc ≈ fs/4 ≈ 4 kHz) — then ZERO
- *      the sample buffer immediately. The raw samples never outlive
- *      the callback that produces them. The HPF state itself is two
- *      int16 lookbacks, lives across frames but is wiped on stop().
+ *      up to three scalars per 20 ms window — DC-removed full-band RMS,
+ *      alarm-band RMS (the stage-1 biquad above), and (Phase 2b only) a
+ *      first-order HPF-RMS (|x[n]-x[n-1]| stream, fc ≈ fs/4 ≈ 4 kHz) —
+ *      then ZERO the sample buffer immediately. The raw samples never
+ *      outlive the callback that produces them. The filter states are a
+ *      handful of numeric lookbacks, live across frames but are wiped
+ *      on stop().
  *   2. The RMS envelope is bucketed into a binary on/off signal with
- *      hysteresis. Each transition carries one extra byte: a 0..200
- *      ratio of (HPF-RMS / full-RMS) averaged across the ending state.
- *      That ratio is a coarse "is this energy concentrated above or
- *      below 4 kHz?" hint — useful for separating glass shatter from
- *      door slam from voice, but FAR too sparse to recover spectral
- *      shape (one byte / state transition vs. ≥40 bytes / 20 ms a true
- *      spectrogram would need at 5 bands).
+ *      hysteresis. Each transition carries two extra bytes: a 0..200
+ *      ratio of (alarm-band RMS / full-RMS) and, in Phase 2b, a 0..200
+ *      ratio of (HPF-RMS / full-RMS), each averaged across the ending
+ *      state. Those ratios are coarse "is this energy concentrated in
+ *      the alarm band / above 4 kHz?" hints — useful for separating an
+ *      alarm from a voice and glass shatter from a door slam, but FAR
+ *      too sparse to recover spectral shape (two bytes / state
+ *      transition vs. ≥40 bytes / 20 ms a true spectrogram would need
+ *      at 5 bands).
  *   3. The only thing that crosses the module boundary is a fixed-size
  *      audio_event_t containing {event_type, confidence, time_bucket,
  *      cycle_count}. No timestamps below the 10-minute daily bucket
@@ -78,6 +102,16 @@
 #define AUDIO_SAMPLE_RATE_HZ      16000   /* PDM mic native; well-supported */
 #define AUDIO_FRAME_MS            20      /* 50 Hz envelope rate */
 #define AUDIO_FRAME_SAMPLES       (AUDIO_SAMPLE_RATE_HZ * AUDIO_FRAME_MS / 1000)
+
+/* Alarm-band tone gate (stage 1 of the two-stage detector — see top doc).
+ * UL 217 / UL 2034 sounders emit 3.0–4.0 kHz; the biquad passband at
+ * fc=3.4 kHz / Q≈1.8 spans ≈2.6–4.4 kHz. A beep state's tone ratio
+ * (alarm-band RMS / full RMS × 100) must clear the floor below for the
+ * T3/T4 matchers to accept it. A pure in-band sine scores ~90–100;
+ * broadband noise ~50; voice/TV/impacts well below. */
+#define AUDIO_TONE_FC_HZ          3400    /* band-pass center frequency */
+#define AUDIO_TONE_MIN_X100       50      /* beep tone floor, normal mode */
+#define AUDIO_TONE_MIN_RELAXED    30      /* beep tone floor, self-test mode */
 
 /* ──────────────────────────────────────────────────────────────────────────
  * TYPES
@@ -138,7 +172,12 @@ typedef struct {
  * cadence" diagnostic. Same fields the internal matcher uses. */
 typedef struct {
   uint8_t  is_on;        /* 1 = entered ON state, 0 = entered OFF */
-  uint8_t  reserved[3];
+  uint8_t  tone_x100;    /* alarm-band/full-band RMS ratio ×100 (0..200) of
+                          * the PREVIOUS state — the stage-1 tone-gate value
+                          * the T3/T4 matchers check on beep states. Lets the
+                          * cadence-trace view show WHY a beep did or didn't
+                          * gate (≥ AUDIO_TONE_MIN_X100 = alarm-band). */
+  uint8_t  reserved[2];
   uint32_t age_ms;       /* how long ago (ms) the transition happened */
   uint32_t dur_ms;       /* duration of the PREVIOUS state, in ms */
 } audio_transition_t;
@@ -256,11 +295,15 @@ bool audio_selftest_status(audio_selftest_status_t* out);
  * nullptr to unregister. */
 void audio_set_event_callback(audio_event_cb_t cb);
 
-/* Pump the audio pipeline. Call from the main loop at >= 50 Hz so the
- * I2S DMA ring doesn't back up. Each call drains up to 4 frames (80 ms
- * of audio) per call, computes RMS, runs the envelope hysteresis +
- * transition tracker, and matches against T3/T4 cadence templates.
- * Returns the number of frames processed this call. */
+/* Pump the audio pipeline. Call from the main loop frequently (the
+ * 8-buffer DMA ring holds 160 ms, so any cadence above ~6 Hz keeps up;
+ * ≥ 50 Hz keeps envelope latency at one frame). Each call drains up to
+ * 8 frames (160 ms of audio), computes DC-removed RMS + alarm-band RMS,
+ * runs the envelope hysteresis + transition tracker, and matches against
+ * the tone-gated T3/T4 cadence templates. Envelope timing uses a sample-
+ * stream clock (frames × frame_ms), NOT the wall clock at processing
+ * time, so bursty draining after a slow loop iteration cannot distort
+ * beep/gap durations. Returns the number of frames processed. */
 int audio_process(void);
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -292,8 +335,10 @@ bool audio_set_thresholds(uint16_t rms_on, uint16_t rms_off);
 bool audio_get_live_level(uint16_t* rms_out, uint32_t* age_ms_out);
 
 /* Copy up to `max` most-recent transitions (newest first) into `out`,
- * with their age relative to `now_ms_or_zero` (pass 0 to use millis()).
- * Returns the number of transitions actually written. */
+ * with their age relative to `now_ms_or_zero`. Pass 0 (what every caller
+ * should do) to use the pipeline's sample-stream clock — the same
+ * timebase the transitions are stamped in. A non-zero value is only
+ * meaningful if it came from that same stream clock (host tests). */
 size_t audio_get_recent_transitions(audio_transition_t* out, size_t max,
                                     uint32_t now_ms_or_zero);
 
