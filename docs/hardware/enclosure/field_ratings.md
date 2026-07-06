@@ -105,10 +105,14 @@ and produces a **signed, verified event** end-to-end.
   horizontal, all sides, mounted in service orientation.
 - **W‑2 jet (CER‑3)** — garden hose, nozzle ~3 m, ~12 L/min, 1 min per side
   (an honest IPX5 *proxy* — say "hose-tested", not "certified IPX5").
-- **W‑3 submersion (CER‑4)** — bucket, **lowest point 1 m** (or case top
-  ≥ 0.15 m down if your bucket is shallower — record depth), **30 min**,
-  water 15–25 °C. Do it once more after the drop matrix: *sealed after
-  drops* is the real field claim.
+- **W‑3 submersion (CER‑4)** — **lowest point of the case 1 m below the
+  surface, 30 min**, water 15–25 °C (IEC 60529's small-enclosure condition —
+  a 21 mm case in a shallow bucket sees almost none of the intended
+  pressure). No 1 m vessel? A rain barrel, a capped 1 m pipe section, or a
+  weighted drop into a pool all work. A shallower dunk only earns
+  "CER‑4 (depth-limited, *X* m)" — record the depth, don't claim IP67.
+  Do it once more after the drop matrix: *sealed after drops* is the real
+  field claim.
 - **D‑1 dust (any level)** — zip-bag of flour/talc, agitate 5 min, tap off,
   open and inspect (proxy for IP5X — call it "dust-tested").
 - **S‑1 transit drop (CER‑4)** — boot fitted, battery in, logging: **26

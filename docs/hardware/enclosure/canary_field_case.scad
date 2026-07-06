@@ -61,7 +61,7 @@ g_c     = 2.0;       // groove centreline offset outboard of the cavity edge
 
 /* [Screw lobes] — 6x M3 heat-set inserts, outboard of the seal line */
 lob_d    = 9.0;
-lob_off  = 6.6;      // lobe centre offset outboard of the cavity edge
+lob_off  = 8.0;      // lobe centre offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)
 end_lob_y = 8.0;     // Y of the two lobes on each short end
 insert_d = 4.6;  insert_h = 6.0;   // M3 heat-set pocket
 screw_c_d = 3.4;                    // lid clearance hole
@@ -141,7 +141,7 @@ assert(wall_t - g_c - grv_w/2 >= 0.8, "outer groove cheek < 0.8 mm — thicken w
 assert(lid_t - disc_t - 0.2 >= 1.5, "lens web < 1.5 mm — thicken lid_t or thin disc_t");
 assert(lid_t - cb_h >= 1.8, "counterbore leaves < 1.8 mm lid web");
 assert(floor_t - kh_head_h >= 1.0, "keyhole pocket breaches the floor — seal-unsafe");
-assert(lob_off - wall_t - lan_d/2 >= 0.2, "lanyard bore cuts the pressure wall — raise lob_off");
+assert(lob_off - wall_t - lan_d/2 >= 1.5, "lanyard bore too close to the pressure wall (< 1.5 mm surround) — raise lob_off");
 assert(insert_h + 1.5 <= base_h, "insert pocket too deep");
 assert(end_lob_y + lob_d/2 <= inner_w/2 - r_in + wall_t, "end lobes ride onto the corner radius");
 assert(wall_t >= 2.4 && floor_t >= 2.4 && lid_t >= 2.4, "field case needs >= 2.4 mm shell minimum");
