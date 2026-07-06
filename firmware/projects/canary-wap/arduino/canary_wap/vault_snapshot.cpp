@@ -64,7 +64,7 @@ static const char* NVS_KEY_MESH  = "vault_mesh";
 static const char* NVS_KEY_COOL  = "vault_cool_s";
 static const char* NVS_KEY_SEQ   = "vault_seq";
 
-static VaultConfig g_cfg = {false, false, false,
+static VaultConfig g_cfg = {false, false, false, false, false,
                             vault_logic::DEFAULT_COOLDOWN_S};
 static uint8_t g_pubkey[vault_logic::PUBKEY_SIZE];
 static bool    g_has_pubkey = false;
