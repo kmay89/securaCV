@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### canary-wap: PSRAM static diet, wave 1 — ~41 KB of internal DRAM back for the Bluetooth budget
+
+The ELF-level RAM audit (RAM Audit workflow, PR #834) showed 158 KB of the
+S3's 320 KB internal DRAM bank spent on static globals; the biggest
+project-owned ones are task-context-only buffers with no reason to live
+there. They now allocate from PSRAM via the new `csi_mem.h`
+`csi_large_calloc()` (PSRAM-first, internal-heap fallback, NULL disables
+the owning feature fail-safe — an ESP32-C3 without PSRAM keeps exactly its
+old footprint):
+
+- `g_health_log_ring` (14 KB, 100 entries) — allocated at the very top of
+  `setup()`; if even the fallback fails, `log_health` degrades to
+  Serial-only and the ring stays empty.
+- `emit_summary()`'s 64-row scratch (11.5 KB) and `csi_features`'
+  amplitude history (10 KB) — both CSI-library copies, allocated lazily on
+  the owning task; a NULL skips the summary / disables the feature
+  pipeline instead of crashing.
+- fleet-scan cache + handler snapshot (2 x 2.5 KB) — the handler answers
+  `out of memory` honestly if allocation ever failed.
+
+Every reclaimed KB lands 1:1 in the internal heap the BLE stack needs
+(~40 KB free measured in the field vs the ~96 KB guard), and shrinking
+`.bss` also grows the heap contiguously, helping the 48 KB
+largest-block requirement. Regression-guarded: the RAM Audit workflow now
+FAILS if any of these buffers reappears in the internal-DRAM window
+(address-filtered — nm's section letters count ESP-IDF's writable-marked
+`.flash.rodata` as RAM), and it invokes gawk explicitly for `strtonum`.
+
 ### Canary Vision: unboxing-to-using walkthrough + boxes-only "Aim camera" view
 
 - **Getting-started guide** (`docs/hardware/canary_vision_getting_started.md`):
