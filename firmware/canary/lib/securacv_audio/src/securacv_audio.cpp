@@ -1,14 +1,22 @@
 /*
  * SecuraCV Canary — Acoustic Event Detection (PDM mic + cadence FSM)
  *
- * Pipeline:
- *   ┌──────────┐   ┌─────────┐   ┌──────────┐   ┌──────────┐
- *   │ PDM I2S  │──▶│  RMS    │──▶│  on/off  │──▶│  cadence │──▶ event_t
- *   │ 16 kHz   │   │  20 ms  │   │ hyst.    │   │  matcher │
- *   └──────────┘   └─────────┘   └──────────┘   └──────────┘
- *      raw int16     int32 mag    edges + ms     T3/T4 FSM
- *      WIPED on      no spectral  no envelope    no audio
- *      consume       content      shape          fingerprint
+ * Pipeline (two-stage: spectral gate × temporal template — header doc):
+ *   ┌──────────┐   ┌────────────┐   ┌──────────┐   ┌────────────┐
+ *   │ PDM I2S  │──▶│ DC-less RMS│──▶│  on/off  │──▶│ tone-gated │──▶ event_t
+ *   │ 16 kHz   │   │ + band RMS │   │ hyst.    │   │ T3/T4 FSM  │
+ *   └──────────┘   └────────────┘   └──────────┘   └────────────┘
+ *      raw int16    2 scalars per    edges + ms      cadence template
+ *      WIPED on     20 ms frame,     no envelope     × alarm-band gate
+ *      consume      no spectra       shape           no fingerprint
+ *
+ * Envelope timing runs on a SAMPLE-STREAM clock (processed frames ×
+ * frame_ms), not millis() at processing time — the DMA ring buffers up
+ * to 160 ms, and stamping frames with the wall clock at drain time would
+ * compress a burst of queued frames into one instant and wreck the
+ * beep/gap durations the cadence matcher scores. Wall millis() is still
+ * used where wall time is the point: event time buckets, self-test
+ * deadlines, live-level staleness, mute-info age.
  *
  * Privacy is enforced structurally at every stage — see header doc.
  *
@@ -20,6 +28,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <math.h>
 #include <string.h>
 
 #include "log_level.h"
@@ -94,6 +103,31 @@ static uint32_t s_state_entered_ms = 0;
  * NEXT transition's prev_dur_ms — see review thread #351. */
 static bool     s_cycle_matched = false;
 
+/* Sample-stream clock: advances by frame_ms per processed frame. ALL
+ * envelope / transition / cadence timing runs on this clock (see file
+ * header). Single writer (process() in the main loop); published with a
+ * release store so get_recent_transitions() can read it cross-task. */
+static uint32_t s_stream_ms = 0;
+
+/* ── Alarm-band tone gate (stage 1; always compiled) ──
+ * One RBJ band-pass biquad (fc = AUDIO_TONE_FC_HZ, Q ≈ 1.8, unity peak
+ * gain) run over every frame; per-envelope-state we accumulate band RMS
+ * vs full RMS and summarize the ratio into one byte at the transition.
+ * Coefficients are designed once in init() from the configured sample
+ * rate. Direct Form II Transposed; the two float states are wiped on
+ * stop()/mute() under the same privacy contract as the sample buffer. */
+static float    s_bq_b0 = 0.0f, s_bq_b2 = 0.0f;   /* b1 = 0 for a BPF */
+static float    s_bq_a1 = 0.0f, s_bq_a2 = 0.0f;
+static float    s_bq_z1 = 0.0f, s_bq_z2 = 0.0f;
+static bool     s_tone_enabled = false;  /* false if fs too low for fc */
+/* Per-state accumulators for the tone ratio (independent of the Phase 2b
+ * band-ratio accumulators so the gate works in every build). Sums of
+ * per-frame uint16 RMS values — 20 ms frames saturate uint32 only after
+ * ~4.5 h in one state at full-scale, and we clamp anyway. */
+static uint32_t s_tone_band_sum = 0;
+static uint32_t s_tone_full_sum = 0;
+static uint32_t s_tone_frames   = 0;
+
 #if FEATURE_ACOUSTIC_TRANSIENTS
 /* Per-state-window accumulators for the band-ratio summary that we
  * record into the next push_transition(). Reset on every transition.
@@ -127,7 +161,13 @@ struct Transition {
                              * Only meaningful for ON→OFF transitions; on
                              * OFF→ON transitions reflects the silent-room
                              * noise floor and is ignored by detectors. */
-  uint32_t at_ms;       /* millis() at the transition */
+  uint8_t  tone_x100;   /* (alarm-band rms / full rms) * 100 of the PREV
+                         * state, clamped 0..200 — the stage-1 spectral
+                         * gate. ~90–100 for a UL sounder's 3.0–4.0 kHz
+                         * tone, ~50 for broadband noise, near 0 for
+                         * voice / impacts / hum. Same ON→OFF caveat as
+                         * band_ratio_x100. */
+  uint32_t at_ms;       /* stream-clock ms at the transition */
   uint32_t prev_dur_ms; /* duration of the PREVIOUS state */
 };
 static constexpr size_t TRANS_CAP = 16;
@@ -194,14 +234,82 @@ static uint32_t s_selftest_transitions_seen = 0;
 /* PRIVACY BARRIER: the caller wipes the FULL sample buffer (sizeof(samples),
  * not n * 2) right after this returns. We don't wipe inside compute_rms
  * because n may be smaller than the buffer when i2s_read returns short —
- * a partial wipe would leave residual audio in the tail. */
+ * a partial wipe would leave residual audio in the tail.
+ *
+ * DC-REMOVED: PDM mics ride on a DC offset (and the decimator can leave
+ * a slow wander). Plain sum-of-squares folds that offset into the
+ * envelope — a big enough offset pins the envelope ON forever and the
+ * cadence matcher never sees a transition. We compute the standard
+ * deviation instead: E[x²] − E[x]², one pass, integer math. */
 static uint16_t compute_rms(const int16_t* samples, size_t n) {
   if (n == 0) return 0;
+  int64_t sum = 0;
   int64_t sumsq = 0;
   for (size_t i = 0; i < n; i++) {
     const int32_t s = samples[i];
+    sum   += s;
     sumsq += (int64_t)s * s;
   }
+  const int64_t mean    = sum / (int64_t)n;
+  int64_t       var     = sumsq / (int64_t)n - mean * mean;
+  if (var < 0) var = 0;                    /* rounding can go −1 */
+  /* var ≤ 32768² < 2³² — fits isqrt_u32's domain. */
+  uint32_t rms = isqrt_u32((uint32_t)var);
+  if (rms > 0xFFFFu) rms = 0xFFFFu;
+  return (uint16_t)rms;
+}
+
+/* ── Alarm-band biquad (stage-1 tone gate) ──
+ *
+ * RBJ cookbook band-pass, constant 0 dB peak gain:
+ *   ω0 = 2π·fc/fs,  α = sin(ω0)/(2Q)
+ *   b = { α, 0, −α } / (1+α),  a = { 1, −2cos(ω0), 1−α } / (1+α)
+ * At fc=3.4 kHz / Q=1.8 the −3 dB passband is ≈2.6–4.4 kHz — wide
+ * enough to catch every UL 217/2034 sounder (3.0–4.0 kHz fundamentals)
+ * without admitting voice, TV or motor noise. ~4 float MACs per sample:
+ * ≈0.2 % of one 240 MHz core at 16 kHz. */
+static void tone_filter_design(void) {
+  const float fs = (float)s_cfg.sample_rate_hz;
+  const float fc = (float)AUDIO_TONE_FC_HZ;
+  const float Q  = 1.8f;
+  /* Need fc comfortably below Nyquist; below that, disable the gate
+   * (ratios default to 100 = "no opinion", matchers degrade to purely
+   * temporal — the pre-tone-gate behavior). */
+  s_tone_enabled = (fs > 2.2f * fc);
+  if (!s_tone_enabled) {
+    s_bq_b0 = s_bq_b2 = s_bq_a1 = s_bq_a2 = 0.0f;
+    s_bq_z1 = s_bq_z2 = 0.0f;
+    return;
+  }
+  const float w0    = 2.0f * (float)M_PI * fc / fs;
+  const float alpha = sinf(w0) / (2.0f * Q);
+  const float a0    = 1.0f + alpha;
+  s_bq_b0 =  alpha / a0;
+  s_bq_b2 = -alpha / a0;
+  s_bq_a1 = (-2.0f * cosf(w0)) / a0;
+  s_bq_a2 = (1.0f - alpha) / a0;
+  s_bq_z1 = s_bq_z2 = 0.0f;
+}
+
+/* Band-limited RMS of the frame through the biquad. Same wipe contract
+ * as compute_rms — the caller scrubs the buffer. The two-float filter
+ * state persists across frames (a biquad needs continuity) and is wiped
+ * on stop()/mute() alongside everything else. */
+static uint16_t compute_tone_rms(const int16_t* samples, size_t n) {
+  if (n == 0 || !s_tone_enabled) return 0;
+  float z1 = s_bq_z1;
+  float z2 = s_bq_z2;
+  int64_t sumsq = 0;
+  for (size_t i = 0; i < n; i++) {
+    const float x = (float)samples[i];
+    const float y = s_bq_b0 * x + z1;          /* DF2T, b1 = 0 */
+    z1 = z2 - s_bq_a1 * y;
+    z2 = s_bq_b2 * x - s_bq_a2 * y;
+    const int32_t iy = (int32_t)y;
+    sumsq += (int64_t)iy * iy;
+  }
+  s_bq_z1 = z1;
+  s_bq_z2 = z2;
   const uint32_t mean_sq = (uint32_t)(sumsq / (int64_t)n);
   uint32_t rms = isqrt_u32(mean_sq);
   if (rms > 0xFFFFu) rms = 0xFFFFu;
@@ -247,11 +355,13 @@ static uint16_t compute_hpf_rms(const int16_t* samples, size_t n) {
 
 static void push_transition(bool entered_on, uint32_t now_ms,
                             uint32_t prev_dur_ms,
-                            uint8_t prev_band_ratio_x100) {
+                            uint8_t prev_band_ratio_x100,
+                            uint8_t prev_tone_x100) {
   s_trans[s_trans_head].is_on             = entered_on;
   s_trans[s_trans_head].at_ms             = now_ms;
   s_trans[s_trans_head].prev_dur_ms       = prev_dur_ms;
   s_trans[s_trans_head].band_ratio_x100   = prev_band_ratio_x100;
+  s_trans[s_trans_head].tone_x100         = prev_tone_x100;
   s_trans_head = (s_trans_head + 1) % TRANS_CAP;
   if (s_trans_count < TRANS_CAP) s_trans_count++;
 }
@@ -303,6 +413,17 @@ static int score_t3_cycle(uint32_t now_ms, bool relaxed) {
   if ( t0->is_on || !t1->is_on ||
         t2->is_on || !t3->is_on ||
         t4->is_on || !t5->is_on) return -1;
+
+  /* Stage-1 tone gate: every beep (the ON states summarized by the
+   * OFF-entry transitions t0/t2/t4) must be alarm-band dominant. This
+   * is what keeps three rhythmic door slams or a shouted "HEY-HEY-HEY"
+   * from reading as a smoke alarm — the cadence alone is easy to fake,
+   * the 3.0–4.0 kHz tone concentration is not. */
+  const uint8_t tone_min = relaxed ? AUDIO_TONE_MIN_RELAXED
+                                   : AUDIO_TONE_MIN_X100;
+  if (t0->tone_x100 < tone_min ||
+      t2->tone_x100 < tone_min ||
+      t4->tone_x100 < tone_min) return -1;
 
   /* Beep durations (the ON state durations). */
   const int32_t b3 = (int32_t)t0->prev_dur_ms;  /* beep 3 ON */
@@ -371,6 +492,15 @@ static int score_t4_cycle(uint32_t now_ms, bool relaxed) {
     const bool expect_on = (i & 1) == 1;  /* i=1,3,5,7 are ON */
     if (t[i]->is_on != expect_on) return -1;
   }
+
+  /* Stage-1 tone gate — same rationale as T3: the four beeps (OFF-entry
+   * transitions t[0]/t[2]/t[4]/t[6]) must be alarm-band dominant. */
+  const uint8_t tone_min = relaxed ? AUDIO_TONE_MIN_RELAXED
+                                   : AUDIO_TONE_MIN_X100;
+  if (t[0]->tone_x100 < tone_min ||
+      t[2]->tone_x100 < tone_min ||
+      t[4]->tone_x100 < tone_min ||
+      t[6]->tone_x100 < tone_min) return -1;
 
   const int32_t b4 = (int32_t)t[0]->prev_dur_ms;
   const int32_t g34 = (int32_t)t[1]->prev_dur_ms;
@@ -580,6 +710,9 @@ static int score_glass_break_cycle(uint32_t now_ms) {
  * EVENT EMITTER
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* `now_ms` is stream-clock time (storm-cap arithmetic stays on the same
+ * clock the matchers run on); the 10-minute bucket is wall time because
+ * that's what it means downstream. */
 static void try_emit_event(uint8_t type, uint8_t conf, uint16_t cycle_count,
                            uint32_t now_ms) {
   if ((now_ms - s_last_event_ms) < 250) return;  /* storm cap */
@@ -590,7 +723,7 @@ static void try_emit_event(uint8_t type, uint8_t conf, uint16_t cycle_count,
   evt.event_type  = type;
   evt.confidence  = conf;
   evt.cycle_count = cycle_count;
-  evt.time_bucket = (uint8_t)((now_ms / (10UL * 60UL * 1000UL)) % 144);
+  evt.time_bucket = (uint8_t)((millis() / (10UL * 60UL * 1000UL)) % 144);
 
   if (s_cb) s_cb(&evt);
 
@@ -613,7 +746,12 @@ static bool i2s_open() {
   cfg.channel_format     = I2S_CHANNEL_FMT_ONLY_LEFT;
   cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
   cfg.intr_alloc_flags   = ESP_INTR_FLAG_LEVEL1;
-  cfg.dma_buf_count      = 4;
+  /* 8 × 20 ms = 160 ms of ring. The main loop occasionally stalls for
+   * ~100 ms (TLS handshake, NVS commit, OTA check); 4 buffers (80 ms)
+   * made every such stall an overflow that silently ate frames mid-beep.
+   * 8 buffers ride out the observed worst cases; process() drains up to
+   * 8 frames per call so one call can empty a full ring. */
+  cfg.dma_buf_count      = 8;
   cfg.dma_buf_len        = AUDIO_FRAME_SAMPLES;  /* one 20 ms frame per buffer */
   cfg.use_apll           = false;
   cfg.tx_desc_auto_clear = false;
@@ -682,6 +820,11 @@ bool init(const audio_config_t& cfg) {
   s_last_event_ms = 0;
   s_t3_cycles = 0;
   s_t4_cycles = 0;
+  s_stream_ms = 0;
+  tone_filter_design();
+  s_tone_band_sum = 0;
+  s_tone_full_sum = 0;
+  s_tone_frames = 0;
   #if FEATURE_ACOUSTIC_TRANSIENTS
   s_hpf_prev_last = 0;
   s_state_rms_sum = 0;
@@ -706,7 +849,7 @@ bool init(const audio_config_t& cfg) {
   s_initialized = true;
   log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
              "Audio HAL initialized",
-             "PDM 16 kHz mono, T3/T4 cadence detector armed");
+             "PDM 16 kHz mono, tone-gated T3/T4 cadence detector armed");
   return true;
 }
 
@@ -732,8 +875,14 @@ bool start() {
   if (!i2s_open()) return false;
 
   s_running = true;
-  s_state_entered_ms = millis();
+  s_state_entered_ms = s_stream_ms;
   s_cycle_matched = false;
+  /* Fresh spectral state — don't carry filter memory across a gap. */
+  s_bq_z1 = 0.0f;
+  s_bq_z2 = 0.0f;
+  s_tone_band_sum = 0;
+  s_tone_full_sum = 0;
+  s_tone_frames = 0;
   return true;
 }
 
@@ -749,6 +898,13 @@ void stop() {
   s_cycle_matched = false;
   s_t3_cycles = 0;
   s_t4_cycles = 0;
+  /* Wipe the biquad's two-float memory and the per-state tone sums —
+   * same privacy intent as the sample-buffer wipe. */
+  s_bq_z1 = 0.0f;
+  s_bq_z2 = 0.0f;
+  s_tone_band_sum = 0;
+  s_tone_full_sum = 0;
+  s_tone_frames = 0;
   #if FEATURE_ACOUSTIC_TRANSIENTS
   /* Wipe the HPF state so the next start() doesn't carry sub-sample
    * memory across a mute boundary — same privacy intent as the
@@ -824,6 +980,11 @@ bool mute_sync_at_boot(bool muted) {
       s_t4_cycles = 0;
       s_last_rms = 0;
       s_last_rms_ms = 0;
+      s_bq_z1 = 0.0f;
+      s_bq_z2 = 0.0f;
+      s_tone_band_sum = 0;
+      s_tone_full_sum = 0;
+      s_tone_frames = 0;
       #if FEATURE_ACOUSTIC_TRANSIENTS
       /* Wipe the HPF carryover so the next unmute's first frame isn't
        * compared against a stale pre-mute sample. */
@@ -929,7 +1090,11 @@ bool get_live_level(uint16_t* rms_out, uint32_t* age_ms_out) {
 size_t get_recent_transitions(audio_transition_t* out, size_t max,
                               uint32_t now_ms_or_zero) {
   if (!out || max == 0) return 0;
-  const uint32_t now = now_ms_or_zero ? now_ms_or_zero : millis();
+  /* Transitions are stamped on the sample-stream clock, so ages must be
+   * computed against that same clock — NOT millis(). */
+  const uint32_t now = now_ms_or_zero
+      ? now_ms_or_zero
+      : __atomic_load_n(&s_stream_ms, __ATOMIC_ACQUIRE);
   const size_t head  = __atomic_load_n(&s_trans_head, __ATOMIC_ACQUIRE);
   const size_t count = __atomic_load_n(&s_trans_count, __ATOMIC_ACQUIRE);
   const size_t n = (count < max) ? count : max;
@@ -940,7 +1105,8 @@ size_t get_recent_transitions(audio_transition_t* out, size_t max,
     const size_t idx = (head + TRANS_CAP - 1 - i) % TRANS_CAP;
     const Transition t = s_trans[idx];  /* copy by value */
     out[i].is_on     = t.is_on ? 1 : 0;
-    out[i].reserved[0] = out[i].reserved[1] = out[i].reserved[2] = 0;
+    out[i].tone_x100 = t.tone_x100;
+    out[i].reserved[0] = out[i].reserved[1] = 0;
     out[i].age_ms    = (now >= t.at_ms) ? (now - t.at_ms) : 0;
     out[i].dur_ms    = t.prev_dur_ms;
   }
@@ -992,6 +1158,11 @@ int process() {
       s_t4_cycles = 0;
       __atomic_store_n(&s_last_rms, 0, __ATOMIC_RELEASE);
       __atomic_store_n(&s_last_rms_ms, 0, __ATOMIC_RELEASE);
+      s_bq_z1 = 0.0f;
+      s_bq_z2 = 0.0f;
+      s_tone_band_sum = 0;
+      s_tone_full_sum = 0;
+      s_tone_frames = 0;
       #if FEATURE_ACOUSTIC_TRANSIENTS
       /* Same rationale as stop() / mute_sync_at_boot — wipe HPF carryover
        * and per-state accumulators so the next unmute starts clean. */
@@ -1009,12 +1180,17 @@ int process() {
     } else if (!want_mute && !s_running && s_initialized) {
       if (i2s_open()) {
         s_running = true;
-        s_state_entered_ms = millis();
+        s_state_entered_ms = s_stream_ms;
         s_cycle_matched = false;
-        #if FEATURE_ACOUSTIC_TRANSIENTS
         /* Belt-and-suspenders — also zero on the unmute path so even if
          * a future change skips the mute-path wipe the unmute side is
          * guaranteed to start with no stale state. */
+        s_bq_z1 = 0.0f;
+        s_bq_z2 = 0.0f;
+        s_tone_band_sum = 0;
+        s_tone_full_sum = 0;
+        s_tone_frames = 0;
+        #if FEATURE_ACOUSTIC_TRANSIENTS
         s_hpf_prev_last = 0;
         s_state_rms_sum = 0;
         s_state_hpf_rms_sum = 0;
@@ -1060,9 +1236,9 @@ int process() {
   size_t bytes_read = 0;
   int frames_this_call = 0;
 
-  /* Drain up to 4 frames per process() call so a slow main loop can
-   * catch up without blocking. */
-  for (int i = 0; i < 4; i++) {
+  /* Drain up to 8 frames per process() call — a full DMA ring — so a
+   * slow main loop can catch up without blocking. */
+  for (int i = 0; i < 8; i++) {
     bytes_read = 0;
     /* Non-blocking read: timeout 0 returns immediately if no DMA buffer
      * is ready. Legacy i2s_read returns ESP_OK with bytes_read==0 in
@@ -1088,11 +1264,13 @@ int process() {
     }
 
     const uint16_t rms = compute_rms(samples, n);
+    /* Compute the alarm-band RMS BEFORE the wipe, while samples are
+     * still alive. A single uint16 like full-RMS; we accumulate
+     * per-state sums below and only the per-transition AVERAGE ratio
+     * is retained — never the per-frame value. */
+    const uint16_t tone_rms = compute_tone_rms(samples, n);
     #if FEATURE_ACOUSTIC_TRANSIENTS
-    /* Compute the high-pass-band RMS BEFORE the wipe, while samples are
-     * still alive. The result is a single uint16 like full-RMS; we
-     * accumulate per-state averages below and only the per-transition
-     * AVERAGE ratio is retained — never the per-frame value. */
+    /* Same contract for the Phase 2b high-pass-band RMS. */
     const uint16_t hpf_rms = compute_hpf_rms(samples, n);
     #endif
     /* PRIVACY BARRIER: wipe the FULL buffer (not just n samples) so any
@@ -1104,6 +1282,14 @@ int process() {
     s_stats.frames_processed++;
     s_stats.envelope_samples++;
     frames_this_call++;
+
+    /* Accumulate the per-state tone sums for the stage-1 gate. Same
+     * saturation scheme as the Phase 2b accumulators below. */
+    if (s_tone_full_sum < 0x7FFFFFFFUL) {
+      s_tone_full_sum += rms;
+      s_tone_band_sum += tone_rms;
+      s_tone_frames++;
+    }
 
     #if FEATURE_ACOUSTIC_TRANSIENTS
     /* Accumulate per-state band-ratio so we can summarize the just-
@@ -1118,14 +1304,19 @@ int process() {
     }
     #endif
 
-    /* Hysteresis state machine on the envelope. */
-    const uint32_t now = millis();
+    /* Advance the sample-stream clock: this frame represents exactly
+     * frame_ms of microphone time, no matter when we got around to
+     * draining it. All envelope / cadence math below uses `now` from
+     * this clock; `wall` is only for wall-time surfaces. */
+    const uint32_t now = s_stream_ms + s_cfg.frame_ms;
+    __atomic_store_n(&s_stream_ms, now, __ATOMIC_RELEASE);
+    const uint32_t wall = millis();
     /* Publish the RMS scalar for the UI level meter. This is the same
      * number the hysteresis uses — we're not adding a second audio path,
      * we're just publishing the existing scalar with a release store so
      * a concurrent HTTP read can pick up the value safely. */
     __atomic_store_n(&s_last_rms, rms, __ATOMIC_RELEASE);
-    __atomic_store_n(&s_last_rms_ms, now, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_last_rms_ms, wall, __ATOMIC_RELAXED);
 
     bool transition = false;
     bool entered_on = false;
@@ -1145,13 +1336,24 @@ int process() {
     if (transition) {
       const uint32_t prev_dur = (s_state_entered_ms == 0)
                                 ? 0 : (now - s_state_entered_ms);
+      /* Summarize the just-ended state's alarm-band concentration:
+       * band_avg / full_avg * 100. Sums span the same frames so the
+       * frame count cancels — just divide. Skip when frames==0
+       * (transition fired immediately at boot), full_sum==0 (silent
+       * state — undefined), or the gate is disabled: report 100 =
+       * "no opinion", which passes the matcher gate, degrading to the
+       * purely temporal pre-gate behavior instead of going deaf. */
+      uint8_t prev_tone = 100;
+      if (s_tone_enabled && s_tone_frames > 0 && s_tone_full_sum > 0) {
+        const uint32_t r = (uint32_t)(((uint64_t)s_tone_band_sum * 100u) / s_tone_full_sum);
+        prev_tone = (uint8_t)(r > 200u ? 200u : r);
+      }
+      s_tone_band_sum = 0;
+      s_tone_full_sum = 0;
+      s_tone_frames = 0;
       uint8_t prev_band_ratio = 100;  /* 100 = "broadband" default */
       #if FEATURE_ACOUSTIC_TRANSIENTS
-      /* Summarize the just-ended state's band concentration. The ratio
-       * is hpf_avg / full_avg * 100. Sums over the same frames so the
-       * mean cancels out — just divide. Skip when frames==0 (transition
-       * fired immediately at boot) or full_avg==0 (silent state — the
-       * ratio is undefined; report 100 = "no opinion"). */
+      /* Same summary for the Phase 2b high-band ratio. */
       if (s_state_frames > 0 && s_state_rms_sum > 0) {
         const uint32_t r = (uint32_t)(((uint64_t)s_state_hpf_rms_sum * 100u) / s_state_rms_sum);
         prev_band_ratio = (uint8_t)(r > 200u ? 200u : r);
@@ -1160,7 +1362,7 @@ int process() {
       s_state_hpf_rms_sum = 0;
       s_state_frames = 0;
       #endif
-      push_transition(entered_on, now, prev_dur, prev_band_ratio);
+      push_transition(entered_on, now, prev_dur, prev_band_ratio, prev_tone);
       s_state_entered_ms = now;
       /* Every new transition rearms the cadence matcher — the matcher
        * may now declare a fresh cycle. */
@@ -1183,14 +1385,15 @@ int process() {
       }
     }
 
-    /* Self-test auto-expiry. */
+    /* Self-test auto-expiry — deadline is wall time (the user's 30 s
+     * button-press window), so compare against wall, not the stream. */
     const bool st_active_now =
         __atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE);
-    if (st_active_now && (int32_t)(now - s_selftest_deadline_ms) >= 0) {
+    if (st_active_now && (int32_t)(wall - s_selftest_deadline_ms) >= 0) {
       __atomic_store_n(&s_selftest_active, false, __ATOMIC_RELEASE);
     }
     const bool relaxed = st_active_now &&
-        (int32_t)(now - s_selftest_deadline_ms) < 0;
+        (int32_t)(wall - s_selftest_deadline_ms) < 0;
 
     /* Cadence matching is timing-based and only meaningful right after
      * the long inter-cycle silence has elapsed. We check whenever we're

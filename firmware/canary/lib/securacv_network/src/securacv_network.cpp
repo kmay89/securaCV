@@ -2762,7 +2762,9 @@ static esp_err_t handle_audio_level(httpd_req_t* req) {
   doc["envelope_high"]     = (rms >= cfg.rms_on_threshold);
   doc["age_ms"] = (age_ms == UINT32_MAX) ? -1L : (long)age_ms;
 
-  /* Last 8 transitions, newest first, for the cadence-trace view. */
+  /* Last 8 transitions, newest first, for the cadence-trace view.
+   * `tone` is the alarm-band ratio ×100 the T3/T4 tone gate checks —
+   * it shows WHY a beep did or didn't count (≥50 = alarm-band). */
   audio_transition_t trans[8];
   const size_t n = audio_get_recent_transitions(trans, 8, 0);
   JsonArray arr = doc["transitions"].to<JsonArray>();
@@ -2771,6 +2773,7 @@ static esp_err_t handle_audio_level(httpd_req_t* req) {
     e["on"]     = (bool)trans[i].is_on;
     e["age_ms"] = trans[i].age_ms;
     e["dur_ms"] = trans[i].dur_ms;
+    e["tone"]   = trans[i].tone_x100;
   }
 
   String response;
