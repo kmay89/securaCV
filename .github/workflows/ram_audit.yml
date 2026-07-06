@@ -19,13 +19,18 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      # Its own file (the only bot-triggerable handle) plus the sources that
-      # carry the PSRAM static diet — editing any of them re-proves the
-      # DRAM regression assertion below.
+      # Its own file (the only bot-triggerable handle) plus every source
+      # that carries the PSRAM static diet — the SHIPPED sketch copies and
+      # the .ino included (the FULL/S3 audit compiles those, not the
+      # canonical lib, so a revert there must re-run the assertion below).
       - '.github/workflows/ram_audit.yml'
       - 'firmware/common/csi/src/csi_features.cpp'
       - 'firmware/common/csi/src/meta_daily_summary.cpp'
       - 'firmware/common/csi/src/csi_mem.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_features.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/meta_daily_summary.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mem.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
 
 permissions:
   contents: read

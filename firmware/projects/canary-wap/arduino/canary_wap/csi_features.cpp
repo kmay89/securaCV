@@ -160,7 +160,15 @@ void reset() {
 void accumulate(const int8_t* iq, uint8_t subcarrier_cnt,
                 int8_t rssi_dbm, uint8_t channel, uint8_t bw_code) {
   if (iq == nullptr || subcarrier_cnt == 0) return;
-  if (s_amp_hist == nullptr) return;  /* alloc failed — pipeline disabled */
+  /* Lazy allocation HERE, not only in reset(): on a cold start the HAL
+   * begins draining frames without a prior reset() (reset runs at stop()
+   * and at window close), so hanging the buffer's existence on reset()
+   * would zero the entire first window. NULL after a failed attempt
+   * disables the pipeline (frames refused, so no consumer dereferences). */
+  if (s_amp_hist == nullptr) {
+    s_amp_hist = (int16_t (*)[MAX_SC])csi_large_calloc(AMP_HIST_BYTES);
+    if (s_amp_hist == nullptr) return;
+  }
   if (s_frame_count >= MAX_FRAMES) return;
 
   /* Lock subcarrier count on first frame of the window. */

@@ -5736,6 +5736,10 @@ static portMUX_TYPE      g_fleet_scan_mux = portMUX_INITIALIZER_UNLOCKED;
 static const uint32_t    FLEET_SCAN_TTL_MS = 10000;
 
 static void fleet_scan_task(void*) {
+  /* Nested scope: vTaskDelete(NULL) never returns, so JsonDocument's
+   * destructor (and its heap pool) only runs if the scope closes first —
+   * without it every scan leaked the doc's pool. */
+  {
   JsonDocument doc;
   JsonArray arr = doc["canaries"].to<JsonArray>();
 
@@ -5753,8 +5757,10 @@ static void fleet_scan_task(void*) {
   }
 
   // Heap staging (not a function-local static): keeps the one-shot task's
-  // stack small and leaves nothing shared between task instances.
-  char* staging = (char*)malloc(FLEET_SCAN_CACHE_SIZE);
+  // stack small and leaves nothing shared between task instances. calloc,
+  // not malloc: the full buffer is memcpy'd into the cache below, and the
+  // bytes past serializeJson's NUL must be zeros, not heap garbage.
+  char* staging = (char*)calloc(1, FLEET_SCAN_CACHE_SIZE);
   if (staging && g_fleet_scan_cache) {
     size_t written = serializeJson(doc, staging, FLEET_SCAN_CACHE_SIZE);
     if (written >= FLEET_SCAN_CACHE_SIZE) {
@@ -5768,6 +5774,7 @@ static void fleet_scan_task(void*) {
     portEXIT_CRITICAL(&g_fleet_scan_mux);
   }
   free(staging);
+  }  /* scope closes: doc's destructor runs BEFORE the task dies */
 
   __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);
   vTaskDelete(NULL);
