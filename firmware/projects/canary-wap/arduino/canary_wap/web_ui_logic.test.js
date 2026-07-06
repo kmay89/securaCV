@@ -94,3 +94,23 @@ describe('fmtKbps', () => {
     assert.equal(L.fmtKbps(54321), '54 Mbps');
   });
 });
+
+describe('otaBannerVisible', () => {
+  it('shows only when an update exists and that version is undismissed', () => {
+    assert.equal(L.otaBannerVisible(true, '2.3.0', ''), true);
+    assert.equal(L.otaBannerVisible(true, '2.3.0', '2.2.1'), true);
+  });
+  it('never shows without an available update', () => {
+    assert.equal(L.otaBannerVisible(false, '2.3.0', ''), false);
+    assert.equal(L.otaBannerVisible(false, '', ''), false);
+  });
+  it('"Later" silences exactly the dismissed version, not the next one', () => {
+    assert.equal(L.otaBannerVisible(true, '2.3.0', '2.3.0'), false);
+    assert.equal(L.otaBannerVisible(true, '2.3.1', '2.3.0'), true);
+  });
+  it('refuses to advertise an update with a missing/empty version string', () => {
+    assert.equal(L.otaBannerVisible(true, '', ''), false);
+    assert.equal(L.otaBannerVisible(true, undefined, ''), false);
+    assert.equal(L.otaBannerVisible(true, null, ''), false);
+  });
+});

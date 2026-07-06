@@ -927,6 +927,15 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   </div>
 
   <div class="container">
+    <!-- Firmware-update banner: shown when the daily (or manual) check
+         found a newer signed release. Dismissal is per-version and lives
+         in a JS variable only, never persisted in the browser (house rule). -->
+    <div id="otaBanner" style="display:none;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;padding:0.7rem 1rem;border-radius:8px;border:1px solid var(--accent);background:rgba(59,130,246,0.12);">
+      <span style="font-size:0.9rem;">Firmware update <strong id="otaBannerVersion">—</strong> is ready to install.</span>
+      <span style="flex:1;"></span>
+      <button class="btn btn-primary btn-sm" onclick="otaBannerView()">View &amp; install</button>
+      <button class="btn btn-ghost btn-sm" onclick="otaBannerDismiss()">Later</button>
+    </div>
     <!-- Clean 5-Tab Navigation -->
     <nav>
       <button class="nav-btn active" data-panel="status">Status</button>
@@ -2629,7 +2638,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (kbps < 1000) return Math.round(kbps) + ' kbps';
         return (kbps / 1000).toFixed(kbps < 10000 ? 1 : 0) + ' Mbps';
       }
-      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps };
+      // Firmware-update banner visibility: show only when a check found a
+      // newer version AND the user hasn't dismissed THAT version ("Later"
+      // silences one version, not all future ones). Missing/empty version
+      // strings never show a banner — an update without a version is a
+      // status bug, not something to advertise.
+      function otaBannerVisible(updateAvailable, latestVersion, dismissedVersion) {
+        if (!updateAvailable) return false;
+        if (typeof latestVersion !== 'string' || latestVersion.length === 0) return false;
+        return latestVersion !== dismissedVersion;
+      }
+      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible };
     })();
     if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
     /* WEBUI_LOGIC:END */
@@ -2790,6 +2809,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     function startDashboard() {
       refreshAll();
+      otaBannerRefresh();
+      if (!window._otaBannerInterval) {
+        window._otaBannerInterval = setInterval(otaBannerRefresh, 30 * 60 * 1000);
+      }
       // refreshAll() already polls refreshStatus / refreshSystemHealth /
       // refreshRfStatus every 5s, so dedicated intervals for those three
       // functions would just double up the work (and the network traffic).
@@ -2993,6 +3016,43 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         await secureFetch('/api/vault/item?name=' + encodeURIComponent(name), { method: 'DELETE' });
       } catch (e) { alert('Delete failed'); }
       refreshVaultList();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FIRMWARE-UPDATE BANNER — reads /api/ota/status, once after auth and
+    // every 30 minutes after that (the device itself checks daily; this
+    // only surfaces what the device already knows).
+    // ═══════════════════════════════════════════════════════════════
+    let otaBannerLatest = '';
+    let otaBannerDismissed = '';
+
+    async function otaBannerRefresh() {
+      try {
+        const resp = await secureFetch('/api/ota/status');
+        if (!resp.ok) return;
+        const d = await resp.json();
+        if (!d || d.ok !== true) return;
+        otaBannerLatest = d.latest_version || '';
+        const show = WebUiLogic.otaBannerVisible(
+            !!d.update_available, otaBannerLatest, otaBannerDismissed);
+        document.getElementById('otaBannerVersion').textContent = otaBannerLatest;
+        document.getElementById('otaBanner').style.display = show ? 'flex' : 'none';
+      } catch (e) { /* auth modal or transient error — banner stays as-is */ }
+    }
+
+    function otaBannerView() {
+      document.getElementById('otaBanner').style.display = 'none';
+      switchPanel('settings');
+      // Click the real tab button: switchSettingsTab reads event.target
+      // to move the active highlight, so a programmatic call would throw.
+      const btn = document.querySelector(
+          "#panel-settings .sub-nav-btn[onclick=\"switchSettingsTab('device')\"]");
+      if (btn) btn.click();
+    }
+
+    function otaBannerDismiss() {
+      otaBannerDismissed = otaBannerLatest;  // this version only
+      document.getElementById('otaBanner').style.display = 'none';
     }
 
     function switchPanel(panel, loadPanel = true) {
