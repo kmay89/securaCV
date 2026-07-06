@@ -21,8 +21,9 @@ part = "all";        // ["clip","molle","all"]
 
 /* [Stud interface] — match the target case's keyholes (36 = field case) */
 stud_gap  = 36.0;
+// ecosystem-standard T-stud: stem 1.4 + cone 1.2 + head 0.8 = 3.4 total
 stud_d    = 4.0;  stud_head = 6.6;  stud_head_t = 0.8;
-stud_stem_h = 2.6;
+stud_stem_h = 1.4;
 
 /* [Belt clip] */
 clip_w    = 45.0;    // width (extrusion length)
@@ -47,11 +48,11 @@ assert(stud_gap + stud_head + 4 <= mp_l, "studs don't fit the MOLLE plate");
 
 module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
 
-module tstud() {                        // +Z axis; base at z0
+module tstud() {                        // +Z axis; base at z0 (catalog standard)
     cylinder(d = stud_d, h = stud_stem_h + 0.01);
     translate([0, 0, stud_stem_h]) {
-        cylinder(d1 = stud_d, d2 = stud_head, h = (stud_head - stud_d)/2);
-        translate([0, 0, (stud_head - stud_d)/2]) cylinder(d = stud_head, h = stud_head_t);
+        cylinder(d1 = stud_d, d2 = stud_head, h = 1.2);
+        translate([0, 0, 1.2]) cylinder(d = stud_head, h = stud_head_t);
     }
 }
 
@@ -69,8 +70,11 @@ module clip() {
         [plate_t + belt_gap, plate_l - leaf_l + 4],
         [plate_t + belt_gap - nub_h, plate_l - leaf_l + 2],     // grip nub
         [plate_t + belt_gap, plate_l - leaf_l],
-        [plate_t + belt_gap + leaf_t + 2.5, plate_l - leaf_l - 0.5],  // flared entry
-        [plate_t + belt_gap + leaf_t, plate_l - leaf_l + 4],
+        // flared entry as a PARALLEL path so the leaf keeps leaf_t thickness
+        // to the tip (a wedge here made the spring rigid where it must flex)
+        [plate_t + belt_gap + 2.5, plate_l - leaf_l - 2],
+        [plate_t + belt_gap + leaf_t + 2.5, plate_l - leaf_l - 2],
+        [plate_t + belt_gap + leaf_t, plate_l - leaf_l],
         // leaf outer face back up to the bridge, then the chamfered bridge top
         [bridge_r, plate_l - 6],
         [bridge_r, plate_l - 2], [bridge_r - 2, plate_l], [2, plate_l], [0, plate_l - 2],

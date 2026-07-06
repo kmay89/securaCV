@@ -25,10 +25,13 @@ part = "all";        // ["dash","vent","all"]
 
 /* [Stud interface] — match the target case's keyholes */
 stud_gap  = 36.0;    // centre-to-centre of the two T-studs
+// ecosystem-standard T-stud (same as canary_mount_adapters.scad): stem 1.4
+// (= kh_face 1.0 + 0.4 slide) + cone 1.2 + head 0.8 = 3.4 total, fitting the
+// catalog's 3.5 mm-deep blind keyhole pockets
 stud_d    = 4.0;     // stem
-stud_head = 6.6;     // head disc (45 deg cone under)
+stud_head = 6.6;     // head disc
 stud_head_t = 0.8;
-stud_stem_h = 2.6;   // stem length = mating face web + slide clearance
+stud_stem_h = 1.4;
 
 /* [Print tolerances] */
 tol_slide = 0.20;  tol_press = 0.10;
@@ -57,11 +60,11 @@ assert(louver_gap >= 1.5, "louver_gap < 1.5 mm — measure your vent blade");
 
 module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = true); }
 
-module tstud() {                        // +Z axis; base at z0
+module tstud() {                        // +Z axis; base at z0 (catalog standard)
     cylinder(d = stud_d, h = stud_stem_h + 0.01);
     translate([0, 0, stud_stem_h]) {
-        cylinder(d1 = stud_d, d2 = stud_head, h = (stud_head - stud_d)/2);
-        translate([0, 0, (stud_head - stud_d)/2]) cylinder(d = stud_head, h = stud_head_t);
+        cylinder(d1 = stud_d, d2 = stud_head, h = 1.2);
+        translate([0, 0, 1.2]) cylinder(d = stud_head, h = stud_head_t);
     }
 }
 
