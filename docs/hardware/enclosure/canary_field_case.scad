@@ -47,9 +47,11 @@ batt_pad = 1.0;
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
 tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
 
-/* [Shell] — 4 mm everywhere is the field-grade floor, not a suggestion */
+/* [Shell] — 4 mm everywhere is the field-grade floor, not a suggestion.
+   floor_t is 4.5 so the keyhole pockets reach the ecosystem-standard 3.5 mm
+   depth (the shared T-stud is 3.4 mm tall) while keeping a 1.0 mm ceiling. */
 wall_t  = 4.0;
-floor_t = 4.0;
+floor_t = 4.5;
 lid_t   = 4.0;
 r_in    = 3.0;       // cavity corner radius
 head_clear = 1.8;    // clearance above the camera stack
@@ -79,7 +81,7 @@ vent_x = -15.0;  vent_y = 6.0;
 /* [Keyhole mounts] — blind, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
 kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;
-kh_head_h = 3.0;  kh_face = 1.0;
+kh_head_h = 3.5;  kh_face = 1.0;    // 3.5 = catalog standard; fits the 3.4 mm T-stud
 
 /* [Lanyard] — paracord bore through the two -X lobes */
 lan_d = 4.5;  lan_z = 5.0;

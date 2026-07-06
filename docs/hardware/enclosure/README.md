@@ -65,6 +65,9 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_hammond_chassis.scad`](./canary_hammond_chassis.scad) | **Chassis plate** carrying any Canary stack inside the off-the-shelf Hammond IP66 box |
 | [`canary_mount_adapters.scad`](./canary_mount_adapters.scad) | **Mount adapters**: corner wedge, magnet plate, pole plate, drill template — all on the shared stud interface |
 | [`canary_field_case.scad`](./canary_field_case.scad) | **Field case**: GoPro-class rugged witness — O-ring sealed, no external ports, TPU impact boot; the only CER‑4 (IP67 + drop) intent design ([ratings](./field_ratings.md)) |
+| [`canary_dash_display.scad`](./canary_dash_display.scad) | **Dashboard display case** for the Waveshare 4.3" touch panel ([display research](../display_research.md) Option B): bezel frame, vented back with keyholes + 75 mm pair, desk stand |
+| [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) | **Vehicle mounts**: VHB dash plate (10° riser) + air-vent louver clip, on the shared stud interface — USB power only, no batteries on a hot dash |
+| [`canary_wear_clip.scad`](./canary_wear_clip.scad) | **Body-worn carry**: belt leaf-spring clip + MOLLE/PALS adapter for the field case (or any keyhole case) |
 
 **Workshop tools** (print/use alongside any build):
 
@@ -129,6 +132,9 @@ measurements welcome.
 | **Covert junction box** — compact WAP disguised as utility hardware; aperture hidden in a mock knockout | pair with the signage plate | <img src="./preview_dev_jbox.png" width="230"> | [`canary_jbox.scad`](./canary_jbox.scad) |
 | **Witness signage plate** — "presence sensing in use / no video stored", debossed, 3 parametric lines | check local signage rules | <img src="./preview_dev_sign.png" width="230"> | [`canary_sign.scad`](./canary_sign.scad) |
 | **Field case** — bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), six-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md) | 72 × 39 × 21 body; boot on ≈ 94 wide | <img src="./preview_dev_field.png" width="230"> | [`canary_field_case.scad`](./canary_field_case.scad) |
+| **Dashboard display case** — Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours | glass drops in, bezel lip 2.5 | <img src="./preview_dev_dash.png" width="230"> | [`canary_dash_display.scad`](./canary_dash_display.scad) |
+| **Vehicle mount kit** — VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors | set `stud_gap` per case (36 = field) | <img src="./preview_dev_veh.png" width="230"> | [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) |
+| **Body-worn clips** — belt leaf-spring clip (prints on its side: flex stays in-plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes | check local recording law; pair with the sign | <img src="./preview_dev_wear.png" width="230"> | [`canary_wear_clip.scad`](./canary_wear_clip.scad) |
 | **Universal fit coupon** — ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
 | **Bench bring-up fixture** — labelled stations for XIAO + BZ1/DLED1/SW1/SW2 with a sliding magnet carriage for repeatable tamper tests (companion to [bench_bringup.md](../bench_bringup.md)) | wire channels per §5 pin map | <img src="./preview_dev_fixture.png" width="230"> | [`canary_bench_fixture.scad`](./canary_bench_fixture.scad) |
 | **Fleet provisioning dock** — N numbered reclined bays for bare XIAOs beside a USB hub (v1 runbook fleet flashing) | `n_bays` parametric | <img src="./preview_dev_dock.png" width="230"> | [`canary_dock.scad`](./canary_dock.scad) |
@@ -246,9 +252,9 @@ size the mounting.
 
 # Canary WAP — Enclosure (v0.7)
 
-Parametric, printable case for the Canary WAP (XIAO ESP32-S3 Sense), referenced
-as a "future add" in the [Peripheral Build Plan](../canary_peripheral_build_plan.md)
-(§6.6). Authored in [OpenSCAD](https://openscad.org), and built as a **configurator**:
+Parametric, printable case for the Canary WAP (XIAO ESP32-S3 Sense), documented
+in §6.6 of the [Peripheral Build Plan](../canary_peripheral_build_plan.md).
+Authored in [OpenSCAD](https://openscad.org), and built as a **configurator**:
 tick the peripherals you fitted and the case rebuilds itself — adding the right
 bays, ports and cutouts and resizing to suit. Opt-in extras add a **TPU gasket +
 drip-edge lid** for splash resistance and **wall-mount keyholes/tabs**.
@@ -755,6 +761,7 @@ exits the bottom wall (`xiao_usb_z` — measure the seated stack).
 | `vm_l/vm_w`, `stack_sock_h`, `xiao_usb_z` | 44×36 / 11.5 / 4.0 | carrier + seated-stack dimensions — **measure** |
 | `lux_dx/dy`, `lp_dx/dy` | — | sensor/LED positions from the board centre |
 | `opt_seal`, `mount_style` | off / hinge | same systems as the Vision case |
+| `radar` | `"bha2"` | `"fda2"` = the MR60**FDA2** fall-detection sibling: same carrier family and radome physics, but **ceiling-mount it** (keyholes), 2.4–3.1 m, facing straight down over the fall zone — and re-verify `rad_dx/dy` on that carrier |
 
 > ⚠️ **v0.1 — verify before printing.** Carrier dimensions and the antenna
 > zone are nominal; measure your kit revision. Print the front first and
