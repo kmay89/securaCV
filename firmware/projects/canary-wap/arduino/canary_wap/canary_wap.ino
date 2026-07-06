@@ -9935,6 +9935,23 @@ void loop() {
     }
     g_ota_last_seen_state = ota_st;
 
+    // Alert once per discovered version: the daily check used to complete
+    // silently, so an available update was only visible if the operator
+    // happened to open Settings -> Device. One NOTICE per version lands it
+    // in the Records feed (and the dashboard banner reads the same status).
+    if (securacv_ota_update_available()) {
+      static char s_ota_alerted_version[SECURACV_OTA_VERSION_MAX] = "";
+      const securacv_ota_manifest_t* am = securacv_ota_get_manifest();
+      if (am != NULL &&
+          strncmp(s_ota_alerted_version, am->version,
+                  sizeof(s_ota_alerted_version)) != 0) {
+        snprintf(s_ota_alerted_version, sizeof(s_ota_alerted_version), "%s",
+                 am->version);
+        log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+                   "Firmware update available", am->version);
+      }
+    }
+
     // Push entity changes promptly (progress %, transitions) and refresh
     // the retained snapshot every 30 s.
     static uint32_t s_last_ota_pub_ms = 0;

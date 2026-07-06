@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### canary-wap: update-available alerting (health log + dashboard banner)
+
+The daily OTA check used to complete silently — a pending update was
+only visible if you happened to open Settings -> Device. Now the result
+surfaces on its own:
+
+- Firmware: when a check finds a newer signed release, the device logs a
+  once-per-version health NOTICE ("Firmware update available", with the
+  version as detail), so it lands in the health panel and anywhere else
+  health events flow. Re-checks of the same version stay quiet; a newer
+  version alerts again.
+- Dashboard: a banner appears at the top of every panel when an update
+  is pending, naming the version, with "View & install" (jumps to
+  Settings -> Device) and "Later" (silences exactly that version —
+  the next release banners again). Refreshes with the dashboard start
+  and every 30 minutes; visibility logic is a pure `WEBUI_LOGIC`
+  function with node tests.
+- canary-vision and canary-sense need nothing here: their control
+  surface is the Home Assistant MQTT update entity, and HA natively
+  badges pending updates for those.
+
 ### OTA: unified-update audit — partition pin, doc truth, first-release runbook
 
 Survey result across the three field firmwares (canary-wap on XIAO
