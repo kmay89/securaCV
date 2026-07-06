@@ -424,5 +424,28 @@ running its current image.
    version bump, press Install and watch the A/B swap + boot self-test
    confirm the new image, with automatic rollback if it doesn't.
 
-Key rotation: ship a release signed with the OLD key whose firmware
-carries the NEW public key, then switch the secret.
+### Key rotation (read before rotating — orphaning risk)
+
+The engine trusts a single key, and devices poll one static
+`releases/latest/...` URL. A naive rotation orphans stragglers: once a
+NEW-key release becomes `latest`, any device still running OLD-key
+firmware fails signature verification on every future check, forever.
+Rotate in phases:
+
+1. Ship a **transition release** signed with the OLD key whose firmware
+   carries the NEW public key. Do not rotate the secret yet.
+2. **Wait for fleet convergence** — devices check daily; with auto-update
+   enabled they converge within days. Verify (HA update entities /
+   dashboard) that every device you care about is on the transition
+   version before proceeding.
+3. Switch `OTA_SIGNING_KEY_PEM` to the new key and release normally.
+
+A device that slept through the window is NOT bricked, but it can no
+longer follow `latest`. Recovery without re-tethering: point it at the
+transition release's **versioned** URL via the manifest-URL override
+(`releases/download/fw-v<transition>/manifest-<variant>.json` — canary-wap:
+`POST /api/ota/config`; all variants: the NVS override) — it installs the
+OLD-key-signed transition image, learns the new key, then switch the URL
+back to `latest`. Engine-level co-signing (a manifest carrying signatures
+from both keys) would remove the convergence window entirely and is the
+designated future hardening if rotation becomes routine.
