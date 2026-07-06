@@ -658,6 +658,40 @@
 
 ---
 
+## Memory Budget
+
+### Internal-DRAM statics are the lever for the BLE budget — and nm lies about where they live
+
+- **What happened:** The FULL/S3 build could never start Bluetooth: ~40 KB
+  free internal RAM at the BLE gate against a ~96 KB need. Flash-side
+  compression (the gz web assets) couldn't help — the ELF showed 158 KB of
+  the 320 KB internal DRAM bank consumed by static globals before a single
+  heap allocation, and that, not flash, is the scarce resource.
+- **Root cause:** Multi-KB buffers (14 KB health-log ring, 11.5 KB
+  daily-summary scratch, 10 KB CSI amplitude history, 2 x 2.5 KB fleet-scan
+  buffers) were declared as file/function statics out of habit, parking
+  them permanently in internal DRAM even though every one of them is only
+  touched from task context and is PSRAM-safe. A second trap: auditing with
+  `nm` section letters counts flash as RAM — ESP-IDF marks `.flash.rodata`
+  writable, so `nm` reports flash-resident const tables (including the gz
+  web assets) as 'D'. Filter by the S3's DRAM address window
+  (0x3FC88000..0x3FD00000) instead.
+- **Fix:** `csi_mem.h::csi_large_calloc()` — PSRAM-first, internal-heap
+  fallback, NULL disables the owning feature (fail-safe; a C3 without
+  PSRAM just recreates the old footprint). The wave-1 buffers above became
+  pointers allocated at the top of `setup()` (before the first
+  `log_health`) or lazily on the owning task, reclaiming ~41 KB of
+  internal heap for the BLE budget. Rule of thumb going forward: any
+  task-context-only buffer over ~1 KB gets `csi_large_calloc`, not a
+  static array.
+- **Regression check:** The RAM Audit workflow
+  (`.github/workflows/ram_audit.yml`) builds the shipped FULL/S3 image,
+  prints the address-filtered DRAM symbol ranking, and FAILS if any
+  wave-1 buffer reappears in the internal-DRAM window at >= 1 KB.
+- **Date learned:** 2026-07
+
+---
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

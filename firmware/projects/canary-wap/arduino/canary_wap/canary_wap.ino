@@ -134,6 +134,7 @@
                                      // wifi_change_authorize()
 #include "config_logic.h"            // runtime device-config clamps (privacy floor)
 #include "peek_stream_logic.h"       // pure, host-tested camera-stream value math
+#include "csi_mem.h"                 // csi_large_calloc: PSRAM-first big buffers
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
@@ -859,7 +860,14 @@ struct HealthLogRingEntry {
   char detail[48];
 };
 static const size_t HEALTH_LOG_RING_SIZE = 100;
-static HealthLogRingEntry g_health_log_ring[HEALTH_LOG_RING_SIZE];
+// PSRAM-resident (csi_mem.h): 100 entries x 140 B = 14 KB, the single
+// biggest static claim on the internal DRAM bank the BLE stack competes
+// for, and only ever touched from task context. Allocated at the very top
+// of setup() (before the first log_health call); NULL means even the
+// internal fallback failed, in which case log_health degrades to
+// Serial-only and the ring stays empty (count never grows, so readers
+// never dereference it).
+static HealthLogRingEntry* g_health_log_ring = nullptr;
 static size_t g_health_log_ring_head = 0;
 static size_t g_health_log_ring_count = 0;
 
@@ -2090,7 +2098,16 @@ void log_health(LogLevel level, LogCategory category, const char* message, const
   // g_log_min_level is clamped to <= WARNING, so ERROR/CRITICAL are always
   // stored no matter the setting — a user can quiet noise, not silence faults.
   if (level < g_log_min_level) return;
-  
+
+  if (g_health_log_ring == nullptr) {
+    // Ring allocation failed at boot — degrade to Serial-only logging.
+    Serial.printf("[%s/%s] %s", log_level_name(level),
+                  log_category_name(category), message);
+    if (detail && detail[0]) Serial.printf(" | %s", detail);
+    Serial.println();
+    return;
+  }
+
   HealthLogRingEntry& entry = g_health_log_ring[g_health_log_ring_head];
   entry.seq = ++g_device.log_seq;
   entry.timestamp_ms = millis();
@@ -5718,11 +5735,25 @@ static bool              g_fleet_scan_have    = false;  // guarded by mux
 // worst-case (32-char name, 30-char hostname, TXT fields), so 8 × ~200 B +
 // wrapper ≈ 1.7 KB; 2560 leaves honest slack instead of truncating the whole
 // result at exactly the advertised capacity.
-static char              g_fleet_scan_cache[2560] = ""; // guarded by mux
+//
+// Cache + handler snapshot live in PSRAM (csi_mem.h), allocated in setup():
+// 2 x 2.5 KB of internal DRAM back for the BLE budget. Both are only
+// touched from task context (scan worker + the single httpd task). The
+// memcpys under the mux get a little slower through the PSRAM cache
+// (~2.5 KB, tens of microseconds, once per 10 s scan) — acceptable for a
+// spinlock that only guards tearing. NULL (allocation failed) makes the
+// endpoint answer "out of memory" instead of crashing.
+static const size_t      FLEET_SCAN_CACHE_SIZE = 2560;
+static char*             g_fleet_scan_cache = nullptr;  // guarded by mux
+static char*             g_fleet_scan_snap  = nullptr;  // httpd task only
 static portMUX_TYPE      g_fleet_scan_mux = portMUX_INITIALIZER_UNLOCKED;
 static const uint32_t    FLEET_SCAN_TTL_MS = 10000;
 
 static void fleet_scan_task(void*) {
+  /* Nested scope: vTaskDelete(NULL) never returns, so JsonDocument's
+   * destructor (and its heap pool) only runs if the scope closes first —
+   * without it every scan leaked the doc's pool. */
+  {
   JsonDocument doc;
   JsonArray arr = doc["canaries"].to<JsonArray>();
 
@@ -5740,22 +5771,24 @@ static void fleet_scan_task(void*) {
   }
 
   // Heap staging (not a function-local static): keeps the one-shot task's
-  // stack small and leaves nothing shared between task instances.
-  char* staging = (char*)malloc(sizeof(g_fleet_scan_cache));
-  if (staging) {
-    size_t written = serializeJson(doc, staging, sizeof(g_fleet_scan_cache));
-    if (written >= sizeof(g_fleet_scan_cache)) {
-      staging[sizeof(g_fleet_scan_cache) - 1] = '\0';
+  // stack small and leaves nothing shared between task instances. calloc,
+  // not malloc: the full buffer is memcpy'd into the cache below, and the
+  // bytes past serializeJson's NUL must be zeros, not heap garbage.
+  char* staging = (char*)calloc(1, FLEET_SCAN_CACHE_SIZE);
+  if (staging && g_fleet_scan_cache) {
+    size_t written = serializeJson(doc, staging, FLEET_SCAN_CACHE_SIZE);
+    if (written >= FLEET_SCAN_CACHE_SIZE) {
+      staging[FLEET_SCAN_CACHE_SIZE - 1] = '\0';
     }
 
     portENTER_CRITICAL(&g_fleet_scan_mux);
-    memcpy(g_fleet_scan_cache, staging, sizeof(g_fleet_scan_cache));
+    memcpy(g_fleet_scan_cache, staging, FLEET_SCAN_CACHE_SIZE);
     g_fleet_scan_done_ms = millis();
     g_fleet_scan_have    = true;
     portEXIT_CRITICAL(&g_fleet_scan_mux);
-
-    free(staging);
   }
+  free(staging);
+  }  /* scope closes: doc's destructor runs BEFORE the task dies */
 
   __atomic_store_n(&g_fleet_scan_busy, false, __ATOMIC_RELEASE);
   vTaskDelete(NULL);
@@ -5764,12 +5797,18 @@ static void fleet_scan_task(void*) {
 static esp_err_t handle_fleet_scan(httpd_req_t* req) {
   g_health.http_requests++;
 
+  if (!g_fleet_scan_cache || !g_fleet_scan_snap) {
+    return http_send_json(req, "{\"ok\":false,\"error\":\"out of memory\"}");
+  }
+
   // Snapshot the cache torn-free (writer runs on the scan worker task).
-  static char snap[sizeof(g_fleet_scan_cache)];
+  // g_fleet_scan_snap is httpd-task-only: esp_http_server runs handlers
+  // sequentially on one task, same reasoning as the old function-static.
+  char* snap = g_fleet_scan_snap;
   bool     have;
   uint32_t done_ms;
   portENTER_CRITICAL(&g_fleet_scan_mux);
-  memcpy(snap, g_fleet_scan_cache, sizeof(snap));
+  memcpy(snap, g_fleet_scan_cache, FLEET_SCAN_CACHE_SIZE);
   have    = g_fleet_scan_have;
   done_ms = g_fleet_scan_done_ms;
   portEXIT_CRITICAL(&g_fleet_scan_mux);
@@ -8815,6 +8854,19 @@ static esp_err_t handle_ota_config(httpd_req_t* req) {
 void setup() {
   Serial.begin(115200);
   serial_wait_for_cdc(SERIAL_CDC_WAIT_MS);
+
+  // ── PSRAM static diet (BEFORE anything can call log_health) ─────────────
+  // These used to be internal-DRAM statics: 14 KB health ring + 2 x 2.5 KB
+  // fleet buffers, part of the ~41 KB reclaimed for the BLE budget (see the
+  // RAM Audit workflow / docs). csi_large_calloc prefers PSRAM and falls
+  // back to internal heap; a NULL just disables the owning feature.
+  g_health_log_ring = (HealthLogRingEntry*)csi_large_calloc(
+      HEALTH_LOG_RING_SIZE * sizeof(HealthLogRingEntry));
+  g_fleet_scan_cache = (char*)csi_large_calloc(FLEET_SCAN_CACHE_SIZE);
+  g_fleet_scan_snap  = (char*)csi_large_calloc(FLEET_SCAN_CACHE_SIZE);
+  if (!g_health_log_ring) {
+    Serial.println("[--] health-log ring alloc failed — Serial-only logging");
+  }
 
   // ── Canary boot banner ──────────────────────────────────────────────────
   {
