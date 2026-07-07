@@ -3449,8 +3449,9 @@ pub struct Frame {
 
 // Re-exports for CLI/tools
 pub use break_glass::{
-    approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
-    BreakGlassToken, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
+    approvals_commitment, sign_approval, verify_approval, Approval, BreakGlass, BreakGlassOutcome,
+    BreakGlassReceipt, BreakGlassToken, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry, TrusteeId,
+    UnlockRequest,
 };
 
 // -------------------- Conformance Tests --------------------
@@ -3459,7 +3460,7 @@ pub use break_glass::{
 mod tests {
     use super::*;
     use crate::break_glass::{Approval, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest};
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
 
     fn setup_test_kernel() -> Result<(Kernel, KernelConfig)> {
         let cfg = KernelConfig {
@@ -3482,11 +3483,10 @@ mod tests {
         let bucket = TimeBucket::now(600).expect("time bucket");
         let request = UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
-        let approval = Approval::new(
+        let approval = Approval::signed(
             TrusteeId::new("alice"),
             request.request_hash(),
-            signature.to_vec(),
+            &signing_key,
         );
         let policy = QuorumPolicy::new(
             1,

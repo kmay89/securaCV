@@ -10,7 +10,7 @@
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::io::IsTerminal;
 use std::io::Write;
 
@@ -18,8 +18,9 @@ use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_
 use crate::{
     approvals_commitment, break_glass::BreakGlassTokenFile,
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, hash_entry,
-    verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
-    KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig, ZonePolicy,
+    verify_approval, verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome,
+    BreakGlassToken, Kernel, KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault,
+    VaultConfig, ZonePolicy,
 };
 
 #[path = "../ui.rs"]
@@ -299,9 +300,9 @@ fn cmd_approve(
         .map_err(|e| anyhow!("failed to read signing key {}: {}", signing_key_path, e))?;
     let signing_key_bytes = parse_hex32(signing_key_hex.trim())?;
     let signing_key = SigningKey::from_bytes(&signing_key_bytes);
-    let signature = signing_key.sign(&request_hash);
-
-    let approval = Approval::new(TrusteeId::new(trustee), request_hash, signature.to_vec());
+    // Domain-separated to DOMAIN_TRUSTEE_APPROVAL so this consent cannot be
+    // replayed as (or from) any other signature context.
+    let approval = Approval::signed(TrusteeId::new(trustee), request_hash, &signing_key);
     let json = serde_json::to_string_pretty(&approval)?;
     std::fs::write(output, json)?;
 
@@ -765,13 +766,18 @@ fn verify_approvals_against_policy(
             .iter()
             .find(|t| t.id.0 == approval.trustee.0)
             .ok_or_else(|| anyhow!("unknown trustee approval: {}", approval.trustee.0))?;
-        let verifying_key = VerifyingKey::from_bytes(&trustee.public_key)
+        // Distinct message for an unusable key; the signature check itself is
+        // domain-separated (verify_approval rejects a bare-hash or
+        // cross-context signature), matching how authorize now signs.
+        VerifyingKey::from_bytes(&trustee.public_key)
             .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
-        let signature = Signature::from_slice(&approval.signature)
-            .map_err(|_| anyhow!("invalid signature bytes for trustee {}", trustee.id.0))?;
-        verifying_key
-            .verify(&approval.request_hash, &signature)
-            .map_err(|_| anyhow!("invalid signature for trustee {}", trustee.id.0))?;
+        if !verify_approval(
+            &trustee.public_key,
+            &approval.request_hash,
+            &approval.signature,
+        ) {
+            return Err(anyhow!("invalid signature for trustee {}", trustee.id.0));
+        }
     }
     Ok(())
 }
@@ -947,12 +953,7 @@ mod tests {
         let bucket = TimeBucket::now_10min()?;
         let request = UnlockRequest::new("vault:1", ruleset_hash, "audit", bucket)?;
         let bob_key = SigningKey::from_bytes(&[2u8; 32]);
-        let signature = bob_key.sign(&request.request_hash());
-        let approval = Approval::new(
-            TrusteeId::new("bob"),
-            request.request_hash(),
-            signature.to_vec(),
-        );
+        let approval = Approval::signed(TrusteeId::new("bob"), request.request_hash(), &bob_key);
         let approval_path = temp_dir.join("bob.approval");
         std::fs::write(&approval_path, serde_json::to_string(&approval)?)?;
 
@@ -1012,11 +1013,10 @@ mod tests {
             size_s: 600,
         };
         let request = UnlockRequest::new("vault:1", cfg.ruleset_hash, "audit", bucket)?;
-        let signature = trustee_key.sign(&request.request_hash());
-        let approval = Approval::new(
+        let approval = Approval::signed(
             TrusteeId::new("alice"),
             request.request_hash(),
-            signature.to_vec(),
+            &trustee_key,
         );
         let approval_path = temp_dir.join("alice.approval");
         std::fs::write(&approval_path, serde_json::to_string(&approval)?)?;

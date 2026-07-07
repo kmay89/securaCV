@@ -30,6 +30,14 @@ pub const DOMAIN_EXPORT_RECEIPT: &str = "securacv:pwk:export-receipt:v2";
 pub const DOMAIN_BREAK_GLASS_TOKEN: &str = "securacv:pwk:break-glass-token:v2";
 pub const DOMAIN_KEY_ROTATION: &str = "securacv:pwk:device-key-rotation:v1";
 pub const DOMAIN_KEY_ROTATION_AUTHZ: &str = "securacv:pwk:device-key-rotation-authz:v1";
+// A trustee's quorum consent (Invariant V). Previously trustee approvals
+// were signed over the BARE request hash with no domain — the only kernel
+// signature context that bypassed domain separation — so any Ed25519
+// signature a trustee key produced over a bare 32-byte value shared an
+// undomained namespace with the legacy sealed-log verify path. This binds
+// a trustee's consent to its own context so a signature minted elsewhere
+// cannot stand in for an approval (and vice versa).
+pub const DOMAIN_TRUSTEE_APPROVAL: &str = "securacv:pwk:trustee-approval:v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {

@@ -460,7 +460,7 @@ fn run_inspections(
 mod tests {
     use super::*;
     use crate::verify_helpers::load_verifying_key;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
     use std::path::{Path, PathBuf};
     use witness_kernel::crypto::signatures::SignatureMode;
     use witness_kernel::{
@@ -686,11 +686,10 @@ mod tests {
         let bucket = TimeBucket::now(600)?;
         let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
         let signing_key = SigningKey::from_bytes(&[3u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
-        let approval = Approval::new(
+        let approval = Approval::signed(
             TrusteeId::new("alice"),
             request.request_hash(),
-            signature.to_vec(),
+            &signing_key,
         );
         let policy = QuorumPolicy::new(
             1,
@@ -753,12 +752,7 @@ mod tests {
         let bucket = TimeBucket::now(600)?;
         let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
         let bob_key = SigningKey::from_bytes(&[12u8; 32]);
-        let bob_signature = bob_key.sign(&request.request_hash());
-        let approval = Approval::new(
-            TrusteeId::new("bob"),
-            request.request_hash(),
-            bob_signature.to_vec(),
-        );
+        let approval = Approval::signed(TrusteeId::new("bob"), request.request_hash(), &bob_key);
         let (_, receipt) =
             BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
         let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
@@ -778,6 +772,64 @@ mod tests {
             |_, _| {},
         );
         assert!(result.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn log_verify_accepts_domain_separated_receipt() -> Result<()> {
+        // A normal authorize flow (registered trustee, domain-separated
+        // approval) must AUDIT as valid — this is the roundtrip the
+        // bare-hash receipt verifier would have failed. The other receipt
+        // tests here are negative (unknown/forged trustee), so without this
+        // the audit path's approval-signature check went uncovered.
+        let db = TempDb::new();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db.path().to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: TEST_SEED.to_string(),
+            zone_policy: ZonePolicy::default(),
+        })?;
+
+        let alice_key = SigningKey::from_bytes(&[11u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice_key.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+
+        let bucket = TimeBucket::now(600)?;
+        let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
+        let approval =
+            Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice_key);
+        let (_, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
+
+        let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
+        drop(kernel);
+
+        let conn = open_encrypted_test_db(db.path());
+        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+        let policy = verify::load_break_glass_policy(&conn)?;
+        let result = verify::verify_break_glass_receipts_with(
+            &conn,
+            &verifying_key,
+            policy.as_ref(),
+            SignatureMode::Compat,
+            None,
+            |_, _| {},
+        );
+        assert!(
+            result.is_ok(),
+            "domain-separated approval receipt must audit as valid: {result:?}"
+        );
 
         Ok(())
     }
@@ -808,12 +860,9 @@ mod tests {
         let bucket = TimeBucket::now(600)?;
         let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
         let wrong_key = SigningKey::from_bytes(&[22u8; 32]);
-        let bad_signature = wrong_key.sign(&request.request_hash());
-        let approval = Approval::new(
-            TrusteeId::new("alice"),
-            request.request_hash(),
-            bad_signature.to_vec(),
-        );
+        // Correct domain, wrong signer — must be rejected on verify.
+        let approval =
+            Approval::signed(TrusteeId::new("alice"), request.request_hash(), &wrong_key);
         let (_, receipt) =
             BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
         let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;

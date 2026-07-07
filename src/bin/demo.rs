@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, ValueEnum};
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -410,11 +410,10 @@ fn issue_break_glass_token(
         request.reason,
         request.bucket,
     )?;
-    let signature = ctx.trustee_key.sign(&request.request_hash());
-    let approval = Approval::new(
+    let approval = Approval::signed(
         ctx.trustee_id.clone(),
         request.request_hash(),
-        signature.to_vec(),
+        ctx.trustee_key,
     );
     let approvals = std::slice::from_ref(&approval);
     let (result, receipt) =

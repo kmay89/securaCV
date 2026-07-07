@@ -269,7 +269,7 @@ fn unseal<O: BreakGlassOps>(
 mod tests {
     use super::*;
     use crate::break_glass::{TrusteeEntry, TrusteeId};
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
 
     const RULESET: [u8; 32] = [7u8; 32];
 
@@ -337,9 +337,9 @@ mod tests {
     }
 
     fn approve_body(key: &SigningKey, trustee: &str, request_hash_hex: &str) -> Vec<u8> {
-        let rh = hex::decode(request_hash_hex).unwrap();
-        let sig = key.sign(&rh);
-        json!({ "trustee": trustee, "signature": hex::encode(sig.to_bytes()) })
+        let rh: [u8; 32] = hex::decode(request_hash_hex).unwrap().try_into().unwrap();
+        let sig = crate::break_glass::sign_approval(key, &rh);
+        json!({ "trustee": trustee, "signature": hex::encode(sig) })
             .to_string()
             .into_bytes()
     }

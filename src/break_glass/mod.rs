@@ -11,8 +11,9 @@ pub mod session;
 pub use backend::KernelVaultOps;
 pub use cli::run;
 pub use core::{
-    approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
-    BreakGlassToken, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
+    approvals_commitment, sign_approval, verify_approval, Approval, BreakGlass, BreakGlassOutcome,
+    BreakGlassReceipt, BreakGlassToken, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry, TrusteeId,
+    UnlockRequest,
 };
 pub use http::{handle_break_glass, BreakGlassOps, HttpReply};
 pub use server::{BreakGlassServer, BreakGlassServerConfig};

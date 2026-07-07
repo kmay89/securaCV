@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use rusqlite::{Connection, Row};
 use serde::Serialize;
 
@@ -9,8 +9,8 @@ use crate::crypto::signatures::{
     DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::{
-    approvals_commitment, hash_entry, verify_entry_signature, Approval, BreakGlassOutcome,
-    BreakGlassReceipt, QuorumPolicy, SealedLogRecord,
+    approvals_commitment, hash_entry, verify_approval, verify_entry_signature, Approval,
+    BreakGlassOutcome, BreakGlassReceipt, QuorumPolicy, SealedLogRecord,
 };
 
 /// Which tamper-evident structure a verification failure occurred in.
@@ -805,13 +805,18 @@ fn verify_approvals_against_policy(
             .iter()
             .find(|t| t.id.0 == approval.trustee.0)
             .ok_or_else(|| anyhow!("unknown trustee approval: {}", approval.trustee.0))?;
-        let verifying_key = VerifyingKey::from_bytes(&trustee.public_key)
+        // Distinct message for an unusable key; the signature check itself is
+        // domain-separated (verify_approval rejects a bare-hash or
+        // cross-context signature), matching how authorize now signs.
+        VerifyingKey::from_bytes(&trustee.public_key)
             .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
-        let signature = Signature::from_slice(&approval.signature)
-            .map_err(|_| anyhow!("invalid signature bytes for trustee {}", trustee.id.0))?;
-        verifying_key
-            .verify(&approval.request_hash, &signature)
-            .map_err(|_| anyhow!("invalid signature for trustee {}", trustee.id.0))?;
+        if !verify_approval(
+            &trustee.public_key,
+            &approval.request_hash,
+            &approval.signature,
+        ) {
+            return Err(anyhow!("invalid signature for trustee {}", trustee.id.0));
+        }
     }
     Ok(())
 }

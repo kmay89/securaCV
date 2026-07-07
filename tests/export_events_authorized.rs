@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use witness_kernel::{
     verify_export_bundle, Approval, BreakGlass, BreakGlassTokenFile, CandidateEvent, EventType,
     ExportAuthMode, ExportOptions, ExportReceipt, ExportWindow, InferenceBackend, Kernel,
@@ -46,10 +46,10 @@ fn authorize_export(
         "export_events",
         bucket,
     )?;
-    let approval = Approval::new(
+    let approval = Approval::signed(
         TrusteeId::new("alice"),
         request.request_hash(),
-        signing_key.sign(&request.request_hash()).to_vec(),
+        &signing_key,
     );
     let policy = QuorumPolicy::new(
         1,

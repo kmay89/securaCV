@@ -152,7 +152,7 @@ This second audit pass focused on **subtle side-channel attacks, OOM/DoS vectors
 
 ### Kernel Cryptographic Correctness
 
-- **Ed25519 signatures**: Domain-separated via `DOMAIN_*` constants (sealed log, break-glass receipt, export receipt, break-glass token). Prevents cross-domain signature confusion attacks.
+- **Ed25519 signatures**: Domain-separated via `DOMAIN_*` constants (sealed log, break-glass receipt, export receipt, break-glass token, trustee approval, device-key rotation). Prevents cross-domain signature confusion attacks. (Trustee approvals were previously signed over the bare request hash with no domain separation — the one context that bypassed it; they are now bound to `DOMAIN_TRUSTEE_APPROVAL` so a signature minted for another purpose cannot stand in for a trustee's consent.)
 - **Signature verification**: Uses `ed25519-dalek` `Verifier::verify()` — no custom verification code.
 - **Post-quantum hybrid**: Optional Dilithium2 signatures stored alongside Ed25519, enabling future migration without breaking existing chains.
 - **Vault encryption**: ChaCha20-Poly1305 with random nonce per envelope. V2 format includes length-prefixed AAD to prevent ambiguity. V1 AAD concatenation is documented and preserved for backwards compatibility.
