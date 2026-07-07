@@ -41,7 +41,14 @@ pub const DOMAIN_TRUSTEE_APPROVAL: &str = "securacv:pwk:trustee-approval:v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureMode {
+    /// Domain-separated Ed25519 required; the post-quantum signature is
+    /// verified only when present. (Historically this also accepted
+    /// pre-domain-separation "bare hash" Ed25519 signatures; that legacy
+    /// fallback has been retired, so Compat and Strict now differ ONLY in
+    /// whether the PQ signature is mandatory.)
     Compat,
+    /// Domain-separated Ed25519 AND a valid post-quantum signature both
+    /// required.
     Strict,
 }
 
@@ -219,13 +226,15 @@ pub fn verify_with_domain(
     pq_public_key: Option<&PqPublicKey>,
 ) -> Result<()> {
     let signing_hash = domain_separated_hash(domain, entry_hash);
+    // Ed25519 verification always requires domain separation. The
+    // pre-domain-separation "bare entry-hash" fallback that Compat used to
+    // accept has been retired — no v1 (pre-domain-separation) data is
+    // deployed, and accepting an undomained signature was a
+    // cross-context-confusion surface (the same class the trustee-approval
+    // domain fix closed). Compat now differs from Strict ONLY in that the
+    // post-quantum signature is optional; both require a domain-separated
+    // Ed25519 signature.
     let ed_result = verify_ed25519(verifying_key, &signing_hash, signatures);
-    let ed_result = match (mode, ed_result) {
-        (SignatureMode::Compat, Err(err)) => {
-            verify_ed25519_legacy(verifying_key, entry_hash, signatures).map_err(|_| err)
-        }
-        (_, result) => result,
-    };
     let pq_result = verify_pq_signature(&signing_hash, signatures, pq_public_key);
 
     match mode {
@@ -407,18 +416,6 @@ fn verify_ed25519(
         .map_err(|e| anyhow!("signature verification failed: {}", e))
 }
 
-fn verify_ed25519_legacy(
-    verifying_key: &VerifyingKey,
-    entry_hash: &[u8; 32],
-    signatures: &SignatureSet,
-) -> Result<()> {
-    let signature_bytes = signatures.ed25519_signature_array()?;
-    let sig = ed25519_dalek::Signature::from_bytes(&signature_bytes);
-    verifying_key
-        .verify(entry_hash, &sig)
-        .map_err(|e| anyhow!("legacy signature verification failed: {}", e))
-}
-
 fn sign_pq(signing_hash: &[u8; 32], keys: &SignatureKeys<'_>) -> Result<Option<PqSignature>> {
     #[cfg(feature = "pqc-signatures")]
     {
@@ -515,6 +512,44 @@ mod tests {
 
         // Wrong length is rejected without panicking.
         assert!(verify_rotation_attestation(&new_vk, &old, &new, &att[..32]).is_err());
+    }
+
+    #[test]
+    fn compat_mode_rejects_bare_hash_signature() {
+        // A signature over the BARE entry hash (the pre-domain-separation
+        // construction the retired legacy fallback used to accept) must now
+        // be rejected even under Compat — Ed25519 verification always
+        // requires domain separation.
+        use ed25519_dalek::Signer;
+        let (signing_key, entry_hash) = test_keys();
+        let bare_sig = signing_key.sign(&entry_hash).to_bytes();
+        let sig_set = SignatureSet::new(bare_sig, None);
+
+        let result = verify_with_domain(
+            DOMAIN_SEALED_LOG_ENTRY,
+            &signing_key.verifying_key(),
+            &entry_hash,
+            &sig_set,
+            SignatureMode::Compat,
+            None,
+        );
+        assert!(
+            result.is_err(),
+            "Compat must reject a bare-hash (undomained) Ed25519 signature"
+        );
+
+        // And the correctly domain-separated signature still verifies.
+        let keys = SignatureKeys::new(&signing_key);
+        let good = sign_with_domain(DOMAIN_SEALED_LOG_ENTRY, &keys, &entry_hash).unwrap();
+        assert!(verify_with_domain(
+            DOMAIN_SEALED_LOG_ENTRY,
+            &signing_key.verifying_key(),
+            &entry_hash,
+            &good,
+            SignatureMode::Compat,
+            None,
+        )
+        .is_ok());
     }
 
     #[test]

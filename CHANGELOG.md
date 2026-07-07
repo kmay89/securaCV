@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### kernel: retire the legacy bare-hash signature fallback
+
+`SignatureMode::Compat` used to fall back to verifying Ed25519 signatures
+over the **bare entry hash** (the pre-domain-separation "v1" construction)
+when the domain-separated check failed. That fallback shared an undomained
+signature namespace with everything else — the same cross-context surface
+the trustee-approval domain fix just closed — and there is no deployed
+pre-domain-separation data that needs it.
+
+- Removed the bare-hash fallback and the now-dead `verify_ed25519_legacy`.
+  **All** Ed25519 verification now requires domain separation, in every
+  mode; an undomained signature no longer verifies anywhere. New test
+  `compat_mode_rejects_bare_hash_signature` pins it.
+- **`Compat` now differs from `Strict` only in that the post-quantum
+  signature is optional** — both require a domain-separated Ed25519
+  signature. PQ posture is deliberately unchanged: this is *not* the
+  "make PQ mandatory" change (that would force the `pqc-signatures`
+  feature always-on and every signer to carry a PQ key — a separate PQC
+  rollout decision), so `--no-default-features` builds still verify.
+- No fixtures needed regeneration: the committed "legacy" envelope
+  fixture is domain-separated (its "legacy" is the absent `auth_mode`
+  receipt field, not a bare-hash signature) and still verifies.
+  `docs/security/SECURITY-AUDIT.md` updated to state domain separation is
+  now mandatory for all signature contexts.
+
 ### kernel: domain-separate trustee approvals (BREAKING for `.approval` artifacts)
 
 Trustee quorum approvals (Invariant V) were the **one** kernel signature
