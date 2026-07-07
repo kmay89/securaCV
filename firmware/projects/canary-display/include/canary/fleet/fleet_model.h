@@ -74,6 +74,10 @@ struct Witness {
   Badge    badge = Badge::Unknown;
   uint32_t chain_length = 0;
   char     fw[16] = {0};
+  // Raw retained chain payload, verbatim — the substrate of Proof-on-Glass
+  // (trailblazer spec §1): the QR reproduces exactly what the witness
+  // published, so any third party can verify it independently.
+  char     chain_raw[360] = {0};
 };
 
 // One row of the glance event log (newest first via event_at(0)).
@@ -178,7 +182,8 @@ class FleetModel {
       push_event(id, kind && kind[0] ? kind : "tamper", Sev::Tamper, false, now);
   }
 
-  void on_chain(const char* id, uint32_t length, Badge verdict, uint32_t now) {
+  void on_chain(const char* id, uint32_t length, Badge verdict, uint32_t now,
+                const char* raw = nullptr, size_t raw_len = 0) {
     Witness* w = upsert(id);
     if (!w) return;
     w->last_seen_ms = now;
@@ -186,6 +191,9 @@ class FleetModel {
     const Badge was = w->badge;
     w->chain_length = length;
     w->badge = verdict;
+    if (raw && raw_len > 0 && raw_len < sizeof(w->chain_raw)) {
+      memcpy_str(w->chain_raw, raw, raw_len);
+    }
     // Edge-only, same retained-replay reasoning as on_tamper.
     if (verdict == Badge::Failed && was != Badge::Failed) {
       push_event(id, "chain_verify_failed", Sev::Alert, false, now);
@@ -313,6 +321,11 @@ class FleetModel {
 
  private:
   static Sev worst_of(Sev a, Sev b) { return (uint8_t)a >= (uint8_t)b ? a : b; }
+
+  static void memcpy_str(char* dst, const char* src, size_t n) {
+    for (size_t i = 0; i < n; i++) dst[i] = src[i];
+    dst[n] = '\0';
+  }
 
   static void copy_str(char* dst, size_t cap, const char* src) {
     if (!dst || cap == 0) return;

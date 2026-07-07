@@ -57,6 +57,7 @@
 #include "canary/net/discovery.h"
 #endif
 #include "canary/hal/display.h"
+#include "canary/hal/chime.h"
 
 #include <lvgl.h>
 #include "canary/ui/lvgl_port.h"
@@ -94,9 +95,13 @@ static uint32_t g_last_diag_ms = 0;
 static bool     g_touch_down = false;
 static uint32_t g_touch_down_ms = 0;
 static bool     g_longpress_fired = false;
+static int16_t  g_touch_x = 0;      // press coordinates (dash tap routing)
+static int16_t  g_touch_y = 0;
 
-// Wake window: any touch brings full brightness for CD_TOUCH_WAKE_MS.
+// Wake window: touch — or a fresh Notice+ fleet event (presence-wake,
+// spec §3) — promotes the illumination ladder to Active for a while.
 static uint32_t g_wake_until_ms = 0;
+static uint32_t g_last_wake_event_ms = 0;
 
 #ifdef CD_FLAVOR_WATCH
 static int      g_page = 0;
@@ -213,6 +218,9 @@ static bool in_quiet_hours() {
 // floor: the one thing a bedside security glance must never do is sleep
 // through a tamper. Touch opens a full-brightness wake window.
 
+// Illumination ladder (spec §3): Active (touch / fresh event / unacked
+// alert) > Ambient (idle daytime) > Night (quiet hours floor). G5 stands:
+// nothing but an unacked Alert/Tamper ever overrides the Night floor.
 static void apply_brightness(uint32_t now, bool night) {
   using canary::fleet::Sev;
   auto& fleet = canary::fleet::the_fleet();
@@ -220,8 +228,9 @@ static void apply_brightness(uint32_t now, bool night) {
   const bool urgent = fleet.worst(now) >= Sev::Alert && !fleet.ack_active(now);
 
   uint8_t level;
-  if (wake || urgent || !night) level = CD_BRIGHT_DAY;
-  else                          level = CD_BRIGHT_NIGHT;
+  if (wake || urgent)  level = CD_BRIGHT_DAY;
+  else if (!night)     level = CD_BRIGHT_AMBIENT;
+  else                 level = CD_BRIGHT_NIGHT;
   canary::hal::backlight_set(level);
 }
 
@@ -246,6 +255,8 @@ static void handle_touch(uint32_t now) {
   if (s.touched && !g_touch_down) {
     g_touch_down = true;
     g_touch_down_ms = now;
+    g_touch_x = s.x;
+    g_touch_y = s.y;
     g_longpress_fired = false;
     ui_ack_hold(true);   // sweep starts; a tap only ever shows a sliver
     return;
@@ -257,6 +268,12 @@ static void handle_touch(uint32_t now) {
     g_longpress_fired = true;
     ui_ack_hold(false);
     fleet.acknowledge(now);
+#if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
+    // Household ack-sync (spec §2): tell the sibling displays — only with
+    // a real clock (no guessed timestamps on the wire).
+    const time_t epoch = time(nullptr);
+    if (epoch > 1700000000) canary::net::publish_fleet_ack((uint32_t)epoch);
+#endif
     g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
     boot_line("[input] long-press -> acknowledge");
     return;
@@ -274,8 +291,13 @@ static void handle_touch(uint32_t now) {
       g_page = (g_page + 1) % canary::ui::glance_page_count();
       g_page_touched_ms = now;
     }
-#else
-    (void)was_awake;
+#endif
+#ifdef CD_FLAVOR_DASH
+    // Proof-on-Glass (spec §1): a lit tap on a witness card opens its
+    // proof sheet; a tap on an open sheet closes it.
+    if (was_awake && g_display_ok) {
+      canary::ui::dash_ui_handle_tap(g_touch_x, g_touch_y);
+    }
 #endif
     fleet.mark_dirty();
   }
@@ -380,6 +402,12 @@ void setup() {
   // Trust store before the network: retained chain payloads replay the
   // moment the broker accepts our subscriptions.
   canary::trust::init();
+
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+  // Chime engine (spec §5) — only ever initialized when the piezo pad is
+  // populated; the engine TU itself is always compiled for CI coverage.
+  canary::hal::chime_init(BUZZER_PIN);
+#endif
 
   // Glass before the network too — a display that boots into a visible
   // "listening" state beats a black disc while WiFi retries.
@@ -492,6 +520,52 @@ void loop() {
   //    network (staleness deadlines run locally) ──
   handle_touch(now);
   fleet.tick(now);
+
+#if defined(FEATURE_PRESENCE_WAKE) && FEATURE_PRESENCE_WAKE
+  // Presence-wake (spec §3): a fresh Notice+ event promotes Ambient to
+  // Active — the hallway canary lights the display before you reach it.
+  // Never during quiet hours below Alert (G5); apply_brightness enforces
+  // the Night floor regardless of this wake window.
+  {
+    const auto* e = fleet.event_at(0);
+    if (e && !in_quiet_hours() &&
+        e->sev >= canary::fleet::Sev::Notice &&
+        (int32_t)(now - e->at_ms) < (int32_t)CD_PRESENCE_WAKE_MS &&
+        e->at_ms != g_last_wake_event_ms) {
+      g_last_wake_event_ms = e->at_ms;
+      g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+    }
+  }
+#endif
+
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+  // Sound identity (spec §5): tier grammar on severity transitions.
+  {
+    using canary::fleet::Sev;
+    static Sev s_prev_worst = Sev::Ok;
+    static uint32_t s_last_voice_ms = 0;
+    const Sev worst = fleet.worst(now);
+    const bool acked = fleet.ack_active(now);
+    const bool night = in_quiet_hours();
+    if (worst >= Sev::Alert && !acked) {
+      // Tier 1 is the one sound allowed to break quiet hours; it re-voices
+      // until acknowledged.
+      if (s_prev_worst < Sev::Alert ||
+          (int32_t)(now - s_last_voice_ms) >= (int32_t)CD_CHIME_REVOICE_MS) {
+        canary::hal::chime_play(canary::hal::Chime::Tier1Alarm);
+        s_last_voice_ms = now;
+      }
+    } else if (worst == Sev::Warn && s_prev_worst < Sev::Warn && !night) {
+      canary::hal::chime_play(canary::hal::Chime::Tier2Warn);
+      s_last_voice_ms = now;
+    } else if (worst <= Sev::Notice && s_prev_worst >= Sev::Warn && !night) {
+      // Resolution deserves a sound — falling tone, exactly once.
+      canary::hal::chime_play(canary::hal::Chime::AllClear);
+    }
+    s_prev_worst = worst;
+  }
+  canary::hal::chime_loop(now);
+#endif
 
   // ── Network supervision ──
   canary::net::wifi_loop(now);

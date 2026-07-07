@@ -172,6 +172,7 @@ sentence-cased fallback for anything new.
 | Page fade | 220 ms ease-out | orientation between pages |
 | Alert breathing (arc/card glow) | 2 s in-out, repeat | the one thing allowed to move at rest — and only while an Alert/Tamper is unacked |
 | Hold-to-ack ring | 900 ms linear sweep (= long-press) | makes acknowledge deliberate; a quick tap flashes a sliver of the ring — a silent hint that holding does more |
+| The heartbeat | 1.6 s swell, once per minute, day only | the sanctioned 4th motion — fires **only** when every witness is quiet AND every chain verified (its absence is information); [trailblazer spec §4](./display_trailblazer_spec.md) |
 | Everything else | none | calm technology: a wall object at rest is still |
 
 **Iconography.** LVGL's built-in symbol set only (✓/✕/wifi/battery) — no

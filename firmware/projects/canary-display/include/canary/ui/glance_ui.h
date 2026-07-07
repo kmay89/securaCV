@@ -6,6 +6,7 @@
 //   0            halo — one smooth arc per witness, hero state center
 //   1..count     per-witness detail
 //   count+1      recent events
+//   count+2      proof — QR of the most urgent witness's signed chain head
 // Input policy lives in main.cpp (tap = wake/next page, long-press = ack);
 // this module renders, animates, and nothing else.
 

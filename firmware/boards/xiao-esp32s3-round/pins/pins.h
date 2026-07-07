@@ -89,6 +89,11 @@
 #define LED_STATUS_PIN          21
 #define LED_ACTIVE_HIGH         0
 
+// Optional passive piezo (severity-tiered chime — display_trailblazer_spec
+// §5). D0/GPIO1 is unused by the Round Display stack; pad is unpopulated
+// on stock builds (FEATURE_CHIME=0 until fitted). VERIFY free at bench.
+#define BUZZER_PIN              1
+
 // BOOT button (GPIO0, active LOW) — used for factory-reset long-press.
 #define BOOT_BUTTON_PIN         0
 #define BOOT_BUTTON_ACTIVE      LOW

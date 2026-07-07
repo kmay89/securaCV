@@ -39,6 +39,10 @@ static inline Topics build_topics(const char* device_id) {
 //   chain         retained signed chain head {v,length,latest_hash,fp,sig}
 //   state         retained per-variant snapshot (presence etc.)
 struct FleetSubs {
+  // Household ack-sync (trailblazer spec §2): one shared retained topic —
+  // acknowledge on any display, every display agrees.
+  static constexpr const char* FLEET_ACK    = "securacv/fleet/ack";
+
   static constexpr const char* STATUS       = "securacv/+/status";
   static constexpr const char* AVAILABILITY = "securacv/+/availability";
   static constexpr const char* HEALTH       = "securacv/+/health";

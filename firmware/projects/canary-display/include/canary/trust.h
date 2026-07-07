@@ -38,4 +38,8 @@ canary::fleet::Badge evaluate_chain(const char* device_id,
 // Number of pinned devices (diagnostics).
 int pinned_count();
 
+// Proof-on-Glass: the pinned pubkey (64 hex + NUL) for a device, so the
+// proof QR can carry the key the verifier checks against. False = no pin.
+bool pinned_pubkey_hex(const char* device_id, char out[65]);
+
 }  // namespace canary::trust

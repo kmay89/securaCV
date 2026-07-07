@@ -61,6 +61,19 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   (LWT `offline`), a retained health row, and the shared signed pull-OTA
   update entity. It publishes no events and pins no keys of its own.
 
+- **Trailblazer wave 1** ([spec](../../../docs/hardware/display_trailblazer_spec.md)):
+  **Proof-on-Glass** — tap a witness card (dash) or reach the Proof page
+  (watch) for a QR of the signed chain head + pinned pubkey, independently
+  verifiable by any phone, no cloud; **household ack-sync** — acknowledge
+  on one display, every display agrees (`securacv/fleet/ack`, retained,
+  epoch-anchored); **illumination ladder + presence-wake** — Active /
+  Ambient / Night, and a hallway presence event lights the watch before
+  you reach it (G5 intact: only unacked Alert/Tamper breaks the Night
+  floor); **the heartbeat** — a once-a-minute swell that fires only when
+  everything is reachable *and* verified; **chime engine** — the full
+  severity-tiered sound grammar, compiled and ready, `FEATURE_CHIME=0`
+  until the piezo pad (`BUZZER_PIN`) is populated at bench.
+
 ## Build
 
 ```bash

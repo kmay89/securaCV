@@ -15,6 +15,7 @@
 
 #include "canary/ui/glance_ui.h"
 #include "canary/ui/theme.h"
+#include "canary/trust.h"
 
 namespace canary::ui {
 
@@ -53,6 +54,16 @@ lv_obj_t* s_pg_ev = nullptr;
 lv_obj_t* s_ev_title = nullptr;
 lv_obj_t* s_ev_name[EV_ROWS] = {nullptr};
 lv_obj_t* s_ev_meta[EV_ROWS] = {nullptr};
+
+// Proof page (trailblazer spec §1)
+lv_obj_t* s_pg_proof = nullptr;
+lv_obj_t* s_proof_card = nullptr;   // white ground behind the QR
+lv_obj_t* s_proof_qr = nullptr;
+lv_obj_t* s_proof_who = nullptr;
+lv_obj_t* s_proof_cap = nullptr;
+
+// Heartbeat ring (spec §4) — the sanctioned 4th motion
+lv_obj_t* s_beat_ring = nullptr;
 
 // Ack hold ring (overlay, all pages)
 lv_obj_t* s_ack_ring = nullptr;
@@ -136,7 +147,7 @@ void show_page(lv_obj_t* page) {
   // ticking against a hidden object (review catch: rationed motion includes
   // rationed CPU).
   if (page != s_pg_halo) breathe(nullptr, false);
-  lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev};
+  lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev, s_pg_proof};
   for (lv_obj_t* p : pages) {
     if (p == page) {
       lv_obj_clear_flag(p, LV_OBJ_FLAG_HIDDEN);
@@ -328,16 +339,76 @@ void update_events(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   }
 }
 
+// Proof page: QR of the most urgent witness's signed chain head — the
+// exact bytes it published, plus the pinned pubkey (spec §1). Dark-on-
+// light on purpose: scanners want it, and scanning implies the user is
+// awake and active.
+void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
+  (void)st;
+  const int n = fleet.count();
+  const Witness* pick = nullptr;
+  for (int i = 0; i < n; i++) {
+    const Witness* w = fleet.at(i);
+    if (w && fleet.witness_sev(*w, now) >= Sev::Alert) { pick = w; break; }
+  }
+  if (!pick && n > 0) pick = fleet.at(0);
+
+  char pk[65];
+  if (!pick || !pick->chain_raw[0] ||
+      !canary::trust::pinned_pubkey_hex(pick->id, pk)) {
+    lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_proof_who, pick ? pick->id : "");
+    lv_label_set_text(s_proof_cap,
+                      pick ? "No signed chain to prove yet"
+                           : "No witnesses yet");
+    return;
+  }
+
+  static char body[640];
+  const int len = snprintf(body, sizeof(body),
+                           "{\"v\":1,\"t\":\"securacv/%s/chain\",\"pk\":\"%s\","
+                           "\"p\":%s}",
+                           pick->id, pk, pick->chain_raw);
+  if (len <= 0 || (size_t)len >= sizeof(body)) {
+    lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_proof_cap, "Proof payload too large");
+    return;
+  }
+  lv_obj_clear_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
+  lv_qrcode_update(s_proof_qr, body, (uint32_t)len);
+  lv_label_set_text_fmt(s_proof_who, "%.18s", pick->id);
+  lv_label_set_text(s_proof_cap, "Scan to verify · no cloud");
+}
+
 void ack_cb(void* var, int32_t v) {
   (void)var;
   lv_arc_set_bg_angles(s_ack_ring, 0, (uint16_t)v);
+}
+
+void beat_cb(void* var, int32_t v) {
+  lv_obj_set_style_arc_opa((lv_obj_t*)var, (lv_opa_t)v, LV_PART_MAIN);
+}
+
+// The heartbeat (spec §4): one soft swell, cryptographically earned — only
+// fired by glance_ui_update when everything is reachable AND verified.
+void heartbeat_pulse() {
+  if (!s_beat_ring) return;
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, s_beat_ring);
+  lv_anim_set_exec_cb(&a, beat_cb);
+  lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_30);
+  lv_anim_set_time(&a, 800);
+  lv_anim_set_playback_time(&a, 800);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
 }
 
 }  // namespace
 
 // ── Public API ───────────────────────────────────────────────────────────
 
-int glance_page_count() { return 2 + the_fleet().count(); }
+int glance_page_count() { return 3 + the_fleet().count(); }
 
 void glance_ui_create() {
   s_scr = lv_scr_act();
@@ -391,6 +462,30 @@ void glance_ui_create() {
     lv_obj_align(s_ev_meta[i], LV_ALIGN_TOP_MID, 0, 74 + i * 32);
   }
 
+  // ── Proof page ──
+  s_pg_proof = mk_page(s_scr);
+  s_proof_who = mk_label(s_pg_proof, font_caption(), col_muted());
+  lv_obj_align(s_proof_who, LV_ALIGN_TOP_MID, 0, 26);
+  s_proof_card = lv_obj_create(s_pg_proof);
+  lv_obj_set_size(s_proof_card, 156, 156);
+  lv_obj_align(s_proof_card, LV_ALIGN_CENTER, 0, 2);
+  lv_obj_set_style_bg_color(s_proof_card, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(s_proof_card, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(s_proof_card, 10, 0);
+  lv_obj_set_style_border_width(s_proof_card, 0, 0);
+  lv_obj_set_style_pad_all(s_proof_card, 8, 0);
+  lv_obj_clear_flag(s_proof_card, LV_OBJ_FLAG_SCROLLABLE);
+  s_proof_qr = lv_qrcode_create(s_proof_card, 140, lv_color_black(),
+                                lv_color_white());
+  lv_obj_center(s_proof_qr);
+  s_proof_cap = mk_label(s_pg_proof, font_caption(), col_muted());
+  lv_obj_align(s_proof_cap, LV_ALIGN_BOTTOM_MID, 0, -26);
+
+  // ── Heartbeat ring (starts invisible; pulses only when earned) ──
+  s_beat_ring = mk_ring(s_scr, 238, 2);
+  lv_obj_set_style_arc_color(s_beat_ring, col_ok(), LV_PART_MAIN);
+  lv_obj_set_style_arc_opa(s_beat_ring, LV_OPA_TRANSP, LV_PART_MAIN);
+
   // ── Ack hold ring (overlay) ──
   s_ack_ring = mk_ring(s_scr, 220, 4);
   lv_obj_set_style_arc_color(s_ack_ring, col_text(), LV_PART_MAIN);
@@ -398,26 +493,40 @@ void glance_ui_create() {
 
   lv_obj_add_flag(s_pg_dev, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(s_pg_ev, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(s_pg_proof, LV_OBJ_FLAG_HIDDEN);
   s_shown_page = 0;
 }
 
 void glance_ui_update(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   if (!s_scr) return;
   const int devices = fleet.count();
-  const int pages = 2 + devices;
+  const int pages = 3 + devices;
   int page = st.page;
   if (page >= pages || page < 0) page = 0;
 
   if (page != s_shown_page) {
     s_shown_page = page;
-    if (page == 0)            show_page(s_pg_halo);
-    else if (page <= devices) show_page(s_pg_dev);
-    else                      show_page(s_pg_ev);
+    if (page == 0)                show_page(s_pg_halo);
+    else if (page <= devices)     show_page(s_pg_dev);
+    else if (page == devices + 1) show_page(s_pg_ev);
+    else                          show_page(s_pg_proof);
   }
 
-  if (page == 0)            update_halo(fleet, now, st);
-  else if (page <= devices) update_device(fleet, now, st, page - 1);
-  else                      update_events(fleet, now, st);
+  if (page == 0)                update_halo(fleet, now, st);
+  else if (page <= devices)     update_device(fleet, now, st, page - 1);
+  else if (page == devices + 1) update_events(fleet, now, st);
+  else                          update_proof(fleet, now, st);
+
+  // The heartbeat: earned, daytime, once a minute (spec §4). Absence is
+  // information — any lesser state and the ring stays dark.
+  static uint32_t s_last_beat_ms = 0;
+  if (!st.night && page == 0 && fleet.count() > 0 &&
+      fleet.worst(now) <= Sev::Notice && fleet.all_verified() &&
+      st.wifi_ok && st.mqtt_ok &&
+      (int32_t)(now - s_last_beat_ms) >= (int32_t)CD_HEARTBEAT_UI_MS) {
+    s_last_beat_ms = now;
+    heartbeat_pulse();
+  }
 }
 
 void glance_ui_ack_hold(bool active) {

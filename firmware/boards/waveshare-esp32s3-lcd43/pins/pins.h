@@ -128,6 +128,11 @@
 #define BOOT_BUTTON_PIN         -1
 #define BOOT_BUTTON_ACTIVE      LOW
 
+// Optional passive piezo (severity-tiered chime — display_trailblazer_spec
+// §5). GPIO6 is not consumed by the RGB/touch/expander nets per the wiki
+// pinout; unpopulated on stock builds (FEATURE_CHIME=0). VERIFY at bench.
+#define BUZZER_PIN              6
+
 // ============================================================================
 // BOARD CAPABILITIES
 // ============================================================================
