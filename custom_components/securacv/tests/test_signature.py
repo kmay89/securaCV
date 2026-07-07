@@ -122,6 +122,47 @@ def test_verify_sense_event_happy_path():
     assert verdict.trusted is True
 
 
+def test_verify_sense_event_vision_shaped_payload():
+    """canary-vision signs the SAME locked sense canonical (its optical
+    presence/occupants fit; range is honestly 'unknown'), so its events
+    verify through verify_sense_event with zero HA-side changes. The
+    extra vision-only fields (device_type, reason, ts_ms, bbox…) are
+    outside the canonical and must not disturb verification."""
+    priv, pub = _make_keypair()
+    hass = HomeAssistant()
+    ts = TrustStore(hass, entry_id="abc")
+    run(ts.async_load())
+    _pin(ts, "vision01", pub)
+
+    canonical = build_sense_event_canonical(
+        "vision01", 12, "dwell_started", "present", "1", "unknown", 600
+    )
+    sig = _b64url_nopad(priv.sign(canonical))
+    payload = {
+        "device_id": "vision01",
+        "device_type": "vision",
+        "event": "dwell_started",
+        "reason": "dwell",
+        "seq": 12,
+        "bucket_uptime_s": 600,
+        "presence": "present",
+        "occupants": "1",
+        "range": "unknown",
+        "signed": True,
+        "ts_ms": 654321,
+        "presence_ms": 12000,
+        "dwell_ms": 5000,
+        "confidence": 87,
+        "v": 1,
+        "alg": "ed25519",
+        "fp": ts.get("vision01").fingerprint_hex,
+        "sig": sig,
+    }
+    verdict = verify_sense_event(ts, "vision01", payload)
+    assert verdict.trusted is True
+    assert verdict.reason == "ok"
+
+
 def test_verify_sense_event_missing_required_field():
     hass = HomeAssistant()
     ts = TrustStore(hass, entry_id="abc")

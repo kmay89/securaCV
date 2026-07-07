@@ -15,6 +15,9 @@
 #include "canary/net/wifi_mgr.h"    // RSSI + link state
 #include "canary/ha/ha_discovery.h"
 #include "identity/device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
+#include "identity/device_signature.h"  // shared signer (health pubkey, chain sig)
+#include "canary/version.h"             // CANARY_FW_VERSION for the health publish
+#include "canary/witness.h"             // chain head/length for the chain publish
 
 namespace canary::net {
 
@@ -268,6 +271,70 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
            (unsigned long)s.ts_ms);
 
   publish_checked("STATE", topics.state, msg, true);
+}
+
+// Witness surfaces — ported verbatim from canary-sense (mqtt_mgr.cpp):
+// the byte-identical envelopes are what lets HA's existing handlers and
+// TOFU pinning work for vision with zero integration changes.
+void publish_health_retained(const Topics& topics) {
+  char msg[384];
+  const int n = snprintf(msg, sizeof(msg),
+           "{"
+           "\"battery\":100,"
+           "\"battery_present\":false,"
+           "\"memory_free\":%lu,"
+           "\"uptime\":%lu,"
+           "\"firmware_version\":\"%s\","
+           "\"public_key\":\"%s\""
+           "}",
+           (unsigned long)ESP.getFreeHeap(),
+           (unsigned long)(millis() / 1000UL),
+           CANARY_FW_VERSION,
+           device_signature::pubkey_hex());
+  if (n <= 0 || (size_t)n >= sizeof(msg)) return;
+  publish_checked("HEALTH", topics.health, msg, true);
+}
+
+void publish_chain_retained(const Topics& topics) {
+  const uint32_t length = canary::witness::chain_length();
+  const uint8_t* head = canary::witness::chain_head();
+
+  char hash_hex[65];
+  {
+    static const char H[] = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+      hash_hex[2 * i]     = H[(head[i] >> 4) & 0xF];
+      hash_hex[2 * i + 1] = H[(head[i] >> 0) & 0xF];
+    }
+    hash_hex[64] = '\0';
+  }
+
+  char sig_b64[device_signature::SIG_B64URL_CAP] = "";
+  const bool signed_ok =
+      canary::witness::ready() &&
+      device_signature::sign_chain(length, head, sig_b64, sizeof(sig_b64));
+
+  char msg[320];
+  int n;
+  if (signed_ok) {
+    n = snprintf(msg, sizeof(msg),
+        "{\"v\":%d,\"length\":%lu,\"latest_hash\":\"%s\","
+        "\"algorithm\":\"ed25519\","
+        "\"alg\":\"%s\",\"fp\":\"%s\",\"sig\":\"%s\"}",
+        device_signature::SCHEMA_V,
+        (unsigned long)length, hash_hex,
+        device_signature::ALG_NAME,
+        device_signature::fingerprint_hex(),
+        sig_b64);
+  } else {
+    n = snprintf(msg, sizeof(msg),
+        "{\"v\":%d,\"length\":%lu,\"latest_hash\":\"%s\","
+        "\"algorithm\":\"ed25519\"}",
+        device_signature::SCHEMA_V,
+        (unsigned long)length, hash_hex);
+  }
+  if (n <= 0 || (size_t)n >= sizeof(msg)) return;
+  publish_checked("CHAIN", topics.chain, msg, true);
 }
 
 void publish_event(const Topics& topics, const char* json_payload) {

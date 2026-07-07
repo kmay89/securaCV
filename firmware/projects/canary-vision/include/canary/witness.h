@@ -2,7 +2,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Witness identity + tamper-evident chain for the radar witness.
+// Witness identity + tamper-evident chain for the optical witness.
+// Deliberately IDENTICAL to canary-sense/include/canary/witness.h —
+// same NVS contract, same shared signer, same canonical chain core.
 //
 // Identity: an Ed25519 keypair generated from the hardware RNG on first
 // boot and persisted in NVS (namespace "securacv", key "privkey") — the

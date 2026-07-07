@@ -868,10 +868,14 @@ jobs:
         # suite — preinstalled on ubuntu-latest.
         run: make -C firmware/projects/canary-wap/tests_host
 
-      - name: Build + run mmWave MR60 host tests
-        # canary-sense radar decoder + presence/vitals FSMs, built twice
-        # (presence-only and -DCANARY_SENSE_VITALS=1) with -Werror; the
-        # suite exits non-zero on any failure.
+      - name: Build + run firmware/common host tests
+        # firmware/tests_host covers the shared common/ modules: the
+        # canary-sense radar decoder + presence/vitals FSMs (built twice:
+        # presence-only and -DCANARY_SENSE_VITALS=1), the device_signature
+        # canonical-message builders, and the canonical witness-chain
+        # construction (witness_chain.h byte layout + goldens shared with
+        # tools/verify_witness_log.py). All with -Werror; each suite exits
+        # non-zero on any failure.
         run: make -C firmware/tests_host
 
   microcopy-lint:
