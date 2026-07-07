@@ -132,10 +132,17 @@ void fade_cb(void* var, int32_t v) {
 }
 
 void show_page(lv_obj_t* page) {
+  // Leaving the halo also parks its breathing anim — no animation may keep
+  // ticking against a hidden object (review catch: rationed motion includes
+  // rationed CPU).
+  if (page != s_pg_halo) breathe(nullptr, false);
   lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev};
   for (lv_obj_t* p : pages) {
     if (p == page) {
       lv_obj_clear_flag(p, LV_OBJ_FLAG_HIDDEN);
+      // lv_anim_start dedups same var+exec_cb in v8; the explicit del makes
+      // the no-stacking intent visible rather than folklore.
+      lv_anim_del(p, fade_cb);
       lv_anim_t a;
       lv_anim_init(&a);
       lv_anim_set_var(&a, p);
@@ -173,10 +180,14 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     const Witness* w = fleet.at(i);
     if (!w) continue;
     lv_obj_clear_flag(s_arcs[i], LV_OBJ_FLAG_HIDDEN);
-    const uint16_t span = (uint16_t)(360 / n);
-    const uint16_t a0 = (uint16_t)(i * span + 2);
-    const uint16_t a1 = (uint16_t)((i + 1) * span - 2);
-    lv_arc_set_bg_angles(s_arcs[i], a0, a1 > a0 ? a1 : a0 + 1);
+    // Signed math on purpose: the fleet caps at 8 (span >= 45°), but if
+    // that cap ever grows, a tiny span must degrade to a sliver — never
+    // underflow uint16 into a full-circle arc (review catch).
+    const int span = 360 / n;
+    const int a0 = i * span + 2;
+    const int a1 = (i + 1) * span - 2;
+    lv_arc_set_bg_angles(s_arcs[i], (uint16_t)a0,
+                         (uint16_t)(a1 > a0 ? a1 : a0 + 1));
     const Sev s = fleet.witness_sev(*w, now);
     lv_obj_set_style_arc_color(s_arcs[i], sev_color(s, st.night), LV_PART_MAIN);
     if (s >= Sev::Alert && !st.acked && !attention) attention = s_arcs[i];
