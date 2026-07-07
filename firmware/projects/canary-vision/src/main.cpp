@@ -20,6 +20,7 @@
 #include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 
 #include "canary/runtime_config.h"
+#include "canary/witness.h"  // Ed25519 identity + canonical hash chain
 #include "canary/detect_config.h"
 #include "canary/diagnostics.h"
 #include "pins.h"  // board identity (BOARD_NAME) from firmware/boards/<id>/pins
@@ -105,10 +106,35 @@ static void publish_event_json(
   const VisionSample& vs
 ) {
   (void)vs;
-  static uint32_t seq = 0;
+  static uint32_t fallback_seq = 0;
 
   const auto snap = fsm.snapshot(now_ms, last_event_name);
-  char msg[768];
+
+  // Witness fields (LOCKED sense canonical — HA verify_sense_event):
+  // presence/occupants come from the detector, range is honestly
+  // "unknown" (an optical witness has no radar range bands), the time
+  // bucket is the same 10-minute uptime coarsening canary-sense uses.
+  const char* presence  = snap.presence ? "present" : "clear";
+  const char* occupants = snap.presence ? "1" : "0";
+  const char* range     = "unknown";
+  const uint32_t bucket_uptime_s = (now_ms / 1000UL / 600UL) * 600UL;
+  const uint32_t seq = canary::witness::ready()
+                           ? canary::witness::chain_length() + 1
+                           : ++fallback_seq;
+
+  // Chain first: the witness record exists regardless of connectivity.
+  canary::witness::chain_advance(seq, event_name, presence, occupants,
+                                 range, bucket_uptime_s);
+
+  // Envelope max is 142 bytes incl. NUL; the headroom keeps a future
+  // constant bump from silently publishing unsigned events through the
+  // fail-closed truncation path.
+  char sig_env[160] = "";
+  const bool signed_ok = canary::witness::sign_event_envelope(
+      seq, event_name, presence, occupants, range, bucket_uptime_s,
+      sig_env, sizeof(sig_env));
+
+  char msg[1024];
 
   if (reason) {
     snprintf(msg, sizeof(msg),
@@ -118,22 +144,32 @@ static void publish_event_json(
         "\"event\":\"%s\","
         "\"reason\":\"%s\","
         "\"seq\":%lu,"
+        "\"bucket_uptime_s\":%lu,"
+        "\"presence\":\"%s\","
+        "\"occupants\":\"%s\","
+        "\"range\":\"%s\","
+        "\"signed\":%s,"
         "\"ts_ms\":%lu,"
         "\"presence_ms\":%lu,"
         "\"dwell_ms\":%lu,"
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
         "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}"
+        "%s"
       "}",
       canary::cfg::get().device_id, DEVICE_TYPE,
       event_name, reason,
-      (unsigned long)(++seq),
+      (unsigned long)seq,
+      (unsigned long)bucket_uptime_s,
+      presence, occupants, range,
+      signed_ok ? "true" : "false",
       (unsigned long)now_ms,
       (unsigned long)snap.presence_ms,
       (unsigned long)snap.dwell_ms,
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
-      snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h
+      snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
+      sig_env
     );
   } else {
     snprintf(msg, sizeof(msg),
@@ -142,26 +178,39 @@ static void publish_event_json(
         "\"device_type\":\"%s\","
         "\"event\":\"%s\","
         "\"seq\":%lu,"
+        "\"bucket_uptime_s\":%lu,"
+        "\"presence\":\"%s\","
+        "\"occupants\":\"%s\","
+        "\"range\":\"%s\","
+        "\"signed\":%s,"
         "\"ts_ms\":%lu,"
         "\"presence_ms\":%lu,"
         "\"dwell_ms\":%lu,"
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
         "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}"
+        "%s"
       "}",
       canary::cfg::get().device_id, DEVICE_TYPE,
       event_name,
-      (unsigned long)(++seq),
+      (unsigned long)seq,
+      (unsigned long)bucket_uptime_s,
+      presence, occupants, range,
+      signed_ok ? "true" : "false",
       (unsigned long)now_ms,
       (unsigned long)snap.presence_ms,
       (unsigned long)snap.dwell_ms,
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
-      snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h
+      snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
+      sig_env
     );
   }
 
   canary::net::publish_event(TOPICS, msg);
+  // The event advanced the chain — refresh the retained signed head
+  // (same cadence as canary-sense: events are rare, one small publish).
+  canary::net::publish_chain_retained(TOPICS);
 }
 
 static void vision_serial_write(const char* str) {
@@ -287,10 +336,21 @@ void setup() {
   boot_kv("HA prefix", HA_DISCOVERY_PREFIX);
   boot_blank();
 
+  // Witness identity + canonical chain: keypair from NVS (generated on
+  // first boot), shared signer init. A failure means events publish
+  // unsigned — never blocks the optical pipeline.
+  if (canary::witness::init()) {
+    boot_kv("Witness", "Ed25519 identity ready (events signed)");
+  } else {
+    boot_kv("Witness", "signing unavailable (events publish unsigned)");
+  }
+
   canary::net::mqtt_reconnect_blocking();
   canary::net::ha_discovery_publish_once(TOPICS);
 
   canary::net::publish_status_retained(TOPICS, "online");
+  canary::net::publish_health_retained(TOPICS);   // carries public_key (TOFU)
+  canary::net::publish_chain_retained(TOPICS);    // retained signed head
 
   // Signed pull-OTA: arm the engine (validation already ran right after
   // WiFi). Daily jittered checks; HA's Install button and auto-update
@@ -327,6 +387,8 @@ void loop() {
     canary::net::mqtt_reconnect_blocking();
     if (!canary::net::mqtt_connected()) return;  // WiFi dropped mid-attempt
     canary::net::publish_status_retained(TOPICS, "online");
+    canary::net::publish_health_retained(TOPICS);
+    canary::net::publish_chain_retained(TOPICS);
     publish_state_now(canary::ms_now());
     delay(250);
     publish_state_now(canary::ms_now());

@@ -37,6 +37,15 @@ DEVSIG_DIR = ../common/identity
 DEVSIG_SRC = $(DEVSIG_DIR)/device_signature.cpp
 DEVSIG_BIN = $(BUILD_DIR)/test_device_signature_common
 
+# Canonical witness-chain construction (common/witness/witness_chain.h):
+# pins the 72-byte chain pre-image layout, domain strings, and
+# python-hashlib golden hashes shared with tools/verify_witness_log.py.
+# Uses OpenSSL's SHA-256 on the host (libcrypto is preinstalled on
+# ubuntu-latest); SHA256_Init & co. are deprecated in OpenSSL 3 but fine
+# for a test, hence the -Wno flag under -Werror.
+WITCHAIN_HDR = ../common/witness/witness_chain.h
+WITCHAIN_BIN = $(BUILD_DIR)/test_witness_chain_core
+
 .PHONY: all run clean
 all: run
 
@@ -52,10 +61,14 @@ $(MR60_VITALS_BIN): $(MR60_TEST_SRC) $(MR60_SRC) $(MR60_HDRS) Makefile | $(BUILD
 $(DEVSIG_BIN): test_device_signature_common.cpp $(DEVSIG_SRC) $(DEVSIG_DIR)/device_signature.h Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(DEVSIG_DIR) test_device_signature_common.cpp $(DEVSIG_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN)
+$(WITCHAIN_BIN): test_witness_chain_core.cpp $(WITCHAIN_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common test_witness_chain_core.cpp -lcrypto -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
+	./$(WITCHAIN_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

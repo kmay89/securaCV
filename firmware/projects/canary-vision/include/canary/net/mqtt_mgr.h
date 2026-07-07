@@ -16,6 +16,12 @@ namespace canary::net {
   void publish_state_retained(const Topics& topics, const StateSnapshot& s);
   void publish_event(const Topics& topics, const char* json_payload);       // non-retained
 
+  // Witness surfaces (same envelopes as canary-sense): health carries
+  // public_key so HA TOFU-pins the device on first sight; chain is the
+  // retained, Ed25519-signed head HA's verify_chain checks.
+  void publish_health_retained(const Topics& topics);
+  void publish_chain_retained(const Topics& topics);
+
   // HA discovery (retained)
   void ha_discovery_publish_once(const Topics& topics);
 

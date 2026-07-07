@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Witness unification part 1: one canonical chain core, sense aligned, vision signs
+
+Four witness-chain implementations had drifted apart. This lands the
+shared core and brings every firmware onto the same construction:
+
+- **`firmware/common/witness/witness_chain.h` is now THE canonical
+  chain construction** — a small header-only core (domain strings, the
+  72-byte big-endian chain pre-image builder, mbedTLS-backed
+  `wc_chain_advance`/`wc_genesis`) instead of a dead never-implemented
+  C API. A new host test pins the byte layout and hashes against
+  python-hashlib goldens, so the firmwares and
+  `tools/verify_witness_log.py` can no longer drift apart silently.
+  The dead, never-buildable `firmware/projects/canary-wap/src/main.cpp`
+  (sole consumer of the old phantom API) is deleted.
+- **canary-sense adopts the canonical construction.** Its chain hash
+  previously omitted the sequence number and time bucket (records could
+  be renumbered/time-shifted without breaking links) and used a
+  pubkey-derived genesis. It now uses `wc_chain_advance` (seq + bucket
+  in the hash) and the canonical device-id genesis. Invisible to Home
+  Assistant — HA verifies Ed25519 envelopes, never internal links —
+  and upgraded devices simply continue forward from their stored head.
+- **canary-vision becomes a signing witness.** Previously it published
+  bare unsigned JSON with no device identity. It now carries the same
+  Ed25519 identity module as canary-sense (NVS-persisted key, fail-closed),
+  chains every presence/dwell event, signs the LOCKED sense canonical
+  (its presence/occupants semantics fit; range is honestly `"unknown"`),
+  and publishes retained `health` (with `public_key` for HA's TOFU
+  pinning) and signed `chain` topics. Vision events now verify in HA
+  through the existing `verify_sense_event` path with zero HA-side
+  changes — a new HA test pins a vision-shaped payload end-to-end.
+
 ### canary-wap polish: crash-proof health logs, offline witness verifier, honest standby UX
 
 Round two of the storage/camera audit — three finishing gaps closed:
