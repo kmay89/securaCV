@@ -186,9 +186,20 @@ static void handle_fleet_ack(const uint8_t* payload, unsigned int len) {
   const time_t epoch = time(nullptr);
   if (epoch < 1700000000) return;             // no local clock — stay honest
   if (at <= s_last_ack_epoch) return;         // stale / retained replay
-  if ((uint32_t)epoch < at) return;           // future-stamped — reject
-  const uint32_t age_s = (uint32_t)epoch - at;
-  if (age_s * 1000UL >= (uint32_t)CD_ACK_HOLD_MS) return;  // expired
+
+  // Clock skew tolerance: two SNTP-synced siblings can disagree by a few
+  // seconds — a slightly future-stamped ack is genuine, treat it as "now".
+  // Beyond the tolerance it's malformed/malicious: reject. (review catch)
+  uint32_t age_s;
+  if (at > (uint32_t)epoch) {
+    if (at - (uint32_t)epoch > 10) return;    // future beyond skew tolerance
+    age_s = 0;
+  } else {
+    age_s = (uint32_t)epoch - at;
+  }
+  // Expiry compared in SECONDS: age_s*1000 would wrap uint32 for acks older
+  // than ~49.7 days and resurrect them as fresh. (review catch)
+  if (age_s >= (uint32_t)(CD_ACK_HOLD_MS / 1000UL)) return;  // expired
 
   s_last_ack_epoch = at;
   const uint32_t now_ms = canary::ms_now();
