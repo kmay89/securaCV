@@ -193,6 +193,11 @@ class FleetModel {
     w->badge = verdict;
     if (raw && raw_len > 0 && raw_len < sizeof(w->chain_raw)) {
       memcpy_str(w->chain_raw, raw, raw_len);
+    } else {
+      // Missing/oversize payload: drop the cached proof rather than let the
+      // proof sheet present a stale chain head as current state — the sheet
+      // then honestly says "no signed chain to prove". (review catch)
+      w->chain_raw[0] = '\0';
     }
     // Edge-only, same retained-replay reasoning as on_tamper.
     if (verdict == Badge::Failed && was != Badge::Failed) {
