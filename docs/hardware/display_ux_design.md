@@ -146,6 +146,40 @@ is the household's second, independent verifier.
   expander line is on/off — no PWM), tap-to-wake 20 s, alert override turns
   it back on.
 
+### Design language — "Quiet Glass" (v0.2, LVGL)
+
+The faces are rendered by LVGL v8 (anti-aliased type and arcs, dirty-region
+repaints — which is also what makes the dash flicker-free). Tokens live in
+`include/canary/ui/theme.h`; every choice below is enforced there, not by
+convention.
+
+**Ground.** True black `#000000` (the bezel disappears; night floors go
+lower), surfaces `#141414`, hairline edges `#262626`, text `#EDEDED` /
+muted `#8A8A8A` / faint `#4A4A4A`. Semantic hues are unchanged
+(timeline-card parity). Emphasis is glow, never hard stripes.
+
+**Type.** Montserrat (anti-aliased, LVGL built-in) in six roles:
+hero 48 · title 28 · clock 20 · body 16 · label 14 · caption 12.
+Uppercase micro-labels get +1..2 letter-spacing. The wire never reaches the
+glass raw: `humanize_event()` turns `presence_in_restricted_zone` into
+"Person in restricted zone", with curated copy for the known vocabulary and
+sentence-cased fallback for anything new.
+
+**Motion budget (rationed, each with a job):**
+
+| Motion | Duration | Why it exists |
+|---|---|---|
+| Page fade | 220 ms ease-out | orientation between pages |
+| Alert breathing (arc/card glow) | 2 s in-out, repeat | the one thing allowed to move at rest — and only while an Alert/Tamper is unacked |
+| Hold-to-ack ring | 900 ms linear sweep (= long-press) | makes acknowledge deliberate; a quick tap flashes a sliver of the ring — a silent hint that holding does more |
+| Everything else | none | calm technology: a wall object at rest is still |
+
+**Iconography.** LVGL's built-in symbol set only (✓/✕/wifi/battery) — no
+custom pictograms until bench validation says the metaphors read at 3 m.
+
+**Night.** Same layouts, tokens swapped to the red-shifted set — the design
+never relies on hue that the night palette can't carry (WCAG 1.4.1 again).
+
 ### Latency budget (G2)
 
 | Hop | Budget |

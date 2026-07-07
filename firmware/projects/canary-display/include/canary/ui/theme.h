@@ -1,91 +1,65 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
+#include <lvgl.h>
 #include "canary/fleet/fleet_model.h"
 
-// Display color semantics — RGB565 versions of the EXACT palette the HA
-// timeline card uses (custom_components/securacv/www/securacv-timeline-card.js),
-// so a state means the same color on the wall as it does in the app:
+// "Quiet Glass" design tokens (display_ux_design.md §Design language).
 //
-//   green #43a047  ok / verified / presence-good
-//   red   #e53935  warn / error / tamper / offline
-//   blue  #03a9f4  signed-but-unverified
-//   amber #fb8c00  attention / stale
-//   grey           logged-only / muted
-//
-// Night palette is red-shifted and dim: blue-heavy light (~460-500 nm) is
-// the melatonin-suppressing band, so anything that must stay visible in a
-// bedroom renders in dim red/amber only (see display_ux_design.md §night).
+// Semantic hues are the HA timeline-card palette — a state means the same
+// color on the wall as in the app. Everything else is a disciplined dark
+// ground: true black (bezels disappear, night floors go lower), #141414
+// surfaces, hairline #262626 edges, and glow-not-stripes for emphasis.
+// Color never carries meaning alone (WCAG 1.4.1): every state also has a
+// label, glyph, or position.
 
 namespace canary::ui {
 
-constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
-  return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-}
+// ── Ground ───────────────────────────────────────────────────────────────
+inline lv_color_t col_bg()      { return lv_color_hex(0x000000); }
+inline lv_color_t col_surface() { return lv_color_hex(0x141414); }
+inline lv_color_t col_edge()    { return lv_color_hex(0x262626); }
+inline lv_color_t col_text()    { return lv_color_hex(0xEDEDED); }
+inline lv_color_t col_muted()   { return lv_color_hex(0x8A8A8A); }
+inline lv_color_t col_faint()   { return lv_color_hex(0x4A4A4A); }
 
-// Day palette (timeline-card parity)
-constexpr uint16_t COL_BG      = rgb565(0x00, 0x00, 0x00);
-constexpr uint16_t COL_TEXT    = rgb565(0xE0, 0xE0, 0xE0);
-constexpr uint16_t COL_MUTED   = rgb565(0x9E, 0x9E, 0x9E);
-constexpr uint16_t COL_OK      = rgb565(0x43, 0xA0, 0x47);
-constexpr uint16_t COL_WARN    = rgb565(0xFB, 0x8C, 0x00);
-constexpr uint16_t COL_ALERT   = rgb565(0xE5, 0x39, 0x35);
-constexpr uint16_t COL_SIGNED  = rgb565(0x03, 0xA9, 0xF4);
-constexpr uint16_t COL_CARD    = rgb565(0x1A, 0x1A, 0x1A);
-constexpr uint16_t COL_EDGE    = rgb565(0x33, 0x33, 0x33);
+// ── Semantics (timeline-card parity) ─────────────────────────────────────
+inline lv_color_t col_ok()      { return lv_color_hex(0x43A047); }
+inline lv_color_t col_warn()    { return lv_color_hex(0xFB8C00); }
+inline lv_color_t col_alert()   { return lv_color_hex(0xE53935); }
+inline lv_color_t col_signed()  { return lv_color_hex(0x03A9F4); }
 
-// Night palette — red-shifted, floor-dim. Color alone never carries the
-// message (WCAG 1.4.1): severity is also position/shape/label, so losing
-// hue at night loses nothing semantic.
-constexpr uint16_t NCOL_TEXT   = rgb565(0x50, 0x18, 0x10);
-constexpr uint16_t NCOL_MUTED  = rgb565(0x28, 0x0C, 0x08);
-constexpr uint16_t NCOL_ALERT  = rgb565(0x90, 0x20, 0x18);
+// ── Night (red-shifted, melatonin-band-free; see UX doc §night) ─────────
+inline lv_color_t ncol_text()   { return lv_color_hex(0x5A1C12); }
+inline lv_color_t ncol_muted()  { return lv_color_hex(0x32100A); }
+inline lv_color_t ncol_alert()  { return lv_color_hex(0x992219); }
 
-// Severity -> paint. Severity is also always rendered as a text label or
-// glyph next to the color (colorblind-safe, ~8% of men can't split
-// red/green dots).
-inline uint16_t sev_color(canary::fleet::Sev s, bool night) {
-  using canary::fleet::Sev;
-  if (night) {
-    return (s >= Sev::Alert) ? NCOL_ALERT : NCOL_MUTED;
-  }
-  switch (s) {
-    case Sev::Ok:     return COL_OK;
-    case Sev::Notice: return COL_OK;
-    case Sev::Warn:   return COL_WARN;
-    case Sev::Alert:  return COL_ALERT;
-    case Sev::Tamper: return COL_ALERT;
-  }
-  return COL_MUTED;
-}
+lv_color_t sev_color(canary::fleet::Sev s, bool night);
+lv_color_t badge_color(canary::fleet::Badge b, bool night);
+const char* badge_text(canary::fleet::Badge b);   // "verified"/"signed"/...
+const char* link_label(canary::fleet::Link l);
 
-// Trust badge -> paint (strong green tick ONLY for Verified — the display
-// must not overclaim, same rule as the HA card).
-inline uint16_t badge_color(canary::fleet::Badge b, bool night) {
-  using canary::fleet::Badge;
-  if (night) return NCOL_MUTED;
-  switch (b) {
-    case Badge::Verified: return COL_OK;
-    case Badge::Signed:   return COL_SIGNED;
-    case Badge::Failed:   return COL_ALERT;
-    case Badge::Unsigned: return COL_MUTED;
-    case Badge::Unknown:  return COL_EDGE;
-  }
-  return COL_EDGE;
-}
+// ── Type scale (Montserrat AA; roles, not sizes, in calling code) ───────
+inline const lv_font_t* font_hero()    { return &lv_font_montserrat_48; }
+inline const lv_font_t* font_title()   { return &lv_font_montserrat_28; }
+inline const lv_font_t* font_body()    { return &lv_font_montserrat_16; }
+inline const lv_font_t* font_label()   { return &lv_font_montserrat_14; }
+inline const lv_font_t* font_caption() { return &lv_font_montserrat_12; }
+inline const lv_font_t* font_clock()   { return &lv_font_montserrat_20; }
 
-inline const char* badge_glyph(canary::fleet::Badge b) {
-  using canary::fleet::Badge;
-  switch (b) {
-    case Badge::Verified: return "OK";   // strong tick — earned only by Ed25519
-    case Badge::Signed:   return "S";    // signed, key not pinned yet
-    case Badge::Failed:   return "X";    // verify failed — loud
-    case Badge::Unsigned: return "-";
-    case Badge::Unknown:  return "?";
-  }
-  return "?";
-}
+// ── Motion budget (calm tech: rationed, purposeful) ──────────────────────
+constexpr uint32_t MOTION_PAGE_MS   = 220;   // page/screen fades, ease-out
+constexpr uint32_t MOTION_BREATH_MS = 2000;  // unacked-alert breathing, ONLY
+constexpr uint32_t MOTION_ACK_MS    = 900;   // hold-to-ack ring sweep (= CD_LONGPRESS_MS)
 
-// Compact "how long ago" for glance rows: 45s, 12m, 3h, 2d.
+// ── Language ─────────────────────────────────────────────────────────────
+
+// Compact "how long ago": 45s, 12m, 3h, 2d.
 void format_age(uint32_t now_ms, uint32_t then_ms, char* out, int cap);
+
+// Wire vocabulary -> human words: "presence_in_restricted_zone" ->
+// "Person in restricted zone". Known events get curated copy; anything
+// unknown degrades to de-underscored sentence case, never raw wire text.
+const char* humanize_event(const char* wire, char* buf, size_t cap);
 
 }  // namespace canary::ui

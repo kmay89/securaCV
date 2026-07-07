@@ -16,12 +16,13 @@ namespace canary::hal {
 // keeps running headless (MQTT still works) so the fault is diagnosable.
 bool display_init();
 
-// Draw target. Watch: an offscreen 240x240 canvas (flushed per frame, no
-// tearing). Dash: the RGB framebuffer directly.
+// Draw target: the bare panel on both flavors. LVGL owns buffering and
+// dirty-region rendering (ui/lvgl_port.cpp); flushes arrive through
+// draw16bitRGBBitmap.
 Arduino_GFX* gfx();
 
-// Push the frame (canvas flush on watch; no-op on dash where the RGB
-// peripheral scans the framebuffer continuously).
+// Kept for interface stability; a no-op on both flavors now that LVGL
+// flushes dirty regions itself.
 void display_flush();
 
 // 0..255. Watch has real PWM dimming; dash hardware is on/off only (CH422G

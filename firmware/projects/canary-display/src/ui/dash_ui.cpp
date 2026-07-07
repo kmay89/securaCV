@@ -1,15 +1,17 @@
-// src/ui/dash_ui.cpp — the Dash's 800x480 wall/desk face.
+// src/ui/dash_ui.cpp — the Dash's 800x480 face, LVGL edition.
 //
-// Layout: 56 px header (fleet state sentence + clock), witness card grid on
-// the left (2 x 4 cards of 250x94), event timeline column on the right
-// (280 px). Same severity/trust vocabulary as the watch and the HA card.
+// Quiet Glass on a wall: true-black ground, #141414 cards with hairline
+// edges and rounded corners, severity as a rounded spine pill plus label
+// (never color alone), soft glow instead of hard strips. Motion budget:
+// an unacked-alert card breathes its glow; the hold-to-ack ring sweeps;
+// nothing else moves.
 #include <config.h>
 #ifdef CD_FLAVOR_DASH
 
 #include <Arduino.h>
-#include <Arduino_GFX_Library.h>
-#include <string.h>
+#include <lvgl.h>
 #include <stdio.h>
+#include <string.h>
 #include <ctype.h>
 
 #include "canary/ui/dash_ui.h"
@@ -18,207 +20,391 @@
 namespace canary::ui {
 
 using canary::fleet::Fleet;
-using canary::fleet::Link;
 using canary::fleet::Sev;
 using canary::fleet::Witness;
 
 namespace {
 
-constexpr int16_t W = 800, H = 480;
-constexpr int16_t HDR_H = 56;
-constexpr int16_t TL_W = 280;                 // timeline column
-constexpr int16_t GRID_X = 8, GRID_Y = HDR_H + 8;
-constexpr int16_t CARD_W = 250, CARD_H = 94, CARD_GAP = 8;
-constexpr int GRID_COLS = 2, GRID_ROWS = 4;   // 8 cards; beyond that "+N more"
+constexpr int GRID_COLS = 2, GRID_ROWS = 4;
+constexpr int MAX_CARDS = GRID_COLS * GRID_ROWS;
+constexpr int EV_ROWS = 9;
 
-const char* link_label(Link l) {
-  switch (l) {
-    case Link::Online:  return "online";
-    case Link::Stale:   return "stale";
-    case Link::Lost:    return "lost";
-    case Link::Offline: return "offline";
-    default:            return "?";
-  }
+constexpr lv_coord_t HDR_H = 64;
+constexpr lv_coord_t TL_W = 272;
+constexpr lv_coord_t CARD_W = 248, CARD_H = 92, GAP = 8;
+
+lv_obj_t* s_scr = nullptr;
+
+// Header
+lv_obj_t* s_headline = nullptr;
+lv_obj_t* s_clock = nullptr;
+lv_obj_t* s_glow = nullptr;      // soft severity bar under the header
+
+// Cards
+struct Card {
+  lv_obj_t* box = nullptr;
+  lv_obj_t* spine = nullptr;
+  lv_obj_t* name = nullptr;
+  lv_obj_t* state = nullptr;
+  lv_obj_t* badge = nullptr;
+  lv_obj_t* event = nullptr;
+  lv_obj_t* meta = nullptr;
+};
+Card s_cards[MAX_CARDS];
+lv_obj_t* s_more = nullptr;      // "+N more"
+lv_obj_t* s_empty = nullptr;     // listening state
+
+// Timeline
+lv_obj_t* s_tl_title = nullptr;
+struct EvRow {
+  lv_obj_t* dot = nullptr;
+  lv_obj_t* name = nullptr;
+  lv_obj_t* meta = nullptr;
+};
+EvRow s_ev[EV_ROWS];
+
+lv_obj_t* s_footer = nullptr;
+
+// Motion state
+lv_anim_t s_breath_anim;
+lv_obj_t* s_breathing = nullptr;
+lv_obj_t* s_ack_ring = nullptr;
+lv_anim_t s_ack_anim;
+bool s_ack_holding = false;
+
+lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
+  lv_obj_t* l = lv_label_create(parent);
+  lv_obj_set_style_text_font(l, f, 0);
+  lv_obj_set_style_text_color(l, c, 0);
+  lv_label_set_text(l, "");
+  return l;
 }
 
-void header(Arduino_GFX* g, const Fleet& fleet, uint32_t now, const DashState& st) {
-  const Sev worst = fleet.worst(now);
-  g->fillRect(0, 0, W, HDR_H, st.night ? COL_BG : COL_CARD);
-  g->fillRect(0, HDR_H - 4, W, 4, sev_color(worst, st.night));
-
-  g->setTextSize(3);
-  g->setTextColor(st.night ? NCOL_TEXT : COL_TEXT);
-  g->setCursor(16, 16);
-  const int n = fleet.count();
-  char line[64];
-  if (n == 0) {
-    snprintf(line, sizeof(line), "No canaries %s",
-             st.mqtt_ok ? "yet - listening" : (st.wifi_ok ? "- broker down" : "- wifi down"));
-  } else if (worst <= Sev::Notice) {
-    snprintf(line, sizeof(line), "All quiet - %d %s%s", n,
-             n == 1 ? "canary" : "canaries",
-             fleet.all_verified() ? " - verified" : "");
-  } else {
-    char sev[12];
-    snprintf(sev, sizeof(sev), "%s", canary::fleet::sev_name(worst));
-    for (char* p = sev; *p; p++) *p = (char)toupper(*p);
-    snprintf(line, sizeof(line), "%s%s - check the grid", sev,
-             st.acked ? " (acked)" : "");
-  }
-  g->print(line);
-
-  if (st.time_valid) {
-    char clk[8];
-    snprintf(clk, sizeof(clk), "%02d:%02d", st.clock_hh, st.clock_mm);
-    g->setCursor(W - 16 - 5 * 18, 16);
-    g->setTextColor(st.night ? NCOL_MUTED : COL_MUTED);
-    g->print(clk);
-  }
+lv_obj_t* mk_box(lv_obj_t* parent) {
+  lv_obj_t* b = lv_obj_create(parent);
+  lv_obj_set_style_bg_color(b, col_surface(), 0);
+  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(b, col_edge(), 0);
+  lv_obj_set_style_border_width(b, 1, 0);
+  lv_obj_set_style_radius(b, 12, 0);
+  lv_obj_set_style_pad_all(b, 0, 0);
+  lv_obj_set_style_shadow_width(b, 0, 0);
+  lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(b, LV_OBJ_FLAG_CLICKABLE);
+  return b;
 }
 
-void card(Arduino_GFX* g, const Fleet& fleet, const Witness& w, uint32_t now,
-          const DashState& st, int16_t x, int16_t y) {
-  const Sev s = fleet.witness_sev(w, now);
-  const uint16_t edge = sev_color(s, st.night);
-  g->fillRect(x, y, CARD_W, CARD_H, st.night ? COL_BG : COL_CARD);
-  g->drawRect(x, y, CARD_W, CARD_H, st.night ? NCOL_MUTED : COL_EDGE);
-  g->fillRect(x, y, 6, CARD_H, edge);   // severity spine (position + color)
-
-  char buf[40];
-  g->setTextSize(2);
-  g->setTextColor(st.night ? NCOL_TEXT : COL_TEXT);
-  g->setCursor(x + 14, y + 8);
-  snprintf(buf, sizeof(buf), "%.18s", w.id);
-  g->print(buf);
-
-  g->setTextSize(1);
-  g->setTextColor(edge);
-  g->setCursor(x + 14, y + 30);
-  snprintf(buf, sizeof(buf), "%s", link_label(w.link));
-  g->print(buf);
-
-  // Trust badge, right-aligned on the state row.
-  g->setTextColor(badge_color(w.badge, st.night));
-  g->setCursor(x + CARD_W - 60, y + 30);
-  snprintf(buf, sizeof(buf), "ch %s", badge_glyph(w.badge));
-  g->print(buf);
-
-  g->setTextColor(st.night ? NCOL_MUTED : COL_MUTED);
-  g->setCursor(x + 14, y + 46);
-  if (w.has_event) {
-    char age[8];
-    format_age(now, w.last_event_ms, age, sizeof(age));
-    snprintf(buf, sizeof(buf), "%.22s  %s", w.last_event, age);
-  } else {
-    snprintf(buf, sizeof(buf), "no events yet");
-  }
-  g->print(buf);
-
-  g->setCursor(x + 14, y + 62);
-  if (w.battery_present && w.battery_pct >= 0) {
-    snprintf(buf, sizeof(buf), "batt %d%%  %.10s", (int)w.battery_pct, w.fw);
-    g->setTextColor(w.battery_pct < 25 ? sev_color(Sev::Warn, st.night)
-                                       : (st.night ? NCOL_MUTED : COL_MUTED));
-  } else {
-    snprintf(buf, sizeof(buf), "%.14s", w.fw[0] ? w.fw : "");
-  }
-  g->print(buf);
-
-  if (w.tamper) {
-    g->setTextSize(2);
-    g->setTextColor(sev_color(Sev::Tamper, st.night));
-    g->setCursor(x + 14, y + 72);
-    g->print("TAMPER");
-  }
+void breath_cb(void* var, int32_t v) {
+  lv_obj_set_style_shadow_opa((lv_obj_t*)var, (lv_opa_t)v, 0);
 }
 
-void grid(Arduino_GFX* g, const Fleet& fleet, uint32_t now, const DashState& st) {
-  const int n = fleet.count();
-  const int max_cards = GRID_COLS * GRID_ROWS;
-  for (int i = 0; i < n && i < max_cards; i++) {
-    const Witness* w = fleet.at(i);
-    if (!w) break;
-    const int col = i % GRID_COLS, row = i / GRID_COLS;
-    card(g, fleet, *w, now, st,
-         GRID_X + col * (CARD_W + CARD_GAP),
-         GRID_Y + row * (CARD_H + CARD_GAP));
+void breathe(lv_obj_t* card, lv_color_t color, bool on) {
+  if (s_breathing && (s_breathing != card || !on)) {
+    lv_anim_del(s_breathing, breath_cb);
+    lv_obj_set_style_shadow_width(s_breathing, 0, 0);
+    s_breathing = nullptr;
   }
-  if (n > max_cards) {
-    char buf[24];
-    snprintf(buf, sizeof(buf), "+%d more", n - max_cards);
-    g->setTextSize(2);
-    g->setTextColor(st.night ? NCOL_MUTED : COL_MUTED);
-    g->setCursor(GRID_X + 8, GRID_Y + GRID_ROWS * (CARD_H + CARD_GAP) + 2);
-    g->print(buf);
-  }
-  if (n == 0) {
-    g->setTextSize(2);
-    g->setTextColor(st.night ? NCOL_MUTED : COL_MUTED);
-    g->setCursor(GRID_X + 24, GRID_Y + 32);
-    g->print("Waiting for witnesses...");
-    g->setTextSize(1);
-    g->setCursor(GRID_X + 24, GRID_Y + 64);
-    g->print("Canaries publishing to this broker appear here.");
-  }
+  if (!on || !card || s_breathing == card) return;
+  s_breathing = card;
+  lv_obj_set_style_shadow_color(card, color, 0);
+  lv_obj_set_style_shadow_width(card, 24, 0);
+  lv_obj_set_style_shadow_spread(card, 2, 0);
+  lv_anim_init(&s_breath_anim);
+  lv_anim_set_var(&s_breath_anim, card);
+  lv_anim_set_exec_cb(&s_breath_anim, breath_cb);
+  lv_anim_set_values(&s_breath_anim, LV_OPA_20, LV_OPA_70);
+  lv_anim_set_time(&s_breath_anim, MOTION_BREATH_MS / 2);
+  lv_anim_set_playback_time(&s_breath_anim, MOTION_BREATH_MS / 2);
+  lv_anim_set_repeat_count(&s_breath_anim, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&s_breath_anim, lv_anim_path_ease_in_out);
+  lv_anim_start(&s_breath_anim);
 }
 
-void timeline(Arduino_GFX* g, const Fleet& fleet, uint32_t now, const DashState& st) {
-  const int16_t x0 = W - TL_W;
-  g->drawLine(x0 - 4, HDR_H, x0 - 4, H, st.night ? NCOL_MUTED : COL_EDGE);
-  g->setTextSize(1);
-  g->setTextColor(st.night ? NCOL_MUTED : COL_MUTED);
-  g->setCursor(x0 + 8, HDR_H + 10);
-  g->print("EVENTS  (* signed)");
+void ack_cb(void* var, int32_t v) {
+  (void)var;
+  lv_arc_set_bg_angles(s_ack_ring, 0, (uint16_t)v);
+}
 
-  const int n = fleet.events_count();
-  int16_t y = HDR_H + 30;
-  for (int i = 0; i < n && y < H - 40; i++) {
-    const auto* e = fleet.event_at(i);
-    if (!e) break;
-    char age[8];
-    format_age(now, e->at_ms, age, sizeof(age));
-
-    g->fillCircle(x0 + 12, y + 6, 4, sev_color(e->sev, st.night));
-    char row[44];
-    g->setTextSize(2);
-    g->setTextColor(e->sev >= Sev::Warn ? sev_color(e->sev, st.night)
-                                        : (st.night ? NCOL_TEXT : COL_TEXT));
-    g->setCursor(x0 + 24, y);
-    snprintf(row, sizeof(row), "%.19s", e->name);
-    g->print(row);
-
-    g->setTextSize(1);
-    g->setTextColor(st.night ? NCOL_MUTED : COL_MUTED);
-    g->setCursor(x0 + 24, y + 18);
-    snprintf(row, sizeof(row), "%s ago  %.14s%s", age, e->device,
-             e->signed_flag ? " *" : "");
-    g->print(row);
-    y += 38;
-  }
-  if (n == 0) {
-    g->setCursor(x0 + 24, HDR_H + 36);
-    g->print("nothing witnessed yet");
-  }
+void upper(char* s) {
+  for (; *s; s++) *s = (char)toupper((unsigned char)*s);
 }
 
 }  // namespace
 
-void dash_render(Arduino_GFX* g, const Fleet& fleet, uint32_t now,
-                 const DashState& st) {
-  g->fillScreen(COL_BG);
-  header(g, fleet, now, st);
-  grid(g, fleet, now, st);
-  timeline(g, fleet, now, st);
+// ── Public API ───────────────────────────────────────────────────────────
 
-  // Footer strip: link state + honesty line. An informational display, not
-  // an alarm — the glass itself says so (see the regulatory notes in the
-  // UX doc).
-  g->setTextSize(1);
-  g->setTextColor(st.night ? NCOL_MUTED : COL_MUTED);
-  g->setCursor(GRID_X + 2, H - 14);
-  if (!st.wifi_ok)      g->print("WIFI DOWN - showing last known state");
-  else if (!st.mqtt_ok) g->print("BROKER DOWN - showing last known state");
-  else                  g->print("status display - not a life-safety device");
+void dash_ui_create() {
+  s_scr = lv_scr_act();
+  lv_obj_set_style_bg_color(s_scr, col_bg(), 0);
+  lv_obj_set_style_bg_opa(s_scr, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
+
+  // ── Header ──
+  s_headline = mk_label(s_scr, font_title(), col_text());
+  lv_obj_align(s_headline, LV_ALIGN_TOP_LEFT, 20, 16);
+  s_clock = mk_label(s_scr, font_title(), col_muted());
+  lv_obj_align(s_clock, LV_ALIGN_TOP_RIGHT, -20, 16);
+  s_glow = lv_obj_create(s_scr);
+  lv_obj_set_size(s_glow, 800, 3);
+  lv_obj_set_pos(s_glow, 0, HDR_H - 3);
+  lv_obj_set_style_border_width(s_glow, 0, 0);
+  lv_obj_set_style_radius(s_glow, 0, 0);
+  lv_obj_set_style_bg_color(s_glow, col_ok(), 0);
+  lv_obj_set_style_bg_opa(s_glow, LV_OPA_COVER, 0);
+  lv_obj_set_style_shadow_width(s_glow, 18, 0);
+  lv_obj_set_style_shadow_spread(s_glow, 1, 0);
+  lv_obj_set_style_shadow_color(s_glow, col_ok(), 0);
+  lv_obj_set_style_shadow_opa(s_glow, LV_OPA_40, 0);
+  lv_obj_clear_flag(s_glow, LV_OBJ_FLAG_SCROLLABLE);
+
+  // ── Cards ──
+  for (int i = 0; i < MAX_CARDS; i++) {
+    Card& c = s_cards[i];
+    const int col = i % GRID_COLS, row = i / GRID_COLS;
+    c.box = mk_box(s_scr);
+    lv_obj_set_size(c.box, CARD_W, CARD_H);
+    lv_obj_set_pos(c.box, 12 + col * (CARD_W + GAP),
+                   HDR_H + 10 + row * (CARD_H + GAP));
+    c.spine = lv_obj_create(c.box);
+    lv_obj_set_size(c.spine, 5, CARD_H - 24);
+    lv_obj_set_pos(c.spine, 10, 12);
+    lv_obj_set_style_radius(c.spine, 3, 0);
+    lv_obj_set_style_border_width(c.spine, 0, 0);
+    lv_obj_set_style_bg_opa(c.spine, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(c.spine, LV_OBJ_FLAG_SCROLLABLE);
+    c.name = mk_label(c.box, font_body(), col_text());
+    lv_obj_set_pos(c.name, 26, 10);
+    c.state = mk_label(c.box, font_caption(), col_ok());
+    lv_obj_set_style_text_letter_space(c.state, 1, 0);
+    lv_obj_set_pos(c.state, 26, 34);
+    c.badge = mk_label(c.box, font_caption(), col_muted());
+    lv_obj_align(c.badge, LV_ALIGN_TOP_RIGHT, -12, 34);
+    c.event = mk_label(c.box, font_caption(), col_muted());
+    lv_obj_set_pos(c.event, 26, 52);
+    c.meta = mk_label(c.box, font_caption(), col_faint());
+    lv_obj_set_pos(c.meta, 26, 70);
+    lv_obj_add_flag(c.box, LV_OBJ_FLAG_HIDDEN);
+  }
+  s_more = mk_label(s_scr, font_label(), col_muted());
+  lv_obj_align(s_more, LV_ALIGN_BOTTOM_LEFT, 20, -8);
+  s_empty = mk_label(s_scr, font_body(), col_muted());
+  lv_obj_set_style_text_align(s_empty, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(s_empty, LV_ALIGN_LEFT_MID, 90, 0);
+
+  // ── Timeline ──
+  lv_obj_t* rail = lv_obj_create(s_scr);
+  lv_obj_set_size(rail, 1, 480 - HDR_H - 20);
+  lv_obj_set_pos(rail, 800 - TL_W - 10, HDR_H + 10);
+  lv_obj_set_style_bg_color(rail, col_edge(), 0);
+  lv_obj_set_style_bg_opa(rail, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(rail, 0, 0);
+  lv_obj_set_style_radius(rail, 0, 0);
+  lv_obj_clear_flag(rail, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_tl_title = mk_label(s_scr, font_caption(), col_muted());
+  lv_obj_set_style_text_letter_space(s_tl_title, 2, 0);
+  lv_label_set_text(s_tl_title, "EVENTS");
+  lv_obj_set_pos(s_tl_title, 800 - TL_W + 14, HDR_H + 12);
+
+  for (int i = 0; i < EV_ROWS; i++) {
+    EvRow& r = s_ev[i];
+    const lv_coord_t y = HDR_H + 40 + i * 42;
+    r.dot = lv_obj_create(s_scr);
+    lv_obj_set_size(r.dot, 10, 10);
+    lv_obj_set_pos(r.dot, 800 - TL_W + 14, y + 5);
+    lv_obj_set_style_radius(r.dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(r.dot, 0, 0);
+    lv_obj_set_style_bg_opa(r.dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(r.dot, 10, 0);
+    lv_obj_set_style_shadow_opa(r.dot, LV_OPA_40, 0);
+    lv_obj_clear_flag(r.dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(r.dot, LV_OBJ_FLAG_HIDDEN);
+    r.name = mk_label(s_scr, font_label(), col_text());
+    lv_obj_set_pos(r.name, 800 - TL_W + 34, y);
+    r.meta = mk_label(s_scr, font_caption(), col_muted());
+    lv_obj_set_pos(r.meta, 800 - TL_W + 34, y + 19);
+  }
+
+  // ── Footer + ack ring ──
+  s_footer = mk_label(s_scr, font_caption(), col_faint());
+  lv_obj_align(s_footer, LV_ALIGN_BOTTOM_RIGHT, -16, -8);
+
+  s_ack_ring = lv_arc_create(s_scr);
+  lv_obj_set_size(s_ack_ring, 120, 120);
+  lv_obj_center(s_ack_ring);
+  lv_arc_set_rotation(s_ack_ring, 270);
+  lv_arc_set_bg_angles(s_ack_ring, 0, 1);
+  lv_obj_set_style_arc_width(s_ack_ring, 5, LV_PART_MAIN);
+  lv_obj_set_style_arc_rounded(s_ack_ring, true, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(s_ack_ring, col_text(), LV_PART_MAIN);
+  lv_obj_set_style_arc_opa(s_ack_ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(s_ack_ring, LV_OPA_TRANSP, LV_PART_KNOB);
+  lv_obj_clear_flag(s_ack_ring, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(s_ack_ring, LV_OBJ_FLAG_HIDDEN);
+}
+
+void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
+  if (!s_scr) return;
+  const int n = fleet.count();
+  const Sev worst = fleet.worst(now);
+  const lv_color_t tcol = st.night ? ncol_text() : col_text();
+  const lv_color_t mcol = st.night ? ncol_muted() : col_muted();
+  const lv_color_t fcol = st.night ? ncol_muted() : col_faint();
+
+  // ── Header sentence ──
+  lv_obj_set_style_text_color(s_headline, tcol, 0);
+  if (n == 0) {
+    lv_label_set_text(s_headline,
+                      st.mqtt_ok ? "Listening for canaries"
+                                 : (st.wifi_ok ? "Broker unreachable" : "WiFi down"));
+  } else if (worst <= Sev::Notice) {
+    lv_label_set_text_fmt(s_headline, "All quiet  ·  %d %s%s", n,
+                          n == 1 ? "canary" : "canaries",
+                          fleet.all_verified() ? "  ·  verified" : "");
+  } else {
+    char word[16];
+    snprintf(word, sizeof(word), "%s", canary::fleet::sev_name(worst));
+    upper(word);
+    lv_obj_set_style_text_color(s_headline, sev_color(worst, st.night), 0);
+    lv_label_set_text_fmt(s_headline, "%s%s", word,
+                          st.acked ? "  ·  acknowledged" : "");
+  }
+  if (st.time_valid) {
+    lv_label_set_text_fmt(s_clock, "%02d:%02d", st.clock_hh, st.clock_mm);
+  } else {
+    lv_label_set_text(s_clock, "");
+  }
+  lv_obj_set_style_text_color(s_clock, mcol, 0);
+  const lv_color_t glow = sev_color(worst, st.night);
+  lv_obj_set_style_bg_color(s_glow, glow, 0);
+  lv_obj_set_style_shadow_color(s_glow, glow, 0);
+
+  // ── Cards ──
+  lv_obj_t* attention = nullptr;
+  lv_color_t attention_col = col_alert();
+  for (int i = 0; i < MAX_CARDS; i++) {
+    Card& c = s_cards[i];
+    const Witness* w = (i < n) ? fleet.at(i) : nullptr;
+    if (!w) {
+      lv_obj_add_flag(c.box, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    lv_obj_clear_flag(c.box, LV_OBJ_FLAG_HIDDEN);
+    const Sev s = fleet.witness_sev(*w, now);
+    const lv_color_t sc = sev_color(s, st.night);
+
+    lv_obj_set_style_bg_color(c.box, st.night ? col_bg() : col_surface(), 0);
+    lv_obj_set_style_border_color(c.box, st.night ? ncol_muted() : col_edge(), 0);
+    lv_obj_set_style_bg_color(c.spine, sc, 0);
+
+    lv_obj_set_style_text_color(c.name, tcol, 0);
+    lv_label_set_text_fmt(c.name, "%.18s", w->id);
+
+    char state[24];
+    snprintf(state, sizeof(state), "%s", link_label(w->link));
+    upper(state);
+    lv_obj_set_style_text_color(c.state, sc, 0);
+    if (w->tamper) {
+      lv_label_set_text_fmt(c.state, "%s · TAMPER", state);
+    } else {
+      lv_label_set_text(c.state, state);
+    }
+
+    lv_obj_set_style_text_color(c.badge, badge_color(w->badge, st.night), 0);
+    lv_label_set_text(c.badge, badge_text(w->badge));
+
+    lv_obj_set_style_text_color(c.event, mcol, 0);
+    if (w->has_event) {
+      char human[40], age[8];
+      humanize_event(w->last_event, human, sizeof(human));
+      format_age(now, w->last_event_ms, age, sizeof(age));
+      lv_label_set_text_fmt(c.event, "%s  ·  %s", human, age);
+    } else {
+      lv_label_set_text(c.event, "No events yet");
+    }
+
+    lv_obj_set_style_text_color(c.meta, fcol, 0);
+    if (w->battery_present && w->battery_pct >= 0) {
+      lv_label_set_text_fmt(c.meta, "%s %d%%   %.12s",
+                            w->battery_pct < 25 ? LV_SYMBOL_BATTERY_1
+                                                : LV_SYMBOL_BATTERY_3,
+                            (int)w->battery_pct, w->fw);
+    } else {
+      lv_label_set_text_fmt(c.meta, "%.14s", w->fw);
+    }
+
+    if (s >= Sev::Alert && !st.acked && !attention) {
+      attention = c.box;
+      attention_col = sc;
+    }
+  }
+  breathe(attention, attention_col, attention != nullptr);
+
+  lv_obj_set_style_text_color(s_more, mcol, 0);
+  if (n > MAX_CARDS) lv_label_set_text_fmt(s_more, "+%d more", n - MAX_CARDS);
+  else lv_label_set_text(s_more, "");
+
+  lv_obj_set_style_text_color(s_empty, mcol, 0);
+  lv_label_set_text(s_empty, n == 0 ? "Canaries publishing to this\nbroker appear here" : "");
+
+  // ── Timeline ──
+  lv_obj_set_style_text_color(s_tl_title, mcol, 0);
+  const int evn = fleet.events_count();
+  for (int i = 0; i < EV_ROWS; i++) {
+    EvRow& r = s_ev[i];
+    const auto* e = (i < evn) ? fleet.event_at(i) : nullptr;
+    if (!e) {
+      lv_obj_add_flag(r.dot, LV_OBJ_FLAG_HIDDEN);
+      lv_label_set_text(r.name, i == 0 && evn == 0 ? "Nothing witnessed yet" : "");
+      lv_label_set_text(r.meta, "");
+      lv_obj_set_style_text_color(r.name, mcol, 0);
+      continue;
+    }
+    char human[40], age[8];
+    humanize_event(e->name, human, sizeof(human));
+    format_age(now, e->at_ms, age, sizeof(age));
+    const lv_color_t ec = sev_color(e->sev, st.night);
+    lv_obj_clear_flag(r.dot, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(r.dot, ec, 0);
+    lv_obj_set_style_shadow_color(r.dot, ec, 0);
+    lv_obj_set_style_text_color(r.name,
+                                e->sev >= Sev::Warn ? ec : tcol, 0);
+    lv_label_set_text_fmt(r.name, "%.26s", human);
+    lv_obj_set_style_text_color(r.meta, mcol, 0);
+    lv_label_set_text_fmt(r.meta, "%s ago  ·  %.14s%s", age, e->device,
+                          e->signed_flag ? "  ·  signed" : "");
+  }
+
+  // ── Footer honesty line ──
+  if (!st.wifi_ok) {
+    lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_alert(), 0);
+    lv_label_set_text(s_footer, "WIFI DOWN — showing last known state");
+  } else if (!st.mqtt_ok) {
+    lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_warn(), 0);
+    lv_label_set_text(s_footer, "BROKER DOWN — showing last known state");
+  } else {
+    lv_obj_set_style_text_color(s_footer, fcol, 0);
+    lv_label_set_text(s_footer, "status display · not a life-safety device");
+  }
+}
+
+void dash_ui_ack_hold(bool active) {
+  if (!s_ack_ring) return;
+  if (active && !s_ack_holding) {
+    s_ack_holding = true;
+    lv_obj_clear_flag(s_ack_ring, LV_OBJ_FLAG_HIDDEN);
+    lv_anim_init(&s_ack_anim);
+    lv_anim_set_var(&s_ack_anim, s_ack_ring);
+    lv_anim_set_exec_cb(&s_ack_anim, ack_cb);
+    lv_anim_set_values(&s_ack_anim, 1, 360);
+    lv_anim_set_time(&s_ack_anim, MOTION_ACK_MS);
+    lv_anim_set_path_cb(&s_ack_anim, lv_anim_path_linear);
+    lv_anim_start(&s_ack_anim);
+  } else if (!active && s_ack_holding) {
+    s_ack_holding = false;
+    lv_anim_del(s_ack_ring, ack_cb);
+    lv_obj_add_flag(s_ack_ring, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 }  // namespace canary::ui
