@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### canary-wap camera: event triggers, idle standby, thermal shedding, real battery gating
+
+The camera was "always ready, never watching": initialized once at boot
+with its 20 MHz clock free-running forever, but only capturing on demand
+(peek, QR, sealed vault) — and the only automatic triggers were the
+acoustic alarms. Three changes get more out of it while making it run
+cooler and last longer on battery:
+
+- **Two new opt-in sealed-vault triggers.** "Motion (Wi-Fi sensing)"
+  seals one encrypted frame the moment the presence engine confirms an
+  arrival (the fused CSI+RF "rf_presence_started" transition — immediate,
+  not the bundled witness commit) — the sensing radio is already
+  listening, so this costs no extra power and works in the dark. "Mesh alarm" seals one frame when a paired Canary
+  reports tamper / motion / breach (battery housekeeping alerts do not
+  fire it). Both ride the existing write-only escrow: key-gated,
+  cooldown-bounded, OFF by default, device can't decrypt its own
+  captures. New `.svlt` trigger bytes 4/5; the unlock tool and both
+  golden-fixture test suites updated in lockstep.
+- **Idle standby + on-demand wake.** A camera unused for 5 minutes is
+  parked via `esp_camera_deinit()` (XCLK stops, framebuffers freed —
+  less idle current, less heat). Anything that needs a frame — peek,
+  QR, a vault seal — wakes it (~1 s, mutex-guarded re-init through the
+  existing boot ladder). Decisions are pure and host-tested
+  (`camera_gate_logic.h` + `test_camera_gate_logic.cpp`).
+- **Thermal protection with teeth.** At the existing 80 °C critical
+  threshold the peek stream (the actual heat source) is stopped, new
+  streams are refused with "Device is too hot", and the sensor parks
+  until it cools. Vault captures stay allowed — one life-safety frame
+  is worth more than the watt it costs.
+- **The battery policy is now enforced for the camera, not just
+  documented.** `PolicyFeatures.camera_peek` had zero call sites — the
+  docs said "camera off on battery" while the firmware ignored it. On
+  battery the peek endpoints now answer 503 with an honest reason and
+  the sensor parks; the policy's record-interval also acts as a real
+  floor on the witness record cadence. Vault and QR still work in every
+  mode. The hardware guide and `power_policy.h` now state exactly which
+  policy fields are enforced and which remain advisory (csi/mqtt/mesh/
+  vision have no consumers yet — no more doc fiction).
+
 ### Audit remediation: witness records now durable on SD; break-glass tokens single-use across invocations
 
 An end-to-end audit of the SD write paths, the device hash chain, the

@@ -102,7 +102,8 @@ static void test_header_rejects_malformed() {
 }
 
 static void test_capture_decision() {
-  VaultConfig cfg{true, false, true, 60};  /* t3 + glass on, t4 off */
+  VaultConfig cfg{true, false, true, false, false, 60};
+  /* t3 + glass on; t4, motion, mesh off */
 
   /* Args: (trigger, cfg, has_pubkey, sd_ok, camera_ok, qr_active,
    *        worker_busy, now, last, has_last) */
@@ -136,9 +137,27 @@ static void test_capture_decision() {
                          false, 100000, 0, false) == Decision::CAPTURE);
 
   /* All-off config (the factory default): every alarm trigger skips. */
-  VaultConfig off{false, false, false, 60};
+  VaultConfig off{false, false, false, false, false, 60};
   CHECK(capture_decision(Trigger::T3_SMOKE, off, true, true, true, false,
                          false, 100000, 0, false) == Decision::SKIP_DISABLED);
+
+  /* New triggers: motion and mesh follow the same opt-in + cooldown
+   * contract as the acoustic three. */
+  VaultConfig mm{false, false, false, true, true, 60};  /* motion+mesh only */
+  CHECK(capture_decision(Trigger::MOTION, mm, true, true, true, false,
+                         false, 100000, 0, false) == Decision::CAPTURE);
+  CHECK(capture_decision(Trigger::MESH, mm, true, true, true, false,
+                         false, 100000, 0, false) == Decision::CAPTURE);
+  CHECK(capture_decision(Trigger::MOTION, off, true, true, true, false,
+                         false, 100000, 0, false) == Decision::SKIP_DISABLED);
+  CHECK(capture_decision(Trigger::MESH, off, true, true, true, false,
+                         false, 100000, 0, false) == Decision::SKIP_DISABLED);
+  /* Motion respects cooldown (30 s since last < 60 s window). */
+  CHECK(capture_decision(Trigger::MOTION, mm, true, true, true, false,
+                         false, 100000, 70000, true) == Decision::SKIP_COOLDOWN);
+  /* Motion with no key stays sealed off, like everything else. */
+  CHECK(capture_decision(Trigger::MOTION, mm, false, true, true, false,
+                         false, 100000, 0, false) == Decision::SKIP_NO_KEY);
 
   /* TEST bypasses opt-in and cooldown, NOT the hard preconditions. */
   CHECK(capture_decision(Trigger::TEST, off, true, true, true, false,
@@ -188,6 +207,10 @@ static void test_filename() {
   CHECK(seq == 6551 && t == Trigger::T3_SMOKE);
   CHECK(filename_parse("seal_00000001_glass.svlt", &seq, &t));
   CHECK(seq == 1 && t == Trigger::GLASS);
+  CHECK(filename_parse("seal_00000002_motion.svlt", &seq, &t));
+  CHECK(seq == 2 && t == Trigger::MOTION);
+  CHECK(filename_parse("seal_00000003_mesh.svlt", &seq, &t));
+  CHECK(seq == 3 && t == Trigger::MESH);
 
   CHECK(!filename_parse("seal_0006551_smoke.svlt", &seq, &t));  /* 7 digits */
   CHECK(!filename_parse("seal_00006551_nope.svlt", &seq, &t));  /* bad tag */

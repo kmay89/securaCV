@@ -54,6 +54,15 @@ enum PowerPolicyMode : uint8_t {
 // Each field is a runtime override. true = feature should run if compiled
 // in; false = feature should be stopped/skipped this loop. The main loop
 // ANDs these with the compile-time FEATURE_* flags.
+//
+// ENFORCEMENT STATUS (keep docs/hardware/esp32s3_power_battery_guide.md
+// in sync): camera_peek (peek gate + sensor standby in canary_wap.ino's
+// camera power manager), record_interval_ms (floor on the record loop),
+// cpu_freq_mhz and wifi_ps_mode (applied in transition_to below), and
+// the deep-sleep duty cycle are ENFORCED. The remaining fields (csi,
+// vision, mqtt, mesh, gnss, touch, ir_rmt, temp_tamper, wifi_*,
+// http_server) are ADVISORY today — no subsystem consumes them yet. If
+// you wire one up, move it to the enforced list here and in the guide.
 // ════════════════════════════════════════════════════════════════════════════
 
 struct PolicyFeatures {

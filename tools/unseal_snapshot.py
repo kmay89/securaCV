@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """SecuraCV sealed-snapshot vault — off-device key generation and unlock.
 
-The canary-wap device seals event-triggered camera frames (T3 smoke / T4 CO /
-glass break, each opt-in and OFF by default) into `.svlt` files on its SD
+The canary-wap device seals event-triggered camera frames (T3 smoke / T4 CO
+/ glass break / Wi-Fi-sensing motion / mesh peer alarms, each opt-in and
+OFF by default) into `.svlt` files on its SD
 card, encrypted against an operator-held X25519 key. The device stores ONLY
 the public key — it cannot decrypt what it wrote. This tool is the other
 half: generate the keypair, inspect sealed files, and unseal them back into
@@ -18,7 +19,7 @@ Construction (mirrors vault_snapshot.cpp exactly):
 
 Header layout (little-endian):
   0..3   magic "SVLT"        4..4   version (1)
-  5..5   trigger (1=smoke, 2=co, 3=glass, 9=test)
+  5..5   trigger (1=smoke, 2=co, 3=glass, 4=motion, 5=mesh, 9=test)
   6..6   time bucket (0..143 ten-minute buckets — the only time info stored)
   7..7   reserved
   8..15  recipient key id (first 8 bytes of SHA-256(operator_pub))
@@ -58,7 +59,7 @@ HEADER_SIZE = 64
 TAG_SIZE = 16
 MAX_CIPHERTEXT = 512 * 1024
 HKDF_INFO = b"securacv/vault/seal/v1"
-TRIGGERS = {1: "smoke", 2: "co", 3: "glass", 9: "test"}
+TRIGGERS = {1: "smoke", 2: "co", 3: "glass", 4: "motion", 5: "mesh", 9: "test"}
 TRIGGER_BY_TAG = {v: k for k, v in TRIGGERS.items()}
 
 
