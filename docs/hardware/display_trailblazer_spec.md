@@ -5,7 +5,9 @@
 > SHIPPED** (§6 chirp scan, §7 v1 in-RAM story, §8 names/rooms, §9
 > wellbeing line, §10 draft standard published), remaining items marked
 > *bench/next* inline. Companion to [`display_ux_design.md`](./display_ux_design.md)
-> (goals G1–G13) and [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md).
+> (goals G1–G13), [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md),
+> and the [bench bring-up runbook](./display_bench_bringup.md) (validates every
+> §1–§10 acceptance criterion on real glass — incl. the router-unplugged §6 demo).
 > Every feature below states its *user story*, UX, wire/protocol impact,
 > privacy posture, and acceptance criteria.
 
