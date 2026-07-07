@@ -164,7 +164,8 @@ CH422G is **write-only**, addresses `0x24` (sys) / `0x38` (out); backlight is
 
 1. Daytime → backlight ON, dark-on-light Quiet Glass.
 2. Quiet hours → dark theme **and** backlight OFF (`CD_BRIGHT_NIGHT 0`).
-3. Tap in quiet hours → backlight ON for `CD_TOUCH_WAKE_MS` (20 s), then OFF.
+3. Tap in quiet hours → backlight ON for `CD_TOUCH_WAKE_MS` (20 s on Dash;
+   the Watch default is 15 s — the two flavors' configs differ), then OFF.
 
 **Pass:** the EXIO2 bit toggles the backlight both ways; no other EXIO line
 (SD_CS/USB-sel) is disturbed when toggling it. **→ clears the CH422G-bit VERIFY.**
@@ -173,8 +174,8 @@ CH422G is **write-only**, addresses `0x24` (sys) / `0x38` (out); backlight is
 ### D5. Chime — optional piezo (`VERIFY: BUZZER_PIN 6`)
 
 If fitted to **GPIO6 ↔ GND** (free of the RGB/touch/expander nets), set
-`FEATURE_CHIME 1` in the **dash** config and re-flash. Same pass criteria as
-W5. **→ clears `BUZZER_PIN` VERIFY.**
+`FEATURE_CHIME 1` in `firmware/configs/canary-display/dash/config.h` and
+re-flash. Same pass criteria as W5. **→ clears `BUZZER_PIN` VERIFY.**
 
 ---
 
