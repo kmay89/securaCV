@@ -41,4 +41,7 @@
 
 #define LV_USE_LOG 0
 
+/* Proof-on-Glass: bundled QR generator (trailblazer spec §1). */
+#define LV_USE_QRCODE 1
+
 #endif /* LV_CONF_H */

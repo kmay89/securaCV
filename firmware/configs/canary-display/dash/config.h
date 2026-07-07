@@ -34,6 +34,10 @@
 #define FEATURE_MQTT                1   // subscribe to the fleet, publish own status
 #define FEATURE_CHAIN_VERIFY        1   // on-device Ed25519 verify + TOFU pinning
 #define FEATURE_MDNS_DISCOVERY      1   // flock discovery: find/gossip the broker
+#define FEATURE_PROOF_QR            1   // tap-for-proof QR (trailblazer spec 1)
+#define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
+#define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
+#define FEATURE_CHIME               0   // piezo unpopulated; engine compiled (spec 5)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
 
@@ -68,6 +72,7 @@
 
 #define CD_UI_FRAME_MS          200     // 5 fps refresh tick (direct RGB draw)
 #define CD_BRIGHT_DAY           255     // kept for API symmetry; panel is on/off
+#define CD_BRIGHT_AMBIENT       255     // backlight is on/off; ambient == on
 #define CD_BRIGHT_NIGHT         0       // quiet hours = dark theme + backlight OFF
 #define CD_TOUCH_WAKE_MS        20000   // backlight back on after a tap, then off
 #define CD_LONGPRESS_MS         900     // acknowledge gesture
@@ -89,5 +94,10 @@
 // (self-heals a broker that moved DHCP lease; also the retry cadence for a
 // never-configured unit waiting for its first referral).
 #define CD_BROKER_REDISCOVER_MS 120000  // 2 min
+
+// Trailblazer wave 1 (display_trailblazer_spec.md)
+#define CD_HEARTBEAT_UI_MS      60000   // all-verified pulse cadence (day only)
+#define CD_PRESENCE_WAKE_MS     10000   // Notice+ event fresher than this wakes
+#define CD_CHIME_REVOICE_MS     30000   // Tier-1 repeats until acked
 #define CD_MQTT_BUFFER_BYTES    2048
 #define CD_HA_DISCOVERY_PREFIX  "homeassistant"

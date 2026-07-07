@@ -251,4 +251,17 @@ int pinned_count() {
   return n;
 }
 
+bool pinned_pubkey_hex(const char* device_id, char out[65]) {
+  if (!device_id || !out) return false;
+  const Pin* p = find_pin(device_id);
+  if (!p || p->mismatch) return false;
+  static const char H[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i++) {
+    out[2 * i]     = H[(p->pubkey[i] >> 4) & 0xF];
+    out[2 * i + 1] = H[p->pubkey[i] & 0xF];
+  }
+  out[64] = '\0';
+  return true;
+}
+
 }  // namespace canary::trust

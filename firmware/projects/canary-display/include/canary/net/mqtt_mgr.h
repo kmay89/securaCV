@@ -20,6 +20,11 @@ namespace canary::net {
   void publish_status_retained(const Topics& topics, const char* status);   // online/offline
   void publish_health_retained(const Topics& topics);
 
+  // Household ack-sync (trailblazer spec §2): announce a local long-press
+  // ack on the shared retained topic. Caller supplies epoch seconds (only
+  // call when SNTP-synced — no guessed clocks on the wire).
+  void publish_fleet_ack(uint32_t epoch_s);
+
   // ── Broker endpoint (flock-discovery rebind) ──────────────────────────
   // The broker address starts from runtime config but is rebindable at
   // runtime: mDNS flock discovery adopts a referral when the compiled/NVS

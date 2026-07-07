@@ -16,6 +16,7 @@
 
 #include "canary/ui/dash_ui.h"
 #include "canary/ui/theme.h"
+#include "canary/trust.h"
 
 namespace canary::ui {
 
@@ -72,6 +73,18 @@ lv_obj_t* s_ack_ring = nullptr;
 lv_anim_t s_ack_anim;
 bool s_ack_holding = false;
 
+// Proof sheet (trailblazer spec §1)
+lv_obj_t* s_proof = nullptr;        // modal container (hidden when closed)
+lv_obj_t* s_proof_qr = nullptr;
+lv_obj_t* s_proof_title = nullptr;
+lv_obj_t* s_proof_state = nullptr;
+lv_obj_t* s_proof_cap = nullptr;
+char s_proof_id[48] = {0};          // which witness the open sheet shows
+
+// Fleet snapshot the tap router needs (updated each dash_ui_update).
+const Fleet* s_fleet = nullptr;
+uint32_t s_now_ms = 0;
+
 lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
   lv_obj_t* l = lv_label_create(parent);
   lv_obj_set_style_text_font(l, f, 0);
@@ -127,6 +140,45 @@ void ack_cb(void* var, int32_t v) {
 
 void upper(char* s) {
   for (; *s; s++) *s = (char)toupper((unsigned char)*s);
+}
+
+void proof_close() {
+  if (s_proof) lv_obj_add_flag(s_proof, LV_OBJ_FLAG_HIDDEN);
+  s_proof_id[0] = '\0';
+}
+
+// Open the proof sheet for one witness: its signed chain head, verbatim,
+// plus the pinned pubkey — dark-on-light so any phone camera reads it.
+void proof_open(const canary::fleet::Witness& w) {
+  char pk[65];
+  const bool have = w.chain_raw[0] &&
+                    canary::trust::pinned_pubkey_hex(w.id, pk);
+
+  lv_label_set_text_fmt(s_proof_title, "%.24s", w.id);
+  lv_label_set_text_fmt(s_proof_state, "%s  ·  %s", link_label(w.link),
+                        badge_text(w.badge));
+  if (have) {
+    static char body[640];
+    const int len = snprintf(body, sizeof(body),
+                             "{\"v\":1,\"t\":\"securacv/%s/chain\","
+                             "\"pk\":\"%s\",\"p\":%s}",
+                             w.id, pk, w.chain_raw);
+    if (len > 0 && (size_t)len < sizeof(body)) {
+      lv_qrcode_update(s_proof_qr, body, (uint32_t)len);
+      lv_obj_clear_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
+      lv_label_set_text(s_proof_cap,
+                        "Scan to verify this witness's signed chain\n"
+                        "no app · no account · no cloud");
+    } else {
+      lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
+      lv_label_set_text(s_proof_cap, "Proof payload too large");
+    }
+  } else {
+    lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_proof_cap, "No signed chain to prove yet");
+  }
+  snprintf(s_proof_id, sizeof(s_proof_id), "%s", w.id);
+  lv_obj_clear_flag(s_proof, LV_OBJ_FLAG_HIDDEN);
 }
 
 }  // namespace
@@ -229,6 +281,34 @@ void dash_ui_create() {
   s_footer = mk_label(s_scr, font_caption(), col_faint());
   lv_obj_align(s_footer, LV_ALIGN_BOTTOM_RIGHT, -16, -8);
 
+  // ── Proof sheet (hidden until a card is tapped) ──
+  s_proof = mk_box(s_scr);
+  lv_obj_set_size(s_proof, 460, 400);
+  lv_obj_center(s_proof);
+  lv_obj_set_style_shadow_width(s_proof, 40, 0);
+  lv_obj_set_style_shadow_color(s_proof, lv_color_black(), 0);
+  lv_obj_set_style_shadow_opa(s_proof, LV_OPA_60, 0);
+  s_proof_title = mk_label(s_proof, font_body(), col_text());
+  lv_obj_align(s_proof_title, LV_ALIGN_TOP_MID, 0, 14);
+  s_proof_state = mk_label(s_proof, font_caption(), col_muted());
+  lv_obj_align(s_proof_state, LV_ALIGN_TOP_MID, 0, 38);
+  lv_obj_t* qr_card = lv_obj_create(s_proof);
+  lv_obj_set_size(qr_card, 256, 256);
+  lv_obj_align(qr_card, LV_ALIGN_TOP_MID, 0, 60);
+  lv_obj_set_style_bg_color(qr_card, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(qr_card, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(qr_card, 12, 0);
+  lv_obj_set_style_border_width(qr_card, 0, 0);
+  lv_obj_set_style_pad_all(qr_card, 8, 0);
+  lv_obj_clear_flag(qr_card, LV_OBJ_FLAG_SCROLLABLE);
+  s_proof_qr = lv_qrcode_create(qr_card, 240, lv_color_black(),
+                                lv_color_white());
+  lv_obj_center(s_proof_qr);
+  s_proof_cap = mk_label(s_proof, font_caption(), col_muted());
+  lv_obj_set_style_text_align(s_proof_cap, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(s_proof_cap, LV_ALIGN_BOTTOM_MID, 0, -14);
+  lv_obj_add_flag(s_proof, LV_OBJ_FLAG_HIDDEN);
+
   s_ack_ring = lv_arc_create(s_scr);
   lv_obj_set_size(s_ack_ring, 120, 120);
   lv_obj_center(s_ack_ring);
@@ -245,6 +325,8 @@ void dash_ui_create() {
 
 void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (!s_scr) return;
+  s_fleet = &fleet;
+  s_now_ms = now;
   const int n = fleet.count();
   const Sev worst = fleet.worst(now);
   const lv_color_t tcol = st.night ? ncol_text() : col_text();
@@ -375,6 +457,26 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
                           e->signed_flag ? "  ·  signed" : "");
   }
 
+  // The heartbeat (spec §4): the header glow swells once a minute, only
+  // when everything is reachable AND verified — absence is information.
+  static uint32_t s_last_beat_ms = 0;
+  if (!st.night && n > 0 && worst <= Sev::Notice && fleet.all_verified() &&
+      st.wifi_ok && st.mqtt_ok &&
+      (int32_t)(now - s_last_beat_ms) >= (int32_t)CD_HEARTBEAT_UI_MS) {
+    s_last_beat_ms = now;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_glow);
+    lv_anim_set_exec_cb(&a, [](void* var, int32_t v) {
+      lv_obj_set_style_shadow_opa((lv_obj_t*)var, (lv_opa_t)v, 0);
+    });
+    lv_anim_set_values(&a, LV_OPA_40, LV_OPA_90);
+    lv_anim_set_time(&a, 800);
+    lv_anim_set_playback_time(&a, 800);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_start(&a);
+  }
+
   // ── Footer honesty line ──
   if (!st.wifi_ok) {
     lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_alert(), 0);
@@ -386,6 +488,32 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     lv_obj_set_style_text_color(s_footer, fcol, 0);
     lv_label_set_text(s_footer, "status display · not a life-safety device");
   }
+}
+
+bool dash_ui_handle_tap(int16_t x, int16_t y) {
+  if (!s_scr || !s_fleet) return false;
+
+  // An open sheet swallows any tap (that's how you close it).
+  if (s_proof && !lv_obj_has_flag(s_proof, LV_OBJ_FLAG_HIDDEN)) {
+    proof_close();
+    return true;
+  }
+
+  // Card hit-test (same geometry the create pass laid down).
+  const int n = s_fleet->count();
+  for (int i = 0; i < MAX_CARDS && i < n; i++) {
+    const int col = i % GRID_COLS, row = i / GRID_COLS;
+    const int cx = 12 + col * (CARD_W + GAP);
+    const int cy = HDR_H + 10 + row * (CARD_H + GAP);
+    if (x >= cx && x < cx + CARD_W && y >= cy && y < cy + CARD_H) {
+      const canary::fleet::Witness* w = s_fleet->at(i);
+      if (w) {
+        proof_open(*w);
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 void dash_ui_ack_hold(bool active) {

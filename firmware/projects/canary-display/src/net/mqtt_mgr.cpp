@@ -11,6 +11,7 @@
 
 #include <Arduino.h>
 #include <cstring>
+#include <time.h>
 
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -154,7 +155,8 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
     const char* hash = doc["latest_hash"] | "";
     const char* sig = doc["sig"] | "";
     const auto verdict = canary::trust::evaluate_chain(device_id, length, hash, sig);
-    fleet.on_chain(device_id, length, verdict, now);
+    // Keep the verbatim payload: it becomes the Proof-on-Glass QR body.
+    fleet.on_chain(device_id, length, verdict, now, (const char*)payload, len);
     return;
   }
 
@@ -166,8 +168,55 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
 
 // ── MQTT callback ───────────────────────────────────────────────────────
 
+#if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
+// Household ack-sync: apply a remote display's acknowledge. Epoch-anchored
+// so retained replays and clock differences stay honest — and the ack maps
+// into this device's millis domain at its true age, so the local ack-hold
+// window and new-alert invalidation behave exactly as if the long-press
+// had happened here.
+static uint32_t s_last_ack_epoch = 0;
+
+static void handle_fleet_ack(const uint8_t* payload, unsigned int len) {
+  JsonDocument doc;
+  if (deserializeJson(doc, payload, len)) return;
+  const uint32_t at = doc["at"] | 0UL;
+  const char* by = doc["by"] | "";
+  if (at == 0 || strcmp(by, canary::cfg::get().device_id) == 0) return;
+
+  const time_t epoch = time(nullptr);
+  if (epoch < 1700000000) return;             // no local clock — stay honest
+  if (at <= s_last_ack_epoch) return;         // stale / retained replay
+
+  // Clock skew tolerance: two SNTP-synced siblings can disagree by a few
+  // seconds — a slightly future-stamped ack is genuine, treat it as "now".
+  // Beyond the tolerance it's malformed/malicious: reject. (review catch)
+  uint32_t age_s;
+  if (at > (uint32_t)epoch) {
+    if (at - (uint32_t)epoch > 10) return;    // future beyond skew tolerance
+    age_s = 0;
+  } else {
+    age_s = (uint32_t)epoch - at;
+  }
+  // Expiry compared in SECONDS: age_s*1000 would wrap uint32 for acks older
+  // than ~49.7 days and resurrect them as fresh. (review catch)
+  if (age_s >= (uint32_t)(CD_ACK_HOLD_MS / 1000UL)) return;  // expired
+
+  s_last_ack_epoch = at;
+  const uint32_t now_ms = canary::ms_now();
+  canary::fleet::the_fleet().acknowledge(now_ms - age_s * 1000UL);
+  log_line("ACK", "Household acknowledge received (synced from a sibling).");
+}
+#endif
+
 static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
   if (!topic || !payload) return;
+
+#if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
+  if (strcmp(topic, FleetSubs::FLEET_ACK) == 0) {
+    handle_fleet_ack(payload, len);
+    return;
+  }
+#endif
 
   // Update-entity commands (exact-match own topics).
   if (strcmp(topic, g_topics.update_cmd) == 0) {
@@ -326,6 +375,19 @@ void publish_health_retained(const Topics& topics) {
   publish_checked("HEALTH", topics.health, msg, true);
 }
 
+void publish_fleet_ack(uint32_t epoch_s) {
+#if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
+  if (!mqtt.connected() || epoch_s == 0) return;
+  s_last_ack_epoch = epoch_s;  // don't re-apply our own retained echo
+  char msg[128];
+  snprintf(msg, sizeof(msg), "{\"at\":%lu,\"by\":\"%s\"}",
+           (unsigned long)epoch_s, canary::cfg::get().device_id);
+  publish_checked("ACK", FleetSubs::FLEET_ACK, msg, true);
+#else
+  (void)epoch_s;
+#endif
+}
+
 bool mqtt_connect_attempt() {
   if (mqtt.connected()) return true;
 
@@ -374,6 +436,9 @@ bool mqtt_connect_attempt() {
   // Fleet wildcards. Retained status/health/chain/tamper replay instantly,
   // so the model repopulates within one broker round-trip of a reconnect.
   mqtt.subscribe(FleetSubs::STATUS, 1);
+#if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
+  mqtt.subscribe(FleetSubs::FLEET_ACK, 1);
+#endif
   mqtt.subscribe(FleetSubs::AVAILABILITY, 1);
   mqtt.subscribe(FleetSubs::HEALTH, 1);
   mqtt.subscribe(FleetSubs::EVENTS, 1);
