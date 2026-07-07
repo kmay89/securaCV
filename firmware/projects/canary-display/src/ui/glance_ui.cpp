@@ -16,6 +16,10 @@
 #include "canary/ui/glance_ui.h"
 #include "canary/ui/theme.h"
 #include "canary/trust.h"
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+#include <time.h>
+#include "canary/fleet/journal_instance.h"
+#endif
 
 namespace canary::ui {
 
@@ -54,6 +58,18 @@ lv_obj_t* s_pg_ev = nullptr;
 lv_obj_t* s_ev_title = nullptr;
 lv_obj_t* s_ev_name[EV_ROWS] = {nullptr};
 lv_obj_t* s_ev_meta[EV_ROWS] = {nullptr};
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+// History page (trailblazer spec §7): the durable, wall-clock story. Where the
+// events page reads the live ring in relative age ("3m ago"), this reads the
+// proof-carrying journal in wall time with the verdict that stood when each
+// event fired — the record that survives a reboot when persistence is on.
+lv_obj_t* s_pg_history = nullptr;
+lv_obj_t* s_thist_title = nullptr;
+lv_obj_t* s_thist_summary = nullptr;
+lv_obj_t* s_thist_name[EV_ROWS] = {nullptr};
+lv_obj_t* s_thist_meta[EV_ROWS] = {nullptr};
+#endif
 
 // Proof page (trailblazer spec §1)
 lv_obj_t* s_pg_proof = nullptr;
@@ -147,7 +163,11 @@ void show_page(lv_obj_t* page) {
   // ticking against a hidden object (review catch: rationed motion includes
   // rationed CPU).
   if (page != s_pg_halo) breathe(nullptr, false);
-  lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev, s_pg_proof};
+  lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev, s_pg_proof,
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+                       s_pg_history,
+#endif
+  };
   for (lv_obj_t* p : pages) {
     if (p == page) {
       lv_obj_clear_flag(p, LV_OBJ_FLAG_HIDDEN);
@@ -348,6 +368,57 @@ void update_events(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   }
 }
 
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+// History page: the durable, wall-clock story from the proof-carrying journal
+// (spec §7). Read-only on the round face — deep re-proof of a single past
+// event is a dash gesture (it has room to hit-test a list); here the value is
+// the honest narrative, wall-stamped and verdict-carrying, that survives a
+// reboot when persistence is on.
+void update_history(const Fleet& fleet, uint32_t now, const GlanceState& st) {
+  (void)fleet;
+  (void)now;
+  const lv_color_t tcol = st.night ? ncol_text() : col_text();
+  const lv_color_t mcol = st.night ? ncol_muted() : col_muted();
+  lv_obj_set_style_text_color(s_thist_title, mcol, 0);
+  lv_obj_set_style_text_color(s_thist_summary, mcol, 0);
+
+  const auto& j = canary::fleet::the_journal();
+  const int n = j.count();
+  if (n == 0) {
+    lv_label_set_text(s_thist_summary, "nothing yet");
+  } else {
+    lv_label_set_text_fmt(s_thist_summary, "%d kept", n);
+  }
+
+  for (int i = 0; i < EV_ROWS; i++) {
+    const auto* r = (i < n) ? j.at(i) : nullptr;
+    if (!r) {
+      lv_label_set_text(s_thist_name[i], "");
+      lv_label_set_text(s_thist_meta[i], "");
+      continue;
+    }
+    char human[40], stamp[16];
+    humanize_event(r->ev, human, sizeof(human));
+    if (r->epoch == 0) {
+      snprintf(stamp, sizeof(stamp), "--:--");
+    } else {
+      const time_t t = (time_t)r->epoch;
+      struct tm tmv;
+      localtime_r(&t, &tmv);
+      strftime(stamp, sizeof(stamp), "%m-%d %H:%M", &tmv);
+    }
+    lv_obj_set_style_text_color(
+        s_thist_name[i],
+        r->sev >= (uint8_t)Sev::Warn ? sev_color((Sev)r->sev, st.night) : tcol,
+        0);
+    lv_label_set_text_fmt(s_thist_name[i], "%.22s", human);
+    lv_obj_set_style_text_color(s_thist_meta[i], mcol, 0);
+    lv_label_set_text_fmt(s_thist_meta[i], "%s · %s", stamp,
+                          badge_text((canary::fleet::Badge)r->badge));
+  }
+}
+#endif  // FEATURE_TIME_MACHINE
+
 // Proof page: QR of the most urgent witness's signed chain head — the
 // exact bytes it published, plus the pinned pubkey (spec §1). Dark-on-
 // light on purpose: scanners want it, and scanning implies the user is
@@ -417,7 +488,13 @@ void heartbeat_pulse() {
 
 // ── Public API ───────────────────────────────────────────────────────────
 
-int glance_page_count() { return 3 + the_fleet().count(); }
+int glance_page_count() {
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  return 4 + the_fleet().count();   // + the history page
+#else
+  return 3 + the_fleet().count();
+#endif
+}
 
 void glance_ui_create() {
   s_scr = lv_scr_act();
@@ -471,6 +548,24 @@ void glance_ui_create() {
     lv_obj_align(s_ev_meta[i], LV_ALIGN_TOP_MID, 0, 74 + i * 32);
   }
 
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  // ── History page (spec §7) ──
+  s_pg_history = mk_page(s_scr);
+  s_thist_title = mk_label(s_pg_history, font_caption(), col_muted());
+  lv_obj_set_style_text_letter_space(s_thist_title, 2, 0);
+  lv_label_set_text(s_thist_title, "HISTORY");
+  lv_obj_align(s_thist_title, LV_ALIGN_TOP_MID, 0, 30);
+  s_thist_summary = mk_label(s_pg_history, font_caption(), col_muted());
+  lv_obj_align(s_thist_summary, LV_ALIGN_TOP_MID, 0, 48);
+  for (int i = 0; i < EV_ROWS; i++) {
+    s_thist_name[i] = mk_label(s_pg_history, font_label(), col_text());
+    lv_obj_align(s_thist_name[i], LV_ALIGN_TOP_MID, 0, 70 + i * 32);
+    s_thist_meta[i] = mk_label(s_pg_history, font_caption(), col_muted());
+    lv_obj_align(s_thist_meta[i], LV_ALIGN_TOP_MID, 0, 86 + i * 32);
+  }
+  lv_obj_add_flag(s_pg_history, LV_OBJ_FLAG_HIDDEN);
+#endif
+
   // ── Proof page ──
   s_pg_proof = mk_page(s_scr);
   s_proof_who = mk_label(s_pg_proof, font_caption(), col_muted());
@@ -509,7 +604,11 @@ void glance_ui_create() {
 void glance_ui_update(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   if (!s_scr) return;
   const int devices = fleet.count();
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  const int pages = 4 + devices;   // + the history page
+#else
   const int pages = 3 + devices;
+#endif
   int page = st.page;
   if (page >= pages || page < 0) page = 0;
 
@@ -518,12 +617,18 @@ void glance_ui_update(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     if (page == 0)                show_page(s_pg_halo);
     else if (page <= devices)     show_page(s_pg_dev);
     else if (page == devices + 1) show_page(s_pg_ev);
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+    else if (page == devices + 2) show_page(s_pg_history);
+#endif
     else                          show_page(s_pg_proof);
   }
 
   if (page == 0)                update_halo(fleet, now, st);
   else if (page <= devices)     update_device(fleet, now, st, page - 1);
   else if (page == devices + 1) update_events(fleet, now, st);
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  else if (page == devices + 2) update_history(fleet, now, st);
+#endif
   else                          update_proof(fleet, now, st);
 
   // The heartbeat: earned, daytime, once a minute (spec §4). Absence is

@@ -39,6 +39,8 @@
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
 #define FEATURE_CHIME               0   // piezo unpopulated; engine compiled (spec 5)
 #define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
+#define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
+#define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
 
@@ -66,6 +68,12 @@
 #define CD_ACK_HOLD_MS          3600000   // 1 h
 
 #define CD_EVENT_LOG_CAP        24
+
+// Time machine (spec 7): proof-carrying journal depth and flash budget. The
+// dash has the panel space to scrub a deeper window than the watch. History
+// modal reads the RAM ring; FEATURE_TIME_MACHINE_PERSIST mirrors to LittleFS.
+#define CD_JOURNAL_CAP          64
+#define CD_JOURNAL_MAX_BYTES    98304     // 96 KB flash ceiling (compacts to ring)
 
 // ============================================================================
 // UI / NIGHT MODE

@@ -39,6 +39,8 @@
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
 #define FEATURE_CHIME               0   // piezo unpopulated; engine compiled (spec 5)
 #define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
+#define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
+#define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
 
@@ -75,6 +77,13 @@
 
 // Event ring buffer shown on the events page.
 #define CD_EVENT_LOG_CAP        16
+
+// Time machine (spec 7): proof-carrying journal depth and flash budget. Each
+// record carries the verbatim signed chain head (~360 B), so the watch — the
+// smaller device — keeps a modest window. The history page reads the RAM ring;
+// FEATURE_TIME_MACHINE_PERSIST mirrors it to LittleFS so it survives reboots.
+#define CD_JOURNAL_CAP          32
+#define CD_JOURNAL_MAX_BYTES    49152     // 48 KB flash ceiling (compacts to ring)
 
 // ============================================================================
 // UI / NIGHT MODE

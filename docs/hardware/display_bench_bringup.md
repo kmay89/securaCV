@@ -246,6 +246,42 @@ MQTT resumes as the richer channel.
 > shipping balance; the sign-off gate is the *behaviour* (tamper crosses the
 > dead broker at all), not a stopwatch number.
 
+### F6. Broker self-discovery — the "configure once" demo (§ discovery)
+
+The magic trick: hand-provision **one** Canary WAP with the broker, then a
+brand-new display finds it with zero setup.
+
+1. Provision a `canary-wap` (DEV/FULL build — `FEATURE_MDNS_BROKER_GOSSIP=1`)
+   and let it connect to the broker.
+2. Flash a display with the **stock** secrets template (no broker configured),
+   or wipe its NVS, and power it on the same LAN.
+
+**Pass:** the display boots, prints "Broker: unconfigured — asking the flock
+(mDNS)", and adopts the WAP's advertised `broker`/`bport` within a rediscover
+cycle — no IP typed. Then **kill the WAP's broker link** (unplug it): confirm
+the WAP retracts its referral (empty-string tombstone) so a *next* fresh
+display won't chase the dead broker. **Artifact:** serial log showing the
+flock referral adopted; `avahi-browse -r _securacv._tcp` showing `broker=` TXT
+present while the WAP is connected and gone after it drops.
+
+### F7. Time machine — verifiable history (§7)
+
+1. Let events accrue (presence, a tamper, a chain). On the **dash**, tap the
+   "Past 24h · tap to review" line → the history modal.
+2. Tap any row → its signed chain QR. Scan it (same verifier as F2).
+3. On the **watch**, tap-cycle to the **HISTORY** page.
+4. **Persistence:** set `FEATURE_TIME_MACHINE_PERSIST=1` in the flavor
+   `config.h`, re-flash, generate a few events, **reboot**.
+
+**Pass:** the dash modal lists wall-clock events with verdicts; a row's QR
+verifies a *past* event exactly like a live one; the two-tap "erase all"
+clears the log. With persistence on, the pre-reboot events reappear after the
+reboot (LittleFS reload) — and a mount failure degrades to RAM-only without a
+bad boot (pull the scenario by testing on a board with no `spiffs` partition:
+it should log "RAM-only this boot" and still run). **Artifact:** photo of the
+history modal + a scan of a past event's QR verifying; serial line showing
+"time machine up (persisted, N loaded)" after reboot.
+
 ---
 
 ## Sign-off — retire the DEV status
@@ -260,6 +296,10 @@ When a track passes on your board revision:
 2. **Chime** — leave `FEATURE_CHIME 1` in a flavor's `config.h` **only** if the
    piezo is populated on that build; otherwise keep it 0 (honest: no silent
    dead pad).
+2b. **Time-machine persistence** — flip `FEATURE_TIME_MACHINE_PERSIST 1` only
+   after F7's reboot test passes on your board's flash; it degrades to RAM-only
+   if the FS won't mount, so enabling it can't brick a boot, but the durability
+   claim is only true once validated.
 3. **DEV banner** — once both flavors clear W1–W4 / D1–D4 and Track F, drop the
    `⚠️ DEV STATUS` block in `firmware/projects/canary-display/src/main.cpp` and
    the matching note atop each `README.md` / pins header.

@@ -50,6 +50,9 @@
 #include "canary/diagnostics.h"
 #include "canary/trust.h"
 #include "canary/fleet/fleet_instance.h"
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+#include "canary/fleet/journal_instance.h"
+#endif
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
@@ -439,6 +442,14 @@ void setup() {
 
 #if defined(FEATURE_SNTP) && FEATURE_SNTP
   configTzTime(CD_TZ, "pool.ntp.org", "time.nist.gov");
+#endif
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  // Boot the time machine (spec 7): reload recent proof-carrying history (when
+  // persistence is enabled) and wire the fleet's event sink so every new event
+  // is journaled. Must precede the first MQTT ingest below so nothing is
+  // missed; degrades to RAM-only if the filesystem won't mount.
+  canary::fleet::journal_begin();
 #endif
 
   // Seed the heap-health snapshot so the first status publish carries real

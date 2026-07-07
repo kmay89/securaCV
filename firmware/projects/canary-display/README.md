@@ -91,6 +91,19 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   time is SNTP-valid; and the **open standard draft** now lives at
   [`docs/standard/AMBIENT_DISPLAY_STANDARD.md`](../../../docs/standard/AMBIENT_DISPLAY_STANDARD.md).
 
+- **Trailblazer wave 3** ([spec](../../../docs/hardware/display_trailblazer_spec.md)):
+  **the verifiable time machine** (`FEATURE_TIME_MACHINE`) — every event is
+  recorded epoch-stamped with the *verbatim signed chain head that was live
+  when it fired*, so the Proof-on-Glass QR works on a week-old event exactly
+  as on a live one. The dash gains a history modal (tap "Past 24h" → a
+  wall-clock log; tap a row → its chain as a QR; a two-tap "erase all" for
+  sovereignty); the watch gains a read-only HISTORY page. Cross-reboot
+  durability is `FEATURE_TIME_MACHINE_PERSIST` (LittleFS, failure-tolerant,
+  bench-gated like the chime). And on the *sensor* side `canary-wap` now
+  **gossips the broker** (`FEATURE_MDNS_BROKER_GOSSIP`): configure one canary
+  and every display self-discovers a provably-reachable broker with zero
+  setup ([discovery doc](../../../docs/hardware/display_discovery_and_resilience.md) §5.1).
+
 ## Build
 
 ```bash

@@ -13,10 +13,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 
 #include "canary/ui/dash_ui.h"
 #include "canary/ui/theme.h"
 #include "canary/trust.h"
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+#include "canary/fleet/journal_instance.h"
+#endif
 
 namespace canary::ui {
 
@@ -81,6 +85,23 @@ lv_obj_t* s_proof_title = nullptr;
 lv_obj_t* s_proof_state = nullptr;
 lv_obj_t* s_proof_cap = nullptr;
 char s_proof_id[48] = {0};          // which witness the open sheet shows
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+// History modal (trailblazer spec §7): the verifiable time machine. Tapping
+// the "Past 24h" line opens a proof-carrying log of recent events; tapping any
+// row re-opens its signed chain as a QR — history you can still prove.
+constexpr int HIST_ROWS = 12;
+constexpr lv_coord_t HIST_X = 24, HIST_Y = 20, HIST_W = 752, HIST_H = 440;
+constexpr lv_coord_t HIST_ROW_Y0 = 84, HIST_ROW_H = 28;
+lv_obj_t* s_hist = nullptr;          // modal container (hidden when closed)
+lv_obj_t* s_hist_title = nullptr;
+lv_obj_t* s_hist_summary = nullptr;
+lv_obj_t* s_hist_rows[HIST_ROWS] = {nullptr};
+lv_obj_t* s_hist_erase = nullptr;    // two-tap "erase all" (sovereignty)
+lv_obj_t* s_hist_hint = nullptr;
+bool s_hist_erase_armed = false;
+uint32_t s_hist_erase_ms = 0;
+#endif
 
 // Fleet snapshot the tap router needs (updated each dash_ui_update).
 const Fleet* s_fleet = nullptr;
@@ -148,27 +169,30 @@ void proof_close() {
   s_proof_id[0] = '\0';
 }
 
-// Open the proof sheet for one witness: its signed chain head, verbatim,
-// plus the pinned pubkey — dark-on-light so any phone camera reads it.
-void proof_open(const canary::fleet::Witness& w) {
+// Render the proof sheet from raw ingredients: the pinned-pubkey key (id), the
+// verbatim signed chain payload, a title, and a state line. Shared by the live
+// witness sheet and the time-machine's per-record re-proof — the QR body is
+// byte-identical in both, which is the whole point: a week-old event proves
+// exactly like a live one. Moves the sheet to the foreground so it sits above
+// the history modal when opened from it.
+void proof_render(const char* title, const char* id, const char* chain_raw,
+                  const char* state_line) {
   char pk[65];
-  const bool have = w.chain_raw[0] &&
-                    canary::trust::pinned_pubkey_hex(w.id, pk);
-
-  lv_label_set_text_fmt(s_proof_title, "%.24s", Fleet::display_name(w));
-  lv_label_set_text_fmt(s_proof_state, "%s  ·  %s", link_label(w.link),
-                        badge_text(w.badge));
+  const bool have = chain_raw && chain_raw[0] &&
+                    canary::trust::pinned_pubkey_hex(id, pk);
+  lv_label_set_text_fmt(s_proof_title, "%.24s", title);
+  lv_label_set_text(s_proof_state, state_line);
   if (have) {
     static char body[640];
     const int len = snprintf(body, sizeof(body),
                              "{\"v\":1,\"t\":\"securacv/%s/chain\","
                              "\"pk\":\"%s\",\"p\":%s}",
-                             w.id, pk, w.chain_raw);
+                             id, pk, chain_raw);
     if (len > 0 && (size_t)len < sizeof(body)) {
       lv_qrcode_update(s_proof_qr, body, (uint32_t)len);
       lv_obj_clear_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
       lv_label_set_text(s_proof_cap,
-                        "Scan to verify this witness's signed chain\n"
+                        "Scan to verify this signed chain\n"
                         "no app · no account · no cloud");
     } else {
       lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
@@ -178,9 +202,93 @@ void proof_open(const canary::fleet::Witness& w) {
     lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_proof_cap, "No signed chain to prove yet");
   }
-  snprintf(s_proof_id, sizeof(s_proof_id), "%s", w.id);
+  snprintf(s_proof_id, sizeof(s_proof_id), "%s", id);
+  lv_obj_move_foreground(s_proof);
   lv_obj_clear_flag(s_proof, LV_OBJ_FLAG_HIDDEN);
 }
+
+// Open the proof sheet for one live witness.
+void proof_open(const canary::fleet::Witness& w) {
+  char state[48];
+  snprintf(state, sizeof(state), "%s  ·  %s", link_label(w.link),
+           badge_text(w.badge));
+  proof_render(Fleet::display_name(w), w.id, w.chain_raw, state);
+}
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+// Wall-clock stamp for a journal record: "MM-DD HH:MM", or an em dash when the
+// event was logged before SNTP (no honest place on a timeline).
+void fmt_stamp(uint32_t epoch, char* out, size_t cap) {
+  if (epoch == 0) { snprintf(out, cap, "  --  "); return; }
+  const time_t t = (time_t)epoch;
+  struct tm tmv;
+  localtime_r(&t, &tmv);
+  strftime(out, cap, "%m-%d %H:%M", &tmv);
+}
+
+// Re-open a PAST event's proof from its journaled record.
+void proof_open_record(const canary::fleet::JournalRecord& r) {
+  char stamp[16];
+  fmt_stamp(r.epoch, stamp, sizeof(stamp));
+  char state[64];
+  snprintf(state, sizeof(state), "%s  ·  %s", stamp,
+           badge_text((canary::fleet::Badge)r.badge));
+  const char* title = r.name[0] ? r.name : r.id;
+  proof_render(title, r.id, r.chain_raw, state);
+}
+
+void hist_close() {
+  if (s_hist) lv_obj_add_flag(s_hist, LV_OBJ_FLAG_HIDDEN);
+  s_hist_erase_armed = false;
+}
+
+// Populate and open the history modal from the journal ring (newest first).
+void hist_open() {
+  if (!s_hist) return;
+  const auto& j = canary::fleet::the_journal();
+  const int n = j.count();
+
+  if (n == 0) {
+    lv_label_set_text(s_hist_summary, "Nothing witnessed yet");
+  } else {
+    const uint32_t oldest = j.oldest_known_epoch();
+    char since[24] = "";
+    if (oldest) fmt_stamp(oldest, since, sizeof(since));
+    lv_label_set_text_fmt(s_hist_summary, "%d event%s%s%s", n,
+                          n == 1 ? "" : "s", oldest ? " · since " : "",
+                          oldest ? since : "");
+  }
+
+  for (int i = 0; i < HIST_ROWS; i++) {
+    const auto* r = j.at(i);   // newest at 0
+    if (!r) { lv_label_set_text(s_hist_rows[i], ""); continue; }
+    char stamp[16], human[40];
+    fmt_stamp(r->epoch, stamp, sizeof(stamp));
+    humanize_event(r->ev, human, sizeof(human));
+    const char* who = r->name[0] ? r->name : r->id;
+    // Verified events earn a check; everything else states its verdict word
+    // (never a bare color) — honesty travels with the history.
+    lv_obj_set_style_text_color(s_hist_rows[i],
+                                sev_color((Sev)r->sev, false), 0);
+    lv_label_set_text_fmt(s_hist_rows[i], "%s   ·   %.12s   ·   %.18s   ·   %s",
+                          stamp, who, human,
+                          badge_text((canary::fleet::Badge)r->badge));
+  }
+
+  const int shown = n < HIST_ROWS ? n : HIST_ROWS;
+  if (n > shown) {
+    lv_label_set_text_fmt(s_hist_hint,
+                          "showing %d of %d · tap a row to prove it", shown, n);
+  } else {
+    lv_label_set_text(s_hist_hint, "tap a row to prove it · tap away to close");
+  }
+  lv_label_set_text(s_hist_erase, "Erase all history");
+  s_hist_erase_armed = false;
+
+  lv_obj_move_foreground(s_hist);
+  lv_obj_clear_flag(s_hist, LV_OBJ_FLAG_HIDDEN);
+}
+#endif  // FEATURE_TIME_MACHINE
 
 }  // namespace
 
@@ -324,6 +432,31 @@ void dash_ui_create() {
   lv_obj_set_style_bg_opa(s_ack_ring, LV_OPA_TRANSP, LV_PART_KNOB);
   lv_obj_clear_flag(s_ack_ring, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(s_ack_ring, LV_OBJ_FLAG_HIDDEN);
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  // ── History modal (spec §7): the verifiable time machine, hidden until the
+  // "Past 24h" line is tapped ──
+  s_hist = mk_box(s_scr);
+  lv_obj_set_size(s_hist, HIST_W, HIST_H);
+  lv_obj_set_pos(s_hist, HIST_X, HIST_Y);
+  lv_obj_set_style_shadow_width(s_hist, 40, 0);
+  lv_obj_set_style_shadow_color(s_hist, lv_color_black(), 0);
+  lv_obj_set_style_shadow_opa(s_hist, LV_OPA_60, 0);
+  s_hist_title = mk_label(s_hist, font_body(), col_text());
+  lv_label_set_text(s_hist_title, "The story so far");
+  lv_obj_align(s_hist_title, LV_ALIGN_TOP_LEFT, 24, 16);
+  s_hist_summary = mk_label(s_hist, font_caption(), col_muted());
+  lv_obj_align(s_hist_summary, LV_ALIGN_TOP_LEFT, 24, 48);
+  for (int i = 0; i < HIST_ROWS; i++) {
+    s_hist_rows[i] = mk_label(s_hist, font_label(), col_text());
+    lv_obj_set_pos(s_hist_rows[i], 24, HIST_ROW_Y0 + i * HIST_ROW_H);
+  }
+  s_hist_hint = mk_label(s_hist, font_caption(), col_faint());
+  lv_obj_align(s_hist_hint, LV_ALIGN_BOTTOM_RIGHT, -20, -14);
+  s_hist_erase = mk_label(s_hist, font_caption(), col_muted());
+  lv_obj_align(s_hist_erase, LV_ALIGN_BOTTOM_LEFT, 24, -14);
+  lv_obj_add_flag(s_hist, LV_OBJ_FLAG_HIDDEN);
+#endif
 }
 
 void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
@@ -438,18 +571,27 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (n > MAX_CARDS) lv_label_set_text_fmt(s_more, "+%d more", n - MAX_CARDS);
   else lv_label_set_text(s_more, "");
 
-  // Time machine v1 (spec §7): the rolling day, one honest sentence.
+  // Time machine (spec §7): the rolling day in one honest sentence, and — when
+  // there's a proof-carrying journal to browse — an affordance to open it.
   lv_obj_set_style_text_color(s_today, fcol, 0);
   const int day_total = fleet.history_total();
+  char today[96];
   if (!st.time_valid || n == 0) {
-    lv_label_set_text(s_today, "");
+    today[0] = '\0';
   } else if (day_total == 0) {
-    lv_label_set_text(s_today, "Past 24h · nothing witnessed");
+    snprintf(today, sizeof(today), "Past 24h · nothing witnessed");
   } else {
-    lv_label_set_text_fmt(s_today, "Past 24h · %d %s · worst: %s",
-                          day_total, day_total == 1 ? "event" : "events",
-                          canary::fleet::sev_name(fleet.history_worst_day()));
+    snprintf(today, sizeof(today), "Past 24h · %d %s · worst: %s", day_total,
+             day_total == 1 ? "event" : "events",
+             canary::fleet::sev_name(fleet.history_worst_day()));
   }
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  if (today[0] && canary::fleet::the_journal().count() > 0) {
+    const size_t o = strlen(today);
+    snprintf(today + o, sizeof(today) - o, "   ·   tap to review");
+  }
+#endif
+  lv_label_set_text(s_today, today);
 
   lv_obj_set_style_text_color(s_empty, mcol, 0);
   lv_label_set_text(s_empty, n == 0 ? "Canaries publishing to this\nbroker appear here" : "");
@@ -518,11 +660,57 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
 bool dash_ui_handle_tap(int16_t x, int16_t y) {
   if (!s_scr || !s_fleet) return false;
 
-  // An open sheet swallows any tap (that's how you close it).
+  // An open proof sheet swallows any tap (that's how you close it). It sits
+  // above the history modal, so closing it returns you to the list.
   if (s_proof && !lv_obj_has_flag(s_proof, LV_OBJ_FLAG_HIDDEN)) {
     proof_close();
     return true;
   }
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  // Open history modal: rows re-prove; the erase affordance takes two taps;
+  // anywhere else dismisses.
+  if (s_hist && !lv_obj_has_flag(s_hist, LV_OBJ_FLAG_HIDDEN)) {
+    lv_area_t ea;
+    lv_obj_get_coords(s_hist_erase, &ea);
+    if (x >= ea.x1 - 8 && x <= ea.x2 + 8 && y >= ea.y1 - 8 && y <= ea.y2 + 8) {
+      // Sovereignty: erasing the home's whole record is deliberate — arm on
+      // the first tap, confirm on a second within 4 s.
+      if (s_hist_erase_armed && (int32_t)(s_now_ms - s_hist_erase_ms) < 4000) {
+        canary::fleet::journal_wipe_all();
+        hist_close();
+      } else {
+        s_hist_erase_armed = true;
+        s_hist_erase_ms = s_now_ms;
+        lv_label_set_text(s_hist_erase, "Tap again to erase everything");
+        lv_obj_set_style_text_color(s_hist_erase, col_alert(), 0);
+      }
+      return true;
+    }
+    const auto& j = canary::fleet::the_journal();
+    const int shown = j.count() < HIST_ROWS ? j.count() : HIST_ROWS;
+    for (int i = 0; i < shown; i++) {
+      const int ry = HIST_Y + HIST_ROW_Y0 + i * HIST_ROW_H;
+      if (x >= HIST_X + 12 && x <= HIST_X + HIST_W - 12 && y >= ry &&
+          y < ry + HIST_ROW_H) {
+        const auto* r = j.at(i);
+        if (r) { proof_open_record(*r); return true; }
+      }
+    }
+    hist_close();
+    return true;
+  }
+
+  // Base layer: tapping the "Past 24h · tap to review" line opens the machine.
+  if (s_today && canary::fleet::the_journal().count() > 0) {
+    lv_area_t ta;
+    lv_obj_get_coords(s_today, &ta);
+    if (x >= ta.x1 - 8 && x <= ta.x2 + 8 && y >= ta.y1 - 8 && y <= ta.y2 + 8) {
+      hist_open();
+      return true;
+    }
+  }
+#endif  // FEATURE_TIME_MACHINE
 
   // Card hit-test (same geometry the create pass laid down).
   const int n = s_fleet->count();

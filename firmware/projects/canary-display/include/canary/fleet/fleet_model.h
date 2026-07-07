@@ -475,6 +475,15 @@ class FleetModel {
   bool take_dirty() { const bool d = dirty_; dirty_ = false; return d; }
   void mark_dirty() { dirty_ = true; }
 
+  // Durable-history hook (spec §7). Fired once per pushed event with the
+  // owning witness, so the firmware can build a proof-carrying JournalRecord
+  // (epoch, chain_raw, verdict) and persist it — WITHOUT this template ever
+  // touching Arduino/time/storage. Host tests leave it null (no-op), keeping
+  // the model dependency-free and testable.
+  using EventSink = void (*)(const char* id, const char* name, Sev sev,
+                             bool signed_flag, uint32_t now, const Witness* w);
+  void set_event_sink(EventSink s) { event_sink_ = s; }
+
  private:
   static Sev worst_of(Sev a, Sev b) { return (uint8_t)a >= (uint8_t)b ? a : b; }
 
@@ -556,9 +565,15 @@ class FleetModel {
     // push on edges (see on_tamper/on_chain), so retained replays at broker
     // reconnect cannot cancel acks.
     if ((uint8_t)sev >= (uint8_t)Sev::Alert) acked_ = false;
+    // Durable history (spec §7): hand the event + its owning witness to the
+    // journal sink, if the firmware wired one. w may be null for an event on
+    // a device that isn't in the fleet slots (shouldn't happen post-upsert,
+    // but the sink tolerates it).
+    if (event_sink_) event_sink_(id, name, sev, signed_flag, now, w);
     dirty_ = true;
   }
 
+  EventSink event_sink_ = nullptr;
   Witness  slots_[MAX_DEVICES] = {};
   EventRow events_[EVENT_CAP] = {};
   int      wall_hour_ = -1;
