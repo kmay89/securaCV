@@ -74,6 +74,21 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   severity-tiered sound grammar, compiled and ready, `FEATURE_CHIME=0`
   until the piezo pad (`BUZZER_PIN`) is populated at bench.
 
+- **Trailblazer wave 2** ([spec](../../../docs/hardware/display_trailblazer_spec.md)):
+  **Chirp fallback** (`FEATURE_CHIRP_SCAN`) — when the broker link drops,
+  a passive NimBLE scan picks up the Canaries' 17-byte BLE chirps, so
+  liveness and tamper still reach the glass with the router unplugged
+  (events honestly labeled "(chirp)", unknown chirpers surface as
+  `SCV-XXXX`); **names & rooms** — retained `securacv/<id>/meta`
+  `{"name","room"}` renders friendly names everywhere, `Name · room` on
+  detail lines, ids as fallback; **wellbeing line** — witnesses that
+  publish `breathing_locked` get "breathing ✓/—" on their detail line
+  (radar-only aging-in-place reassurance, consent by construction);
+  **time machine v1** — a rolling 24 h in-RAM histogram feeds the dash
+  day line ("Past 24h · 14 events · worst: warn"), rendered only when
+  time is SNTP-valid; and the **open standard draft** now lives at
+  [`docs/standard/AMBIENT_DISPLAY_STANDARD.md`](../../../docs/standard/AMBIENT_DISPLAY_STANDARD.md).
+
 ## Build
 
 ```bash

@@ -56,6 +56,9 @@
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
 #include "canary/net/discovery.h"
 #endif
+#if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
+#include "canary/net/chirp_scan.h"
+#endif
 #include "canary/hal/display.h"
 #include "canary/hal/chime.h"
 
@@ -575,6 +578,22 @@ void loop() {
   }
 
   const bool broker = mqtt_supervise(now);
+
+#if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
+  // Off-grid fallback (spec §6): while the broker is dark and WiFi may be
+  // too, passive BLE bursts keep tamper/liveness flowing to the glass. The
+  // module itself stops scanning the moment the broker is back.
+  canary::net::chirp_scan_loop(now, !broker);
+#endif
+
+  // Time machine v1 (spec §7): keep the model's wall-hour current so new
+  // events bin into the rolling 24 h story.
+  {
+    int hh = -1;
+    local_time(&hh, nullptr);
+    fleet.set_wall_hour(hh);
+  }
+
   if (broker) {
     canary::net::mqtt_loop();
     canary::net::ota_loop(now);

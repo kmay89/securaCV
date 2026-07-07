@@ -50,4 +50,7 @@ struct FleetSubs {
   static constexpr const char* TAMPER       = "securacv/+/tamper";
   static constexpr const char* CHAIN        = "securacv/+/chain";
   static constexpr const char* STATE        = "securacv/+/state";
+  // Rooms & names (trailblazer spec §8): retained {"name","room"} published
+  // by HA / the companion app / mosquitto_pub — the glass speaks "Kitchen".
+  static constexpr const char* META         = "securacv/+/meta";
 };

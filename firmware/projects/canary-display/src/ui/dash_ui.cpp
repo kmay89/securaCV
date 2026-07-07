@@ -53,6 +53,7 @@ struct Card {
 };
 Card s_cards[MAX_CARDS];
 lv_obj_t* s_more = nullptr;      // "+N more"
+lv_obj_t* s_today = nullptr;     // time machine v1: the day's story
 lv_obj_t* s_empty = nullptr;     // listening state
 
 // Timeline
@@ -154,7 +155,7 @@ void proof_open(const canary::fleet::Witness& w) {
   const bool have = w.chain_raw[0] &&
                     canary::trust::pinned_pubkey_hex(w.id, pk);
 
-  lv_label_set_text_fmt(s_proof_title, "%.24s", w.id);
+  lv_label_set_text_fmt(s_proof_title, "%.24s", Fleet::display_name(w));
   lv_label_set_text_fmt(s_proof_state, "%s  ·  %s", link_label(w.link),
                         badge_text(w.badge));
   if (have) {
@@ -239,6 +240,8 @@ void dash_ui_create() {
   }
   s_more = mk_label(s_scr, font_label(), col_muted());
   lv_obj_align(s_more, LV_ALIGN_BOTTOM_LEFT, 20, -8);
+  s_today = mk_label(s_scr, font_caption(), col_muted());
+  lv_obj_align(s_today, LV_ALIGN_BOTTOM_LEFT, 20, -28);
   s_empty = mk_label(s_scr, font_body(), col_muted());
   lv_obj_set_style_text_align(s_empty, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(s_empty, LV_ALIGN_LEFT_MID, 90, 0);
@@ -380,7 +383,11 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     lv_obj_set_style_bg_color(c.spine, sc, 0);
 
     lv_obj_set_style_text_color(c.name, tcol, 0);
-    lv_label_set_text_fmt(c.name, "%.18s", w->id);
+    if (w->name[0] && w->room[0]) {
+      lv_label_set_text_fmt(c.name, "%.12s · %.9s", w->name, w->room);
+    } else {
+      lv_label_set_text_fmt(c.name, "%.18s", Fleet::display_name(*w));
+    }
 
     char state[24];
     snprintf(state, sizeof(state), "%s", link_label(w->link));
@@ -406,13 +413,18 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     }
 
     lv_obj_set_style_text_color(c.meta, fcol, 0);
+    char wb[24] = "";
+    if (w->wb_present) {
+      snprintf(wb, sizeof(wb), "   breathing %s",
+               w->wb_breathing ? LV_SYMBOL_OK : "—");
+    }
     if (w->battery_present && w->battery_pct >= 0) {
-      lv_label_set_text_fmt(c.meta, "%s %d%%   %.12s",
+      lv_label_set_text_fmt(c.meta, "%s %d%%   %.12s%s",
                             w->battery_pct < 25 ? LV_SYMBOL_BATTERY_1
                                                 : LV_SYMBOL_BATTERY_3,
-                            (int)w->battery_pct, w->fw);
+                            (int)w->battery_pct, w->fw, wb);
     } else {
-      lv_label_set_text_fmt(c.meta, "%.14s", w->fw);
+      lv_label_set_text_fmt(c.meta, "%.14s%s", w->fw, wb);
     }
 
     if (s >= Sev::Alert && !st.acked && !attention) {
@@ -425,6 +437,19 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   lv_obj_set_style_text_color(s_more, mcol, 0);
   if (n > MAX_CARDS) lv_label_set_text_fmt(s_more, "+%d more", n - MAX_CARDS);
   else lv_label_set_text(s_more, "");
+
+  // Time machine v1 (spec §7): the rolling day, one honest sentence.
+  lv_obj_set_style_text_color(s_today, fcol, 0);
+  const int day_total = fleet.history_total();
+  if (!st.time_valid || n == 0) {
+    lv_label_set_text(s_today, "");
+  } else if (day_total == 0) {
+    lv_label_set_text(s_today, "Past 24h · nothing witnessed");
+  } else {
+    lv_label_set_text_fmt(s_today, "Past 24h · %d %s · worst: %s",
+                          day_total, day_total == 1 ? "event" : "events",
+                          canary::fleet::sev_name(fleet.history_worst_day()));
+  }
 
   lv_obj_set_style_text_color(s_empty, mcol, 0);
   lv_label_set_text(s_empty, n == 0 ? "Canaries publishing to this\nbroker appear here" : "");

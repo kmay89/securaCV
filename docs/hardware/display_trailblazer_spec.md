@@ -1,8 +1,10 @@
 # Canary Display — Trailblazer feature specs (v0.3+)
 
 > Status: **wave 1 SHIPPED** (§1–§5: proof-on-glass, ack-sync, illumination
-> ladder + presence-wake, heartbeat, chime engine), **wave 2+ SPECIFIED**
-> (§6–§10). Companion to [`display_ux_design.md`](./display_ux_design.md)
+> ladder + presence-wake, heartbeat, chime engine), **wave 2 display-side
+> SHIPPED** (§6 chirp scan, §7 v1 in-RAM story, §8 names/rooms, §9
+> wellbeing line, §10 draft standard published), remaining items marked
+> *bench/next* inline. Companion to [`display_ux_design.md`](./display_ux_design.md)
 > (goals G1–G13) and [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md).
 > Every feature below states its *user story*, UX, wire/protocol impact,
 > privacy posture, and acceptance criteria.
@@ -115,54 +117,69 @@ changes silent; all-clear plays exactly once per resolution.
 
 ---
 
-## Wave 2+ — specified, next PRs / bench
+## Wave 2 — shipped display-side (bench items marked)
 
-## 6. Off-grid resilience — Chirp scan + mesh relay
+## 6. Off-grid resilience — Chirp scan + mesh relay — `FEATURE_CHIRP_SCAN`
 
-*Own PR (BLE adds real size/coexistence risk).* Passive NimBLE scan for the
-Canaries' connectionless Chirp adverts (mfr id `0xFFFF`, 17-byte payload:
-type/timestamp/chain-hash/device-id — `docs/ble_protocol.md` §5). When the
-broker link is down, chirps keep liveness/tamper flowing into the fleet
-model, badged "via chirp" (coarser trust — no Ed25519 on chirps). Demo
-acceptance: *unplug the router; tamper still reaches the bedside puck in
-<10 s.* Phase 2: displays re-chirp as ESP-NOW/BLE relays (mains-powered
-wall nodes are ideal repeaters), capped at 1 hop to avoid storms.
+**Shipped: passive scan.** NimBLE passive scan for the Canaries'
+connectionless Chirp adverts (mfr id `0xFFFF`, 17-byte payload:
+type/timestamp/chain-hash/fingerprint-prefix — `docs/ble_protocol.md` §5).
+The scanner runs *only while the broker link is down* (4 s bursts every
+20 s — WiFi/BLE coexistence stays polite) and stops the moment MQTT
+returns. Chirps are matched to known witnesses by fingerprint prefix
+(unknown prefixes surface as `SCV-XXXX` so a chirping stranger is never
+silently dropped); ALERT/TAMPER chirps raise real fleet events labeled
+"(chirp)" — honestly coarser trust, no Ed25519 on chirps — and all types
+refresh liveness. Per-witness/per-kind 60 s dedupe absorbs re-broadcasts.
+Demo acceptance stands: *unplug the router; tamper still reaches the
+bedside puck in <10 s.* **Bench/next:** re-chirp relay (ESP-NOW/BLE,
+1-hop cap) once two displays are on the wall.
 
 ## 7. Semantic time machine
 
-MicroSD event journal on the watch (slot exists) / flash ring on dash;
-dash gains a scrub bar: "yesterday: 14 events, all verified, quiet
-00:00–06:12." The story of the home, no video — the archive is the same
-signed envelopes, so **history is verifiable too** (proof QR works on past
-events). Retention default 30 days, user-wipeable (sovereignty).
+**Shipped: v1 in-RAM story.** The fleet model bins every event into a
+rolling 24 h wall-clock histogram (count + worst severity per hour,
+hour buckets cleared as the clock re-enters them); the dash renders the
+day line — "Past 24h · 14 events · worst: warn" / "Past 24h · nothing
+witnessed" — only when time is SNTP-valid (no guessed history).
+**Bench/next:** MicroSD signed-envelope journal on the watch (slot
+exists) / flash ring on dash, scrub bar, 30-day user-wipeable retention —
+history stays verifiable because the archive is the same signed envelopes.
 
 ## 8. Rooms & follow-me (protocol addition)
 
-Retained `securacv/<id>/meta` `{"name":"Kitchen","room":"kitchen"}`
-published from HA/companion app. Displays render friendly names (today:
-device ids), group by room, and scope presence-wake/follow-me to their own
-room. Also unlocks per-room quiet hours. Backwards compatible: absent meta
-= today's behavior.
+**Shipped: names + rooms on glass.** Retained `securacv/<id>/meta`
+`{"name":"Kitchen","room":"kitchen"}` (published from HA/companion app or
+`mosquitto_pub -r`) now flows through the fleet model; both displays
+render friendly names everywhere (cards, hero, events, proof sheet), with
+`Name · room` on the detail lines. Backwards compatible: absent meta =
+device ids, exactly today's behavior. **Bench/next:** room-scoped
+presence-wake/follow-me and per-room quiet hours (needs the display to
+know *its own* room — onboarding question).
 
 ## 9. Wellbeing face (aging-in-place)
 
-canary-sense wellbeing builds already publish a P1-gated breathing lock on
-the state topic. A watch flavor page for the family caregiver: "Kitchen
-active this morning ✓ · overnight breathing steady ✓" — radar-only, no
-camera/mic in the home, no cloud, green-halo reassurance. Requires: state-
-topic wellbeing fields into the fleet model + a consent flag in meta (§8).
-This is the market where privacy-by-construction is the *requirement*,
-not a preference.
+**Shipped: wellbeing line.** canary-sense wellbeing builds publish a
+P1-gated `breathing_locked` on the state topic; the fleet model now
+carries it and both displays append "breathing ✓ / —" to the witness
+detail line — radar-only, no camera/mic in the home, no cloud. The field
+only renders for witnesses that actually publish it (consent by
+construction: no wellbeing build, no wellbeing line). **Bench/next:** the
+dedicated caregiver page ("Kitchen active this morning ✓ · overnight
+breathing steady ✓") and an explicit consent flag in meta (§8).
 
 ## 10. The open standard
 
-Publish "Quiet Glass" + the fleet model + signed-status vocabulary as
-**the open ambient-security-display spec**: docs + host-testable reference
-model + conformance checklist (glance ≤1 s, silence-≠-safety deadlines,
-honest trust badges, night floor, motion budget). Community ports (Guition
-panels, e-ink, Tidbyt-class) grow the ecosystem; SecuraCV owns the
-reference implementation and the trust layer. Pitch alignment: Calm Tech
-Institute certification criteria (attention/periphery/light/sound).
+**Shipped: draft v0.1 published** at
+[`docs/standard/AMBIENT_DISPLAY_STANDARD.md`](../standard/AMBIENT_DISPLAY_STANDARD.md):
+conformance levels (AD-Core honesty invariants, AD-Calm attention/light/
+sound, AD-Resilient failure ladder, AD-Verified proof-on-glass), a
+14-point self-assessment checklist, the reference wire vocabulary, and a
+porting guide pointing at the host-testable fleet model. Community ports
+(Guition panels, e-ink, Tidbyt-class) grow the ecosystem; SecuraCV owns
+the reference implementation and the trust layer. Pitch alignment: Calm
+Tech Institute certification criteria. **Next:** iterate the draft in the
+open via issues/PRs.
 
 ## Anti-roadmap (unchanged, load-bearing)
 
