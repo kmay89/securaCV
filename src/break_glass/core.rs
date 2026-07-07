@@ -1,11 +1,13 @@
 //! Core break-glass types (no CLI).
 
 use anyhow::{anyhow, Result};
-use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::crypto::signatures::{sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN};
+use crate::crypto::signatures::{
+    sign_ed25519_only, verify_ed25519_only, DOMAIN_BREAK_GLASS_TOKEN, DOMAIN_TRUSTEE_APPROVAL,
+};
 use crate::vault::crypto::VaultCryptoMode;
 use crate::TimeBucket;
 
@@ -156,6 +158,42 @@ impl Approval {
             signature,
         }
     }
+
+    /// Produce a domain-separated trustee approval: the signature is
+    /// Ed25519 over `domain_separated_hash(DOMAIN_TRUSTEE_APPROVAL,
+    /// request_hash)`, so it is bound to the trustee-consent context and
+    /// cannot be replayed from (or into) any other signature domain.
+    pub fn signed(trustee: TrusteeId, request_hash: [u8; 32], signing_key: &SigningKey) -> Self {
+        let signature = sign_approval(signing_key, &request_hash).to_vec();
+        Self::new(trustee, request_hash, signature)
+    }
+}
+
+/// Sign a trustee approval over the request hash, domain-separated to
+/// `DOMAIN_TRUSTEE_APPROVAL`. Mirrors the break-glass token signer's
+/// use of `sign_ed25519_only`.
+pub fn sign_approval(signing_key: &SigningKey, request_hash: &[u8; 32]) -> [u8; 64] {
+    sign_ed25519_only(DOMAIN_TRUSTEE_APPROVAL, signing_key, request_hash)
+}
+
+/// Verify a trustee approval signature against a trustee public key.
+/// Returns false on a malformed key, a wrong-length signature, or a
+/// signature that verifies under any domain other than
+/// `DOMAIN_TRUSTEE_APPROVAL` (cross-context signatures are rejected).
+pub fn verify_approval(public_key: &[u8; 32], request_hash: &[u8; 32], signature: &[u8]) -> bool {
+    let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+    let Ok(sig_array) = <[u8; 64]>::try_from(signature) else {
+        return false;
+    };
+    verify_ed25519_only(
+        DOMAIN_TRUSTEE_APPROVAL,
+        &verifying_key,
+        request_hash,
+        &sig_array,
+    )
+    .is_ok()
 }
 
 fn canonical_approval_bytes(approval: &Approval) -> Vec<u8> {
@@ -489,13 +527,9 @@ impl BreakGlass {
                 unknown_trustees.insert(approval.trustee.0.clone());
                 continue;
             };
-            let Ok(public_key) = VerifyingKey::from_bytes(&trustee.public_key) else {
-                continue;
-            };
-            let Ok(signature) = Signature::from_slice(&approval.signature) else {
-                continue;
-            };
-            if public_key.verify(&request_hash, &signature).is_err() {
+            // Domain-separated: rejects a signature that only verifies over
+            // the bare request hash or under any other context's domain.
+            if !verify_approval(&trustee.public_key, &request_hash, &approval.signature) {
                 continue;
             }
             if approved.insert(approval.trustee.0.clone()) {
@@ -595,7 +629,7 @@ impl BreakGlass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
 
     #[test]
     fn core_types_round_trip() {
@@ -605,7 +639,7 @@ mod tests {
         };
         let request = UnlockRequest::new("vault:1", [1u8; 32], "incident", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[1u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
+        let signature = sign_approval(&signing_key, &request.request_hash());
         let approval = Approval::new(
             TrusteeId::new("alice"),
             request.request_hash(),
@@ -659,7 +693,7 @@ mod tests {
         let request = UnlockRequest::new("vault:2", [2u8; 32], "incident", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[3u8; 32]);
         let other_key = SigningKey::from_bytes(&[4u8; 32]);
-        let signature = other_key.sign(&request.request_hash());
+        let signature = sign_approval(&other_key, &request.request_hash());
         let approval = Approval::new(
             TrusteeId::new("alice"),
             request.request_hash(),
@@ -687,7 +721,7 @@ mod tests {
         };
         let request = UnlockRequest::new("vault:3", [3u8; 32], "incident", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[5u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
+        let signature = sign_approval(&signing_key, &request.request_hash());
         let approval = Approval::new(
             TrusteeId::new("alice"),
             request.request_hash(),
@@ -714,7 +748,7 @@ mod tests {
         };
         let request = UnlockRequest::new("vault:4", [4u8; 32], "incident", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[6u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
+        let signature = sign_approval(&signing_key, &request.request_hash());
         let approval = Approval::new(
             TrusteeId::new("alice"),
             request.request_hash(),
@@ -826,7 +860,7 @@ mod tests {
         };
         let request = UnlockRequest::new("vault:dup", [5u8; 32], "incident", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
+        let signature = sign_approval(&signing_key, &request.request_hash());
 
         // Same trustee signs twice
         let approval1 = Approval::new(
@@ -882,7 +916,7 @@ mod tests {
         };
         let request = UnlockRequest::new("vault:consume", [10u8; 32], "incident", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[11u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
+        let signature = sign_approval(&signing_key, &request.request_hash());
         let approval = Approval::new(
             TrusteeId::new("alice"),
             request.request_hash(),
@@ -909,5 +943,97 @@ mod tests {
         assert!(token.consume().is_ok());
         // Second consume should fail (token already consumed)
         assert!(token.consume().is_err());
+    }
+
+    // ─── domain separation for trustee approvals ─────────────────────────
+
+    fn single_trustee_policy(id: &str, key: &SigningKey) -> (QuorumPolicy, UnlockRequest) {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:dom", [7u8; 32], "incident", bucket).unwrap();
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new(id),
+                public_key: key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        (policy, request)
+    }
+
+    #[test]
+    fn domain_separated_approval_verifies() {
+        let key = SigningKey::from_bytes(&[1u8; 32]);
+        let (policy, request) = single_trustee_policy("alice", &key);
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &key);
+        assert!(verify_approval(
+            &key.verifying_key().to_bytes(),
+            &request.request_hash(),
+            &approval.signature
+        ));
+        let bucket = request.time_bucket;
+        let (result, _r) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        assert!(
+            result.is_ok(),
+            "domain-separated approval must reach quorum"
+        );
+    }
+
+    #[test]
+    fn bare_hash_signature_rejected_as_approval() {
+        // A signature over the BARE request hash (the pre-fix construction,
+        // and the shape a legacy sealed-log/verify signature would have) must
+        // NOT count as a trustee approval now that approvals are domained.
+        use ed25519_dalek::Signer;
+        let key = SigningKey::from_bytes(&[2u8; 32]);
+        let (policy, request) = single_trustee_policy("bob", &key);
+        let bare = key.sign(&request.request_hash()).to_vec();
+        assert!(!verify_approval(
+            &key.verifying_key().to_bytes(),
+            &request.request_hash(),
+            &bare
+        ));
+        let approval = Approval::new(TrusteeId::new("bob"), request.request_hash(), bare);
+        let bucket = request.time_bucket;
+        let (result, _r) = BreakGlass::authorize(&policy, &request, &[approval], bucket);
+        assert!(
+            result.is_err(),
+            "a bare-hash signature must not satisfy quorum"
+        );
+    }
+
+    #[test]
+    fn cross_domain_signature_rejected_as_approval() {
+        // A signature minted for a DIFFERENT context (the break-glass token
+        // domain) over the same request hash must not verify as a trustee
+        // approval, and an approval signature must not verify under the token
+        // domain — the two domains are disjoint.
+        let key = SigningKey::from_bytes(&[3u8; 32]);
+        let request_hash = [9u8; 32];
+        let token_domain_sig =
+            sign_ed25519_only(DOMAIN_BREAK_GLASS_TOKEN, &key, &request_hash).to_vec();
+        assert!(!verify_approval(
+            &key.verifying_key().to_bytes(),
+            &request_hash,
+            &token_domain_sig
+        ));
+        let approval_sig = sign_approval(&key, &request_hash);
+        assert!(verify_ed25519_only(
+            DOMAIN_TRUSTEE_APPROVAL,
+            &key.verifying_key(),
+            &request_hash,
+            &approval_sig
+        )
+        .is_ok());
+        assert!(verify_ed25519_only(
+            DOMAIN_BREAK_GLASS_TOKEN,
+            &key.verifying_key(),
+            &request_hash,
+            &approval_sig
+        )
+        .is_err());
     }
 }

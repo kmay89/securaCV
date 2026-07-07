@@ -528,7 +528,7 @@ mod tests {
     };
     use crate::vault::crypto::VaultCryptoMode;
     use crate::TimeBucket;
-    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+    use ed25519_dalek::{SigningKey, VerifyingKey};
     use sha2::{Digest, Sha256};
     use std::fs;
 
@@ -539,11 +539,10 @@ mod tests {
         let bucket = crate::TimeBucket::now(600).expect("time bucket");
         let request = UnlockRequest::new(envelope_id, ruleset_hash, "test-export", bucket).unwrap();
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
-        let approval = Approval::new(
+        let approval = Approval::signed(
             TrusteeId::new("alice"),
             request.request_hash(),
-            signature.to_vec(),
+            &signing_key,
         );
         let policy = QuorumPolicy::new(
             1,

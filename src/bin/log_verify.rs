@@ -460,7 +460,7 @@ fn run_inspections(
 mod tests {
     use super::*;
     use crate::verify_helpers::load_verifying_key;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
     use std::path::{Path, PathBuf};
     use witness_kernel::crypto::signatures::SignatureMode;
     use witness_kernel::{
@@ -686,11 +686,10 @@ mod tests {
         let bucket = TimeBucket::now(600)?;
         let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
         let signing_key = SigningKey::from_bytes(&[3u8; 32]);
-        let signature = signing_key.sign(&request.request_hash());
-        let approval = Approval::new(
+        let approval = Approval::signed(
             TrusteeId::new("alice"),
             request.request_hash(),
-            signature.to_vec(),
+            &signing_key,
         );
         let policy = QuorumPolicy::new(
             1,
@@ -753,12 +752,7 @@ mod tests {
         let bucket = TimeBucket::now(600)?;
         let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
         let bob_key = SigningKey::from_bytes(&[12u8; 32]);
-        let bob_signature = bob_key.sign(&request.request_hash());
-        let approval = Approval::new(
-            TrusteeId::new("bob"),
-            request.request_hash(),
-            bob_signature.to_vec(),
-        );
+        let approval = Approval::signed(TrusteeId::new("bob"), request.request_hash(), &bob_key);
         let (_, receipt) =
             BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
         let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
@@ -808,12 +802,9 @@ mod tests {
         let bucket = TimeBucket::now(600)?;
         let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
         let wrong_key = SigningKey::from_bytes(&[22u8; 32]);
-        let bad_signature = wrong_key.sign(&request.request_hash());
-        let approval = Approval::new(
-            TrusteeId::new("alice"),
-            request.request_hash(),
-            bad_signature.to_vec(),
-        );
+        // Correct domain, wrong signer — must be rejected on verify.
+        let approval =
+            Approval::signed(TrusteeId::new("alice"), request.request_hash(), &wrong_key);
         let (_, receipt) =
             BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
         let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;

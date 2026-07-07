@@ -161,7 +161,7 @@ mod tests {
     use super::*;
     use crate::break_glass::{TrusteeEntry, TrusteeId};
     use crate::ZonePolicy;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
     use std::time::Duration;
 
     fn test_config(dir: &Path) -> KernelConfig {
@@ -178,8 +178,7 @@ mod tests {
     }
 
     fn approval_for(key: &SigningKey, id: &str, request: &UnlockRequest) -> Approval {
-        let rh = request.request_hash();
-        Approval::new(TrusteeId::new(id), rh, key.sign(&rh).to_vec())
+        Approval::signed(TrusteeId::new(id), request.request_hash(), key)
     }
 
     /// Sleep until safely past a 10-minute bucket boundary if we're within the

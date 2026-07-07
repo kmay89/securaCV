@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### kernel: domain-separate trustee approvals (BREAKING for `.approval` artifacts)
+
+Trustee quorum approvals (Invariant V) were the **one** kernel signature
+context with no domain separation — they were signed over the bare
+32-byte request hash, sharing an undomained namespace with the legacy
+verify path. Any Ed25519 signature a trustee key produced over a bare
+value was cryptographically interchangeable across contexts. This binds a
+trustee's consent to its own domain:
+
+- New `DOMAIN_TRUSTEE_APPROVAL = "securacv:pwk:trustee-approval:v2"`.
+  Approvals are now signed and verified over
+  `domain_separated_hash(DOMAIN_TRUSTEE_APPROVAL, request_hash)` via the
+  same `sign_ed25519_only`/`verify_ed25519_only` helpers the break-glass
+  token path uses. New `Approval::signed` / `sign_approval` /
+  `verify_approval` centralize it; all signing/verifying sites (CLI,
+  session, backend, HTTP) and the in-browser signer (`breakglass.html`,
+  which now reproduces the kernel's domain-hash byte layout) move in
+  lockstep.
+- **Breaking:** any `.approval` artifact minted before this change no
+  longer verifies — they were signed over the bare hash. Re-sign with the
+  updated `break_glass approve` / trustee console. New tests pin that a
+  bare-hash signature and a cross-context (break-glass-token domain)
+  signature are both rejected as approvals, and vice versa.
+- `docs/security/SECURITY-AUDIT.md` corrected — it previously claimed all
+  Ed25519 contexts were domain-separated while omitting (the then-
+  unseparated) trustee approvals. No protected spec edited; Invariant V
+  (`spec/invariants.md`) motivates the change and is left untouched.
+
 ### canary-wap battery gates round two: CSI drain + MQTT heartbeat cadence
 
 PR #847 enforced the first power-policy gates (camera, record interval,

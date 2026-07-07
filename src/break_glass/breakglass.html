@@ -379,6 +379,30 @@ async function submitApproval(trustee, signature) {
   }
 }
 
+// Domain separation for trustee approvals — must reproduce the kernel's
+// domain_separated_hash (src/crypto/signatures.rs) byte-for-byte:
+//   SHA256( le32(len(domain)) || domain_utf8 || request_hash ).
+// The approval is signed over THIS, not the bare request hash, so it is
+// bound to the trustee-consent context (DOMAIN_TRUSTEE_APPROVAL) and cannot
+// be replayed as (or from) any other signature domain.
+const DOMAIN_TRUSTEE_APPROVAL = "securacv:pwk:trustee-approval:v2";
+function le32(n) {
+  return new Uint8Array([n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]);
+}
+async function domainSeparatedHash(domain, entryHash) {
+  const d = new TextEncoder().encode(domain);
+  const buf = new Uint8Array(4 + d.length + entryHash.length);
+  buf.set(le32(d.length), 0);
+  buf.set(d, 4);
+  buf.set(entryHash, 4 + d.length);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return new Uint8Array(digest);
+}
+async function approvalMessageHex(requestHashHex) {
+  const h = await domainSeparatedHash(DOMAIN_TRUSTEE_APPROVAL, hexToBytes(requestHashHex));
+  return bytesToHex(h);
+}
+
 // In-browser Ed25519 signing (WebCrypto). The seed never leaves the tab; the
 // same routine backs the operator-side signer and the trustee share-link view.
 async function ed25519SignSeed(seedHex, messageHex) {
@@ -406,7 +430,9 @@ $("btn-sign").onclick = async () => {
   if (!state.requestHash) { banner("sign-msg", "bad", "Open a request first."); return; }
   const trustee = $("sk-trustee").value.trim();
   try {
-    const sigHex = await ed25519SignSeed($("sk").value, state.requestHash);
+    // Sign the domain-separated approval message, not the bare request hash.
+    const messageHex = await approvalMessageHex(state.requestHash);
+    const sigHex = await ed25519SignSeed($("sk").value, messageHex);
     const row = document.querySelector('#trustee-rows input[data-trustee="' + (window.CSS && CSS.escape ? CSS.escape(trustee) : trustee) + '"]');
     if (row) { row.value = sigHex; banner("sign-msg", "ok", "Signed. Signature placed in the " + trustee + " row — review and submit."); }
     else { banner("sign-msg", "warn", "Signed, but no row for trustee \"" + trustee + "\". Signature: " + sigHex); }

@@ -11,9 +11,9 @@
 //! It is deliberately pure logic (no I/O, no network) so the authorization rules
 //! are unit-tested in isolation; the HTTP layer is a thin wrapper over this.
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 
-use super::core::{Approval, QuorumPolicy, UnlockRequest};
+use super::core::{verify_approval, Approval, QuorumPolicy, UnlockRequest};
 
 /// Why a submitted approval was not added to the session.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,13 +118,17 @@ impl BreakGlassSession {
             .iter()
             .find(|t| t.id.0 == approval.trustee.0)
             .ok_or(ApprovalRejection::UnknownTrustee)?;
-        let verifying_key = VerifyingKey::from_bytes(&trustee.public_key)
+        // Surface an unusable trustee key distinctly from a bad signature.
+        VerifyingKey::from_bytes(&trustee.public_key)
             .map_err(|_| ApprovalRejection::InvalidTrusteeKey)?;
-        let signature = Signature::from_slice(&approval.signature)
-            .map_err(|_| ApprovalRejection::BadSignature)?;
-        verifying_key
-            .verify(&pending.request_hash, &signature)
-            .map_err(|_| ApprovalRejection::BadSignature)?;
+        // Domain-separated: a bare-hash or cross-context signature is rejected.
+        if !verify_approval(
+            &trustee.public_key,
+            &pending.request_hash,
+            &approval.signature,
+        ) {
+            return Err(ApprovalRejection::BadSignature);
+        }
 
         // Dedupe by trustee id: replace any prior approval from this trustee.
         if let Some(slot) = pending
@@ -179,7 +183,7 @@ mod tests {
     use super::*;
     use crate::break_glass::{TrusteeEntry, TrusteeId};
     use crate::TimeBucket;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::SigningKey;
 
     fn bucket() -> TimeBucket {
         TimeBucket {
@@ -200,11 +204,7 @@ mod tests {
     }
 
     fn sign(key: &SigningKey, id: &str, request_hash: [u8; 32]) -> Approval {
-        Approval::new(
-            TrusteeId::new(id),
-            request_hash,
-            key.sign(&request_hash).to_vec(),
-        )
+        Approval::signed(TrusteeId::new(id), request_hash, key)
     }
 
     #[test]
@@ -254,7 +254,8 @@ mod tests {
             Err(ApprovalRejection::UnknownTrustee)
         );
         // Known id but signature from the wrong key.
-        let forged = Approval::new(TrusteeId::new("alice"), rh, mallory.sign(&rh).to_vec());
+        // Known id, but the signature is from the wrong key (correct domain).
+        let forged = Approval::signed(TrusteeId::new("alice"), rh, &mallory);
         assert_eq!(
             session.submit(&policy, forged),
             Err(ApprovalRejection::BadSignature)
