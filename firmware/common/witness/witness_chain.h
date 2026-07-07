@@ -77,14 +77,23 @@ static inline size_t wc_chain_buf(const uint8_t prev[WC_HASH_SIZE],
   return WC_CHAIN_BUF_SIZE;
 }
 
-#if defined(__has_include)
-#if __has_include(<mbedtls/sha256.h>)
-#include <mbedtls/sha256.h>
+/* The hashing helpers are target-only: mbedTLS ships with every ESP32
+ * core (Arduino 2.x/3.x and ESP-IDF), so the gate is the platform
+ * defines rather than __has_include — cppcheck's preprocessor
+ * (simplecpp) cannot evaluate __has_include and fails the whole file
+ * with a preprocessorErrorDirective. Host builds (the tests_host
+ * suite) use only the pure wc_chain_buf above. Predefine
+ * WC_HAS_MBEDTLS to 1 or 0 to override. */
+#ifndef WC_HAS_MBEDTLS
+#if defined(ARDUINO) || defined(ESP_PLATFORM) || defined(IDF_VER)
 #define WC_HAS_MBEDTLS 1
+#else
+#define WC_HAS_MBEDTLS 0
 #endif
 #endif
 
-#ifdef WC_HAS_MBEDTLS
+#if WC_HAS_MBEDTLS
+#include <mbedtls/sha256.h>
 
 /** SHA256(domain_ascii || 0x00 || data) — the house domain hash. */
 static inline void wc_sha256_domain(const char* domain, const uint8_t* data,
