@@ -104,6 +104,21 @@ The firmware ENFORCES these per-mode signals at runtime:
   (explicit user action) still wake the camera on demand in every mode.
 - **Record interval** — the policy value acts as a floor: the effective
   interval is max(operator setting, policy interval).
+- **CSI environmental sensing (`csi`)** — the CSI ring-drain and 1 Hz
+  module dispatch are skipped when the mode turns CSI off (battery-saver
+  and below), stopping the pipeline's per-loop work. CSI is pure
+  environmental sensing (motion/breathing, no life-safety), so the draw
+  estimates above already reflect it being off in those modes. The ring
+  simply fills and drops while gated; draining resumes the moment CSI
+  re-enables.
+- **MQTT routine heartbeat cadence (`mqtt`)** — the MQTT link itself is
+  kept alive in *every* mode (LOW_POWER holds STA + MQTT up so panic
+  events still reach Home Assistant), so MQTT is never "turned off". What
+  the policy stretches is the cadence of ROUTINE heartbeats
+  (status/health/mesh-snapshot/beacon): ×4 in battery-saver, ×8 in
+  low-power/shutdown. Life-safety (acoustic `/sensing`) and event-driven
+  (record counts / chain head) publishes are never stretched — they fire
+  on their own triggers.
 - **Deep-sleep duty cycling and shutdown** — as described above.
 
 Independent of the battery policy, the camera also parks itself after
@@ -111,12 +126,16 @@ Independent of the battery policy, the camera also parks itself after
 stream and parks the sensor until it cools (vault captures remain
 allowed).
 
-The remaining `PolicyFeatures` fields (`csi`, `vision`, `mqtt`, `mesh`,
-`gnss`, `touch`, `ir_rmt`, `temp_tamper`) are currently ADVISORY — the
-subsystems do not yet consume them, so the per-mode draw estimates above
-assume those features keep running. Acoustic detection is deliberately
-never gated: a Canary that goes deaf to a smoke alarm to save battery has
-failed at its job.
+The remaining `PolicyFeatures` fields (`vision`, `gnss`, `touch`,
+`ir_rmt`, `temp_tamper`) are ADVISORY — those subsystems do not yet
+consume them, so the per-mode draw estimates above assume they keep
+running (`vision` has no subsystem in this sketch at all). Two features
+are deliberately NEVER gated off, by design rather than omission:
+**acoustic** detection (a Canary that goes deaf to a smoke alarm to save
+battery has failed at its job) and **mesh** servicing
+(`mesh_network::update` carries inter-canary security/tamper alerts, so
+it stays serviced in every mode — only its routine MQTT snapshot cadence
+is stretched, above).
 
 Per-subsystem contributions (typical, for budgeting your own variant):
 
