@@ -2298,6 +2298,7 @@ void log_health(LogLevel level, LogCategory category, const char* message, const
       portENTER_CRITICAL(&g_health_pending_mux);
       HealthPendingLine* slot = &g_health_pending[g_health_pending_head];
       memcpy(slot->line, line, n);
+      slot->line[n] = '\0';  // n < HS_LINE_MAX (line_build contract)
       slot->len = n;
       g_health_pending_head =
           (g_health_pending_head + 1) % health_store::HS_PENDING_SLOTS;
@@ -2330,6 +2331,15 @@ static void health_store_drain() {
   if (g_health_pending == nullptr) return;
   if (!g_sd_mounted || sd_mount_in_flight()) return;
 
+  // Back off after a failure: a mounted-but-failing card (write-locked,
+  // full, corrupt directory) would otherwise be re-probed on every loop
+  // pass for as long as entries stay staged. Wrap-safe uint32 math.
+  static uint32_t s_last_fail_ms = 0;
+  if (s_last_fail_ms != 0 &&
+      (uint32_t)(millis() - s_last_fail_ms) < 5000UL) {
+    return;
+  }
+
   // Anything staged? (Cheap peek; the real dequeue happens per line.)
   portENTER_CRITICAL(&g_health_pending_mux);
   size_t staged = g_health_pending_count;
@@ -2358,7 +2368,11 @@ static void health_store_drain() {
                g_health_pending_count) %
               health_store::HS_PENDING_SLOTS;
           len = g_health_pending[idx].len;
-          memcpy(line, g_health_pending[idx].line, len);
+          if (len < health_store::HS_LINE_MAX) {
+            memcpy(line, g_health_pending[idx].line, len);
+          } else {
+            len = 0;  // corrupted slot length — drop, never overflow
+          }
           g_health_pending_count--;
         }
         portEXIT_CRITICAL(&g_health_pending_mux);
@@ -2388,8 +2402,10 @@ static void health_store_drain() {
 
   if (ok) {
     g_health_sd_warned = false;  // healthy again — re-arm the latch
+    s_last_fail_ms = 0;
     return;
   }
+  s_last_fail_ms = millis();
   if (!g_health_sd_warned) {
     g_health_sd_warned = true;
     // This warning stages into the pending ring like any other entry;

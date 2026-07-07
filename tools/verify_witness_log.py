@@ -99,8 +99,11 @@ def load_records(path: str):
     """Parse the file; a torn FINAL line is tolerated (power-cut model),
     torn or malformed lines anywhere else are integrity failures."""
     records, problems, torn_tail = [], [], False
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        raw_lines = f.read().split("\n")
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            raw_lines = f.read().split("\n")
+    except OSError as e:
+        return [], [f"error: cannot read '{path}': {e}"], False
     # A trailing "" after the final newline is normal; anything else on the
     # last slot is a torn tail.
     if raw_lines and raw_lines[-1] == "":

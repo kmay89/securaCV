@@ -129,6 +129,10 @@ def main() -> int:
     check(code == 0, "torn tail tolerated")
     check("torn final line" in out, "torn tail is noted")
 
+    print("unreadable file")
+    code = vw.verify("/nonexistent/records.jsonl", pub_hex, None)
+    check(code == 1, "missing file reports cleanly instead of crashing")
+
     if _failures:
         print(f"{_failures} FAILURE(S)", file=sys.stderr)
         return 1
