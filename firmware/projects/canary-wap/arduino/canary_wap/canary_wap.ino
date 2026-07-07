@@ -139,6 +139,7 @@
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
+#include "health_store_logic.h"      // pure, host-tested /HEALTH jsonl format
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
 // instead of the raw PROGMEM literals — saves ~336 KB of app-partition flash.
@@ -885,6 +886,23 @@ static const size_t HEALTH_LOG_RING_SIZE = 100;
 static HealthLogRingEntry* g_health_log_ring = nullptr;
 static size_t g_health_log_ring_head = 0;
 static size_t g_health_log_ring_count = 0;
+
+// Durable tier staging: log_health() runs on ANY task, and every SD
+// writer in this firmware is loop-task-only — so entries are formatted
+// up front and staged into this small PSRAM ring behind a critical
+// section; health_store_drain() (loop) appends them to the per-boot
+// /HEALTH file. NULL ring (alloc failure) disables the SD tier only —
+// the RAM ring and Serial keep working.
+struct HealthPendingLine {
+  char line[health_store::HS_LINE_MAX];
+  size_t len;
+};
+static HealthPendingLine* g_health_pending = nullptr;
+static size_t g_health_pending_head = 0;   // next slot to write
+static size_t g_health_pending_count = 0;  // staged, undrained
+static uint32_t g_health_pending_dropped = 0;
+static portMUX_TYPE g_health_pending_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool g_health_sd_warned = false;    // one warning per failure streak
 
 // ════════════════════════════════════════════════════════════════════════════
 // FORWARD DECLARATIONS
@@ -2265,13 +2283,121 @@ void log_health(LogLevel level, LogCategory category, const char* message, const
   if (log_level_requires_attention(level)) {
     g_health.logs_unacked++;
   }
-  
+
+  // Durable tier: stage a fully-escaped JSON line for the loop-task
+  // drainer. Format OUTSIDE the critical section; only the memcpy and
+  // ring bookkeeping run under the lock. A full ring drops the OLDEST
+  // staged line — the newest entry is the one that explains a burst.
+  if (g_health_pending != nullptr) {
+    char line[health_store::HS_LINE_MAX];
+    const size_t n = health_store::line_build(
+        line, sizeof(line), entry.seq, entry.timestamp_ms,
+        log_level_name(level), log_category_name(category), message,
+        detail ? detail : "");
+    if (n > 0) {
+      portENTER_CRITICAL(&g_health_pending_mux);
+      HealthPendingLine* slot = &g_health_pending[g_health_pending_head];
+      memcpy(slot->line, line, n);
+      slot->len = n;
+      g_health_pending_head =
+          (g_health_pending_head + 1) % health_store::HS_PENDING_SLOTS;
+      if (g_health_pending_count < health_store::HS_PENDING_SLOTS) {
+        g_health_pending_count++;
+      } else {
+        g_health_pending_dropped++;  // overwrote the oldest staged line
+      }
+      portEXIT_CRITICAL(&g_health_pending_mux);
+    }
+  }
+
   // Also print to Serial
   Serial.printf("[%s/%s] %s", log_level_name(level), log_category_name(category), message);
   if (detail && detail[0]) {
     Serial.printf(" | %s", detail);
   }
   Serial.println();
+}
+
+// Drain staged health lines to the per-boot /HEALTH file. LOOP TASK
+// ONLY (the one SD-writer task). Copies the staged burst out under the
+// critical section, then does file I/O with the lock released. One
+// latched warning per failure streak (beacon-audit pattern); success
+// re-arms it. Health files are regenerable artifacts — datamgmt's
+// /HEALTH count rotation bounds the per-boot collection (Invariant IV
+// protects only /WITNESS and /CHAIN).
+static void health_store_drain() {
+#if FEATURE_SD_STORAGE
+  if (g_health_pending == nullptr) return;
+  if (!g_sd_mounted || sd_mount_in_flight()) return;
+
+  // Anything staged? (Cheap peek; the real dequeue happens per line.)
+  portENTER_CRITICAL(&g_health_pending_mux);
+  size_t staged = g_health_pending_count;
+  portEXIT_CRITICAL(&g_health_pending_mux);
+  if (staged == 0) return;
+
+  bool ok = SD.exists("/HEALTH") || SD.mkdir("/HEALTH");
+  if (ok) {
+    char path[health_store::HS_PATH_MAX];
+    health_store::boot_filename(g_device.boot_count, path, sizeof(path));
+    File f = SD.open(path, FILE_APPEND);
+    if (!f) {
+      ok = false;
+    } else {
+      // Dequeue one line at a time: a 512 B stack copy per line keeps
+      // the critical section to a memcpy and needs no static burst
+      // buffer (which would hand 4 KB back to internal DRAM — the exact
+      // budget the PSRAM diet reclaimed).
+      while (ok) {
+        char line[health_store::HS_LINE_MAX];
+        size_t len = 0;
+        portENTER_CRITICAL(&g_health_pending_mux);
+        if (g_health_pending_count > 0) {
+          const size_t idx =
+              (g_health_pending_head + health_store::HS_PENDING_SLOTS -
+               g_health_pending_count) %
+              health_store::HS_PENDING_SLOTS;
+          len = g_health_pending[idx].len;
+          memcpy(line, g_health_pending[idx].line, len);
+          g_health_pending_count--;
+        }
+        portEXIT_CRITICAL(&g_health_pending_mux);
+        if (len == 0) break;
+        ok = (f.write((const uint8_t*)line, len) == len);
+      }
+      if (ok) {
+        portENTER_CRITICAL(&g_health_pending_mux);
+        const uint32_t dropped = g_health_pending_dropped;
+        g_health_pending_dropped = 0;
+        portEXIT_CRITICAL(&g_health_pending_mux);
+        if (dropped > 0) {
+          char note[112];
+          const int m = snprintf(
+              note, sizeof(note),
+              "{\"v\":1,\"lvl\":\"WARNING\",\"cat\":\"STORAGE\","
+              "\"msg\":\"health lines dropped\",\"detail\":\"%u\"}\n",
+              (unsigned)dropped);
+          if (m > 0 && (size_t)m < sizeof(note)) {
+            ok = (f.write((const uint8_t*)note, (size_t)m) == (size_t)m);
+          }
+        }
+      }
+      f.close();
+    }
+  }
+
+  if (ok) {
+    g_health_sd_warned = false;  // healthy again — re-arm the latch
+    return;
+  }
+  if (!g_health_sd_warned) {
+    g_health_sd_warned = true;
+    // This warning stages into the pending ring like any other entry;
+    // the latch keeps a persistently failing card from looping it.
+    log_health(SCV_LOG_WARNING, SCV_CAT_STORAGE,
+               "health log: SD tier unavailable — RAM ring only", nullptr);
+  }
+#endif
 }
 
 // Public wrapper for external modules (e.g., chirp_channel.cpp)
@@ -4175,6 +4301,7 @@ static bool camera_ensure_awake() {
                    nullptr);
     }
     g_cam_standby = false;  // either awake now, or genuinely failed
+    g_hw.camera_standby = false;
   }
   if (ok) camera_note_use();
   xSemaphoreGive(cam_lock());
@@ -4195,6 +4322,7 @@ static void camera_enter_standby(const char* reason) {
     g_camera_initialized  = false;
     g_hw.camera_available = false;
     g_cam_standby = true;
+    g_hw.camera_standby = true;
     log_health(SCV_LOG_INFO, SCV_CAT_SENSOR, "Camera standby", reason);
   }
   xSemaphoreGive(cam_lock());
@@ -4576,6 +4704,8 @@ static esp_err_t handle_peek_status(httpd_req_t* req) {
   JsonDocument doc;
   doc["ok"] = true;
   doc["camera_initialized"] = g_camera_initialized;
+  doc["standby"] = g_cam_standby;
+  doc["gate"] = camera_gate::peek_gate_name(peek_gate_now());
   doc["peek_active"] = g_peek_active;
   doc["resolution"] = (int)g_peek_framesize;
   doc["resolution_name"] = framesize_name(g_peek_framesize);
@@ -9187,6 +9317,8 @@ void setup() {
   // back to internal heap; a NULL just disables the owning feature.
   g_health_log_ring = (HealthLogRingEntry*)csi_large_calloc(
       HEALTH_LOG_RING_SIZE * sizeof(HealthLogRingEntry));
+  g_health_pending = (HealthPendingLine*)csi_large_calloc(
+      health_store::HS_PENDING_SLOTS * sizeof(HealthPendingLine));
   g_fleet_scan_cache = (char*)csi_large_calloc(FLEET_SCAN_CACHE_SIZE);
   g_fleet_scan_snap  = (char*)csi_large_calloc(FLEET_SCAN_CACHE_SIZE);
   {
@@ -10666,6 +10798,10 @@ void loop() {
   #if FEATURE_CAMERA_PEEK
   camera_power_tick();
   #endif
+
+  // Flush staged health-log lines to the per-boot /HEALTH file (the SD
+  // tier that makes crash forensics survive the reboot).
+  health_store_drain();
 
   // Pump the acoustic pipeline. Drains up to 8×20 ms PDM frames per call
   // against an 8-deep DMA ring, so the loop must come back within ~160 ms —

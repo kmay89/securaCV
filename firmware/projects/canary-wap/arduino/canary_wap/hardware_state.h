@@ -131,6 +131,7 @@ struct HardwareState {
   // === Camera State ===
   bool     camera_available;      // Is camera initialized?
   bool     camera_ever_init;      // Did camera ever initialize successfully?
+  bool     camera_standby;        // Parked by the power manager (healthy, wakes on use)
 
   // === Safe Mode ===
   bool     safe_mode;             // In safe mode (optional peripherals disabled)

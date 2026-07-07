@@ -40,6 +40,16 @@ enum class PeekGate : uint8_t {
   DENY_NO_CAMERA = 3,  /* init failed and the sensor is not in standby */
 };
 
+/* Short machine name for JSON fields and UI logic. */
+inline const char* peek_gate_name(PeekGate g) {
+  switch (g) {
+    case PeekGate::ALLOW:        return "ok";
+    case PeekGate::DENY_POLICY:  return "policy";
+    case PeekGate::DENY_THERMAL: return "thermal";
+    default:                     return "no_camera";
+  }
+}
+
 inline const char* peek_gate_reason(PeekGate g) {
   switch (g) {
     case PeekGate::ALLOW:

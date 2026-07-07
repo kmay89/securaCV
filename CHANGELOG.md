@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### canary-wap polish: crash-proof health logs, offline witness verifier, honest standby UX
+
+Round two of the storage/camera audit — three finishing gaps closed:
+
+- **Health logs now survive reboots.** `log_health()` was a 100-entry
+  RAM ring; after a crash, the evidence of WHY was gone. Every entry now
+  also lands in a per-boot SD file (`/HEALTH/boot_<n>.jsonl`) — the
+  previous boot's file IS the crash forensic. Entries are staged into a
+  small PSRAM ring from any task and drained by the loop task (the one
+  SD-writer task), JSON-escaped because health details can carry
+  peer-controlled bytes (mesh sender names). Missing card degrades to
+  the RAM ring behind one latched warning; old boot files are bounded
+  by the existing /HEALTH rotation. New host test pins the escaping and
+  the format.
+- **The sealed log is now provable offline.** `tools/verify_witness_log.py`
+  re-verifies `/WITNESS/records.jsonl` from the card alone: recomputes
+  every chain hash, checks every Ed25519 signature against the device
+  public key, verifies segment continuity, and reports card-absent gaps
+  and torn power-cut tails honestly instead of hiding them. Its test
+  suite proves edited fields, wrong keys, re-signed lines, and
+  reordering all fail loudly.
+- **A parked camera no longer reads as broken.** Standby is now a
+  first-class state: `/api/peek/status` reports `standby` and the gate
+  reason, the self-test says "Asleep to save power — wakes when used"
+  (PASS) instead of "Sensor offline" (FAIL), the dashboard's preview
+  button stays usable (starting the preview wakes the sensor), and the
+  thermal/battery gates show their own copy. The init-failure
+  diagnostics card only appears for genuine failures. Panel state is a
+  pure `WEBUI_LOGIC` function with five node tests.
+
 ### canary-wap camera: event triggers, idle standby, thermal shedding, real battery gating
 
 The camera was "always ready, never watching": initialized once at boot

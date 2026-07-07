@@ -756,6 +756,30 @@ jobs:
           /tmp/camera_gate_logic | tee /tmp/camera_gate_logic.log
           grep -q "ALL .* PASSED" /tmp/camera_gate_logic.log
 
+      - name: Build + run canary-wap health store logic host test
+        # The /HEALTH per-boot jsonl format (health_store_logic.h): JSON
+        # escaping of peer-influenced strings (quote/backslash/control
+        # bytes, atomic truncation), the byte-exact line format, and the
+        # boot filename scheme.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_health_store_logic.cpp \
+              -o /tmp/health_store_logic
+          /tmp/health_store_logic | tee /tmp/health_store_logic.log
+          grep -q "ALL .* PASSED" /tmp/health_store_logic.log
+
+      - name: Run witness log verifier tests (offline chain + signatures)
+        # tools/verify_witness_log.py — the off-device half of the
+        # /WITNESS/records.jsonl durable tier: real Ed25519-signed chains
+        # verify end-to-end; edited fields, wrong keys, re-signed lines,
+        # and reordering all fail loudly; card-absent gaps and torn
+        # power-cut tails are tolerated and reported.
+        run: |
+          python3 -m pip install --quiet cryptography
+          python3 tools/test_verify_witness_log.py
+
       - name: Build + run canary-wap catch-all logic host test
         # Who owns the shared canary.local catch-all when several Canaries
         # share a LAN: the fingerprint-staggered claim window, the

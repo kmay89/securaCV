@@ -207,10 +207,19 @@ inline void probe_camera(ProbeResult* r, JsonObject metric) {
   metric["ever_initialized"] = ever;
   metric["initialized"]      = now;
 
+  metric["standby"] = g_hw.camera_standby;
+
   if (now) {
     r->status = Status::PASS;
     r->code   = 0;
     set_detail(r, "Sensor online");
+  } else if (g_hw.camera_standby) {
+    // Parked by the power manager — healthy, wakes on use. Reporting
+    // this as FAIL would page the user about a feature working as
+    // designed.
+    r->status = Status::PASS;
+    r->code   = 0;
+    set_detail(r, "Asleep to save power — wakes when used");
   } else if (ever) {
     r->status = Status::FAIL;
     r->code   = -2;
