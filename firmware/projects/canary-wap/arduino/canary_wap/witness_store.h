@@ -18,7 +18,8 @@
  * This header is pure hosted C++ (no Arduino/ESP-IDF includes) so the
  * byte-exact line format and the reconciliation decision are unit-tested
  * on the host (test_witness_store_logic.cpp). The sketch supplies the
- * SD/NVS/crypto glue.
+ * SD/NVS/crypto glue. The off-device half is tools/verify_witness_log.py,
+ * which re-verifies the whole file (chain + Ed25519) from the card alone.
  */
 
 #ifndef WITNESS_STORE_H

@@ -95,6 +95,39 @@ describe('fmtKbps', () => {
   });
 });
 
+describe('cameraPanelState', () => {
+  it('healthy running camera needs no override', () => {
+    const s = L.cameraPanelState(true, false, 'ok');
+    assert.equal(s.usable, true);
+    assert.equal(s.label, '');
+  });
+
+  it('parked camera is usable with wake copy, never "broken"', () => {
+    const s = L.cameraPanelState(false, true, 'ok');
+    assert.equal(s.usable, true);
+    assert.match(s.label, /Asleep/);
+    assert.match(s.offline, /wake/i);
+  });
+
+  it('genuine init failure reads as no camera', () => {
+    const s = L.cameraPanelState(false, false, 'no_camera');
+    assert.equal(s.usable, false);
+    assert.match(s.offline, /not initialized/);
+  });
+
+  it('thermal gate blocks the preview with heat copy', () => {
+    const s = L.cameraPanelState(true, false, 'thermal');
+    assert.equal(s.usable, false);
+    assert.match(s.offline, /too hot/i);
+  });
+
+  it('battery policy blocks the preview with battery copy', () => {
+    const s = L.cameraPanelState(false, true, 'policy');
+    assert.equal(s.usable, false);
+    assert.match(s.offline, /battery/i);
+  });
+});
+
 describe('otaBannerVisible', () => {
   it('shows only when an update exists and that version is undismissed', () => {
     assert.equal(L.otaBannerVisible(true, '2.3.0', ''), true);

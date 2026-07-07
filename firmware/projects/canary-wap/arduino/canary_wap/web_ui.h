@@ -2657,12 +2657,40 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // silences one version, not all future ones). Missing/empty version
       // strings never show a banner — an update without a version is a
       // status bug, not something to advertise.
-      function otaBannerVisible(updateAvailable, latestVersion, dismissedVersion) {
+      /* Camera panel state from /api/peek/status: a PARKED camera (standby)
+     * is healthy and usable — starting the preview wakes it. Only a
+     * genuine init failure, heat, or the battery policy block the
+     * preview, each with its own honest copy. */
+    function cameraPanelState(initialized, standby, gate) {
+      if (!initialized && !standby) {
+        return { usable: false, btn: '\u26a0 No Camera',
+                 label: 'Camera unavailable',
+                 offline: 'Camera not initialized' };
+      }
+      if (gate === 'thermal') {
+        return { usable: false, btn: '\u26a0 Too Hot',
+                 label: 'Too hot \u2014 preview off',
+                 offline: 'Device is too hot. The preview stays off until it cools.' };
+      }
+      if (gate === 'policy') {
+        return { usable: false, btn: '\u26a0 Battery Saver',
+                 label: 'Preview off to save battery',
+                 offline: 'Camera preview is off to save battery. Plug in to use it.' };
+      }
+      if (standby) {
+        return { usable: true, btn: '\u25b6 Start Preview',
+                 label: 'Asleep \u2014 wakes on use',
+                 offline: 'Camera is asleep. Start the preview to wake it.' };
+      }
+      return { usable: true, btn: '', label: '', offline: '' };
+    }
+
+    function otaBannerVisible(updateAvailable, latestVersion, dismissedVersion) {
         if (!updateAvailable) return false;
         if (typeof latestVersion !== 'string' || latestVersion.length === 0) return false;
         return latestVersion !== dismissedVersion;
       }
-      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible };
+      return { peekStreamUrl, shouldRetryPeek, PEEK_MAX_RETRIES, BLE_CHIRP_ENDPOINT, fmtKbps, otaBannerVisible, cameraPanelState };
     })();
     if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
     /* WEBUI_LOGIC:END */
@@ -2867,6 +2895,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     let logFilter = 'all';
     let peekActive = false;
     let cameraReady = false;
+    let cameraStandby = false;
+    let cameraGate = 'ok';
     let currentResolution = 8;
     let currentResolutionName = null;  // name reported by the firmware for the active framesize
 
@@ -3639,7 +3669,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const diag = document.getElementById('camInitDiag');
       const diagText = document.getElementById('camInitDiagText');
       if (diag && diagText) {
-        if (!data.camera_initialized) {
+        if (!data.camera_initialized && !data.standby) {
           let msg = '';
           if (data.last_init_label && data.last_init_label !== 'never') {
             msg += 'Last attempt: <code>' + data.last_init_label + '</code> → ' +
@@ -3717,6 +3747,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (data && data.ok) {
         const wasReady = cameraReady;
         cameraReady = data.camera_initialized;
+        cameraStandby = !!data.standby;
+        cameraGate = data.gate || 'ok';
         peekActive = data.peek_active;
         if (typeof data.resolution !== 'undefined') {
           currentResolution = data.resolution;
@@ -3739,10 +3771,19 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const offline = document.getElementById('peekOffline');
       const offlineText = document.getElementById('peekOfflineText');
 
-      if (!cameraReady) {
-        btn.disabled = true; btn.textContent = '⚠ No Camera';
-        status.textContent = 'Camera unavailable';
-        offlineText.textContent = 'Camera not initialized';
+      const cam = WebUiLogic.cameraPanelState(cameraReady, cameraStandby, cameraGate);
+      if (!cam.usable) {
+        btn.disabled = true; btn.textContent = cam.btn;
+        status.textContent = cam.label;
+        offlineText.textContent = cam.offline;
+        stream.style.display = 'none'; offline.style.display = 'flex';
+        return;
+      }
+      if (!cameraReady && cameraStandby && !peekActive) {
+        // Parked but healthy: the preview button works and wakes the sensor.
+        btn.disabled = false; btn.textContent = cam.btn;
+        status.textContent = cam.label;
+        offlineText.textContent = cam.offline;
         stream.style.display = 'none'; offline.style.display = 'flex';
         return;
       }
@@ -3765,7 +3806,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     let peekRetries = 0;
     async function startPeek() {
-      if (!cameraReady) { alert('Camera not available'); return; }
+      // A PARKED camera is startable: /api/peek/stream wakes it on the
+      // device side (camera_ensure_awake). Only a genuine init failure
+      // blocks here.
+      if (!cameraReady && !cameraStandby) { alert('Camera not available'); return; }
       const stream = document.getElementById('peekStream');
       document.getElementById('peekStatus').textContent = 'Connecting…';
       peekRetries = 0;
