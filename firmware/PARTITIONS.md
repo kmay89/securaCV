@@ -26,7 +26,7 @@ comfortable answer when FULL needs A/B **plus** a `witness_log`-style partition.
 
 | Table | Used by | Flash used | App slots | OTA | FULL (~2.7 MB) fits? |
 |---|---|---|---|---|---|
-| [`canary/partitions_ota.csv`](canary/partitions_ota.csv) | `canary/platformio.ini` (the **ACTIVE/canonical** PlatformIO build) | **4 MB** of 8 | 2 × `0x1E0000` (1.9 MB) | A/B | ❌ no (slots < FULL) |
+| [`canary/partitions_ota.csv`](canary/partitions_ota.csv) | `canary/platformio.ini` dev/release/minimal (the **ACTIVE/canonical** PlatformIO build; `[env:full]` pins `default_8MB` instead — see below) | **4 MB** of 8 | 2 × `0x1E0000` (1.9 MB) | A/B | ❌ no (slots < FULL) |
 | [`projects/canary-ota/partitions.csv`](projects/canary-ota/partitions.csv) | `projects/canary-ota/` (SPECIALIZED OTA A/B subsystem) | 8 MB | factory + A + B, 3 × `0x180000` (1.5 MB) + `witness_log` | factory+A/B | ❌ no (slots < FULL) |
 | [`provisioning/partitions_secure.csv`](provisioning/partitions_secure.csv) | `provisioning/platformio_secure.ini` (Phase‑2 secure/encrypted) | **4 MB** of 8 | 2 × `0x1E0000` (1.9 MB) + `nvs_keys` | A/B | ❌ no (slots < FULL) |
 | _(none pinned)_ board default `default_8MB` | `projects/canary-wap/` Arduino sketch (the real **FULL** build) | 8 MB | 2 × `0x330000` (3.2 MB) + 9.5 MB FATFS region | A/B (`app0`/`app1`) | ✅ yes (fits a 3.2 MB slot, A/B intact) |
@@ -51,7 +51,7 @@ Choose by what you are shipping:
 | Deployment | Flash | Use this layout |
 |---|---|---|
 | **FULL with OTA A/B** (production WAP today) | 8 MB | Board default `default_8MB` (2 × 3.2 MB `app0`/`app1`), as `projects/canary-wap/` does. FULL fits the slot and updates arrive via signed pull-OTA or BLE OTA (see `docs/firmware_ota.md`). |
-| **DEV / release / minimal, with OTA A/B** | 8 MB | [`canary/partitions_ota.csv`](canary/partitions_ota.csv) — 1.9 MB A/B slots. Fits the non‑FULL profiles; **do not** select `[env:full]` against it expecting it to fit. |
+| **DEV / release / minimal, with OTA A/B** | 8 MB | [`canary/partitions_ota.csv`](canary/partitions_ota.csv) — 1.9 MB A/B slots. Fits the non‑FULL profiles; **do not** select `[env:full]` against it expecting it to fit — `canary/platformio.ini` now pins `board_build.partitions = default_8MB.csv` for `[env:full]` (per the row above), which also restores its signed pull-OTA path. |
 | **Factory‑recovery + A/B + on‑device log** (smaller builds) | 8 MB | [`projects/canary-ota/partitions.csv`](projects/canary-ota/partitions.csv) — adds a `witness_log` data partition that survives OTA. |
 | **Secure / flash‑encrypted** (Phase‑2 provisioning) | 8 MB | Start from [`provisioning/partitions_secure.csv`](provisioning/partitions_secure.csv) but **enlarge the app slots and push subsequent offsets** for an 8 MB target — the committed file is a 4 MB reference (see its in‑file note). |
 | **FULL + OTA A/B + dedicated `witness_log` partition** | **16 MB** | Not shipped on 8 MB (`default_8MB` gives FULL its A/B slots but no custom data partitions). Per [roadmap §4.1](../docs/review/02-roadmap.md), a 16 MB‑flash S3 (e.g. XIAO ESP32‑S3 "Plus") fits two ≥3 MB app slots **plus** a `witness_log` partition. Keep MINIMAL/DEV on 8 MB. |

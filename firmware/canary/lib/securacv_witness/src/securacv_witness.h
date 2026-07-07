@@ -156,6 +156,14 @@ float witness_get_speed_ema();
 // Provision device identity (keys, chain state)
 bool witness_provision_device();
 
+// Reconcile the chain head with the durable SD log (/WITNESS/records.jsonl).
+// NVS is only a fast-boot cache persisted every SD_PERSIST_INTERVAL records;
+// the SD tail is adopted when it is strictly ahead AND its signature
+// verifies under this device's public key (a foreign or tampered card must
+// never move the head). Call once, after the SD card mounts and before the
+// first record of the boot is created. Returns true if the head advanced.
+bool witness_recover_from_sd();
+
 // ════════════════════════════════════════════════════════════════════════════
 // RECORD CREATION
 // ════════════════════════════════════════════════════════════════════════════

@@ -285,6 +285,23 @@ setup_arduino() {
         print_warn "device_pseudonym not found at ${identity_src} — sketch will not compile until firmware/common/identity/ is restored"
     fi
 
+    # The witness-store pure logic (the /WITNESS/records.jsonl line format +
+    # SD-wins boot reconciliation) is a single canonical, header-only source
+    # shared with the PIO canary tree (firmware/canary). Stage a byte-identical
+    # copy next to the sketch; check_csi_sync.sh guards the two against drift.
+    local witness_src="${FIRMWARE_ROOT}/common/witness"
+    if [ -f "${witness_src}/witness_store.h" ]; then
+        cp "${witness_src}/witness_store.h" "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/witness_store.h" ]; then
+            print_success "Copied witness_store header"
+        else
+            print_error "Failed to stage witness_store header to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "witness_store not found at ${witness_src} — sketch will not compile until firmware/common/witness/ is restored"
+    fi
+
     print_success "Arduino IDE setup complete!"
     echo ""
     echo "Arduino IDE Instructions:"

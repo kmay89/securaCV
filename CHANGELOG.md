@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+### PIO canary: durable witness log on SD (/WITNESS/records.jsonl)
+
+The PlatformIO canary (firmware/canary) signed every witness record but
+never wrote one to the card — `sd_writes` was a counter with no write
+behind it, and the `/WITNESS` "per-record files" that rotation,
+verification, and export code operated on never existed. Ported the
+canary-wap durable tier:
+
+- **Every signed record now lands on SD** as one self-describing JSON
+  line in the append-only `/WITNESS/records.jsonl` — the same byte-exact
+  format canary-wap writes and `tools/verify_witness_log.py` proves
+  offline (chain hashes + Ed25519 + gap/torn-tail honesty). The pure
+  line/parse/reconcile logic is now a single canonical header
+  (`firmware/common/witness/witness_store.h`) shared by both trees:
+  the wap sketch carries a byte-identical staged copy (guarded by
+  `check_csi_sync.sh`, staged by `setup.sh`), the PIO tree includes it
+  directly, and the existing host suite runs against the canonical copy
+  in CI.
+- **Ordering is load-bearing and now correct:** the SD append happens
+  BEFORE the periodic NVS persist, so a power cut leaves SD ahead —
+  exactly the state the new signature-verified SD-wins boot recovery
+  repairs (a foreign or tampered card can never move the chain head).
+- **`/WITNESS` is never rotated** (Invariant IV) — the rotation pass now
+  bounds only `/HEALTH`. Deleted two dead APIs that read a raw-struct
+  record-file format that never existed on disk and would have misread
+  the new log: `datamgmt_verify_chain` and `datamgmt_export_records`
+  (zero callers; offline verification is `verify_witness_log.py`).
+- **Boot recovery binds seq to the signature** (review hardening, both
+  trees): the tail's Ed25519 signature covers only the chain hash, so
+  recovery now recomputes that hash from the line's own fields
+  (prev, ph, seq, tb) and requires a match before adopting — a tampered
+  card keeping a genuine hash/signature pair while editing `seq` can no
+  longer move the device sequence. Host test pins the tamper class.
+- **`[env:full]` moves to the canonical `default_8MB` partition table**
+  (per `firmware/PARTITIONS.md`): the durable log pushed FULL past 100%
+  of the 1.9 MB `partitions_ota.csv` slot it was never meant to ship on.
+  On the 3.2 MB slots FULL fits with ample headroom, and the old
+  "self-update could never fit" rationale is gone — FULL regains the
+  signed pull-OTA path. Switching tables requires a USB reflash, which
+  is already how FULL is installed.
+
 ### Witness unification part 1: one canonical chain core, sense aligned, vision signs
 
 Four witness-chain implementations had drifted apart. This lands the

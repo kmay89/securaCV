@@ -1,8 +1,8 @@
 /*
  * SecuraCV Canary — Data Management implementation
  *
- * SD log rotation, chain backup/restore, integrity verification,
- * and witness record export.
+ * SD log rotation (health diagnostics only — the witness log is
+ * append-only and never rotated) and chain backup/restore.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -236,20 +236,23 @@ bool datamgmt_process(void) {
   s_health_files  = count_files("/HEALTH");
 
   /* Check if rotation is needed: file count exceeds limits OR SD usage
-   * exceeds the target percentage. */
-  bool needs_rotation = (s_witness_files > DATAMGMT_MAX_WITNESS_FILES) ||
-                        (s_health_files  > DATAMGMT_MAX_HEALTH_FILES)  ||
+   * exceeds the target percentage.
+   *
+   * /WITNESS is deliberately NOT rotated (Invariant IV: the sealed log is
+   * a locally owned, tamper-evident record — rotation must never touch
+   * it). Its durable tier is the single append-only
+   * /WITNESS/records.jsonl written by securacv_witness; deleting from it
+   * would silently truncate the evidence the whole chain exists to
+   * protect. Only /HEALTH (diagnostics) is bounded here. */
+  bool needs_rotation = (s_health_files  > DATAMGMT_MAX_HEALTH_FILES)  ||
                         (sd_usage_pct()  > DATAMGMT_SD_USAGE_TARGET_PCT);
 
   if (needs_rotation) {
-    uint32_t deleted = 0;
-    deleted += rotate_impl("/WITNESS", DATAMGMT_MAX_WITNESS_FILES);
-    deleted += rotate_impl("/HEALTH",  DATAMGMT_MAX_HEALTH_FILES);
+    uint32_t deleted = rotate_impl("/HEALTH", DATAMGMT_MAX_HEALTH_FILES);
 
     if (deleted > 0) {
       s_files_rotated   += deleted;
       s_last_rotation_ms = millis();
-      s_witness_files    = count_files("/WITNESS");
       s_health_files     = count_files("/HEALTH");
 
       char detail[32];
@@ -418,222 +421,6 @@ bool datamgmt_has_backup(void) {
 #endif
 }
 
-bool datamgmt_verify_chain(chain_verify_result_t* result) {
-  if (!result) return false;
-  memset(result, 0, sizeof(*result));
-
-#if FEATURE_SD_STORAGE
-  if (!storage_is_mounted()) return false;
-
-  File dir = SD.open("/WITNESS");
-  if (!dir || !dir.isDirectory()) {
-    if (dir) dir.close();
-    return false;
-  }
-
-  static constexpr size_t V_NAME = 48;
-  static constexpr uint32_t VERIFY_MAX_RECORDS = 100;
-
-  uint8_t prev_chain_hash[32];
-  bool have_prev = false;
-  uint32_t records_checked = 0;
-  uint32_t records_valid   = 0;
-  uint32_t chain_breaks    = 0;
-  uint32_t sig_failures    = 0;
-  bool     chain_intact    = true;
-
-  /* Walk files in globally sorted order using an O(n^2) selection
-   * approach: on each iteration, scan the directory for the
-   * lexicographically smallest filename greater than the last one
-   * processed. This uses constant stack memory regardless of file
-   * count, and guarantees correct chain-hash continuity checking
-   * across any number of files.
-   *
-   * Capped at VERIFY_MAX_RECORDS to prevent watchdog timeout on
-   * large directories (O(n^2) directory scans). Full verification
-   * of 500+ files should use an offline tool. */
-
-  char last_processed[V_NAME] = {0};
-  char next_name[V_NAME];
-
-  for (;;) {
-    if (records_checked >= VERIFY_MAX_RECORDS) break;
-
-    /* Find the smallest filename > last_processed. */
-    next_name[0] = '\0';
-
-    dir.rewindDirectory();
-    for (File entry = dir.openNextFile(); entry;
-         entry = dir.openNextFile()) {
-      if (entry.isDirectory()) { entry.close(); continue; }
-      const char* n = entry.name();
-      const char* slash = strrchr(n, '/');
-      const char* base = slash ? (slash + 1) : n;
-      entry.close();
-
-      if (strcmp(base, last_processed) <= 0) continue;
-      if (next_name[0] == '\0' || strcmp(base, next_name) < 0) {
-        strncpy(next_name, base, V_NAME - 1);
-        next_name[V_NAME - 1] = '\0';
-      }
-    }
-
-    if (next_name[0] == '\0') break;
-    strncpy(last_processed, next_name, V_NAME);
-
-    char path[V_NAME + 16];
-    snprintf(path, sizeof(path), "/WITNESS/%s", next_name);
-
-    File rf = SD.open(path, FILE_READ);
-    if (!rf) continue;
-
-    WitnessRecord rec;
-    size_t rd = rf.read((uint8_t*)&rec, sizeof(rec));
-    rf.close();
-
-    if (rd < sizeof(rec)) continue;
-
-    records_checked++;
-
-    if (witness_verify_record(&rec)) {
-      records_valid++;
-    } else {
-      sig_failures++;
-      chain_intact = false;
-    }
-
-    if (have_prev) {
-      if (memcmp(rec.prev_hash, prev_chain_hash, 32) != 0) {
-        chain_breaks++;
-        chain_intact = false;
-      }
-    }
-    memcpy(prev_chain_hash, rec.chain_hash, 32);
-    have_prev = true;
-
-    /* Yield to prevent watchdog timeout — Ed25519 verify + SD I/O
-     * can take 10-20ms per record. */
-    if ((records_checked % 10) == 0) delay(1);
-  }
-  // Check if more records exist beyond the cap
-  bool more_exist = false;
-  if (records_checked >= VERIFY_MAX_RECORDS) {
-    dir.rewindDirectory();
-    for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
-      if (entry.isDirectory()) { entry.close(); continue; }
-      const char* n = entry.name();
-      const char* slash = strrchr(n, '/');
-      const char* base = slash ? (slash + 1) : n;
-      entry.close();
-      if (strcmp(base, last_processed) > 0) { more_exist = true; break; }
-    }
-  }
-  dir.close();
-
-  bool was_capped = more_exist;
-  if (was_capped) chain_intact = false;
-
-  result->records_checked    = records_checked;
-  result->records_valid      = records_valid;
-  result->chain_breaks       = chain_breaks;
-  result->signature_failures = sig_failures;
-  result->chain_intact       = chain_intact;
-  result->partial            = was_capped;
-
-  char detail[80];
-  snprintf(detail, sizeof(detail), "%u checked, %u valid, %u breaks%s",
-           (unsigned)records_checked, (unsigned)records_valid,
-           (unsigned)chain_breaks,
-           was_capped ? " (partial — capped)" : "");
-  log_health(was_capped ? LOG_LEVEL_WARNING : LOG_LEVEL_INFO,
-             LOG_CAT_CHAIN,
-             "Chain verification complete", detail);
-
-  return true;
-#else
-  return false;
-#endif
-}
-
-uint32_t datamgmt_export_records(uint32_t from_seq, uint32_t to_seq) {
-#if FEATURE_SD_STORAGE
-  if (!storage_is_mounted()) return 0;
-
-  /* Ensure /EXPORT exists. */
-  if (!SD.exists("/EXPORT")) SD.mkdir("/EXPORT");
-
-  File dir = SD.open("/WITNESS");
-  if (!dir || !dir.isDirectory()) {
-    if (dir) dir.close();
-    return 0;
-  }
-
-  uint32_t copied = 0;
-
-  for (File entry = dir.openNextFile(); entry;
-       entry = dir.openNextFile()) {
-    if (entry.isDirectory()) {
-      entry.close();
-      continue;
-    }
-
-    /* Read the record header to check sequence number. */
-    WitnessRecord rec;
-    size_t rd = entry.read((uint8_t*)&rec, sizeof(rec));
-    if (rd < sizeof(rec)) {
-      entry.close();
-      continue;
-    }
-
-    if (rec.seq >= from_seq && rec.seq <= to_seq) {
-      /* Build export path. */
-      const char* n = entry.name();
-      const char* slash = strrchr(n, '/');
-      const char* base = slash ? (slash + 1) : n;
-
-      char dst[80];
-      snprintf(dst, sizeof(dst), "/EXPORT/%s", base);
-
-      /* Seek back to start and copy. */
-      entry.seek(0);
-
-      File out = SD.open(dst, FILE_WRITE);
-      bool ok = false;
-      size_t bytes_copied = 0;
-      if (out) {
-        uint8_t buf[256];
-        while (entry.available()) {
-          size_t n_read = entry.read(buf, sizeof(buf));
-          if (n_read == 0) break;
-          bytes_copied += out.write(buf, n_read);
-        }
-        ok = true;
-        out.close();
-      }
-
-#if FEATURE_DIAGNOSTICS
-      diag_record_sd_write_bytes(bytes_copied, ok);
-#endif
-
-      if (ok) copied++;
-    }
-    entry.close();
-  }
-  dir.close();
-
-  if (copied > 0) {
-    char detail[32];
-    snprintf(detail, sizeof(detail), "%u files", (unsigned)copied);
-    log_health(LOG_LEVEL_INFO, LOG_CAT_STORAGE,
-               "Records exported to /EXPORT", detail);
-  }
-
-  return copied;
-#else
-  (void)from_seq; (void)to_seq;
-  return 0;
-#endif
-}
 
 bool datamgmt_get_stats(datamgmt_stats_t* out) {
   using namespace datamgmt;
