@@ -18,7 +18,9 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
 > ⚠️ **DEV STATUS (v0.1):** compile/CI-verified; **not yet validated on
 > bench hardware** — same status as the matching enclosures. Pin maps carry
 > VERIFY notes where vendor documentation is thin (CH422G bits, RGB
-> timings, round-display backlight line).
+> timings, round-display backlight line). The
+> [bench bring-up runbook](../../../docs/hardware/display_bench_bringup.md)
+> is the step-by-step that clears every VERIFY note and retires this status.
 
 ## What it does
 
