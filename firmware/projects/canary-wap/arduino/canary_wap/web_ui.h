@@ -3806,7 +3806,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     let peekRetries = 0;
     async function startPeek() {
-      if (!cameraReady) { alert('Camera not available'); return; }
+      // A PARKED camera is startable: /api/peek/stream wakes it on the
+      // device side (camera_ensure_awake). Only a genuine init failure
+      // blocks here.
+      if (!cameraReady && !cameraStandby) { alert('Camera not available'); return; }
       const stream = document.getElementById('peekStream');
       document.getElementById('peekStatus').textContent = 'Connecting…';
       peekRetries = 0;

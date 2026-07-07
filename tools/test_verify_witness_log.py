@@ -129,6 +129,22 @@ def main() -> int:
     check(code == 0, "torn tail tolerated")
     check("torn final line" in out, "torn tail is noted")
 
+    print("complete final line missing only its newline")
+    noeol = list(lines)
+    noeol[-1] = noeol[-1].rstrip("\n")  # full record, no terminator
+    code, out = run_verify(noeol, pub_hex, device_id)
+    check(code == 0, "unterminated-but-complete final record verifies")
+    check("signatures verified : 6/6" in out,
+          "the final record was NOT skipped as torn")
+    # ...and if that final record is tampered, deleting the newline must
+    # not hide it from verification.
+    evil = list(noeol)
+    rec = json.loads(evil[-1])
+    rec["tb"] = (rec["tb"] + 1) % 144
+    evil[-1] = json.dumps(rec)
+    code, out = run_verify(evil, pub_hex, device_id)
+    check(code == 1, "tampered newline-stripped final record still fails")
+
     print("unreadable file")
     code = vw.verify("/nonexistent/records.jsonl", pub_hex, None)
     check(code == 1, "missing file reports cleanly instead of crashing")

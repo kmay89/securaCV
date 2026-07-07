@@ -104,14 +104,18 @@ def load_records(path: str):
             raw_lines = f.read().split("\n")
     except OSError as e:
         return [], [f"error: cannot read '{path}': {e}"], False
-    # A trailing "" after the final newline is normal; anything else on the
-    # last slot is a torn tail.
+    # A trailing "" after the final newline is normal. A final line with
+    # NO newline is only "torn" if it does not parse as a complete
+    # record: a power cut mid-append leaves half a line, but an attacker
+    # deleting just the final newline must not exempt the newest record
+    # from verification.
+    tail_candidate = None
     if raw_lines and raw_lines[-1] == "":
         raw_lines.pop()
         complete = raw_lines
     else:
         complete = raw_lines[:-1]
-        torn_tail = bool(raw_lines and raw_lines[-1])
+        tail_candidate = raw_lines[-1] if raw_lines else None
     for i, raw in enumerate(complete, start=1):
         if not raw.strip():
             continue
@@ -119,6 +123,11 @@ def load_records(path: str):
             records.append(parse_line(raw, i))
         except ValueError as e:
             problems.append(str(e))
+    if tail_candidate is not None and tail_candidate.strip():
+        try:
+            records.append(parse_line(tail_candidate, len(raw_lines)))
+        except ValueError:
+            torn_tail = True  # genuinely half a line — the crash model
     return records, problems, torn_tail
 
 
