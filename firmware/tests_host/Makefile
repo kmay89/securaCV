@@ -46,6 +46,16 @@ DEVSIG_BIN = $(BUILD_DIR)/test_device_signature_common
 WITCHAIN_HDR = ../common/witness/witness_chain.h
 WITCHAIN_BIN = $(BUILD_DIR)/test_witness_chain_core
 
+# Canonical witness-store pure logic (common/witness/witness_store.h):
+# the /WITNESS/records.jsonl byte-exact line format + SD-wins boot
+# reconciliation, consumed by the PIO canary tree directly and by the
+# canary-wap sketch via a byte-identical staged copy (check_csi_sync.sh).
+# Reuses the canary-wap host suite, compiled here against the CANONICAL
+# header so the suite exercises the copy the PIO canary actually builds.
+WITSTORE_HDR  = ../common/witness/witness_store.h
+WITSTORE_TEST = ../projects/canary-wap/tests_host/test_witness_store_logic.cpp
+WITSTORE_BIN  = $(BUILD_DIR)/test_witness_store_common
+
 .PHONY: all run clean
 all: run
 
@@ -64,11 +74,15 @@ $(DEVSIG_BIN): test_device_signature_common.cpp $(DEVSIG_SRC) $(DEVSIG_DIR)/devi
 $(WITCHAIN_BIN): test_witness_chain_core.cpp $(WITCHAIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common test_witness_chain_core.cpp -lcrypto -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN)
+$(WITSTORE_BIN): $(WITSTORE_TEST) $(WITSTORE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common/witness $(WITSTORE_TEST) -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
 	./$(WITCHAIN_BIN)
+	./$(WITSTORE_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

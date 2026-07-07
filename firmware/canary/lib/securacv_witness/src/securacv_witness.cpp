@@ -18,6 +18,15 @@
 #include <Crypto.h>
 #include <Ed25519.h>
 
+#if FEATURE_SD_STORAGE
+#include <SD.h>
+#include "securacv_storage.h"
+// Pure line-format + SD-wins reconciliation logic, shared byte-for-byte
+// with the canary-wap tree (canonical: firmware/common/witness/,
+// host-tested by test_witness_store_logic.cpp).
+#include "witness/witness_store.h"
+#endif
+
 // ════════════════════════════════════════════════════════════════════════════
 // GLOBAL STATE
 // ════════════════════════════════════════════════════════════════════════════
@@ -228,6 +237,122 @@ void witness_persist_chain_state() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// DURABLE SD LOG (/WITNESS/records.jsonl)
+// ════════════════════════════════════════════════════════════════════════════
+
+#if FEATURE_SD_STORAGE
+
+// Latched warning so a missing/failing card logs once per outage, not once
+// per record (records keep chaining in RAM/NVS; the verifier reports the
+// resulting seq gap as a card-absent segment, honestly).
+static bool g_witness_sd_warned = false;
+
+static bool sd_append_fail(const char* why) {
+  g_health.sd_errors++;
+  if (!g_witness_sd_warned) {
+    g_witness_sd_warned = true;
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE,
+               "Witness SD append failed", why);
+  }
+  return false;
+}
+
+// Append one signed record to the durable log. Loop-task only (every
+// record producer — setup, loop, the *_process() event callbacks, and
+// power_graceful_shutdown — runs on the Arduino loopTask; the HTTP task
+// never touches SD). FILE_APPEND + close-per-write: a power cut at most
+// loses the in-flight line, never the file structure. The torn tail is
+// tolerated by both the boot recovery below and the offline verifier.
+static bool sd_append_record(const WitnessRecord* rec) {
+  if (!storage_is_mounted()) return sd_append_fail("no card");
+
+  char line[witness_store::RECORD_LINE_MAX];
+  const size_t n = witness_store::line_build(
+      line, sizeof(line), rec->seq, rec->time_bucket, (uint8_t)rec->type,
+      rec->payload_hash, rec->prev_hash, rec->chain_hash, rec->signature);
+  if (n == 0) return sd_append_fail("line build failed");
+
+  if (!SD.exists("/WITNESS") && !SD.mkdir("/WITNESS"))
+    return sd_append_fail("mkdir /WITNESS failed");
+
+  File f = SD.open("/WITNESS/records.jsonl", FILE_APPEND);
+  if (!f) return sd_append_fail("open failed");
+  const size_t wrote = f.write((const uint8_t*)line, n);
+  f.close();
+  if (wrote != n) return sd_append_fail("short write (card full?)");
+
+  g_health.sd_writes++;
+#if FEATURE_DIAGNOSTICS
+  diag_record_sd_write_bytes(n, true);
+#endif
+  if (g_witness_sd_warned) {
+    g_witness_sd_warned = false;  // healthy again — re-arm the warning latch
+    log_health(LOG_LEVEL_NOTICE, LOG_CAT_STORAGE,
+               "Witness SD append healthy again", nullptr);
+  }
+  return true;
+}
+
+#endif  // FEATURE_SD_STORAGE
+
+bool witness_recover_from_sd() {
+#if FEATURE_SD_STORAGE
+  // The NVS cache persists only every SD_PERSIST_INTERVAL records, so
+  // after a power cut (or an NVS wipe/reflash while the card kept its
+  // history) the cached head can be BEHIND the last record actually
+  // signed — resuming from it would fork the supposedly append-only
+  // chain. SD wins when its tail is strictly ahead AND the tail record's
+  // signature verifies under THIS device's public key: a foreign card
+  // (another device's history) or a tampered tail must never move our
+  // chain head. Call once, right after the SD card mounts and BEFORE the
+  // first record of the boot is created.
+  if (!storage_is_mounted()) return false;
+
+  File f = SD.open("/WITNESS/records.jsonl", FILE_READ);
+  if (!f) return false;
+  const size_t size = f.size();
+  if (size == 0) {
+    f.close();
+    return false;
+  }
+
+  char tail[witness_store::TAIL_READ + 1];
+  const size_t want =
+      (size < witness_store::TAIL_READ) ? size : witness_store::TAIL_READ;
+  if (!f.seek(size - want)) {
+    f.close();
+    return false;
+  }
+  const size_t got = f.read((uint8_t*)tail, want);
+  f.close();
+  if (got == 0) return false;
+  tail[got] = '\0';
+
+  uint32_t sd_seq = 0;
+  uint8_t sd_head[32];
+  uint8_t sd_sig[64];
+  if (!witness_store::tail_parse(tail, &sd_seq, sd_head, sd_sig)) return false;
+  if (!witness_store::sd_wins(g_device.seq, sd_seq)) return false;
+  if (!crypto_verify(g_device.pubkey, sd_head, 32, sd_sig)) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE,
+               "Witness SD tail ignored: signature not ours", nullptr);
+    return false;
+  }
+
+  g_device.seq = sd_seq;
+  memcpy(g_device.chain_head, sd_head, 32);
+  witness_persist_chain_state();
+  char detail[32];
+  snprintf(detail, sizeof(detail), "seq %u", (unsigned)sd_seq);
+  log_health(LOG_LEVEL_NOTICE, LOG_CAT_STORAGE,
+             "Witness chain head recovered from SD", detail);
+  return true;
+#else
+  return false;
+#endif
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // RECORD CREATION
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -277,17 +402,23 @@ bool witness_create_record_gps(const uint8_t* payload, size_t len, RecordType ty
   if (g_record_ring_count < WITNESS_RECORD_RING_SIZE) g_record_ring_count++;
   portEXIT_CRITICAL(&g_record_ring_mux);
 
-  // Persist chain state periodically
+  // Durable tier FIRST, NVS second (ordering is load-bearing): the SD
+  // append must precede the NVS persist so a crash between the two leaves
+  // SD ahead — exactly the state the boot recovery (SD-wins) repairs. If
+  // NVS advanced first and the append tore, reboot would resume from a
+  // head the card never received and the next line would chain across an
+  // unverifiable gap. A failed append (card absent/full) is tolerated:
+  // the chain keeps advancing and the offline verifier reports the seq
+  // gap as a card-absent segment.
+  #if FEATURE_SD_STORAGE
+  sd_append_record(out);
+  #endif
+
+  // Persist chain state periodically (fast-boot cache only — the durable
+  // history lives in /WITNESS/records.jsonl).
   if ((g_device.seq - g_device.seq_persisted) >= SD_PERSIST_INTERVAL) {
     witness_persist_chain_state();
   }
-
-  #if FEATURE_SD_STORAGE
-  g_health.sd_writes++;
-  #if FEATURE_DIAGNOSTICS
-  diag_record_sd_write_bytes(sizeof(WitnessRecord), true);
-  #endif
-  #endif
 
   return true;
 }

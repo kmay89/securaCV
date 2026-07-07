@@ -83,6 +83,27 @@ if [ -f "$IDENTITY_CANONICAL" ]; then
     fi
 fi
 
+# ── Witness store: same single-source pattern ──
+# The canonical, header-only witness_store (the /WITNESS/records.jsonl
+# byte-exact line format + SD-wins boot reconciliation) lives at
+# firmware/common/witness/; the canary-wap sketch carries a byte-identical
+# staged copy so a fresh zip download compiles. The PIO canary tree
+# (firmware/canary) includes the canonical directly via -I ../common.
+WITSTORE_CANONICAL="firmware/common/witness/witness_store.h"
+WITSTORE_STAGED="$STAGED/witness_store.h"
+if [ -f "$WITSTORE_CANONICAL" ]; then
+    if [ ! -f "$WITSTORE_STAGED" ]; then
+        echo "::error::Missing staged copy: $WITSTORE_STAGED"
+        echo "         Run: cp $WITSTORE_CANONICAL $WITSTORE_STAGED"
+        drift=1
+    elif ! cmp -s "$WITSTORE_CANONICAL" "$WITSTORE_STAGED"; then
+        echo "::error::Drift detected: $WITSTORE_STAGED differs from $WITSTORE_CANONICAL"
+        echo "--- diff ($WITSTORE_CANONICAL vs $WITSTORE_STAGED) ---"
+        diff -u "$WITSTORE_CANONICAL" "$WITSTORE_STAGED" || true
+        drift=1
+    fi
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources."
@@ -90,4 +111,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity library copies are in sync."
+echo "CSI + identity + witness-store library copies are in sync."

@@ -605,6 +605,15 @@ void setup() {
   if (storage_init(nullptr)) {
     Serial.println("[OK] SD card ready for witness records");
     witness_get_health().sd_healthy = true;
+    // Reconcile the chain head with the durable SD log BEFORE the first
+    // record of this boot is created: NVS persists only every
+    // SD_PERSIST_INTERVAL records, so after a power cut the cached head
+    // can be behind the last record actually signed — resuming from it
+    // would fork the append-only chain.
+    if (witness_recover_from_sd()) {
+      Serial.printf("[OK] Witness chain head recovered from SD (seq %u)\n",
+                    (unsigned)witness_get_device().seq);
+    }
   } else {
     Serial.println("[WARN] SD card not available - records will not persist");
     witness_get_health().sd_healthy = false;
@@ -2178,8 +2187,8 @@ static void handle_serial_commands() {
       datamgmt_stats_t dm;
       Serial.println("\n=== Data Management ===");
       if (datamgmt_get_stats(&dm)) {
-        Serial.printf("  Witness files: %u (max %u)\n",
-                      (unsigned)dm.witness_files, DATAMGMT_MAX_WITNESS_FILES);
+        Serial.printf("  Witness files: %u (append-only, never rotated)\n",
+                      (unsigned)dm.witness_files);
         Serial.printf("  Health files:  %u (max %u)\n",
                       (unsigned)dm.health_files, DATAMGMT_MAX_HEALTH_FILES);
         Serial.printf("  Files rotated: %u total\n",
