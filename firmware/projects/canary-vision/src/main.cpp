@@ -126,7 +126,10 @@ static void publish_event_json(
   canary::witness::chain_advance(seq, event_name, presence, occupants,
                                  range, bucket_uptime_s);
 
-  char sig_env[144] = "";
+  // Envelope max is 142 bytes incl. NUL; the headroom keeps a future
+  // constant bump from silently publishing unsigned events through the
+  // fail-closed truncation path.
+  char sig_env[160] = "";
   const bool signed_ok = canary::witness::sign_event_envelope(
       seq, event_name, presence, occupants, range, bucket_uptime_s,
       sig_env, sizeof(sig_env));

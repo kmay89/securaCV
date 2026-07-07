@@ -269,7 +269,10 @@ static void record_event_now(const char* event_name, uint32_t now_ms) {
 
   if (!canary::net::mqtt_connected()) return;
 
-  char sig_env[144] = "";
+  // Envelope max is 142 bytes incl. NUL; the headroom keeps a future
+  // constant bump from silently publishing unsigned events through the
+  // fail-closed truncation path.
+  char sig_env[160] = "";
   const bool signed_ok = canary::witness::sign_event_envelope(
       seq, event_name, g_snap.presence, g_snap.occupants, g_snap.range,
       bucket_uptime_s, sig_env, sizeof(sig_env));
