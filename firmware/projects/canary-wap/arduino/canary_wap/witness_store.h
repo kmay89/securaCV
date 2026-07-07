@@ -57,6 +57,12 @@ inline void to_hex(char* out, const uint8_t* in, size_t len) {
   out[2 * len] = '\0';
 }
 
+/* Caller contract: `in` must have at least 2*out_len readable bytes
+ * (line_parse bounds every field against line_end before calling; a NUL
+ * or any other non-hex byte inside the window fails the parse in-bounds).
+ * Lowercase-only by design: line_build emits lowercase, and this is a
+ * canonical-format check, not a general hex reader — an uppercase digit
+ * means the line is not something this firmware wrote. */
 inline bool from_hex(uint8_t* out, const char* in, size_t out_len) {
   for (size_t i = 0; i < out_len; i++) {
     uint8_t v = 0;
@@ -102,37 +108,75 @@ inline size_t line_build(char* buf, size_t buflen, uint32_t seq,
 }
 
 /**
- * Parse one complete line (must span [line, line_end)) into the fields
- * the boot reconciliation needs: seq, chain hash, signature. Returns
- * false on any malformed field. Tolerant of unknown extra keys but the
- * three extracted fields must be well-formed.
+ * All fields the boot reconciliation needs from one parsed line. Every
+ * field of the chain-hash pre-image (prev, ph, seq, tb) is extracted, not
+ * just the head+sig: the tail's Ed25519 signature covers only the chain
+ * hash, so a verifier that never recomputes that hash from the line's own
+ * fields would accept a line whose seq (or tb) was edited while keeping a
+ * genuine ch/sig pair — letting a tampered card move the device sequence
+ * arbitrarily. The device glue must recompute
+ * chain_hash(prev, ph, seq, tb) and require it to equal ch before
+ * adopting, exactly as tools/verify_witness_log.py does offline.
  */
-inline bool line_parse(const char* line, const char* line_end,
-                       uint32_t* out_seq, uint8_t out_head[32],
-                       uint8_t out_sig[64]) {
-  const char* s = strstr(line, "\"seq\":");
+struct TailRecord {
+  uint32_t seq;
+  uint32_t tb;
+  uint8_t  ph[32];
+  uint8_t  prev[32];
+  uint8_t  ch[32];
+  uint8_t  sig[64];
+};
+
+/* Parse an unsigned decimal following `key` (e.g. "\"seq\":") within
+ * [line, line_end). Rejects overflow past UINT32_MAX rather than
+ * wrapping into a bogus-but-valid value. */
+inline bool parse_u32_field(const char* line, const char* line_end,
+                            const char* key, size_t key_len,
+                            uint32_t* out) {
+  const char* s = strstr(line, key);
   if (s == NULL || s >= line_end) return false;
-  s += 6;
-  uint32_t seq = 0;
+  s += key_len;
+  uint32_t v = 0;
   bool any = false;
   while (s < line_end && *s >= '0' && *s <= '9') {
-    // Reject overflow rather than wrapping into a bogus-but-valid seq.
-    if (seq > 429496728u) return false;
-    seq = seq * 10u + (uint32_t)(*s - '0');
+    const uint32_t d = (uint32_t)(*s - '0');
+    // UINT32_MAX is 4294967295: one more digit overflows when the
+    // accumulated value exceeds 429496729, or equals it with d > 5.
+    if (v > 429496729u || (v == 429496729u && d > 5)) return false;
+    v = v * 10u + d;
     s++;
     any = true;
   }
   if (!any) return false;
+  *out = v;
+  return true;
+}
 
-  const char* ch = strstr(line, "\"ch\":\"");
-  if (ch == NULL || ch + 6 + 64 > line_end) return false;
-  if (!from_hex(out_head, ch + 6, 32)) return false;
+/* Parse a fixed-width hex string field `key` (e.g. "\"ch\":\"") within
+ * [line, line_end) into out (n_bytes decoded bytes). */
+inline bool parse_hex_field(const char* line, const char* line_end,
+                            const char* key, size_t key_len,
+                            uint8_t* out, size_t n_bytes) {
+  const char* s = strstr(line, key);
+  if (s == NULL || s + key_len + 2 * n_bytes > line_end) return false;
+  return from_hex(out, s + key_len, n_bytes);
+}
 
-  const char* sig = strstr(line, "\"sig\":\"");
-  if (sig == NULL || sig + 7 + 128 > line_end) return false;
-  if (!from_hex(out_sig, sig + 7, 64)) return false;
-
-  *out_seq = seq;
+/**
+ * Parse one complete line (must span [line, line_end)) into a TailRecord.
+ * Returns false on any malformed field. Tolerant of unknown extra keys
+ * but every extracted field must be well-formed — the full chain-hash
+ * pre-image is required so the caller can bind seq/tb to the signature
+ * (see TailRecord).
+ */
+inline bool line_parse(const char* line, const char* line_end,
+                       TailRecord* out) {
+  if (!parse_u32_field(line, line_end, "\"seq\":", 6, &out->seq)) return false;
+  if (!parse_u32_field(line, line_end, "\"tb\":", 5, &out->tb)) return false;
+  if (!parse_hex_field(line, line_end, "\"ph\":\"", 6, out->ph, 32)) return false;
+  if (!parse_hex_field(line, line_end, "\"prev\":\"", 8, out->prev, 32)) return false;
+  if (!parse_hex_field(line, line_end, "\"ch\":\"", 6, out->ch, 32)) return false;
+  if (!parse_hex_field(line, line_end, "\"sig\":\"", 7, out->sig, 64)) return false;
   return true;
 }
 
@@ -143,19 +187,15 @@ inline bool line_parse(const char* line, const char* line_end,
  * line — exactly the head that torn line chained from. Returns false when
  * no complete, well-formed line exists in the tail.
  */
-inline bool tail_parse(const char* tail, uint32_t* out_seq,
-                       uint8_t out_head[32], uint8_t out_sig[64]) {
+inline bool tail_parse(const char* tail, TailRecord* out) {
   bool found = false;
   const char* p = tail;
   while (*p != '\0') {
     const char* nl = strchr(p, '\n');
     if (nl == NULL) break;  // torn final line — stop at the last complete one
-    uint32_t seq;
-    uint8_t head[32], sig[64];
-    if (line_parse(p, nl, &seq, head, sig)) {
-      *out_seq = seq;
-      memcpy(out_head, head, 32);
-      memcpy(out_sig, sig, 64);
+    TailRecord rec;
+    if (line_parse(p, nl, &rec)) {
+      *out = rec;
       found = true;
     }
     p = nl + 1;

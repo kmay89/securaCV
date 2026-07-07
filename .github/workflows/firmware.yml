@@ -731,13 +731,15 @@ jobs:
         # byte-exact NDJSON line against a golden fixture, tail recovery
         # (newest complete line wins; torn power-cut lines skipped; junk
         # lines can't shadow good ones), malformed-field and seq-overflow
-        # rejection, and the SD-wins reconciliation decision.
+        # rejection, the SD-wins reconciliation decision, and the
+        # seq-binding tamper check (OpenSSL recompute of the chain hash —
+        # libcrypto is preinstalled on ubuntu-latest).
         run: |
           set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror \
+          g++ -std=c++17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
               -I firmware/projects/canary-wap/arduino/canary_wap \
               firmware/projects/canary-wap/tests_host/test_witness_store_logic.cpp \
-              -o /tmp/witness_store_logic
+              -lcrypto -o /tmp/witness_store_logic
           /tmp/witness_store_logic | tee /tmp/witness_store_logic.log
           grep -q "ALL .* PASSED" /tmp/witness_store_logic.log
 

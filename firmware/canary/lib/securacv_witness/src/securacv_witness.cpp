@@ -328,22 +328,33 @@ bool witness_recover_from_sd() {
   if (got == 0) return false;
   tail[got] = '\0';
 
-  uint32_t sd_seq = 0;
-  uint8_t sd_head[32];
-  uint8_t sd_sig[64];
-  if (!witness_store::tail_parse(tail, &sd_seq, sd_head, sd_sig)) return false;
-  if (!witness_store::sd_wins(g_device.seq, sd_seq)) return false;
-  if (!crypto_verify(g_device.pubkey, sd_head, 32, sd_sig)) {
+  witness_store::TailRecord rec;
+  if (!witness_store::tail_parse(tail, &rec)) return false;
+  if (!witness_store::sd_wins(g_device.seq, rec.seq)) return false;
+
+  // Bind seq/tb to the signature: the Ed25519 signature covers only the
+  // chain hash, so recompute that hash from the line's own fields and
+  // require a match — otherwise a tampered card could keep a genuine
+  // ch/sig pair while editing seq to move the device sequence to an
+  // arbitrary value (the same check verify_witness_log.py runs offline).
+  uint8_t recomputed[32];
+  compute_chain_hash(rec.prev, rec.ph, rec.seq, rec.tb, recomputed);
+  if (memcmp(recomputed, rec.ch, 32) != 0) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE,
+               "Witness SD tail ignored: chain hash mismatch", nullptr);
+    return false;
+  }
+  if (!crypto_verify(g_device.pubkey, rec.ch, 32, rec.sig)) {
     log_health(LOG_LEVEL_WARNING, LOG_CAT_STORAGE,
                "Witness SD tail ignored: signature not ours", nullptr);
     return false;
   }
 
-  g_device.seq = sd_seq;
-  memcpy(g_device.chain_head, sd_head, 32);
+  g_device.seq = rec.seq;
+  memcpy(g_device.chain_head, rec.ch, 32);
   witness_persist_chain_state();
   char detail[32];
-  snprintf(detail, sizeof(detail), "seq %u", (unsigned)sd_seq);
+  snprintf(detail, sizeof(detail), "seq %u", (unsigned)rec.seq);
   log_health(LOG_LEVEL_NOTICE, LOG_CAT_STORAGE,
              "Witness chain head recovered from SD", detail);
   return true;
