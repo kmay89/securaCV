@@ -2898,7 +2898,7 @@ bool init(httpd_handle_t server, const char* api_token) {
  * an honest-but-quiet room, so it can't double as a "did it boot" signal.
  * ────────────────────────────────────────────────────────────────────────── */
 
-void loop() {
+void loop(bool run_csi) {
   if (!g_initialized) return;
 
 #if FEATURE_BLE_SCAN && FEATURE_MESH_NETWORK
@@ -2924,6 +2924,17 @@ void loop() {
     }
   }
 #endif
+
+  /* Round-two power gate: everything ABOVE (outbound beacon drain +
+   * mesh coordinator/channel maintenance) always runs — mesh carries
+   * inter-canary security alerts and must not pause on battery. Only the
+   * CSI-specific work below is skipped when the policy disables CSI:
+   * csi_hal::process() (the drain), probe_pump() (peer probing that
+   * exists solely to elicit CSI frames — no probes needed when CSI is
+   * off, and it saves the probe TX too), and the boot self-test (which
+   * would otherwise false-alarm "0 frames" while CSI is intentionally
+   * disabled — deferring it means it runs once CSI is actually active). */
+  if (!run_csi) return;
 
   csi_hal::process();
   probe_pump();

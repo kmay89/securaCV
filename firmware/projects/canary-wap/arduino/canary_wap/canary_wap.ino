@@ -10857,11 +10857,14 @@ void loop() {
   // forever (see csi_hal.h:39 and firmware/common/csi/README.md:61).
   //
   // Round-two power gate: when the policy turns CSI off (battery saver and
-  // below) we skip the drain to stop the pipeline's per-loop work. CSI is
-  // pure environmental sensing — no life-safety — so honoring the bit is
-  // exactly the profiles' intent. The ring simply fills and drops
-  // (bounded, harmless); draining resumes the moment CSI re-enables, no
-  // re-init needed.
+  // below) we skip the CSI-specific work to stop the pipeline's per-loop
+  // cost. CSI is pure environmental sensing — no life-safety — so honoring
+  // the bit is exactly the profiles' intent; the ring fills and drops
+  // (bounded, harmless) and draining resumes on re-enable with no re-init.
+  // The gate is passed INTO csi_integration::loop() rather than wrapping
+  // it, because that function ALSO services mesh (outbound beacon drain +
+  // coordinator/channel maintenance) which must keep running on battery to
+  // carry inter-canary security alerts (codex #855 P1).
   {
     bool csi_gate_on = true;
     #if FEATURE_POWER_POLICY
@@ -10869,7 +10872,7 @@ void loop() {
     csi_gate_on = power_gate::feature_runs(pf_csi != nullptr,
                                            pf_csi != nullptr && pf_csi->csi);
     #endif
-    if (csi_gate_on) csi_integration::loop();
+    csi_integration::loop(csi_gate_on);
   }
 
   // Optional MQTT bridge — pump (no-op when disabled or unconfigured),
