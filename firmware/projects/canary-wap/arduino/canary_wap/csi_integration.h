@@ -55,8 +55,16 @@ bool init(httpd_handle_t server, const char* api_token);
  *
  * Cheap (single ring drain + millis() compare); safe to call from the
  * Arduino main loop at full rate.
+ *
+ * run_csi (round-two power gate): when false (the power policy disabled
+ * CSI on battery), the CSI-specific work — csi_hal::process(), the
+ * peer-probe pump that exists only to elicit CSI frames, and the boot
+ * self-test — is skipped, but mesh servicing at the top of this function
+ * (outbound beacon drain, coordinator/channel maintenance) ALWAYS runs.
+ * Mesh carries inter-canary security alerts, so it must not pause with
+ * CSI. Call unconditionally as loop(csi_gate_on).
  */
-void loop();
+void loop(bool run_csi = true);
 
 /**
  * Has any v1 module committed an event since boot? (i.e. has the snapshot

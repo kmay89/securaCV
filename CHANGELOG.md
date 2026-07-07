@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### canary-wap battery gates round two: CSI drain + MQTT heartbeat cadence
+
+PR #847 enforced the first power-policy gates (camera, record interval,
+CPU/WiFi-PS, deep sleep) but left several `PolicyFeatures` bits computed
+and never read. This wires the two that are honest power wins:
+
+- **CSI drain is now gated.** When the policy turns CSI off (battery
+  saver and below) the main loop skips the CSI ring-drain and 1 Hz
+  module dispatch, stopping the pipeline's per-loop work. CSI is pure
+  environmental sensing (no life-safety), so this matches the profiles'
+  intent; the ring fills and drops harmlessly while gated and resumes on
+  re-enable with no re-init.
+- **Routine MQTT heartbeats stretch under battery load.** The MQTT link
+  is kept alive in every mode (LOW_POWER holds it up so panic events
+  reach Home Assistant), so instead of skipping publishes the routine
+  heartbeat cadence (status/health/mesh-snapshot/beacon) stretches ×4 in
+  battery-saver and ×8 in low-power/shutdown. Life-safety (acoustic
+  `/sensing`) and event-driven (record counts / chain head) publishes are
+  never stretched.
+- **Mesh servicing is deliberately kept always-on** (not gated off like
+  the profiles' advisory bit suggested): `mesh_network::update` carries
+  inter-canary security/tamper alerts, so dropping alert reception to
+  save a little CPU is the wrong trade for a security device — only its
+  routine MQTT snapshot cadence is stretched. `vision` has no subsystem
+  in this sketch and stays advisory.
+
+Decisions live in a pure, host-tested `power_gate_logic.h` (feature
+run/skip + cadence stretch with overflow saturation); the enforcement
+comment in `power_policy.h` and the battery guide are updated in lockstep
+so the enforced-vs-advisory table stays honest.
+
 ### PIO canary: durable witness log on SD (/WITNESS/records.jsonl)
 
 The PlatformIO canary (firmware/canary) signed every witness record but

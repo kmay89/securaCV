@@ -139,6 +139,7 @@
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
+#include "power_gate_logic.h"        // pure, host-tested round-two power gate decisions
 #include "health_store_logic.h"      // pure, host-tested /HEALTH jsonl format
 #include "wap_server.h"
 // Ship the dashboard/settings/companion HTML as pre-gzipped byte arrays
@@ -233,6 +234,14 @@ extern "C" {
 #endif
 #if FEATURE_POWER_POLICY
 #include "power_policy.h"
+// Lock the pure header's mode mirror to the real enum so the CSI gate and
+// MQTT cadence stretch can't silently desync from power_policy.h.
+static_assert((uint8_t)PMODE_PLUGGED_IN     == power_gate::MODE_PLUGGED_IN,     "power_gate mode drift");
+static_assert((uint8_t)PMODE_BATTERY_NORMAL == power_gate::MODE_BATTERY_NORMAL, "power_gate mode drift");
+static_assert((uint8_t)PMODE_BATTERY_SAVER  == power_gate::MODE_BATTERY_SAVER,  "power_gate mode drift");
+static_assert((uint8_t)PMODE_LOW_POWER      == power_gate::MODE_LOW_POWER,      "power_gate mode drift");
+static_assert((uint8_t)PMODE_SHUTDOWN       == power_gate::MODE_SHUTDOWN,       "power_gate mode drift");
+static_assert((uint8_t)PMODE_USB_ONLY       == power_gate::MODE_USB_ONLY,       "power_gate mode drift");
 #endif
 
 // PDM acoustic event detection (T3 smoke / T4 CO alarm cadences)
@@ -10846,7 +10855,25 @@ void loop() {
   // drops frames at RING_CAP=16. Without this call the entire CSI pipeline
   // is dead and /api/csi/stream returns the boot-fallback "sensing" state
   // forever (see csi_hal.h:39 and firmware/common/csi/README.md:61).
-  csi_integration::loop();
+  //
+  // Round-two power gate: when the policy turns CSI off (battery saver and
+  // below) we skip the CSI-specific work to stop the pipeline's per-loop
+  // cost. CSI is pure environmental sensing — no life-safety — so honoring
+  // the bit is exactly the profiles' intent; the ring fills and drops
+  // (bounded, harmless) and draining resumes on re-enable with no re-init.
+  // The gate is passed INTO csi_integration::loop() rather than wrapping
+  // it, because that function ALSO services mesh (outbound beacon drain +
+  // coordinator/channel maintenance) which must keep running on battery to
+  // carry inter-canary security alerts (codex #855 P1).
+  {
+    bool csi_gate_on = true;
+    #if FEATURE_POWER_POLICY
+    const PolicyFeatures* pf_csi = power_policy::get_features();
+    csi_gate_on = power_gate::feature_runs(pf_csi != nullptr,
+                                           pf_csi != nullptr && pf_csi->csi);
+    #endif
+    csi_integration::loop(csi_gate_on);
+  }
 
   // Optional MQTT bridge — pump (no-op when disabled or unconfigured),
   // plus three cadence-gated publishers for the topics HA expects.
@@ -10869,14 +10896,24 @@ void loop() {
     static uint32_t s_mqtt_status_ms = 0;
     static uint32_t s_mqtt_health_ms = 0;
     static uint32_t s_mqtt_counts_last = 0;
-    if (now - s_mqtt_status_ms >= 30000UL) {
+    // Round-two power gate: routine heartbeats (status/health, and the
+    // mesh/beacon snapshots below) stretch their cadence as the battery
+    // drains — the mqtt bit is TRUE in every mode (the link stays up for
+    // panic events), so lengthening ROUTINE traffic is the honest lever.
+    // Life-safety (acoustic /sensing) and event-driven (counts/chain)
+    // publishes further down are NOT stretched.
+    uint8_t pmode = power_gate::MODE_PLUGGED_IN;
+    #if FEATURE_POWER_POLICY
+    pmode = (uint8_t)power_policy::get_mode();
+    #endif
+    if (now - s_mqtt_status_ms >= power_gate::routine_interval_ms(30000UL, pmode)) {
       s_mqtt_status_ms = now;
       csi_mqtt::publish_status(
           csi_integration::csi_running(),
           /*wifi_connected=*/(WiFi.status() == WL_CONNECTED || WiFi.softAPgetStationNum() > 0),
           /*rssi_dbm=*/(WiFi.status() == WL_CONNECTED) ? (int)WiFi.RSSI() : 0);
     }
-    if (now - s_mqtt_health_ms >= 60000UL) {
+    if (now - s_mqtt_health_ms >= power_gate::routine_interval_ms(60000UL, pmode)) {
       s_mqtt_health_ms = now;
       // Attach the real battery state when one is wired (HW ADC mode);
       // nullptr keeps the mains semantics (battery=100) for USB-only
@@ -10976,7 +11013,7 @@ void loop() {
     // canary-ota) don't try to read mesh state that doesn't exist.
 #if FEATURE_MESH_NETWORK
     static uint32_t s_mqtt_mesh_ms = 0;
-    if (now - s_mqtt_mesh_ms >= 30000UL) {
+    if (now - s_mqtt_mesh_ms >= power_gate::routine_interval_ms(30000UL, pmode)) {
       s_mqtt_mesh_ms = now;
       mesh_channel_policy::ChannelDecision d = mesh_channel_policy::current();
       airtime_governor::Stats s = airtime_governor::snapshot(now);
@@ -11001,7 +11038,7 @@ void loop() {
 
 #if FEATURE_BEACON_CHANNEL
     static uint32_t s_mqtt_beacon_ms = 0;
-    if (now - s_mqtt_beacon_ms >= 30000UL) {
+    if (now - s_mqtt_beacon_ms >= power_gate::routine_interval_ms(30000UL, pmode)) {
       s_mqtt_beacon_ms = now;
       beacon_channel::BeaconStatus bs = beacon_channel::get_status();
       // Beacon-class airtime is rolled into the same Stats struct via

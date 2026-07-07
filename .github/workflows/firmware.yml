@@ -772,6 +772,20 @@ jobs:
           /tmp/health_store_logic | tee /tmp/health_store_logic.log
           grep -q "ALL .* PASSED" /tmp/health_store_logic.log
 
+      - name: Build + run canary-wap power gate logic host test
+        # Round-two power-policy gates (power_gate_logic.h): advisory
+        # feature run/skip (CSI drain) and routine MQTT heartbeat cadence
+        # stretch by power mode (life-safety and event publishes bypass;
+        # overflow saturates rather than wraps).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_power_gate_logic.cpp \
+              -o /tmp/power_gate_logic
+          /tmp/power_gate_logic | tee /tmp/power_gate_logic.log
+          grep -q "ALL .* PASSED" /tmp/power_gate_logic.log
+
       - name: Run witness log verifier tests (offline chain + signatures)
         # tools/verify_witness_log.py — the off-device half of the
         # /WITNESS/records.jsonl durable tier: real Ed25519-signed chains

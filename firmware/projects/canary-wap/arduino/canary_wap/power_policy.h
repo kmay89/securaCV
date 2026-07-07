@@ -56,13 +56,25 @@ enum PowerPolicyMode : uint8_t {
 // ANDs these with the compile-time FEATURE_* flags.
 //
 // ENFORCEMENT STATUS (keep docs/hardware/esp32s3_power_battery_guide.md
-// in sync): camera_peek (peek gate + sensor standby in canary_wap.ino's
-// camera power manager), record_interval_ms (floor on the record loop),
-// cpu_freq_mhz and wifi_ps_mode (applied in transition_to below), and
-// the deep-sleep duty cycle are ENFORCED. The remaining fields (csi,
-// vision, mqtt, mesh, gnss, touch, ir_rmt, temp_tamper, wifi_*,
-// http_server) are ADVISORY today — no subsystem consumes them yet. If
-// you wire one up, move it to the enforced list here and in the guide.
+// in sync). ENFORCED:
+//   - camera_peek (peek gate + sensor standby in canary_wap.ino's camera
+//     power manager)
+//   - record_interval_ms (floor on the record loop)
+//   - cpu_freq_mhz, wifi_ps_mode (applied in transition_to below)
+//   - the deep-sleep duty cycle
+//   - csi (round two): the CSI ring-drain / module dispatch is skipped
+//     when this bit is false (canary_wap.ino, gated via power_gate_logic.h)
+//   - mqtt: the bit itself is TRUE in every mode (the STA+MQTT link stays
+//     up so panic events reach HA), but ROUTINE heartbeat cadence
+//     (status/health/mesh-snapshot/beacon) is stretched by power mode via
+//     power_gate::routine_interval_ms. Life-safety (acoustic /sensing) and
+//     event-driven (counts/chain) publishes are never stretched.
+// ADVISORY (still not consumed as an on/off gate): vision (no vision
+// subsystem in this sketch), gnss, touch, ir_rmt, temp_tamper, wifi_*,
+// http_server. And DELIBERATELY not gated off: mesh — mesh_network::update
+// carries inter-canary security/tamper alerts, so servicing stays on in
+// every mode (like acoustic); only its routine MQTT snapshot cadence is
+// stretched. If you wire another field, move it here and in the guide.
 // ════════════════════════════════════════════════════════════════════════════
 
 struct PolicyFeatures {
