@@ -2,11 +2,9 @@
 #include <stdint.h>
 #include "canary/fleet/fleet_instance.h"
 
-class Arduino_GFX;
-
-// Dash face (800x480): header strip + witness card grid + event timeline
-// column. Single screen — a wall panel is a poster, not an app. Input
-// policy lives in main.cpp; this module only draws.
+// Dash face (800x480, LVGL "Quiet Glass"): header sentence + witness card
+// gallery + event timeline. Single screen — a wall panel is a poster, not
+// an app. Input policy lives in main.cpp; this module renders and animates.
 
 namespace canary::ui {
 
@@ -20,7 +18,11 @@ struct DashState {
   int  clock_mm = 0;
 };
 
-void dash_render(Arduino_GFX* g, const canary::fleet::Fleet& fleet,
-                 uint32_t now, const DashState& st);
+void dash_ui_create();
+void dash_ui_update(const canary::fleet::Fleet& fleet, uint32_t now,
+                    const DashState& st);
+
+// Hold-to-acknowledge sweep (same affordance as the watch).
+void dash_ui_ack_hold(bool active);
 
 }  // namespace canary::ui

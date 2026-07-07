@@ -1,10 +1,10 @@
 // src/hal/display_watch.cpp — Watch flavor glass: Seeed Round Display for
 // XIAO (GC9A01 240x240 over SPI + CST816S touch over I2C).
 //
-// Rendering goes through an offscreen Arduino_Canvas (240*240*2 = 112.5 KB,
-// PSRAM-backed on the XIAO ESP32-S3) flushed once per UI frame — a round
-// glance face redrawn in place would shimmer otherwise. Backlight is real
-// PWM (LEDC), which is what makes the bedside near-dark floor possible.
+// LVGL owns buffering/dirty-region rendering (ui/lvgl_port.cpp); this HAL
+// exposes the bare panel and flushes arrive via draw16bitRGBBitmap.
+// Backlight is real PWM (LEDC), which is what makes the bedside near-dark
+// floor possible.
 #include <config.h>
 #ifdef CD_FLAVOR_WATCH
 
@@ -22,7 +22,6 @@ namespace {
 
 Arduino_DataBus* s_bus = nullptr;
 Arduino_GFX* s_panel = nullptr;
-Arduino_Canvas* s_canvas = nullptr;
 
 constexpr uint8_t LEDC_CHANNEL = 0;
 constexpr uint32_t LEDC_FREQ_HZ = 5000;
@@ -55,13 +54,11 @@ bool display_init() {
                                TFT_PIN_MOSI, TFT_PIN_MISO);
   s_panel = new Arduino_GC9A01(s_bus, GFX_NOT_DEFINED /* no reset pin */,
                                0 /* rotation */, true /* IPS */);
-  s_canvas = new Arduino_Canvas(TFT_WIDTH, TFT_HEIGHT, s_panel);
-  if (!s_canvas->begin(TFT_SPI_HZ)) {
-    log_line("DISP", "GC9A01/canvas init FAILED — running headless.");
+  if (!s_panel->begin(TFT_SPI_HZ)) {
+    log_line("DISP", "GC9A01 init FAILED — running headless.");
     return false;
   }
-  s_canvas->fillScreen(0x0000);
-  s_canvas->flush();
+  s_panel->fillScreen(0x0000);
 
   // Touch: shared I2C bus (CST816S + PCF8563 RTC live on it).
   Wire.begin(I2C_PIN_SDA, I2C_PIN_SCL, I2C_FREQ_FAST);
@@ -73,15 +70,13 @@ bool display_init() {
     log_line("DISP", "CST816S quiet at boot (naps until touched) — touch armed.");
   }
 
-  log_line("DISP", "GC9A01 240x240 up (canvas render, PWM backlight).");
+  log_line("DISP", "GC9A01 240x240 up (LVGL render, PWM backlight).");
   return true;
 }
 
-Arduino_GFX* gfx() { return s_canvas; }
+Arduino_GFX* gfx() { return s_panel; }
 
-void display_flush() {
-  if (s_canvas) s_canvas->flush();
-}
+void display_flush() { /* LVGL flushes dirty regions itself */ }
 
 void backlight_set(uint8_t level) {
 #if TFT_BL_ACTIVE_HIGH

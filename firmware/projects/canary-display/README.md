@@ -39,12 +39,17 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   retained health payload (persisted in NVS) and checks signed chain heads
   with Ed25519 — the "verified ✓" on the glass means the same thing it
   means in Home Assistant, and is never shown otherwise.
-- **Renders**:
-  - *watch* — witness ring (one arc per Canary), center worst-state glyph,
+- **Renders ("Quiet Glass", LVGL v8)** — anti-aliased Montserrat type and
+  smooth arcs, dirty-region repaints (flicker-free dash by construction),
+  humanized event copy ("Person in restricted zone", never raw wire text),
+  and a rationed motion budget: 220 ms page fades, a 2 s breathing glow
+  only while an Alert/Tamper is unacked, and a hold-to-ack ring that
+  sweeps closed as you long-press:
+  - *watch* — witness halo (one arc per Canary), hero worst-state center,
     tap to page through per-device detail + recent events, long-press to
     acknowledge.
-  - *dash* — header state sentence, witness card grid, event timeline
-    column.
+  - *dash* — header state sentence with severity glow, witness card
+    gallery, event timeline column.
 - **Night mode**: quiet hours render red-shifted and near-dark (watch dims
   via PWM; dash goes dark-theme + backlight-off — its expander backlight is
   on/off only). An **unacked Alert/Tamper overrides the night floor**.
@@ -83,8 +88,10 @@ include/canary/
 src/                  implementations; hal+ui TUs are flavor-gated
 ```
 
-## Roadmap (post-v0.1)
+## Roadmap (post-v0.2)
 
+- ~~LVGL migration~~ — shipped ("Quiet Glass", see the UX doc's Design
+  language section).
 - Passive **BLE Chirp scan** fallback: render heartbeat/tamper chirps when
   the broker is unreachable (`docs/ble_protocol.md` §5).
 - Piezo chime (severity-tiered, falling "all-clear" tone) — watch enclosure

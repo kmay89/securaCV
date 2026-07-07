@@ -58,6 +58,8 @@
 #endif
 #include "canary/hal/display.h"
 
+#include <lvgl.h>
+#include "canary/ui/lvgl_port.h"
 #ifdef CD_FLAVOR_WATCH
 #include "canary/ui/glance_ui.h"
 #endif
@@ -85,7 +87,10 @@ static uint32_t g_last_health_ms = 0;
 static uint32_t g_last_render_ms = 0;
 static uint32_t g_last_diag_ms = 0;
 
-// Touch gesture tracking (tap vs long-press).
+// Touch gesture tracking (tap vs long-press). The hold-to-ack ring starts
+// the moment a finger lands: a quick tap flashes a sliver of arc — a quiet
+// hint that holding does more — and a full hold sweeps it closed exactly
+// when the ack fires (MOTION_ACK_MS == CD_LONGPRESS_MS).
 static bool     g_touch_down = false;
 static uint32_t g_touch_down_ms = 0;
 static bool     g_longpress_fired = false;
@@ -224,6 +229,16 @@ static void apply_brightness(uint32_t now, bool night) {
 // Touch: tap = wake/page, long-press = acknowledge
 // ----------------------------------------------------------------------------
 
+static void ui_ack_hold(bool active) {
+  if (!g_display_ok) return;
+#ifdef CD_FLAVOR_WATCH
+  canary::ui::glance_ui_ack_hold(active);
+#endif
+#ifdef CD_FLAVOR_DASH
+  canary::ui::dash_ui_ack_hold(active);
+#endif
+}
+
 static void handle_touch(uint32_t now) {
   const auto s = canary::hal::touch_read();
   auto& fleet = canary::fleet::the_fleet();
@@ -232,6 +247,7 @@ static void handle_touch(uint32_t now) {
     g_touch_down = true;
     g_touch_down_ms = now;
     g_longpress_fired = false;
+    ui_ack_hold(true);   // sweep starts; a tap only ever shows a sliver
     return;
   }
 
@@ -239,6 +255,7 @@ static void handle_touch(uint32_t now) {
       (int32_t)(now - g_touch_down_ms) >= (int32_t)CD_LONGPRESS_MS) {
     // Long-press: acknowledge. Quiet, deliberate, works half-asleep.
     g_longpress_fired = true;
+    ui_ack_hold(false);
     fleet.acknowledge(now);
     g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
     boot_line("[input] long-press -> acknowledge");
@@ -247,6 +264,7 @@ static void handle_touch(uint32_t now) {
 
   if (!s.touched && g_touch_down) {
     g_touch_down = false;
+    ui_ack_hold(false);
     if (g_longpress_fired) return;
     // Tap. First tap in the dark only wakes; a lit tap navigates.
     const bool was_awake = (int32_t)(now - g_wake_until_ms) < 0 || !in_quiet_hours();
@@ -283,7 +301,7 @@ static void render(uint32_t now) {
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
-  canary::ui::glance_render(canary::hal::gfx(), fleet, now, st);
+  canary::ui::glance_ui_update(fleet, now, st);
 #endif
 #ifdef CD_FLAVOR_DASH
   canary::ui::DashState st;
@@ -292,10 +310,9 @@ static void render(uint32_t now) {
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
-  canary::ui::dash_render(canary::hal::gfx(), fleet, now, st);
+  canary::ui::dash_ui_update(fleet, now, st);
 #endif
 
-  canary::hal::display_flush();
   apply_brightness(now, night);
 }
 
@@ -365,10 +382,18 @@ void setup() {
   canary::trust::init();
 
   // Glass before the network too — a display that boots into a visible
-  // "connecting" state beats a black disc while WiFi retries.
+  // "listening" state beats a black disc while WiFi retries.
   g_display_ok = canary::hal::display_init();
+  if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
   if (g_display_ok) {
+#ifdef CD_FLAVOR_WATCH
+    canary::ui::glance_ui_create();
+#endif
+#ifdef CD_FLAVOR_DASH
+    canary::ui::dash_ui_create();
+#endif
     render(canary::ms_now());
+    lv_timer_handler();
     canary::hal::backlight_set(CD_BRIGHT_DAY);
   }
 
@@ -491,9 +516,11 @@ void loop() {
     }
   }
 
-  // ── Render: promptly on model change (frame-rate capped), and at a slow
-  //    steady tick so clocks/ages/staleness colors move even when the wire
-  //    is quiet ──
+  // ── Content refresh: promptly on model change (frame-rate capped), and
+  //    at a slow steady tick so clocks/ages/staleness colors move even when
+  //    the wire is quiet. LVGL itself repaints + animates from
+  //    lv_timer_handler() every pass — updates here only change WHAT is
+  //    shown, never how often pixels move ──
   static bool s_render_pending = false;
   if (fleet.take_dirty()) s_render_pending = true;
   const int32_t since_render = (int32_t)(now - g_last_render_ms);
@@ -503,6 +530,7 @@ void loop() {
     g_last_render_ms = now;
     render(now);
   }
+  if (g_display_ok) lv_timer_handler();
 
   delay(5);
 }
