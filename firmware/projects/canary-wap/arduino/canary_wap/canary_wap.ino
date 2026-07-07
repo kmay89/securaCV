@@ -6906,7 +6906,10 @@ static void mdns_sync_broker_txt() {
     MDNS.addServiceTxt("securacv", "tcp", "broker", (const char*)cfg.host);
     char p[8];
     snprintf(p, sizeof(p), "%u", (unsigned)cfg.port);
-    MDNS.addServiceTxt("securacv", "tcp", "bport", p);
+    // Cast the char[] to const char* so the three addServiceTxt overloads
+    // (char*, const char*, String) don't make the call ambiguous — same
+    // reason the device_id/host lines above cast.
+    MDNS.addServiceTxt("securacv", "tcp", "bport", (const char*)p);
   } else {
     MDNS.addServiceTxt("securacv", "tcp", "broker", "");  // tombstone
     MDNS.addServiceTxt("securacv", "tcp", "bport", "");

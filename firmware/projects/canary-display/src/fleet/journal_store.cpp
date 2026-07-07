@@ -1,15 +1,15 @@
 // LittleFS persistence for the time-machine journal (spec §7).
 //
-// Compiled whenever FEATURE_TIME_MACHINE is on, so CI exercises the LittleFS +
-// JSON paths (no bench-only typos). Whether it actually MOUNTS and writes is
-// gated by FEATURE_TIME_MACHINE_PERSIST — off by default, flipped on after a
-// flash-write validation at bench, exactly the "engine compiled, inert until
-// enabled" pattern the chime engine uses.
+// Gated by FEATURE_TIME_MACHINE_PERSIST — off by default, flipped on after a
+// flash-write validation at bench (like FEATURE_CHIME). The whole LittleFS +
+// JSON body is behind the gate because the bundled LittleFS library isn't on
+// the default PlatformIO include path here; enabling persistence at bench may
+// need `LittleFS` added to the env's lib_deps (see the bench runbook §F7).
 #include "canary/fleet/journal_store.h"
 
 #include "canary/config.h"
 
-#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+#if defined(FEATURE_TIME_MACHINE_PERSIST) && FEATURE_TIME_MACHINE_PERSIST
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -67,12 +67,17 @@ void rewrite_from_ring() {
   File f = LittleFS.open(PATH, "w");
   if (!f) return;
   const EventJournal& j = the_journal();
-  char buf[900];
+  // chain_raw is capped at 360 bytes but can nearly double under JSON escaping
+  // (every " and \ grows); 1200 clears worst-case chain_raw + all other fields
+  // + envelope with headroom. serializeJson returns cap-1 on truncation (still
+  // non-zero), so an explicit truncation guard is what prevents a half-written
+  // line from corrupting the log.
+  char buf[1200];
   for (int i = j.count() - 1; i >= 0; i--) {
     const JournalRecord* r = j.at(i);
     if (!r) continue;
     const size_t n = line_of(*r, buf, sizeof(buf));
-    if (n == 0) continue;  // pathological oversize record: skip, never truncate
+    if (n == 0 || n >= sizeof(buf) - 1) continue;  // oversize/truncated: skip
     f.write(reinterpret_cast<const uint8_t*>(buf), n);
     f.write('\n');
   }
@@ -102,7 +107,7 @@ void journal_store_load() {
   if (!s_mounted) return;
   File f = LittleFS.open(PATH, "r");
   if (!f) return;  // no history yet — fine
-  char line[900];
+  char line[1200];  // must match the writer so a long line is never split
   while (f.available()) {
     const size_t n = f.readBytesUntil('\n', line, sizeof(line) - 1);
     if (n == 0) continue;
@@ -115,9 +120,9 @@ void journal_store_load() {
 
 void journal_store_append(const JournalRecord& r) {
   if (!s_mounted) return;
-  char buf[900];
+  char buf[1200];
   const size_t n = line_of(r, buf, sizeof(buf));
-  if (n == 0) return;  // record wouldn't serialize (oversize) — skip silently
+  if (n == 0 || n >= sizeof(buf) - 1) return;  // oversize/truncated — skip
   File f = LittleFS.open(PATH, "a");
   if (!f) return;
   const size_t projected = f.size() + n + 1;

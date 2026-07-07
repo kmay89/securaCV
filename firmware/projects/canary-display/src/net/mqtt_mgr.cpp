@@ -134,6 +134,13 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
   }
 
   if (strcmp(suffix, "events") == 0) {
+    // WAP reconnect backfill republishes missed events with replay:true. The
+    // display renders LIVE state (millis-age) and journals at wall-clock time,
+    // so re-ingesting backfilled history would both mis-age the glance log and
+    // duplicate entries in the time machine at the wrong (reconnect) time. Drop
+    // replays — the journal's durability is its own (persistence), not re-heard
+    // from the WAP.
+    if (doc["replay"] | false) return;
     // Vocabulary differs per variant: sense uses "event", wap "event_type",
     // vision "event"/"state". Fall through the spellings; classify_event
     // owns severity.

@@ -34,7 +34,10 @@ void on_fleet_event(const char* id, const char* name, Sev sev,
   const time_t t = time(nullptr);
   // Same SNTP floor the histogram uses: below it the clock is a guess, so the
   // record is kept (ordering preserved) but stamped 0 = "time unknown".
-  r.epoch = (t >= 1700000000L) ? (uint32_t)t : 0;
+  // Coarsen to 10-minute buckets before storing (AGENTS.md Invariant III,
+  // Metadata Minimization): the durable history keeps the *shape* of the day,
+  // never a precise "someone moved at 02:47:13" trail.
+  r.epoch = (t >= 1700000000L) ? (uint32_t)(t - (t % 600)) : 0;
   copy_field(r.id, sizeof(r.id), w ? w->id : id);
   copy_field(r.name, sizeof(r.name), w ? w->name : "");
   copy_field(r.ev, sizeof(r.ev), name);
