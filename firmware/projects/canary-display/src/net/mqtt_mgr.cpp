@@ -97,7 +97,8 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
   const bool want =
       strcmp(suffix, "status") == 0 || strcmp(suffix, "health") == 0 ||
       strcmp(suffix, "events") == 0 || strcmp(suffix, "tamper") == 0 ||
-      strcmp(suffix, "chain") == 0  || strcmp(suffix, "state") == 0;
+      strcmp(suffix, "chain") == 0  || strcmp(suffix, "state") == 0 ||
+      strcmp(suffix, "meta") == 0;
   if (!want) return;
 
   JsonDocument doc;
@@ -154,16 +155,28 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
     const uint32_t length = doc["length"] | 0UL;
     const char* hash = doc["latest_hash"] | "";
     const char* sig = doc["sig"] | "";
+    const char* fp = doc["fp"] | "";
     const auto verdict = canary::trust::evaluate_chain(device_id, length, hash, sig);
-    // Keep the verbatim payload: it becomes the Proof-on-Glass QR body.
-    fleet.on_chain(device_id, length, verdict, now, (const char*)payload, len);
+    // Keep the verbatim payload (Proof-on-Glass QR body) and the
+    // fingerprint (the off-grid Chirp correlator).
+    fleet.on_chain(device_id, length, verdict, now, (const char*)payload, len, fp);
     return;
   }
 
-  // "state": retained per-variant snapshot — liveness plus device_type.
+  if (strcmp(suffix, "meta") == 0) {
+    // Rooms & names (spec §8): retained, human-authored.
+    fleet.on_meta(device_id, doc["name"] | "", doc["room"] | "", now);
+    return;
+  }
+
+  // "state": retained per-variant snapshot — liveness plus device_type,
+  // plus the wellbeing surface (spec §9) when the witness publishes one.
   const char* dt = doc["device_type"] | "";
   if (dt[0]) fleet.on_status(device_id, dt, true, -1, now);
   else fleet.on_activity(device_id, now);
+  if (doc["breathing_locked"].is<bool>()) {
+    fleet.on_wellbeing(device_id, doc["breathing_locked"].as<bool>(), now);
+  }
 }
 
 // ── MQTT callback ───────────────────────────────────────────────────────
@@ -445,6 +458,7 @@ bool mqtt_connect_attempt() {
   mqtt.subscribe(FleetSubs::TAMPER, 1);
   mqtt.subscribe(FleetSubs::CHAIN, 1);
   mqtt.subscribe(FleetSubs::STATE, 0);
+  mqtt.subscribe(FleetSubs::META, 1);
 
   // Firmware update entity: re-subscribe the command topics (the broker
   // may have dropped them) and reconcile the retained states.

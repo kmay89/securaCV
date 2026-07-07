@@ -38,6 +38,7 @@
 #define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
 #define FEATURE_CHIME               0   // piezo unpopulated; engine compiled (spec 5)
+#define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
 
@@ -49,7 +50,7 @@
 #define FEATURE_WIFI_AP             0
 #define FEATURE_HTTP_SERVER         0
 #define FEATURE_MESH_NETWORK        0
-#define FEATURE_BLUETOOTH           0   // future: passive Chirp scan fallback
+#define FEATURE_BLUETOOTH           0   // no BLE services/pairing; passive scan rides FEATURE_CHIRP_SCAN
 #define FEATURE_HA_DISCOVERY        0   // the display consumes; HA already sees the fleet
 #define FEATURE_GNSS                0
 

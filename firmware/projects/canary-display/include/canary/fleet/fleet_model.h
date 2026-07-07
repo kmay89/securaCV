@@ -54,6 +54,19 @@ struct Witness {
   char     id[48] = {0};
   char     device_type[24] = {0};
 
+  // Rooms & names (trailblazer spec §8; retained securacv/<id>/meta).
+  // The glass speaks "Kitchen", never "canary_sense_001", once meta exists.
+  char     name[24] = {0};
+  char     room[16] = {0};
+
+  // Pubkey fingerprint (16 hex, from the chain payload). Its first 4 hex
+  // chars are the 2-byte id Chirp adverts carry — the off-grid correlator.
+  char     fp[17] = {0};
+
+  // Wellbeing surface (spec §9; canary-sense wellbeing state topic).
+  bool     wb_present = false;    // this witness publishes a breathing lock
+  bool     wb_breathing = false;  // lock currently held
+
   // Liveness
   Link     link = Link::Unknown;
   uint32_t last_seen_ms = 0;      // any topic activity from this device
@@ -182,8 +195,74 @@ class FleetModel {
       push_event(id, kind && kind[0] ? kind : "tamper", Sev::Tamper, false, now);
   }
 
+  // Rooms & names (spec §8): retained securacv/<id>/meta. Deliberately
+  // does NOT touch last_seen_ms: meta is human-authored (HA, companion
+  // app) and retained — renaming a dead witness must not revive it.
+  void on_meta(const char* id, const char* name, const char* room,
+               uint32_t /*now*/) {
+    Witness* w = upsert(id);
+    if (!w) return;
+    copy_str(w->name, sizeof(w->name), name);
+    copy_str(w->room, sizeof(w->room), room);
+    dirty_ = true;
+  }
+
+  // Wellbeing surface (spec §9): breathing lock riding the state topic.
+  void on_wellbeing(const char* id, bool breathing, uint32_t now) {
+    Witness* w = upsert(id);
+    if (!w) return;
+    w->last_seen_ms = now;
+    if (!w->wb_present || w->wb_breathing != breathing) dirty_ = true;
+    w->wb_present = true;
+    w->wb_breathing = breathing;
+  }
+
+  // Chirp ingest (spec §6): an off-grid BLE advert — coarse and UNSIGNED,
+  // so it feeds liveness and attention but never trust ("via chirp" names,
+  // badge untouched). fp4 = 4 hex chars (the advert's 2-byte fingerprint
+  // prefix); an unknown prefix becomes a pseudo witness "SCV-XXXX" so the
+  // glass still shows *something* screamed in the dark.
+  void on_chirp(const char fp4[5], uint8_t chirp_type, uint32_t now) {
+    Witness* w = nullptr;
+    for (int i = 0; i < MAX_DEVICES; i++) {
+      if (slots_[i].used && fp_suffix_match(slots_[i].fp, fp4)) { w = &slots_[i]; break; }
+    }
+    if (!w) {
+      char pseudo[12];
+      pseudo[0] = 'S'; pseudo[1] = 'C'; pseudo[2] = 'V'; pseudo[3] = '-';
+      for (int i = 0; i < 4; i++) pseudo[4 + i] = fp4[i];
+      pseudo[8] = '\0';
+      w = upsert(pseudo);
+      if (!w) return;
+    }
+    w->last_seen_ms = now;
+    if (w->link != Link::Online) dirty_ = true;
+    w->link = Link::Online;
+
+    const char* name = nullptr;
+    Sev sev = Sev::Ok;
+    switch (chirp_type) {
+      case 0x01: name = "alert (chirp)";  sev = Sev::Alert;  break;
+      case 0x03: name = "tamper (chirp)"; sev = Sev::Tamper; break;
+      default: return;  // heartbeat/witness/boot = liveness only
+    }
+    // Chirp timestamps are hour-coarse; dedupe locally instead — one
+    // attention edge per (witness, type) per minute, so a 2 s broadcast
+    // burst can't spam the log or re-cancel acks.
+    if (str_eq(w->last_event, name) &&
+        (int32_t)(now - w->last_event_ms) < 60000) {
+      return;
+    }
+    copy_str(w->last_event, sizeof(w->last_event), name);
+    w->last_event_ms = now;
+    w->has_event = true;
+    w->event_sev = sev;
+    push_event(w->id, name, sev, false, now);
+  }
+
   void on_chain(const char* id, uint32_t length, Badge verdict, uint32_t now,
-                const char* raw = nullptr, size_t raw_len = 0) {
+                const char* raw = nullptr, size_t raw_len = 0,
+                const char* fp = nullptr) {
     Witness* w = upsert(id);
     if (!w) return;
     w->last_seen_ms = now;
@@ -191,6 +270,28 @@ class FleetModel {
     const Badge was = w->badge;
     w->chain_length = length;
     w->badge = verdict;
+    if (fp && fp[0]) {
+      copy_str(w->fp, sizeof(w->fp), fp);
+      // An off-grid chirp may have created a pseudo witness ("SCV-XXXX",
+      // named by the fp's last-4 suffix like the canary's own BLE name)
+      // for this very device before its fingerprint was known. Now that a
+      // real identity owns the suffix, retire the ghost — left behind it
+      // would go Lost once scanning stops and raise a false alarm.
+      size_t n = 0;
+      while (fp[n]) n++;
+      if (n >= 4) {
+        const char* s = fp + n - 4;
+        const char pseudo[9] = {'S', 'C', 'V', '-', s[0], s[1], s[2], s[3],
+                                '\0'};
+        for (int i = 0; i < MAX_DEVICES; i++) {
+          Witness& g = slots_[i];
+          if (g.used && &g != w && str_eq(g.id, pseudo)) {
+            g.used = false;
+            dirty_ = true;
+          }
+        }
+      }
+    }
     if (raw && raw_len > 0 && raw_len < sizeof(w->chain_raw)) {
       memcpy_str(w->chain_raw, raw, raw_len);
     } else {
@@ -320,6 +421,56 @@ class FleetModel {
     return &events_[pos];
   }
 
+  // What the glass calls a witness: its meta name once one exists, its id
+  // until then (spec §8).
+  static const char* display_name(const Witness& w) {
+    return w.name[0] ? w.name : w.id;
+  }
+
+  // ── Time machine v1 (spec §7): the day's story, in RAM ────────────────
+  // 24 hour-of-day buckets binned at push_event time using the wall hour
+  // main feeds in (unknown clock = unbinned). The SD-backed verifiable
+  // journal remains the bench-phase §7 follow-up; this is the honest
+  // subset: "Today: 14 events · worst was warn".
+
+  void set_wall_hour(int hour) {
+    if (hour < 0 || hour > 23) { wall_hour_ = -1; return; }
+    if (wall_hour_ == -1) {
+      // Coming from "clock unknown" (boot, or SNTP lost for an unknowable
+      // span): the buckets' ages are unknowable too. Start the day fresh
+      // rather than present stale counts as "Past 24h" — no guessed history.
+      for (int h = 0; h < 24; h++) {
+        hist_count_[h] = 0;
+        hist_worst_[h] = (uint8_t)Sev::Ok;
+      }
+      wall_hour_ = hour;
+      return;
+    }
+    if (wall_hour_ != hour) {
+      // Entering a new hour reclaims that bucket (rolling 24 h window).
+      hist_count_[hour] = 0;
+      hist_worst_[hour] = (uint8_t)Sev::Ok;
+      wall_hour_ = hour;
+    }
+  }
+
+  uint8_t history_count(int hour) const {
+    return (hour >= 0 && hour < 24) ? hist_count_[hour] : 0;
+  }
+  Sev history_worst(int hour) const {
+    return (hour >= 0 && hour < 24) ? (Sev)hist_worst_[hour] : Sev::Ok;
+  }
+  int history_total() const {
+    int t = 0;
+    for (int h = 0; h < 24; h++) t += hist_count_[h];
+    return t;
+  }
+  Sev history_worst_day() const {
+    uint8_t w = (uint8_t)Sev::Ok;
+    for (int h = 0; h < 24; h++) if (hist_worst_[h] > w) w = hist_worst_[h];
+    return (Sev)w;
+  }
+
   // Render-needed flag; consuming it resets it.
   bool take_dirty() { const bool d = dirty_; dirty_ = false; return d; }
   void mark_dirty() { dirty_ = true; }
@@ -346,6 +497,24 @@ class FleetModel {
     return *a == *b;
   }
 
+  // Chirp fingerprint match: the advert carries the LAST 4 hex chars of
+  // the witness's 16-hex fingerprint (ble_chirp.h encodes the deviceIdHash
+  // *suffix* — the same 4 chars as its "SCV-XXXX" BLE name), so compare
+  // suffix-to-suffix. A short/absent fp never matches and never reads out
+  // of bounds. (review catch: this originally compared the prefix, which
+  // would have filed every known witness's chirps under a pseudo twin.)
+  static bool fp_suffix_match(const char* fp, const char* fp4) {
+    if (!fp || !fp4) return false;
+    size_t n = 0;
+    while (fp[n]) n++;
+    if (n < 4) return false;
+    const char* s = fp + n - 4;
+    for (int i = 0; i < 4; i++) {
+      if (!fp4[i] || s[i] != fp4[i]) return false;
+    }
+    return true;
+  }
+
   Witness* upsert(const char* id) {
     if (!id || !id[0]) return nullptr;
     for (int i = 0; i < MAX_DEVICES; i++)
@@ -363,8 +532,17 @@ class FleetModel {
 
   void push_event(const char* id, const char* name, Sev sev, bool signed_flag,
                   uint32_t now) {
+    // Time machine v1: bin into the current wall hour when the clock is known.
+    if (wall_hour_ >= 0) {
+      if (hist_count_[wall_hour_] < 255) hist_count_[wall_hour_]++;
+      if ((uint8_t)sev > hist_worst_[wall_hour_]) hist_worst_[wall_hour_] = (uint8_t)sev;
+    }
     EventRow& r = events_[ev_head_];
-    copy_str(r.device, sizeof(r.device), id);
+    // The log speaks the witness's friendly name once meta gave it one.
+    const Witness* w = nullptr;
+    for (int i = 0; i < MAX_DEVICES; i++)
+      if (slots_[i].used && str_eq(slots_[i].id, id)) { w = &slots_[i]; break; }
+    copy_str(r.device, sizeof(r.device), w ? display_name(*w) : id);
     copy_str(r.name, sizeof(r.name), name);
     r.sev = sev;
     r.at_ms = now;
@@ -383,6 +561,9 @@ class FleetModel {
 
   Witness  slots_[MAX_DEVICES] = {};
   EventRow events_[EVENT_CAP] = {};
+  int      wall_hour_ = -1;
+  uint8_t  hist_count_[24] = {0};
+  uint8_t  hist_worst_[24] = {0};
   int      ev_head_ = 0;
   int      ev_count_ = 0;
   bool     dirty_ = true;

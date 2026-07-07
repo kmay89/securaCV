@@ -246,7 +246,7 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     for (int i = 0; i < n; i++) {
       const Witness* w = fleet.at(i);
       if (w && fleet.witness_sev(*w, now) == worst) {
-        lv_label_set_text_fmt(s_hero_sub, "%.20s", w->id);
+        lv_label_set_text_fmt(s_hero_sub, "%.20s", Fleet::display_name(*w));
         break;
       }
     }
@@ -285,7 +285,11 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
   lv_obj_set_style_arc_color(s_dev_ring, sev_color(s, st.night), LV_PART_MAIN);
 
   lv_obj_set_style_text_color(s_dev_name, tcol, 0);
-  lv_label_set_text_fmt(s_dev_name, "%.18s", w->id);
+  if (w->name[0] && w->room[0]) {
+    lv_label_set_text_fmt(s_dev_name, "%.12s · %.10s", w->name, w->room);
+  } else {
+    lv_label_set_text_fmt(s_dev_name, "%.18s", Fleet::display_name(*w));
+  }
 
   lv_obj_set_style_text_color(s_dev_state, sev_color(s, st.night), 0);
   lv_label_set_text(s_dev_state, link_label(w->link));
@@ -300,9 +304,14 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
     lv_label_set_text(s_dev_event, "no events yet");
   }
 
-  char batt[20] = "";
+  char batt[64] = "";  // "·"/"—"/LVGL symbols are multi-byte; keep headroom
+  if (w->wb_present) {
+    snprintf(batt, sizeof(batt), "  ·  breathing %s",
+             w->wb_breathing ? LV_SYMBOL_OK : "—");
+  }
   if (w->battery_present && w->battery_pct >= 0) {
-    snprintf(batt, sizeof(batt), "  ·  %s %d%%",
+    const size_t off = strlen(batt);
+    snprintf(batt + off, sizeof(batt) - off, "  ·  %s %d%%",
              w->battery_pct < 25 ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_3,
              (int)w->battery_pct);
   }
