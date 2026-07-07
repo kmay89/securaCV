@@ -138,16 +138,26 @@ Demo acceptance stands: *unplug the router; tamper still reaches the
 bedside puck in <10 s.* **Bench/next:** re-chirp relay (ESP-NOW/BLE,
 1-hop cap) once two displays are on the wall.
 
-## 7. Semantic time machine
+## 7. Semantic time machine — `FEATURE_TIME_MACHINE`
 
-**Shipped: v1 in-RAM story.** The fleet model bins every event into a
-rolling 24 h wall-clock histogram (count + worst severity per hour,
-hour buckets cleared as the clock re-enters them); the dash renders the
-day line — "Past 24h · 14 events · worst: warn" / "Past 24h · nothing
-witnessed" — only when time is SNTP-valid (no guessed history).
-**Bench/next:** MicroSD signed-envelope journal on the watch (slot
-exists) / flash ring on dash, scrub bar, 30-day user-wipeable retention —
-history stays verifiable because the archive is the same signed envelopes.
+**Shipped: the verifiable journal + review UI.** Beyond the v1 histogram
+("Past 24h · 14 events · worst: warn"), the fleet model now feeds a
+proof-carrying journal (`fleet/journal.h`, host-tested): each event is
+recorded epoch-stamped with the **verbatim signed chain head that was live
+when it fired** — so the Proof-on-Glass QR works on a week-old event
+exactly as on a live one. History never becomes hearsay. The **dash** gets
+a full history modal (tap the "Past 24h" line → a wall-clock log; tap any
+row → its signed chain as a QR; a two-tap "erase all" honours sovereignty).
+The **watch** gets a read-only HISTORY page in the tap-cycle — the durable,
+verdict-carrying story. Both surfaces render only records with a known
+clock (no guessed timeline).
+
+Cross-reboot durability is **`FEATURE_TIME_MACHINE_PERSIST`** (LittleFS on
+internal flash — no SD SPI-bus arbitration; failure-tolerant, so a failed
+mount degrades to RAM-only, never a bad boot). It ships **compiled + host-
+tested but disabled**, flipped on after a flash-write validation at bench,
+exactly like `FEATURE_CHIME`. **Bench/next:** deeper-than-RAM scrubbing
+from flash and an explicit retention window (default 30 days).
 
 ## 8. Rooms & follow-me (protocol addition)
 

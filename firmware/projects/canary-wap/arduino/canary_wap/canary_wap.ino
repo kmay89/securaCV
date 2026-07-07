@@ -6884,6 +6884,36 @@ static esp_err_t handle_identify(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// mDNS broker gossip (flock self-discovery). Keep the _securacv._tcp
+// "broker"/"bport" TXT records in lockstep with our ACTUAL MQTT link, so a
+// freshly-plugged SecuraCV display self-configures from a broker that is
+// provably reachable — and never chases a dead one. Ground truth in both
+// directions: advertise the host we are connected to while the link is up;
+// retract it (empty-string tombstone — the only "remove" ESPmDNS offers)
+// the instant we drop. Mirrors the display's own discovery.cpp gossip
+// semantics so the two interoperate byte-for-byte: the display reads
+// "broker" verbatim (IP, DNS name, or resolvable *.local) and parses
+// "bport" as a plain decimal, defaulting to 1883 when absent/empty.
+static void mdns_sync_broker_txt() {
+#if defined(FEATURE_MDNS_BROKER_GOSSIP) && FEATURE_MDNS_BROKER_GOSSIP
+  csi_mqtt::Config cfg;
+  const bool up = csi_mqtt::connected() && csi_mqtt::config_load(&cfg) &&
+                  cfg.enabled && cfg.host[0];
+  // The display rejects any broker string >= 64 bytes (a stack guard against
+  // an unauthenticated LAN TXT record), so a pathological host is treated as
+  // "nothing to advertise" rather than silently truncated to a wrong address.
+  if (up && strlen(cfg.host) < 64) {
+    MDNS.addServiceTxt("securacv", "tcp", "broker", (const char*)cfg.host);
+    char p[8];
+    snprintf(p, sizeof(p), "%u", (unsigned)cfg.port);
+    MDNS.addServiceTxt("securacv", "tcp", "bport", p);
+  } else {
+    MDNS.addServiceTxt("securacv", "tcp", "broker", "");  // tombstone
+    MDNS.addServiceTxt("securacv", "tcp", "bport", "");
+  }
+#endif
+}
+
 // Re-announce mDNS with the current unique hostname + TXT records and re-assert
 // the canary.local catch-all. Used after a rename so the new name takes effect
 // without a reboot. Mirrors the announce block in wifi_init_provisioning().
@@ -6905,6 +6935,7 @@ static void mdns_reannounce() {
   #else
   MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
   #endif
+  mdns_sync_broker_txt();      // re-add broker/bport if the link is up (else tombstone)
   schedule_catch_all_claim();  // staggered; performed by catch_all_tick()
 }
 
@@ -8624,6 +8655,7 @@ static void wifi_init_provisioning() {
           #else
           MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
           #endif
+          mdns_sync_broker_txt();      // re-add broker/bport if the link is up
           schedule_catch_all_claim();  // staggered re-assert of canary.local
           log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
                      "mDNS re-announced on STA", g_device.mdns_hostname);
@@ -8733,6 +8765,7 @@ static void wifi_init_provisioning() {
     #else
     MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
     #endif
+    mdns_sync_broker_txt();      // broker/bport if already connected (else tombstone)
     schedule_catch_all_claim();  // staggered; answers bare canary.local if free
     log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", g_device.mdns_hostname);
   } else {
@@ -10852,6 +10885,20 @@ void loop() {
   // plus three cadence-gated publishers for the topics HA expects.
   // Schemas locked against custom_components/securacv/sensor.py.
   csi_mqtt::loop();
+#if defined(FEATURE_MDNS_BROKER_GOSSIP) && FEATURE_MDNS_BROKER_GOSSIP
+  // Keep the flock's broker referral honest: re-sync the _securacv._tcp
+  // broker/bport TXT on every MQTT link transition — connect advertises the
+  // live broker, disconnect tombstones it. Edge-triggered, so the TXT write
+  // only fires on the transition, never every loop.
+  {
+    static bool s_gossip_prev = false;
+    const bool up = csi_mqtt::connected();
+    if (up != s_gossip_prev) {
+      s_gossip_prev = up;
+      mdns_sync_broker_txt();
+    }
+  }
+#endif
 #if FEATURE_ACOUSTIC_EVENTS
   // Track the broker-connection edge OUTSIDE the connected gate so a
   // reconnect (or first boot connect) forces an immediate /sensing

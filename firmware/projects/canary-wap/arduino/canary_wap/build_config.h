@@ -150,6 +150,7 @@
   #define FEATURE_SD_STORAGE    0
   #define FEATURE_WIFI_AP       0
   #define FEATURE_HTTP_SERVER   0
+  #define FEATURE_MDNS_BROKER_GOSSIP 0   // no networking in MINIMAL
   #define FEATURE_CAMERA_PEEK   0
   #define FEATURE_TAMPER_GPIO   0
   #define FEATURE_WATCHDOG      1
@@ -190,6 +191,7 @@
   #define FEATURE_SD_STORAGE    1
   #define FEATURE_WIFI_AP       1
   #define FEATURE_HTTP_SERVER   1
+  #define FEATURE_MDNS_BROKER_GOSSIP 1   // advertise broker/bport so displays self-discover
   #define FEATURE_CAMERA_PEEK   0   // Skip camera (saves ~20s)
   #define FEATURE_TAMPER_GPIO   0
   #define FEATURE_WATCHDOG      1
@@ -225,6 +227,7 @@
   #define FEATURE_SD_STORAGE    1
   #define FEATURE_WIFI_AP       1
   #define FEATURE_HTTP_SERVER   1
+  #define FEATURE_MDNS_BROKER_GOSSIP 1   // advertise broker/bport so displays self-discover
   #define FEATURE_CAMERA_PEEK   HW_HAS_CAMERA    // ESP32-C3 has no camera interface
   #define FEATURE_TAMPER_GPIO   0
   #define FEATURE_WATCHDOG      1

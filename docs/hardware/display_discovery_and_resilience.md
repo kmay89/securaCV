@@ -1,8 +1,9 @@
 # Flock discovery & resilience — how displays and Canaries find and keep each other
 
-> Status: **display-side SHIPPED** (`canary-display` v0.1.x, `FEATURE_MDNS_DISCOVERY`);
-> Canary-side gossip + captive-portal onboarding are tracked follow-ups (§5).
-> Companion to [`display_ux_design.md`](./display_ux_design.md).
+> Status: **display-side SHIPPED** (`canary-display` v0.1.x, `FEATURE_MDNS_DISCOVERY`)
+> and **canary-side broker gossip SHIPPED** (`canary-wap`,
+> `FEATURE_MDNS_BROKER_GOSSIP` — §5.1); captive-portal onboarding is the
+> remaining follow-up (§5). Companion to [`display_ux_design.md`](./display_ux_design.md).
 
 ## 1. The promise
 
@@ -84,18 +85,34 @@ already chirp heartbeat/tamper/alert over connectionless BLE adverts
 (`docs/ble_protocol.md` §5), and a display can listen without joining
 anything. That closes the loop: WiFi dead, tamper still reaches the glass.
 
+## 5.1 Canary-side broker gossip — SHIPPED (`FEATURE_MDNS_BROKER_GOSSIP`)
+
+The witness that the user *actually configures* with broker credentials
+becomes the household's broker beacon. `canary-wap` already advertised
+`_securacv._tcp` (with `device_id`/`fw`/`host`/`name`/`model` TXT); it now
+also publishes **`broker`/`bport` TXT — but only while its own MQTT link is
+live** (ground truth), and retracts them (empty-string tombstone) the instant
+it drops, on the same link-transition edge the display uses. Byte-for-byte
+compatible with the display's parser: `broker` verbatim (IP / DNS / resolvable
+`*.local`, ≤63 bytes), `bport` as plain decimal. Net effect: **hand-provision
+one canary, and every display afterwards is plug-and-play** — it hears a broker
+that is *provably reachable* from a real witness, and never chases a dead one.
+The gossip rides the sensor's existing announce blocks plus a loop-level
+link-transition sync; gated so MINIMAL (no networking) builds stay clean.
+
+Still open on the sensor side: the same `broker` TXT for the modular
+`canary-sense` / `canary-vision` trees (no mDNS there yet — additive when
+those become always-on nodes).
+
 ## 5. Follow-ups to finish the magic
 
-1. **Canary-side gossip** — add the same `_securacv._tcp` advert (+
-   `broker=` TXT when connected, + the 2-min rebind) to the witness trees
-   (`canary/`, `canary-vision`, `canary-sense`). Then *any* single
-   provisioned device seeds the whole household, and Canaries survive
-   broker moves too. (Displays interoperate with it already — the query
-   side is deliberately role-agnostic.)
-2. **Captive-portal onboarding for displays** — WAP-parity SoftAP flow for
+1. **Captive-portal onboarding for displays** — WAP-parity SoftAP flow for
    WiFi credentials themselves (the flock can't help before the device is
    on the LAN). Until then displays are provisioned by compiled secrets.
-3. **BLE Chirp scan fallback** (§4) — off-WiFi alert path.
-4. **Broker mDNS advert in the HA add-on / docs** — one avahi service file
+2. **Broker mDNS advert in the HA add-on / docs** — one avahi service file
    makes even the *first* device zero-config; document it in the getting-
-   started guide.
+   started guide. (With §5.1, a single provisioned canary already covers
+   this for any household that has one — this closes the no-canary-yet gap.)
+
+*(BLE Chirp off-WiFi fallback, once listed here, shipped in wave 2 —
+`FEATURE_CHIRP_SCAN`, see the trailblazer spec §6.)*
