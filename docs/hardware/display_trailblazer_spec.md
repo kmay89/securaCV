@@ -123,11 +123,12 @@ changes silent; all-clear plays exactly once per resolution.
 
 **Shipped: passive scan.** NimBLE passive scan for the Canaries'
 connectionless Chirp adverts (mfr id `0xFFFF`, 17-byte payload:
-type/timestamp/chain-hash/fingerprint-prefix — `docs/ble_protocol.md` §5).
+type/timestamp/chain-hash/fingerprint-suffix — `docs/ble_protocol.md` §5).
 The scanner runs *only while the broker link is down* (4 s bursts every
 20 s — WiFi/BLE coexistence stays polite) and stops the moment MQTT
-returns. Chirps are matched to known witnesses by fingerprint prefix
-(unknown prefixes surface as `SCV-XXXX` so a chirping stranger is never
+returns. Chirps are matched to known witnesses by fingerprint suffix
+(the last 4 hex chars, same as the canary's `SCV-XXXX` BLE name; unknown
+suffixes surface as `SCV-XXXX` pseudo witnesses so a chirping stranger is never
 silently dropped); ALERT/TAMPER chirps raise real fleet events labeled
 "(chirp)" — honestly coarser trust, no Ed25519 on chirps — and all types
 refresh liveness. Per-witness/per-kind 60 s dedupe absorbs re-broadcasts.

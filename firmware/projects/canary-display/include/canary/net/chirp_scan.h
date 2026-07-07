@@ -4,7 +4,9 @@
 // Off-grid resilience (trailblazer spec §6): passive BLE scan for the
 // Canaries' connectionless Chirp adverts (docs/ble_protocol.md §5 —
 // manufacturer data, company id 0xFFFF, 17 bytes total:
-// [company(2)|type(1)|hour-bucket ts(4)|chain-hash(8)|fp-prefix(2)]).
+// [company(2)|type(1)|hour-bucket ts(4)|chain-hash(8)|fp-suffix(2)] —
+// the 2 id bytes are the LAST 4 hex chars of the pubkey fingerprint,
+// the same 4 the canary uses in its "SCV-XXXX" BLE name).
 //
 // Scanning runs ONLY while the broker link is down: MQTT is the richer
 // channel when it exists; chirps are the "burglar cut the internet"

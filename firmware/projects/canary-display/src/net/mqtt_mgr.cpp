@@ -174,8 +174,8 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
   const char* dt = doc["device_type"] | "";
   if (dt[0]) fleet.on_status(device_id, dt, true, -1, now);
   else fleet.on_activity(device_id, now);
-  if (!doc["breathing_locked"].isNull()) {
-    fleet.on_wellbeing(device_id, doc["breathing_locked"] | false, now);
+  if (doc["breathing_locked"].is<bool>()) {
+    fleet.on_wellbeing(device_id, doc["breathing_locked"].as<bool>(), now);
   }
 }
 

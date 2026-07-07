@@ -304,7 +304,7 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
     lv_label_set_text(s_dev_event, "no events yet");
   }
 
-  char batt[36] = "";
+  char batt[64] = "";  // "·"/"—"/LVGL symbols are multi-byte; keep headroom
   if (w->wb_present) {
     snprintf(batt, sizeof(batt), "  ·  breathing %s",
              w->wb_breathing ? LV_SYMBOL_OK : "—");

@@ -77,6 +77,11 @@ bool ble_up() {
   NimBLEDevice::init("");
   NimBLEScan* scan = NimBLEDevice::getScan();
   if (!scan) return false;
+  // wantDuplicates stays true deliberately: NimBLE's duplicate filter is
+  // per-address, so it would hide a chirp *type escalation* (heartbeat ->
+  // tamper from the same canary) for the rest of a burst. Flooding isn't a
+  // risk: the ring is drained every main-loop pass (ms cadence vs ~100 ms
+  // advert cadence) and the fleet model dedupes semantically (60 s).
   scan->setAdvertisedDeviceCallbacks(&s_cb, /*wantDuplicates=*/true);
   scan->setActiveScan(false);          // passive: we never transmit
   scan->setInterval(100);

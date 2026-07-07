@@ -195,12 +195,13 @@ class FleetModel {
       push_event(id, kind && kind[0] ? kind : "tamper", Sev::Tamper, false, now);
   }
 
-  // Rooms & names (spec §8): retained securacv/<id>/meta.
+  // Rooms & names (spec §8): retained securacv/<id>/meta. Deliberately
+  // does NOT touch last_seen_ms: meta is human-authored (HA, companion
+  // app) and retained — renaming a dead witness must not revive it.
   void on_meta(const char* id, const char* name, const char* room,
-               uint32_t now) {
+               uint32_t /*now*/) {
     Witness* w = upsert(id);
     if (!w) return;
-    w->last_seen_ms = now;
     copy_str(w->name, sizeof(w->name), name);
     copy_str(w->room, sizeof(w->room), room);
     dirty_ = true;
@@ -224,7 +225,7 @@ class FleetModel {
   void on_chirp(const char fp4[5], uint8_t chirp_type, uint32_t now) {
     Witness* w = nullptr;
     for (int i = 0; i < MAX_DEVICES; i++) {
-      if (slots_[i].used && str_ncmp4(slots_[i].fp, fp4)) { w = &slots_[i]; break; }
+      if (slots_[i].used && fp_suffix_match(slots_[i].fp, fp4)) { w = &slots_[i]; break; }
     }
     if (!w) {
       char pseudo[12];
@@ -269,7 +270,28 @@ class FleetModel {
     const Badge was = w->badge;
     w->chain_length = length;
     w->badge = verdict;
-    if (fp && fp[0]) copy_str(w->fp, sizeof(w->fp), fp);
+    if (fp && fp[0]) {
+      copy_str(w->fp, sizeof(w->fp), fp);
+      // An off-grid chirp may have created a pseudo witness ("SCV-XXXX",
+      // named by the fp's last-4 suffix like the canary's own BLE name)
+      // for this very device before its fingerprint was known. Now that a
+      // real identity owns the suffix, retire the ghost — left behind it
+      // would go Lost once scanning stops and raise a false alarm.
+      size_t n = 0;
+      while (fp[n]) n++;
+      if (n >= 4) {
+        const char* s = fp + n - 4;
+        const char pseudo[9] = {'S', 'C', 'V', '-', s[0], s[1], s[2], s[3],
+                                '\0'};
+        for (int i = 0; i < MAX_DEVICES; i++) {
+          Witness& g = slots_[i];
+          if (g.used && &g != w && str_eq(g.id, pseudo)) {
+            g.used = false;
+            dirty_ = true;
+          }
+        }
+      }
+    }
     if (raw && raw_len > 0 && raw_len < sizeof(w->chain_raw)) {
       memcpy_str(w->chain_raw, raw, raw_len);
     } else {
@@ -413,6 +435,17 @@ class FleetModel {
 
   void set_wall_hour(int hour) {
     if (hour < 0 || hour > 23) { wall_hour_ = -1; return; }
+    if (wall_hour_ == -1) {
+      // Coming from "clock unknown" (boot, or SNTP lost for an unknowable
+      // span): the buckets' ages are unknowable too. Start the day fresh
+      // rather than present stale counts as "Past 24h" — no guessed history.
+      for (int h = 0; h < 24; h++) {
+        hist_count_[h] = 0;
+        hist_worst_[h] = (uint8_t)Sev::Ok;
+      }
+      wall_hour_ = hour;
+      return;
+    }
     if (wall_hour_ != hour) {
       // Entering a new hour reclaims that bucket (rolling 24 h window).
       hist_count_[hour] = 0;
@@ -464,11 +497,20 @@ class FleetModel {
     return *a == *b;
   }
 
-  // First-4-chars match (chirp fingerprint prefix vs stored 16-hex fp).
-  static bool str_ncmp4(const char* fp, const char* fp4) {
-    if (!fp || !fp[0] || !fp4) return false;
+  // Chirp fingerprint match: the advert carries the LAST 4 hex chars of
+  // the witness's 16-hex fingerprint (ble_chirp.h encodes the deviceIdHash
+  // *suffix* — the same 4 chars as its "SCV-XXXX" BLE name), so compare
+  // suffix-to-suffix. A short/absent fp never matches and never reads out
+  // of bounds. (review catch: this originally compared the prefix, which
+  // would have filed every known witness's chirps under a pseudo twin.)
+  static bool fp_suffix_match(const char* fp, const char* fp4) {
+    if (!fp || !fp4) return false;
+    size_t n = 0;
+    while (fp[n]) n++;
+    if (n < 4) return false;
+    const char* s = fp + n - 4;
     for (int i = 0; i < 4; i++) {
-      if (fp[i] != fp4[i]) return false;
+      if (!fp4[i] || s[i] != fp4[i]) return false;
     }
     return true;
   }
