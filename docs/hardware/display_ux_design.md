@@ -96,6 +96,7 @@ cloud), no subscription, works when the internet doesn't.** Their patterns:
 | G10 | **Accessible** (WCAG 1.4.1; ~8% of men are colorblind) | color never sole carrier: severity is also position (spine/ring/center), glyph, and label |
 | G11 | **Family-wide by default** | zero per-user setup; the device on the wall serves everyone, including people without phones |
 | G12 | **Fails diagnosable** | headless boot (display init failure) keeps MQTT + logs alive; every degraded state is printed and published |
+| G13 | **The Nth device is magic** | zero pairing (broker wildcards + retained topics); an unconfigured device adopts the broker from the flock's mDNS gossip and persists it; a moved broker re-binds within ~2 min — see [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md) |
 
 ## 4. UX specification (v0.1 firmware)
 

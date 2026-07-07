@@ -20,6 +20,18 @@ namespace canary::net {
   void publish_status_retained(const Topics& topics, const char* status);   // online/offline
   void publish_health_retained(const Topics& topics);
 
+  // ── Broker endpoint (flock-discovery rebind) ──────────────────────────
+  // The broker address starts from runtime config but is rebindable at
+  // runtime: mDNS flock discovery adopts a referral when the compiled/NVS
+  // endpoint is a placeholder or has gone dark (broker moved DHCP lease).
+  // Adopting persists to the same NVS keys runtime_config reads, so the
+  // discovered endpoint survives reboots. Drops any current connection;
+  // the caller's supervision loop reconnects on its normal backoff.
+  void mqtt_set_broker(const char* host, uint16_t port);
+  const char* mqtt_broker_host();
+  uint16_t mqtt_broker_port();
+  bool mqtt_broker_is_placeholder();   // unconfigured (CI stub / blank)
+
   // ── Firmware update entity (signed pull-OTA) ──────────────────────────
   // Retained state for HA's update entity + the auto-update switch; cached
   // and republished on every reconnect. Inbound commands are latched by the

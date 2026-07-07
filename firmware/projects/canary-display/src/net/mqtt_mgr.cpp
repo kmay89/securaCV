@@ -15,6 +15,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 
 #include "canary/config.h"
 #include "canary/log.h"
@@ -31,6 +32,11 @@ namespace canary::net {
 static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
 static Topics g_topics{};
+
+// Broker endpoint — rebindable (flock discovery). PubSubClient::setServer
+// stores the caller's pointer, so the storage must be static and stable.
+static char s_broker_host[64] = {0};
+static uint16_t s_broker_port = 1883;
 
 // Inbound firmware-update commands. The PubSubClient callback fires inside
 // mqtt.loop() on the main task, but flash-cycle decisions belong to the OTA
@@ -218,9 +224,49 @@ static bool publish_checked(const char* tag, const char* topic, const char* payl
 void mqtt_init(const Topics& topics) {
   g_topics = topics;
   const auto& cfg = canary::cfg::get();
-  mqtt.setServer(cfg.mqtt_host, cfg.mqtt_port);
+  strncpy(s_broker_host, cfg.mqtt_host, sizeof(s_broker_host) - 1);
+  s_broker_host[sizeof(s_broker_host) - 1] = '\0';
+  s_broker_port = cfg.mqtt_port ? cfg.mqtt_port : 1883;
+  mqtt.setServer(s_broker_host, s_broker_port);
   mqtt.setBufferSize(MQTT_BUFFER_BYTES);
   mqtt.setCallback(on_mqtt_message);
+}
+
+void mqtt_set_broker(const char* host, uint16_t port) {
+  if (!host || !host[0]) return;
+  const bool same = (strcmp(s_broker_host, host) == 0 && s_broker_port == port);
+  strncpy(s_broker_host, host, sizeof(s_broker_host) - 1);
+  s_broker_host[sizeof(s_broker_host) - 1] = '\0';
+  s_broker_port = port ? port : 1883;
+  if (mqtt.connected()) mqtt.disconnect();
+  mqtt.setServer(s_broker_host, s_broker_port);
+
+  // Persist to the keys runtime_config reads so the endpoint survives a
+  // reboot. Note the precedence rule there: a REAL compiled MQTT_HOST wins
+  // over NVS at boot — a unit with hand-compiled broker creds re-fails and
+  // re-discovers after ~2 min instead of silently forgetting its build.
+  Preferences prefs;
+  if (prefs.begin("securacv", /*readOnly=*/false)) {
+    prefs.putString("mqtt_host", s_broker_host);
+    prefs.putUShort("mqtt_port", s_broker_port);
+    prefs.end();
+  }
+
+  if (!same) {
+    log_header("MQTT");
+    canary::dbg_serial().printf("Broker rebound to %s:%u (persisted)\n",
+                                s_broker_host, (unsigned)s_broker_port);
+  }
+}
+
+const char* mqtt_broker_host() { return s_broker_host; }
+uint16_t mqtt_broker_port() { return s_broker_port; }
+
+bool mqtt_broker_is_placeholder() {
+  return s_broker_host[0] == '\0' ||
+         strcmp(s_broker_host, "127.0.0.1") == 0 ||
+         strcmp(s_broker_host, "ci") == 0 ||
+         strcmp(s_broker_host, "ci-placeholder") == 0;
 }
 
 bool mqtt_connected() { return mqtt.connected(); }
@@ -306,7 +352,8 @@ bool mqtt_connect_attempt() {
   String clientId = String("securacv-") + cfg.device_id + "-" + devid_hex;
 
   log_header("MQTT");
-  canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", cfg.mqtt_host, cfg.mqtt_port, clientId.c_str());
+  canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", s_broker_host,
+                              (unsigned)s_broker_port, clientId.c_str());
 
   bool ok = false;
   if (cfg.mqtt_user[0] != '\0') {
