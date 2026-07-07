@@ -777,6 +777,64 @@ mod tests {
     }
 
     #[test]
+    fn log_verify_accepts_domain_separated_receipt() -> Result<()> {
+        // A normal authorize flow (registered trustee, domain-separated
+        // approval) must AUDIT as valid — this is the roundtrip the
+        // bare-hash receipt verifier would have failed. The other receipt
+        // tests here are negative (unknown/forged trustee), so without this
+        // the audit path's approval-signature check went uncovered.
+        let db = TempDb::new();
+        let mut kernel = Kernel::open(&KernelConfig {
+            db_path: db.path().to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: TEST_SEED.to_string(),
+            zone_policy: ZonePolicy::default(),
+        })?;
+
+        let alice_key = SigningKey::from_bytes(&[11u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice_key.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+
+        let bucket = TimeBucket::now(600)?;
+        let request = UnlockRequest::new("vault:1", [9u8; 32], "audit", bucket)?;
+        let approval =
+            Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice_key);
+        let (_, receipt) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
+
+        let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
+        drop(kernel);
+
+        let conn = open_encrypted_test_db(db.path());
+        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+        let policy = verify::load_break_glass_policy(&conn)?;
+        let result = verify::verify_break_glass_receipts_with(
+            &conn,
+            &verifying_key,
+            policy.as_ref(),
+            SignatureMode::Compat,
+            None,
+            |_, _| {},
+        );
+        assert!(
+            result.is_ok(),
+            "domain-separated approval receipt must audit as valid: {result:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn log_verify_rejects_invalid_trustee_signature() -> Result<()> {
         let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {

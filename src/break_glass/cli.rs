@@ -10,7 +10,7 @@
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::io::IsTerminal;
 use std::io::Write;
 
@@ -18,8 +18,9 @@ use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_
 use crate::{
     approvals_commitment, break_glass::BreakGlassTokenFile,
     break_glass_receipt_outcome_for_verifier, device_public_key_from_db, hash_entry,
-    verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
-    KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault, VaultConfig, ZonePolicy,
+    verify_approval, verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome,
+    BreakGlassToken, Kernel, KernelConfig, TimeBucket, TrusteeId, UnlockRequest, Vault,
+    VaultConfig, ZonePolicy,
 };
 
 #[path = "../ui.rs"]
@@ -765,13 +766,18 @@ fn verify_approvals_against_policy(
             .iter()
             .find(|t| t.id.0 == approval.trustee.0)
             .ok_or_else(|| anyhow!("unknown trustee approval: {}", approval.trustee.0))?;
-        let verifying_key = VerifyingKey::from_bytes(&trustee.public_key)
+        // Distinct message for an unusable key; the signature check itself is
+        // domain-separated (verify_approval rejects a bare-hash or
+        // cross-context signature), matching how authorize now signs.
+        VerifyingKey::from_bytes(&trustee.public_key)
             .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
-        let signature = Signature::from_slice(&approval.signature)
-            .map_err(|_| anyhow!("invalid signature bytes for trustee {}", trustee.id.0))?;
-        verifying_key
-            .verify(&approval.request_hash, &signature)
-            .map_err(|_| anyhow!("invalid signature for trustee {}", trustee.id.0))?;
+        if !verify_approval(
+            &trustee.public_key,
+            &approval.request_hash,
+            &approval.signature,
+        ) {
+            return Err(anyhow!("invalid signature for trustee {}", trustee.id.0));
+        }
     }
     Ok(())
 }

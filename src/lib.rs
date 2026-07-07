@@ -3449,8 +3449,9 @@ pub struct Frame {
 
 // Re-exports for CLI/tools
 pub use break_glass::{
-    approvals_commitment, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
-    BreakGlassToken, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry, TrusteeId, UnlockRequest,
+    approvals_commitment, sign_approval, verify_approval, Approval, BreakGlass, BreakGlassOutcome,
+    BreakGlassReceipt, BreakGlassToken, BreakGlassTokenFile, QuorumPolicy, TrusteeEntry, TrusteeId,
+    UnlockRequest,
 };
 
 // -------------------- Conformance Tests --------------------

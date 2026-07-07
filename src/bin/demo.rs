@@ -413,7 +413,7 @@ fn issue_break_glass_token(
     let approval = Approval::signed(
         ctx.trustee_id.clone(),
         request.request_hash(),
-        &ctx.trustee_key,
+        ctx.trustee_key,
     );
     let approvals = std::slice::from_ref(&approval);
     let (result, receipt) =

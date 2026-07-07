@@ -473,7 +473,9 @@ if (signParams) {
   $("ts-btn-sign").onclick = async () => {
     clearBanner("ts-msg");
     try {
-      const sigHex = await ed25519SignSeed($("ts-sk").value, signParams.hash);
+      // Domain-separated approval message, same as the operator-side signer.
+      const messageHex = await approvalMessageHex(signParams.hash);
+      const sigHex = await ed25519SignSeed($("ts-sk").value, messageHex);
       $("ts-sig").textContent = sigHex;
       $("ts-result").style.display = "";
       banner("ts-msg", "ok", "Signed. Copy the signature below and send it to the operator.");
