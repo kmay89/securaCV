@@ -299,6 +299,57 @@ jobs:
             --build-property "build.extra_flags=-DVALIDATION_BUILD=1 -DFEATURE_BEACON_CHANNEL=1 -DBOARD_HAS_PSRAM" \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
+  build-arduino-cli-display:
+    name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - name: watch
+            fqbn: "esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashSize=8M,PartitionScheme=default_8MB"
+          - name: dash
+            fqbn: "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Configure Arduino CLI (esp32 core 2.0.x)
+        # GFX 1.4.9 (pinned for the panels) does NOT build on arduino-esp32
+        # core 3.x, and 1.5+ needs 3.x — same reason the PlatformIO env pins
+        # espressif32@6.9.0. Pin 2.0.17 here to match.
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@2.0.17
+
+      - name: Install libraries (pinned to the PlatformIO set)
+        run: |
+          arduino-cli lib install "GFX Library for Arduino@1.4.9"
+          arduino-cli lib install "lvgl@8.4.0"
+          arduino-cli lib install "PubSubClient"
+          arduino-cli lib install "Crypto"
+          arduino-cli lib install "ArduinoJson"
+          arduino-cli lib install "NimBLE-Arduino@1.4.3"
+
+      - name: Stage + compile ${{ matrix.flavor.name }}
+        run: |
+          cd firmware/projects/canary-display
+          ./setup.sh arduino ${{ matrix.flavor.name }}
+          # LVGL resolves lv_conf.h relative to the libraries dir root
+          # (libraries/lvgl/src/../../lv_conf.h). Stage the sketch's copy there
+          # so the library compiles against the project's config.
+          LIBDIR="$(arduino-cli config get directories.user)/libraries"
+          cp arduino/canary_display/lv_conf.h "${LIBDIR}/lv_conf.h"
+          arduino-cli compile \
+            --fqbn ${{ matrix.flavor.fqbn }} \
+            --output-dir /tmp/display-build \
+            arduino/canary_display/canary_display.ino
+
   csi-sketch-sync:
     name: CSI Sketch Copy Sync
     runs-on: ubuntu-latest
@@ -352,6 +403,15 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_audio_sync.sh
           firmware/scripts/check_audio_sync.sh
+
+      - name: Verify the Canary Display Arduino sketch is in sync with the PlatformIO tree
+        # The display Arduino sketch is GENERATED from the canonical PlatformIO
+        # tree (src/ + include/) by setup.sh, not hand-copied — this guard
+        # regenerates it and fails if the committed sketch drifted (someone
+        # edited src/ without running `./setup.sh regen`).
+        run: |
+          chmod +x firmware/scripts/check_display_arduino_sync.sh
+          firmware/scripts/check_display_arduino_sync.sh
 
   regression-check:
     name: Regression Guards
