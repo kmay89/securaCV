@@ -76,7 +76,7 @@ GFX and NimBLE split their majors along the core boundary:
 | arduino-esp32 core | GFX Library for Arduino | NimBLE-Arduino | Profile suffix |
 |---|---|---|---|
 | **2.0.17** (matches PlatformIO `espressif32 @ 6.9.0` — the bench-validated release path) | 1.4.9 (1.5+ needs core 3) | 1.4.3 (2.x needs core 3) | `watch` / `dash` |
-| **3.x** (Boards Manager default) | 1.6.0 (won't build on core 2) | 2.5.0 (won't build on core 2) | `watch-core3` / `dash-core3` |
+| **3.x** (Boards Manager default) | 1.6.6 (won't build on core 2) | 2.5.0 (won't build on core 2) | `watch-core3` / `dash-core3` |
 
 LVGL 8.4.0, PubSubClient, Crypto, and ArduinoJson are core-agnostic and shared.
 Always move a whole row at once — mixing lines fails the build. The canonical

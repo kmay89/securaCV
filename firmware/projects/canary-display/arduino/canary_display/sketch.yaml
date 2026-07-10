@@ -23,7 +23,7 @@
 #
 #   core 3.x (the Boards Manager default — pick this if you just installed
 #   the esp32 platform and don't want to downgrade):
-#     GFX Library for Arduino 1.6.0   (does NOT build on core 2)
+#     GFX Library for Arduino 1.6.6   (does NOT build on core 2)
 #     NimBLE-Arduino 2.5.0            (does NOT build on core 2)
 #
 # Mixing lines (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails the build —
@@ -59,7 +59,7 @@ profiles:
       - platform: esp32:esp32 (3.3.10)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
-      - GFX Library for Arduino (1.6.0)
+      - GFX Library for Arduino (1.6.6)
       - lvgl (8.4.0)
       - PubSubClient
       - Crypto
@@ -90,7 +90,7 @@ profiles:
       - platform: esp32:esp32 (3.3.10)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
-      - GFX Library for Arduino (1.6.0)
+      - GFX Library for Arduino (1.6.6)
       - lvgl (8.4.0)
       - PubSubClient
       - Crypto

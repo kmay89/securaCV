@@ -31,7 +31,7 @@ own profiles carrying the right pins:
 
 | Your `esp32` platform | Profiles | GFX | NimBLE-Arduino |
 |---|---|---|---|
-| **3.x** (what Boards Manager installs by default) | `watch-core3` / `dash-core3` | 1.6.0 | 2.5.0 |
+| **3.x** (what Boards Manager installs by default) | `watch-core3` / `dash-core3` | 1.6.6 | 2.5.0 |
 | **2.0.17** (matches the PlatformIO release path) | `watch` / `dash` | 1.4.9 | 1.4.3 |
 
 Just installed the esp32 platform and got the latest? Use the `-core3`
@@ -68,7 +68,7 @@ git-ignored). Set your timezone for quiet hours with e.g.
 
 Libraries (also declared per-profile in `sketch.yaml`): `lvgl @ 8.4.0`,
 `PubSubClient`, `Crypto`, `ArduinoJson`, plus the core-matched pair from the
-table above — `GFX Library for Arduino` @ **1.6.0** (core 3) or **1.4.9**
+table above — `GFX Library for Arduino` @ **1.6.6** (core 3) or **1.4.9**
 (core 2, EXACT), and `NimBLE-Arduino` @ **2.5.0** (core 3) or **1.4.3**
 (core 2).
 

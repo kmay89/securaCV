@@ -335,7 +335,7 @@ jobs:
             # Arduino CI builds against). GFX 1.6.x / NimBLE 2.x are the
             # core-3 counterparts of the 2.0.17 pins.
             version: "3.3.10"
-            gfx: "1.6.0"
+            gfx: "1.6.6"
             nimble: "2.5.0"
     steps:
       - uses: actions/checkout@v7
