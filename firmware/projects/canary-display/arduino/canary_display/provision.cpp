@@ -5,12 +5,21 @@
 // carries zero onboarding baggage at steady state — the WebServer, the DNS
 // socket, and the scan cache all free on return.
 #include "flavor_config.h"
-#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
 
+// Library includes live ABOVE the feature gate on purpose: PlatformIO's LDF
+// (deep+ mode) evaluates preprocessor conditionals using build flags only —
+// FEATURE_ONBOARDING is defined in the flavor config HEADER, which the LDF
+// can't see, so a gated include would leave the bundled WebServer library
+// unregistered and the build failing on WebServer.h (the LittleFS lesson,
+// again). Unconditional includes cost nothing when the feature is off — the
+// linker drops the unused objects.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <WebServer.h>
+
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+
 #include <esp_random.h>
 #include <lvgl.h>
 
