@@ -52,6 +52,11 @@ flatten_includes() {
   sed -i -E 's|#include "canary/[^"]*/|#include "|g' "$f"
   # canary/<name>              ->  <name>
   sed -i -E 's|#include "canary/|#include "|g' "$f"
+  # Shared firmware/common headers, staged flat next to the sketch (self-
+  # contained for the Arduino IDE, no external include path — the same
+  # committed-copy approach the canary-wap sketch uses).
+  sed -i -E 's|#include "boot/|#include "|g' "$f"
+  sed -i -E 's|#include "identity/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -90,6 +95,23 @@ generate_shared() {
   # CI-safe secrets fallback (the __has_include ladder lands here if no real
   # secrets.h is staged).
   cp "${SCRIPT_DIR}/include/secrets.ci.h" "${SKETCH_DIR}/secrets.ci.h"
+
+  # Shared firmware/common code the display consumes (via lib_extra_dirs / -I
+  # in PlatformIO). Staged flat so the Arduino sketch is self-contained — no
+  # --libraries path needed, IDE builds work from the sketch folder alone.
+  # This is the exact transitive set the display's `#include`s reach; keep it
+  # in step with the canonical includes if src/ starts using more of common.
+  local common_files=(
+    "${FIRMWARE_ROOT}/common/boot/boot_banner.h"
+    "${FIRMWARE_ROOT}/common/boot/boot_banner.cpp"
+    "${FIRMWARE_ROOT}/common/identity/device_pseudonym.h"
+    "${FIRMWARE_ROOT}/common/ota/src/securacv_ota.h"
+    "${FIRMWARE_ROOT}/common/ota/src/securacv_ota.cpp"
+    "${FIRMWARE_ROOT}/common/ota/src/ota_release_key.h"
+  )
+  for cf in "${common_files[@]}"; do
+    cp "$cf" "${SKETCH_DIR}/$(basename "$cf")"
+  done
 
   # Flatten every include in every generated file.
   find "${SKETCH_DIR}" -maxdepth 1 -type f \

@@ -25,6 +25,11 @@ transforms the canonical tree deterministically:
    is staged as **`flavor_config.h`** and `#include <config.h>` is rewritten to
    it. The composition header keeps the name `config.h`.
 5. Per-flavor board `pins.h` + `flavor_config.h` + `secrets.h` are staged.
+6. The shared `firmware/common` code the display consumes (boot banner, the
+   MAC-free device pseudonym, the signed pull-OTA engine + release key) is
+   staged flat too, with its `boot/` / `identity/` include prefixes stripped —
+   so the sketch is **self-contained** and needs no `--libraries` path (the
+   same committed-copy approach the canary-wap sketch uses).
 
 ## What is committed vs staged
 

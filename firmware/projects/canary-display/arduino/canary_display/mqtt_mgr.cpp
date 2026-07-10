@@ -26,7 +26,7 @@
 #include "trust.h"           // TOFU pins + Ed25519 chain verify
 #include "fleet_instance.h"
 #include "wifi_mgr.h"    // RSSI + link state
-#include "identity/device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
+#include "device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
 
 namespace canary::net {
 

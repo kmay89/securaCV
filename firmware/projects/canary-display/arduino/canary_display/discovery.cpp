@@ -13,7 +13,7 @@
 #include <stdio.h>
 
 #include "log.h"
-#include "identity/device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
+#include "device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
 
 namespace canary::net {
 

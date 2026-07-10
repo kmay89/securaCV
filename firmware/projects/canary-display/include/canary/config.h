@@ -75,11 +75,30 @@ static constexpr uint32_t HEAP_HYSTERESIS      = 5000;
 // is a distinct OTA product (set via build flags in canary-display.ini): a
 // watch image can never install on a dash or vice versa — the engine
 // refuses on product mismatch.
+// Per-flavor OTA identity. PlatformIO passes these as -D build flags (see
+// envs/platformio/canary-display.ini); when it doesn't (e.g. the Arduino
+// build, which has no per-env flags), derive them from the flavor macro so a
+// watch never polls/accepts a dash image and vice versa. The flavor config is
+// already included above, so CD_FLAVOR_* is known here.
 #ifndef SECURACV_OTA_PRODUCT
-#define SECURACV_OTA_PRODUCT "securacv-canary-display"
+#  if defined(CD_FLAVOR_WATCH)
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display-watch"
+#  elif defined(CD_FLAVOR_DASH)
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display-dash"
+#  else
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display"
+#  endif
 #endif
 static constexpr const char* OTA_PRODUCT = SECURACV_OTA_PRODUCT;
 #ifndef SECURACV_OTA_MANIFEST_URL
-#define SECURACV_OTA_MANIFEST_URL \
+#  if defined(CD_FLAVOR_WATCH)
+#    define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-watch.json"
+#  elif defined(CD_FLAVOR_DASH)
+#    define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-dash.json"
+#  else
+#    define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display.json"
+#  endif
 #endif

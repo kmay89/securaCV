@@ -79,8 +79,8 @@
 #endif
 
 // Shared, board-agnostic modules (reached via -I .../common).
-#include "boot/boot_banner.h"
-#include "identity/device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
+#include "boot_banner.h"
+#include "device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 
 // ----------------------------------------------------------------------------
 // State
