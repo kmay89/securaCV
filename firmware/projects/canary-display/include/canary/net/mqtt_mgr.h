@@ -25,9 +25,9 @@ namespace canary::net {
   // call when SNTP-synced — no guessed clocks on the wire).
   void publish_fleet_ack(uint32_t epoch_s);
 
-  // ── Broker endpoint (flock-discovery rebind) ──────────────────────────
+  // ── Broker endpoint (fleet-discovery rebind) ──────────────────────────
   // The broker address starts from runtime config but is rebindable at
-  // runtime: mDNS flock discovery adopts a referral when the compiled/NVS
+  // runtime: mDNS fleet discovery adopts a referral when the compiled/NVS
   // endpoint is a placeholder or has gone dark (broker moved DHCP lease).
   // Adopting persists to the same NVS keys runtime_config reads, so the
   // discovered endpoint survives reboots. Drops any current connection;

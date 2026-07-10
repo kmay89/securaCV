@@ -238,7 +238,7 @@ enum class State : uint8_t {
  * the UI checks (securacv_webui.cpp refreshOpera / startPairingPoll) are:
  *
  *   "DISABLED"        — mesh feature compiled out / disabled
- *   "NO_FLOCK"        — mesh enabled, but no opera joined yet
+ *   "NO_OPERA"        — mesh enabled, but no opera joined yet
  *   "CONNECTING"      — opera joined, no peers online yet
  *   "ACTIVE"          — opera joined, ≥1 peer online
  *   "PAIRING_INIT"    — pairing in progress, initiator side (pre-confirm)
@@ -249,7 +249,7 @@ enum class State : uint8_t {
  * on hand. It is a pure function (no I/O, no globals) so host tests can
  * pin the mapping without standing up the whole network stack. The
  * pairing-state precedence is: an in-progress pairing flow always wins
- * over the steady-state DISABLED/NO_FLOCK/CONNECTING/ACTIVE classification,
+ * over the steady-state DISABLED/NO_OPERA/CONNECTING/ACTIVE classification,
  * because the UI swaps to the pairing screen whenever state starts with
  * "PAIRING".
  * ────────────────────────────────────────────────────────────────────────── */

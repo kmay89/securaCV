@@ -27,11 +27,11 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
 - **Subscribes** to the fleet: `securacv/+/{status,availability,health,events,tamper,chain,state}`.
   Every Canary on the household broker appears automatically — retained
   topics repopulate the whole view in one round-trip. No pairing, ever.
-- **Flock discovery** (`FEATURE_MDNS_DISCOVERY`, see
+- **Fleet discovery** (`FEATURE_MDNS_DISCOVERY`, see
   [`display_discovery_and_resilience.md`](../../../docs/hardware/display_discovery_and_resilience.md)):
   advertises `_securacv._tcp` on the LAN and — once connected — gossips the
   broker address in its TXT records. A display flashed with **no broker
-  configured asks the flock and adopts the referral** (persisted to NVS);
+  configured asks the fleet and adopts the referral** (persisted to NVS);
   a broker that goes dark for 2 min (moved DHCP lease) triggers re-ask +
   rebind. Fallback: any `_mqtt._tcp` advert. One hand-provisioned device
   makes every later one plug-and-play.
@@ -97,7 +97,7 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   glass** (device-unique AP, per-session password), pops a captive portal on
   the phone (dark, self-contained, live status, specific failure reasons),
   persists credentials **on success only**, and cross-fades straight into the
-  fleet UI — where the flock referral lands the broker with zero further
+  fleet UI — where the fleet referral lands the broker with zero further
   input. Plug in → scan → password → watching your canaries. No dead ends.
 
 - **Trailblazer wave 3** ([spec](../../../docs/hardware/display_trailblazer_spec.md)):

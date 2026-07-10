@@ -80,7 +80,7 @@ const char* mesh_state_name(bool   enabled,
   }
 
   if (!enabled)   return "DISABLED";
-  if (!has_opera) return "NO_FLOCK";
+  if (!has_opera) return "NO_OPERA";
   return peers_online > 0 ? "ACTIVE" : "CONNECTING";
 }
 

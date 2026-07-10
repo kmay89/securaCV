@@ -286,7 +286,7 @@ helper); if not set, the relevant code paths:
 1. Refuse to create an opera (return `MESH_ERROR_NO_FLASH_ENCRYPTION`).
 2. Refuse to consume a `PAIR_COMPLETE` payload.
 3. Refuse to load a previously-stored `opera_secret` from NVS — instead,
-   wipe the entry, mark the device as `MESH_NO_FLOCK`, and log loudly:
+   wipe the entry, mark the device as `MESH_NO_OPERA`, and log loudly:
    `health_log(LOG_LEVEL_ALERT, LOG_CAT_SECURITY, "opera: refused to load — flash encryption disabled")`.
 
 Rationale: `opera_secret` is the symmetric secret that gates pairing and
@@ -356,7 +356,7 @@ Received alerts are stored in the health log with:
 ```
 MESH_DISABLED        → Feature disabled
 MESH_INITIALIZING    → Loading opera config, starting transports
-MESH_NO_FLOCK        → No opera configured, awaiting pairing
+MESH_NO_OPERA        → No opera configured, awaiting pairing
 MESH_CONNECTING      → Attempting to reach opera members
 MESH_ACTIVE          → Connected to one or more peers
 MESH_PAIRING_INIT    → In pairing mode as initiator (existing member)

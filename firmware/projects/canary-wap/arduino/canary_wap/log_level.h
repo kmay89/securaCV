@@ -39,7 +39,7 @@ enum LogCategory : uint8_t {
   SCV_CAT_SENSOR     = 6,   // PIR, tamper, environmental
   SCV_CAT_USER       = 7,   // User actions (config changes, acknowledgments)
   SCV_CAT_WITNESS    = 8,   // Witness record creation
-  SCV_CAT_MESH       = 9,   // Mesh network (flock) operations
+  SCV_CAT_MESH       = 9,   // Mesh network (opera) operations
   SCV_CAT_BLUETOOTH  = 10,  // Bluetooth Low Energy operations
   SCV_CAT_RF         = 11,  // RF presence detection operations
   SCV_CAT_AUTH       = 12   // API authentication & authorization

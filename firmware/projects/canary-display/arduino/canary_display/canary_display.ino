@@ -125,7 +125,7 @@ static uint32_t g_page_touched_ms = 0;   // auto-return to overview
 static uint32_t g_mqtt_next_attempt_ms = 0;
 static uint32_t g_mqtt_attempts = 0;
 
-// Broker-outage clock for the flock-rediscovery rebind (wifi up, broker
+// Broker-outage clock for the fleet-rediscovery rebind (wifi up, broker
 // dark). Zero = link healthy or wifi down.
 static uint32_t g_mqtt_down_since_ms = 0;
 
@@ -157,7 +157,7 @@ static bool mqtt_supervise(uint32_t now) {
     g_last_health_ms = now;
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
     // Gossip only ground truth: we are connected to this broker right now,
-    // so the next device to join the WiFi can just ask the flock.
+    // so the next device to join the WiFi can just ask the fleet.
     canary::net::discovery_advertise_broker(canary::net::mqtt_broker_host(),
                                             canary::net::mqtt_broker_port());
 #endif
@@ -168,7 +168,7 @@ static bool mqtt_supervise(uint32_t now) {
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
   // Self-healing rebind: WiFi is fine but the broker has been dark past
   // the deadline — the classic cause is the broker host taking a new DHCP
-  // lease. Ask the flock (bounded ~3-6 s mDNS query; the link is already
+  // lease. Ask the fleet (bounded ~3-6 s mDNS query; the link is already
   // down, so the stall costs nothing), adopt any referral, and let the
   // normal backoff reconnect. Re-asks once per deadline window.
   if ((int32_t)(now - g_mqtt_down_since_ms) >= (int32_t)BROKER_REDISCOVER_MS) {
@@ -477,16 +477,16 @@ void setup() {
 
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
   // Zero-config join: no broker was provisioned (fresh flash with the
-  // stock secrets template) — ask the flock before the first connect
+  // stock secrets template) — ask the fleet before the first connect
   // attempt. One hand-provisioned device on the LAN makes every later
   // one plug-and-play; the referral persists to NVS via mqtt_set_broker.
   if (canary::net::mqtt_broker_is_placeholder()) {
-    boot_kv("Broker", "unconfigured — asking the flock (mDNS)");
+    boot_kv("Broker", "unconfigured — asking the fleet (mDNS)");
     char host[64];
     uint16_t port = 1883;
     if (canary::net::discovery_find_broker(host, sizeof(host), &port)) {
       canary::net::mqtt_set_broker(host, port);
-      boot_kvf("Broker", "flock referral: %s:%u", host, (unsigned)port);
+      boot_kvf("Broker", "fleet referral: %s:%u", host, (unsigned)port);
     } else {
       boot_kv("Broker", "no referral yet — will keep asking from loop()");
     }

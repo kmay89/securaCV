@@ -34,7 +34,7 @@ static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
 static Topics g_topics{};
 
-// Broker endpoint — rebindable (flock discovery). PubSubClient::setServer
+// Broker endpoint — rebindable (fleet discovery). PubSubClient::setServer
 // stores the caller's pointer, so the storage must be static and stable.
 static char s_broker_host[64] = {0};
 static uint16_t s_broker_port = 1883;

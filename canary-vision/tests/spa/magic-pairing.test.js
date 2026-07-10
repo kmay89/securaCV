@@ -40,7 +40,7 @@ describe('SPA Magic Pairing', () => {
       'SPA must offer renaming via the device endpoint');
   });
 
-  it('encourages the flock: chained add and room grouping stay client-side', () => {
+  it('encourages the fleet: chained add and room grouping stay client-side', () => {
     assert.ok(/Add another Canary/.test(js),
       'Successful pairing must invite adding the next device');
     assert.ok(/setDeviceRoom/.test(js),

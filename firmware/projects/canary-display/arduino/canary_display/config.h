@@ -40,8 +40,8 @@ static constexpr uint32_t HEARTBEAT_MS = CD_HEARTBEAT_MS;
 // witness pubkey to pin, but fleet tooling still wants the liveness row).
 static constexpr uint32_t HEALTH_PUBLISH_MS = 60000;
 
-// Flock-rediscovery deadline: broker dark this long (WiFi healthy) -> ask
-// the flock again and rebind (see canary/net/discovery.h).
+// Fleet-rediscovery deadline: broker dark this long (WiFi healthy) -> ask
+// the fleet again and rebind (see canary/net/discovery.h).
 static constexpr uint32_t BROKER_REDISCOVER_MS = CD_BROKER_REDISCOVER_MS;
 
 // -------------------- MQTT / HA --------------------

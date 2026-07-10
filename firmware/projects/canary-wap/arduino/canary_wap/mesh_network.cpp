@@ -1324,7 +1324,7 @@ bool init(const uint8_t* device_privkey, const uint8_t* device_pubkey, const cha
   if (g_opera_config.enabled && g_opera_config.configured) {
     g_mesh_state = MESH_CONNECTING;
   } else if (g_opera_config.enabled) {
-    g_mesh_state = MESH_NO_FLOCK;
+    g_mesh_state = MESH_NO_OPERA;
   } else {
     g_mesh_state = MESH_DISABLED;
   }
@@ -1352,7 +1352,7 @@ void set_enabled(bool enabled) {
     if (g_opera_config.configured) {
       g_mesh_state = MESH_CONNECTING;
     } else {
-      g_mesh_state = MESH_NO_FLOCK;
+      g_mesh_state = MESH_NO_OPERA;
     }
   } else {
     g_mesh_state = MESH_DISABLED;
@@ -1499,7 +1499,7 @@ const char* state_name(MeshState state) {
   switch (state) {
     case MESH_DISABLED: return "DISABLED";
     case MESH_INITIALIZING: return "INITIALIZING";
-    case MESH_NO_FLOCK: return "NO_FLOCK";
+    case MESH_NO_OPERA: return "NO_OPERA";
     case MESH_CONNECTING: return "CONNECTING";
     case MESH_ACTIVE: return "ACTIVE";
     case MESH_PAIRING_INIT: return "PAIRING_INIT";
@@ -1710,7 +1710,7 @@ bool leave_opera() {
   persist_opera_config();
   persist_peers();
 
-  g_mesh_state = MESH_NO_FLOCK;
+  g_mesh_state = MESH_NO_OPERA;
   return true;
 }
 
@@ -1761,9 +1761,9 @@ void cancel_pairing() {
   memset(&g_pairing, 0, sizeof(g_pairing));
 
   if (g_opera_config.configured) {
-    g_mesh_state = g_peer_count > 0 ? MESH_CONNECTING : MESH_NO_FLOCK;
+    g_mesh_state = g_peer_count > 0 ? MESH_CONNECTING : MESH_NO_OPERA;
   } else {
-    g_mesh_state = MESH_NO_FLOCK;
+    g_mesh_state = MESH_NO_OPERA;
   }
 
   if (g_pairing_callback) {

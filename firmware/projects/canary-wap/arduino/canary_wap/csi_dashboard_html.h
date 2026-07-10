@@ -1300,7 +1300,7 @@ const COPY = {
     orb:         "What the room feels like right now.",
     helpBtn:     "See what the sensor can and can't notice.",
     todayBtn:    "See everything that happened today.",
-    fleetBtn:    "See your flock and set up new Canaries.",
+    fleetBtn:    "See your fleet and set up new Canaries.",
     settingsBtn: "Tweak how the sensor behaves.",
     calibrate:   "Step out for one minute. The canary learns your empty room by ear.",
     sensitive:   "Picks up small movements. Best for one quiet room.",
