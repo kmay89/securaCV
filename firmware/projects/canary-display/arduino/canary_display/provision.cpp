@@ -71,6 +71,7 @@ struct Ctx {
   uint32_t st_since = 0;
   bool portal_seen = false;      // any GET / — the captive sheet actually popped
   bool phone_acked = false;      // /status poll observed our success
+  uint32_t acked_at = 0;         // when that first success poll landed
   uint32_t success_at = 0;
   char join_ssid[33] = {0};
   char join_pass[65] = {0};
@@ -318,10 +319,17 @@ void handle_join() {
   snprintf(g->join_pass, sizeof(g->join_pass), "%s", pass.c_str());
   g->fail_reason[0] = '\0';
 
-  // WAP lessons, in order: kill any scan handle, clear stale STA state,
-  // then a non-blocking begin. The AP stays up (AP_STA) so the phone keeps
-  // its connection and can poll /status for the verdict.
-  if (WiFi.scanComplete() == WIFI_SCAN_RUNNING) WiFi.scanDelete();
+  // WAP lessons, in order: clear ANY scan handle — running OR completed-but-
+  // unharvested (leftover results alive at begin() cause silent association
+  // failures; review catch) — clear stale STA state, then a non-blocking
+  // begin. Harvesting a completed sweep keeps the cache fresh for free.
+  // The AP stays up (AP_STA) so the phone keeps its connection and can poll
+  // /status for the verdict.
+  {
+    const int rc = WiFi.scanComplete();
+    if (rc >= 0) harvest_scan(rc);        // caches + scanDelete()s
+    else if (rc == WIFI_SCAN_RUNNING) WiFi.scanDelete();
+  }
   WiFi.persistent(false);
   WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
   WiFi.begin(g->join_ssid, g->join_pass);
@@ -339,7 +347,14 @@ void handle_status() {
       snprintf(body, sizeof(body), "{\"state\":\"connecting\"}");
       break;
     case St::Success:
-      g->phone_acked = true;  // the phone has SEEN the verdict — linger ends soon
+      // The phone has SEEN the verdict — start the linger beat from THIS
+      // moment, not from entering Success (review catch: a poll delayed by
+      // the STA/AP channel switch would otherwise tear the AP down in the
+      // same pass that sends this response, re-creating the race).
+      if (!g->phone_acked) {
+        g->phone_acked = true;
+        g->acked_at = millis();
+      }
       snprintf(body, sizeof(body), "{\"state\":\"success\"}");
       break;
     case St::Fail:
@@ -550,7 +565,7 @@ void provision_run(bool glass_ok) {
         // The glass is the primary channel; the linger is for the phone's.
         const bool acked_beat =
             ctx.phone_acked &&
-            (int32_t)(now - ctx.st_since) > (int32_t)AP_LINGER_ACK_MS;
+            (int32_t)(now - ctx.acked_at) > (int32_t)AP_LINGER_ACK_MS;
         const bool cap =
             (int32_t)(now - ctx.success_at) > (int32_t)AP_LINGER_MAX_MS;
         if (acked_beat || cap) {
