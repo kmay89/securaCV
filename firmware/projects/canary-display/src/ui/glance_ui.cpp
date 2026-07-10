@@ -439,14 +439,19 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
              (int)w->battery_pct);
   }
   // Room comfort, when the witness reports it (parent-unit table stakes).
+  // Sign carried explicitly: -0.5° would otherwise render as 0.5°, since
+  // %d has no sign at zero (review catch).
   if (w->temp_present) {
     const size_t off = strlen(batt);
+    const char* sign = w->temp_c10 < 0 ? "-" : "";
+    const int whole = abs(w->temp_c10 / 10);
+    const int frac = abs(w->temp_c10 % 10);
     if (w->humidity_pct >= 0) {
-      snprintf(batt + off, sizeof(batt) - off, "  ·  %d.%d\xC2\xB0 %d%%",
-               w->temp_c10 / 10, abs(w->temp_c10 % 10), (int)w->humidity_pct);
+      snprintf(batt + off, sizeof(batt) - off, "  ·  %s%d.%d\xC2\xB0 %d%%",
+               sign, whole, frac, (int)w->humidity_pct);
     } else {
-      snprintf(batt + off, sizeof(batt) - off, "  ·  %d.%d\xC2\xB0",
-               w->temp_c10 / 10, abs(w->temp_c10 % 10));
+      snprintf(batt + off, sizeof(batt) - off, "  ·  %s%d.%d\xC2\xB0",
+               sign, whole, frac);
     }
   }
   lv_obj_set_style_text_color(s_dev_meta, badge_color(w->badge, st.night), 0);

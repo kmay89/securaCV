@@ -708,15 +708,19 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
                w->wb_breathing ? LV_SYMBOL_OK : "—");
     }
     // Room comfort, when the witness reports it (parent-unit table stakes).
+    // Sign carried explicitly: -0.5° would otherwise render as 0.5°, since
+    // %d has no sign at zero (review catch).
     if (w->temp_present) {
       const size_t off = strlen(wb);
+      const char* sign = w->temp_c10 < 0 ? "-" : "";
+      const int whole = abs(w->temp_c10 / 10);
+      const int frac = abs(w->temp_c10 % 10);
       if (w->humidity_pct >= 0) {
-        snprintf(wb + off, sizeof(wb) - off, "   %d.%d\xC2\xB0 · %d%%",
-                 w->temp_c10 / 10, abs(w->temp_c10 % 10),
-                 (int)w->humidity_pct);
+        snprintf(wb + off, sizeof(wb) - off, "   %s%d.%d\xC2\xB0 · %d%%",
+                 sign, whole, frac, (int)w->humidity_pct);
       } else {
-        snprintf(wb + off, sizeof(wb) - off, "   %d.%d\xC2\xB0",
-                 w->temp_c10 / 10, abs(w->temp_c10 % 10));
+        snprintf(wb + off, sizeof(wb) - off, "   %s%d.%d\xC2\xB0",
+                 sign, whole, frac);
       }
     }
     if (w->battery_present && w->battery_pct >= 0) {

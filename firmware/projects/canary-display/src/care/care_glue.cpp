@@ -39,19 +39,35 @@ bool s_prev_quiet = false;
 bool s_prev_acked = false;
 bool s_mutes_applied = false;
 
-// Record every witness currently at Warn into the overnight ledger — called
-// on a suppressed Warn edge, so it costs nothing on the steady path.
-void ledger_note_warns(uint32_t now) {
+// Per-witness Warn-edge scan for the overnight ledger. Runs at 1 Hz during
+// quiet hours only. Tracking is per slot, NOT fleet-wide: a second witness
+// going stale while the first still holds the fleet's worst at Warn must
+// still land in the morning summary (review catch). The mask self-heals on
+// slot reuse — worst case is a duplicate note, which the ledger dedups.
+uint32_t s_warn_mask = 0;
+uint32_t s_last_scan_ms = 0;
+
+void ledger_scan_warns(uint32_t now) {
   using canary::fleet::Sev;
+  if ((int32_t)(now - s_last_scan_ms) < 1000) return;
+  s_last_scan_ms = now;
   auto& fleet = canary::fleet::the_fleet();
   const time_t epoch = time(nullptr);
   const uint32_t e = epoch > 1700000000 ? (uint32_t)epoch : 0;
   const int n = fleet.count();
-  for (int i = 0; i < n; i++) {
+  for (int i = 0; i < n && i < 32; i++) {
     const auto* w = fleet.at(i);
     if (!w) continue;
-    if (fleet.witness_sev(*w, now) != Sev::Warn) continue;
-    s_ledger.note(canary::fleet::Fleet::display_name(*w), warn_reason(*w), e);
+    const uint32_t bit = 1UL << i;
+    if (fleet.witness_sev(*w, now) == Sev::Warn) {
+      if (!(s_warn_mask & bit)) {
+        s_warn_mask |= bit;
+        s_ledger.note(canary::fleet::Fleet::display_name(*w), warn_reason(*w),
+                      e);
+      }
+    } else {
+      s_warn_mask &= ~bit;
+    }
   }
 }
 
@@ -122,37 +138,44 @@ void care_loop(uint32_t now, bool quiet, bool broker_up, bool time_valid,
       default:
         break;
     }
-    if (s_policy.take_suppressed_warn()) ledger_note_warns(now);
   }
   canary::hal::chime_loop(now);
 
   // ── Ledger lifecycle: night begins fresh; the household ack clears it
-  //    (reading the morning summary IS the acknowledgment) ──
-  if (quiet && !s_prev_quiet) s_ledger.clear();
+  //    (reading the morning summary IS the acknowledgment). During quiet
+  //    hours a per-witness scan records every Warn edge the policy
+  //    silenced. ──
+  if (quiet && !s_prev_quiet) {
+    s_ledger.clear();
+    s_warn_mask = 0;  // witnesses already at Warn when night falls count too
+  }
   if (acked && !s_prev_acked) s_ledger.clear();
   s_prev_quiet = quiet;
   s_prev_acked = acked;
+  if (quiet) ledger_scan_warns(now);
 
-  // ── Escalation-on-no-ack (spec §5) ──
-  if (s_policy.escalation_due(worst, acked, now, ESCALATE_UNACKED_MS) &&
-      broker_up) {
-    const time_t epoch = time(nullptr);
-    if (epoch > 1700000000) {
-      // Name the witness that is worst right now — the escalation names a
-      // place, not a payload.
-      const char* who = "";
-      const int n = fleet.count();
-      for (int i = 0; i < n; i++) {
-        const auto* w = fleet.at(i);
-        if (w && fleet.witness_sev(*w, now) == worst) {
-          who = canary::fleet::Fleet::display_name(*w);
-          break;
-        }
+  // ── Escalation-on-no-ack (spec §5). Deliverability gates the latch: a
+  //    deadline crossed while the broker is down (or the clock invalid)
+  //    escalates the moment sending becomes possible, instead of being
+  //    silently consumed (review catch). ──
+  const time_t esc_epoch = time(nullptr);
+  const bool can_send = broker_up && esc_epoch > 1700000000;
+  if (s_policy.escalation_due(worst, acked, now, ESCALATE_UNACKED_MS,
+                              can_send)) {
+    // Name the witness that is worst right now — the escalation names a
+    // place, not a payload.
+    const char* who = "";
+    const int n = fleet.count();
+    for (int i = 0; i < n; i++) {
+      const auto* w = fleet.at(i);
+      if (w && fleet.witness_sev(*w, now) == worst) {
+        who = canary::fleet::Fleet::display_name(*w);
+        break;
       }
-      canary::net::publish_fleet_escalation(
-          (uint32_t)epoch, canary::fleet::sev_name(worst), who);
-      log_line("CARE", "Escalation published: Tier-1 ran unacked past deadline.");
     }
+    canary::net::publish_fleet_escalation(
+        (uint32_t)esc_epoch, canary::fleet::sev_name(worst), who);
+    log_line("CARE", "Escalation published: Tier-1 ran unacked past deadline.");
   }
 
 #if defined(FEATURE_RHYTHM) && FEATURE_RHYTHM

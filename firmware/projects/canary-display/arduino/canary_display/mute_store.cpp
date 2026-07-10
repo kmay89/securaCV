@@ -75,6 +75,14 @@ int mute_store_apply(uint32_t now_ms, uint32_t now_epoch) {
       continue;
     }
     const uint32_t remain_s = at - now_epoch;
+    // A legitimate mute is at most ~a day ("until morning"). A corrupted
+    // NVS value would overflow remain_s * 1000 into a nonsense deadline —
+    // prune it instead of honoring garbage (review catch).
+    if (remain_s > 48UL * 3600UL) {
+      prefs.remove(kid);
+      prefs.remove(kat);
+      continue;
+    }
     if (fleet.set_mute(sid.c_str(), true, now_ms + remain_s * 1000UL)) {
       applied++;
       log_header("MUTE");

@@ -59,11 +59,11 @@ class AttentionPolicy {
           d.sound = Sound::Tier2;
           d.ramp = 2;
           last_voice_ms_ = now;
-        } else {
-          // The whole point: the Warn edge makes NO sound at night — it is
-          // handed to the ledger instead (caller harvests the flag).
-          suppressed_warn_ = true;
         }
+        // At night the Warn edge makes NO sound — the caller's PER-WITNESS
+        // ledger scan records who/why (a fleet-wide flag here would miss a
+        // second witness going Warn while the first still holds the level;
+        // review catch).
       } else if (worst <= Sev::Notice && prev_worst_ >= Sev::Warn && !quiet) {
         d.sound = Sound::AllClear;
         d.ramp = 1;
@@ -74,20 +74,15 @@ class AttentionPolicy {
     return d;
   }
 
-  // True exactly once after a Warn edge was silenced by quiet hours — the
-  // caller records who/why into the NightLedger.
-  bool take_suppressed_warn() {
-    const bool v = suppressed_warn_;
-    suppressed_warn_ = false;
-    return v;
-  }
-
   // Escalation-on-no-ack (display_care_wave.md §5): true exactly once per
-  // alarm episode when it has run unacknowledged past the deadline. The
-  // caller publishes the escalation event; a household automation decides
-  // who else to wake. Ack or resolution resets the episode.
+  // alarm episode when it has run unacknowledged past the deadline AND the
+  // caller can actually deliver it (`can_send`: broker up, clock valid).
+  // The deadline latches only on a deliverable pass — a Tier-1 that crosses
+  // the deadline while the broker is down escalates the moment the link
+  // returns, instead of being silently consumed (review catch). Ack or
+  // resolution resets the episode.
   bool escalation_due(Sev worst, bool acked, uint32_t now,
-                      uint32_t deadline_ms) {
+                      uint32_t deadline_ms, bool can_send) {
     const bool alarm = worst >= Sev::Alert && !acked;
     if (!alarm) {
       alarm_clocked_ = false;
@@ -98,7 +93,7 @@ class AttentionPolicy {
       alarm_clocked_ = true;
       alarm_since_ms_ = now;
     }
-    if (!escalated_ &&
+    if (!escalated_ && can_send &&
         (int32_t)(now - alarm_since_ms_) >= (int32_t)deadline_ms) {
       escalated_ = true;
       return true;
@@ -112,7 +107,6 @@ class AttentionPolicy {
   bool in_episode_ = false;
   uint8_t voices_ = 0;
   uint32_t last_voice_ms_ = 0;
-  bool suppressed_warn_ = false;
   bool alarm_clocked_ = false;
   bool escalated_ = false;
   uint32_t alarm_since_ms_ = 0;

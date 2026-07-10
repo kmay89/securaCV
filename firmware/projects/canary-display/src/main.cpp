@@ -277,12 +277,14 @@ static void toggle_mute(const canary::fleet::Witness& w, uint32_t now) {
   }
   const uint32_t until_epoch = canary::care::mute_until_morning_epoch();
   uint32_t until_ms;
-  if (until_epoch > 0) {
-    const uint32_t now_epoch = (uint32_t)time(nullptr);
+  const uint32_t now_epoch = (uint32_t)time(nullptr);
+  if (until_epoch > now_epoch) {
+    // Strictly-greater guard: an SNTP step between the two time() reads
+    // must not underflow into a ~49-day mute (review catch).
     until_ms = now + (until_epoch - now_epoch) * 1000UL;
     canary::fleet::mute_store_put(w.id, until_epoch);
   } else {
-    until_ms = now + 8UL * 3600UL * 1000UL;  // no clock: 8 h, unpersisted
+    until_ms = now + 8UL * 3600UL * 1000UL;  // no/odd clock: 8 h, unpersisted
   }
   fleet.set_mute(w.id, true, until_ms);
   boot_line("[input] long-press -> mute witness until morning");

@@ -433,11 +433,27 @@ void publish_fleet_ack(uint32_t epoch_s) {
 void publish_fleet_escalation(uint32_t epoch_s, const char* worst,
                               const char* witness) {
   if (!mqtt.connected() || epoch_s == 0) return;
-  char msg[192];
+  // The witness name is human-authored (retained meta payload) — escape it
+  // for JSON or a name like `Living "Room"` breaks every downstream parser.
+  // Worst case doubles: 32 name chars -> 64 + NUL fits esc (review catch).
+  char esc[66];
+  {
+    size_t o = 0;
+    for (const char* p = witness ? witness : ""; *p && o + 2 < sizeof(esc);
+         p++) {
+      const unsigned char c = (unsigned char)*p;
+      if (c == '"' || c == '\\') esc[o++] = '\\';
+      else if (c < 0x20) continue;  // control chars have no place in a name
+      esc[o++] = (char)c;
+      if (o >= 64) break;  // cap the name at 32 source chars' worst case
+    }
+    esc[o] = '\0';
+  }
+  char msg[224];
   snprintf(msg, sizeof(msg),
-           "{\"at\":%lu,\"by\":\"%s\",\"worst\":\"%s\",\"witness\":\"%.32s\"}",
+           "{\"at\":%lu,\"by\":\"%s\",\"worst\":\"%s\",\"witness\":\"%s\"}",
            (unsigned long)epoch_s, canary::cfg::get().device_id,
-           worst ? worst : "", witness ? witness : "");
+           worst ? worst : "", esc);
   // Deliberately NOT retained: an escalation is a moment, not a state — a
   // display that reconnects hours later must not re-fire the phone tree.
   publish_checked("ESCALATE", FleetSubs::FLEET_ESCALATION, msg, false);
