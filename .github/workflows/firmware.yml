@@ -307,9 +307,17 @@ jobs:
       matrix:
         flavor:
           - name: watch
-            fqbn: "esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashSize=8M,PartitionScheme=default_8MB"
+            # XIAO_ESP32S3 defaults to 8 MB flash + its own partition table;
+            # PSRAM=opi is the only override needed (matching the canary-wap
+            # Arduino CI). An explicit PartitionScheme= value the board menu
+            # doesn't define fails FQBN validation.
+            fqbn: "esp32:esp32:XIAO_ESP32S3:PSRAM=opi"
           - name: dash
-            fqbn: "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB"
+            # huge_app (3 MB app) is a built-in scheme valid on the generic
+            # esp32s3 board and comfortably fits the LVGL firmware — the CI
+            # compile gate only needs a valid, fitting layout; production uses
+            # the custom 16 MB A/B table (default_16MB.csv) in the PIO tree.
+            fqbn: "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app"
     steps:
       - uses: actions/checkout@v7
 

@@ -29,7 +29,7 @@ profiles:
   # ── Canary Watch: XIAO ESP32-S3 + Seeed Round Display (GC9A01 240x240) ──
   watch:
     notes: XIAO ESP32-S3 on the Round Display for XIAO — 8 MB flash, OPI PSRAM
-    fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashSize=8M,PartitionScheme=default_8MB,CDCOnBoot=default,USBMode=hwcdc
+    fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc
     platforms:
       - platform: esp32:esp32 (2.0.17)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
@@ -45,7 +45,9 @@ profiles:
   # ── Canary Dash: ESP32-S3 (devkit profile) + Waveshare 4.3" 800x480 RGB ──
   dash:
     notes: ESP32-S3-DevKitC-1 profile for the Waveshare 4.3B — 16 MB flash, OPI PSRAM
-    fqbn: esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=default_16MB,CDCOnBoot=default,USBMode=hwcdc
+    # huge_app (3 MB app) is a built-in scheme valid on the generic esp32s3
+    # board; production uses the custom 16 MB A/B table in the PlatformIO tree.
+    fqbn: esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc
     platforms:
       - platform: esp32:esp32 (2.0.17)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
