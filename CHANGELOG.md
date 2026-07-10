@@ -20,6 +20,14 @@ under 0.10.1 keep decrypting byte-for-byte. If that test ever fails after
 a future bump, sealed evidence would no longer open; the goldens must
 never be "fixed".
 
+The crate's `zeroize` feature is enabled explicitly: 0.10.x scrubbed the
+cipher's internal key copy on drop unconditionally, but 0.11 gates that
+behind an off-by-default feature — without it, the bump would have
+silently left DEK/master-key copies in process memory after each
+seal/decrypt (review catch on this PR). Also picks up crossbeam-epoch
+0.9.20 (lockfile-only) for RUSTSEC-2026-0204, a pre-existing transitive
+advisory published 2026-07-06 that began failing `cargo audit` in CI.
+
 ### kernel: retire the legacy bare-hash signature fallback
 
 `SignatureMode::Compat` used to fall back to verifying Ed25519 signatures
