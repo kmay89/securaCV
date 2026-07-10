@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### kernel: chacha20poly1305 0.10 → 0.11 (vault AEAD, wire format unchanged)
+
+Supersedes the Dependabot bump (#828), which could not merge because the
+new `aead` 0.6 trait API is a source-breaking change in our vault crypto.
+Migrated `src/vault/crypto.rs` to `AeadInOut::{encrypt,decrypt}_inout_detached`
+with `TryFrom`/reference conversions for key/nonce/tag (same four cipher
+sites, same fail-closed error mapping).
+
+**The on-disk sealed-envelope format is provably unchanged:** a new
+known-answer test (`aead_known_answer_rfc8439`) pins the exact
+ciphertext+tag bytes for both the V1 and V2 AAD constructions against
+goldens generated with an independent implementation (Python
+`cryptography`, RFC 8439). The test was added and verified green on
+0.10.1 BEFORE the bump, and passes identically on 0.11 — envelopes sealed
+under 0.10.1 keep decrypting byte-for-byte. If that test ever fails after
+a future bump, sealed evidence would no longer open; the goldens must
+never be "fixed".
+
+The crate's `zeroize` feature is enabled explicitly: 0.10.x scrubbed the
+cipher's internal key copy on drop unconditionally, but 0.11 gates that
+behind an off-by-default feature — without it, the bump would have
+silently left DEK/master-key copies in process memory after each
+seal/decrypt (review catch on this PR). Also picks up crossbeam-epoch
+0.9.20 (lockfile-only) for RUSTSEC-2026-0204, a pre-existing transitive
+advisory published 2026-07-06 that began failing `cargo audit` in CI.
+
 ### kernel: retire the legacy bare-hash signature fallback
 
 `SignatureMode::Compat` used to fall back to verifying Ed25519 signatures

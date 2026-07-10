@@ -15,7 +15,9 @@ toml = "1.1"
 sha2 = "0.11"
 rand = "0.10"
 zeroize = { version = "1.7", features = ["derive"] }
-chacha20poly1305 = "0.10"
+# zeroize: restores 0.10.x behavior (unconditional then) of scrubbing the
+# cipher's internal key copy on drop — off by default in 0.11.
+chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 regex = "1.10"
 log = "0.4"

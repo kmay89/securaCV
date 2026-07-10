@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use chacha20poly1305::{
-    aead::{AeadInPlace, KeyInit},
-    ChaCha20Poly1305, Key, Nonce, Tag,
+    aead::{AeadInOut, KeyInit},
+    ChaCha20Poly1305, Nonce, Tag,
 };
 use rand::rngs::SysRng;
 use rand::TryRng;
@@ -217,12 +217,10 @@ fn encrypt_payload(
     aad: &[u8],
     buffer: &mut [u8],
 ) -> Result<[u8; 16]> {
-    if nonce.len() != 12 {
-        return Err(anyhow!("vault nonce length mismatch"));
-    }
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(dek));
+    let nonce = Nonce::try_from(nonce).map_err(|_| anyhow!("vault nonce length mismatch"))?;
+    let cipher = ChaCha20Poly1305::new(dek.into());
     let tag = cipher
-        .encrypt_in_place_detached(Nonce::from_slice(nonce), aad, buffer)
+        .encrypt_inout_detached(&nonce, aad, buffer.into())
         .map_err(|_| anyhow!("vault encryption failed"))?;
     Ok(tag.into())
 }
@@ -234,16 +232,11 @@ fn decrypt_payload(
     buffer: &mut [u8],
     tag: &[u8],
 ) -> Result<()> {
-    if nonce.len() != 12 {
-        return Err(anyhow!("vault nonce length mismatch"));
-    }
-    if tag.len() != 16 {
-        return Err(anyhow!("vault tag length mismatch"));
-    }
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(dek));
-    let tag = Tag::from_slice(tag);
+    let nonce = Nonce::try_from(nonce).map_err(|_| anyhow!("vault nonce length mismatch"))?;
+    let tag = Tag::try_from(tag).map_err(|_| anyhow!("vault tag length mismatch"))?;
+    let cipher = ChaCha20Poly1305::new(dek.into());
     cipher
-        .decrypt_in_place_detached(Nonce::from_slice(nonce), aad, buffer, tag)
+        .decrypt_inout_detached(&nonce, aad, buffer.into(), &tag)
         .map_err(|_| anyhow!("vault decryption failed"))?;
     Ok(())
 }
@@ -376,13 +369,13 @@ fn encrypt_in_place(
     nonce: &[u8; 12],
     buffer: &mut [u8],
 ) -> Result<[u8; 16]> {
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(master_key));
+    let cipher = ChaCha20Poly1305::new(master_key.into());
     // V1 AAD format: envelope_id || ruleset_hash (no length prefix for backward compatibility)
     let mut aad = Vec::with_capacity(envelope_id.len() + ruleset_hash.len());
     aad.extend_from_slice(envelope_id.as_bytes());
     aad.extend_from_slice(ruleset_hash);
     let tag = cipher
-        .encrypt_in_place_detached(Nonce::from_slice(nonce), &aad, buffer)
+        .encrypt_inout_detached(nonce.into(), &aad, buffer.into())
         .map_err(|_| anyhow!("vault encryption failed"))?;
     Ok(tag.into())
 }
@@ -395,14 +388,13 @@ fn decrypt_in_place(
     tag: &[u8; 16],
     buffer: &mut [u8],
 ) -> Result<()> {
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(master_key));
+    let cipher = ChaCha20Poly1305::new(master_key.into());
     // V1 AAD format: envelope_id || ruleset_hash (no length prefix for backward compatibility)
     let mut aad = Vec::with_capacity(envelope_id.len() + ruleset_hash.len());
     aad.extend_from_slice(envelope_id.as_bytes());
     aad.extend_from_slice(ruleset_hash);
-    let tag = Tag::from_slice(tag);
     cipher
-        .decrypt_in_place_detached(Nonce::from_slice(nonce), &aad, buffer, tag)
+        .decrypt_inout_detached(nonce.into(), &aad, buffer.into(), tag.into())
         .map_err(|_| anyhow!("vault decryption failed"))?;
     Ok(())
 }
@@ -506,6 +498,49 @@ fn kem_decapsulate(kem: &KemKeypair, kem_ct: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Known-answer test pinning the exact on-disk AEAD bytes to RFC 8439.
+    /// Goldens were generated with an INDEPENDENT implementation (Python
+    /// `cryptography`'s ChaCha20Poly1305), so this locks the wire format
+    /// across chacha20poly1305 crate upgrades: an already-sealed envelope
+    /// must keep decrypting byte-for-byte identically after any bump. If
+    /// this test ever fails after a dependency change, sealed evidence on
+    /// disk would no longer open — do not "fix" the goldens.
+    #[test]
+    fn aead_known_answer_rfc8439() {
+        let key: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let nonce: [u8; 12] = std::array::from_fn(|i| i as u8);
+        let clear = b"securacv vault known-answer test";
+        let ruleset = [0xAAu8; 32];
+
+        const GOLDEN_CT: &str = "fa9e6b755b76c63697f55e86f4692e08a71fc5897c15c3ca91f25de501a5d548";
+        const GOLDEN_TAG_V2: &str = "32c1c9adf7f92ccf7e8a00f47288b92c";
+        const GOLDEN_TAG_V1: &str = "df41bbadcff6d7e7c1e9283ca8f1923f";
+
+        // V2 path (length-prefixed AAD via encode_aad).
+        let aad = encode_aad("kat-envelope", &ruleset);
+        let mut buf = clear.to_vec();
+        let tag = encrypt_payload(&key, &nonce, &aad, &mut buf).unwrap();
+        assert_eq!(hex::encode(&buf), GOLDEN_CT);
+        assert_eq!(hex::encode(tag), GOLDEN_TAG_V2);
+        // ...and the pinned bytes decrypt back (a 0.10.1-sealed envelope
+        // must open on any future crate version).
+        let mut ct = hex::decode(GOLDEN_CT).unwrap();
+        let tag_bytes = hex::decode(GOLDEN_TAG_V2).unwrap();
+        decrypt_payload(&key, &nonce, &aad, &mut ct, &tag_bytes).unwrap();
+        assert_eq!(ct, clear);
+
+        // V1 path (raw-concatenation AAD, encrypt_in_place/decrypt_in_place).
+        let mut buf = clear.to_vec();
+        let tag = encrypt_in_place(&key, "kat-envelope", &ruleset, &nonce, &mut buf).unwrap();
+        assert_eq!(hex::encode(&buf), GOLDEN_CT);
+        assert_eq!(hex::encode(tag), GOLDEN_TAG_V1);
+        let mut ct = hex::decode(GOLDEN_CT).unwrap();
+        let mut tag_arr = [0u8; 16];
+        tag_arr.copy_from_slice(&hex::decode(GOLDEN_TAG_V1).unwrap());
+        decrypt_in_place(&key, "kat-envelope", &ruleset, &nonce, &tag_arr, &mut ct).unwrap();
+        assert_eq!(ct, clear);
+    }
 
     #[test]
     fn aad_roundtrip() {
