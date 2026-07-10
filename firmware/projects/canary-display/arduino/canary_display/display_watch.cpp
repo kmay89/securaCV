@@ -14,6 +14,7 @@
 
 #include "pins.h"
 #include "display.h"
+#include "core_compat.h"
 #include "log.h"
 
 namespace canary::hal {
@@ -46,9 +47,8 @@ bool cst816s_read(uint8_t reg, uint8_t* buf, size_t len) {
 bool display_init() {
   // Backlight first, held dark until the first frame is flushed — no
   // white-flash at boot on a device that may live in a bedroom.
-  ledcSetup(LEDC_CHANNEL, LEDC_FREQ_HZ, LEDC_RES_BITS);
-  ledcAttachPin(TFT_PIN_BL, LEDC_CHANNEL);
-  ledcWrite(LEDC_CHANNEL, 0);
+  cc_ledc_setup(TFT_PIN_BL, LEDC_CHANNEL, LEDC_FREQ_HZ, LEDC_RES_BITS);
+  cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, 0);
 
   s_bus = new Arduino_ESP32SPI(TFT_PIN_DC, TFT_PIN_CS, TFT_PIN_SCK,
                                TFT_PIN_MOSI, TFT_PIN_MISO);
@@ -80,9 +80,9 @@ void display_flush() { /* LVGL flushes dirty regions itself */ }
 
 void backlight_set(uint8_t level) {
 #if TFT_BL_ACTIVE_HIGH
-  ledcWrite(LEDC_CHANNEL, level);
+  cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, level);
 #else
-  ledcWrite(LEDC_CHANNEL, 255 - level);
+  cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, 255 - level);
 #endif
 }
 

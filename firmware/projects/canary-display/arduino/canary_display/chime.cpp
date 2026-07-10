@@ -1,5 +1,6 @@
 // src/hal/chime.cpp — non-blocking LEDC tone patterns (spec §5).
 #include "chime.h"
+#include "core_compat.h"
 
 #include <Arduino.h>
 
@@ -45,12 +46,12 @@ uint32_t s_step_until_ms = 0;
 void tone_out(uint16_t freq) {
   if (s_pin < 0) return;
   if (freq == 0) {
-    ledcWriteTone(LEDC_CH, 0);
+    cc_ledc_tone((uint8_t)s_pin, LEDC_CH, 0);
   } else {
-    ledcWriteTone(LEDC_CH, freq);
+    cc_ledc_tone((uint8_t)s_pin, LEDC_CH, freq);
     // Passive piezo at ~50% duty; ledcWriteTone sets its own duty, this
     // keeps loudness deterministic across core versions.
-    ledcWrite(LEDC_CH, 127);
+    cc_ledc_write((uint8_t)s_pin, LEDC_CH, 127);
   }
 }
 
@@ -59,9 +60,8 @@ void tone_out(uint16_t freq) {
 void chime_init(int pin) {
   if (pin < 0) return;
   s_pin = pin;
-  ledcSetup(LEDC_CH, 2000, 8);
-  ledcAttachPin((uint8_t)pin, LEDC_CH);
-  ledcWriteTone(LEDC_CH, 0);
+  cc_ledc_setup((uint8_t)pin, LEDC_CH, 2000, 8);
+  cc_ledc_tone((uint8_t)pin, LEDC_CH, 0);
 }
 
 void chime_play(Chime c) {

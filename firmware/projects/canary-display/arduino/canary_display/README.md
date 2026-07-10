@@ -23,13 +23,20 @@ name collision the flat layout creates (both the composition header
 (`check_display_arduino_sync.sh`) fails if the committed sketch drifts from the
 canonical tree. **Fix bugs in `../../src`, then regenerate** (below).
 
-## ⚠️ Use arduino-esp32 core **2.0.x**, not 3.x
+## Pick the profile that matches your installed core
 
-The renderer pins `GFX Library for Arduino @ 1.4.9` and LVGL v8. GFX 1.5+/newer
-LVGL need core 3.x; GFX 1.4.9 does **not** build on core 3.x. The `sketch.yaml`
-profiles pin the `esp32:esp32` platform to the **2.0.17** line (the same core
-the PlatformIO env resolves). Installing the Boards Manager default (3.x) will
-fail the build.
+The sketch builds on **both** arduino-esp32 major lines, but GFX and NimBLE
+split their library majors along the core boundary — so each core line has its
+own profiles carrying the right pins:
+
+| Your `esp32` platform | Profiles | GFX | NimBLE-Arduino |
+|---|---|---|---|
+| **3.x** (what Boards Manager installs by default) | `watch-core3` / `dash-core3` | 1.6.0 | 2.5.0 |
+| **2.0.17** (matches the PlatformIO release path) | `watch` / `dash` | 1.4.9 | 1.4.3 |
+
+Just installed the esp32 platform and got the latest? Use the `-core3`
+profiles — no downgrade needed. Mixing rows (core 3 + GFX 1.4.9, or core 2 +
+NimBLE 2.x) fails the build; switch profiles instead of editing a single pin.
 
 ## Build
 
@@ -49,18 +56,21 @@ git-ignored). Set your timezone for quiet hours with e.g.
 
 - **Arduino IDE 2.3+**: add the ESP32 board URL
   `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`,
-  install **esp32 by Espressif Systems 2.0.17**, install the libraries below,
-  open `canary_display.ino`, and pick the **watch** or **dash** profile from
-  the toolbar dropdown (board + PSRAM + flash travel with the profile).
+  install **esp32 by Espressif Systems** (3.x default is fine — see the profile
+  table above), install the libraries below, open `canary_display.ino`, and
+  pick the profile matching your flavor + core from the toolbar dropdown
+  (board + PSRAM + flash travel with the profile).
 - **arduino-cli**:
   ```bash
-  arduino-cli compile --profile watch    # or --profile dash
-  arduino-cli upload  --profile watch -p /dev/ttyACM0
+  arduino-cli compile --profile watch-core3    # or dash-core3 / watch / dash
+  arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
   ```
 
-Libraries (also declared per-profile in `sketch.yaml`): `GFX Library for
-Arduino @ 1.4.9` (EXACT), `lvgl @ 8.4.0`, `PubSubClient`, `Crypto`,
-`ArduinoJson`, `NimBLE-Arduino @ 1.4.3`.
+Libraries (also declared per-profile in `sketch.yaml`): `lvgl @ 8.4.0`,
+`PubSubClient`, `Crypto`, `ArduinoJson`, plus the core-matched pair from the
+table above — `GFX Library for Arduino` @ **1.6.0** (core 3) or **1.4.9**
+(core 2, EXACT), and `NimBLE-Arduino` @ **2.5.0** (core 3) or **1.4.3**
+(core 2).
 
 ### 3. LVGL config
 

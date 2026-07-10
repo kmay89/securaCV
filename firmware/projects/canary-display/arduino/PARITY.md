@@ -59,16 +59,26 @@ alongside the OTA/CSI sync guards.
 
 ## The compile gate
 
-`.github/workflows/firmware.yml` builds **both** flavors with `arduino-cli`
-(esp32 core 2.0.17, GFX 1.4.9, LVGL v8) — the same job class as the canary-wap
-Arduino build. This is what proves the generated sketch actually compiles;
-until a flavor is green here, treat its parity as *claimed, not proven*
-(repo convention: land code CI-green, flip the dashboard on proof).
+`.github/workflows/firmware.yml` builds **both flavors × both core lines**
+(2×2 matrix) with `arduino-cli` — the same job class as the canary-wap Arduino
+build. This is what proves the generated sketch actually compiles; until a
+flavor is green here, treat its parity as *claimed, not proven* (repo
+convention: land code CI-green, flip the dashboard on proof).
 
-## Core-version constraint (load-bearing)
+## Core-version matrix (load-bearing)
 
-The Arduino build **must** use arduino-esp32 **2.0.x**. GFX 1.4.9 (pinned for
-the panels) does not build on core 3.x, and 1.5+ needs 3.x — the same reason
-the PlatformIO env pins `espressif32 @ 6.9.0`. The `sketch.yaml` profiles and
-the CI job both pin 2.0.17; do not bump without also moving GFX/LVGL and
-re-validating both packagings.
+The Arduino packaging builds on **both** arduino-esp32 major lines; the source
+carries the differences (`include/canary/hal/core_compat.h` shims LEDC + task-
+watchdog, `src/net/chirp_scan.cpp` gates the NimBLE scan-callback API on
+`ESP_ARDUINO_VERSION_MAJOR`). What is NOT interchangeable is the library set —
+GFX and NimBLE split their majors along the core boundary:
+
+| arduino-esp32 core | GFX Library for Arduino | NimBLE-Arduino | Profile suffix |
+|---|---|---|---|
+| **2.0.17** (matches PlatformIO `espressif32 @ 6.9.0` — the bench-validated release path) | 1.4.9 (1.5+ needs core 3) | 1.4.3 (2.x needs core 3) | `watch` / `dash` |
+| **3.x** (Boards Manager default) | 1.6.0 (won't build on core 2) | 2.5.0 (won't build on core 2) | `watch-core3` / `dash-core3` |
+
+LVGL 8.4.0, PubSubClient, Crypto, and ArduinoJson are core-agnostic and shared.
+Always move a whole row at once — mixing lines fails the build. The canonical
+PlatformIO tree stays on the 2.0.17 line (that is what ships); the core-3 row
+exists so a stock Boards Manager install builds without a downgrade.
