@@ -21,11 +21,11 @@
 #if __has_include("secrets.h")
   #include "secrets.h"
 #elif __has_include("secrets/secrets.h")
-  #include "secrets/secrets.h"
+  #include "secrets.h"
 #else
   #include "secrets.ci.h"
 #endif
-#include <config.h>
+#include "flavor_config.h"
 
 // -------------------- Identity --------------------
 static constexpr const char* DEVICE_TYPE   = CD_DEVICE_TYPE;

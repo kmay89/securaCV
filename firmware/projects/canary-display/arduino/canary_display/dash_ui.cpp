@@ -1,0 +1,753 @@
+// src/ui/dash_ui.cpp — the Dash's 800x480 face, LVGL edition.
+//
+// Quiet Glass on a wall: true-black ground, #141414 cards with hairline
+// edges and rounded corners, severity as a rounded spine pill plus label
+// (never color alone), soft glow instead of hard strips. Motion budget:
+// an unacked-alert card breathes its glow; the hold-to-ack ring sweeps;
+// nothing else moves.
+#include "flavor_config.h"
+#ifdef CD_FLAVOR_DASH
+
+#include <Arduino.h>
+#include <lvgl.h>
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+#include <time.h>
+
+#include "dash_ui.h"
+#include "theme.h"
+#include "trust.h"
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+#include "journal_instance.h"
+#endif
+
+namespace canary::ui {
+
+using canary::fleet::Fleet;
+using canary::fleet::Sev;
+using canary::fleet::Witness;
+
+namespace {
+
+constexpr int GRID_COLS = 2, GRID_ROWS = 4;
+constexpr int MAX_CARDS = GRID_COLS * GRID_ROWS;
+constexpr int EV_ROWS = 9;
+
+constexpr lv_coord_t HDR_H = 64;
+constexpr lv_coord_t TL_W = 272;
+constexpr lv_coord_t CARD_W = 248, CARD_H = 92, GAP = 8;
+
+lv_obj_t* s_scr = nullptr;
+
+// Header
+lv_obj_t* s_headline = nullptr;
+lv_obj_t* s_clock = nullptr;
+lv_obj_t* s_glow = nullptr;      // soft severity bar under the header
+
+// Cards
+struct Card {
+  lv_obj_t* box = nullptr;
+  lv_obj_t* spine = nullptr;
+  lv_obj_t* name = nullptr;
+  lv_obj_t* state = nullptr;
+  lv_obj_t* badge = nullptr;
+  lv_obj_t* event = nullptr;
+  lv_obj_t* meta = nullptr;
+};
+Card s_cards[MAX_CARDS];
+lv_obj_t* s_more = nullptr;      // "+N more"
+lv_obj_t* s_today = nullptr;     // time machine v1: the day's story
+lv_obj_t* s_empty = nullptr;     // listening state
+
+// Timeline
+lv_obj_t* s_tl_title = nullptr;
+struct EvRow {
+  lv_obj_t* dot = nullptr;
+  lv_obj_t* name = nullptr;
+  lv_obj_t* meta = nullptr;
+};
+EvRow s_ev[EV_ROWS];
+
+lv_obj_t* s_footer = nullptr;
+
+// Motion state
+lv_anim_t s_breath_anim;
+lv_obj_t* s_breathing = nullptr;
+lv_obj_t* s_ack_ring = nullptr;
+lv_anim_t s_ack_anim;
+bool s_ack_holding = false;
+
+// Proof sheet (trailblazer spec §1)
+lv_obj_t* s_proof = nullptr;        // modal container (hidden when closed)
+lv_obj_t* s_proof_qr = nullptr;
+lv_obj_t* s_proof_title = nullptr;
+lv_obj_t* s_proof_state = nullptr;
+lv_obj_t* s_proof_cap = nullptr;
+char s_proof_id[48] = {0};          // which witness the open sheet shows
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+// History modal (trailblazer spec §7): the verifiable time machine. Tapping
+// the "Past 24h" line opens a proof-carrying log of recent events; tapping any
+// row re-opens its signed chain as a QR — history you can still prove.
+constexpr int HIST_ROWS = 12;
+constexpr lv_coord_t HIST_X = 24, HIST_Y = 20, HIST_W = 752, HIST_H = 440;
+constexpr lv_coord_t HIST_ROW_Y0 = 84, HIST_ROW_H = 28;
+lv_obj_t* s_hist = nullptr;          // modal container (hidden when closed)
+lv_obj_t* s_hist_title = nullptr;
+lv_obj_t* s_hist_summary = nullptr;
+lv_obj_t* s_hist_rows[HIST_ROWS] = {nullptr};
+lv_obj_t* s_hist_erase = nullptr;    // two-tap "erase all" (sovereignty)
+lv_obj_t* s_hist_hint = nullptr;
+bool s_hist_erase_armed = false;
+uint32_t s_hist_erase_ms = 0;
+#endif
+
+// Fleet snapshot the tap router needs (updated each dash_ui_update).
+const Fleet* s_fleet = nullptr;
+uint32_t s_now_ms = 0;
+
+lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
+  lv_obj_t* l = lv_label_create(parent);
+  lv_obj_set_style_text_font(l, f, 0);
+  lv_obj_set_style_text_color(l, c, 0);
+  lv_label_set_text(l, "");
+  return l;
+}
+
+lv_obj_t* mk_box(lv_obj_t* parent) {
+  lv_obj_t* b = lv_obj_create(parent);
+  lv_obj_set_style_bg_color(b, col_surface(), 0);
+  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(b, col_edge(), 0);
+  lv_obj_set_style_border_width(b, 1, 0);
+  lv_obj_set_style_radius(b, 12, 0);
+  lv_obj_set_style_pad_all(b, 0, 0);
+  lv_obj_set_style_shadow_width(b, 0, 0);
+  lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(b, LV_OBJ_FLAG_CLICKABLE);
+  return b;
+}
+
+void breath_cb(void* var, int32_t v) {
+  lv_obj_set_style_shadow_opa((lv_obj_t*)var, (lv_opa_t)v, 0);
+}
+
+void breathe(lv_obj_t* card, lv_color_t color, bool on) {
+  if (s_breathing && (s_breathing != card || !on)) {
+    lv_anim_del(s_breathing, breath_cb);
+    lv_obj_set_style_shadow_width(s_breathing, 0, 0);
+    s_breathing = nullptr;
+  }
+  if (!on || !card || s_breathing == card) return;
+  s_breathing = card;
+  lv_obj_set_style_shadow_color(card, color, 0);
+  lv_obj_set_style_shadow_width(card, 24, 0);
+  lv_obj_set_style_shadow_spread(card, 2, 0);
+  lv_anim_init(&s_breath_anim);
+  lv_anim_set_var(&s_breath_anim, card);
+  lv_anim_set_exec_cb(&s_breath_anim, breath_cb);
+  lv_anim_set_values(&s_breath_anim, LV_OPA_20, LV_OPA_70);
+  lv_anim_set_time(&s_breath_anim, MOTION_BREATH_MS / 2);
+  lv_anim_set_playback_time(&s_breath_anim, MOTION_BREATH_MS / 2);
+  lv_anim_set_repeat_count(&s_breath_anim, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&s_breath_anim, lv_anim_path_ease_in_out);
+  lv_anim_start(&s_breath_anim);
+}
+
+void ack_cb(void* var, int32_t v) {
+  (void)var;
+  lv_arc_set_bg_angles(s_ack_ring, 0, (uint16_t)v);
+}
+
+void upper(char* s) {
+  for (; *s; s++) *s = (char)toupper((unsigned char)*s);
+}
+
+void proof_close() {
+  if (s_proof) lv_obj_add_flag(s_proof, LV_OBJ_FLAG_HIDDEN);
+  s_proof_id[0] = '\0';
+}
+
+// Render the proof sheet from raw ingredients: the pinned-pubkey key (id), the
+// verbatim signed chain payload, a title, and a state line. Shared by the live
+// witness sheet and the time-machine's per-record re-proof — the QR body is
+// byte-identical in both, which is the whole point: a week-old event proves
+// exactly like a live one. Moves the sheet to the foreground so it sits above
+// the history modal when opened from it.
+void proof_render(const char* title, const char* id, const char* chain_raw,
+                  const char* state_line) {
+  char pk[65];
+  const bool have = chain_raw && chain_raw[0] &&
+                    canary::trust::pinned_pubkey_hex(id, pk);
+  lv_label_set_text_fmt(s_proof_title, "%.24s", title);
+  lv_label_set_text(s_proof_state, state_line);
+  if (have) {
+    static char body[640];
+    const int len = snprintf(body, sizeof(body),
+                             "{\"v\":1,\"t\":\"securacv/%s/chain\","
+                             "\"pk\":\"%s\",\"p\":%s}",
+                             id, pk, chain_raw);
+    if (len > 0 && (size_t)len < sizeof(body)) {
+      lv_qrcode_update(s_proof_qr, body, (uint32_t)len);
+      lv_obj_clear_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
+      lv_label_set_text(s_proof_cap,
+                        "Scan to verify this signed chain\n"
+                        "no app · no account · no cloud");
+    } else {
+      lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
+      lv_label_set_text(s_proof_cap, "Proof payload too large");
+    }
+  } else {
+    lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_proof_cap, "No signed chain to prove yet");
+  }
+  snprintf(s_proof_id, sizeof(s_proof_id), "%s", id);
+  lv_obj_move_foreground(s_proof);
+  lv_obj_clear_flag(s_proof, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Open the proof sheet for one live witness.
+void proof_open(const canary::fleet::Witness& w) {
+  char state[48];
+  snprintf(state, sizeof(state), "%s  ·  %s", link_label(w.link),
+           badge_text(w.badge));
+  proof_render(Fleet::display_name(w), w.id, w.chain_raw, state);
+}
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+// Wall-clock stamp for a journal record: "MM-DD HH:MM", or an em dash when the
+// event was logged before SNTP (no honest place on a timeline).
+void fmt_stamp(uint32_t epoch, char* out, size_t cap) {
+  if (epoch == 0) { snprintf(out, cap, "  --  "); return; }
+  const time_t t = (time_t)epoch;
+  struct tm tmv;
+  localtime_r(&t, &tmv);
+  strftime(out, cap, "%m-%d %H:%M", &tmv);
+}
+
+// Re-open a PAST event's proof from its journaled record.
+void proof_open_record(const canary::fleet::JournalRecord& r) {
+  char stamp[16];
+  fmt_stamp(r.epoch, stamp, sizeof(stamp));
+  char state[64];
+  snprintf(state, sizeof(state), "%s  ·  %s", stamp,
+           badge_text((canary::fleet::Badge)r.badge));
+  const char* title = r.name[0] ? r.name : r.id;
+  proof_render(title, r.id, r.chain_raw, state);
+}
+
+void hist_close() {
+  if (s_hist) lv_obj_add_flag(s_hist, LV_OBJ_FLAG_HIDDEN);
+  s_hist_erase_armed = false;
+}
+
+// Populate and open the history modal from the journal ring (newest first).
+void hist_open() {
+  if (!s_hist) return;
+  const auto& j = canary::fleet::the_journal();
+  const int n = j.count();
+
+  if (n == 0) {
+    lv_label_set_text(s_hist_summary, "Nothing witnessed yet");
+  } else {
+    const uint32_t oldest = j.oldest_known_epoch();
+    char since[24] = "";
+    if (oldest) fmt_stamp(oldest, since, sizeof(since));
+    lv_label_set_text_fmt(s_hist_summary, "%d event%s%s%s", n,
+                          n == 1 ? "" : "s", oldest ? " · since " : "",
+                          oldest ? since : "");
+  }
+
+  for (int i = 0; i < HIST_ROWS; i++) {
+    const auto* r = j.at(i);   // newest at 0
+    if (!r) { lv_label_set_text(s_hist_rows[i], ""); continue; }
+    char stamp[16], human[40];
+    fmt_stamp(r->epoch, stamp, sizeof(stamp));
+    humanize_event(r->ev, human, sizeof(human));
+    const char* who = r->name[0] ? r->name : r->id;
+    // Verified events earn a check; everything else states its verdict word
+    // (never a bare color) — honesty travels with the history.
+    lv_obj_set_style_text_color(s_hist_rows[i],
+                                sev_color((Sev)r->sev, false), 0);
+    lv_label_set_text_fmt(s_hist_rows[i], "%s   ·   %.12s   ·   %.18s   ·   %s",
+                          stamp, who, human,
+                          badge_text((canary::fleet::Badge)r->badge));
+  }
+
+  const int shown = n < HIST_ROWS ? n : HIST_ROWS;
+  if (n > shown) {
+    lv_label_set_text_fmt(s_hist_hint,
+                          "showing %d of %d · tap a row to prove it", shown, n);
+  } else {
+    lv_label_set_text(s_hist_hint, "tap a row to prove it · tap away to close");
+  }
+  lv_label_set_text(s_hist_erase, "Erase all history");
+  s_hist_erase_armed = false;
+
+  lv_obj_move_foreground(s_hist);
+  lv_obj_clear_flag(s_hist, LV_OBJ_FLAG_HIDDEN);
+}
+#endif  // FEATURE_TIME_MACHINE
+
+}  // namespace
+
+// ── Public API ───────────────────────────────────────────────────────────
+
+void dash_ui_create() {
+  s_scr = lv_scr_act();
+  lv_obj_set_style_bg_color(s_scr, col_bg(), 0);
+  lv_obj_set_style_bg_opa(s_scr, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
+
+  // ── Header ──
+  s_headline = mk_label(s_scr, font_title(), col_text());
+  lv_obj_align(s_headline, LV_ALIGN_TOP_LEFT, 20, 16);
+  s_clock = mk_label(s_scr, font_title(), col_muted());
+  lv_obj_align(s_clock, LV_ALIGN_TOP_RIGHT, -20, 16);
+  s_glow = lv_obj_create(s_scr);
+  lv_obj_set_size(s_glow, 800, 3);
+  lv_obj_set_pos(s_glow, 0, HDR_H - 3);
+  lv_obj_set_style_border_width(s_glow, 0, 0);
+  lv_obj_set_style_radius(s_glow, 0, 0);
+  lv_obj_set_style_bg_color(s_glow, col_ok(), 0);
+  lv_obj_set_style_bg_opa(s_glow, LV_OPA_COVER, 0);
+  lv_obj_set_style_shadow_width(s_glow, 18, 0);
+  lv_obj_set_style_shadow_spread(s_glow, 1, 0);
+  lv_obj_set_style_shadow_color(s_glow, col_ok(), 0);
+  lv_obj_set_style_shadow_opa(s_glow, LV_OPA_40, 0);
+  lv_obj_clear_flag(s_glow, LV_OBJ_FLAG_SCROLLABLE);
+
+  // ── Cards ──
+  for (int i = 0; i < MAX_CARDS; i++) {
+    Card& c = s_cards[i];
+    const int col = i % GRID_COLS, row = i / GRID_COLS;
+    c.box = mk_box(s_scr);
+    lv_obj_set_size(c.box, CARD_W, CARD_H);
+    lv_obj_set_pos(c.box, 12 + col * (CARD_W + GAP),
+                   HDR_H + 10 + row * (CARD_H + GAP));
+    c.spine = lv_obj_create(c.box);
+    lv_obj_set_size(c.spine, 5, CARD_H - 24);
+    lv_obj_set_pos(c.spine, 10, 12);
+    lv_obj_set_style_radius(c.spine, 3, 0);
+    lv_obj_set_style_border_width(c.spine, 0, 0);
+    lv_obj_set_style_bg_opa(c.spine, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(c.spine, LV_OBJ_FLAG_SCROLLABLE);
+    c.name = mk_label(c.box, font_body(), col_text());
+    lv_obj_set_pos(c.name, 26, 10);
+    c.state = mk_label(c.box, font_caption(), col_ok());
+    lv_obj_set_style_text_letter_space(c.state, 1, 0);
+    lv_obj_set_pos(c.state, 26, 34);
+    c.badge = mk_label(c.box, font_caption(), col_muted());
+    lv_obj_align(c.badge, LV_ALIGN_TOP_RIGHT, -12, 34);
+    c.event = mk_label(c.box, font_caption(), col_muted());
+    lv_obj_set_pos(c.event, 26, 52);
+    c.meta = mk_label(c.box, font_caption(), col_faint());
+    lv_obj_set_pos(c.meta, 26, 70);
+    lv_obj_add_flag(c.box, LV_OBJ_FLAG_HIDDEN);
+  }
+  s_more = mk_label(s_scr, font_label(), col_muted());
+  lv_obj_align(s_more, LV_ALIGN_BOTTOM_LEFT, 20, -8);
+  s_today = mk_label(s_scr, font_caption(), col_muted());
+  lv_obj_align(s_today, LV_ALIGN_BOTTOM_LEFT, 20, -28);
+  s_empty = mk_label(s_scr, font_body(), col_muted());
+  lv_obj_set_style_text_align(s_empty, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(s_empty, LV_ALIGN_LEFT_MID, 90, 0);
+
+  // ── Timeline ──
+  lv_obj_t* rail = lv_obj_create(s_scr);
+  lv_obj_set_size(rail, 1, 480 - HDR_H - 20);
+  lv_obj_set_pos(rail, 800 - TL_W - 10, HDR_H + 10);
+  lv_obj_set_style_bg_color(rail, col_edge(), 0);
+  lv_obj_set_style_bg_opa(rail, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(rail, 0, 0);
+  lv_obj_set_style_radius(rail, 0, 0);
+  lv_obj_clear_flag(rail, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_tl_title = mk_label(s_scr, font_caption(), col_muted());
+  lv_obj_set_style_text_letter_space(s_tl_title, 2, 0);
+  lv_label_set_text(s_tl_title, "EVENTS");
+  lv_obj_set_pos(s_tl_title, 800 - TL_W + 14, HDR_H + 12);
+
+  for (int i = 0; i < EV_ROWS; i++) {
+    EvRow& r = s_ev[i];
+    const lv_coord_t y = HDR_H + 40 + i * 42;
+    r.dot = lv_obj_create(s_scr);
+    lv_obj_set_size(r.dot, 10, 10);
+    lv_obj_set_pos(r.dot, 800 - TL_W + 14, y + 5);
+    lv_obj_set_style_radius(r.dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(r.dot, 0, 0);
+    lv_obj_set_style_bg_opa(r.dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(r.dot, 10, 0);
+    lv_obj_set_style_shadow_opa(r.dot, LV_OPA_40, 0);
+    lv_obj_clear_flag(r.dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(r.dot, LV_OBJ_FLAG_HIDDEN);
+    r.name = mk_label(s_scr, font_label(), col_text());
+    lv_obj_set_pos(r.name, 800 - TL_W + 34, y);
+    r.meta = mk_label(s_scr, font_caption(), col_muted());
+    lv_obj_set_pos(r.meta, 800 - TL_W + 34, y + 19);
+  }
+
+  // ── Footer + ack ring ──
+  s_footer = mk_label(s_scr, font_caption(), col_faint());
+  lv_obj_align(s_footer, LV_ALIGN_BOTTOM_RIGHT, -16, -8);
+
+  // ── Proof sheet (hidden until a card is tapped) ──
+  s_proof = mk_box(s_scr);
+  lv_obj_set_size(s_proof, 460, 400);
+  lv_obj_center(s_proof);
+  lv_obj_set_style_shadow_width(s_proof, 40, 0);
+  lv_obj_set_style_shadow_color(s_proof, lv_color_black(), 0);
+  lv_obj_set_style_shadow_opa(s_proof, LV_OPA_60, 0);
+  s_proof_title = mk_label(s_proof, font_body(), col_text());
+  lv_obj_align(s_proof_title, LV_ALIGN_TOP_MID, 0, 14);
+  s_proof_state = mk_label(s_proof, font_caption(), col_muted());
+  lv_obj_align(s_proof_state, LV_ALIGN_TOP_MID, 0, 38);
+  lv_obj_t* qr_card = lv_obj_create(s_proof);
+  lv_obj_set_size(qr_card, 256, 256);
+  lv_obj_align(qr_card, LV_ALIGN_TOP_MID, 0, 60);
+  lv_obj_set_style_bg_color(qr_card, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(qr_card, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(qr_card, 12, 0);
+  lv_obj_set_style_border_width(qr_card, 0, 0);
+  lv_obj_set_style_pad_all(qr_card, 8, 0);
+  lv_obj_clear_flag(qr_card, LV_OBJ_FLAG_SCROLLABLE);
+  s_proof_qr = lv_qrcode_create(qr_card, 240, lv_color_black(),
+                                lv_color_white());
+  lv_obj_center(s_proof_qr);
+  s_proof_cap = mk_label(s_proof, font_caption(), col_muted());
+  lv_obj_set_style_text_align(s_proof_cap, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(s_proof_cap, LV_ALIGN_BOTTOM_MID, 0, -14);
+  lv_obj_add_flag(s_proof, LV_OBJ_FLAG_HIDDEN);
+
+  s_ack_ring = lv_arc_create(s_scr);
+  lv_obj_set_size(s_ack_ring, 120, 120);
+  lv_obj_center(s_ack_ring);
+  lv_arc_set_rotation(s_ack_ring, 270);
+  lv_arc_set_bg_angles(s_ack_ring, 0, 1);
+  lv_obj_set_style_arc_width(s_ack_ring, 5, LV_PART_MAIN);
+  lv_obj_set_style_arc_rounded(s_ack_ring, true, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(s_ack_ring, col_text(), LV_PART_MAIN);
+  lv_obj_set_style_arc_opa(s_ack_ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(s_ack_ring, LV_OPA_TRANSP, LV_PART_KNOB);
+  lv_obj_clear_flag(s_ack_ring, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(s_ack_ring, LV_OBJ_FLAG_HIDDEN);
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  // ── History modal (spec §7): the verifiable time machine, hidden until the
+  // "Past 24h" line is tapped ──
+  s_hist = mk_box(s_scr);
+  lv_obj_set_size(s_hist, HIST_W, HIST_H);
+  lv_obj_set_pos(s_hist, HIST_X, HIST_Y);
+  lv_obj_set_style_shadow_width(s_hist, 40, 0);
+  lv_obj_set_style_shadow_color(s_hist, lv_color_black(), 0);
+  lv_obj_set_style_shadow_opa(s_hist, LV_OPA_60, 0);
+  s_hist_title = mk_label(s_hist, font_body(), col_text());
+  lv_label_set_text(s_hist_title, "The story so far");
+  lv_obj_align(s_hist_title, LV_ALIGN_TOP_LEFT, 24, 16);
+  s_hist_summary = mk_label(s_hist, font_caption(), col_muted());
+  lv_obj_align(s_hist_summary, LV_ALIGN_TOP_LEFT, 24, 48);
+  for (int i = 0; i < HIST_ROWS; i++) {
+    s_hist_rows[i] = mk_label(s_hist, font_label(), col_text());
+    lv_obj_set_pos(s_hist_rows[i], 24, HIST_ROW_Y0 + i * HIST_ROW_H);
+  }
+  s_hist_hint = mk_label(s_hist, font_caption(), col_faint());
+  lv_obj_align(s_hist_hint, LV_ALIGN_BOTTOM_RIGHT, -20, -14);
+  s_hist_erase = mk_label(s_hist, font_caption(), col_muted());
+  lv_obj_align(s_hist_erase, LV_ALIGN_BOTTOM_LEFT, 24, -14);
+  lv_obj_add_flag(s_hist, LV_OBJ_FLAG_HIDDEN);
+#endif
+}
+
+void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
+  if (!s_scr) return;
+  s_fleet = &fleet;
+  s_now_ms = now;
+  const int n = fleet.count();
+  const Sev worst = fleet.worst(now);
+  const lv_color_t tcol = st.night ? ncol_text() : col_text();
+  const lv_color_t mcol = st.night ? ncol_muted() : col_muted();
+  const lv_color_t fcol = st.night ? ncol_muted() : col_faint();
+
+  // ── Header sentence ──
+  lv_obj_set_style_text_color(s_headline, tcol, 0);
+  if (n == 0) {
+    lv_label_set_text(s_headline,
+                      st.mqtt_ok ? "Listening for canaries"
+                                 : (st.wifi_ok ? "Broker unreachable" : "WiFi down"));
+  } else if (worst <= Sev::Notice) {
+    lv_label_set_text_fmt(s_headline, "All quiet  ·  %d %s%s", n,
+                          n == 1 ? "canary" : "canaries",
+                          fleet.all_verified() ? "  ·  verified" : "");
+  } else {
+    char word[16];
+    snprintf(word, sizeof(word), "%s", canary::fleet::sev_name(worst));
+    upper(word);
+    lv_obj_set_style_text_color(s_headline, sev_color(worst, st.night), 0);
+    lv_label_set_text_fmt(s_headline, "%s%s", word,
+                          st.acked ? "  ·  acknowledged" : "");
+  }
+  if (st.time_valid) {
+    lv_label_set_text_fmt(s_clock, "%02d:%02d", st.clock_hh, st.clock_mm);
+  } else {
+    lv_label_set_text(s_clock, "");
+  }
+  lv_obj_set_style_text_color(s_clock, mcol, 0);
+  const lv_color_t glow = sev_color(worst, st.night);
+  lv_obj_set_style_bg_color(s_glow, glow, 0);
+  lv_obj_set_style_shadow_color(s_glow, glow, 0);
+
+  // ── Cards ──
+  lv_obj_t* attention = nullptr;
+  lv_color_t attention_col = col_alert();
+  for (int i = 0; i < MAX_CARDS; i++) {
+    Card& c = s_cards[i];
+    const Witness* w = (i < n) ? fleet.at(i) : nullptr;
+    if (!w) {
+      lv_obj_add_flag(c.box, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    lv_obj_clear_flag(c.box, LV_OBJ_FLAG_HIDDEN);
+    const Sev s = fleet.witness_sev(*w, now);
+    const lv_color_t sc = sev_color(s, st.night);
+
+    lv_obj_set_style_bg_color(c.box, st.night ? col_bg() : col_surface(), 0);
+    lv_obj_set_style_border_color(c.box, st.night ? ncol_muted() : col_edge(), 0);
+    lv_obj_set_style_bg_color(c.spine, sc, 0);
+
+    lv_obj_set_style_text_color(c.name, tcol, 0);
+    if (w->name[0] && w->room[0]) {
+      lv_label_set_text_fmt(c.name, "%.12s · %.9s", w->name, w->room);
+    } else {
+      lv_label_set_text_fmt(c.name, "%.18s", Fleet::display_name(*w));
+    }
+
+    char state[24];
+    snprintf(state, sizeof(state), "%s", link_label(w->link));
+    upper(state);
+    lv_obj_set_style_text_color(c.state, sc, 0);
+    if (w->tamper) {
+      lv_label_set_text_fmt(c.state, "%s · TAMPER", state);
+    } else {
+      lv_label_set_text(c.state, state);
+    }
+
+    lv_obj_set_style_text_color(c.badge, badge_color(w->badge, st.night), 0);
+    lv_label_set_text(c.badge, badge_text(w->badge));
+
+    lv_obj_set_style_text_color(c.event, mcol, 0);
+    if (w->has_event) {
+      char human[40], age[8];
+      humanize_event(w->last_event, human, sizeof(human));
+      format_age(now, w->last_event_ms, age, sizeof(age));
+      lv_label_set_text_fmt(c.event, "%s  ·  %s", human, age);
+    } else {
+      lv_label_set_text(c.event, "No events yet");
+    }
+
+    lv_obj_set_style_text_color(c.meta, fcol, 0);
+    char wb[24] = "";
+    if (w->wb_present) {
+      snprintf(wb, sizeof(wb), "   breathing %s",
+               w->wb_breathing ? LV_SYMBOL_OK : "—");
+    }
+    if (w->battery_present && w->battery_pct >= 0) {
+      lv_label_set_text_fmt(c.meta, "%s %d%%   %.12s%s",
+                            w->battery_pct < 25 ? LV_SYMBOL_BATTERY_1
+                                                : LV_SYMBOL_BATTERY_3,
+                            (int)w->battery_pct, w->fw, wb);
+    } else {
+      lv_label_set_text_fmt(c.meta, "%.14s%s", w->fw, wb);
+    }
+
+    if (s >= Sev::Alert && !st.acked && !attention) {
+      attention = c.box;
+      attention_col = sc;
+    }
+  }
+  breathe(attention, attention_col, attention != nullptr);
+
+  lv_obj_set_style_text_color(s_more, mcol, 0);
+  if (n > MAX_CARDS) lv_label_set_text_fmt(s_more, "+%d more", n - MAX_CARDS);
+  else lv_label_set_text(s_more, "");
+
+  // Time machine (spec §7): the rolling day in one honest sentence, and — when
+  // there's a proof-carrying journal to browse — an affordance to open it.
+  lv_obj_set_style_text_color(s_today, fcol, 0);
+  const int day_total = fleet.history_total();
+  char today[96];
+  if (!st.time_valid || n == 0) {
+    today[0] = '\0';
+  } else if (day_total == 0) {
+    snprintf(today, sizeof(today), "Past 24h · nothing witnessed");
+  } else {
+    snprintf(today, sizeof(today), "Past 24h · %d %s · worst: %s", day_total,
+             day_total == 1 ? "event" : "events",
+             canary::fleet::sev_name(fleet.history_worst_day()));
+  }
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  if (today[0] && canary::fleet::the_journal().count() > 0) {
+    const size_t o = strlen(today);
+    snprintf(today + o, sizeof(today) - o, "   ·   tap to review");
+  }
+#endif
+  lv_label_set_text(s_today, today);
+
+  lv_obj_set_style_text_color(s_empty, mcol, 0);
+  lv_label_set_text(s_empty, n == 0 ? "Canaries publishing to this\nbroker appear here" : "");
+
+  // ── Timeline ──
+  lv_obj_set_style_text_color(s_tl_title, mcol, 0);
+  const int evn = fleet.events_count();
+  for (int i = 0; i < EV_ROWS; i++) {
+    EvRow& r = s_ev[i];
+    const auto* e = (i < evn) ? fleet.event_at(i) : nullptr;
+    if (!e) {
+      lv_obj_add_flag(r.dot, LV_OBJ_FLAG_HIDDEN);
+      lv_label_set_text(r.name, i == 0 && evn == 0 ? "Nothing witnessed yet" : "");
+      lv_label_set_text(r.meta, "");
+      lv_obj_set_style_text_color(r.name, mcol, 0);
+      continue;
+    }
+    char human[40], age[8];
+    humanize_event(e->name, human, sizeof(human));
+    format_age(now, e->at_ms, age, sizeof(age));
+    const lv_color_t ec = sev_color(e->sev, st.night);
+    lv_obj_clear_flag(r.dot, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(r.dot, ec, 0);
+    lv_obj_set_style_shadow_color(r.dot, ec, 0);
+    lv_obj_set_style_text_color(r.name,
+                                e->sev >= Sev::Warn ? ec : tcol, 0);
+    lv_label_set_text_fmt(r.name, "%.26s", human);
+    lv_obj_set_style_text_color(r.meta, mcol, 0);
+    lv_label_set_text_fmt(r.meta, "%s ago  ·  %.14s%s", age, e->device,
+                          e->signed_flag ? "  ·  signed" : "");
+  }
+
+  // The heartbeat (spec §4): the header glow swells once a minute, only
+  // when everything is reachable AND verified — absence is information.
+  static uint32_t s_last_beat_ms = 0;
+  if (!st.night && n > 0 && worst <= Sev::Notice && fleet.all_verified() &&
+      st.wifi_ok && st.mqtt_ok &&
+      (int32_t)(now - s_last_beat_ms) >= (int32_t)CD_HEARTBEAT_UI_MS) {
+    s_last_beat_ms = now;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_glow);
+    lv_anim_set_exec_cb(&a, [](void* var, int32_t v) {
+      lv_obj_set_style_shadow_opa((lv_obj_t*)var, (lv_opa_t)v, 0);
+    });
+    lv_anim_set_values(&a, LV_OPA_40, LV_OPA_90);
+    lv_anim_set_time(&a, 800);
+    lv_anim_set_playback_time(&a, 800);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_start(&a);
+  }
+
+  // ── Footer honesty line ──
+  if (!st.wifi_ok) {
+    lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_alert(), 0);
+    lv_label_set_text(s_footer, "WIFI DOWN — showing last known state");
+  } else if (!st.mqtt_ok) {
+    lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_warn(), 0);
+    lv_label_set_text(s_footer, "BROKER DOWN — showing last known state");
+  } else {
+    lv_obj_set_style_text_color(s_footer, fcol, 0);
+    lv_label_set_text(s_footer, "status display · not a life-safety device");
+  }
+}
+
+bool dash_ui_handle_tap(int16_t x, int16_t y) {
+  if (!s_scr || !s_fleet) return false;
+
+  // An open proof sheet swallows any tap (that's how you close it). It sits
+  // above the history modal, so closing it returns you to the list.
+  if (s_proof && !lv_obj_has_flag(s_proof, LV_OBJ_FLAG_HIDDEN)) {
+    proof_close();
+    return true;
+  }
+
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  // Open history modal: rows re-prove; the erase affordance takes two taps;
+  // anywhere else dismisses.
+  if (s_hist && !lv_obj_has_flag(s_hist, LV_OBJ_FLAG_HIDDEN)) {
+    lv_area_t ea;
+    lv_obj_get_coords(s_hist_erase, &ea);
+    if (x >= ea.x1 - 8 && x <= ea.x2 + 8 && y >= ea.y1 - 8 && y <= ea.y2 + 8) {
+      // Sovereignty: erasing the home's whole record is deliberate — arm on
+      // the first tap, confirm on a second within 4 s.
+      if (s_hist_erase_armed && (int32_t)(s_now_ms - s_hist_erase_ms) < 4000) {
+        canary::fleet::journal_wipe_all();
+        hist_close();
+      } else {
+        s_hist_erase_armed = true;
+        s_hist_erase_ms = s_now_ms;
+        lv_label_set_text(s_hist_erase, "Tap again to erase everything");
+        lv_obj_set_style_text_color(s_hist_erase, col_alert(), 0);
+      }
+      return true;
+    }
+    const auto& j = canary::fleet::the_journal();
+    const int shown = j.count() < HIST_ROWS ? j.count() : HIST_ROWS;
+    for (int i = 0; i < shown; i++) {
+      const int ry = HIST_Y + HIST_ROW_Y0 + i * HIST_ROW_H;
+      if (x >= HIST_X + 12 && x <= HIST_X + HIST_W - 12 && y >= ry &&
+          y < ry + HIST_ROW_H) {
+        const auto* r = j.at(i);
+        if (r) { proof_open_record(*r); return true; }
+      }
+    }
+    hist_close();
+    return true;
+  }
+
+  // Base layer: tapping the "Past 24h · tap to review" line opens the machine.
+  if (s_today && canary::fleet::the_journal().count() > 0) {
+    lv_area_t ta;
+    lv_obj_get_coords(s_today, &ta);
+    if (x >= ta.x1 - 8 && x <= ta.x2 + 8 && y >= ta.y1 - 8 && y <= ta.y2 + 8) {
+      hist_open();
+      return true;
+    }
+  }
+#endif  // FEATURE_TIME_MACHINE
+
+  // Card hit-test (same geometry the create pass laid down).
+  const int n = s_fleet->count();
+  for (int i = 0; i < MAX_CARDS && i < n; i++) {
+    const int col = i % GRID_COLS, row = i / GRID_COLS;
+    const int cx = 12 + col * (CARD_W + GAP);
+    const int cy = HDR_H + 10 + row * (CARD_H + GAP);
+    if (x >= cx && x < cx + CARD_W && y >= cy && y < cy + CARD_H) {
+      const canary::fleet::Witness* w = s_fleet->at(i);
+      if (w) {
+        proof_open(*w);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void dash_ui_ack_hold(bool active) {
+  if (!s_ack_ring) return;
+  if (active && !s_ack_holding) {
+    s_ack_holding = true;
+    lv_obj_clear_flag(s_ack_ring, LV_OBJ_FLAG_HIDDEN);
+    lv_anim_init(&s_ack_anim);
+    lv_anim_set_var(&s_ack_anim, s_ack_ring);
+    lv_anim_set_exec_cb(&s_ack_anim, ack_cb);
+    lv_anim_set_values(&s_ack_anim, 1, 360);
+    lv_anim_set_time(&s_ack_anim, MOTION_ACK_MS);
+    lv_anim_set_path_cb(&s_ack_anim, lv_anim_path_linear);
+    lv_anim_start(&s_ack_anim);
+  } else if (!active && s_ack_holding) {
+    s_ack_holding = false;
+    lv_anim_del(s_ack_ring, ack_cb);
+    lv_obj_add_flag(s_ack_ring, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+}  // namespace canary::ui
+
+#endif  // CD_FLAVOR_DASH

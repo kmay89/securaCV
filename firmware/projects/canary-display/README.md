@@ -106,6 +106,13 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
 
 ## Build
 
+This is the canonical **PlatformIO** tree. An Arduino-IDE-buildable **parity
+sketch** is generated from it (single source of truth) — see
+[`arduino/canary_display/`](./arduino/canary_display/) and
+[`arduino/PARITY.md`](./arduino/PARITY.md).
+
+### PlatformIO (canonical)
+
 ```bash
 cd firmware/projects/canary-display
 cp secrets/secrets.example.h secrets/secrets.h   # then edit
@@ -116,6 +123,18 @@ pio device monitor -b 115200
 
 Set your timezone for quiet hours by adding e.g.
 `#define CD_TZ "EST5EDT,M3.2.0,M11.1.0"` to `secrets/secrets.h`.
+
+### Arduino IDE (generated parity sketch)
+
+```bash
+cd firmware/projects/canary-display
+./setup.sh arduino watch     # or: ./setup.sh arduino dash  — generates + stages
+arduino-cli compile --profile watch    # or open arduino/canary_display/canary_display.ino
+```
+
+Uses **arduino-esp32 core 2.0.x** (GFX 1.4.9 / LVGL v8 — a 3.x core will not
+build). Edit firmware in `src/`, then `./setup.sh regen` before committing; a
+CI guard enforces the sketch stays in sync.
 
 ## Layout
 
