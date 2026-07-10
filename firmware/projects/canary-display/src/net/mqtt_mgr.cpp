@@ -118,6 +118,9 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
     const int batt = doc["battery_soc"] | doc["battery"] | -1;
     if (st) fleet.on_status(device_id, dt, strcmp(st, "offline") != 0, batt, now);
     else    fleet.on_status(device_id, dt, true, batt, now);
+    // Self-reported WiFi RSSI rides the status row (every variant publishes
+    // it) — the Roll Call page's signal column.
+    if (doc["rssi"].is<int>()) fleet.on_rssi(device_id, doc["rssi"].as<int>(), now);
     return;
   }
 
@@ -184,6 +187,23 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
   if (doc["breathing_locked"].is<bool>()) {
     fleet.on_wellbeing(device_id, doc["breathing_locked"].as<bool>(), now);
   }
+  // Room comfort, when the variant reports it (spellings differ; °C either
+  // way). Tenths keep 21.5° honest on the glass.
+  {
+    bool have_temp = false;
+    int temp_c10 = 0;
+    if (doc["temperature"].is<float>()) {
+      temp_c10 = (int)(doc["temperature"].as<float>() * 10.0f);
+      have_temp = true;
+    } else if (doc["temp_c"].is<float>()) {
+      temp_c10 = (int)(doc["temp_c"].as<float>() * 10.0f);
+      have_temp = true;
+    }
+    const int rh = doc["humidity"] | -1;
+    if (have_temp || rh >= 0) {
+      fleet.on_comfort(device_id, temp_c10, have_temp, rh, now);
+    }
+  }
 }
 
 // ── MQTT callback ───────────────────────────────────────────────────────
@@ -223,7 +243,9 @@ static void handle_fleet_ack(const uint8_t* payload, unsigned int len) {
 
   s_last_ack_epoch = at;
   const uint32_t now_ms = canary::ms_now();
-  canary::fleet::the_fleet().acknowledge(now_ms - age_s * 1000UL);
+  // Attribution travels with the ack — the glass can say WHICH display
+  // quieted the house (the who-disarmed audit line security panels keep).
+  canary::fleet::the_fleet().acknowledge_by(now_ms - age_s * 1000UL, by);
   log_line("ACK", "Household acknowledge received (synced from a sibling).");
 }
 #endif
@@ -406,6 +428,19 @@ void publish_fleet_ack(uint32_t epoch_s) {
 #else
   (void)epoch_s;
 #endif
+}
+
+void publish_fleet_escalation(uint32_t epoch_s, const char* worst,
+                              const char* witness) {
+  if (!mqtt.connected() || epoch_s == 0) return;
+  char msg[192];
+  snprintf(msg, sizeof(msg),
+           "{\"at\":%lu,\"by\":\"%s\",\"worst\":\"%s\",\"witness\":\"%.32s\"}",
+           (unsigned long)epoch_s, canary::cfg::get().device_id,
+           worst ? worst : "", witness ? witness : "");
+  // Deliberately NOT retained: an escalation is a moment, not a state — a
+  // display that reconnects hours later must not re-fire the phone tree.
+  publish_checked("ESCALATE", FleetSubs::FLEET_ESCALATION, msg, false);
 }
 
 bool mqtt_connect_attempt() {

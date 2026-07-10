@@ -113,6 +113,27 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   and every display self-discovers a provably-reachable broker with zero
   setup ([discovery doc](../../../docs/hardware/display_discovery_and_resilience.md) §5.1).
 
+- **The care wave** (`FEATURE_CARE` + `FEATURE_RHYTHM`,
+  [design + research trace](../../../docs/hardware/display_care_wave.md)):
+  the **clock is the idle face** (all-quiet watch hero = the time — every
+  glance at the clock absorbs the security state); the **attention policy**
+  ends 2 a.m. maintenance chirps forever — Warn-class sounds are suppressed
+  during quiet hours into an overnight ledger and surface as a **morning
+  summary** ("While you slept: 2 notices"), while unacked Alert/Tamper
+  remains the one sound that breaks the night, **ramping soft → full** across
+  re-voicings; **per-witness mute** (long-press a witness) is the honest
+  bypass — visible always, tamper punches through, persisted until morning;
+  **Roll Call** is a live walk test (last word · battery · RSSI, rows light
+  up as each canary answers); the **rhythm line** learns the home's first
+  stir on-device and says "Quiet past the usual wake" when it matters (the
+  post-Alexa-Together slot nobody fills); **escalation-on-no-ack** publishes
+  one `securacv/fleet/escalation` event after 15 unacknowledged minutes so
+  automations can widen the circle; and the **transparency page** mirrors on
+  the glass exactly what this display consumes, speaks, stores — and never
+  does. Plus: ack attribution ("acked · kitchen-dash"), room comfort lines,
+  an emergency contact on the dash during unacked alarms, glance-first wake,
+  and a cleaning-mode touch lockout.
+
 ## Build
 
 This is the canonical **PlatformIO** tree. An Arduino-IDE-buildable **parity

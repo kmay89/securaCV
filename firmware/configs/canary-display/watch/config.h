@@ -42,6 +42,11 @@
 #define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
 #define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
 #define FEATURE_ONBOARDING          1   // first-boot SoftAP wizard + on-glass guide
+#define FEATURE_CARE                1   // attention policy: night-silent maintenance,
+                                        // morning summary, per-witness mute, Roll Call,
+                                        // escalation-on-no-ack (display_care_wave.md)
+#define FEATURE_RHYTHM              1   // whole-home morning-rhythm baseline (learned
+                                        // on-device, never uploaded; wellbeing line)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
 

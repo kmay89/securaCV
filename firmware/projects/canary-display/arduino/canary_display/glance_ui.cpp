@@ -16,9 +16,13 @@
 #include "glance_ui.h"
 #include "theme.h"
 #include "trust.h"
+#include "version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
 #include <time.h>
 #include "journal_instance.h"
+#endif
+#if defined(FEATURE_CARE) && FEATURE_CARE
+#include "care_glue.h"
 #endif
 
 namespace canary::ui {
@@ -70,6 +74,26 @@ lv_obj_t* s_thist_summary = nullptr;
 lv_obj_t* s_thist_name[EV_ROWS] = {nullptr};
 lv_obj_t* s_thist_meta[EV_ROWS] = {nullptr};
 #endif
+
+#if defined(FEATURE_CARE) && FEATURE_CARE
+// Roll Call page (display_care_wave.md §6): per-witness diagnostics — the
+// IQ-Panel-grade walk test no ambient display ships. Rows light up live as
+// each canary answers.
+constexpr int RC_ROWS = 5;
+lv_obj_t* s_pg_rc = nullptr;
+lv_obj_t* s_rc_title = nullptr;
+lv_obj_t* s_rc_name[RC_ROWS] = {nullptr};
+lv_obj_t* s_rc_meta[RC_ROWS] = {nullptr};
+lv_obj_t* s_rc_more = nullptr;
+#endif
+
+// Transparency page (display_care_wave.md §7): what this glass consumes,
+// speaks, stores — and everything it will never do. Research says elders
+// accept monitoring they can SEE the shape of; this page is that mirror,
+// on the device itself, for everyone in the house.
+lv_obj_t* s_pg_about = nullptr;
+lv_obj_t* s_about_title = nullptr;
+lv_obj_t* s_about_body = nullptr;
 
 // Proof page (trailblazer spec §1)
 lv_obj_t* s_pg_proof = nullptr;
@@ -158,14 +182,40 @@ void fade_cb(void* var, int32_t v) {
   lv_obj_set_style_opa((lv_obj_t*)var, (lv_opa_t)v, 0);
 }
 
+// Page order after the per-device details: events, [history], [roll call],
+// proof, transparency. One map so the count and the dispatch can't drift.
+struct PageMap {
+  int events = -1, history = -1, rollcall = -1, proof = -1, about = -1;
+  int count = 0;
+};
+
+PageMap page_map(int devices) {
+  PageMap m;
+  int idx = 1 + devices;
+  m.events = idx++;
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  m.history = idx++;
+#endif
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  m.rollcall = idx++;
+#endif
+  m.proof = idx++;
+  m.about = idx++;
+  m.count = idx;
+  return m;
+}
+
 void show_page(lv_obj_t* page) {
   // Leaving the halo also parks its breathing anim — no animation may keep
   // ticking against a hidden object (review catch: rationed motion includes
   // rationed CPU).
   if (page != s_pg_halo) breathe(nullptr, false);
-  lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev, s_pg_proof,
+  lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev, s_pg_proof, s_pg_about,
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
                        s_pg_history,
+#endif
+#if defined(FEATURE_CARE) && FEATURE_CARE
+                       s_pg_rc,
 #endif
   };
   for (lv_obj_t* p : pages) {
@@ -220,6 +270,14 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     lv_arc_set_bg_angles(s_arcs[i], (uint16_t)a0,
                          (uint16_t)(a1 > a0 ? a1 : a0 + 1));
     const Sev s = fleet.witness_sev(*w, now);
+    // A muted witness's arc goes hairline-faint: present, deliberately
+    // quieted, impossible to mistake for healthy OR to forget entirely.
+    if (Fleet::mute_active(*w, now) && s < Sev::Alert) {
+      lv_obj_set_style_arc_color(s_arcs[i],
+                                 st.night ? ncol_muted() : col_edge(),
+                                 LV_PART_MAIN);
+      continue;
+    }
     lv_obj_set_style_arc_color(s_arcs[i], sev_color(s, st.night), LV_PART_MAIN);
     if (s >= Sev::Alert && !st.acked && !attention) attention = s_arcs[i];
   }
@@ -243,11 +301,37 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                       (st.wifi_ok ? "no broker yet" : "no wifi"));
     lv_label_set_text(s_hero_badge, "");
   } else if (worst <= Sev::Notice) {
+    // All quiet: the TIME becomes the hero (display_care_wave.md §1) — a
+    // bedside glance is a clock check 20x a day, and every one of them
+    // absorbs the security state peripherally. Falls back to the words
+    // when the clock isn't valid yet.
     lv_obj_set_style_text_font(s_hero, font_title(), 0);
-    lv_label_set_text(s_hero, "All quiet");
-    lv_label_set_text_fmt(s_hero_sub, "%d %s", n,
-                          n == 1 ? "canary" : "canaries");
-    if (fleet.all_verified()) {
+    if (st.time_valid) {
+      lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
+      lv_label_set_text_fmt(s_hero_sub, "all quiet · %d %s", n,
+                            n == 1 ? "canary" : "canaries");
+    } else {
+      lv_label_set_text(s_hero, "All quiet");
+      lv_label_set_text_fmt(s_hero_sub, "%d %s", n,
+                            n == 1 ? "canary" : "canaries");
+    }
+    // Badge line, best story first: the morning summary (what the night
+    // silenced), else the rhythm line, else the earned verified tick.
+    char care_line[80] = "";
+#if defined(FEATURE_CARE) && FEATURE_CARE
+    if (!st.night && canary::care::night_ledger().count() > 0) {
+      canary::care::night_ledger().summary(care_line, sizeof(care_line));
+    }
+#if defined(FEATURE_RHYTHM) && FEATURE_RHYTHM
+    if (!care_line[0]) {
+      canary::care::rhythm_line(care_line, sizeof(care_line));
+    }
+#endif
+#endif
+    if (care_line[0]) {
+      lv_label_set_text_fmt(s_hero_badge, "%.34s", care_line);
+      lv_obj_set_style_text_color(s_hero_badge, mcol, 0);
+    } else if (fleet.all_verified()) {
       lv_label_set_text(s_hero_badge, LV_SYMBOL_OK "  verified");
       lv_obj_set_style_text_color(s_hero_badge,
                                   st.night ? ncol_muted() : col_ok(), 0);
@@ -270,12 +354,19 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
         break;
       }
     }
-    lv_label_set_text(s_hero_badge, st.acked ? "acknowledged" : "hold to acknowledge");
+    // Acknowledged carries its attribution — which glass quieted the house.
+    if (st.acked && fleet.ack_by()[0]) {
+      lv_label_set_text_fmt(s_hero_badge, "acked · %.16s", fleet.ack_by());
+    } else {
+      lv_label_set_text(s_hero_badge,
+                        st.acked ? "acknowledged" : "hold to acknowledge");
+    }
     lv_obj_set_style_text_color(s_hero_badge, mcol, 0);
   }
 
-  // Clock + honesty banner.
-  if (st.time_valid) {
+  // Small clock (redundant while the time IS the hero; honest otherwise).
+  const bool clock_is_hero = st.time_valid && n > 0 && worst <= Sev::Notice;
+  if (st.time_valid && !clock_is_hero) {
     lv_label_set_text_fmt(s_clock, "%02d:%02d", st.clock_hh, st.clock_mm);
   } else {
     lv_label_set_text(s_clock, "");
@@ -299,10 +390,15 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
   const Witness* w = fleet.at(idx);
   if (!w) return;
   const Sev s = fleet.witness_sev(*w, now);
+  const bool muted = Fleet::mute_active(*w, now);
   const lv_color_t tcol = st.night ? ncol_text() : col_text();
   const lv_color_t mcol = st.night ? ncol_muted() : col_muted();
 
-  lv_obj_set_style_arc_color(s_dev_ring, sev_color(s, st.night), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(
+      s_dev_ring,
+      muted && s < Sev::Alert ? (st.night ? ncol_muted() : col_edge())
+                              : sev_color(s, st.night),
+      LV_PART_MAIN);
 
   lv_obj_set_style_text_color(s_dev_name, tcol, 0);
   if (w->name[0] && w->room[0]) {
@@ -311,8 +407,15 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
     lv_label_set_text_fmt(s_dev_name, "%.18s", Fleet::display_name(*w));
   }
 
-  lv_obj_set_style_text_color(s_dev_state, sev_color(s, st.night), 0);
-  lv_label_set_text(s_dev_state, link_label(w->link));
+  if (muted && s < Sev::Alert) {
+    // The honest bypass: state says muted (never hides), and the same
+    // gesture that muted it un-mutes it.
+    lv_obj_set_style_text_color(s_dev_state, mcol, 0);
+    lv_label_set_text(s_dev_state, "muted");
+  } else {
+    lv_obj_set_style_text_color(s_dev_state, sev_color(s, st.night), 0);
+    lv_label_set_text(s_dev_state, link_label(w->link));
+  }
 
   lv_obj_set_style_text_color(s_dev_event, mcol, 0);
   if (w->has_event) {
@@ -324,7 +427,7 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
     lv_label_set_text(s_dev_event, "no events yet");
   }
 
-  char batt[64] = "";  // "·"/"—"/LVGL symbols are multi-byte; keep headroom
+  char batt[96] = "";  // "·"/"—"/LVGL symbols are multi-byte; keep headroom
   if (w->wb_present) {
     snprintf(batt, sizeof(batt), "  ·  breathing %s",
              w->wb_breathing ? LV_SYMBOL_OK : "—");
@@ -335,11 +438,27 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
              w->battery_pct < 25 ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_3,
              (int)w->battery_pct);
   }
+  // Room comfort, when the witness reports it (parent-unit table stakes).
+  if (w->temp_present) {
+    const size_t off = strlen(batt);
+    if (w->humidity_pct >= 0) {
+      snprintf(batt + off, sizeof(batt) - off, "  ·  %d.%d\xC2\xB0 %d%%",
+               w->temp_c10 / 10, abs(w->temp_c10 % 10), (int)w->humidity_pct);
+    } else {
+      snprintf(batt + off, sizeof(batt) - off, "  ·  %d.%d\xC2\xB0",
+               w->temp_c10 / 10, abs(w->temp_c10 % 10));
+    }
+  }
   lv_obj_set_style_text_color(s_dev_meta, badge_color(w->badge, st.night), 0);
   lv_label_set_text_fmt(s_dev_meta, "%s%s", badge_text(w->badge), batt);
 
   lv_obj_set_style_text_color(s_dev_pos, st.night ? ncol_muted() : col_faint(), 0);
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  lv_label_set_text_fmt(s_dev_pos, "%d of %d · hold to %s", idx + 1,
+                        fleet.count(), muted ? "unmute" : "mute");
+#else
   lv_label_set_text_fmt(s_dev_pos, "%d of %d", idx + 1, fleet.count());
+#endif
 }
 
 void update_events(const Fleet& fleet, uint32_t now, const GlanceState& st) {
@@ -419,6 +538,83 @@ void update_history(const Fleet& fleet, uint32_t now, const GlanceState& st) {
 }
 #endif  // FEATURE_TIME_MACHINE
 
+#if defined(FEATURE_CARE) && FEATURE_CARE
+// Roll Call: every witness answers for itself — last word, battery, its own
+// WiFi signal. Walk-test built in: a row that reported in the last few
+// seconds lights green, so you can walk the house and watch each canary
+// answer (display_care_wave.md §6).
+void update_rollcall(const Fleet& fleet, uint32_t now, const GlanceState& st) {
+  const lv_color_t tcol = st.night ? ncol_text() : col_text();
+  const lv_color_t mcol = st.night ? ncol_muted() : col_muted();
+  lv_obj_set_style_text_color(s_rc_title, mcol, 0);
+
+  const int n = fleet.count();
+  for (int i = 0; i < RC_ROWS; i++) {
+    const Witness* w = (i < n) ? fleet.at(i) : nullptr;
+    if (!w) {
+      lv_label_set_text(s_rc_name[i], i == 0 && n == 0 ? "No witnesses yet" : "");
+      lv_label_set_text(s_rc_meta[i], "");
+      lv_obj_set_style_text_color(s_rc_name[i], mcol, 0);
+      continue;
+    }
+    const int32_t age_ms = (int32_t)(now - w->last_seen_ms);
+    const bool just_answered = age_ms >= 0 && age_ms < 5000;
+    char age[8];
+    format_age(now, w->last_seen_ms, age, sizeof(age));
+    lv_obj_set_style_text_color(
+        s_rc_name[i],
+        just_answered ? col_ok()
+                      : (fleet.witness_sev(*w, now) >= Sev::Warn
+                             ? sev_color(fleet.witness_sev(*w, now), st.night)
+                             : tcol),
+        0);
+    lv_label_set_text_fmt(s_rc_name[i], "%.16s%s", Fleet::display_name(*w),
+                          just_answered ? "  " LV_SYMBOL_OK : "");
+    char meta[64];
+    size_t o = (size_t)snprintf(meta, sizeof(meta), "%s ago", age);
+    if (w->battery_present && w->battery_pct >= 0 && o < sizeof(meta)) {
+      o += (size_t)snprintf(meta + o, sizeof(meta) - o, " · %d%%",
+                            (int)w->battery_pct);
+    }
+    if (w->rssi_present && o < sizeof(meta)) {
+      snprintf(meta + o, sizeof(meta) - o, " · %d dBm", (int)w->rssi_dbm);
+    }
+    lv_obj_set_style_text_color(s_rc_meta[i], mcol, 0);
+    lv_label_set_text(s_rc_meta[i], meta);
+  }
+  lv_obj_set_style_text_color(s_rc_more, st.night ? ncol_muted() : col_faint(), 0);
+  if (n > RC_ROWS) {
+    lv_label_set_text_fmt(s_rc_more, "+%d more", n - RC_ROWS);
+  } else {
+    lv_label_set_text(s_rc_more, n > 0 ? "walk past one — it lights up" : "");
+  }
+}
+#endif  // FEATURE_CARE
+
+// Transparency page: the mirror. Everything this glass consumes, speaks,
+// and stores — and what it never does — with live numbers, on the device,
+// for anyone in the house to read.
+void update_about(const Fleet& fleet, uint32_t now, const GlanceState& st) {
+  (void)now;
+  const lv_color_t mcol = st.night ? ncol_muted() : col_muted();
+  lv_obj_set_style_text_color(s_about_title, mcol, 0);
+  lv_obj_set_style_text_color(s_about_body, mcol, 0);
+  int journal_kept = 0;
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  journal_kept = canary::fleet::the_journal().count();
+#endif
+  lv_label_set_text_fmt(
+      s_about_body,
+      "watches %d %s\n"
+      "hears: your broker only\n"
+      "speaks: liveness · acks\n"
+      "keeps: %d events, on-device\n"
+      "never: cloud · camera · mic\n"
+      "v%s",
+      fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
+      CANARY_FW_VERSION);
+}
+
 // Proof page: QR of the most urgent witness's signed chain head — the
 // exact bytes it published, plus the pinned pubkey (spec §1). Dark-on-
 // light on purpose: scanners want it, and scanning implies the user is
@@ -488,13 +684,7 @@ void heartbeat_pulse() {
 
 // ── Public API ───────────────────────────────────────────────────────────
 
-int glance_page_count() {
-#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
-  return 4 + the_fleet().count();   // + the history page
-#else
-  return 3 + the_fleet().count();
-#endif
-}
+int glance_page_count() { return page_map(the_fleet().count()).count; }
 
 void glance_ui_create() {
   s_scr = lv_scr_act();
@@ -566,6 +756,36 @@ void glance_ui_create() {
   lv_obj_add_flag(s_pg_history, LV_OBJ_FLAG_HIDDEN);
 #endif
 
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  // ── Roll Call page (care wave §6) ──
+  s_pg_rc = mk_page(s_scr);
+  s_rc_title = mk_label(s_pg_rc, font_caption(), col_muted());
+  lv_obj_set_style_text_letter_space(s_rc_title, 2, 0);
+  lv_label_set_text(s_rc_title, "ROLL CALL");
+  lv_obj_align(s_rc_title, LV_ALIGN_TOP_MID, 0, 32);
+  for (int i = 0; i < RC_ROWS; i++) {
+    s_rc_name[i] = mk_label(s_pg_rc, font_label(), col_text());
+    lv_obj_align(s_rc_name[i], LV_ALIGN_TOP_MID, 0, 58 + i * 32);
+    s_rc_meta[i] = mk_label(s_pg_rc, font_caption(), col_muted());
+    lv_obj_align(s_rc_meta[i], LV_ALIGN_TOP_MID, 0, 74 + i * 32);
+  }
+  s_rc_more = mk_label(s_pg_rc, font_caption(), col_faint());
+  lv_obj_align(s_rc_more, LV_ALIGN_BOTTOM_MID, 0, -22);
+  lv_obj_add_flag(s_pg_rc, LV_OBJ_FLAG_HIDDEN);
+#endif
+
+  // ── Transparency page (care wave §7) ──
+  s_pg_about = mk_page(s_scr);
+  s_about_title = mk_label(s_pg_about, font_caption(), col_muted());
+  lv_obj_set_style_text_letter_space(s_about_title, 2, 0);
+  lv_label_set_text(s_about_title, "THIS GLASS");
+  lv_obj_align(s_about_title, LV_ALIGN_TOP_MID, 0, 36);
+  s_about_body = mk_label(s_pg_about, font_caption(), col_muted());
+  lv_obj_set_style_text_align(s_about_body, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_line_space(s_about_body, 8, 0);
+  lv_obj_align(s_about_body, LV_ALIGN_CENTER, 0, 8);
+  lv_obj_add_flag(s_pg_about, LV_OBJ_FLAG_HIDDEN);
+
   // ── Proof page ──
   s_pg_proof = mk_page(s_scr);
   s_proof_who = mk_label(s_pg_proof, font_caption(), col_muted());
@@ -604,32 +824,36 @@ void glance_ui_create() {
 void glance_ui_update(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   if (!s_scr) return;
   const int devices = fleet.count();
-#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
-  const int pages = 4 + devices;   // + the history page
-#else
-  const int pages = 3 + devices;
-#endif
+  const PageMap m = page_map(devices);
   int page = st.page;
-  if (page >= pages || page < 0) page = 0;
+  if (page >= m.count || page < 0) page = 0;
 
   if (page != s_shown_page) {
     s_shown_page = page;
-    if (page == 0)                show_page(s_pg_halo);
-    else if (page <= devices)     show_page(s_pg_dev);
-    else if (page == devices + 1) show_page(s_pg_ev);
+    if (page == 0)             show_page(s_pg_halo);
+    else if (page <= devices)  show_page(s_pg_dev);
+    else if (page == m.events) show_page(s_pg_ev);
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
-    else if (page == devices + 2) show_page(s_pg_history);
+    else if (page == m.history) show_page(s_pg_history);
 #endif
-    else                          show_page(s_pg_proof);
+#if defined(FEATURE_CARE) && FEATURE_CARE
+    else if (page == m.rollcall) show_page(s_pg_rc);
+#endif
+    else if (page == m.proof)  show_page(s_pg_proof);
+    else                       show_page(s_pg_about);
   }
 
-  if (page == 0)                update_halo(fleet, now, st);
-  else if (page <= devices)     update_device(fleet, now, st, page - 1);
-  else if (page == devices + 1) update_events(fleet, now, st);
+  if (page == 0)             update_halo(fleet, now, st);
+  else if (page <= devices)  update_device(fleet, now, st, page - 1);
+  else if (page == m.events) update_events(fleet, now, st);
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
-  else if (page == devices + 2) update_history(fleet, now, st);
+  else if (page == m.history) update_history(fleet, now, st);
 #endif
-  else                          update_proof(fleet, now, st);
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  else if (page == m.rollcall) update_rollcall(fleet, now, st);
+#endif
+  else if (page == m.proof)  update_proof(fleet, now, st);
+  else                       update_about(fleet, now, st);
 
   // The heartbeat: earned, daytime, once a minute (spec §4). Absence is
   // information — any lesser state and the ring stays dark.

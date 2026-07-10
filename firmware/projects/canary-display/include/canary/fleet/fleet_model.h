@@ -83,6 +83,26 @@ struct Witness {
   int16_t  battery_pct = -1;      // -1 = unknown/not present
   bool     battery_present = false;
 
+  // Diagnostics the witness reports about itself (Roll Call page). RSSI is
+  // the witness's OWN WiFi link as published in its status row — the display
+  // can't measure a remote radio, it can only relay the self-report.
+  int16_t  rssi_dbm = 0;
+  bool     rssi_present = false;
+
+  // Room comfort, when the witness publishes it (baby-monitor table stakes;
+  // parsed from state/health payloads, absent otherwise).
+  int16_t  temp_c10 = 0;          // tenths of °C (21.5° = 215)
+  bool     temp_present = false;
+  int8_t   humidity_pct = -1;     // -1 = not published
+
+  // Per-witness mute (the security panel "bypass" pattern, done honestly):
+  // a muted witness stops nagging — its link/battery/event severities cap at
+  // Notice — but stays VISIBLE with a muted tag, and tamper or a failed
+  // chain verify still punches through at full severity. A silent, hidden
+  // bypass is how real alarms get missed; this one can't hide.
+  uint32_t mute_until_ms = 0;
+  bool     muted = false;
+
   // Trust surface
   Badge    badge = Badge::Unknown;
   uint32_t chain_length = 0;
@@ -152,6 +172,34 @@ class FleetModel {
     copy_str(w->device_type, sizeof(w->device_type), device_type);
     if (battery_soc >= 0) { w->battery_pct = (int16_t)battery_soc; w->battery_present = true; }
     on_availability(id, online, now);
+  }
+
+  // Witness self-reported WiFi RSSI (status row) — Roll Call diagnostics.
+  void on_rssi(const char* id, int rssi_dbm, uint32_t now) {
+    Witness* w = upsert(id);
+    if (!w) return;
+    w->last_seen_ms = now;
+    if (!w->rssi_present || w->rssi_dbm != (int16_t)rssi_dbm) dirty_ = true;
+    w->rssi_dbm = (int16_t)rssi_dbm;
+    w->rssi_present = true;
+  }
+
+  // Room comfort (state/health payloads that carry it). Tenths of °C so a
+  // 21.5° room doesn't render as a lie in either direction.
+  void on_comfort(const char* id, int temp_c10, bool have_temp,
+                  int humidity_pct, uint32_t now) {
+    Witness* w = upsert(id);
+    if (!w) return;
+    w->last_seen_ms = now;
+    if (have_temp) {
+      if (!w->temp_present || w->temp_c10 != (int16_t)temp_c10) dirty_ = true;
+      w->temp_c10 = (int16_t)temp_c10;
+      w->temp_present = true;
+    }
+    if (humidity_pct >= 0 && humidity_pct <= 100) {
+      if (w->humidity_pct != (int8_t)humidity_pct) dirty_ = true;
+      w->humidity_pct = (int8_t)humidity_pct;
+    }
   }
 
   void on_health(const char* id, int battery, bool battery_present,
@@ -306,6 +354,26 @@ class FleetModel {
     }
   }
 
+  // ── Per-witness mute (honest bypass) ─────────────────────────────────
+
+  // Mute/unmute one witness until `until_ms` (millis domain — the caller
+  // owns wall-clock/NVS translation). Upserts: re-applying a persisted mute
+  // before the witness has spoken this boot creates its slot (link Unknown —
+  // honest), rather than dropping the promise. Returns the new muted state,
+  // or false when the fleet is full.
+  bool set_mute(const char* id, bool muted, uint32_t until_ms) {
+    Witness* w = upsert(id);
+    if (!w) return false;
+    w->muted = muted;
+    w->mute_until_ms = until_ms;
+    dirty_ = true;
+    return w->muted;
+  }
+
+  static bool mute_active(const Witness& w, uint32_t now) {
+    return w.muted && (int32_t)(now - w.mute_until_ms) < 0;
+  }
+
   // ── Time ─────────────────────────────────────────────────────────────
 
   // Staleness deadlines. Call every loop pass; cheap.
@@ -313,6 +381,11 @@ class FleetModel {
     for (int i = 0; i < MAX_DEVICES; i++) {
       Witness& w = slots_[i];
       if (!w.used) continue;
+      // Expired mutes clear themselves — the nag comes back by design.
+      if (w.muted && (int32_t)(now - w.mute_until_ms) >= 0) {
+        w.muted = false;
+        dirty_ = true;
+      }
       if (w.link == Link::Offline || w.link == Link::Unknown) continue;
       const int32_t silent = (int32_t)(now - w.last_seen_ms);
       Link next = Link::Online;
@@ -320,8 +393,10 @@ class FleetModel {
       else if (silent >= (int32_t)limits_.stale_after_ms) next = Link::Stale;
       if (w.link != next) {
         // Crossing into Lost is a new Alert-grade condition: it must cancel
-        // any standing ack so the display re-demands attention (G5/G8).
-        if (next == Link::Lost) acked_ = false;
+        // any standing ack so the display re-demands attention (G5/G8) —
+        // unless this witness is deliberately muted (a flaky unit someone
+        // bypassed must not keep un-acking the household all night).
+        if (next == Link::Lost && !mute_active(w, now)) acked_ = false;
         w.link = next;
         dirty_ = true;
       }
@@ -333,11 +408,25 @@ class FleetModel {
   // until they actually clear. The ack itself expires after ack_hold_ms so
   // a persisting Alert re-demands attention rather than rotting silently.
 
-  void acknowledge(uint32_t now) { ack_ms_ = now; acked_ = true; dirty_ = true; }
+  void acknowledge(uint32_t now) { acknowledge_by(now, nullptr); }
+
+  // Attribution rides along (panels log who disarmed; we log which glass
+  // quieted the house): `by` is the acking display's device_id — our own for
+  // a local long-press, the sibling's for a synced ack.
+  void acknowledge_by(uint32_t now, const char* by) {
+    ack_ms_ = now;
+    acked_ = true;
+    copy_str(ack_by_, sizeof(ack_by_), by ? by : "");
+    dirty_ = true;
+  }
 
   bool ack_active(uint32_t now) const {
     return acked_ && (int32_t)(now - ack_ms_) < (int32_t)limits_.ack_hold_ms;
   }
+
+  // Who acked (empty = unknown/legacy payload) and when, millis domain.
+  const char* ack_by() const { return ack_by_; }
+  uint32_t ack_at_ms() const { return ack_ms_; }
 
   // ── Queries (UI) ─────────────────────────────────────────────────────
 
@@ -358,11 +447,15 @@ class FleetModel {
   }
 
   // Effective severity of one witness right now (link + conditions + the
-  // decaying edge event).
+  // decaying edge event). A muted witness contributes ONLY tamper and a
+  // failed chain verify: mute quiets nags (staleness, battery, events), it
+  // never un-knows an attack. The UI renders the muted tag in place of the
+  // suppressed state, so the bypass is always visible.
   Sev witness_sev(const Witness& w, uint32_t now) const {
     Sev s = Sev::Ok;
     if (w.tamper) s = worst_of(s, Sev::Tamper);
     if (w.badge == Badge::Failed) s = worst_of(s, Sev::Alert);
+    if (mute_active(w, now)) return s;  // punch-through conditions only
     if (w.link == Link::Lost) {
       s = worst_of(s, Sev::Alert);
     } else if (w.link == Link::Offline) {
@@ -524,6 +617,13 @@ class FleetModel {
     return true;
   }
 
+  Witness* find(const char* id) {
+    if (!id || !id[0]) return nullptr;
+    for (int i = 0; i < MAX_DEVICES; i++)
+      if (slots_[i].used && str_eq(slots_[i].id, id)) return &slots_[i];
+    return nullptr;
+  }
+
   Witness* upsert(const char* id) {
     if (!id || !id[0]) return nullptr;
     for (int i = 0; i < MAX_DEVICES; i++)
@@ -563,8 +663,13 @@ class FleetModel {
     // is what lets a fresh 3 a.m. tamper punch through the night floor even
     // inside the ack-hold window (G5/G8; #843 review catch). Callers only
     // push on edges (see on_tamper/on_chain), so retained replays at broker
-    // reconnect cannot cancel acks.
-    if ((uint8_t)sev >= (uint8_t)Sev::Alert) acked_ = false;
+    // reconnect cannot cancel acks. Exception: a muted witness's ALERT does
+    // not re-wake the house (that's what mute is for) — but its TAMPER
+    // still does, matching the witness_sev punch-through rule.
+    if ((uint8_t)sev >= (uint8_t)Sev::Alert) {
+      const bool muted_alert = w && mute_active(*w, now) && sev == Sev::Alert;
+      if (!muted_alert) acked_ = false;
+    }
     // Durable history (spec §7): hand the event + its owning witness to the
     // journal sink, if the firmware wired one. w may be null for an event on
     // a device that isn't in the fleet slots (shouldn't happen post-upsert,
@@ -575,6 +680,7 @@ class FleetModel {
 
   EventSink event_sink_ = nullptr;
   Witness  slots_[MAX_DEVICES] = {};
+  char     ack_by_[24] = {0};
   EventRow events_[EVENT_CAP] = {};
   int      wall_hour_ = -1;
   uint8_t  hist_count_[24] = {0};

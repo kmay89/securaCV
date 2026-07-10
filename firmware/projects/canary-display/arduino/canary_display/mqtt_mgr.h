@@ -25,6 +25,14 @@ namespace canary::net {
   // call when SNTP-synced — no guessed clocks on the wire).
   void publish_fleet_ack(uint32_t epoch_s);
 
+  // Escalation-on-no-ack (display_care_wave.md §5): a Tier-1 condition has
+  // run unacknowledged past the household deadline — say so once, on a
+  // NON-retained event, so an automation can widen the circle (notify the
+  // second phone, the sibling, the neighbor). The display never decides who
+  // that is; it only reports that nobody here answered.
+  void publish_fleet_escalation(uint32_t epoch_s, const char* worst,
+                                const char* witness);
+
   // ── Broker endpoint (fleet-discovery rebind) ──────────────────────────
   // The broker address starts from runtime config but is rebindable at
   // runtime: mDNS fleet discovery adopts a referral when the compiled/NVS

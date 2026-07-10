@@ -42,6 +42,10 @@ struct FleetSubs {
   // Household ack-sync (trailblazer spec §2): one shared retained topic —
   // acknowledge on any display, every display agrees.
   static constexpr const char* FLEET_ACK    = "securacv/fleet/ack";
+  // Escalation-on-no-ack (display_care_wave.md §5): non-retained event a
+  // display publishes when a Tier-1 condition ran unacked past the
+  // deadline. Consumed by automations (HA), not by displays.
+  static constexpr const char* FLEET_ESCALATION = "securacv/fleet/escalation";
 
   static constexpr const char* STATUS       = "securacv/+/status";
   static constexpr const char* AVAILABILITY = "securacv/+/availability";

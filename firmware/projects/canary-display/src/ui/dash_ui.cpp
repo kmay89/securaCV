@@ -18,8 +18,12 @@
 #include "canary/ui/dash_ui.h"
 #include "canary/ui/theme.h"
 #include "canary/trust.h"
+#include "canary/version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
 #include "canary/fleet/journal_instance.h"
+#endif
+#if defined(FEATURE_CARE) && FEATURE_CARE
+#include "canary/care/care_glue.h"
 #endif
 
 namespace canary::ui {
@@ -102,6 +106,28 @@ lv_obj_t* s_hist_hint = nullptr;
 bool s_hist_erase_armed = false;
 uint32_t s_hist_erase_ms = 0;
 #endif
+
+#if defined(FEATURE_CARE) && FEATURE_CARE
+// Roll Call modal (care wave §6): tap the headline to open. Live rows —
+// walk the house and watch each canary answer.
+constexpr int RC_ROWS = 8;
+constexpr lv_coord_t RC_X = 130, RC_Y = 40, RC_W = 540, RC_H = 400;
+lv_obj_t* s_rc = nullptr;
+lv_obj_t* s_rc_title = nullptr;
+lv_obj_t* s_rc_rows[RC_ROWS] = {nullptr};
+lv_obj_t* s_rc_hint = nullptr;
+#endif
+
+// Transparency sheet (care wave §7): tap the footer to open. What this
+// glass consumes/speaks/stores, what it never does — plus the cleaning-mode
+// affordance ("wipe the glass" belongs where the honesty lives).
+constexpr lv_coord_t AB_X = 200, AB_Y = 70, AB_W = 400, AB_H = 340;
+lv_obj_t* s_about = nullptr;
+lv_obj_t* s_about_title = nullptr;
+lv_obj_t* s_about_body = nullptr;
+lv_obj_t* s_about_clean = nullptr;
+lv_obj_t* s_clean_note = nullptr;    // full-screen countdown while locked
+uint32_t s_clean_until_ms = 0;
 
 // Fleet snapshot the tap router needs (updated each dash_ui_update).
 const Fleet* s_fleet = nullptr;
@@ -290,6 +316,78 @@ void hist_open() {
 }
 #endif  // FEATURE_TIME_MACHINE
 
+#if defined(FEATURE_CARE) && FEATURE_CARE
+// Roll Call rows re-render every update pass while the modal is open (the
+// walk-test needs live ages, unlike the read-only history list).
+void rc_render(const Fleet& fleet, uint32_t now) {
+  const int n = fleet.count();
+  for (int i = 0; i < RC_ROWS; i++) {
+    const Witness* w = (i < n) ? fleet.at(i) : nullptr;
+    if (!w) {
+      lv_label_set_text(s_rc_rows[i], i == 0 && n == 0 ? "No witnesses yet" : "");
+      continue;
+    }
+    const int32_t age_ms = (int32_t)(now - w->last_seen_ms);
+    const bool just_answered = age_ms >= 0 && age_ms < 5000;
+    char age[8];
+    format_age(now, w->last_seen_ms, age, sizeof(age));
+    char batt[12] = "—";
+    if (w->battery_present && w->battery_pct >= 0) {
+      snprintf(batt, sizeof(batt), "%d%%", (int)w->battery_pct);
+    }
+    char rssi[16] = "—";
+    if (w->rssi_present) {
+      snprintf(rssi, sizeof(rssi), "%d dBm", (int)w->rssi_dbm);
+    }
+    const Sev s = fleet.witness_sev(*w, now);
+    lv_obj_set_style_text_color(
+        s_rc_rows[i],
+        just_answered ? col_ok()
+                      : (s >= Sev::Warn ? sev_color(s, false) : col_text()),
+        0);
+    lv_label_set_text_fmt(s_rc_rows[i],
+                          "%.16s   ·   %s ago   ·   %s   ·   %s%s",
+                          Fleet::display_name(*w), age, batt, rssi,
+                          just_answered ? "   " LV_SYMBOL_OK : "");
+  }
+}
+
+void rc_open(const Fleet& fleet, uint32_t now) {
+  if (!s_rc) return;
+  rc_render(fleet, now);
+  lv_obj_move_foreground(s_rc);
+  lv_obj_clear_flag(s_rc, LV_OBJ_FLAG_HIDDEN);
+}
+
+void rc_close() {
+  if (s_rc) lv_obj_add_flag(s_rc, LV_OBJ_FLAG_HIDDEN);
+}
+#endif  // FEATURE_CARE
+
+void about_open(const Fleet& fleet) {
+  if (!s_about) return;
+  int journal_kept = 0;
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  journal_kept = canary::fleet::the_journal().count();
+#endif
+  lv_label_set_text_fmt(
+      s_about_body,
+      "Watches: %d %s, via your broker only\n"
+      "Speaks: a liveness heartbeat and household acks\n"
+      "Keeps: %d events on this device — erasable in History\n"
+      "Never: cloud, camera, microphone, or your MAC\n\n"
+      "Firmware v%s",
+      fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
+      CANARY_FW_VERSION);
+  lv_label_set_text(s_about_clean, LV_SYMBOL_REFRESH "  Wipe the glass (30 s touch lockout)");
+  lv_obj_move_foreground(s_about);
+  lv_obj_clear_flag(s_about, LV_OBJ_FLAG_HIDDEN);
+}
+
+void about_close() {
+  if (s_about) lv_obj_add_flag(s_about, LV_OBJ_FLAG_HIDDEN);
+}
+
 }  // namespace
 
 // ── Public API ───────────────────────────────────────────────────────────
@@ -457,6 +555,50 @@ void dash_ui_create() {
   lv_obj_align(s_hist_erase, LV_ALIGN_BOTTOM_LEFT, 24, -14);
   lv_obj_add_flag(s_hist, LV_OBJ_FLAG_HIDDEN);
 #endif
+
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  // ── Roll Call modal (care wave §6), hidden until the headline is tapped ──
+  s_rc = mk_box(s_scr);
+  lv_obj_set_size(s_rc, RC_W, RC_H);
+  lv_obj_set_pos(s_rc, RC_X, RC_Y);
+  lv_obj_set_style_shadow_width(s_rc, 40, 0);
+  lv_obj_set_style_shadow_color(s_rc, lv_color_black(), 0);
+  lv_obj_set_style_shadow_opa(s_rc, LV_OPA_60, 0);
+  s_rc_title = mk_label(s_rc, font_body(), col_text());
+  lv_label_set_text(s_rc_title, "Roll call");
+  lv_obj_align(s_rc_title, LV_ALIGN_TOP_LEFT, 24, 16);
+  for (int i = 0; i < RC_ROWS; i++) {
+    s_rc_rows[i] = mk_label(s_rc, font_label(), col_text());
+    lv_obj_set_pos(s_rc_rows[i], 24, 56 + i * 34);
+  }
+  s_rc_hint = mk_label(s_rc, font_caption(), col_faint());
+  lv_label_set_text(s_rc_hint,
+                    "walk past a canary — its row lights as it answers · tap away to close");
+  lv_obj_align(s_rc_hint, LV_ALIGN_BOTTOM_MID, 0, -12);
+  lv_obj_add_flag(s_rc, LV_OBJ_FLAG_HIDDEN);
+#endif
+
+  // ── Transparency sheet (care wave §7), hidden until the footer is tapped ──
+  s_about = mk_box(s_scr);
+  lv_obj_set_size(s_about, AB_W, AB_H);
+  lv_obj_set_pos(s_about, AB_X, AB_Y);
+  lv_obj_set_style_shadow_width(s_about, 40, 0);
+  lv_obj_set_style_shadow_color(s_about, lv_color_black(), 0);
+  lv_obj_set_style_shadow_opa(s_about, LV_OPA_60, 0);
+  s_about_title = mk_label(s_about, font_body(), col_text());
+  lv_label_set_text(s_about_title, "What this glass does");
+  lv_obj_align(s_about_title, LV_ALIGN_TOP_LEFT, 24, 16);
+  s_about_body = mk_label(s_about, font_caption(), col_muted());
+  lv_obj_set_style_text_line_space(s_about_body, 7, 0);
+  lv_obj_set_pos(s_about_body, 24, 56);
+  s_about_clean = mk_label(s_about, font_caption(), col_muted());
+  lv_obj_align(s_about_clean, LV_ALIGN_BOTTOM_LEFT, 24, -16);
+  lv_obj_add_flag(s_about, LV_OBJ_FLAG_HIDDEN);
+
+  // Cleaning-mode note (full width, replaces the sheet while locked).
+  s_clean_note = mk_label(s_scr, font_body(), col_muted());
+  lv_obj_align(s_clean_note, LV_ALIGN_CENTER, 0, 0);
+  lv_label_set_text(s_clean_note, "");
 }
 
 void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
@@ -484,8 +626,14 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     snprintf(word, sizeof(word), "%s", canary::fleet::sev_name(worst));
     upper(word);
     lv_obj_set_style_text_color(s_headline, sev_color(worst, st.night), 0);
-    lv_label_set_text_fmt(s_headline, "%s%s", word,
-                          st.acked ? "  ·  acknowledged" : "");
+    // Acknowledged carries its attribution — which glass quieted the house.
+    if (st.acked && fleet.ack_by()[0]) {
+      lv_label_set_text_fmt(s_headline, "%s  ·  acked by %.16s", word,
+                            fleet.ack_by());
+    } else {
+      lv_label_set_text_fmt(s_headline, "%s%s", word,
+                            st.acked ? "  ·  acknowledged" : "");
+    }
   }
   if (st.time_valid) {
     lv_label_set_text_fmt(s_clock, "%02d:%02d", st.clock_hh, st.clock_mm);
@@ -525,11 +673,19 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     char state[24];
     snprintf(state, sizeof(state), "%s", link_label(w->link));
     upper(state);
-    lv_obj_set_style_text_color(c.state, sc, 0);
-    if (w->tamper) {
-      lv_label_set_text_fmt(c.state, "%s · TAMPER", state);
+    const bool muted = Fleet::mute_active(*w, now);
+    if (muted && !w->tamper && s < Sev::Alert) {
+      // The honest bypass: card stays, spine goes hairline, state says so.
+      lv_obj_set_style_text_color(c.state, fcol, 0);
+      lv_label_set_text(c.state, "MUTED · UNTIL MORNING");
+      lv_obj_set_style_bg_color(c.spine, st.night ? ncol_muted() : col_edge(), 0);
     } else {
-      lv_label_set_text(c.state, state);
+      lv_obj_set_style_text_color(c.state, sc, 0);
+      if (w->tamper) {
+        lv_label_set_text_fmt(c.state, "%s · TAMPER", state);
+      } else {
+        lv_label_set_text(c.state, state);
+      }
     }
 
     lv_obj_set_style_text_color(c.badge, badge_color(w->badge, st.night), 0);
@@ -546,10 +702,22 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     }
 
     lv_obj_set_style_text_color(c.meta, fcol, 0);
-    char wb[24] = "";
+    char wb[48] = "";
     if (w->wb_present) {
       snprintf(wb, sizeof(wb), "   breathing %s",
                w->wb_breathing ? LV_SYMBOL_OK : "—");
+    }
+    // Room comfort, when the witness reports it (parent-unit table stakes).
+    if (w->temp_present) {
+      const size_t off = strlen(wb);
+      if (w->humidity_pct >= 0) {
+        snprintf(wb + off, sizeof(wb) - off, "   %d.%d\xC2\xB0 · %d%%",
+                 w->temp_c10 / 10, abs(w->temp_c10 % 10),
+                 (int)w->humidity_pct);
+      } else {
+        snprintf(wb + off, sizeof(wb) - off, "   %d.%d\xC2\xB0",
+                 w->temp_c10 / 10, abs(w->temp_c10 % 10));
+      }
     }
     if (w->battery_present && w->battery_pct >= 0) {
       lv_label_set_text_fmt(c.meta, "%s %d%%   %.12s%s",
@@ -573,22 +741,42 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
 
   // Time machine (spec §7): the rolling day in one honest sentence, and — when
   // there's a proof-carrying journal to browse — an affordance to open it.
+  // The care wave leads the line: the morning summary of what quiet hours
+  // silenced, then the rhythm verdict, then the day's tally.
   lv_obj_set_style_text_color(s_today, fcol, 0);
   const int day_total = fleet.history_total();
-  char today[96];
+  char today[192] = "";
+  size_t to = 0;
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  if (!st.night && canary::care::night_ledger().count() > 0) {
+    char sum[48];
+    canary::care::night_ledger().summary(sum, sizeof(sum));
+    to += (size_t)snprintf(today + to, sizeof(today) - to, "%s   ·   ", sum);
+  }
+#if defined(FEATURE_RHYTHM) && FEATURE_RHYTHM
+  {
+    char rl[80];
+    if (canary::care::rhythm_line(rl, sizeof(rl)) > 0 && to < sizeof(today)) {
+      to += (size_t)snprintf(today + to, sizeof(today) - to, "%s   ·   ", rl);
+    }
+  }
+#endif
+#endif
   if (!st.time_valid || n == 0) {
-    today[0] = '\0';
+    // no day story without a clock/witnesses; care segments may still show
   } else if (day_total == 0) {
-    snprintf(today, sizeof(today), "Past 24h · nothing witnessed");
+    to += (size_t)snprintf(today + to, sizeof(today) - to,
+                           "Past 24h · nothing witnessed");
   } else {
-    snprintf(today, sizeof(today), "Past 24h · %d %s · worst: %s", day_total,
-             day_total == 1 ? "event" : "events",
-             canary::fleet::sev_name(fleet.history_worst_day()));
+    to += (size_t)snprintf(today + to, sizeof(today) - to,
+                           "Past 24h · %d %s · worst: %s", day_total,
+                           day_total == 1 ? "event" : "events",
+                           canary::fleet::sev_name(fleet.history_worst_day()));
   }
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
-  if (today[0] && canary::fleet::the_journal().count() > 0) {
-    const size_t o = strlen(today);
-    snprintf(today + o, sizeof(today) - o, "   ·   tap to review");
+  if (today[0] && canary::fleet::the_journal().count() > 0 &&
+      to < sizeof(today)) {
+    snprintf(today + to, sizeof(today) - to, "   ·   tap to review");
   }
 #endif
   lv_label_set_text(s_today, today);
@@ -644,8 +832,14 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     lv_anim_start(&a);
   }
 
-  // ── Footer honesty line ──
-  if (!st.wifi_ok) {
+  // ── Footer: emergency contact first, honesty line otherwise ──
+  // A panel dispatches; a witness display INFORMS whoever is standing in
+  // front of it. During an unacked Tier-1, the footer carries the household
+  // emergency contact (secrets.h, never committed) instead of the tagline.
+  if (worst >= Sev::Alert && !st.acked && EMERGENCY_CONTACT[0]) {
+    lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_alert(), 0);
+    lv_label_set_text_fmt(s_footer, "Need help? %.48s", EMERGENCY_CONTACT);
+  } else if (!st.wifi_ok) {
     lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_alert(), 0);
     lv_label_set_text(s_footer, "WIFI DOWN — showing last known state");
   } else if (!st.mqtt_ok) {
@@ -654,6 +848,23 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   } else {
     lv_obj_set_style_text_color(s_footer, fcol, 0);
     lv_label_set_text(s_footer, "status display · not a life-safety device");
+  }
+
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  // Roll Call stays live while open (the whole point is watching rows
+  // answer as you walk the house).
+  if (s_rc && !lv_obj_has_flag(s_rc, LV_OBJ_FLAG_HIDDEN)) rc_render(fleet, now);
+#endif
+
+  // Cleaning-mode countdown (the one sanctioned full-screen text).
+  if (s_clean_note) {
+    if ((int32_t)(now - s_clean_until_ms) < 0) {
+      lv_obj_move_foreground(s_clean_note);
+      lv_label_set_text_fmt(s_clean_note, "Wipe away — touch wakes in %lu s",
+                            (unsigned long)((s_clean_until_ms - now) / 1000 + 1));
+    } else if (lv_label_get_text(s_clean_note)[0]) {
+      lv_label_set_text(s_clean_note, "");
+    }
   }
 }
 
@@ -666,6 +877,29 @@ bool dash_ui_handle_tap(int16_t x, int16_t y) {
     proof_close();
     return true;
   }
+
+  // Transparency sheet: the "wipe the glass" row arms cleaning mode;
+  // anywhere else closes.
+  if (s_about && !lv_obj_has_flag(s_about, LV_OBJ_FLAG_HIDDEN)) {
+    lv_area_t ca;
+    lv_obj_get_coords(s_about_clean, &ca);
+    if (x >= ca.x1 - 8 && x <= ca.x2 + 8 && y >= ca.y1 - 8 && y <= ca.y2 + 8) {
+      s_clean_until_ms = s_now_ms + 30000;
+      about_close();
+      return true;
+    }
+    about_close();
+    return true;
+  }
+
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  // Open Roll Call swallows the tap to close (no row actions — it's a
+  // diagnostics view, not a control surface).
+  if (s_rc && !lv_obj_has_flag(s_rc, LV_OBJ_FLAG_HIDDEN)) {
+    rc_close();
+    return true;
+  }
+#endif
 
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
   // Open history modal: rows re-prove; the erase affordance takes two taps;
@@ -712,21 +946,54 @@ bool dash_ui_handle_tap(int16_t x, int16_t y) {
   }
 #endif  // FEATURE_TIME_MACHINE
 
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  // Headline tap -> Roll Call (the "how is everyone, really" view).
+  if (s_headline && s_fleet->count() > 0) {
+    lv_area_t ha;
+    lv_obj_get_coords(s_headline, &ha);
+    if (x >= ha.x1 - 8 && x <= ha.x2 + 8 && y >= ha.y1 - 8 && y <= ha.y2 + 8) {
+      rc_open(*s_fleet, s_now_ms);
+      return true;
+    }
+  }
+#endif
+
+  // Footer tap -> transparency sheet (what this glass does / never does).
+  if (s_footer) {
+    lv_area_t fa;
+    lv_obj_get_coords(s_footer, &fa);
+    if (x >= fa.x1 - 8 && x <= fa.x2 + 8 && y >= fa.y1 - 8 && y <= fa.y2 + 8) {
+      about_open(*s_fleet);
+      return true;
+    }
+  }
+
   // Card hit-test (same geometry the create pass laid down).
+  const int card = dash_ui_card_at(x, y);
+  if (card >= 0) {
+    const canary::fleet::Witness* w = s_fleet->at(card);
+    if (w) {
+      proof_open(*w);
+      return true;
+    }
+  }
+  return false;
+}
+
+int dash_ui_card_at(int16_t x, int16_t y) {
+  if (!s_fleet) return -1;
   const int n = s_fleet->count();
   for (int i = 0; i < MAX_CARDS && i < n; i++) {
     const int col = i % GRID_COLS, row = i / GRID_COLS;
     const int cx = 12 + col * (CARD_W + GAP);
     const int cy = HDR_H + 10 + row * (CARD_H + GAP);
-    if (x >= cx && x < cx + CARD_W && y >= cy && y < cy + CARD_H) {
-      const canary::fleet::Witness* w = s_fleet->at(i);
-      if (w) {
-        proof_open(*w);
-        return true;
-      }
-    }
+    if (x >= cx && x < cx + CARD_W && y >= cy && y < cy + CARD_H) return i;
   }
-  return false;
+  return -1;
+}
+
+bool dash_ui_touch_locked(uint32_t now_ms) {
+  return (int32_t)(now_ms - s_clean_until_ms) < 0;
 }
 
 void dash_ui_ack_hold(bool active) {
