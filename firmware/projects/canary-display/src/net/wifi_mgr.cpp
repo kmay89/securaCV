@@ -52,6 +52,19 @@ void begin_sta() {
 }  // namespace
 
 void wifi_init_or_reboot() {
+  // Already associated — the onboarding wizard just joined the network and
+  // handed over a live link. Adopt it instead of bouncing the connection.
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.setAutoReconnect(false);  // wifi_loop owns retry policy (backoff)
+    log_header("WIFI");
+    canary::dbg_serial().printf(
+        "Adopting provisioned link IP=%s RSSI=%ddBm\n",
+        WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    apply_power_policy();
+    s_online = true;
+    return;
+  }
+
   const auto& cfg = canary::cfg::get();
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(false);  // wifi_loop owns retry policy (backoff)

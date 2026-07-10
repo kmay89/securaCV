@@ -62,6 +62,9 @@
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
 #include "canary/net/chirp_scan.h"
 #endif
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+#include "canary/net/provision.h"
+#endif
 #include "canary/hal/display.h"
 #include "canary/hal/chime.h"
 
@@ -430,6 +433,15 @@ void setup() {
     lv_timer_handler();
     canary::hal::backlight_set(CD_BRIGHT_DAY);
   }
+
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+  // First boot (placeholder WiFi credentials): the glass becomes the setup
+  // guide — SoftAP + join QR + captive portal — instead of reboot-looping
+  // against a network that was never configured. Blocking modal phase; runs
+  // BEFORE the watchdog is armed (same class as the WiFi boot connect) and
+  // returns with the STA associated and credentials persisted.
+  if (canary::net::provision_needed()) canary::net::provision_run(g_display_ok);
+#endif
 
   TOPICS = build_topics(canary::cfg::get().device_id);
 
