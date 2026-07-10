@@ -42,8 +42,12 @@ uint32_t s_seen = 0;
 // Shared advert parser — the callback API differs between NimBLE majors,
 // the payload handling must not.
 void handle_advert(const NimBLEAdvertisedDevice* d) {
-  if (!d || !d->haveManufacturerData()) return;
-  const std::string m = d->getManufacturerData();
+  if (!d) return;
+  // NimBLE 1.4.x's accessors aren't const-qualified (2.x fixed that), so the
+  // shared parser sheds constness once; neither major's accessors mutate.
+  NimBLEAdvertisedDevice* dev = const_cast<NimBLEAdvertisedDevice*>(d);
+  if (!dev->haveManufacturerData()) return;
+  const std::string m = dev->getManufacturerData();
   if (m.size() != 17) return;
   const uint8_t* p = reinterpret_cast<const uint8_t*>(m.data());
   if (p[0] != 0xFF || p[1] != 0xFF) return;   // company id 0xFFFF (LE)
