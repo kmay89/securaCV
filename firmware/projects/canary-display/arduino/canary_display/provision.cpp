@@ -270,7 +270,9 @@ void harvest_scan(int n) {
 }
 
 void send_scan_json() {
-  char row[128], esc[80];
+  // Worst-case escaped SSID: 32 chars, all control bytes -> 32*6 = 192 + NUL.
+  // Undersizing here silently omits that network from the list (review catch).
+  char row[256], esc[200];
   String out = "{\"networks\":[";
   for (int i = 0; i < g->scan_n; i++) {
     if (json_escape(g->scan[i].ssid, esc, sizeof(esc)) == 0 &&
