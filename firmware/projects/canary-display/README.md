@@ -138,12 +138,15 @@ Set your timezone for quiet hours by adding e.g.
 ```bash
 cd firmware/projects/canary-display
 ./setup.sh arduino watch     # or: ./setup.sh arduino dash  — generates + stages
-arduino-cli compile --profile watch    # or open arduino/canary_display/canary_display.ino
+arduino-cli compile --profile watch-core3   # or open arduino/canary_display/canary_display.ino
 ```
 
-Uses **arduino-esp32 core 2.0.x** (GFX 1.4.9 / LVGL v8 — a 3.x core will not
-build). Edit firmware in `src/`, then `./setup.sh regen` before committing; a
-CI guard enforces the sketch stays in sync.
+Builds on **both** arduino-esp32 core lines: pick the `watch-core3`/`dash-core3`
+profiles on core 3.x (the Boards Manager default; GFX 1.6.6 + NimBLE 2.5.0) or
+`watch`/`dash` on core 2.0.17 (PlatformIO-matched; GFX 1.4.9 + NimBLE 1.4.3) —
+see `arduino/canary_display/README.md` for the matrix. Edit firmware in `src/`,
+then `./setup.sh regen` before committing; a CI guard enforces the sketch stays
+in sync.
 
 ## Layout
 

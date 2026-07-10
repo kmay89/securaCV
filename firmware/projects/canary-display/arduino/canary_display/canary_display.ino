@@ -67,6 +67,7 @@
 #endif
 #include "display.h"
 #include "chime.h"
+#include "core_compat.h"
 
 #include <lvgl.h>
 #include "lvgl_port.h"
@@ -521,8 +522,7 @@ void setup() {
   // LAST so the blocking boot phases above (WiFi connect up to 30 s) can't
   // trip it. Timeout must exceed loop()'s worst bounded block (one MQTT
   // connect attempt against a dead broker).
-  esp_task_wdt_init(CD_WATCHDOG_TIMEOUT_SEC, true);
-  esp_task_wdt_add(NULL);
+  canary::hal::cc_task_wdt_arm(CD_WATCHDOG_TIMEOUT_SEC);
   boot_kvf("Watchdog", "%lu s timeout", (unsigned long)CD_WATCHDOG_TIMEOUT_SEC);
 #endif
 

@@ -140,7 +140,13 @@ bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out) 
   //    (mosquitto/HA setups with avahi service files).
   n = MDNS.queryService("mqtt", PROTO);
   if (n > 0) {
+    // Core 3 renamed the result accessor IP(idx) -> address(idx); the rest
+    // of the ESPmDNS surface this file uses is identical across majors.
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    const IPAddress ip = MDNS.address(0);
+#else
     const IPAddress ip = MDNS.IP(0);
+#endif
     if (!(ip == IPAddress())) {
       copy_str(host_out, host_cap, ip.toString().c_str());
       const uint16_t p = MDNS.port(0);

@@ -5,18 +5,29 @@
 # board FQBN, the flavor #define, and the library set so the essential
 # settings travel with the sketch instead of living in per-IDE preferences.
 #
-#   Arduino IDE 2.3+ : open canary_display.ino, pick "watch" or "dash" from
-#                      the profile dropdown in the toolbar.
-#   arduino-cli      : arduino-cli compile --profile watch
-#                      arduino-cli upload  --profile watch -p /dev/ttyACM0
+#   Arduino IDE 2.3+ : open canary_display.ino, pick a profile from the
+#                      dropdown in the toolbar.
+#   arduino-cli      : arduino-cli compile --profile watch-core3
+#                      arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
 #
-# ── CRITICAL: arduino-esp32 core 2.0.x, NOT 3.x ────────────────────────────
-# The display renderer pins `moononournation/GFX Library for Arduino @ 1.4.9`
-# and LVGL v8. GFX 1.5+ and the current LVGL line need arduino-esp32 core 3.x
-# (esp32-hal-periman.h et al.), and conversely GFX 1.4.9 does NOT build on
-# core 3.x. So these profiles pin the esp32 platform to the 2.0.x line — the
-# same core the PlatformIO env resolves (espressif32 @ 6.9.0). Installing core
-# 3.x (the Boards Manager default) will fail the build; this pin prevents that.
+# ── Core version matrix ─────────────────────────────────────────────────────
+# The sketch builds on BOTH arduino-esp32 major lines; the source carries the
+# compatibility shims (hal/core_compat.h + the NimBLE gate in chirp_scan.cpp).
+# What changes per line is the LIBRARY SET, because two dependencies split
+# their majors along the core boundary:
+#
+#   core 2.0.17 (matches PlatformIO / espressif32 @ 6.9.0 — the bench-
+#   validated release path):
+#     GFX Library for Arduino 1.4.9   (1.5+ needs core 3)
+#     NimBLE-Arduino 1.4.3            (2.x needs core 3 / IDF 5)
+#
+#   core 3.x (the Boards Manager default — pick this if you just installed
+#   the esp32 platform and don't want to downgrade):
+#     GFX Library for Arduino 1.6.6   (does NOT build on core 2)
+#     NimBLE-Arduino 2.5.0            (does NOT build on core 2)
+#
+# Mixing lines (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails the build —
+# always switch profiles, never edit a single library pin.
 #
 # No `default_profile:` on purpose — that pushes plain `arduino-cli compile`
 # into profile mode and makes it reject the explicit --fqbn / --libraries the
@@ -28,12 +39,11 @@
 profiles:
   # ── Canary Watch: XIAO ESP32-S3 + Seeed Round Display (GC9A01 240x240) ──
   watch:
-    notes: XIAO ESP32-S3 on the Round Display for XIAO — 8 MB flash, OPI PSRAM
+    notes: XIAO ESP32-S3 + Round Display — arduino-esp32 2.0.17 (PlatformIO-matched)
     fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc
     platforms:
       - platform: esp32:esp32 (2.0.17)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-    # GFX pinned to 1.4.9 EXACT (see the core-version note above). LVGL v8.
     libraries:
       - GFX Library for Arduino (1.4.9)
       - lvgl (8.4.0)
@@ -42,9 +52,23 @@ profiles:
       - ArduinoJson
       - NimBLE-Arduino (1.4.3)
 
+  watch-core3:
+    notes: XIAO ESP32-S3 + Round Display — arduino-esp32 3.x (Boards Manager default)
+    fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc
+    platforms:
+      - platform: esp32:esp32 (3.3.10)
+        platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+    libraries:
+      - GFX Library for Arduino (1.6.6)
+      - lvgl (8.4.0)
+      - PubSubClient
+      - Crypto
+      - ArduinoJson
+      - NimBLE-Arduino (2.5.0)
+
   # ── Canary Dash: ESP32-S3 (devkit profile) + Waveshare 4.3" 800x480 RGB ──
   dash:
-    notes: ESP32-S3-DevKitC-1 profile for the Waveshare 4.3B — 16 MB flash, OPI PSRAM
+    notes: Waveshare 4.3B (generic ESP32-S3 board) — arduino-esp32 2.0.17 (PlatformIO-matched)
     # huge_app (3 MB app) is a built-in scheme valid on the generic esp32s3
     # board; production uses the custom 16 MB A/B table in the PlatformIO tree.
     fqbn: esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc
@@ -58,3 +82,17 @@ profiles:
       - Crypto
       - ArduinoJson
       - NimBLE-Arduino (1.4.3)
+
+  dash-core3:
+    notes: Waveshare 4.3B (generic ESP32-S3 board) — arduino-esp32 3.x (Boards Manager default)
+    fqbn: esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc
+    platforms:
+      - platform: esp32:esp32 (3.3.10)
+        platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+    libraries:
+      - GFX Library for Arduino (1.6.6)
+      - lvgl (8.4.0)
+      - PubSubClient
+      - Crypto
+      - ArduinoJson
+      - NimBLE-Arduino (2.5.0)

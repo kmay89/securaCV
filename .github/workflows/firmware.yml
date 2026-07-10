@@ -300,7 +300,7 @@ jobs:
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
   build-arduino-cli-display:
-    name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }})
+    name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }}, core ${{ matrix.core.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -318,31 +318,47 @@ jobs:
             # compile gate only needs a valid, fitting layout; production uses
             # the custom 16 MB A/B table (default_16MB.csv) in the PIO tree.
             fqbn: "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app"
+        # The sketch is dual-core (hal/core_compat.h + the NimBLE gate in
+        # chirp_scan.cpp), but GFX and NimBLE split their majors along the
+        # core boundary — each core line carries its own library pins. This
+        # matrix mirrors the watch/dash vs watch-core3/dash-core3 profiles
+        # in sketch.yaml; keep the two in lockstep.
+        core:
+          - name: "2.0.17"
+            # Matches the PlatformIO env (espressif32@6.9.0) — the
+            # bench-validated release path.
+            version: "2.0.17"
+            gfx: "1.4.9"
+            nimble: "1.4.3"
+          - name: "3.x"
+            # The Boards Manager default line (same major the canary-wap
+            # Arduino CI builds against). GFX 1.6.x / NimBLE 2.x are the
+            # core-3 counterparts of the 2.0.17 pins.
+            version: "3.3.10"
+            gfx: "1.6.6"
+            nimble: "2.5.0"
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2
 
-      - name: Configure Arduino CLI (esp32 core 2.0.x)
-        # GFX 1.4.9 (pinned for the panels) does NOT build on arduino-esp32
-        # core 3.x, and 1.5+ needs 3.x — same reason the PlatformIO env pins
-        # espressif32@6.9.0. Pin 2.0.17 here to match.
+      - name: Configure Arduino CLI (esp32 core ${{ matrix.core.version }})
         run: |
           arduino-cli config init
           arduino-cli config add board_manager.additional_urls \
             https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
-          arduino-cli core install esp32:esp32@2.0.17
+          arduino-cli core install esp32:esp32@${{ matrix.core.version }}
 
-      - name: Install libraries (pinned to the PlatformIO set)
+      - name: Install libraries (pinned per core line)
         run: |
-          arduino-cli lib install "GFX Library for Arduino@1.4.9"
+          arduino-cli lib install "GFX Library for Arduino@${{ matrix.core.gfx }}"
           arduino-cli lib install "lvgl@8.4.0"
           arduino-cli lib install "PubSubClient"
           arduino-cli lib install "Crypto"
           arduino-cli lib install "ArduinoJson"
-          arduino-cli lib install "NimBLE-Arduino@1.4.3"
+          arduino-cli lib install "NimBLE-Arduino@${{ matrix.core.nimble }}"
 
       - name: Stage + compile ${{ matrix.flavor.name }}
         run: |
