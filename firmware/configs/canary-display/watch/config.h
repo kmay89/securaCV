@@ -41,6 +41,7 @@
 #define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
 #define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
 #define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
+#define FEATURE_ONBOARDING          1   // first-boot SoftAP wizard + on-glass guide
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
 

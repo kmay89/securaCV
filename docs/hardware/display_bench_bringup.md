@@ -282,6 +282,31 @@ it should log "RAM-only this boot" and still run). **Artifact:** photo of the
 history modal + a scan of a past event's QR verifying; serial line showing
 "time machine up (persisted, N loaded)" after reboot.
 
+### F8. First-boot onboarding — the out-of-box experience
+
+Flash with the **stock secrets template** (or wipe NVS) so the WiFi
+credentials are placeholders, then power on cold. Full choreography +
+recovery matrix: [`display_onboarding.md`](./display_onboarding.md).
+
+1. Glass says **Hello**, then shows the join QR. Scan with an **iPhone
+   camera** → auto-join prompt → captive sheet pops with the network list
+   already loaded. Repeat the scan step on an **Android**.
+2. Pick your network, enter a **wrong password** on purpose.
+3. Enter the right one.
+4. Power-cycle a second unit **mid-setup** (before success) and confirm the
+   wizard restarts clean.
+
+**Pass:** (1) both phones auto-join from the QR and the sheet pops (Android
+fallback: the glass adds "no page? open 192.168.4.1" after ~9 s if it
+doesn't); (2) the portal shows **"Wrong password"** inline (not a generic
+error, not "network not found"), the sheet shakes, the glass mirrors the
+reason in amber, and the AP never drops; (3) glass sweeps → **"You're in."**
+bloom → cross-fade to the fleet UI → flock referral lands the broker (F6) and
+canaries render — while the phone draws its ✓; (4) the second unit boots back
+into the wizard with a **fresh session password** and no stored junk.
+**Artifact:** video of the full happy path (scan → bloom → fleet), photo of
+the wrong-password state on both surfaces.
+
 ---
 
 ## Sign-off — retire the DEV status

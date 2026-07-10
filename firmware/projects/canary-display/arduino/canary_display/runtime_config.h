@@ -14,8 +14,9 @@
 //     (flashing a new secrets build over USB updates the unit); placeholder
 //     values (CI stubs / generic release builds) defer to NVS.
 //
-// First provisioning is a user-compiled USB flash (real secrets), which
-// seeds NVS; every OTA release build afterwards inherits the unit's setup.
+// First provisioning is either the on-glass onboarding wizard (SoftAP captive
+// portal writes NVS — see net/provision.h) or a user-compiled USB flash with
+// real secrets; every OTA release build afterwards inherits the unit's setup.
 
 namespace canary::cfg {
 
@@ -31,5 +32,16 @@ struct RuntimeConfig {
 
 // Loaded once on first call (then cached). Safe to call from setup() onward.
 const RuntimeConfig& get();
+
+// True when the effective WiFi SSID is a placeholder (CI stub / generic OTA
+// build with nothing in NVS) — i.e. this unit has never been provisioned.
+// The onboarding wizard keys off this.
+bool wifi_is_placeholder();
+
+// Persist WiFi credentials to NVS and update the cached config in place —
+// called by the onboarding wizard ON SUCCESS ONLY (a failed join must never
+// leave broken credentials behind). No reboot needed; the net stack reads
+// the refreshed cache from here on.
+void set_wifi_credentials(const char* ssid, const char* pass);
 
 } // namespace canary::cfg

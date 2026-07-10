@@ -91,6 +91,15 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   time is SNTP-valid; and the **open standard draft** now lives at
   [`docs/standard/AMBIENT_DISPLAY_STANDARD.md`](../../../docs/standard/AMBIENT_DISPLAY_STANDARD.md).
 
+- **First-boot onboarding** (`FEATURE_ONBOARDING`,
+  [choreography](../../../docs/hardware/display_onboarding.md)): a fresh
+  display never reboot-loops — it says hello, shows a **join QR on its own
+  glass** (device-unique AP, per-session password), pops a captive portal on
+  the phone (dark, self-contained, live status, specific failure reasons),
+  persists credentials **on success only**, and cross-fades straight into the
+  fleet UI — where the flock referral lands the broker with zero further
+  input. Plug in → scan → password → watching your canaries. No dead ends.
+
 - **Trailblazer wave 3** ([spec](../../../docs/hardware/display_trailblazer_spec.md)):
   **the verifiable time machine** (`FEATURE_TIME_MACHINE`) — every event is
   recorded epoch-stamped with the *verbatim signed chain head that was live

@@ -104,12 +104,19 @@ Still open on the sensor side: the same `broker` TXT for the modular
 `canary-sense` / `canary-vision` trees (no mDNS there yet — additive when
 those become always-on nodes).
 
+## 5.2 First-boot onboarding — SHIPPED (`FEATURE_ONBOARDING`)
+
+The last gap is closed: WiFi itself no longer needs a compiled `secrets.h`.
+A fresh display raises a device-unique SoftAP, shows a **join QR on its own
+glass**, and walks the user through a captive-portal wizard — wrong-password
+recovery, live status, no dead ends — then the flock referral (§5.1) lands
+the broker with zero further input. Full UX choreography, recovery matrix,
+and security posture: [`display_onboarding.md`](./display_onboarding.md).
+End-to-end: **plug in → scan → password → watching your canaries.**
+
 ## 5. Follow-ups to finish the magic
 
-1. **Captive-portal onboarding for displays** — WAP-parity SoftAP flow for
-   WiFi credentials themselves (the flock can't help before the device is
-   on the LAN). Until then displays are provisioned by compiled secrets.
-2. **Broker mDNS advert in the HA add-on / docs** — one avahi service file
+1. **Broker mDNS advert in the HA add-on / docs** — one avahi service file
    makes even the *first* device zero-config; document it in the getting-
    started guide. (With §5.1, a single provisioned canary already covers
    this for any household that has one — this closes the no-canary-yet gap.)
