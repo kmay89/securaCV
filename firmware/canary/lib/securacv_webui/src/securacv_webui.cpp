@@ -4901,7 +4901,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // FLOCK (MESH NETWORK)
+    // OPERA (MESH NETWORK)
     // ══════════════════════════════════════════════════════════════════
 
     let operaState = null;
@@ -4932,7 +4932,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         badge.className = 'badge warning';
         stateText.textContent = 'Connecting';
         document.getElementById('operaSubtitle').textContent = 'Searching for opera members...';
-      } else if (data.state === 'NO_FLOCK') {
+      } else if (data.state === 'NO_OPERA') {
         badge.className = 'badge info';
         stateText.textContent = 'No Opera';
         document.getElementById('operaSubtitle').textContent = 'Create or join an opera to get started';
@@ -5084,7 +5084,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (data.state === 'ACTIVE') {
             alert('Successfully joined opera!');
           }
-        } else if (data.state === 'NO_FLOCK' || data.state === 'DISABLED') {
+        } else if (data.state === 'NO_OPERA' || data.state === 'DISABLED') {
           // Pairing cancelled or failed
           stopPairingPolling();
           refreshOpera();

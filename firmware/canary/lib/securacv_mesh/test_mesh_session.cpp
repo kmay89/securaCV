@@ -831,7 +831,7 @@ void test_mesh_state_name_mapping() {
 
   /* Steady states (IDLE / PAIRED / FAILED fall through). */
   assert(std::strcmp(mesh_pairing::mesh_state_name(false, true, S::IDLE, 3), "DISABLED") == 0);
-  assert(std::strcmp(mesh_pairing::mesh_state_name(true, false, S::IDLE, 0), "NO_FLOCK") == 0);
+  assert(std::strcmp(mesh_pairing::mesh_state_name(true, false, S::IDLE, 0), "NO_OPERA") == 0);
   assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::IDLE, 0), "CONNECTING") == 0);
   assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::IDLE, 2), "ACTIVE") == 0);
   assert(std::strcmp(mesh_pairing::mesh_state_name(true, true, S::PAIRED, 1), "ACTIVE") == 0);
@@ -896,7 +896,7 @@ void test_build_mesh_status_json_no_opera_empty_id() {
   assert(mesh_api::build_mesh_status_json(
       buf, sizeof(buf), true, false, nullptr, "",
       mesh_pairing::State::IDLE, 0, 0, 0, 0));
-  assert(std::strstr(buf, "\"state\":\"NO_FLOCK\"") != nullptr);
+  assert(std::strstr(buf, "\"state\":\"NO_OPERA\"") != nullptr);
   assert(std::strstr(buf, "\"opera_id\":\"\"") != nullptr);
   assert(std::strstr(buf, "\"has_opera\":false") != nullptr);
   std::printf("PASS test_build_mesh_status_json_no_opera_empty_id\n");

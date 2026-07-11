@@ -33,7 +33,7 @@
 #define FEATURE_WIFI_STA            1
 #define FEATURE_MQTT                1   // subscribe to the fleet, publish own status
 #define FEATURE_CHAIN_VERIFY        1   // on-device Ed25519 verify + TOFU pinning
-#define FEATURE_MDNS_DISCOVERY      1   // flock discovery: find/gossip the broker
+#define FEATURE_MDNS_DISCOVERY      1   // fleet discovery: find/gossip the broker
 #define FEATURE_PROOF_QR            1   // tap-for-proof QR (trailblazer spec 1)
 #define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
@@ -42,6 +42,11 @@
 #define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
 #define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
 #define FEATURE_ONBOARDING          1   // first-boot SoftAP wizard + on-glass guide
+#define FEATURE_CARE                1   // attention policy: night-silent maintenance,
+                                        // morning summary, per-witness mute, Roll Call,
+                                        // escalation-on-no-ack (display_care_wave.md)
+#define FEATURE_RHYTHM              1   // whole-home morning-rhythm baseline (learned
+                                        // on-device, never uploaded; wellbeing line)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
 
@@ -115,7 +120,7 @@
 #define CD_HEARTBEAT_MS         30000   // own retained status cadence
 #define CD_WATCHDOG_TIMEOUT_SEC 30      // > worst bounded block (MQTT TCP timeout)
 
-// Broker dark past this (WiFi fine) -> re-ask the flock via mDNS and rebind
+// Broker dark past this (WiFi fine) -> re-ask the fleet via mDNS and rebind
 // (self-heals a broker that moved DHCP lease; also the retry cadence for a
 // never-configured unit waiting for its first referral).
 #define CD_BROKER_REDISCOVER_MS 120000  // 2 min

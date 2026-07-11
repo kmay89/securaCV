@@ -56,7 +56,7 @@ enum LogCategory : uint8_t {
   LOG_CAT_SENSOR     = 6,   // PIR, tamper, environmental
   LOG_CAT_USER       = 7,   // User actions (config changes, acknowledgments)
   LOG_CAT_WITNESS    = 8,   // Witness record creation
-  LOG_CAT_MESH       = 9,   // Mesh network (flock) operations
+  LOG_CAT_MESH       = 9,   // Mesh network (opera) operations
   LOG_CAT_BLUETOOTH  = 10   // Bluetooth Low Energy operations
 };
 

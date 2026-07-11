@@ -4083,7 +4083,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           document.getElementById('pairingConfirmBtn').style.display = 'inline-flex';
         } else if (data.state === 'ACTIVE' || data.state === 'CONNECTING') {
           stopPairingPolling(); refreshOpera();
-        } else if (data.state === 'NO_FLOCK' || data.state === 'DISABLED') {
+        } else if (data.state === 'NO_OPERA' || data.state === 'DISABLED') {
           stopPairingPolling(); refreshOpera();
         }
       }, 1000);

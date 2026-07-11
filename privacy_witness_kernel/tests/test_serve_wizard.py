@@ -210,7 +210,7 @@ def test_handle_mesh_proxy_get_sends_no_body(monkeypatch):
 
     def _fake_canary(address, token, method, path, data=None):
         captured["data"] = data
-        return {"ok": True, "state": "NO_FLOCK"}
+        return {"ok": True, "state": "NO_OPERA"}
 
     monkeypatch.setattr(serve_wizard, "_canary_request", _fake_canary)
     handler = _bare_handler()

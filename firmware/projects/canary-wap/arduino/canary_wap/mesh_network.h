@@ -87,7 +87,7 @@ extern const uint8_t BROADCAST_ADDR[6];
 enum MeshState : uint8_t {
   MESH_DISABLED = 0,       // Feature disabled
   MESH_INITIALIZING,       // Loading config, starting transports
-  MESH_NO_FLOCK,           // No opera configured, awaiting pairing
+  MESH_NO_OPERA,           // No opera configured, awaiting pairing
   MESH_CONNECTING,         // Attempting to reach opera members
   MESH_ACTIVE,             // Connected to one or more peers
   MESH_PAIRING_INIT,       // Pairing mode - initiator
