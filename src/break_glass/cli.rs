@@ -881,6 +881,7 @@ mod tests {
             },
             trustees_used: vec![TrusteeId::new("trustee")],
             approvals_commitment: approvals_commitment(&[]),
+            policy_commitment: [0u8; 32],
             outcome: BreakGlassOutcome::Granted,
         };
         let token = BreakGlassToken::test_token_with(

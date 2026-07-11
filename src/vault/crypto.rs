@@ -137,10 +137,14 @@ pub fn seal_v2(
     kem_keypair: Option<&KemKeypair>,
 ) -> Result<EnvelopeV2> {
     let aad = encode_aad(envelope_id, &ruleset_hash);
-    let derived = derive_dek(envelope_id, &ruleset_hash, mode, master_key, kem_keypair)?;
+    let mut derived = derive_dek(envelope_id, &ruleset_hash, mode, master_key, kem_keypair)?;
 
-    // Wrap DEK in guard to ensure zeroization on all paths including errors
+    // Wrap DEK in guard to ensure zeroization on all paths including errors.
     let dek_guard = DekGuard(derived.dek);
+    // The guard now owns the working copy; scrub the source copy that still
+    // lives in `derived.dek` (a plain [u8;32] has no Drop, so it would
+    // otherwise linger on the stack un-zeroized).
+    derived.dek.zeroize();
 
     let mut nonce = vec![0u8; 12];
     SysRng
@@ -187,8 +191,10 @@ pub fn decrypt_v2(
     // classical_wrap.
     if envelope.kem_alg == KEM_ALG_ML_KEM_768 {
         if let Some(kp) = kem_keypair {
-            if let Ok(shared_secret) = kem_decapsulate(kp, &envelope.kem_ct) {
+            if let Ok(mut shared_secret) = kem_decapsulate(kp, &envelope.kem_ct) {
                 let dek_guard = DekGuard(kdf_dek(&shared_secret, &envelope.kdf_info));
+                // Spent — scrub the decapsulated secret before it drops.
+                shared_secret.zeroize();
                 let mut ciphertext = envelope.ciphertext[..tag_offset].to_vec();
                 if decrypt_payload(&dek_guard.0, &envelope.nonce, &aad, &mut ciphertext, tag)
                     .is_ok()
@@ -271,12 +277,15 @@ fn derive_dek(
         VaultCryptoMode::Pq | VaultCryptoMode::Hybrid => {
             let kem_keypair =
                 kem_keypair.ok_or_else(|| anyhow!("vault KEM keypair missing for PQ mode"))?;
-            let (kem_ct, shared_secret) = kem_encapsulate(kem_keypair)?;
+            let (kem_ct, mut shared_secret) = kem_encapsulate(kem_keypair)?;
             let mut kdf_info = vec![0u8; 32];
             SysRng
                 .try_fill_bytes(&mut kdf_info[..])
                 .expect("OS RNG unavailable");
             let dek = kdf_dek(&shared_secret, &kdf_info);
+            // The KEM shared secret is spent; scrub it so the raw secret does
+            // not linger in the heap allocation after the DEK is derived.
+            shared_secret.zeroize();
             let classical_wrap = if matches!(mode, VaultCryptoMode::Hybrid) {
                 Some(wrap_dek(master_key, envelope_id, ruleset_hash, &dek)?)
             } else {
