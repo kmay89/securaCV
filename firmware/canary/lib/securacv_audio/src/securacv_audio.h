@@ -113,6 +113,16 @@
 #define AUDIO_TONE_MIN_X100       50      /* beep tone floor, normal mode */
 #define AUDIO_TONE_MIN_RELAXED    30      /* beep tone floor, self-test mode */
 
+/* A live PDM mic never produces a perfectly flat signal — its noise floor
+ * wiggles at least a few LSBs. If every 20 ms window for this many
+ * consecutive frames computes RMS == 0 while the driver reports running,
+ * the data line is almost certainly dead (expansion board unseated, wrong
+ * pins, hardware fault). 1500 frames = 30 s at the 50 Hz envelope rate —
+ * long enough that a silent room can't trip it spuriously. Consumers
+ * compare audio_stats_t.zero_rms_streak against this to surface a
+ * "microphone signal is flat" warning instead of a lying LISTENING badge. */
+#define AUDIO_SILENT_STREAK_FRAMES 1500
+
 /* ──────────────────────────────────────────────────────────────────────────
  * TYPES
  * ────────────────────────────────────────────────────────────────────────── */
@@ -166,6 +176,10 @@ typedef struct {
   uint32_t knock_detected;       /* knock patterns confirmed (Phase 2b) */
   uint32_t doorbell_detected;    /* doorbell patterns confirmed (Phase 2b) */
   uint32_t glass_break_detected; /* glass-break patterns confirmed (Phase 2b) */
+  uint32_t zero_rms_streak;      /* consecutive frames with RMS == 0; a dead
+                                  * data line pins this while a live mic's
+                                  * noise floor resets it. Compare against
+                                  * AUDIO_SILENT_STREAK_FRAMES. */
 } audio_stats_t;
 
 /* A single recent on/off transition, exposed for the UI's "show me the
@@ -265,11 +279,21 @@ void audio_get_mute_info(audio_mute_info_t* out);
  * SELF-TEST MODE
  *
  * When active, the existing T3/T4 matchers run with relaxed timing
- * tolerance and a lower confidence floor so a user holding their alarm's
- * TEST button at ~3 m has the best chance of being heard. Crucially, the
- * normal event callback is NOT fired while self-test is active — we don't
- * want a test press to flow into Home Assistant smoke automations.
+ * tolerance, a lower confidence floor, AND halved envelope on/off
+ * thresholds so a user holding their alarm's TEST button at ~3 m has the
+ * best chance of being heard (a UL sounder at 3 m lands near RMS ~600,
+ * under the default ON threshold of 800). Crucially, the normal event
+ * callback is NOT fired while self-test is active — we don't want a test
+ * press to flow into Home Assistant smoke automations — and when the test
+ * ends (expiry or stop) the transition ring is wiped, so beeps gathered
+ * under test conditions can never complete a NORMAL match a moment later.
  * Auto-expires after `duration_ms` (max 60_000).
+ *
+ * `peak_rms` records the loudest 20 ms window heard during the test. It
+ * lets the UI separate three very different failures that otherwise all
+ * read "no alarm cadence heard": a dead mic (peak 0), a working mic that
+ * heard only faint sound (0 < peak < ON threshold), and loud sound that
+ * simply wasn't an alarm cadence (peak above threshold, no match).
  * ────────────────────────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -279,6 +303,8 @@ typedef struct {
   uint8_t  reserved;
   uint32_t remaining_ms;    /* time until auto-expiry */
   uint32_t transitions_seen;/* on/off transitions observed during the test */
+  uint16_t peak_rms;        /* loudest 20 ms RMS heard during the test */
+  uint8_t  reserved2[2];
 } audio_selftest_status_t;
 
 bool audio_selftest_start(uint32_t duration_ms);
