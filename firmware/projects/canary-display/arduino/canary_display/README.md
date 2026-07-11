@@ -75,8 +75,13 @@ Mixing rows (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails the build.
 5. **Build.** With no `secrets.h` compiled in, the display boots into its
    on-glass onboarding wizard — WiFi setup happens on the device.
 
-(Exotic board? Force a flavor with `#define CD_BUILD_DASH 0|1` in a
-`flavor_local.h` next to the sketch — an explicit choice beats inference.)
+(Using a **vendor board package** — e.g. Waveshare's own
+"ESP32-S3-Touch-LCD-4.3B" board entry? The sketch can't infer the flavor
+from those and stops with a clear error. Either switch to the two official
+boards above, or force a flavor with `#define CD_BUILD_DASH 0|1` in a
+`flavor_local.h` next to the sketch — an explicit choice beats inference.
+The official `ESP32S3 Dev Module` + our committed pin map is the tested
+path for the Waveshare 4.3B panel.)
 
 ## Build — arduino-cli (zero manual installs)
 
