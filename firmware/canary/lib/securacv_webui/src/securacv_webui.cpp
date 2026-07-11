@@ -3708,6 +3708,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (flagsEl) {
           const parts = [];
           if (r.muted) parts.push('muted');
+          else if (r.mic_silent) parts.push('NO SIGNAL — check mic hardware');
           else if (r.envelope_high) parts.push('ALARM-LEVEL');
           else parts.push('quiet');
           if (typeof r.age_ms === 'number' && r.age_ms >= 0 && r.age_ms < 5000) {
@@ -4107,13 +4108,23 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               '✓ Matched ' + r.matched + ' (' + (r.confidence | 0) + '% confidence). ' +
               'No Home Assistant automation was triggered.';
           } else {
+            // peak_rms separates three failures that used to read the same:
+            // dead mic (0), too quiet (under the ON threshold), and loud
+            // sound that just wasn't an alarm cadence.
             const seen = r.transitions_seen | 0;
-            if (seen === 0) {
+            const peak = r.peak_rms | 0;
+            const need = r.rms_on_threshold | 0 || 800;
+            if (peak === 0) {
               statusEl.textContent =
-                '✗ No sound transitions seen at all. Move the Canary closer to your alarm or check the I2S errors stat.';
+                '✗ The microphone heard nothing at all — not even room noise. ' +
+                'Check that it isn\'t muted and that the mic hardware is connected, then retry.';
+            } else if (seen === 0) {
+              statusEl.textContent =
+                '✗ Heard only faint sound (peak level ' + peak + ', needs about ' + need + '). ' +
+                'Move the Canary closer to your alarm — or raise the sensitivity — and retry.';
             } else {
               statusEl.textContent =
-                '✗ Heard ' + seen + ' on/off transitions but no T3/T4 cadence matched. ' +
+                '✗ Heard ' + seen + ' on/off transitions (peak ' + peak + ') but no T3/T4 cadence matched. ' +
                 'Possible reasons: alarm is too far away, room is too noisy, or your alarm uses a non-standard cadence.';
             }
           }

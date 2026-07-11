@@ -2762,6 +2762,16 @@ static esp_err_t handle_audio_level(httpd_req_t* req) {
   doc["envelope_high"]     = (rms >= cfg.rms_on_threshold);
   doc["age_ms"] = (age_ms == UINT32_MAX) ? -1L : (long)age_ms;
 
+  /* Flat-signal watchdog: running but every 20 ms window for 30+ s
+   * computed RMS == 0 — a dead data line, not a quiet room (a live PDM
+   * mic's noise floor never holds an exact zero that long). Lets the UI
+   * warn instead of showing a healthy meter stuck at zero. */
+  audio_stats_t a_stats;
+  memset(&a_stats, 0, sizeof(a_stats));
+  audio_get_stats(&a_stats);
+  doc["mic_silent"] =
+      (running && a_stats.zero_rms_streak >= AUDIO_SILENT_STREAK_FRAMES);
+
   /* Last 8 transitions, newest first, for the cadence-trace view.
    * `tone` is the alarm-band ratio ×100 the T3/T4 tone gate checks —
    * it shows WHY a beep did or didn't count (≥50 = alarm-band). */
@@ -2871,6 +2881,11 @@ static esp_err_t handle_audio_test_status(httpd_req_t* req) {
   audio_selftest_status_t st;
   audio_selftest_status(&st);
 
+  /* Ship the live ON threshold alongside peak_rms so the failure copy can
+   * distinguish "too quiet" (0 < peak < on) from "loud but not an alarm". */
+  audio_config_t cfg = AUDIO_CONFIG_DEFAULT;
+  audio_get_config(&cfg);
+
   JsonDocument doc;
   doc["ok"]               = true;
   doc["active"]           = (bool)st.active;
@@ -2878,6 +2893,8 @@ static esp_err_t handle_audio_test_status(httpd_req_t* req) {
   doc["matched"]          = audio_event_name(st.matched_type);
   doc["confidence"]       = st.matched_conf;
   doc["transitions_seen"] = st.transitions_seen;
+  doc["peak_rms"]         = st.peak_rms;
+  doc["rms_on_threshold"] = cfg.rms_on_threshold;
   String response;
   serializeJson(doc, response);
   return http_send_json(req, response.c_str());
