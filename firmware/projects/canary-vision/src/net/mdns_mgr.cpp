@@ -28,6 +28,11 @@ constexpr const char* PROTO = "tcp";
 bool s_up = false;
 char s_host[48] = {0};
 
+// Set from the WiFi event task (STA_GOT_IP), drained by mdns_loop() on the
+// main task — event handlers only latch state, they never run mDNS logic
+// (single-task invariant; single-word write is atomic on ESP32).
+volatile bool s_reannounce_pending = false;
+
 // Broker gossip cache — re-applied on every re-announce so a WiFi link
 // cycle can't silently drop (or resurrect) a referral.
 char s_broker[64] = {0};
@@ -66,7 +71,10 @@ void canonical_dt(char* out, size_t cap) {
 }
 
 void apply_txt() {
+  // cfg device_id is an in-struct array (never NULL), but guard anyway —
+  // a NULL would dereference inside the mDNS library.
   const char* device_id = canary::cfg::get().device_id;
+  if (!device_id) device_id = "";
   MDNS.addServiceTxt(SVC, PROTO, "device_id", device_id);
   // No separate friendly-name store on this variant (names live on the
   // HA/display side via the meta topic) — the id doubles as the name.
@@ -113,16 +121,16 @@ bool mdns_init() {
   s_up = true;
 
   // ESP-IDF mDNS binds to whichever netifs are up at begin() time and does
-  // not re-announce when the STA regains an IP later — re-announce on every
-  // STA_GOT_IP so a WiFi outage (wifi_mgr backoff) can't leave a stale
-  // advert. Same recovery canary-wap ships.
+  // not re-announce when the STA regains an IP later — so a WiFi outage
+  // (wifi_mgr backoff) must not leave a stale advert. The event handler
+  // only latches a flag (it runs on the system event task, which must
+  // never drive mDNS logic directly); mdns_loop() drains it on the main
+  // task. Same recovery canary-wap ships, via the loop instead.
   static bool s_event_registered = false;
   if (!s_event_registered) {
     WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t /*info*/) {
-      if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP && s_up) {
-        if (!announce()) {
-          log_line("MDNS", "mDNS re-announce failed.");
-        }
+      if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        s_reannounce_pending = true;
       }
     });
     s_event_registered = true;
@@ -132,6 +140,15 @@ bool mdns_init() {
   canary::dbg_serial().printf("Fleet advert up as %s.local (_%s._%s)\n",
                               s_host, SVC, PROTO);
   return true;
+}
+
+void mdns_loop(uint32_t /*now_ms*/) {
+  if (!s_up || !s_reannounce_pending) return;
+  s_reannounce_pending = false;
+  if (WiFi.status() != WL_CONNECTED) return;  // next GOT_IP re-latches
+  if (!announce()) {
+    log_line("MDNS", "mDNS re-announce failed.");
+  }
 }
 
 void mdns_advertise_broker(const char* host, uint16_t port) {

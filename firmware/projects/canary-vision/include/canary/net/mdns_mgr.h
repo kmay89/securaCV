@@ -25,9 +25,13 @@
 
 namespace canary::net {
 
-// Start the fleet advert. Call once after the boot WiFi connect; a WiFi
-// link cycle re-announces automatically (STA_GOT_IP handler).
+// Start the fleet advert. Call once after the boot WiFi connect.
 bool mdns_init();
+
+// Drain deferred work: the STA_GOT_IP handler only latches a re-announce
+// flag (event handlers never run mDNS logic); this drains it on the main
+// task. Call every loop pass — cheap no-op when nothing is pending.
+void mdns_loop(uint32_t now_ms);
 
 // Broker gossip — same TXT contract as canary-wap's
 // FEATURE_MDNS_BROKER_GOSSIP and canary-display: advertise the working

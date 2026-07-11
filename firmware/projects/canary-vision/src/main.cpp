@@ -435,6 +435,7 @@ void setup() {
 void loop() {
   // STA supervision first: backoff reconnects, outage reboot (S3 parity).
   canary::net::wifi_loop(canary::ms_now());
+  canary::net::mdns_loop(canary::ms_now());  // drain deferred re-announce
   canary::diag::loop(canary::ms_now());
 
   if (!canary::net::mqtt_connected()) {

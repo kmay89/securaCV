@@ -12,8 +12,8 @@
 #include <string.h>
 #include <stdio.h>
 
-#include "config.h"   // MODEL (CD_MODEL)
-#include "version.h"  // CANARY_FW_VERSION
+#include "config.h"     // MODEL (CD_MODEL)
+#include "version.h"    // CANARY_FW_VERSION
 #include "log.h"
 #include "device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
 

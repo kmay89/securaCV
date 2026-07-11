@@ -613,6 +613,7 @@ void loop() {
 
   // ── Network supervision ──
   canary::net::wifi_loop(now);
+  canary::net::mdns_loop(now);  // drain deferred re-announce (event task latches only)
   canary::diag::loop(now);
 
   // Bounded, backoff-scheduled broker supervision: while the broker is
