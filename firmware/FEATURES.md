@@ -1,6 +1,6 @@
 # SecuraCV Canary Firmware — Feature Audit Matrix
 
-**Last updated:** 2026-07-02 (canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
+**Last updated:** 2026-07-11 (`_securacv._tcp` mDNS fleet adverts with the canonical TXT schema + HA MQTT Identify buttons on canary-vision and canary-sense — compile/CI-verified, hardware bench validation pending. 2026-07-02: canary-sense witness signing — Ed25519 events + NVS hash chain + wap-schema chain/health trust surface + task watchdog; earlier same day: Phase 2 network stack + canary-vision robustness parity)
 **Original audit:** 2026-02-20
 **Companion docs:** [VARIANT_POLICY.md](VARIANT_POLICY.md) (lifecycle labels), [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) (risk analysis), [PARITY_PLAN.md](PARITY_PLAN.md) (ACTIVE ⇄ canary-wap parity closure program)
 
@@ -87,6 +87,8 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Battery health history (NVS-persisted charge cycles, voltage extremes) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ⚠️ | ❌ | ❌ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ✅ | ❌ | ✅ | ✅ | ➖ | ❌ |
+| mDNS fleet advert (`_securacv._tcp`, canonical TXT schema incl. `dt`/`role` + broker gossip) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ➖ | ❌ |
+| Remote identify blink (HA `Identify` button on MQTT variants; HTTP `/api/identify` on WAP) | ❌ | ✅ | ✅ | ✅ | ✅ | ➖ | ❌ |
 | OTA A/B with rollback safety | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
 | Signed pull-OTA (HTTPS manifest + Ed25519 release signature) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ❌ |
 | HA `update` entity (MQTT discovery, Install button + auto-update switch) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
@@ -97,6 +99,14 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Watchdog timer | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ |
 | Provisioning gate (BOOT button) | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ |
 | `SECURACV_RELEASE_BUILD` fail-closed guards | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ (archive-only) |
+
+> **2026-07-11 rows:** the mDNS fleet advert and identify rows reflect code
+> that is compile/CI-verified but not yet bench-verified on hardware for
+> canary-vision and canary-sense. The canary (PIO) tree advertises
+> `_securacv._tcp` with `device_id`/`fw`/`model` TXT keys but not yet the
+> full canonical schema (`name`/`host`/`dt`/`role`/`broker`) — hence ⚠️.
+> The canary-wap (PIO) cells are ✅ because that env builds the same
+> `arduino/canary_wap/` sources (`src_dir` points at the sketch).
 
 ---
 
@@ -151,7 +161,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | AP mode with dynamic SSID | ✅ SecuraCV-<MAC> | ✅ | ✅ | ✅ |
 | Device-unique AP password | ✅ (derived from fingerprint) | ❌ Static default | ✅ (derived from pubkey fp) | ❌ Static default |
 | Max client limit (1) | ✅ Hardened | ❌ (4 clients) | ✅ (1 client) | ❌ (configurable) |
-| mDNS (canary.local + _securacv._tcp, device_id in TXT record) | ✅ | ❌ | ✅ | ❌ |
+| mDNS (canary.local + _securacv._tcp, device_id in TXT record) | ✅ | ✅ (2026-07: unique `canary-<name>.local` + catch-all + canonical `dt`/`role` TXT schema) | ✅ | ✅ (same sources as Arduino IDE via `src_dir`) |
 | Rate limiting on API | ✅ | ❌ | ✅ (120 req/min) | ❌ |
 | TLS (HTTPS) support | ✅ Self-signed cert | ❌ | ❌ | ❌ |
 | WiFi STA (home network connect) | ✅ | ❌ | ✅ (AP+STA dual mode) | ❌ |
@@ -339,8 +349,8 @@ Post-archive (2026-04), the ACTIVE canonical tree is `firmware/canary/` (Platfor
 
 - **canary-wap Arduino (COMPATIBILITY)**: ~100% WAP parity; recently hardened (real ESP-NOW RSSI 2026-04, SD flush-on-unmount 2026-04). MQTT publish + HA Discovery is now present here too (`csi_mqtt.cpp`, compiled in the Arduino CLI build; HA side validated by `hassfest`) — see the 2026-06-09 reconciliation note in [PARITY_PLAN.md](PARITY_PLAN.md).
 - **canary (PIO, ACTIVE)**: ~88% feature parity — modular libs, MQTT + HA Discovery, WiFi STA, export, storage status counters (2026-04), HKDF-derived bearer token gating every SPA-driven endpoint (2026-04). Gaps: camera streaming, full GPS motion FSM, some web UI tabs.
-- **canary-vision (SPECIALIZED)**: 2026-07 robustness parity with the S3 tree — supervised WiFi STA (exponential-backoff reconnect + outage reboot), WiFi power-save policy (⚠️ pending bench), heap monitor with 3-level degradation that stretches the inference cadence under pressure, and RSSI/heap HA diagnostic entities.
-- **canary-sense (SPECIALIZED)**: Phase 2 landed 2026-07 — the MR60 radar witness now publishes: supervised WiFi STA, MQTT with LWT + HA discovery (presence / occupants / range band / radar-link health / illuminance; wellbeing builds add the P0 breathing lock and P1-gated BPM entities), NVS-backed runtime config, heap diagnostics, and the shared signed pull-OTA engine with HA update entity. OTA cells sit at ⚠️ until the engine is bench-proven on the ESP32-C6 (new MCU for the A/B flow); Ed25519 witness-chain signing is the remaining Phase 2 design-doc item and stays ❌.
+- **canary-vision (SPECIALIZED)**: 2026-07 robustness parity with the S3 tree — supervised WiFi STA (exponential-backoff reconnect + outage reboot), WiFi power-save policy (⚠️ pending bench), heap monitor with 3-level degradation that stretches the inference cadence under pressure, and RSSI/heap HA diagnostic entities. 2026-07-11 adds the `_securacv._tcp` mDNS fleet advert (canonical TXT schema; `DEVICE_TYPE` is now the canonical hyphenated `canary-vision`) and the HA Identify button (bench validation pending).
+- **canary-sense (SPECIALIZED)**: Phase 2 landed 2026-07 — the MR60 radar witness now publishes: supervised WiFi STA, MQTT with LWT + HA discovery (presence / occupants / range band / radar-link health / illuminance; wellbeing builds add the P0 breathing lock and P1-gated BPM entities), NVS-backed runtime config, heap diagnostics, and the shared signed pull-OTA engine with HA update entity. OTA cells sit at ⚠️ until the engine is bench-proven on the ESP32-C6 (new MCU for the A/B flow). Ed25519 witness-chain signing landed 2026-07-02 (events signed over the v1 `sense` canonical + NVS hash chain + wap-schema chain/health trust surface) — ✅ in the dashboard. 2026-07-11 adds the `_securacv._tcp` mDNS fleet advert and the HA Identify button (bench validation pending).
 - **canary-wap (PIO, COMPATIBILITY)**: ~40% parity — uses common headers, many implementations still skeleton.
 
 ### Priority Actions

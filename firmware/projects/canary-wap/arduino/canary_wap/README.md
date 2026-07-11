@@ -2,7 +2,7 @@
 
 Full-featured Privacy Witness Device firmware for the XIAO ESP32-S3 Sense.
 
-This is the **complete** Arduino IDE version of the Canary WAP firmware, with full feature parity with the canonical WAP snapshot. All features are controlled via compile-time `#define` flags in `build_config.h`.
+This is the **complete** Arduino IDE version of the Canary WAP firmware — the full WAP feature set (witness chain, SD storage, web dashboard, mesh, BLE, camera peek) in a single sketch tree. All features are controlled via compile-time `#define` flags in `build_config.h`. The same sources are built by PlatformIO (`platformio.ini` points `src_dir` here), so both toolchains produce the same firmware.
 
 ## Features
 
@@ -68,7 +68,7 @@ change.
 | Board | XIAO_ESP32S3 (or ESP32S3 Dev Module) |
 | USB CDC On Boot | **Enabled** |
 | Flash Size | **8MB (64Mb)** |
-| Partition Scheme | 8M with spiffs (3MB APP/1.5MB SPIFFS) |
+| Partition Scheme | 8M with spiffs (3MB APP/1.5MB SPIFFS) — this menu entry is the core's `default_8MB.csv` table |
 | PSRAM | **OPI PSRAM** |
 | Upload Speed | 921600 |
 
@@ -83,6 +83,17 @@ change.
 > automatically. On the command line: `arduino-cli compile --profile xiao_sense`
 > (or `make arduino-build` from `firmware/projects/canary-wap`, which uses the
 > same PSRAM-enabled FQBN).
+
+> **Partition/filesystem parity with PlatformIO:** both toolchains use the
+> same **`default_8MB.csv`** partition table (the Arduino IDE menu labels it
+> "8M with spiffs (3MB APP/1.5MB SPIFFS)"; `sketch.yaml` and
+> `envs/platformio/canary-wap.ini` both pin it), so the app/OTA slot layout is
+> identical. They differ in one deliberate way: the PlatformIO env sets
+> `board_build.filesystem = littlefs`, so a data-partition image built by
+> PlatformIO is LittleFS, while the Arduino IDE's default for that partition
+> is SPIFFS. The firmware stores witness data on the SD card, not the internal
+> data partition, so this difference does not affect runtime behavior — but
+> the images are not bit-identical.
 
 ### 3. Library Dependencies
 
@@ -177,7 +188,7 @@ same way; no sketch change is needed.)
 - Time coarsened to 5-second buckets (privacy)
 - No frame storage — camera peek is positioning only
 - API token derived via HKDF (never stored in plaintext)
-- Device-unique AP password derived from public key fingerprint
+- Device-unique AP password derived from the device private key (HMAC, domain-separated)
 - Optional TLS with self-signed certificate
 
 ## File Structure

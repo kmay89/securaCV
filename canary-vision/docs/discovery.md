@@ -8,7 +8,7 @@ Canary Vision uses four passive methods to discover peer devices on the local ne
 
 Each Canary device registers itself via multicast DNS using the `_securacv._tcp` service type.
 
-**Service record:**
+**Canonical TXT schema:**
 
 ```
 Instance: canary-a3f7
@@ -16,17 +16,37 @@ Service:  _securacv._tcp.local.
 Host:     canary-a3f7.local.
 Port:     80
 TXT:
-  device_id=canary-a3f7
-  name=Front Porch
-  model=XIAO ESP32S3
-  fw=0.4.1
+  device_id=canary-a3f7      # stable device identifier
+  name=Front Porch           # user-assigned display name
+  host=canary-a3f7.local     # mDNS hostname
+  fw=0.4.1                   # firmware version
+  model=XIAO ESP32S3         # hardware model
+  dt=canary-wap              # canonical device type (see below)
+  role=witness-beacon        # human-readable display role
+  broker=192.168.1.2         # MQTT broker in use (MQTT-onboarded types)
+  bport=1883                 # MQTT broker port
 ```
 
-The SPA and other Canary devices listen for `_securacv._tcp` announcements on the local network. When a new service appears, the listener extracts the hostname (e.g., `canary-a3f7.local`) and can resolve it to a LAN IP.
+**Device types (`dt`) and display roles:**
 
-**How it works on the ESP32:**
+| `dt` | Display role | What it is |
+|------|--------------|------------|
+| `canary-wap` | witness beacon | GPS + signed event log with its own WiFi hotspot; HTTP API + mDNS |
+| `canary-vision` | camera witness | On-device person detection; semantic events only, never stores video |
+| `canary-sense` | radar witness | 60 GHz mmWave presence/breathing/heartbeat; no camera, no microphone |
 
-The ESP32 firmware uses the built-in mDNS library to both advertise its own service and browse for peers:
+The SPA and WAP-class devices listen for `_securacv._tcp` announcements on the local network. When a new service appears, the listener extracts the hostname (e.g., `canary-a3f7.local`) and can resolve it to a LAN IP.
+
+**How it works on the ESP32 — behavior differs by type:**
+
+- **canary-wap** both advertises its own `_securacv._tcp` service *and*
+  browses for peers, and it serves the HTTP API (including
+  `GET /api/v1/peers`). It is the only variant with an HTTP server.
+- **canary-vision** and **canary-sense** *advertise only*. They run no
+  HTTP server and cannot be paired over HTTP; they are onboarded through
+  Home Assistant via MQTT discovery (their `broker`/`bport` TXT keys show
+  which broker they use). Peers relayed by a WAP's fleet scan carry their
+  `dt` and `role` so clients can render them correctly.
 
 ```
 mdns_hostname: canary-a3f7.local
@@ -39,7 +59,7 @@ The `network.mdns_enabled` config flag controls whether the device participates 
 
 ### 2. Peer List API
 
-Each device maintains a list of known peers and exposes it at `GET /api/v1/peers`. When the SPA connects to one device, it can query that device's peer list to discover other Canary devices on the network.
+Each WAP-class device maintains a list of known peers (gathered by its mDNS fleet scan) and exposes it at `GET /api/v1/peers`. When the SPA connects to one WAP, it can query that device's peer list to discover other Canary devices on the network — including MQTT-only vision/sense sensors, whose `dt`/`role` the WAP relays from their TXT records (the API normalizes `dt` to `device_type`).
 
 **Example flow:**
 
@@ -48,15 +68,19 @@ Each device maintains a list of known peers and exposes it at `GET /api/v1/peers
    ```json
    {
      "peers": [
-       { "device_id": "canary-b1c2", "name": "Garage",   "ip": "192.168.1.103", "mdns_hostname": "canary-b1c2.local" },
-       { "device_id": "canary-d4e5", "name": "Back Yard", "ip": "192.168.1.110", "mdns_hostname": "canary-d4e5.local" }
+       { "device_id": "canary-b1c2", "name": "Garage",   "device_type": "canary-vision", "ip": "192.168.1.103", "mdns_hostname": "canary-b1c2.local" },
+       { "device_id": "canary-d4e5", "name": "Back Yard", "device_type": "canary-sense",  "ip": "192.168.1.110", "mdns_hostname": "canary-d4e5.local" }
      ]
    }
    ```
 3. SPA renders a "Discovered on your network" section on the My Canaries
-   view with one card per peer that is not yet in the user's device list.
-4. The user taps "Pair this Canary"; the host is pre-filled, and the user
-   provides the token for that specific device. Each peer is independently
+   view with one card per peer that is not yet in the user's device list,
+   badged with the peer's type and a one-line explanation.
+4. The user taps "Pair this Canary". For WAP-class peers the host is
+   pre-filled and pairing proceeds over HTTP (BOOT-tap or token). For
+   vision/sense peers there is no HTTP pairing — the SPA explains the
+   device and points the user to Home Assistant, where the sensor appears
+   automatically via MQTT discovery. Each HTTP peer is independently
    authenticated — knowing a peer exists does not grant API access.
 
 The SPA prefers `mdns_hostname` over `ip` when constructing the peer's
@@ -118,6 +142,7 @@ Discovered devices are stored in `localStorage` under the key `canary_devices` a
   "name": "Front Porch",
   "base_url": "http://canary-a3f7.local",
   "token": "cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f",
+  "device_type": "canary-wap",
   "last_info": { "..." },
   "added_at": "2026-02-18T15:30:00.000Z"
 }

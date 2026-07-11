@@ -91,9 +91,26 @@ make monitor
 ### 3. Connect to Your Device
 
 1. Connect to WiFi: **SecuraCV-XXXX**
-   > **Security:** Default password is for development only. Run `make secrets` and edit `secrets/secrets.h` to set a custom password before deployment.
-2. Open browser: http://192.168.4.1
+   > **Security:** The AP password is device-unique (`cv-` + 12 chars, derived
+   > from the device's private key) and is printed on the serial console at
+   > first boot. There is no shared default password; release builds fail
+   > closed if provisioning is incomplete.
+2. Open a browser at any of:
+   - **http://canary.local** — single-device catch-all (first Canary on the
+     network claims it)
+   - **http://canary-\<name\>.local** — each device's unique mDNS hostname
+     (e.g. `canary-kitchen.local` after you name it, or `canary-ab7k.local`)
+   - **http://192.168.4.1** — numeric fallback that always works
+   > When a TLS certificate is available the dashboard is served over
+   > **HTTPS (port 443)** and plain-HTTP requests are redirected; without a
+   > cert the device runs HTTP-only. See the
+   > [Arduino build README](arduino/canary_wap/README.md) for details.
 3. View live device status on the web dashboard
+
+For the full walkthrough — discovery, naming devices, the `canary.local`
+catch-all, and Home Assistant/MQTT integration (the WAP publishes HA MQTT
+auto-discovery via its CSI bridge) — see
+[`docs/getting_started_canary.md`](../../../docs/getting_started_canary.md).
 
 ---
 
@@ -207,18 +224,24 @@ curl http://192.168.4.1/api/status
 
 ```
 canary-wap/
-├── src/
-│   └── main.cpp              # Main application (PlatformIO)
 ├── arduino/
-│   └── canary_wap/           # Arduino IDE sketch
-│       └── canary_wap.ino
-├── include/                  # Project-specific headers
+│   └── canary_wap/           # The firmware sources (single tree, both toolchains)
+│       ├── canary_wap.ino    # Main sketch — PlatformIO's src_dir points here too
+│       └── ...               # Modules (see arduino/canary_wap/README.md)
+├── libraries/
+│   └── csi/                  # CSI sensing library (synced from common/csi)
+├── include/                  # Project-specific headers (app.h)
 ├── secrets/                  # Credentials (gitignored)
-├── platformio.ini            # PlatformIO configuration
+├── tests_host/               # Host-side unit tests
+├── platformio.ini            # PlatformIO configuration (src_dir = arduino/canary_wap)
 ├── Makefile                  # Unified build system
 ├── setup.sh                  # Interactive setup wizard
 └── README.md                 # This file
 ```
+
+There is no separate `src/main.cpp` — PlatformIO builds the same
+`arduino/canary_wap/` sketch tree that the Arduino IDE opens, so both
+toolchains produce the same firmware.
 
 ## Architecture
 

@@ -34,9 +34,16 @@ Standard configuration for the Canary Wireless Access Point witness device.
 | Setting | Value |
 |---------|-------|
 | AP SSID | SecuraCV-{fingerprint} |
-| AP Password | witness2026 |
+| AP Password | Device-unique (`cv-` + 12 chars, derived from the device private key; shown on serial at first boot) |
 | AP Channel | 1 |
-| HTTP Port | 80 |
+| Web/API | HTTPS on port 443 with HTTP→HTTPS redirect on port 80 when a TLS cert is available; HTTP-only (port 80) otherwise |
+
+> **Dev-only overrides:** `config.h` still defines
+> `CONFIG_AP_PASSWORD_DEFAULT` (`witness2026`) and `CONFIG_HTTP_PORT` (80),
+> but the current firmware does **not** use them — the AP password is always
+> derived per device (release builds fail closed if provisioning is
+> incomplete), and the serving port is chosen by TLS availability. Treat
+> those defines as legacy development values, not shipped behavior.
 
 ## Usage
 

@@ -25,6 +25,7 @@ describe('GET /api/v1/info', () => {
     assert.equal(res.json.device_id, 'canary-a3f7');
     assert.equal(res.json.name, 'Front Porch');
     assert.equal(res.json.model, 'XIAO ESP32S3');
+    assert.equal(res.json.device_type, 'canary-wap');
     assert.equal(res.json.firmware_version, '0.4.1');
     assert.equal(typeof res.json.uptime_s, 'number');
     assert.ok(res.json.last_seen);

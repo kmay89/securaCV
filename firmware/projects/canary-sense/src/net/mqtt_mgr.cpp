@@ -39,6 +39,11 @@ static char s_update_state_cache[640] = {0};
 static bool s_update_state_set = false;
 static int s_update_auto_cache = -1;
 
+// Inbound identify command (HA identify button / companion app): the
+// wizard's "which device is which" moment. Latch-and-drain like the OTA
+// install command; main.cpp owns the blink window.
+static volatile bool s_pending_identify = false;
+
 static bool token_at(const char* p, int n, const char* tok, int tok_len) {
   auto boundary = [](char c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
@@ -53,7 +58,8 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
 
   const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
   const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
-  if (!is_install && !is_auto) return;
+  const bool is_identify = (strcmp(topic, g_topics.identify_cmd) == 0);
+  if (!is_install && !is_auto && !is_identify) return;
 
   // Trim leading whitespace/quotes; require a token boundary after the
   // match so a mangled payload can't trigger a flash cycle.
@@ -63,6 +69,13 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
 
   if (is_install) {
     if (token_at(p, n, "install", 7)) s_pending_install = true;
+    return;
+  }
+  if (is_identify) {
+    if (token_at(p, n, "identify", 8) || token_at(p, n, "ON", 2) ||
+        token_at(p, n, "on", 2)) {
+      s_pending_identify = true;
+    }
     return;
   }
   if (token_at(p, n, "ON", 2) || token_at(p, n, "on", 2)) {
@@ -82,6 +95,12 @@ int take_pending_auto() {
   const int v = s_pending_auto;
   s_pending_auto = -1;
   return v;
+}
+
+bool take_pending_identify() {
+  if (!s_pending_identify) return false;
+  s_pending_identify = false;
+  return true;
 }
 
 static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
@@ -348,6 +367,10 @@ bool mqtt_connect_attempt() {
   // may have dropped them) and reconcile the retained states.
   mqtt.subscribe(g_topics.update_cmd, 1);
   mqtt.subscribe(g_topics.update_auto_cmd, 1);
+
+  // Identify button: re-subscribe so the wizard's blink request always
+  // reaches a connected device.
+  mqtt.subscribe(g_topics.identify_cmd, 1);
   if (s_update_state_set) {
     publish_checked("OTA", g_topics.update_state, s_update_state_cache, true);
   }
@@ -356,6 +379,14 @@ bool mqtt_connect_attempt() {
                     s_update_auto_cache ? "ON" : "OFF", true);
   }
   return true;
+}
+
+bool publish_identify_echo(const Topics& topics, bool active) {
+  if (!mqtt.connected()) return false;
+  // Non-retained on purpose: the echo marks a live blink window, not a
+  // state — a card should only pulse while the LED is actually flashing.
+  return publish_checked("IDFY", topics.identify_echo, active ? "on" : "off",
+                         false);
 }
 
 bool publish_update_state_retained(const Topics& topics, const char* json_payload) {

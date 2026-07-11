@@ -12,6 +12,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "canary/config.h"     // MODEL (CD_MODEL)
+#include "canary/version.h"    // CANARY_FW_VERSION
 #include "canary/log.h"
 #include "identity/device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
 
@@ -87,6 +89,14 @@ bool discovery_init(const char* device_id, const char* device_type,
   // Presence advert. The service port is a formality (nothing listens);
   // the payload is the TXT set.
   MDNS.addService(SVC, PROTO, 1);
+  // Canonical fleet TXT identity — the same vocabulary the witness
+  // variants (canary-wap/vision/sense) advertise, so one browser can
+  // label every SecuraCV advertiser without special-casing displays.
+  MDNS.addServiceTxt(SVC, PROTO, "device_id", device_id ? device_id : "");
+  MDNS.addServiceTxt(SVC, PROTO, "name", device_id ? device_id : "");
+  MDNS.addServiceTxt(SVC, PROTO, "host", (const char*)hostname);
+  MDNS.addServiceTxt(SVC, PROTO, "fw", CANARY_FW_VERSION);
+  MDNS.addServiceTxt(SVC, PROTO, "model", MODEL);
   MDNS.addServiceTxt(SVC, PROTO, "role", role ? role : "display");
   MDNS.addServiceTxt(SVC, PROTO, "dt", device_type ? device_type : "");
 

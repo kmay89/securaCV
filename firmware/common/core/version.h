@@ -55,7 +55,7 @@ extern "C" {
 
 // Device type identifier
 #define DEVICE_TYPE_CANARY          "canary"
-#define DEVICE_TYPE_CANARY_VISION   "canary_vision"
+#define DEVICE_TYPE_CANARY_VISION   "canary-vision"  // canonical: lowercase, hyphenated
 #define DEVICE_TYPE_CANARY_WAP      "canary_wap"
 
 // ============================================================================
