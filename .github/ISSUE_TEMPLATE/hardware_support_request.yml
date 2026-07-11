@@ -1,0 +1,76 @@
+name: "Hardware Support Request"
+description: "Propose support for a new board or hardware kit."
+title: "[Hardware] "
+labels:
+  - "hardware"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to propose a new board for the firmware tree. Read
+        [`firmware/HARDWARE.md`](../blob/main/firmware/HARDWARE.md) for what
+        "supported" means, and [`firmware/PORTING.md`](../blob/main/firmware/PORTING.md)
+        if you'd like to do the port yourself — data-only board ports are
+        very welcome as PRs.
+  - type: input
+    id: board_name
+    attributes:
+      label: Board / kit name
+      description: Exact vendor product name and revision, with a link.
+      placeholder: "e.g., Seeed Studio XIAO ESP32-C6 (v1.1), https://…"
+    validations:
+      required: true
+  - type: input
+    id: mcu
+    attributes:
+      label: MCU, flash, PSRAM
+      placeholder: "e.g., ESP32-C6, 4 MB flash, no PSRAM"
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Witness role this board would serve
+      description: Boards enter the tree to serve a role (see HARDWARE.md scope).
+      options:
+        - Sensing — camera (canary / canary-wap / canary-vision)
+        - Sensing — radar / RF / CSI (canary-sense)
+        - Display — fleet status glass (canary-display)
+        - Other / new flavor (explain below)
+    validations:
+      required: true
+  - type: textarea
+    id: peripherals
+    attributes:
+      label: Onboard peripherals & capability flags
+      description: |
+        What the board carries: camera, mic, SD, display, touch, radios,
+        battery, sensors. Note anything with a privacy implication (e.g. a
+        microphone on a display board).
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Pin documentation sources
+      description: Links to schematic, vendor wiki, or reference firmware the pin map would be built from.
+    validations:
+      required: true
+  - type: dropdown
+    id: ownership
+    attributes:
+      label: Do you own this hardware and can you test on it?
+      options:
+        - Yes — I can run bring-up and file a Hardware Test Report
+        - Not yet — ordering / planned
+        - No — request only
+    validations:
+      required: true
+  - type: textarea
+    id: availability
+    attributes:
+      label: Availability & audience
+      description: |
+        Can others buy this board today? Who else would use this port?
+        (One-off or unobtainable hardware generally lives in a fork — see
+        HARDWARE.md scope.)

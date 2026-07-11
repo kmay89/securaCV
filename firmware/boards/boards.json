@@ -1,0 +1,93 @@
+[
+  {
+    "id": "xiao-esp32s3-sense",
+    "name": "Seeed Studio XIAO ESP32-S3 Sense",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-S3",
+    "flash_mb": 8,
+    "psram_mb": 8,
+    "pio_board": "seeed_xiao_esp32s3",
+    "tier": "verified",
+    "tier_evidence": "docs/hardware/v1_bench_validation_runbook.md",
+    "used_by": ["canary", "canary-wap"],
+    "notes": "Primary witness board: camera, PDM mic, microSD, 8 MB octal PSRAM."
+  },
+  {
+    "id": "xiao-esp32s3",
+    "name": "Seeed Studio XIAO ESP32-S3 (plain, non-Sense)",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-S3",
+    "flash_mb": 8,
+    "psram_mb": 8,
+    "pio_board": "seeed_xiao_esp32s3",
+    "tier": "verified",
+    "tier_evidence": "docs/hardware/canary_vision_getting_started.md",
+    "used_by": ["canary-vision"],
+    "notes": "Grove Vision AI V2 Kit pairing; external u.FL antenna required."
+  },
+  {
+    "id": "xiao-esp32c3",
+    "name": "Seeed Studio XIAO ESP32-C3",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-C3",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "seeed_xiao_esp32c3",
+    "tier": "verified",
+    "tier_evidence": "docs/hardware/canary_vision_getting_started.md",
+    "used_by": ["canary-vision"],
+    "notes": "Stacks directly on the Grove Vision AI V2 XIAO socket; external u.FL antenna required."
+  },
+  {
+    "id": "esp32-c3",
+    "name": "ESP32-C3 DevKitM-1 (generic)",
+    "vendor": "Espressif",
+    "mcu": "ESP32-C3",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "esp32-c3-devkitm-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": ["canary-vision"],
+    "notes": "Generic C3 devkit wired to the Vision AI over a Grove cable (device guide §5). Promote with a hardware test report."
+  },
+  {
+    "id": "xiao-esp32c6-mr60",
+    "name": "Seeed Studio XIAO ESP32-C6 (MR60BHA2 mmWave kit)",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-C6",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "seeed_xiao_esp32c6",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": ["canary-sense"],
+    "notes": "60 GHz FMCW radar witness host. Radar decoder + FSMs are host-tested; end-to-end bench validation pending."
+  },
+  {
+    "id": "xiao-esp32s3-round",
+    "name": "Seeed Studio XIAO ESP32-S3 + Round Display",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-S3",
+    "flash_mb": 8,
+    "psram_mb": 8,
+    "pio_board": "seeed_xiao_esp32s3",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": ["canary-display"],
+    "notes": "Watch-puck fleet display: GC9A01 240x240 round LCD, CST816S touch, PCF8563 RTC, battery. Bench validation pending — run docs/hardware/display_bench_bringup.md Track W to promote."
+  },
+  {
+    "id": "waveshare-esp32s3-lcd43",
+    "name": "Waveshare ESP32-S3-Touch-LCD-4.3",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": ["canary-display"],
+    "notes": "Dash fleet display: 800x480 RGB565 parallel panel, GT911 5-point touch, CH422G IO expander. Bench validation pending — run docs/hardware/display_bench_bringup.md Track D to promote."
+  }
+]

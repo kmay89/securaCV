@@ -2,7 +2,7 @@
 
 **Status:** Canonical and normative for the `firmware/` subtree.  
 **Precedence:** If a document conflicts with this file, this file wins within `firmware/`.  
-**Companion policy:** [VARIANT_POLICY.md](VARIANT_POLICY.md) governs variant lifecycle (ACTIVE/COMPATIBILITY/SPECIALIZED/ARCHIVED).
+**Companion policy:** [VARIANT_POLICY.md](VARIANT_POLICY.md) governs variant lifecycle (ACTIVE/COMPATIBILITY/SPECIALIZED/ARCHIVED); [HARDWARE.md](HARDWARE.md) governs board support tiers; [PORTING.md](PORTING.md) is the new-board bring-up guide.
 
 ## Purpose
 
