@@ -221,6 +221,23 @@ stage_secrets() {
   fi
 }
 
+# Arduino IDE builds (which ignore sketch.yaml profiles — arduino-ide#2573)
+# need lv_conf.h ONE LEVEL ABOVE the lvgl library dir. Best-effort copy into
+# the user's sketchbook; cli --profile builds don't need this (the profile
+# build resolves lv_conf via the sketch), and CI does its own copy.
+stage_lv_conf() {
+  local sketchbook=""
+  for c in "${HOME}/Documents/Arduino" "${HOME}/Arduino"; do
+    [ -d "$c/libraries" ] && { sketchbook="$c"; break; }
+  done
+  if [ -n "$sketchbook" ]; then
+    cp "${SKETCH_DIR}/lv_conf.h" "${sketchbook}/libraries/lv_conf.h"
+    ok "Copied lv_conf.h -> ${sketchbook}/libraries/ (Arduino IDE builds)"
+  else
+    info "No Arduino sketchbook found — IDE users: copy ${SKETCH_DIR}/lv_conf.h to <sketchbook>/libraries/"
+  fi
+}
+
 setup_arduino() {
   local flavor="${1:-}"
   if [ -z "$flavor" ]; then
@@ -230,6 +247,7 @@ setup_arduino() {
   generate_shared
   stage_flavor "$flavor"
   stage_secrets
+  stage_lv_conf
   echo ""
   ok "Arduino sketch ready: ${SKETCH_DIR} (flavor: ${flavor})"
   info "Build:  arduino-cli compile --profile ${flavor}-core3   (or ${flavor} on core 2.0.17; or open canary_display.ino in the IDE)"

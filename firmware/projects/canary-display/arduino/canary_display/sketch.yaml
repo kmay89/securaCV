@@ -1,14 +1,18 @@
 # Arduino sketch build profiles for the SecuraCV Canary Display.
 #
 # One sketch, two flavors — exactly like the PlatformIO tree (one app,
-# two envs). Pick the profile that matches your hardware; it carries the
-# board FQBN, the flavor #define, and the library set so the essential
-# settings travel with the sketch instead of living in per-IDE preferences.
+# two envs). Each profile carries the board FQBN, platform pin, and library
+# set, so a build is reproducible independent of what's installed globally.
 #
-#   Arduino IDE 2.3+ : open canary_display.ino, pick a profile from the
-#                      dropdown in the toolbar.
-#   arduino-cli      : arduino-cli compile --profile watch-core3
-#                      arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
+#   arduino-cli : arduino-cli compile --profile watch-core3
+#                 arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
+#                 (auto-installs the pinned core + libraries, isolated)
+#
+#   Arduino IDE : profiles are NOT read by the IDE (arduino-ide#2573 —
+#                 a CLI-only feature). IDE users install the core +
+#                 libraries below via Boards/Library Manager and set the
+#                 board options in Tools — the README's step-by-step
+#                 mirrors this file's pins exactly.
 #
 # ── Core version matrix ─────────────────────────────────────────────────────
 # The sketch builds on BOTH arduino-esp32 major lines; the source carries the
