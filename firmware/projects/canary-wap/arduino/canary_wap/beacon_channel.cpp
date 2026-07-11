@@ -40,6 +40,7 @@
 #include "mesh_network.h"
 #include "airtime_governor.h"
 #include "health_log.h"
+#include "beacon_audit_recover.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_flash_encrypt.h>
@@ -551,21 +552,6 @@ static void audit_hex(char* out, const uint8_t* in, size_t len) {
   out[2 * len] = '\0';
 }
 
-static bool audit_unhex(uint8_t* out, const char* in, size_t out_len) {
-  for (size_t i = 0; i < out_len; i++) {
-    uint8_t v = 0;
-    for (int n = 0; n < 2; n++) {
-      const char c = in[2 * i + n];
-      v <<= 4;
-      if (c >= '0' && c <= '9') v |= (uint8_t)(c - '0');
-      else if (c >= 'a' && c <= 'f') v |= (uint8_t)(c - 'a' + 10);
-      else return false;
-    }
-    out[i] = v;
-  }
-  return true;
-}
-
 // Append one entry to the SD audit file. Pure append: no truncation, no
 // rotation (AGENTS item 9). Returns false (after a latched health warning)
 // when no SD card is present or the write fails.
@@ -626,11 +612,16 @@ static bool sd_append_audit_entry(const BeaconAuditEntry* entry,
 }
 
 // Recover the chain head from the SD log of record at boot: read the tail
-// of /beacon/audit.jsonl and parse the last line's "head" field. The NVS
-// ring is only a cache — if its persistence failed or it was wiped while
-// SD retained later entries, deriving the head from NVS alone would fork
-// the supposedly append-only chain (codex P2 on #748). SD wins on
-// disagreement.
+// of /beacon/audit.jsonl and adopt the newest complete line's "head" ONLY
+// when it chain-links to the file (its "prev" == the previous line's "head",
+// or genesis for a first record). The NVS ring is only a cache — if its
+// persistence failed or it was wiped while SD retained later entries,
+// deriving the head from NVS alone would fork the supposedly append-only
+// chain (codex P2 on #748), so SD wins on disagreement. But we no longer
+// trust the last "head":"…" substring verbatim: a torn/corrupt/spliced tail
+// could otherwise silently redirect the chain. The linkage guard (and the
+// tail parsing) is the pure, host-tested beacon_audit_recover::recover_head
+// (test_beacon_audit_recover.cpp).
 static bool sd_recover_chain_head(uint8_t out[32]) {
   if (sd_mount_in_flight()) return false;
   if (SD.cardType() == CARD_NONE) return false;
@@ -639,27 +630,24 @@ static bool sd_recover_chain_head(uint8_t out[32]) {
   const size_t size = f.size();
   if (size == 0) { f.close(); return false; }
 
-  // Lines are ≤768 bytes; a 1 KiB tail always contains the final line.
-  char tail[1025];
-  const size_t want = (size < 1024) ? size : 1024;
+  // The writer caps a line at `char line[768]`, so the linkage guard needs, in
+  // the worst case, a torn final partial (≤767) + the newest COMPLETE line
+  // (≤767) + its predecessor (≤767) + the predecessor's starting delimiter all
+  // in view — otherwise the window could start inside the predecessor, the
+  // guard would find no verifiable predecessor, refuse the (non-genesis) newest
+  // line, and keep a stale NVS head, forking the log in exactly the stale-cache
+  // case this guard exists to fix (codex on #865). 4 KiB clears 3×768 with
+  // margin. Static (init is single-threaded, non-reentrant) to stay off the
+  // loop-task stack.
+  static char tail[4096];
+  const size_t want = (size < sizeof(tail)) ? size : sizeof(tail);
   if (!f.seek(size - want)) { f.close(); return false; }
   const size_t got = f.read((uint8_t*)tail, want);
   f.close();
   if (got == 0) return false;
-  tail[got] = '\0';
 
-  // Last occurrence of the head field within the tail belongs to the
-  // newest complete line (a torn final line simply won't contain it and
-  // we fall back to the previous line's occurrence — which is exactly the
-  // head that torn line chained from).
-  const char* marker = nullptr;
-  for (const char* p = tail; (p = strstr(p, "\"head\":\"")) != nullptr; p++) {
-    marker = p;
-  }
-  if (!marker) return false;
-  const char* hex = marker + 8;
-  if (strlen(hex) < 64) return false;
-  return audit_unhex(out, hex, 32);
+  const bool from_start = (want == size);
+  return beacon_audit_recover::recover_head(tail, got, from_start, out);
 }
 
 static void chain_audit_entry(BeaconAuditEntry* entry) {

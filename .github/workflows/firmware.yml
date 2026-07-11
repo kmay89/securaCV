@@ -866,6 +866,22 @@ jobs:
           /tmp/witness_store_logic | tee /tmp/witness_store_logic.log
           grep -q "ALL .* PASSED" /tmp/witness_store_logic.log
 
+      - name: Build + run canary-wap beacon audit recovery host test
+        # The beacon-audit chain-head SD recovery guard
+        # (beacon_audit_recover.h): only adopt the newest COMPLETE line's head
+        # when the tail chain-links (each entry's prev == the previous entry's
+        # head, or genesis for a first record). Torn power-cut tails, corrupt
+        # or field-less lines, and unverifiable single fragments are refused so
+        # a stale-NVS boot cannot silently redirect the append-only chain.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_beacon_audit_recover.cpp \
+              -o /tmp/beacon_audit_recover
+          /tmp/beacon_audit_recover | tee /tmp/beacon_audit_recover.log
+          grep -q "ALL .* PASSED" /tmp/beacon_audit_recover.log
+
       - name: Build + run canary-wap camera gate logic host test
         # Camera power management decisions (camera_gate_logic.h): the
         # peek-surface gate precedence (broken camera > thermal > battery

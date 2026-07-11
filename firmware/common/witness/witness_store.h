@@ -10,10 +10,16 @@
  * it). NVS holds only the chain head + sequence as a fast-boot cache,
  * persisted every SD_PERSIST_INTERVAL records. On boot the tail of the
  * SD log is parsed and, when it is strictly ahead of NVS AND its line
- * signature verifies under this device's public key, SD wins — the same
- * two-tier reconciliation the beacon audit log uses (beacon_channel.cpp
- * sd_recover_chain_head): deriving the head from a stale NVS cache alone
- * would fork the supposedly append-only chain.
+ * signature verifies under this device's public key, SD wins — deriving the
+ * head from a stale NVS cache alone would fork the supposedly append-only
+ * chain. The beacon audit log (beacon_channel.cpp sd_recover_chain_head)
+ * follows the same SD-wins-on-disagreement posture, but its integrity guard
+ * is weaker and different: the beacon format carries no per-line sequence and
+ * its entries are peer-authored, so it cannot use this chain's seq-ahead or
+ * device-key checks. It instead requires the recovered tail to CHAIN-LINK
+ * (each entry's prev == the previous entry's head) before adopting a head
+ * (beacon_audit_recover.h), with the per-beacon Ed25519 signatures remaining
+ * the primary tamper-evidence for entry contents.
  *
  * This header is pure hosted C++ (no Arduino/ESP-IDF includes) so the
  * byte-exact line format and the reconciliation decision are unit-tested
