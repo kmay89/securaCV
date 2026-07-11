@@ -2366,6 +2366,11 @@ static esp_err_t handle_sensing(httpd_req_t* req) {
   JsonObject ac = doc["acoustic"].to<JsonObject>();
   ac["enabled"]     = audio_is_running();
   ac["muted"]       = audio_is_muted();
+  /* Flat-signal watchdog, mirrored from /api/audio/level: the always-
+   * visible acoustic card is fed from THIS endpoint, so a dead data line
+   * must be visible here too — not only inside the fold-out test panel. */
+  ac["mic_silent"]  = (audio_is_running() &&
+                       a_stats.zero_rms_streak >= AUDIO_SILENT_STREAK_FRAMES);
   ac["last_event"]  = audio_event_name(s.last_audio_event_type);
   ac["confidence"]  = s.last_audio_event_conf;
   ac["cycle_count"] = s.last_audio_event_count;
