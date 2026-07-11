@@ -36,15 +36,19 @@ So:
   Library Manager (exact list below) — the IDE builds against your global
   installs, same as our CI compile gate does.
 
-The core matters because GFX and NimBLE split their library majors along
-the arduino-esp32 core boundary:
+The core matters because GFX, NimBLE, and LVGL split their library majors
+along the arduino-esp32 core boundary:
 
-| Your `esp32` platform | GFX Library for Arduino | NimBLE-Arduino | CLI profiles |
-|---|---|---|---|
-| **3.x** (Boards Manager default) | 1.6.6 | 2.5.0 | `watch-core3` / `dash-core3` |
-| **2.0.17** (PlatformIO release path) | 1.4.9 (EXACT) | 1.4.3 | `watch` / `dash` |
+| Your `esp32` platform | GFX Library for Arduino | NimBLE-Arduino | LVGL | CLI profiles |
+|---|---|---|---|---|
+| **3.x** (Boards Manager default) | 1.6.6 | 2.5.0 | 9.5.0 | `watch-core3` / `dash-core3` |
+| **2.0.17** (PlatformIO release path) | 1.4.9 (EXACT) | 1.4.3 | 8.4.0 | `watch` / `dash` |
 
-Mixing rows (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails the build.
+Mixing GFX/NimBLE rows (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails
+the build. LVGL is the friendly exception: the source is dual-major, so
+either 8.4 or 9.x builds on either core — the rows above are just what the
+profiles pin (8.4 = PlatformIO/bench parity, 9.5 = stock Library Manager
+install).
 
 ## Build — Arduino IDE (step by step)
 
@@ -54,7 +58,8 @@ Mixing rows (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails the build.
    under Settings → Additional boards manager URLs.
 2. **Libraries**: Library Manager → install, matching your core line from
    the table above:
-   - `lvgl` **8.4.0** (exact — 9.x does not build against this sketch)
+   - `lvgl` — the Library Manager latest (9.x) works as-is; **8.4.0** is
+     the bench-parity pairing for core 2 (the source builds on both majors)
    - `GFX Library for Arduino` **1.6.6** (core 3) / **1.4.9** (core 2)
    - `NimBLE-Arduino` **2.5.0** (core 3) / **1.4.3** (core 2)
    - `PubSubClient`, `ArduinoJson`, and `Crypto` (by Rhys Weatherley) — latest
@@ -75,8 +80,13 @@ Mixing rows (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails the build.
 5. **Build.** With no `secrets.h` compiled in, the display boots into its
    on-glass onboarding wizard — WiFi setup happens on the device.
 
-(Exotic board? Force a flavor with `#define CD_BUILD_DASH 0|1` in a
-`flavor_local.h` next to the sketch — an explicit choice beats inference.)
+(Using a **vendor board package** — e.g. Waveshare's own
+"ESP32-S3-Touch-LCD-4.3B" board entry? The sketch can't infer the flavor
+from those and stops with a clear error. Either switch to the two official
+boards above, or force a flavor with `#define CD_BUILD_DASH 0|1` in a
+`flavor_local.h` next to the sketch — an explicit choice beats inference.
+The official `ESP32S3 Dev Module` + our committed pin map is the tested
+path for the Waveshare 4.3B panel.)
 
 ## Build — arduino-cli (zero manual installs)
 

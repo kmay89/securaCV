@@ -50,8 +50,8 @@
     "pre_step": "secrets_header",
     "size_guard": {
       "bin": ".pio/build/canary-sense-default/firmware.bin",
-      "slot_bytes": 1310720,
-      "slot_name": "0x140000 OTA slot (ESP32-C6 default.csv app0/app1)"
+      "slot_bytes": 1966080,
+      "slot_name": "0x1E0000 OTA slot (ESP32-C6 min_spiffs.csv app0/app1)"
     }
   }
 ]
