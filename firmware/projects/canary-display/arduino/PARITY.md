@@ -83,12 +83,17 @@ watchdog, `src/net/chirp_scan.cpp` gates the NimBLE scan-callback API on
 `ESP_ARDUINO_VERSION_MAJOR`). What is NOT interchangeable is the library set —
 GFX and NimBLE split their majors along the core boundary:
 
-| arduino-esp32 core | GFX Library for Arduino | NimBLE-Arduino | Profile suffix |
-|---|---|---|---|
-| **2.0.17** (matches PlatformIO `espressif32 @ 6.9.0` — the bench-validated release path) | 1.4.9 (1.5+ needs core 3) | 1.4.3 (2.x needs core 3) | `watch` / `dash` |
-| **3.x** (Boards Manager default) | 1.6.6 (won't build on core 2) | 2.5.0 (won't build on core 2) | `watch-core3` / `dash-core3` |
+| arduino-esp32 core | GFX Library for Arduino | NimBLE-Arduino | LVGL | Profile suffix |
+|---|---|---|---|---|
+| **2.0.17** (matches PlatformIO `espressif32 @ 6.9.0` — the bench-validated release path) | 1.4.9 (1.5+ needs core 3) | 1.4.3 (2.x needs core 3) | 8.4.0 | `watch` / `dash` |
+| **3.x** (Boards Manager default) | 1.6.6 (won't build on core 2) | 2.5.0 (won't build on core 2) | 9.5.0 | `watch-core3` / `dash-core3` |
 
-LVGL 8.4.0, PubSubClient, Crypto, and ArduinoJson are core-agnostic and shared.
-Always move a whole row at once — mixing lines fails the build. The canonical
-PlatformIO tree stays on the 2.0.17 line (that is what ships); the core-3 row
-exists so a stock Boards Manager install builds without a downgrade.
+PubSubClient, Crypto, and ArduinoJson are core-agnostic and shared. LVGL is
+pinned per row but is NOT core-bound: the source is dual-major
+(`src/ui/lvgl_port.cpp` + `theme.cpp` gate on `LVGL_VERSION_MAJOR`), so 8.4
+and 9.x both build on either core — 8.4 stays the PlatformIO/core-2 pairing
+(bench parity), 9.5 is what a stock Library Manager install gets. For GFX
+and NimBLE, always move a whole row at once — mixing lines fails the build.
+The canonical PlatformIO tree stays on the 2.0.17 line (that is what ships);
+the core-3 row exists so a stock Boards Manager install builds without a
+downgrade.

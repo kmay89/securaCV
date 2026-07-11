@@ -124,4 +124,18 @@ const char* humanize_event(const char* wire, char* buf, size_t cap) {
   return buf;
 }
 
+lv_obj_t* mk_qrcode(lv_obj_t* parent, int32_t size_px) {
+#if LVGL_VERSION_MAJOR >= 9
+  // v9 split creation into setters (and renders on update).
+  lv_obj_t* qr = lv_qrcode_create(parent);
+  lv_qrcode_set_size(qr, size_px);
+  lv_qrcode_set_dark_color(qr, lv_color_black());
+  lv_qrcode_set_light_color(qr, lv_color_white());
+  return qr;
+#else
+  return lv_qrcode_create(parent, size_px, lv_color_black(),
+                          lv_color_white());
+#endif
+}
+
 }  // namespace canary::ui

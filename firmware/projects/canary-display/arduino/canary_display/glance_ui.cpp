@@ -804,8 +804,7 @@ void glance_ui_create() {
   lv_obj_set_style_border_width(s_proof_card, 0, 0);
   lv_obj_set_style_pad_all(s_proof_card, 8, 0);
   lv_obj_clear_flag(s_proof_card, LV_OBJ_FLAG_SCROLLABLE);
-  s_proof_qr = lv_qrcode_create(s_proof_card, 140, lv_color_black(),
-                                lv_color_white());
+  s_proof_qr = mk_qrcode(s_proof_card, 140);
   lv_obj_center(s_proof_qr);
   s_proof_cap = mk_label(s_pg_proof, font_caption(), col_muted());
   lv_obj_align(s_proof_cap, LV_ALIGN_BOTTOM_MID, 0, -26);

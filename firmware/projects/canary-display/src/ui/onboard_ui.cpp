@@ -215,7 +215,7 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
   lv_obj_set_style_border_width(s_qr_card, 0, 0);
   lv_obj_set_style_pad_all(s_qr_card, (QR_CARD - QR_SIZE) / 2, 0);
   lv_obj_clear_flag(s_qr_card, LV_OBJ_FLAG_SCROLLABLE);
-  s_qr = lv_qrcode_create(s_qr_card, QR_SIZE, lv_color_black(), lv_color_white());
+  s_qr = mk_qrcode(s_qr_card, QR_SIZE);
   lv_obj_center(s_qr);
   char payload[224];
   const size_t n = canary::net::wifi_qr_payload(s_ap_ssid, s_ap_pass,

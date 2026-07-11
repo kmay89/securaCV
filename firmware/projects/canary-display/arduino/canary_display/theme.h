@@ -62,4 +62,12 @@ void format_age(uint32_t now_ms, uint32_t then_ms, char* out, int cap);
 // unknown degrades to de-underscored sentence case, never raw wire text.
 const char* humanize_event(const char* wire, char* buf, size_t cap);
 
+// ── Widgets ──────────────────────────────────────────────────────────────
+
+// QR code, dark-on-light (scanners want it), sized in pixels. One helper
+// because LVGL split the creation API with its 9.x major (v8 takes
+// size+colors in create; v9 takes setters) — every proof/join QR on the
+// glass goes through here so the version gate lives in exactly one place.
+lv_obj_t* mk_qrcode(lv_obj_t* parent, int32_t size_px);
+
 }  // namespace canary::ui

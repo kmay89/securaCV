@@ -510,8 +510,7 @@ void dash_ui_create() {
   lv_obj_set_style_border_width(qr_card, 0, 0);
   lv_obj_set_style_pad_all(qr_card, 8, 0);
   lv_obj_clear_flag(qr_card, LV_OBJ_FLAG_SCROLLABLE);
-  s_proof_qr = lv_qrcode_create(qr_card, 240, lv_color_black(),
-                                lv_color_white());
+  s_proof_qr = mk_qrcode(qr_card, 240);
   lv_obj_center(s_proof_qr);
   s_proof_cap = mk_label(s_proof, font_caption(), col_muted());
   lv_obj_set_style_text_align(s_proof_cap, LV_TEXT_ALIGN_CENTER, 0);
