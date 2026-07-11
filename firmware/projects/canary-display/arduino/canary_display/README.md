@@ -67,14 +67,16 @@ Mixing rows (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails the build.
    ```
    (`./setup.sh arduino <flavor>` does this copy for you when it can find
    your sketchbook.)
-4. **Flavor**: nothing to do for the **watch** — the committed dispatchers
-   default to it, and with no `secrets.h` the display boots into its
-   on-glass onboarding wizard (WiFi setup happens on the device). For the
-   **dash**, set `CD_BUILD_DASH` to `1` in `flavor_select.h`.
-5. **Tools menu**, watch: Board → `XIAO_ESP32S3`, PSRAM → `OPI PSRAM`.
-   Dash: Board → `ESP32S3 Dev Module`, PSRAM → `OPI PSRAM`, Flash Size →
-   `16MB`, Partition Scheme → `Huge APP (3MB No OTA/1MB SPIFFS)`.
-6. **Build.**
+4. **Tools menu** — and this picks your flavor too (the firmware follows
+   the board, so a board/firmware mismatch can't happen by accident):
+   - Watch: Board → `XIAO_ESP32S3`, PSRAM → `OPI PSRAM`
+   - Dash: Board → `ESP32S3 Dev Module`, PSRAM → `OPI PSRAM`, Flash Size →
+     `16MB`, Partition Scheme → `Huge APP (3MB No OTA/1MB SPIFFS)`
+5. **Build.** With no `secrets.h` compiled in, the display boots into its
+   on-glass onboarding wizard — WiFi setup happens on the device.
+
+(Exotic board? Force a flavor with `#define CD_BUILD_DASH 0|1` in a
+`flavor_local.h` next to the sketch — an explicit choice beats inference.)
 
 ## Build — arduino-cli (zero manual installs)
 
@@ -84,12 +86,15 @@ arduino-cli compile --profile watch-core3    # or dash-core3 / watch / dash
 arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
 ```
 
-Profiles auto-download the pinned core + libraries into an isolated build.
-Working from a **git checkout**? `../../setup.sh arduino <watch|dash>` first
-— it writes the git-ignored `flavor_local.h` override, stages a `secrets.h`
-template you can pre-fill (timezone for quiet hours lives there, e.g.
-`#define CD_TZ "EST5EDT,M3.2.0,M11.1.0"`), and copies `lv_conf.h` into your
-sketchbook libraries dir for IDE builds.
+Profiles auto-download the pinned core + libraries into an isolated build,
+and the **flavor follows the profile's board** (`dash-core3` really builds
+dash firmware — the dispatchers infer it from the board define).
+
+Working from a **git checkout**? `../../setup.sh arduino <watch|dash>` also
+works — it writes the git-ignored `flavor_local.h` override (explicit beats
+inference), stages a `secrets.h` template you can pre-fill (timezone for
+quiet hours lives there, e.g. `#define CD_TZ "EST5EDT,M3.2.0,M11.1.0"`), and
+copies `lv_conf.h` into your sketchbook libraries dir for IDE builds.
 
 ## What lives where
 

@@ -38,11 +38,12 @@
 # CI build passes. Opt in via --profile (or the IDE dropdown).
 #
 # ── Zero setup ──────────────────────────────────────────────────────────────
-# A raw GitHub zip compiles as-is: the committed flavor dispatchers default
-# to the WATCH, and missing WiFi credentials hand off to the on-glass
-# onboarding wizard. Building the DASH takes one line in flavor_select.h
-# (CD_BUILD_DASH 1) — pick the matching dash profile too, or in a git
-# checkout run `./setup.sh arduino dash` (writes the git-ignored override).
+# A raw GitHub zip compiles as-is: the committed flavor dispatchers infer
+# the flavor from the selected BOARD (XIAO -> watch, ESP32S3 Dev Module ->
+# dash), so these profiles — and the IDE's Tools->Board menu — always build
+# the firmware that matches the hardware. Missing WiFi credentials hand off
+# to the on-glass onboarding wizard. Explicit override: flavor_local.h
+# (written by `./setup.sh arduino <flavor>`).
 
 profiles:
   # ── Canary Watch: XIAO ESP32-S3 + Seeed Round Display (GC9A01 240x240) ──
