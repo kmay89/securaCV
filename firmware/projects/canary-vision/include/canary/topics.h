@@ -29,6 +29,12 @@ struct Topics {
   char aim[96];
   char aim_state[96];
   char aim_cmd[96];
+  // Identify (the wizard's "which device is which" moment — HAP-style):
+  // HA's identify button / the companion app writes identify/set; the
+  // non-retained echo mirrors the blink window so dashboards can pulse
+  // the device card in sync with the physical LED.
+  char identify_cmd[96];
+  char identify_echo[96];
 };
 
 // device_id comes from canary::cfg::get() — NVS-backed, so topics stay
@@ -52,5 +58,7 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.cfg_score_cmd,  sizeof(t.cfg_score_cmd),  "securacv/%s/cfg/score/set",  device_id);
   snprintf(t.cfg_lost_cmd,   sizeof(t.cfg_lost_cmd),   "securacv/%s/cfg/lost/set",   device_id);
   snprintf(t.cfg_dwell_cmd,  sizeof(t.cfg_dwell_cmd),  "securacv/%s/cfg/dwell/set",  device_id);
+  snprintf(t.identify_cmd,  sizeof(t.identify_cmd),  "securacv/%s/identify/set", device_id);
+  snprintf(t.identify_echo, sizeof(t.identify_echo), "securacv/%s/identify",     device_id);
   return t;
 }

@@ -6205,6 +6205,11 @@ static void fleet_scan_task(void*) {
     o["mdns_host"] = MDNS.txt(i, "host");
     o["fw"]        = MDNS.txt(i, "fw");
     o["model"]     = MDNS.txt(i, "model");
+    // Device type + role (canonical TXT schema) — the SPA branches its
+    // per-type wizard steps and badges off dt ("canary-vision",
+    // "canary-sense", "canary-wap"); older firmware adverts return "".
+    o["dt"]        = MDNS.txt(i, "dt");
+    o["role"]      = MDNS.txt(i, "role");
     o["ip"]        = MDNS.address(i).toString();
     o["port"]      = MDNS.port(i);
   }
@@ -6947,6 +6952,12 @@ static void mdns_reannounce() {
   #else
   MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
   #endif
+  // Canonical fleet TXT identity (see docs/onboarding_unified_wizard.md):
+  // dt is the canonical hyphenated device type the HA component and the
+  // companion app key modality/wizard branches off; role separates
+  // witnesses from glance surfaces (canary-display advertises "display").
+  MDNS.addServiceTxt("securacv", "tcp", "dt",   "canary-wap");
+  MDNS.addServiceTxt("securacv", "tcp", "role", "witness");
   mdns_sync_broker_txt();      // re-add broker/bport if the link is up (else tombstone)
   schedule_catch_all_claim();  // staggered; performed by catch_all_tick()
 }
@@ -8667,6 +8678,12 @@ static void wifi_init_provisioning() {
           #else
           MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
           #endif
+          // Canonical fleet TXT identity (see docs/onboarding_unified_wizard.md):
+          // dt is the canonical hyphenated device type the HA component and the
+          // companion app key modality/wizard branches off; role separates
+          // witnesses from glance surfaces (canary-display advertises "display").
+          MDNS.addServiceTxt("securacv", "tcp", "dt",   "canary-wap");
+          MDNS.addServiceTxt("securacv", "tcp", "role", "witness");
           mdns_sync_broker_txt();      // re-add broker/bport if the link is up
           schedule_catch_all_claim();  // staggered re-assert of canary.local
           log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
@@ -8777,6 +8794,12 @@ static void wifi_init_provisioning() {
     #else
     MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
     #endif
+    // Canonical fleet TXT identity (see docs/onboarding_unified_wizard.md):
+    // dt is the canonical hyphenated device type the HA component and the
+    // companion app key modality/wizard branches off; role separates
+    // witnesses from glance surfaces (canary-display advertises "display").
+    MDNS.addServiceTxt("securacv", "tcp", "dt",   "canary-wap");
+    MDNS.addServiceTxt("securacv", "tcp", "role", "witness");
     mdns_sync_broker_txt();      // broker/bport if already connected (else tombstone)
     schedule_catch_all_claim();  // staggered; answers bare canary.local if free
     log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "mDNS started", g_device.mdns_hostname);

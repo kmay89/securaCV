@@ -298,6 +298,25 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     publish_cfg(mqtt, t, p);
   }
 
+  // Identify button (HAP-style): blinks the LED for 10 s so the wizard's
+  // "which device is which" moment works from HA and the companion app.
+  {
+    char t[192], p[1024];
+    topic_for("button", "identify", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Identify\","
+             "\"unique_id\":\"%s_identify\","
+             "\"command_topic\":\"%s\","
+             "\"payload_press\":\"identify\","
+             "\"device_class\":\"identify\","
+             "\"entity_category\":\"config\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.identify_cmd, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
   // Auto-update opt-in switch. Off by default — a witness device should
   // not restart unattended unless its owner chose that.
   {

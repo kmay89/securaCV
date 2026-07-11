@@ -44,6 +44,13 @@ namespace canary::net {
   bool publish_aim_state_retained(const Topics& topics, bool enabled);
   int take_pending_aim();       // -1 none; 0/1 = switch set off/on
 
+  // ── Identify (which-device-is-which) ──────────────────────────────────
+  // HA's identify button / the companion app writes identify/set; the
+  // callback latches it and main.cpp owns the 10 s blink window, echoing
+  // on/off (non-retained) so dashboards can pulse the card in sync.
+  bool take_pending_identify();  // true exactly once per inbound request
+  bool publish_identify_echo(const Topics& topics, bool active);
+
   // ── Runtime detection settings ─────────────────────────────────────────
   // Same latch-and-drain pattern as the update commands: the callback only
   // parses and latches inbound numbers; main.cpp drains them, applies via

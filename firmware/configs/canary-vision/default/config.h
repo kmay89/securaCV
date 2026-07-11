@@ -12,7 +12,7 @@
 // DEVICE IDENTITY
 // ============================================================================
 
-#define CONFIG_DEVICE_TYPE          "canary_vision"
+#define CONFIG_DEVICE_TYPE          "canary-vision"  // canonical: lowercase, hyphenated
 #define CONFIG_DEVICE_ID            "canary_vision_001"
 #define CONFIG_MANUFACTURER         "SecuraCV"
 #define CONFIG_MODEL                "Canary Vision (ESP32-C3 + Grove Vision AI V2)"
