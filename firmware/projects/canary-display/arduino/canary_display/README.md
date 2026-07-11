@@ -40,17 +40,26 @@ NimBLE 2.x) fails the build; switch profiles instead of editing a single pin.
 
 ## Build
 
-### 1. Stage the flat sketch for your flavor (required, first time + after edits)
+### 1. Pick your flavor (zero setup for the watch)
+
+**Downloaded a GitHub zip? The sketch compiles as-is** — the committed
+flavor dispatchers default to the **watch** (XIAO ESP32-S3 + Round Display),
+and with no `secrets.h` the display boots into its on-glass onboarding
+wizard, so WiFi setup happens on the device, not in a header. Open
+`canary_display.ino`, pick the `watch-core3` profile, build.
+
+Building the **dash** (Waveshare 4.3B)? One line: set `CD_BUILD_DASH` to `1`
+in `flavor_select.h`, and pick a `dash` profile.
+
+Working from a **git checkout**? Prefer the setup script — it writes the
+git-ignored `flavor_local.h` override (tree stays clean) and stages a
+`secrets.h` template you can pre-fill (timezone for quiet hours goes there
+too, e.g. `#define CD_TZ "EST5EDT,M3.2.0,M11.1.0"`):
 
 ```bash
 cd firmware/projects/canary-display
 ./setup.sh arduino watch     # or: ./setup.sh arduino dash
 ```
-
-This generates the flat sources and stages the flavor's `pins.h`,
-`flavor_config.h`, and a `secrets.h` (edit it with your WiFi/broker; it is
-git-ignored). Set your timezone for quiet hours with e.g.
-`#define CD_TZ "EST5EDT,M3.2.0,M11.1.0"` in `secrets.h`.
 
 ### 2. Toolchain
 
@@ -86,9 +95,11 @@ sketch's own sources).
 | `canary_display.ino` | `../../src/main.cpp` |
 | shared `*.cpp` / `*.h` | `../../src/**` + `../../include/canary/**` (flattened) |
 | `config.h` | `../../include/canary/config.h` (composition header) |
-| `flavor_config.h` | `../../../../configs/canary-display/<flavor>/config.h` |
-| `pins.h` | `../../../../boards/<board>/pins/pins.h` |
+| `flavor_config.h` / `pins.h` | generated dispatchers keyed on `flavor_select.h` |
+| `flavor_watch.h` / `flavor_dash.h` | `../../../../configs/canary-display/<flavor>/config.h` |
+| `pins_watch.h` / `pins_dash.h` | `../../../../boards/<board>/pins/pins.h` |
+| `flavor_local.h` | your flavor override, written by `setup.sh` (git-ignored) |
 | `lv_conf.h` | `../../include/lv_conf.h` |
-| `secrets.h` | your credentials (git-ignored) |
+| `secrets.h` | your credentials (git-ignored; optional — the wizard covers it) |
 
 Full parity model + regeneration workflow: [`../PARITY.md`](../PARITY.md).
