@@ -42,23 +42,23 @@
     - variables:
         # How many events were witnessed today?
         event_count: >
-          {{ states('sensor.securacv_DEVICE_ID_witness_count') | int(0) }}
+          {{ states('sensor.securacv_canary_DEVICE_ID_witness_count') | int(0) }}
 
         # Is the chain valid?
         chain_ok: >
-          {{ is_state('binary_sensor.securacv_DEVICE_ID_chain_valid', 'on') }}
+          {{ is_state('binary_sensor.securacv_canary_DEVICE_ID_chain_valid', 'on') }}
 
         # Any tamper in last 24h?
         tamper_active: >
-          {{ is_state('binary_sensor.securacv_DEVICE_ID_tamper', 'on') }}
+          {{ is_state('binary_sensor.securacv_canary_DEVICE_ID_tamper', 'on') }}
 
         # Last event details
         last_event: >
-          {{ state_attr('sensor.securacv_DEVICE_ID_last_event', 'zone') | default('—') }}
+          {{ state_attr('sensor.securacv_canary_DEVICE_ID_last_event', 'zone') | default('—') }}
 
         # Integrity badge
         integrity_badge: >
-          {% if is_state('binary_sensor.securacv_DEVICE_ID_chain_valid', 'on') %}
+          {% if is_state('binary_sensor.securacv_canary_DEVICE_ID_chain_valid', 'on') %}
           ✅ Verified
           {% else %}
           🔴 INTEGRITY FAILURE
@@ -84,7 +84,7 @@
           # Tap to open SecuraCV dashboard
           url: "/lovelace/securacv"
           action_data:
-            entity_id: "sensor.securacv_DEVICE_ID_last_event"
+            entity_id: "sensor.securacv_canary_DEVICE_ID_last_event"
 
     # Also log to HA persistent notifications for reference
     - service: persistent_notification.create

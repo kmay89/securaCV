@@ -2,8 +2,7 @@
 # who don't run MQTT yet.
 #
 #   1. docker compose -f quickstart-with-broker.compose.yml up -d
-#   2. Point Frigate at the broker by adding this to your frigate config
-#      (use your docker host's IP if Frigate runs elsewhere):
+#   2. Point Frigate at the broker by adding this to your frigate config:
 #
 #        mqtt:
 #          enabled: true
@@ -12,20 +11,47 @@
 #
 #   3. docker compose -f quickstart-with-broker.compose.yml run --rm securacv doctor
 #
-# The bundled broker allows anonymous local connections; restrict it with a
-# password file before exposing it beyond a trusted network.
+# Security defaults:
+#   - The broker port is bound to 127.0.0.1 (this host only). Containers on
+#     this compose network (the sidecar) and processes on this host can
+#     connect; other machines on your LAN cannot.
+#   - If Frigate runs on ANOTHER machine, you must (a) set a broker password
+#     and (b) widen the bind address. Both are one line in a `.env` file next
+#     to this compose file:
+#
+#         SECURACV_MQTT_PASSWORD=pick-a-strong-password
+#         SECURACV_MQTT_BIND=0.0.0.0
+#
+#     Then `docker compose -f quickstart-with-broker.compose.yml up -d --force-recreate`
+#     and give Frigate the same credentials (user: securacv). Never expose the
+#     broker beyond localhost while it still allows anonymous connections.
 
 services:
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: securacv-mosquitto
     restart: unless-stopped
+    # With SECURACV_MQTT_PASSWORD set, anonymous access is disabled and a
+    # password file is generated for user "securacv" at startup. Without it,
+    # the broker allows anonymous connections — safe only because the port
+    # binding below keeps it off the network.
+    environment:
+      SECURACV_MQTT_PASSWORD: "${SECURACV_MQTT_PASSWORD:-}"
     command: >-
-      sh -c 'printf "listener 1883 0.0.0.0\nallow_anonymous true\n"
-      > /mosquitto/config/mosquitto.conf && exec mosquitto
-      -c /mosquitto/config/mosquitto.conf'
+      sh -c 'if [ -n "$$SECURACV_MQTT_PASSWORD" ]; then
+      mosquitto_passwd -c -b /mosquitto/config/passwd securacv "$$SECURACV_MQTT_PASSWORD" &&
+      chown mosquitto:mosquitto /mosquitto/config/passwd &&
+      chmod 0600 /mosquitto/config/passwd &&
+      printf "listener 1883 0.0.0.0\nallow_anonymous false\npassword_file /mosquitto/config/passwd\n"
+      > /mosquitto/config/mosquitto.conf;
+      else
+      printf "listener 1883 0.0.0.0\nallow_anonymous true\n"
+      > /mosquitto/config/mosquitto.conf;
+      fi && exec mosquitto -c /mosquitto/config/mosquitto.conf'
     ports:
-      - "1883:1883"
+      # Loopback-only by default. Set SECURACV_MQTT_BIND=0.0.0.0 (with a
+      # password!) to accept connections from other machines.
+      - "${SECURACV_MQTT_BIND:-127.0.0.1}:1883:1883"
     volumes:
       - mosquitto_data:/mosquitto/data
 
@@ -41,6 +67,10 @@ services:
       - mosquitto
     environment:
       FRIGATE_MQTT_HOST: "mosquitto"
+      # Credentials are picked up automatically when SECURACV_MQTT_PASSWORD
+      # is set (the entrypoint skips empty values).
+      MQTT_USERNAME: "${SECURACV_MQTT_PASSWORD:+securacv}"
+      MQTT_PASSWORD: "${SECURACV_MQTT_PASSWORD:-}"
       # FRIGATE_TOPIC_PREFIX: "frigate"
       # FRIGATE_LABELS: "person,car,dog,cat"
       # RETENTION_DAYS: "7"

@@ -25,14 +25,14 @@
   trigger:
     # Primary trigger: chain_valid goes false
     - platform: state
-      entity_id: binary_sensor.securacv_DEVICE_ID_chain_valid
+      entity_id: binary_sensor.securacv_canary_DEVICE_ID_chain_valid
       to: "off"
       # Don't fire on HA startup unavailable state
       from: "on"
 
     # Secondary trigger: tamper sensor activates
     - platform: state
-      entity_id: binary_sensor.securacv_DEVICE_ID_tamper
+      entity_id: binary_sensor.securacv_canary_DEVICE_ID_tamper
       to: "on"
       from: "off"
 
@@ -42,11 +42,11 @@
     - variables:
         trigger_source: "{{ trigger.entity_id }}"
         tamper_type: >
-          {{ state_attr('sensor.securacv_DEVICE_ID_last_event', 'tamper_type') | default('unknown') }}
+          {{ state_attr('sensor.securacv_canary_DEVICE_ID_last_event', 'tamper_type') | default('unknown') }}
         is_chain_failure: >
-          {{ trigger.entity_id == 'binary_sensor.securacv_DEVICE_ID_chain_valid' }}
+          {{ trigger.entity_id == 'binary_sensor.securacv_canary_DEVICE_ID_chain_valid' }}
         is_tamper: >
-          {{ trigger.entity_id == 'binary_sensor.securacv_DEVICE_ID_tamper' }}
+          {{ trigger.entity_id == 'binary_sensor.securacv_canary_DEVICE_ID_tamper' }}
 
     # ---- Push notification (high priority) ----
     - service: notify.mobile_app_YOUR_PHONE
@@ -124,7 +124,7 @@
 
   trigger:
     - platform: state
-      entity_id: binary_sensor.securacv_DEVICE_ID_chain_valid
+      entity_id: binary_sensor.securacv_canary_DEVICE_ID_chain_valid
       to: "on"
       from: "off"
 
