@@ -226,6 +226,22 @@ static uint32_t s_selftest_deadline_ms = 0;
 static uint8_t  s_selftest_matched_type = AUDIO_EVENT_NONE;
 static uint8_t  s_selftest_matched_conf = 0;
 static uint32_t s_selftest_transitions_seen = 0;
+/* Loudest 20 ms RMS seen while the test window was active. Lets the UI
+ * tell a dead mic (peak 0) from a too-quiet alarm (peak under the ON
+ * threshold) from a non-alarm noise (peak above it, no match). */
+static uint16_t s_selftest_peak_rms = 0;
+/* Main-loop-only edge tracker: when the test window closes (expiry, stop,
+ * or the status()-side auto-expire observed from here), the envelope FSM
+ * and transition ring are reset. Transitions gathered under the test's
+ * halved thresholds — or a TEST press ending right at the window edge —
+ * must never complete a NORMAL match and flow into HA automations. */
+static bool     s_selftest_prev_active = false;
+
+/* Consecutive frames whose DC-removed RMS computed exactly 0. A live PDM
+ * mic's noise floor keeps this near zero; a dead data line (unseated
+ * expansion board, wrong pins) pins it. Surfaced via audio_stats_t so the
+ * dashboard can warn instead of showing a lying LISTENING badge. */
+static uint32_t s_zero_rms_streak = 0;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * RMS COMPUTATION  — int64 sum-of-squares; samples wiped after each call
@@ -870,6 +886,9 @@ bool init(const audio_config_t& cfg) {
   s_selftest_matched_type = AUDIO_EVENT_NONE;
   s_selftest_matched_conf = 0;
   s_selftest_transitions_seen = 0;
+  s_selftest_peak_rms = 0;
+  s_selftest_prev_active = false;
+  s_zero_rms_streak = 0;
 
   s_initialized = true;
   log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
@@ -902,6 +921,7 @@ bool start() {
   s_running = true;
   s_state_entered_ms = s_stream_ms;
   s_cycle_matched = false;
+  s_zero_rms_streak = 0;
   /* Fresh spectral state — don't carry filter memory across a gap. */
   s_bq_z1 = 0.0f;
   s_bq_z2 = 0.0f;
@@ -945,6 +965,7 @@ void stop() {
   /* Wipe the published level — when muted, /api/audio/level returns zero. */
   s_last_rms = 0;
   s_last_rms_ms = 0;
+  s_zero_rms_streak = 0;
 }
 
 bool is_running() { return s_running; }
@@ -1005,6 +1026,7 @@ bool mute_sync_at_boot(bool muted) {
       s_t4_cycles = 0;
       s_last_rms = 0;
       s_last_rms_ms = 0;
+      s_zero_rms_streak = 0;
       s_bq_z1 = 0.0f;
       s_bq_z2 = 0.0f;
       s_tone_band_sum = 0;
@@ -1085,6 +1107,7 @@ bool selftest_status(audio_selftest_status_t* out) {
   out->remaining_ms  = (active && !expired) ? (uint32_t)(deadline - now) : 0;
   out->transitions_seen =
       __atomic_load_n(&s_selftest_transitions_seen, __ATOMIC_RELAXED);
+  out->peak_rms = __atomic_load_n(&s_selftest_peak_rms, __ATOMIC_RELAXED);
   return true;
 }
 
@@ -1162,6 +1185,34 @@ bool set_thresholds(uint16_t rms_on, uint16_t rms_off) {
  * MAIN-LOOP PUMP
  * ────────────────────────────────────────────────────────────────────────── */
 
+/* Reset the envelope FSM + transition ring after a self-test window closes.
+ * Main-loop only. The biquad/HPF filter states are left alone — they are
+ * sub-frame continuity, not envelope history — but the per-state ratio
+ * accumulators restart with the fresh OFF state. */
+static void selftest_track_window_edge() {
+  const bool active = __atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE);
+  if (s_selftest_prev_active && !active) {
+    memset(s_trans, 0, sizeof(s_trans));
+    s_trans_head = 0;
+    s_trans_count = 0;
+    s_envelope_high = false;
+    s_state_entered_ms = s_stream_ms;
+    s_cycle_matched = false;
+    s_tone_band_sum = 0;
+    s_tone_full_sum = 0;
+    s_tone_frames = 0;
+    #if FEATURE_ACOUSTIC_TRANSIENTS
+    s_state_rms_sum = 0;
+    s_state_hpf_rms_sum = 0;
+    s_state_frames = 0;
+    s_knock_matched = false;
+    s_doorbell_matched = false;
+    s_glass_matched = false;
+    #endif
+  }
+  s_selftest_prev_active = active;
+}
+
 int process() {
   /* Apply any cross-task requests in single-task context first — the
    * HTTP server task must NEVER touch the I2S driver directly, because
@@ -1183,6 +1234,7 @@ int process() {
       s_t4_cycles = 0;
       __atomic_store_n(&s_last_rms, 0, __ATOMIC_RELEASE);
       __atomic_store_n(&s_last_rms_ms, 0, __ATOMIC_RELEASE);
+      s_zero_rms_streak = 0;
       s_bq_z1 = 0.0f;
       s_bq_z2 = 0.0f;
       s_tone_band_sum = 0;
@@ -1243,6 +1295,7 @@ int process() {
       __atomic_store_n(&s_selftest_matched_type, AUDIO_EVENT_NONE, __ATOMIC_RELAXED);
       __atomic_store_n(&s_selftest_matched_conf, 0, __ATOMIC_RELAXED);
       __atomic_store_n(&s_selftest_transitions_seen, 0, __ATOMIC_RELAXED);
+      __atomic_store_n(&s_selftest_peak_rms, 0, __ATOMIC_RELAXED);
       s_selftest_deadline_ms = millis() + d;
       __atomic_store_n(&s_selftest_active, true, __ATOMIC_RELEASE);
     }
@@ -1251,6 +1304,17 @@ int process() {
   if (__atomic_exchange_n(&s_selftest_stop_pending, false, __ATOMIC_ACQUIRE)) {
     __atomic_store_n(&s_selftest_active, false, __ATOMIC_RELEASE);
   }
+
+  /* Self-test window edge: the moment the window closes (stop consumed
+   * above, expiry inside the frame loop, or the status()-side auto-expire
+   * observed from here), reset the envelope FSM and wipe the transition
+   * ring. Two reasons this MUST happen: (1) transitions gathered under the
+   * test's halved thresholds would otherwise sit in the ring and feed the
+   * normal matchers sub-threshold audio; (2) a TEST press ending right at
+   * the window edge would otherwise complete a NORMAL match during the 1 s
+   * pause after expiry and flow into HA smoke automations — the exact thing
+   * self-test mode promises can't happen. */
+  selftest_track_window_edge();
 
   if (!s_running || !s_i2s_installed) return 0;
 
@@ -1343,15 +1407,60 @@ int process() {
     __atomic_store_n(&s_last_rms, rms, __ATOMIC_RELEASE);
     __atomic_store_n(&s_last_rms_ms, wall, __ATOMIC_RELAXED);
 
+    /* Flat-signal watchdog: a live PDM mic's noise floor never computes
+     * RMS == 0 for long; a dead data line does, forever. Consumers compare
+     * the streak against AUDIO_SILENT_STREAK_FRAMES (30 s). */
+    if (rms == 0) {
+      s_zero_rms_streak++;
+    } else {
+      s_zero_rms_streak = 0;
+    }
+
+    /* Self-test auto-expiry — deadline is wall time (the user's 30 s
+     * button-press window), so compare against wall, not the stream.
+     * Evaluated BEFORE the hysteresis so this frame's envelope decision
+     * already uses the right (test vs normal) thresholds, and so the
+     * window-edge wipe runs before any post-expiry transition lands in
+     * the ring. */
+    const bool st_active_now =
+        __atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE);
+    if (st_active_now && (int32_t)(wall - s_selftest_deadline_ms) >= 0) {
+      __atomic_store_n(&s_selftest_active, false, __ATOMIC_RELEASE);
+    }
+    const bool relaxed = st_active_now &&
+        (int32_t)(wall - s_selftest_deadline_ms) < 0;
+    selftest_track_window_edge();
+
+    /* Self-test also relaxes the envelope on/off thresholds (halved, with
+     * a sanity floor). A UL sounder's TEST press at ~3 m lands near RMS
+     * ~600 — under the default ON threshold of 800 — and would otherwise
+     * produce the "0 sound transitions seen" failure with a perfectly
+     * working mic. Normal detection is unaffected: the moment the window
+     * closes, the thresholds revert and the ring is wiped (above). */
+    uint16_t on_thr  = s_cfg.rms_on_threshold;
+    uint16_t off_thr = s_cfg.rms_off_threshold;
+    if (relaxed) {
+      const uint16_t peak =
+          __atomic_load_n(&s_selftest_peak_rms, __ATOMIC_RELAXED);
+      if (rms > peak) {
+        __atomic_store_n(&s_selftest_peak_rms, rms, __ATOMIC_RELAXED);
+      }
+      on_thr  = (uint16_t)(on_thr / 2);
+      off_thr = (uint16_t)(off_thr / 2);
+      if (on_thr < 100) on_thr = 100;
+      if (off_thr < 50) off_thr = 50;
+      if (off_thr >= on_thr) off_thr = (uint16_t)(on_thr / 2);
+    }
+
     bool transition = false;
     bool entered_on = false;
 
-    if (!s_envelope_high && rms >= s_cfg.rms_on_threshold) {
+    if (!s_envelope_high && rms >= on_thr) {
       transition = true;
       entered_on = true;
       s_envelope_high = true;
       s_stats.on_transitions++;
-    } else if (s_envelope_high && rms <= s_cfg.rms_off_threshold) {
+    } else if (s_envelope_high && rms <= off_thr) {
       transition = true;
       entered_on = false;
       s_envelope_high = false;
@@ -1398,7 +1507,7 @@ int process() {
       s_glass_matched    = false;
       #endif
 
-      if (__atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE)) {
+      if (relaxed) {
         __atomic_fetch_add(&s_selftest_transitions_seen, 1, __ATOMIC_RELAXED);
       }
 
@@ -1409,16 +1518,6 @@ int process() {
         s_t4_cycles = 0;
       }
     }
-
-    /* Self-test auto-expiry — deadline is wall time (the user's 30 s
-     * button-press window), so compare against wall, not the stream. */
-    const bool st_active_now =
-        __atomic_load_n(&s_selftest_active, __ATOMIC_ACQUIRE);
-    if (st_active_now && (int32_t)(wall - s_selftest_deadline_ms) >= 0) {
-      __atomic_store_n(&s_selftest_active, false, __ATOMIC_RELEASE);
-    }
-    const bool relaxed = st_active_now &&
-        (int32_t)(wall - s_selftest_deadline_ms) < 0;
 
     /* Cadence matching is timing-based and only meaningful right after
      * the long inter-cycle silence has elapsed. We check whenever we're
@@ -1519,6 +1618,7 @@ int process() {
 bool get_stats(audio_stats_t* out) {
   if (!out) return false;
   *out = s_stats;
+  out->zero_rms_streak = s_zero_rms_streak;
   return true;
 }
 

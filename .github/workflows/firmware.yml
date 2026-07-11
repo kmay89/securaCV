@@ -712,6 +712,27 @@ jobs:
           /tmp/selftest_logic | tee /tmp/selftest_logic.log
           grep -q "ALL .* PASSED" /tmp/selftest_logic.log
 
+      - name: Build + run acoustic-pipeline (microphone) host test
+        # Compiles the REAL vendored securacv_audio.cpp against stub
+        # Arduino/ESP-IDF headers and drives synthetic alarm cadences
+        # through a scripted i2s_read — the full pipeline: DC-removed RMS,
+        # envelope hysteresis, the stage-1 tone gate, the T3/T4/knock/
+        # doorbell/glass matchers, self-test mode (relaxed thresholds,
+        # peak_rms, the window-edge event-leak guard), the deferred hard
+        # mute, and the flat-signal (dead mic) watchdog. The vendored copy
+        # is kept identical to firmware/canary's canonical lib by
+        # check_audio_sync.sh, so this run covers both firmwares.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-wap/tests_host/stubs/audio \
+              -I firmware/projects/canary-wap/arduino/canary_wap \
+              firmware/projects/canary-wap/tests_host/test_audio_cadence.cpp \
+              firmware/projects/canary-wap/arduino/canary_wap/securacv_audio.cpp \
+              -o /tmp/audio_cadence
+          /tmp/audio_cadence | tee /tmp/audio_cadence.log
+          grep -q "test_audio_cadence: all tests passed" /tmp/audio_cadence.log
+
       - name: Build + run canary-wap config-logic host test
         # The Device-tab runtime config clamps. Most important: the event-time
         # coarsening bucket can only be widened past its compile-time floor,
