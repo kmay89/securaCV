@@ -230,12 +230,19 @@ stage_lv_conf() {
   for c in "${HOME}/Documents/Arduino" "${HOME}/Arduino"; do
     [ -d "$c/libraries" ] && { sketchbook="$c"; break; }
   done
-  if [ -n "$sketchbook" ]; then
-    cp "${SKETCH_DIR}/lv_conf.h" "${sketchbook}/libraries/lv_conf.h"
-    ok "Copied lv_conf.h -> ${sketchbook}/libraries/ (Arduino IDE builds)"
-  else
+  if [ -z "$sketchbook" ]; then
     info "No Arduino sketchbook found — IDE users: copy ${SKETCH_DIR}/lv_conf.h to <sketchbook>/libraries/"
+    return 0
   fi
+  local dst="${sketchbook}/libraries/lv_conf.h"
+  if [ -f "$dst" ] && ! cmp -s "${SKETCH_DIR}/lv_conf.h" "$dst"; then
+    # The sketchbook lv_conf.h is global to every LVGL project the user
+    # builds in the IDE — never destroy someone else's config silently.
+    cp "$dst" "${dst}.bak"
+    warn "Existing ${dst} differed — kept a copy at lv_conf.h.bak"
+  fi
+  cp "${SKETCH_DIR}/lv_conf.h" "$dst"
+  ok "Copied lv_conf.h -> ${sketchbook}/libraries/ (Arduino IDE builds)"
 }
 
 setup_arduino() {
