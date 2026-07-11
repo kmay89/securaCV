@@ -232,7 +232,9 @@ async def _setup_mqtt_binary_sensors(
 class SecuraCVKernelOnlineSensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor for kernel connectivity status."""
 
-    _attr_name = "SecuraCV Kernel Online"
+    # With has_entity_name, HA prefixes the device name ("SecuraCV Privacy
+    # Witness Kernel"), so the entity name must not repeat the brand.
+    _attr_name = "Online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_icon = "mdi:server-network"
     _attr_has_entity_name = True
@@ -269,7 +271,7 @@ class SecuraCVKernelStorageReplaceSensor(CoordinatorEntity, BinarySensorEntity):
     as the Storage Health sensor, so it never flaps on transient readings.
     """
 
-    _attr_name = "SecuraCV Storage Replacement Recommended"
+    _attr_name = "Storage Replacement Recommended"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:sd-alert"
     _attr_has_entity_name = True

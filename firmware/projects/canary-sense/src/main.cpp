@@ -29,6 +29,8 @@
 
 // Project composition header: flavor config (CS_*) + net/OTA/diag constants.
 #include "canary/config.h"
+// FEATURE_* vs HAS_* compile-time cross-check (needs pins.h + config above).
+#include "core/feature_sanity.h"
 #include "canary/version.h"
 #include "canary/log.h"
 #include "canary/topics.h"

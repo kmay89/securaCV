@@ -122,8 +122,12 @@ docker compose -f quickstart.compose.yml run --rm securacv doctor
 The device key is generated on first start into the `securacv_data` volume
 (back it up). No broker yet? Use
 `docker/sidecar/quickstart-with-broker.compose.yml`, which bundles
-Mosquitto. The full environment-variable contract is documented at the top
-of [`docker/sidecar/entrypoint.sh`](../docker/sidecar/entrypoint.sh).
+Mosquitto. The bundled broker is reachable only from that compose network
+and from the Docker host (loopback port binding); to let a Frigate on
+another machine connect, set `SECURACV_MQTT_PASSWORD` and
+`SECURACV_MQTT_BIND=0.0.0.0` in a `.env` file — the compose file's header
+walks through it. The full environment-variable contract is documented at
+the top of [`docker/sidecar/entrypoint.sh`](../docker/sidecar/entrypoint.sh).
 
 Verify the sealed log from the host at any time:
 

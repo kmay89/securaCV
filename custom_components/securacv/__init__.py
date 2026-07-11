@@ -49,6 +49,11 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 DEFAULT_UPDATE_INTERVAL = timedelta(seconds=30)
 
+# Untrusted-broker hardening: cap how much of any single MQTT payload this
+# integration will decode/parse. Real device publishes are well under 8 KiB;
+# anything larger is malformed or hostile and gets dropped before json.loads.
+MAX_MQTT_PAYLOAD_BYTES = 64 * 1024
+
 # Lovelace cards (custom_components/securacv/www/). Served and auto-loaded
 # best-effort so `type: custom:securacv-timeline-card` /
 # `custom:securacv-aim-card` resolve without the user hand-adding a frontend
@@ -303,6 +308,24 @@ class SecuraCVAdapterStatsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"unable to reach adapter stats endpoint: {err}") from err
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate old config entries to the current version.
+
+    The config flow declares VERSION = 2. Without this handler, HA refuses
+    to load any entry stored with a lower version ("Migration handler not
+    found"), permanently bricking it on upgrade. Version 1 predates this
+    repository's history and used a compatible data schema, so the
+    migration is a straight version bump.
+    """
+    if entry.version > 2:
+        # Downgrade from a future version — refuse rather than guess.
+        return False
+    if entry.version < 2:
+        hass.config_entries.async_update_entry(entry, version=2)
+        _LOGGER.info("Migrated SecuraCV config entry from version %s to 2", entry.version)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SecuraCV from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -442,6 +465,40 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+def _safe_config_url(ap_ip: Any) -> str | None:
+    """Build a configuration_url from a broker-supplied address, or None.
+
+    The `ap_ip` field arrives over MQTT and is untrusted: it becomes a
+    clickable link on the HA device page. Devices only ever report a LAN
+    address (their AP/STA IP, e.g. 192.168.4.1) or their mDNS hostname
+    (canary-<id>.local), so accept exactly those forms: a private or
+    link-local IP address, or a `.local` hostname. Public IPs, arbitrary
+    hostnames, and anything with URL syntax (scheme, port, path,
+    credentials) are rejected — a hostile broker must not be able to plant
+    an off-LAN phishing link.
+    """
+    if not isinstance(ap_ip, str) or not ap_ip or len(ap_ip) > 253:
+        return None
+    import ipaddress
+    import re
+
+    try:
+        ip = ipaddress.ip_address(ap_ip)
+    except ValueError:
+        pass
+    else:
+        if not (ip.is_private or ip.is_link_local):
+            return None
+        # IPv6 literals need brackets in URLs.
+        return f"http://[{ap_ip}]" if ip.version == 6 else f"http://{ap_ip}"
+    if ap_ip.lower().endswith(".local") and re.fullmatch(
+        r"[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+",
+        ap_ip,
+    ):
+        return f"http://{ap_ip}"
+    return None
+
+
 def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
     """Return callback for Canary device status MQTT messages."""
 
@@ -451,6 +508,8 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
         # Topic format: {prefix}/{device_id}/status
         parts = msg.topic.split("/")
         if len(parts) < 3:
+            return
+        if len(msg.payload) > MAX_MQTT_PAYLOAD_BYTES:
             return
 
         device_id = parts[-2]
@@ -472,12 +531,14 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
             friendly_name = None
             try:
                 status_data = json.loads(status_payload) if isinstance(status_payload, str) else {}
+                if not isinstance(status_data, dict):
+                    status_data = {}
                 fw_version = status_data.get("firmware_version") or status_data.get("fw_version")
                 hw_version = status_data.get("hardware") or status_data.get("board")
                 friendly_name = status_data.get("device_name") or status_data.get("name")
-                ap_ip = status_data.get("ap_ip") or status_data.get("ip")
-                if ap_ip:
-                    config_url = f"http://{ap_ip}"
+                config_url = _safe_config_url(
+                    status_data.get("ap_ip") or status_data.get("ip")
+                )
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -499,18 +560,21 @@ def _async_device_status_received(hass: HomeAssistant, entry: ConfigEntry):
 
             try:
                 status_data = json.loads(status_payload) if isinstance(status_payload, str) else {}
+                if not isinstance(status_data, dict):
+                    status_data = {}
                 fw = status_data.get("firmware_version") or status_data.get("fw_version")
                 if fw and fw != devices[device_id].get("_last_fw"):
                     devices[device_id]["_last_fw"] = fw
                     dev_registry = dr.async_get(hass)
                     hw = status_data.get("hardware") or status_data.get("board")
-                    ap_ip = status_data.get("ap_ip") or status_data.get("ip")
                     dev_registry.async_get_or_create(
                         config_entry_id=entry.entry_id,
                         identifiers={(DOMAIN, f"canary_{device_id}")},
                         sw_version=fw,
                         hw_version=hw,
-                        configuration_url=f"http://{ap_ip}" if ap_ip else None,
+                        configuration_url=_safe_config_url(
+                            status_data.get("ap_ip") or status_data.get("ip")
+                        ),
                     )
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -549,9 +613,19 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
 
     The health publish has always carried `public_key` (64-char hex)
     because the HA dashboard's health sensor already surfaces it as an
-    attribute. We piggy-back on it for the trust store: pubkey is a
-    public value, and a hostile broker can't forge a new device's
-    first-sight pubkey without already controlling the device itself.
+    attribute. We piggy-back on it for the trust store.
+
+    Trust model — be honest about the limits of TOFU: first-sight pinning
+    trusts whoever publishes to `{prefix}/{device_id}/health` FIRST. Any
+    client with publish access to the broker (or a hostile broker) can
+    pre-emptively pin its own key for a device_id before the genuine
+    device connects, after which its spoofed publishes verify green.
+    TOFU therefore upgrades an *honest* broker from "trust every payload"
+    to "detect later tampering"; it does not defend against a broker (or
+    co-tenant publisher) that is hostile from the start. Users whose
+    threat model includes a hostile broker must pin keys manually from
+    the device's /enroll page (Options → Pin a device pubkey) and should
+    use broker ACLs to restrict who may publish under the prefix.
     Subsequent publishes are verified against the pin; the warn-loudly-
     accept policy handles the "device legitimately re-flashed" case.
     """
@@ -560,6 +634,8 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
     def _callback(msg: mqtt.ReceiveMessage) -> None:
         parts = msg.topic.split("/")
         if len(parts) < 3:
+            return
+        if len(msg.payload) > MAX_MQTT_PAYLOAD_BYTES:
             return
         device_id = parts[-2]
         entry_data = hass.data[DOMAIN].get(entry.entry_id)
@@ -573,8 +649,15 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: ConfigEntry):
             data = json.loads(payload)
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
+        if not isinstance(data, dict):
+            return
         pubkey_hex = data.get("public_key")
         if not pubkey_hex or not isinstance(pubkey_hex, str) or len(pubkey_hex) != 64:
+            return
+        try:
+            bytes.fromhex(pubkey_hex)
+        except ValueError:
+            # 64 chars but not hex — would raise later inside the pin task.
             return
         # async_pin needs the loop; schedule as a task so the @callback
         # context returns synchronously.

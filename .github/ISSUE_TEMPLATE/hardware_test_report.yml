@@ -1,0 +1,70 @@
+name: "Hardware Test Report"
+description: "Report real-hardware validation of a board — the evidence that promotes it from compile-tested to community tier."
+title: "[Hardware Test] "
+labels:
+  - "hardware"
+  - "test-report"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you — reports like this are how boards earn their **community**
+        support tier (see [`firmware/HARDWARE.md`](../blob/main/firmware/HARDWARE.md)).
+        A maintainer will review this report and, if it checks out, set the
+        board's tier in `firmware/boards/boards.json` with this issue as the
+        permanent `tier_evidence`. Your report stays linked as the proof for
+        everyone who flashes this board after you.
+  - type: input
+    id: board_id
+    attributes:
+      label: Board ID
+      description: The registry id from `firmware/boards/boards.json`.
+      placeholder: "e.g., xiao-esp32s3-round"
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Exact hardware revision
+      description: Vendors respin boards silently — the revision is part of the evidence.
+      placeholder: "e.g., Round Display for XIAO v1.2, purchased 2026-06"
+    validations:
+      required: true
+  - type: input
+    id: firmware_version
+    attributes:
+      label: Firmware version / commit tested
+      placeholder: "e.g., main @ 61ccc6c, env canary-display-watch"
+    validations:
+      required: true
+  - type: textarea
+    id: runbook
+    attributes:
+      label: Test procedure followed
+      description: |
+        Which bring-up runbook (e.g. `docs/hardware/display_bench_bringup.md`
+        Track W) or documented test plan you ran, and the per-check results.
+        If you deviated from the runbook, say where and why.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: Results & serial log
+      description: |
+        Pass/fail per check, plus a boot serial log. Attach or paste —
+        trim credentials/SSIDs first.
+    validations:
+      required: true
+  - type: textarea
+    id: verify_notes
+    attributes:
+      label: VERIFY notes retired
+      description: |
+        Which `VERIFY` annotations in the board's `pins/pins.h` your test
+        confirms (they flip to plain comments in the promotion PR).
+  - type: textarea
+    id: issues
+    attributes:
+      label: Problems found
+      description: Anything that didn't match the pin map, docs, or expected behavior.

@@ -689,6 +689,44 @@
   NOT match, and T3 must still match with a frozen wall clock.
 - **Date learned:** 2026-07
 
+### A self-test must relax the SAME gate that fails in the field — and clean up when its window closes
+- **What happened:** The dashboard's "Test with your alarm (30 s)" failed
+  with "No alarm cadence heard (0 sound transitions seen)" while the badge
+  said LISTENING. The user couldn't tell a dead mic from a quiet room from
+  an alarm that was simply too far away — and neither could the firmware.
+- **Root cause (three independent gaps):** (1) self-test relaxed the
+  cadence *timing* tolerance and the tone-gate floor, but not the envelope
+  ON/OFF thresholds — the very gate that produces "0 transitions". A UL
+  sounder's TEST press at ~3 m lands near RMS ~600, under the default
+  ON=800, so a perfectly working mic still failed the test it recommends.
+  (2) Nothing distinguished "mic delivers exact zeros forever" (dead data
+  line) from silence — a live PDM mic's noise floor never computes RMS==0
+  for 30 s straight. (3) The one host test covering this pipeline existed
+  but was never wired into CI, so none of this was ever exercised.
+- **The leak nobody promised:** self-test suppresses the event callback
+  *while active* — but a TEST press ending just before the window expired
+  left its beeps in the transition ring, and the NORMAL matcher completed
+  the match during the post-expiry pause and fired the callback into HA
+  smoke automations. Suppressing a consumer is not enough; the *evidence*
+  gathered under test conditions must not outlive the test.
+- **Fix:** self-test halves the envelope thresholds (with floors) for its
+  window; the window edge wipes the transition ring + envelope FSM;
+  `peak_rms` in the self-test status + `zero_rms_streak` in stats let the
+  UI say "heard nothing at all (hardware)" vs "heard faint sound, peak N,
+  needs M — move closer" vs "sound but no alarm cadence"; CI now runs
+  `test_audio_cadence` (17 tests, incl. one that FAILS if the window-edge
+  wipe is removed).
+- **Two lessons:** (a) when a self-test exists to diagnose a failure mode,
+  relax/instrument the exact stage that produces that failure's symptom —
+  a test that can't hear what it asks the user to play is worse than none;
+  (b) "suppressed during the test" guarantees need a plan for state that
+  *straddles* the test boundary.
+- **Regression check:** `test_audio_cadence.cpp` — quiet (RMS 600) T3 must
+  match under self-test but produce zero transitions in normal mode; a
+  burst ending at the window edge must emit NO event; a flat signal must
+  pin `zero_rms_streak` past `AUDIO_SILENT_STREAK_FRAMES` with peak_rms 0.
+- **Date learned:** 2026-07
+
 ---
 
 ## Memory Budget
