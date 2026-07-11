@@ -448,6 +448,24 @@ jobs:
           chmod +x firmware/scripts/regression_check.sh
           firmware/scripts/regression_check.sh
 
+      - name: Run feature-sanity header tests
+        # firmware/common/core/feature_sanity.h is the Marlin-SanityCheck-
+        # style FEATURE_* vs HAS_* cross-check. This host suite asserts each
+        # #error fires (and doesn't fire) for representative flag combos and
+        # compiles every Vision host board's pins.h against the vision
+        # default feature set.
+        run: bash firmware/scripts/test_feature_sanity.sh
+
+      - name: Check board registry
+        # firmware/boards/boards.json is the single source of truth for
+        # supported hardware (the board-level flavors.json). This guard
+        # keeps the registry, the board directories, the pin headers, the
+        # build environments, and the boards README consistent — and
+        # enforces the "pins are data" rule (pins.h = #define only) plus
+        # tier_evidence for any board claiming hardware validation.
+        # Contract: firmware/PORTING.md.
+        run: python3 firmware/scripts/check_board_registry.py
+
       - name: Verify LESSONS_LEARNED.md exists
         run: |
           if [ ! -f "firmware/LESSONS_LEARNED.md" ]; then

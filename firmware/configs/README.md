@@ -40,6 +40,18 @@ configs/
 4. **Local overrides**: Projects can create `config_local.h` to override
    settings without modifying the tracked config files.
 
+5. **Breaking changes are logged**: renaming or removing a flag, or
+   changing a default in a behavior-visible way, requires a dated entry in
+   [../CONFIG_CHANGES.md](../CONFIG_CHANGES.md) **and** updating every
+   shipped config the change breaks, in the same PR. CI builds every
+   shipped config on every PR, so a missed one fails loudly.
+
+6. **Capability mismatches fail the build**: feature flags are
+   cross-checked against the board's `HAS_*` capability flags by
+   [../common/core/feature_sanity.h](../common/core/feature_sanity.h).
+   Enabling a feature the board can't carry produces a compile-time
+   `#error` naming the flag — not a runtime mystery.
+
 ## Creating a New Configuration
 
 1. Create directory: `configs/<app-id>/<config-id>/`

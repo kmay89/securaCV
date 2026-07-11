@@ -43,6 +43,8 @@
 
 // Project composition header: flavor config (CD_*) + net/OTA/diag constants.
 #include "config.h"
+// FEATURE_* vs HAS_* compile-time cross-check (needs pins.h + config above).
+#include "feature_sanity.h"
 #include "version.h"
 #include "log.h"
 #include "topics.h"

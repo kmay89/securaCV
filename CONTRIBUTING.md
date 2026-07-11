@@ -92,6 +92,21 @@ PRs without these will not be reviewed.
 When reporting regressions or drift, use the structured issue forms:
 - [Security Report](.github/ISSUE_TEMPLATE/security_report.yml)
 - [Conformance Report](.github/ISSUE_TEMPLATE/conformance_report.yml)
+- [Hardware Support Request](.github/ISSUE_TEMPLATE/hardware_support_request.yml)
+- [Hardware Test Report](.github/ISSUE_TEMPLATE/hardware_test_report.yml)
+
+---
+
+## Hardware Contributions
+
+Board ports are the one contribution type designed to be low-friction:
+a new board is a **data-only PR** (pin map + capability flags + build env +
+registry entry) that never touches shared logic, so it can't weaken an
+invariant. Start with [`firmware/PORTING.md`](firmware/PORTING.md); what
+"supported" means (and how your port earns its tier) is defined in
+[`firmware/HARDWARE.md`](firmware/HARDWARE.md). Validated a board on real
+hardware? File a **Hardware Test Report** — it becomes the permanent
+evidence that promotes the board's support tier.
 
 ---
 

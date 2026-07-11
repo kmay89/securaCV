@@ -24,6 +24,7 @@
 #include "canary/detect_config.h"
 #include "canary/diagnostics.h"
 #include "pins.h"  // board identity (BOARD_NAME) from firmware/boards/<id>/pins
+#include "core/feature_sanity.h"  // FEATURE_* vs HAS_* compile-time cross-check
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
