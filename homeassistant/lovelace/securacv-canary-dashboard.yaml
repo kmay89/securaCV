@@ -5,17 +5,16 @@
 #   Or paste into an existing dashboard's raw YAML editor.
 #
 # Entity IDs:
-#   SecuraCV entities follow the pattern: sensor.securacv_<device_id>_<type>
+#   Canary entities follow the pattern:
+#     <domain>.securacv_canary_<device_id>_<name>
+#   e.g. binary_sensor.securacv_canary_ab7k_chain_valid
 #   Replace DEVICE_ID below with your actual device ID (found in
 #   Settings → Devices & Services → SecuraCV → your device).
 #
-#   If you used Mosquitto/MQTT auto-discovery, the device_id is derived
-#   from your device_key_seed prefix (e.g. "pwk_a1b2c3d4").
-#
 #   Frigate entities follow: camera.<camera_name>, sensor.frigate_<camera>_*
 #
-# Tip: Run this script to auto-detect entity IDs from the command line:
-#   ha states list | grep securacv
+# Tip: To confirm the exact entity IDs on your install, open
+#   Developer Tools → States and filter for "securacv".
 
 title: "SecuraCV"
 views:
@@ -56,24 +55,25 @@ views:
         icon: "mdi:heart-pulse"
         show_header_toggle: false
         entities:
-          # Kernel add-on online (binary sensor created by SecuraCV HA integration)
-          - entity: binary_sensor.securacv_kernel_online
+          # Kernel online (created by the SecuraCV integration in kernel/both
+          # mode; remove this row for MQTT-only setups).
+          - entity: binary_sensor.securacv_privacy_witness_kernel_online
             name: "Witness Kernel"
             icon: "mdi:server-network"
           # Replace DEVICE_ID with your actual device ID
-          - entity: binary_sensor.securacv_DEVICE_ID_online
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_online
             name: "Device Online"
             icon: "mdi:wifi"
-          - entity: binary_sensor.securacv_DEVICE_ID_chain_valid
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_chain_valid
             name: "Log Integrity"
             icon: "mdi:link-lock"
-          - entity: sensor.securacv_DEVICE_ID_witness_count
+          - entity: sensor.securacv_canary_DEVICE_ID_witness_count
             name: "Total Events Witnessed"
             icon: "mdi:counter"
-          - entity: sensor.securacv_DEVICE_ID_chain_length
+          - entity: sensor.securacv_canary_DEVICE_ID_chain_length
             name: "Chain Length"
             icon: "mdi:database-check"
-          - entity: sensor.securacv_DEVICE_ID_health
+          - entity: sensor.securacv_canary_DEVICE_ID_health
             name: "Device Health"
             icon: "mdi:chip"
 
@@ -85,18 +85,18 @@ views:
         icon: "mdi:shield-alert"
         show_header_toggle: false
         entities:
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_tamper
             name: "Any Tamper Detected"
             icon: "mdi:alert-octagon"
           - type: section
             label: "Specific Tamper Types"
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper_power_loss
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_power_loss
             name: "Power Loss"
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper_sd_removed
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_sd_removed
             name: "SD Card Removed"
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper_enclosure
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_enclosure_open
             name: "Enclosure Opened"
-          - entity: binary_sensor.securacv_DEVICE_ID_tamper_motion
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_unexpected_motion
             name: "Unexpected Motion"
 
       # -----------------------------------------------------------------------
@@ -107,7 +107,7 @@ views:
         icon: "mdi:clock-check"
         show_header_toggle: false
         entities:
-          - entity: sensor.securacv_DEVICE_ID_last_event
+          - entity: sensor.securacv_canary_DEVICE_ID_last_event
             name: "Last Event"
             icon: "mdi:motion-sensor"
 
@@ -141,7 +141,7 @@ views:
         title: "Zone: Front Door"
         icon: "mdi:door-open"
         entities:
-          - entity: sensor.securacv_DEVICE_ID_last_event
+          - entity: sensor.securacv_canary_DEVICE_ID_last_event
             name: "Last Event"
           - entity: sensor.frigate_front_door_person_count
             name: "Person detections today"
@@ -167,11 +167,10 @@ views:
           The witness log records every event cryptographically. You can verify
           the log at any time using the `log_verify` CLI tool in the add-on.
 
-          **To export the witness chain:**
-          Settings → Devices & Services → SecuraCV → your device → Export Chain
-
-          **To verify integrity:**
-          Settings → Devices & Services → SecuraCV → your device → Verify Chain
+          **Chain integrity** is verified continuously — the "Chain Valid"
+          sensor below turns off (and the Signature Mismatch notification
+          fires) if verification ever fails. Per-device signature state is
+          visible in the Chain Length sensor's attributes.
 
           **Break-glass** requires multi-party authorization (N-of-M trustee quorum).
           See `docs/homeassistant_setup.md` for the break-glass workflow.
@@ -181,11 +180,11 @@ views:
         icon: "mdi:certificate"
         show_header_toggle: false
         entities:
-          - entity: binary_sensor.securacv_DEVICE_ID_chain_valid
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_chain_valid
             name: "Chain Valid"
-          - entity: sensor.securacv_DEVICE_ID_chain_length
+          - entity: sensor.securacv_canary_DEVICE_ID_chain_length
             name: "Chain Length"
-          - entity: sensor.securacv_DEVICE_ID_witness_count
+          - entity: sensor.securacv_canary_DEVICE_ID_witness_count
             name: "Total Events"
 
       - type: entities
@@ -193,9 +192,9 @@ views:
         icon: "mdi:access-point-network"
         show_header_toggle: false
         entities:
-          - entity: binary_sensor.securacv_DEVICE_ID_transport_mqtt
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_mqtt
             name: "MQTT"
-          - entity: binary_sensor.securacv_DEVICE_ID_transport_wifi_sta
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_wifi_station
             name: "WiFi Station"
-          - entity: binary_sensor.securacv_DEVICE_ID_mesh_connected
+          - entity: binary_sensor.securacv_canary_DEVICE_ID_mesh_connected
             name: "Mesh Network"

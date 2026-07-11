@@ -31,7 +31,7 @@
 
   trigger:
     - platform: state
-      entity_id: sensor.securacv_DEVICE_ID_last_event
+      entity_id: sensor.securacv_canary_DEVICE_ID_last_event
       # Triggers whenever the last_event sensor gets a new value
       for:
         seconds: 0
@@ -44,14 +44,14 @@
 
     # And only if the device is online
     - condition: state
-      entity_id: binary_sensor.securacv_DEVICE_ID_online
+      entity_id: binary_sensor.securacv_canary_DEVICE_ID_online
       state: "on"
 
   action:
     - variables:
         hour: "{{ now().hour }}"
-        zone: "{{ state_attr('sensor.securacv_DEVICE_ID_last_event', 'zone') | default('unknown zone') }}"
-        event_type: "{{ states('sensor.securacv_DEVICE_ID_last_event') }}"
+        zone: "{{ state_attr('sensor.securacv_canary_DEVICE_ID_last_event', 'zone') | default('unknown zone') }}"
+        event_type: "{{ states('sensor.securacv_canary_DEVICE_ID_last_event') }}"
 
     - service: notify.mobile_app_YOUR_PHONE
       data:
@@ -101,14 +101,14 @@
 
     # Only if device is online
     - condition: state
-      entity_id: binary_sensor.securacv_DEVICE_ID_online
+      entity_id: binary_sensor.securacv_canary_DEVICE_ID_online
       state: "on"
 
     # Alert if the last event was more than 4 hours ago during active hours
     # (Adjust threshold based on your camera's typical event frequency)
     - condition: template
       value_template: >
-        {% set last_changed = states.sensor.securacv_DEVICE_ID_last_event.last_changed %}
+        {% set last_changed = states.sensor.securacv_canary_DEVICE_ID_last_event.last_changed %}
         {% if last_changed %}
           {{ (now() - last_changed).total_seconds() > 14400 }}
         {% else %}
@@ -118,7 +118,7 @@
   action:
     - variables:
         last_event_age_hours: >
-          {% set last_changed = states.sensor.securacv_DEVICE_ID_last_event.last_changed %}
+          {% set last_changed = states.sensor.securacv_canary_DEVICE_ID_last_event.last_changed %}
           {% if last_changed %}
             {{ ((now() - last_changed).total_seconds() / 3600) | round(1) }}
           {% else %}
