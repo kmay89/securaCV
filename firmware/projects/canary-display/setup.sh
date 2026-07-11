@@ -161,9 +161,9 @@ generate_shared() {
   #else
     /* Unrecognized board (a vendor board package, e.g. Waveshare's own
      * "ESP32-S3-Touch-LCD-4.3B" entry, defines its own board macro we
-     * can't know). Guessing here could flash the WRONG FLAVOR silently —
+     * can't know). Guessing here could flash the WRONG FLAVOR silently -
      * fail loud with the fix instead. */
-    #error "Board not recognized. Pick Tools->Board 'XIAO_ESP32S3' (watch) or 'ESP32S3 Dev Module' (dash) from 'esp32 by Espressif Systems' — or create flavor_local.h next to this sketch with '#define CD_BUILD_DASH 0' (watch) or '#define CD_BUILD_DASH 1' (dash)."
+    #error "Board not recognized. Pick Tools->Board 'XIAO_ESP32S3' (watch) or 'ESP32S3 Dev Module' (dash) from 'esp32 by Espressif Systems' - or create flavor_local.h next to this sketch with '#define CD_BUILD_DASH 0' (watch) or '#define CD_BUILD_DASH 1' (dash)."
   #endif
 #endif
 EOF
