@@ -37,18 +37,21 @@ transforms the canonical tree deterministically:
   the shared `*.cpp`/`*.h`, `config.h`, `lv_conf.h`, `secrets.ci.h`, **both
   flavors' pin/config copies** (`pins_watch.h`/`pins_dash.h`,
   `flavor_watch.h`/`flavor_dash.h`) and the **flavor dispatchers**
-  (`pins.h`, `flavor_config.h`, `flavor_select.h` — watch by default); plus
+  (`pins.h`, `flavor_config.h`, `flavor_select.h` — flavor inferred from
+  the selected BOARD: XIAO -> watch, ESP32S3 Dev Module -> dash); plus
   the hand-written `sketch.yaml` / `README.md` / `.gitignore`.
 - **Staged, git-ignored** (per-user): `flavor_local.h` (the flavor override
   `./setup.sh arduino <watch|dash>` writes) and `secrets.h` (optional — a
   missing one falls back to `secrets.ci.h` placeholders, which hand off to
   the on-glass onboarding wizard).
 
-So a raw GitHub zip compiles with **zero setup** as the watch flavor — the
-recurring "pins.h: No such file or directory" first-build failure is
-structurally gone — and the dash is one committed line (`flavor_select.h`)
-or one `setup.sh` run away. CI's "Zip-download build" leg compiles the
-sketch exactly as downloaded to keep that promise honest.
+So a raw GitHub zip compiles with **zero setup** — the recurring "pins.h:
+No such file or directory" first-build failure is structurally gone — and
+the flavor **follows the board choice** (picking the dash board or the
+`dash-core3` cli profile builds dash firmware; no forgotten define can put
+watch firmware on dash hardware). CI's "Zip-download build" and "Profile
+build" legs compile the sketch exactly as downloaded to keep those
+promises honest.
 
 ## Regeneration workflow (making a change)
 

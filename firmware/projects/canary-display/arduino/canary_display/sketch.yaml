@@ -1,14 +1,18 @@
 # Arduino sketch build profiles for the SecuraCV Canary Display.
 #
 # One sketch, two flavors — exactly like the PlatformIO tree (one app,
-# two envs). Pick the profile that matches your hardware; it carries the
-# board FQBN, the flavor #define, and the library set so the essential
-# settings travel with the sketch instead of living in per-IDE preferences.
+# two envs). Each profile carries the board FQBN, platform pin, and library
+# set, so a build is reproducible independent of what's installed globally.
 #
-#   Arduino IDE 2.3+ : open canary_display.ino, pick a profile from the
-#                      dropdown in the toolbar.
-#   arduino-cli      : arduino-cli compile --profile watch-core3
-#                      arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
+#   arduino-cli : arduino-cli compile --profile watch-core3
+#                 arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
+#                 (auto-installs the pinned core + libraries, isolated)
+#
+#   Arduino IDE : profiles are NOT read by the IDE (arduino-ide#2573 —
+#                 a CLI-only feature). IDE users install the core +
+#                 libraries below via Boards/Library Manager and set the
+#                 board options in Tools — the README's step-by-step
+#                 mirrors this file's pins exactly.
 #
 # ── Core version matrix ─────────────────────────────────────────────────────
 # The sketch builds on BOTH arduino-esp32 major lines; the source carries the
@@ -34,11 +38,12 @@
 # CI build passes. Opt in via --profile (or the IDE dropdown).
 #
 # ── Zero setup ──────────────────────────────────────────────────────────────
-# A raw GitHub zip compiles as-is: the committed flavor dispatchers default
-# to the WATCH, and missing WiFi credentials hand off to the on-glass
-# onboarding wizard. Building the DASH takes one line in flavor_select.h
-# (CD_BUILD_DASH 1) — pick the matching dash profile too, or in a git
-# checkout run `./setup.sh arduino dash` (writes the git-ignored override).
+# A raw GitHub zip compiles as-is: the committed flavor dispatchers infer
+# the flavor from the selected BOARD (XIAO -> watch, ESP32S3 Dev Module ->
+# dash), so these profiles — and the IDE's Tools->Board menu — always build
+# the firmware that matches the hardware. Missing WiFi credentials hand off
+# to the on-glass onboarding wizard. Explicit override: flavor_local.h
+# (written by `./setup.sh arduino <flavor>`).
 
 profiles:
   # ── Canary Watch: XIAO ESP32-S3 + Seeed Round Display (GC9A01 240x240) ──

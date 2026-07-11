@@ -23,70 +23,78 @@ name collision the flat layout creates (both the composition header
 (`check_display_arduino_sync.sh`) fails if the committed sketch drifts from the
 canonical tree. **Fix bugs in `../../src`, then regenerate** (below).
 
-## Pick the profile that matches your installed core
+## Two toolchains, one important difference
 
-The sketch builds on **both** arduino-esp32 major lines, but GFX and NimBLE
-split their library majors along the core boundary — so each core line has its
-own profiles carrying the right pins:
+The `sketch.yaml` **build profiles** (core + pinned libraries per flavor)
+are an **arduino-cli feature — the Arduino IDE does not read them** ([the
+IDE feature request is still open](https://github.com/arduino/arduino-ide/issues/2573)).
+So:
 
-| Your `esp32` platform | Profiles | GFX | NimBLE-Arduino |
+- **arduino-cli**: `--profile watch-core3` auto-installs the right core and
+  every pinned library in an isolated build. Nothing to manage.
+- **Arduino IDE**: you install the core + libraries yourself via Boards /
+  Library Manager (exact list below) — the IDE builds against your global
+  installs, same as our CI compile gate does.
+
+The core matters because GFX and NimBLE split their library majors along
+the arduino-esp32 core boundary:
+
+| Your `esp32` platform | GFX Library for Arduino | NimBLE-Arduino | CLI profiles |
 |---|---|---|---|
-| **3.x** (what Boards Manager installs by default) | `watch-core3` / `dash-core3` | 1.6.6 | 2.5.0 |
-| **2.0.17** (matches the PlatformIO release path) | `watch` / `dash` | 1.4.9 | 1.4.3 |
+| **3.x** (Boards Manager default) | 1.6.6 | 2.5.0 | `watch-core3` / `dash-core3` |
+| **2.0.17** (PlatformIO release path) | 1.4.9 (EXACT) | 1.4.3 | `watch` / `dash` |
 
-Just installed the esp32 platform and got the latest? Use the `-core3`
-profiles — no downgrade needed. Mixing rows (core 3 + GFX 1.4.9, or core 2 +
-NimBLE 2.x) fails the build; switch profiles instead of editing a single pin.
+Mixing rows (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails the build.
 
-## Build
+## Build — Arduino IDE (step by step)
 
-### 1. Pick your flavor (zero setup for the watch)
+1. **Board core**: Boards Manager → install **esp32 by Espressif Systems**
+   (the 3.x default is fine). If it's missing from the list, add the URL
+   `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
+   under Settings → Additional boards manager URLs.
+2. **Libraries**: Library Manager → install, matching your core line from
+   the table above:
+   - `lvgl` **8.4.0** (exact — 9.x does not build against this sketch)
+   - `GFX Library for Arduino` **1.6.6** (core 3) / **1.4.9** (core 2)
+   - `NimBLE-Arduino` **2.5.0** (core 3) / **1.4.3** (core 2)
+   - `PubSubClient`, `ArduinoJson`, and `Crypto` (by Rhys Weatherley) — latest
+3. **LVGL config** (one file copy): LVGL looks for `lv_conf.h` one level
+   above its own library folder. Copy the sketch's copy there:
+   ```bash
+   # macOS/Windows sketchbook default:
+   cp <sketch dir>/lv_conf.h ~/Documents/Arduino/libraries/lv_conf.h
+   # Linux: ~/Arduino/libraries/lv_conf.h
+   ```
+   (`./setup.sh arduino <flavor>` does this copy for you when it can find
+   your sketchbook.)
+4. **Tools menu** — and this picks your flavor too (the firmware follows
+   the board, so a board/firmware mismatch can't happen by accident):
+   - Watch: Board → `XIAO_ESP32S3`, PSRAM → `OPI PSRAM`
+   - Dash: Board → `ESP32S3 Dev Module`, PSRAM → `OPI PSRAM`, Flash Size →
+     `16MB`, Partition Scheme → `Huge APP (3MB No OTA/1MB SPIFFS)`
+5. **Build.** With no `secrets.h` compiled in, the display boots into its
+   on-glass onboarding wizard — WiFi setup happens on the device.
 
-**Downloaded a GitHub zip? The sketch compiles as-is** — the committed
-flavor dispatchers default to the **watch** (XIAO ESP32-S3 + Round Display),
-and with no `secrets.h` the display boots into its on-glass onboarding
-wizard, so WiFi setup happens on the device, not in a header. Open
-`canary_display.ino`, pick the `watch-core3` profile, build.
+(Exotic board? Force a flavor with `#define CD_BUILD_DASH 0|1` in a
+`flavor_local.h` next to the sketch — an explicit choice beats inference.)
 
-Building the **dash** (Waveshare 4.3B)? One line: set `CD_BUILD_DASH` to `1`
-in `flavor_select.h`, and pick a `dash` profile.
-
-Working from a **git checkout**? Prefer the setup script — it writes the
-git-ignored `flavor_local.h` override (tree stays clean) and stages a
-`secrets.h` template you can pre-fill (timezone for quiet hours goes there
-too, e.g. `#define CD_TZ "EST5EDT,M3.2.0,M11.1.0"`):
+## Build — arduino-cli (zero manual installs)
 
 ```bash
-cd firmware/projects/canary-display
-./setup.sh arduino watch     # or: ./setup.sh arduino dash
+cd firmware/projects/canary-display/arduino/canary_display
+arduino-cli compile --profile watch-core3    # or dash-core3 / watch / dash
+arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
 ```
 
-### 2. Toolchain
+Profiles auto-download the pinned core + libraries into an isolated build,
+and the **flavor follows the profile's board** (`dash-core3` really builds
+dash firmware — the dispatchers infer it from the board define).
 
-- **Arduino IDE 2.3+**: add the ESP32 board URL
-  `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`,
-  install **esp32 by Espressif Systems** (3.x default is fine — see the profile
-  table above), install the libraries below, open `canary_display.ino`, and
-  pick the profile matching your flavor + core from the toolbar dropdown
-  (board + PSRAM + flash travel with the profile).
-- **arduino-cli**:
-  ```bash
-  arduino-cli compile --profile watch-core3    # or dash-core3 / watch / dash
-  arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
-  ```
-
-Libraries (also declared per-profile in `sketch.yaml`): `lvgl @ 8.4.0`,
-`PubSubClient`, `Crypto`, `ArduinoJson`, plus the core-matched pair from the
-table above — `GFX Library for Arduino` @ **1.6.6** (core 3) or **1.4.9**
-(core 2, EXACT), and `NimBLE-Arduino` @ **2.5.0** (core 3) or **1.4.3**
-(core 2).
-
-### 3. LVGL config
-
-`lv_conf.h` is generated into the sketch root; the profiles compile LVGL with
-`LV_CONF_INCLUDE_SIMPLE` so it is picked up from there. If the IDE can't find
-it, ensure the sketch folder is on the include path (it is by default for the
-sketch's own sources).
+Working from a **git checkout**? `../../setup.sh arduino <watch|dash>` also
+works — it writes the git-ignored `flavor_local.h` override (explicit beats
+inference), stages a `secrets.h` template you can pre-fill (timezone for
+quiet hours lives there, e.g. `#define CD_TZ "EST5EDT,M3.2.0,M11.1.0"`), and
+copies `lv_conf.h` into your sketchbook libraries dir for IDE builds.
 
 ## What lives where
 

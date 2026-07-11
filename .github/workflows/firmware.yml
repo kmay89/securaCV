@@ -360,6 +360,19 @@ jobs:
           arduino-cli lib install "ArduinoJson"
           arduino-cli lib install "NimBLE-Arduino@${{ matrix.core.nimble }}"
 
+      - name: Profile build (arduino-cli --profile, core-3 row)
+        # sketch.yaml profiles are what the CLI docs point users at, but
+        # nothing compiled through them until this leg — the IDE ignores
+        # profiles entirely (arduino-ide#2573), so the README's cli path
+        # must stay proven here. Profiles auto-install their own pinned
+        # core + libraries into an isolated dir; lv_conf.h resolution is
+        # exactly what this leg exercises.
+        if: matrix.core.name == '3.x'
+        run: |
+          cd firmware/projects/canary-display/arduino/canary_display
+          arduino-cli compile --profile ${{ matrix.flavor.name }}-core3 \
+            --output-dir /tmp/display-profile-build canary_display.ino
+
       - name: Zip-download build (watch, zero setup)
         # A raw GitHub zip / fresh checkout must compile with NO setup step:
         # the committed flavor dispatchers (pins.h/flavor_config.h ->
