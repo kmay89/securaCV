@@ -3286,6 +3286,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           micDot.className = 'audio-mic-row__dot audio-mic-row__dot--offline';
           micLabel.textContent = 'Mic offline';
           micBtn.textContent = 'Try unmute';
+        } else if (ac.mic_silent) {
+          // Flat-signal watchdog: the driver runs but the data line has
+          // computed RMS 0 for 30+ s — a dead mic, not a quiet room. Say
+          // so on the always-visible card, not just the fold-out panel.
+          micDot.className = 'audio-mic-row__dot audio-mic-row__dot--offline';
+          micLabel.textContent = 'Mic gives no signal — check hardware';
+          micBtn.textContent = 'Mute microphone';
         } else {
           micDot.className = 'audio-mic-row__dot audio-mic-row__dot--live';
           micLabel.textContent = 'Mic live';
