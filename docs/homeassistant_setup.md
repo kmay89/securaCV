@@ -14,11 +14,14 @@ Most users should use this path. Canary devices auto-discover in Home Assistant 
 
 ### Step 1: Install the Integration
 
-Install via HACS:
+SecuraCV is distributed as a HACS **custom repository** (it is not in the
+default HACS store yet):
+
 1. Open HACS in Home Assistant
-2. Search for "SecuraCV"
-3. Install the integration
-4. Restart Home Assistant
+2. Click **⋮ → Custom repositories**
+3. Add `https://github.com/kmay89/securaCV` with type **Integration**
+4. Search HACS for "SecuraCV" and install it
+5. Restart Home Assistant
 
 ### Step 2: Configure the Integration
 
@@ -93,8 +96,10 @@ Import the SecuraCV Alert Blueprint for one-click notification setup:
 1. Go to **Settings > Automations > Blueprints > Import Blueprint**
 2. Enter URL: `https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml`
 3. Create an automation from the blueprint
-4. Select your Canary device and notification service
-5. Enable the alert types you want (smoke/CO alarm heard — critical pushes that bypass silent mode, tamper, chain failure, offline, GPS loss)
+4. Pick the sensors you want monitored (each alert type is optional — leave
+   an input empty to skip it): smoke/CO alarm heard (critical pushes that
+   bypass silent mode), tamper, chain failure, offline, GPS loss
+5. Enter your notification service (e.g. `notify.mobile_app_your_phone`)
 
 Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
 
@@ -131,6 +136,7 @@ Full background, threat model, and rotation procedure: see
 | Sensors show "unavailable" | Check MQTT broker logs for connection attempts from `securacv-canary-*` client IDs |
 | Discovery not working | Ensure HA MQTT integration is configured and `securacv/#` topics are not blocked |
 | Tamper alerts not firing | Verify the `tamper` binary sensor entity exists and automations are enabled |
+| Two "SecuraCV Canary" devices / entities ending in `_2` | Known overlap: the firmware announces core entities via native MQTT discovery *and* the integration creates its own (with PKI verification attributes). Both work; disable the ones you don't use from the entity settings, and prefer the integration's set if you use signature verification |
 
 ### MQTT Topic Reference
 
@@ -188,7 +194,7 @@ The integration supports three modes. The MQTT-only mode above is recommended fo
 
 ## Legacy: Witness Kernel Setup
 
-## Choose Your Mode
+### Choose Your Mode
 
 | Mode | Best For | How It Works |
 |------|----------|--------------|
@@ -239,24 +245,23 @@ Cameras → go2rtc → PWK (detection + logging)
 3. Add `https://github.com/kmay89/securaCV` as an **Integration**
 4. Install **SecuraCV** and restart Home Assistant when prompted
 
-### Step 2: Run the Kernel
+### Step 2: Install the Kernel
 
-Choose one runtime option and configure it in either **frigate** or **standalone** mode:
+Choose one runtime option (you'll configure it in **frigate** or **standalone** mode in Step 4):
 
 **Option A: Home Assistant add-on (custom repository)**
 1. Go to **Settings → Add-ons → Add-on Store**
 2. Click **⋮ → Repositories** → Add: `https://github.com/kmay89/securaCV`
 3. Install **Privacy Witness Kernel**
 
-
-### Step 2: Configure
-
-First, generate a device key. This is required for the kernel configuration.
 **Option B: Docker / another host**
 1. Run the kernel using your preferred deployment method
 2. Ensure the Event API is reachable from Home Assistant
 
-### Step 3: Generate a Device Key (Kernel)
+### Step 3: Generate a Device Key
+
+The device key establishes your kernel's cryptographic identity and is
+required before the kernel will start:
 
 ```bash
 openssl rand -hex 32
@@ -286,12 +291,11 @@ mqtt_publish:
   enabled: true  # Optional: HA MQTT discovery
 ```
 
-### Step 3: Start
+### Step 5: Start the Kernel
 
-Click **Start**. Check logs for any errors.
+Click **Start** (or start your container). Check logs for any errors.
 
----
-### Step 5: Add the Integration
+### Step 6: Add the Integration
 
 1. Go to **Settings → Devices & Services**
 2. Click **Add Integration** and select **SecuraCV**

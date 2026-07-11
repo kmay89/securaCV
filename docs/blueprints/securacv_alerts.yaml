@@ -4,85 +4,116 @@
 #   Settings > Automations > Blueprints > Import Blueprint
 #   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml
 #
-# Creates automations for smoke/CO alarm detection, tamper alerts, chain
-# integrity failures, device offline, and GPS loss — all from a single
-# configuration.
+# Creates one automation covering smoke/CO alarm detection, tamper alerts,
+# chain integrity failures, device offline, and GPS loss. Every alert is
+# opt-in: pick the sensors you want monitored, leave the rest empty.
+#
+# Where to find the sensors (entity IDs follow
+# `<domain>.securacv_canary_<device_id>_<name>`):
+#   - Tamper:        binary_sensor.securacv_canary_<id>_tamper
+#                    (or `_tamper_detected` if discovered from firmware)
+#   - Smoke heard:   the "Smoke Alarm Heard" binary sensor (mic builds only)
+#   - CO heard:      the "CO Alarm Heard" binary sensor (mic builds only)
+#   - Chain valid:   binary_sensor.securacv_canary_<id>_chain_valid
+#   - Online:        binary_sensor.securacv_canary_<id>_online
+#   - GPS fix:       the "GPS Fix" binary sensor (GPS builds only)
 
 blueprint:
   name: "SecuraCV Canary Alerts"
   description: >-
     Monitor a SecuraCV Canary witness device and send notifications for
     smoke/CO alarms heard by the device, tamper events, chain integrity
-    failures, device offline, and GPS loss.
+    failures, device offline, and GPS loss. Each alert type is enabled by
+    selecting its sensor — leave an input empty to skip that alert.
     Privacy by design — only semantic events, never raw video or audio.
   domain: automation
   author: "ERRERlabs"
+  homeassistant:
+    min_version: "2024.6.0"
   source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_alerts.yaml"
 
   input:
-    canary_device:
-      name: "Canary Device"
-      description: "Select the SecuraCV Canary device to monitor"
+    tamper_entity:
+      name: "Tamper sensor (optional)"
+      description: >-
+        The Canary's tamper binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_tamper). Leave empty to
+        skip tamper alerts.
       selector:
-        device:
-          integration: securacv
-          model: "SecuraCV Canary"
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    smoke_entity:
+      name: "Smoke-alarm-heard sensor (optional)"
+      description: >-
+        The "Smoke Alarm Heard" binary sensor — latches on when the mic
+        matches an NFPA 72 T3 smoke cadence. Sends a CRITICAL push that
+        bypasses silent/do-not-disturb modes. Requires a Canary with the
+        microphone enabled (XIAO ESP32-S3 Sense). Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    co_entity:
+      name: "CO-alarm-heard sensor (optional)"
+      description: >-
+        The "CO Alarm Heard" binary sensor — latches on when the mic
+        matches a UL 2034 T4 carbon-monoxide cadence. Sends a CRITICAL
+        push that bypasses silent/do-not-disturb modes. Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    chain_entity:
+      name: "Chain-valid sensor (optional)"
+      description: >-
+        The witness-chain integrity binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_chain_valid). Alerts when
+        chain verification fails. Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    online_entity:
+      name: "Online sensor (optional)"
+      description: >-
+        The device connectivity binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_online). Alerts after the
+        device stays offline past the delay below. Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: connectivity
+          multiple: false
+      default: []
+
+    gps_entity:
+      name: "GPS-fix sensor (optional)"
+      description: >-
+        The GPS fix binary sensor. Alerts when the fix is lost for 2+
+        minutes (possible jamming or indoor placement). Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
 
     notify_service:
       name: "Notification Service"
-      description: "The notification service to use (e.g., mobile_app_your_phone, telegram, pushover)"
+      description: >-
+        The notification service to use
+        (e.g. notify.mobile_app_your_phone, notify.telegram, notify.pushover)
       selector:
         text:
       default: "notify.mobile_app"
-
-    enable_tamper_alerts:
-      name: "Enable Tamper Alerts"
-      description: "Send notification on tamper events (enclosure open, unexpected motion, etc.)"
-      selector:
-        boolean:
-      default: true
-
-    enable_smoke_alerts:
-      name: "Enable Smoke Alarm Alerts"
-      description: >-
-        Send a CRITICAL notification when the Canary's microphone hears an
-        NFPA 72 T3 smoke-alarm cadence. Critical pushes bypass silent/do-not-
-        disturb modes — this is a life-safety alert. Requires a Canary with
-        the microphone enabled (XIAO ESP32-S3 Sense).
-      selector:
-        boolean:
-      default: true
-
-    enable_co_alerts:
-      name: "Enable CO Alarm Alerts"
-      description: >-
-        Send a CRITICAL notification when the Canary's microphone hears a
-        UL 2034 T4 carbon-monoxide-alarm cadence. Critical pushes bypass
-        silent/do-not-disturb modes — this is a life-safety alert.
-      selector:
-        boolean:
-      default: true
-
-    enable_chain_alerts:
-      name: "Enable Chain Integrity Alerts"
-      description: "Send notification when witness chain verification fails"
-      selector:
-        boolean:
-      default: true
-
-    enable_offline_alerts:
-      name: "Enable Offline Alerts"
-      description: "Send notification when device goes offline for 5+ minutes"
-      selector:
-        boolean:
-      default: true
-
-    enable_gps_alerts:
-      name: "Enable GPS Loss Alerts"
-      description: "Send notification when GPS fix is lost for 2+ minutes"
-      selector:
-        boolean:
-      default: false
 
     offline_delay:
       name: "Offline Delay"
@@ -94,39 +125,33 @@ blueprint:
 
 trigger:
   - platform: state
-    entity_id: !input canary_device
-    attribute: tamper
+    entity_id: !input tamper_entity
     to: "on"
     id: tamper
 
   - platform: state
-    entity_id: !input canary_device
-    attribute: smoke_alarm
+    entity_id: !input smoke_entity
     to: "on"
     id: smoke
 
   - platform: state
-    entity_id: !input canary_device
-    attribute: co_alarm
+    entity_id: !input co_entity
     to: "on"
     id: co
 
   - platform: state
-    entity_id: !input canary_device
-    attribute: chain_valid
+    entity_id: !input chain_entity
     to: "off"
     id: chain_fail
 
   - platform: state
-    entity_id: !input canary_device
-    attribute: online
+    entity_id: !input online_entity
     to: "off"
     for: !input offline_delay
     id: offline
 
   - platform: state
-    entity_id: !input canary_device
-    attribute: gps_fix
+    entity_id: !input gps_entity
     to: "off"
     for:
       minutes: 2
@@ -143,8 +168,6 @@ action:
       - conditions:
           - condition: trigger
             id: smoke
-          - condition: template
-            value_template: "{{ true == enable_smoke_alerts }}"
         sequence:
           - service: !input notify_service
             data:
@@ -167,8 +190,6 @@ action:
       - conditions:
           - condition: trigger
             id: co
-          - condition: template
-            value_template: "{{ true == enable_co_alerts }}"
         sequence:
           - service: !input notify_service
             data:
@@ -192,8 +213,6 @@ action:
       - conditions:
           - condition: trigger
             id: tamper
-          - condition: template
-            value_template: "{{ true == enable_tamper_alerts }}"
         sequence:
           - service: !input notify_service
             data:
@@ -208,8 +227,6 @@ action:
       - conditions:
           - condition: trigger
             id: chain_fail
-          - condition: template
-            value_template: "{{ true == enable_chain_alerts }}"
         sequence:
           - service: !input notify_service
             data:
@@ -224,8 +241,6 @@ action:
       - conditions:
           - condition: trigger
             id: offline
-          - condition: template
-            value_template: "{{ true == enable_offline_alerts }}"
         sequence:
           - service: !input notify_service
             data:
@@ -239,8 +254,6 @@ action:
       - conditions:
           - condition: trigger
             id: gps_lost
-          - condition: template
-            value_template: "{{ true == enable_gps_alerts }}"
         sequence:
           - service: !input notify_service
             data:

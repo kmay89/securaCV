@@ -38,10 +38,10 @@
 
   trigger:
     - platform: state
-      entity_id: sensor.securacv_DEVICE_ID_health
+      entity_id: sensor.securacv_canary_DEVICE_ID_health
       to: "warning"
     - platform: state
-      entity_id: sensor.securacv_DEVICE_ID_health
+      entity_id: sensor.securacv_canary_DEVICE_ID_health
       to: "critical"
 
   condition:
@@ -49,17 +49,17 @@
     # also go critical on low memory, which is a different runbook.
     - condition: template
       value_template: >
-        {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_present') == true
-           and (state_attr('sensor.securacv_DEVICE_ID_health', 'battery_percent') | int(100)) < 25 }}
+        {{ state_attr('sensor.securacv_canary_DEVICE_ID_health', 'battery_present') == true
+           and (state_attr('sensor.securacv_canary_DEVICE_ID_health', 'battery_percent') | int(100)) < 25 }}
 
   action:
     - variables:
         battery_pct: >
-          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_percent') | int(0) }}
+          {{ state_attr('sensor.securacv_canary_DEVICE_ID_health', 'battery_percent') | int(0) }}
         charge_state: >
-          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'charge_state') | default('unknown') }}
+          {{ state_attr('sensor.securacv_canary_DEVICE_ID_health', 'charge_state') | default('unknown') }}
         battery_mv: >
-          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_mv') | int(0) }}
+          {{ state_attr('sensor.securacv_canary_DEVICE_ID_health', 'battery_mv') | int(0) }}
         is_critical: "{{ trigger.to_state.state == 'critical' }}"
 
     - service: notify.mobile_app_YOUR_PHONE
@@ -121,7 +121,7 @@
 
   trigger:
     - platform: numeric_state
-      entity_id: sensor.securacv_DEVICE_ID_health
+      entity_id: sensor.securacv_canary_DEVICE_ID_health
       attribute: battery_health_pct
       below: 80
 
@@ -134,7 +134,7 @@
         title: "🔧 SecuraCV: Canary battery is wearing out"
         message: >
           **Estimated battery health:
-          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_health_pct') }}%
+          {{ state_attr('sensor.securacv_canary_DEVICE_ID_health', 'battery_health_pct') }}%
           of rated capacity.**
 
           The cell has accumulated enough charge cycles that its outage
@@ -159,11 +159,11 @@
 
   trigger:
     - platform: state
-      entity_id: sensor.securacv_DEVICE_ID_health
+      entity_id: sensor.securacv_canary_DEVICE_ID_health
       to: "healthy"
       from: "warning"
     - platform: state
-      entity_id: sensor.securacv_DEVICE_ID_health
+      entity_id: sensor.securacv_canary_DEVICE_ID_health
       to: "healthy"
       from: "critical"
 
@@ -179,8 +179,8 @@
         title: "✅ SecuraCV — Canary battery recovered"
         message: >
           Battery back to
-          {{ state_attr('sensor.securacv_DEVICE_ID_health', 'battery_percent') }}%
-          ({{ state_attr('sensor.securacv_DEVICE_ID_health', 'charge_state') | default('unknown') }})
+          {{ state_attr('sensor.securacv_canary_DEVICE_ID_health', 'battery_percent') }}%
+          ({{ state_attr('sensor.securacv_canary_DEVICE_ID_health', 'charge_state') | default('unknown') }})
           at {{ now().strftime('%H:%M') }}.
         data:
           push:

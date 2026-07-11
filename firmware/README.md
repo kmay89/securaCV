@@ -114,7 +114,7 @@ firmware/
 
 **Key rule:** Composition happens only in `envs/` and `projects/`. Common modules never import board or config files.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed composition rules and [VARIANT_POLICY.md](VARIANT_POLICY.md) for the lifecycle policy governing each variant.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed composition rules, [VARIANT_POLICY.md](VARIANT_POLICY.md) for the lifecycle policy governing each variant, and [HARDWARE.md](HARDWARE.md) for board support tiers and the community hardware contribution path.
 
 ---
 
@@ -315,10 +315,11 @@ See [provisioning/README.md](provisioning/README.md) for complete guide.
 
 ## Adding a New Board
 
-1. Create `boards/<board-id>/pins/pins.h` with pin definitions
-2. Add capability flags (`HAS_CAMERA`, `HAS_SD_CARD`, etc.)
-3. Create board section in `envs/platformio/common.ini`
-4. Create project wrapper in `projects/<project-id>/`
+See **[PORTING.md](PORTING.md)** for the full bring-up guide — board
+directory, pin/capability rules, build env, and the registry entries CI
+checks. **[HARDWARE.md](HARDWARE.md)** defines the support tiers
+(verified / community / compile-tested) and how a port earns them; the
+machine-readable board list is [`boards/boards.json`](boards/boards.json).
 
 ---
 

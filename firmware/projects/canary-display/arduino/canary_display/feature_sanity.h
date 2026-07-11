@@ -1,0 +1,115 @@
+/**
+ * @file feature_sanity.h
+ * @brief Compile-time cross-check of config feature flags against board
+ *        capability flags — fail the build, not the field device.
+ *
+ * Pattern borrowed from Marlin's SanityCheck.h: a misconfiguration should
+ * die at compile time with a message that names the exact flag to fix and
+ * where to fix it, instead of surfacing as a runtime mystery ("SD writes
+ * failing", "BLE refused") on someone's bench.
+ *
+ * Include this ONCE per project, after both the board pin map
+ * (boards/<id>/pins/pins.h — defines HAS_*) and the configuration
+ * (configs/<app>/<config>/config.h — defines FEATURE_*) are visible:
+ *
+ *     #include "pins.h"              // board capabilities
+ *     #include "config.h"     // feature selection
+ *     #include "feature_sanity.h"
+ *
+ * Every check fires only when BOTH sides of the comparison are defined, so
+ * the header is safe to adopt incrementally: a tree that doesn't define a
+ * given HAS_* flag simply skips that check. The flip side: an undefined
+ * capability flag is an unchecked one — boards must define the baseline
+ * HAS_* set (CI enforces this via scripts/check_board_registry.py).
+ *
+ * Rules for adding checks (keep the Marlin discipline):
+ *   - The message names the offending flag, the conflicting board fact,
+ *     and the two ways out (disable the feature, or pick capable hardware).
+ *   - Checks are preprocessor-only. No includes, no code, no side effects.
+ */
+
+#pragma once
+
+// ─── Storage ────────────────────────────────────────────────────────────
+
+#if defined(FEATURE_SD_STORAGE) && FEATURE_SD_STORAGE && defined(HAS_SD_CARD) && !HAS_SD_CARD
+  #error "FEATURE_SD_STORAGE=1 but this board has no SD slot (HAS_SD_CARD=0). Disable FEATURE_SD_STORAGE in your configs/<app>/<config>/config.h, or select a board with an SD slot (see firmware/boards/boards.json)."
+#endif
+
+// ─── Camera ─────────────────────────────────────────────────────────────
+
+#if defined(FEATURE_CAMERA_PEEK) && FEATURE_CAMERA_PEEK && defined(HAS_CAMERA) && !HAS_CAMERA
+  #error "FEATURE_CAMERA_PEEK=1 but this board has no camera (HAS_CAMERA=0). Disable FEATURE_CAMERA_PEEK in your config, or select a camera board like xiao-esp32s3-sense (see firmware/boards/boards.json)."
+#endif
+
+#if defined(FEATURE_CAMERA_PEEK) && FEATURE_CAMERA_PEEK && defined(HAS_PSRAM) && !HAS_PSRAM
+  #error "FEATURE_CAMERA_PEEK=1 but this board has no PSRAM (HAS_PSRAM=0). The camera framebuffer lives in PSRAM; without it the heap starves (BLE refused, SD writes failing). Disable FEATURE_CAMERA_PEEK or select a PSRAM board."
+#endif
+
+// ─── Radios ─────────────────────────────────────────────────────────────
+
+#if defined(FEATURE_BLUETOOTH) && FEATURE_BLUETOOTH && defined(HAS_BLE) && !HAS_BLE
+  #error "FEATURE_BLUETOOTH=1 but this board has no BLE radio (HAS_BLE=0). Disable FEATURE_BLUETOOTH in your config, or select a BLE-capable board (see firmware/boards/boards.json)."
+#endif
+
+#if defined(FEATURE_BLE) && FEATURE_BLE && defined(HAS_BLE) && !HAS_BLE
+  #error "FEATURE_BLE=1 but this board has no BLE radio (HAS_BLE=0). Disable FEATURE_BLE in your config, or select a BLE-capable board (see firmware/boards/boards.json)."
+#endif
+
+#if defined(HAS_WIFI) && !HAS_WIFI
+  #if defined(FEATURE_WIFI_AP) && FEATURE_WIFI_AP
+    #error "FEATURE_WIFI_AP=1 but this board has no WiFi radio (HAS_WIFI=0). Disable FEATURE_WIFI_AP in your config, or select a WiFi-capable board."
+  #endif
+  #if defined(FEATURE_WIFI_STA) && FEATURE_WIFI_STA
+    #error "FEATURE_WIFI_STA=1 but this board has no WiFi radio (HAS_WIFI=0). Disable FEATURE_WIFI_STA in your config, or select a WiFi-capable board."
+  #endif
+  #if defined(FEATURE_HTTP_SERVER) && FEATURE_HTTP_SERVER
+    #error "FEATURE_HTTP_SERVER=1 requires a WiFi radio (HAS_WIFI=0 on this board). Disable FEATURE_HTTP_SERVER in your config, or select a WiFi-capable board."
+  #endif
+  #if defined(FEATURE_MQTT) && FEATURE_MQTT
+    #error "FEATURE_MQTT=1 requires a WiFi radio (HAS_WIFI=0 on this board). Disable FEATURE_MQTT in your config, or select a WiFi-capable board."
+  #endif
+  #if defined(FEATURE_HA_MQTT) && FEATURE_HA_MQTT
+    #error "FEATURE_HA_MQTT=1 requires a WiFi radio (HAS_WIFI=0 on this board). Disable FEATURE_HA_MQTT in your config, or select a WiFi-capable board."
+  #endif
+  #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
+    #error "FEATURE_MESH_NETWORK=1 requires a WiFi radio (HAS_WIFI=0 on this board). Disable FEATURE_MESH_NETWORK in your config, or select a WiFi-capable board."
+  #endif
+  #if defined(FEATURE_WIFI_PRESENCE) && FEATURE_WIFI_PRESENCE
+    #error "FEATURE_WIFI_PRESENCE=1 requires a WiFi radio (HAS_WIFI=0 on this board). Disable FEATURE_WIFI_PRESENCE in your config, or select a WiFi-capable board."
+  #endif
+  #if defined(FEATURE_CSI) && FEATURE_CSI
+    #error "FEATURE_CSI=1 requires a WiFi radio (HAS_WIFI=0 on this board) — CSI sensing reads WiFi channel state. Disable FEATURE_CSI in your config, or select a WiFi-capable board."
+  #endif
+  #if defined(FEATURE_CHIRP) && FEATURE_CHIRP
+    #error "FEATURE_CHIRP=1 requires a WiFi radio (HAS_WIFI=0 on this board). Disable FEATURE_CHIRP in your config, or select a WiFi-capable board."
+  #endif
+#endif
+
+// ─── Display ────────────────────────────────────────────────────────────
+
+#if defined(FEATURE_DISPLAY) && FEATURE_DISPLAY && defined(HAS_DISPLAY) && !HAS_DISPLAY
+  #error "FEATURE_DISPLAY=1 but this board has no display (HAS_DISPLAY=0). Disable FEATURE_DISPLAY in your config, or select a display board (see firmware/boards/boards.json)."
+#endif
+
+#if defined(FEATURE_TOUCH) && FEATURE_TOUCH && defined(HAS_TOUCH) && !HAS_TOUCH
+  #error "FEATURE_TOUCH=1 but this board has no touch controller (HAS_TOUCH=0). Disable FEATURE_TOUCH in your config, or select a touch-capable board."
+#endif
+
+#if defined(FEATURE_BACKLIGHT_DIM) && FEATURE_BACKLIGHT_DIM && defined(HAS_BACKLIGHT_PWM) && !HAS_BACKLIGHT_PWM
+  #error "FEATURE_BACKLIGHT_DIM=1 but this board's backlight is not PWM-dimmable (HAS_BACKLIGHT_PWM=0 — e.g. the Waveshare 4.3's CH422G is on/off only). Set FEATURE_BACKLIGHT_DIM=0 in your config."
+#endif
+
+// ─── Sensors & inputs ───────────────────────────────────────────────────
+
+#if defined(FEATURE_GNSS) && FEATURE_GNSS && defined(HAS_GNSS_UART) && !HAS_GNSS_UART
+  #error "FEATURE_GNSS=1 but this board has no GNSS UART wiring (HAS_GNSS_UART=0). Disable FEATURE_GNSS in your config, or add the GNSS UART pins to your board's pins.h (see firmware/PORTING.md)."
+#endif
+
+#if defined(FEATURE_TAMPER_GPIO) && FEATURE_TAMPER_GPIO && defined(HAS_TAMPER_INPUT) && !HAS_TAMPER_INPUT
+  #error "FEATURE_TAMPER_GPIO=1 but this board has no tamper input (HAS_TAMPER_INPUT=0). Disable FEATURE_TAMPER_GPIO in your config, or define the tamper pin in your board's pins.h."
+#endif
+
+#if defined(FEATURE_VISION_AI) && FEATURE_VISION_AI && defined(HAS_VISION_AI) && !HAS_VISION_AI
+  #error "FEATURE_VISION_AI=1 but this board is not a supported Vision AI host (HAS_VISION_AI=0). Disable FEATURE_VISION_AI in your config, or select a Vision AI host board (see firmware/boards/boards.json)."
+#endif

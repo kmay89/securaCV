@@ -57,6 +57,7 @@ flatten_includes() {
   # committed-copy approach the canary-wap sketch uses).
   sed -i -E 's|#include "boot/|#include "|g' "$f"
   sed -i -E 's|#include "identity/|#include "|g' "$f"
+  sed -i -E 's|#include "core/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -105,6 +106,7 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/boot/boot_banner.h"
     "${FIRMWARE_ROOT}/common/boot/boot_banner.cpp"
     "${FIRMWARE_ROOT}/common/identity/device_pseudonym.h"
+    "${FIRMWARE_ROOT}/common/core/feature_sanity.h"
     "${FIRMWARE_ROOT}/common/ota/src/securacv_ota.h"
     "${FIRMWARE_ROOT}/common/ota/src/securacv_ota.cpp"
     "${FIRMWARE_ROOT}/common/ota/src/ota_release_key.h"

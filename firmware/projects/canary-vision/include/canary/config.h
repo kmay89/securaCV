@@ -2,6 +2,17 @@
 #include <stdint.h>
 #include <cstddef>
 
+// Pull in the flavor configuration (configs/canary-vision/<flavor>/config.h
+// via -I): the FEATURE_* flags feature_sanity.h cross-checks against the
+// board's HAS_* capabilities. Without this, the sanity checks silently
+// no-op in the real build (every check skips when FEATURE_* is undefined) —
+// same include ladder canary-sense and canary-display use.
+// Angle brackets on purpose: a quoted include would search this header's own
+// directory first and hit THIS file (also named config.h); <config.h> skips
+// the current-file directory and resolves via the -I paths straight to
+// configs/canary-vision/<flavor>/config.h.
+#include <config.h>
+
 // -------------------- Identity --------------------
 // Canonical device type: lowercase, hyphenated — must match HA's
 // DEVICE_TYPE_MODALITY map and the mDNS `dt` TXT key. (HA canonicalises
