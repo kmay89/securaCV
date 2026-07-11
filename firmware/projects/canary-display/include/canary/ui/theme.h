@@ -1,4 +1,5 @@
 #pragma once
+#include <config.h>   // CD_FLAVOR_* — the type scale below is per-flavor
 #include <stdint.h>
 #include <stddef.h>
 #include <lvgl.h>
@@ -40,12 +41,26 @@ const char* badge_text(canary::fleet::Badge b);   // "verified"/"signed"/...
 const char* link_label(canary::fleet::Link l);
 
 // ── Type scale (Montserrat AA; roles, not sizes, in calling code) ───────
+// Per-flavor: the watch is a 1.28" panel read at arm's length; the dash is
+// a 4.3" panel read from across a room — same pixel sizes rendered both
+// (bench finding: dash text visibly undersized), so the dash scale runs
+// ~1.3-1.4x larger per role. Enabled-but-unreferenced Montserrat sizes
+// cost nothing (the linker drops unused font tables).
+#ifdef CD_FLAVOR_DASH
+inline const lv_font_t* font_hero()    { return &lv_font_montserrat_48; }
+inline const lv_font_t* font_title()   { return &lv_font_montserrat_36; }
+inline const lv_font_t* font_body()    { return &lv_font_montserrat_24; }
+inline const lv_font_t* font_label()   { return &lv_font_montserrat_20; }
+inline const lv_font_t* font_caption() { return &lv_font_montserrat_16; }
+inline const lv_font_t* font_clock()   { return &lv_font_montserrat_28; }
+#else
 inline const lv_font_t* font_hero()    { return &lv_font_montserrat_48; }
 inline const lv_font_t* font_title()   { return &lv_font_montserrat_28; }
 inline const lv_font_t* font_body()    { return &lv_font_montserrat_16; }
 inline const lv_font_t* font_label()   { return &lv_font_montserrat_14; }
 inline const lv_font_t* font_caption() { return &lv_font_montserrat_12; }
 inline const lv_font_t* font_clock()   { return &lv_font_montserrat_20; }
+#endif
 
 // ── Motion budget (calm tech: rationed, purposeful) ──────────────────────
 constexpr uint32_t MOTION_PAGE_MS   = 220;   // page/screen fades, ease-out
