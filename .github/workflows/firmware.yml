@@ -360,6 +360,23 @@ jobs:
           arduino-cli lib install "ArduinoJson"
           arduino-cli lib install "NimBLE-Arduino@${{ matrix.core.nimble }}"
 
+      - name: Zip-download build (watch, zero setup)
+        # A raw GitHub zip / fresh checkout must compile with NO setup step:
+        # the committed flavor dispatchers (pins.h/flavor_config.h ->
+        # flavor_select.h) default to watch, and missing secrets fall back to
+        # secrets.ci.h -> the onboarding wizard. This leg is the regression
+        # test for that promise — it compiles the sketch exactly as
+        # downloaded, before setup.sh ever runs.
+        if: matrix.flavor.name == 'watch'
+        run: |
+          LIBDIR="$(arduino-cli config get directories.user)/libraries"
+          mkdir -p "${LIBDIR}"
+          cp firmware/projects/canary-display/arduino/canary_display/lv_conf.h "${LIBDIR}/lv_conf.h"
+          arduino-cli compile \
+            --fqbn ${{ matrix.flavor.fqbn }} \
+            --output-dir /tmp/display-zip-build \
+            firmware/projects/canary-display/arduino/canary_display/canary_display.ino
+
       - name: Stage + compile ${{ matrix.flavor.name }}
         run: |
           cd firmware/projects/canary-display

@@ -157,9 +157,13 @@ Set your timezone for quiet hours by adding e.g.
 ### Arduino IDE (generated parity sketch)
 
 ```bash
+# A GitHub zip compiles with ZERO setup (watch flavor by default; missing
+# credentials hand off to the on-glass onboarding wizard) — just open
+# arduino/canary_display/canary_display.ino and pick a profile. From a git
+# checkout, the setup script selects the flavor + stages a secrets template:
 cd firmware/projects/canary-display
-./setup.sh arduino watch     # or: ./setup.sh arduino dash  — generates + stages
-arduino-cli compile --profile watch-core3   # or open arduino/canary_display/canary_display.ino
+./setup.sh arduino watch     # or: ./setup.sh arduino dash
+arduino-cli compile --profile watch-core3
 ```
 
 Builds on **both** arduino-esp32 core lines: pick the `watch-core3`/`dash-core3`
