@@ -3361,7 +3361,8 @@ static esp_err_t handle_audio_status(httpd_req_t* req) {
     "\"knock_detected\":%u,"
     "\"doorbell_detected\":%u,"
     "\"glass_break_detected\":%u,"
-    "\"i2s_read_errors\":%u"
+    "\"i2s_read_errors\":%u,"
+    "\"mic_silent\":%s"
     "}",
     audio_is_running() ? "true" : "false",
     audio_is_muted() ? "true" : "false",
@@ -3375,7 +3376,13 @@ static esp_err_t handle_audio_status(httpd_req_t* req) {
     (unsigned)stats.knock_detected,
     (unsigned)stats.doorbell_detected,
     (unsigned)stats.glass_break_detected,
-    (unsigned)stats.i2s_read_errors);
+    (unsigned)stats.i2s_read_errors,
+    // Flat-signal watchdog: the driver runs but every 20 ms window for
+    // 30+ s computed RMS == 0 — a dead data line, not a quiet room. The
+    // dashboard turns this into a "no signal from the microphone" warning
+    // instead of a lying LISTENING badge.
+    (audio_is_running() &&
+     stats.zero_rms_streak >= AUDIO_SILENT_STREAK_FRAMES) ? "true" : "false");
 
   if (len <= 0 || len >= (int)sizeof(buf)) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
@@ -3434,6 +3441,12 @@ static esp_err_t handle_audio_selftest_get(httpd_req_t* req) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"audio not initialized\"}");
   }
 
+  // peak_rms alone doesn't tell the UI whether the test heard "enough" —
+  // ship the live ON threshold alongside so the failure copy can say
+  // "too quiet" (0 < peak < on) vs "loud but not an alarm" (peak ≥ on).
+  audio_config_t cfg = AUDIO_CONFIG_DEFAULT;
+  audio_get_config(&cfg);
+
   char buf[256];
   int len = snprintf(buf, sizeof(buf),
     "{"
@@ -3443,14 +3456,18 @@ static esp_err_t handle_audio_selftest_get(httpd_req_t* req) {
     "\"matched_name\":\"%s\","
     "\"matched_conf\":%u,"
     "\"remaining_ms\":%u,"
-    "\"transitions_seen\":%u"
+    "\"transitions_seen\":%u,"
+    "\"peak_rms\":%u,"
+    "\"rms_on_threshold\":%u"
     "}",
     st.active ? "true" : "false",
     (unsigned)st.matched_type,
     audio_event_name(st.matched_type),
     (unsigned)st.matched_conf,
     (unsigned)st.remaining_ms,
-    (unsigned)st.transitions_seen);
+    (unsigned)st.transitions_seen,
+    (unsigned)st.peak_rms,
+    (unsigned)cfg.rms_on_threshold);
 
   if (len <= 0 || len >= (int)sizeof(buf)) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
@@ -5113,7 +5130,7 @@ static esp_err_t handle_peek_sensor_set(httpd_req_t* req) {
 #endif // FEATURE_CAMERA_PEEK
 
 // ════════════════════════════════════════════════════════════════════════════
-// MESH NETWORK (FLOCK) API HANDLERS
+// MESH NETWORK (OPERA) API HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
 
 #if FEATURE_MESH_NETWORK
@@ -6158,7 +6175,7 @@ static esp_err_t handle_fleet_qr_auth(httpd_req_t* req) {
 // sharing home WiFi showed each other as "No other Canaries found yet."
 // This endpoint browses that service and returns every SecuraCV device on
 // the LAN, plus this device's own identity (an mDNS querier does not
-// reliably see its own responder), so the UI can render the whole flock.
+// reliably see its own responder), so the UI can render the whole fleet.
 //
 // The browse blocks ~2 s, which must never stall the single httpd task —
 // same trap as the MJPEG stream. It runs on a short-lived worker task; the
@@ -6893,7 +6910,7 @@ static esp_err_t handle_identify(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// mDNS broker gossip (flock self-discovery). Keep the _securacv._tcp
+// mDNS broker gossip (fleet self-discovery). Keep the _securacv._tcp
 // "broker"/"bport" TXT records in lockstep with our ACTUAL MQTT link, so a
 // freshly-plugged SecuraCV display self-configures from a broker that is
 // provably reachable — and never chases a dead one. Ground truth in both
@@ -10916,7 +10933,7 @@ void loop() {
   // Schemas locked against custom_components/securacv/sensor.py.
   csi_mqtt::loop();
 #if defined(FEATURE_MDNS_BROKER_GOSSIP) && FEATURE_MDNS_BROKER_GOSSIP
-  // Keep the flock's broker referral honest: re-sync the _securacv._tcp
+  // Keep the fleet's broker referral honest: re-sync the _securacv._tcp
   // broker/bport TXT on every MQTT link transition — connect advertises the
   // live broker, disconnect tombstones it. Edge-triggered, so the TXT write
   // only fires on the transition, never every loop.

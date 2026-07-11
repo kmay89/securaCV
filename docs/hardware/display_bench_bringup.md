@@ -256,12 +256,12 @@ brand-new display finds it with zero setup.
 2. Flash a display with the **stock** secrets template (no broker configured),
    or wipe its NVS, and power it on the same LAN.
 
-**Pass:** the display boots, prints "Broker: unconfigured — asking the flock
+**Pass:** the display boots, prints "Broker: unconfigured — asking the fleet
 (mDNS)", and adopts the WAP's advertised `broker`/`bport` within a rediscover
 cycle — no IP typed. Then **kill the WAP's broker link** (unplug it): confirm
 the WAP retracts its referral (empty-string tombstone) so a *next* fresh
 display won't chase the dead broker. **Artifact:** serial log showing the
-flock referral adopted; `avahi-browse -r _securacv._tcp` showing `broker=` TXT
+fleet referral adopted; `avahi-browse -r _securacv._tcp` showing `broker=` TXT
 present while the WAP is connected and gone after it drops.
 
 ### F7. Time machine — verifiable history (§7)
@@ -301,7 +301,7 @@ fallback: the glass adds "no page? open 192.168.4.1" after ~9 s if it
 doesn't); (2) the portal shows **"Wrong password"** inline (not a generic
 error, not "network not found"), the sheet shakes, the glass mirrors the
 reason in amber, and the AP never drops; (3) glass sweeps → **"You're in."**
-bloom → cross-fade to the fleet UI → flock referral lands the broker (F6) and
+bloom → cross-fade to the fleet UI → fleet referral lands the broker (F6) and
 canaries render — while the phone draws its ✓; (4) the second unit boots back
 into the wizard with a **fresh session password** and no stored junk.
 **Artifact:** video of the full happy path (scan → bloom → fleet), photo of

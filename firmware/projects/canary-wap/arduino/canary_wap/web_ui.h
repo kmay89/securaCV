@@ -1193,6 +1193,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div style="height:8px;border-radius:4px;background:rgba(128,128,128,0.2);overflow:hidden;">
             <div id="micLevelBar" style="height:100%;width:0%;border-radius:4px;background:var(--success);transition:width 0.4s;"></div>
           </div>
+          <p id="micSilentWarning" style="display:none;font-size:0.8rem;color:var(--danger);margin:0.4rem 0 0;">
+            No signal from the microphone for 30+ seconds — even a silent
+            room shows a noise floor. Re-seat the Sense expansion board,
+            then reboot the device.
+          </p>
         </div>
         <div class="stats-grid">
           <div class="stat-item">
@@ -4083,7 +4088,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           document.getElementById('pairingConfirmBtn').style.display = 'inline-flex';
         } else if (data.state === 'ACTIVE' || data.state === 'CONNECTING') {
           stopPairingPolling(); refreshOpera();
-        } else if (data.state === 'NO_FLOCK' || data.state === 'DISABLED') {
+        } else if (data.state === 'NO_OPERA' || data.state === 'DISABLED') {
           stopPairingPolling(); refreshOpera();
         }
       }, 1000);
@@ -4524,6 +4529,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // typical levels are visible and loud sounds peg the bar.
       const pct = Math.min(100, Math.round((data.last_rms || 0) / 30));
       document.getElementById('micLevelBar').style.width = (data.muted ? 0 : pct) + '%';
+      // Flat-signal watchdog: LISTENING with a dead data line looks exactly
+      // like a quiet room — the device flags it so the user isn't misled.
+      const silentWarn = document.getElementById('micSilentWarning');
+      if (silentWarn) silentWarn.style.display = data.mic_silent ? '' : 'none';
+      if (data.mic_silent) {
+        badge.className = 'badge danger';
+        badgeText.textContent = 'No signal';
+      }
     }
 
     async function toggleMicMute() {
@@ -4607,8 +4620,24 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           clearInterval(micSelftestTimer); micSelftestTimer = null;
           btn.disabled = false;
           out.style.color = 'var(--danger)';
-          out.textContent = 'No alarm cadence heard (' + (st.transitions_seen || 0) +
-            ' sound transitions seen). Move the device closer and retry.';
+          // peak_rms separates three failures that used to read the same:
+          // dead mic (0), too quiet (under the ON threshold), and loud
+          // sound that just wasn't an alarm cadence.
+          const peak = st.peak_rms || 0;
+          const need = st.rms_on_threshold || 800;
+          if (peak === 0) {
+            out.textContent = 'The microphone heard nothing at all — not even ' +
+              'room noise. Check that it isn\'t muted and that the Sense ' +
+              'expansion board is seated, then reboot and retry.';
+          } else if ((st.transitions_seen || 0) === 0) {
+            out.textContent = 'Heard only faint sound (peak level ' + peak +
+              ', needs about ' + need + '). Hold the alarm closer to the ' +
+              'device — or raise the sensitivity — and retry.';
+          } else {
+            out.textContent = 'Heard sound (' + st.transitions_seen +
+              ' transitions, peak ' + peak + ') but no smoke/CO alarm ' +
+              'cadence. Hold the TEST button through a full beep cycle and retry.';
+          }
         } else {
           out.textContent = 'Listening… ' + Math.ceil((st.remaining_ms || 0) / 1000) + 's left.';
         }

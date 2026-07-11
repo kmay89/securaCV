@@ -25,6 +25,20 @@
 //      (frames drained in a burst after a stalled loop) — timing comes
 //      from frames × frame_ms, not millis() at processing time.
 //  11. audio_get_recent_transitions() reports the per-state tone ratio.
+//  12. Self-test mode: a T3 cadence during the window is recorded in
+//      audio_selftest_status_t (matched_type / conf / transitions_seen /
+//      peak_rms) and the NORMAL event callback stays silent.
+//  13. Self-test halves the envelope thresholds: a T3 cadence at RMS 600
+//      (under the normal ON=800, i.e. a TEST press at ~3 m) produces zero
+//      transitions in normal mode but matches during a self-test.
+//  14. Self-test window edge: beeps ending right before expiry can NOT
+//      complete a NORMAL match during the post-expiry pause (the ring is
+//      wiped when the window closes) — a TEST press never reaches HA.
+//  15. Self-test start is refused while muted.
+//  16. Dead-mic watchdog: a perfectly flat signal pins zero_rms_streak
+//      past AUDIO_SILENT_STREAK_FRAMES (and self-test peak_rms stays 0);
+//      one live frame resets the streak.
+//  17. audio_get_live_level() publishes the envelope RMS and zeroes on mute.
 //
 // Build/run: make (this dir). No Arduino runtime needed.
 
@@ -148,7 +162,11 @@ static void reset_pipeline() {
   assert(audio_init(&cfg));
   audio_set_event_callback(on_event);
   audio_set_mute_callback(on_mute);
+  // The user's mute intent survives deinit/init on purpose (on-device it
+  // lives in NVS); clear it so each test starts from the unmuted default.
+  audio_mute(false, AUDIO_MUTE_SOURCE_BOOT);
   assert(audio_start());
+  audio_process();  // consume the pending unmute request (a no-op)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────
@@ -420,6 +438,168 @@ static void test_transitions_expose_tone_ratio() {
          (unsigned)trans[0].tone_x100);
 }
 
+// Self-test mode: the matchers run relaxed, the result lands in the status
+// struct (type / confidence / transitions / peak RMS), and — the promise
+// that matters — the NORMAL event callback never fires for a test press.
+static void test_selftest_records_match_without_events() {
+  reset_pipeline();
+  assert(audio_selftest_start(30000));
+  const int16_t LOUD = 2000;
+  script_load({
+      {2000, 0},
+      {500, LOUD, 2}, {500, 0},
+      {500, LOUD, 2}, {500, 0},
+      {500, LOUD, 2},
+      {1600, 0},
+  });
+  pump(/*tail_ms=*/0);
+
+  audio_selftest_status_t st;
+  assert(audio_selftest_status(&st));
+  assert(st.matched_type == AUDIO_EVENT_T3_SMOKE_ALARM &&
+         "self-test must record the T3 match in the status struct");
+  assert(st.matched_conf >= 30);
+  assert(st.transitions_seen >= 6);
+  assert(st.peak_rms >= 1900 && st.peak_rms <= 2100 &&
+         "peak_rms must report the loudest window heard during the test");
+  assert(g_events.empty() &&
+         "a TEST-button press must never fire the normal event callback");
+  printf("ok  self-test records the match (conf=%u, peak=%u) with no events\n",
+         (unsigned)st.matched_conf, (unsigned)st.peak_rms);
+}
+
+// Self-test halves the envelope thresholds. RMS 600 sits under the normal
+// ON threshold (800) — a UL sounder's TEST press at ~3 m — so normal mode
+// hears NOTHING (the dashboard's "0 sound transitions seen" failure), but
+// the same cadence must match during a self-test window.
+static void test_selftest_hears_quiet_alarm() {
+  // Baseline: normal mode, T3 at RMS 600 → zero transitions.
+  reset_pipeline();
+  const int16_t QUIET = 600;
+  const std::vector<Segment> t3_quiet = {
+      {2000, 0},
+      {500, QUIET, 2}, {500, 0},
+      {500, QUIET, 2}, {500, 0},
+      {500, QUIET, 2},
+      {1600, 0},
+  };
+  script_load(t3_quiet);
+  pump(/*tail_ms=*/0);
+  audio_stats_t stats;
+  assert(audio_get_stats(&stats));
+  assert(stats.on_transitions == 0 &&
+         "RMS 600 must sit under the normal ON threshold (baseline)");
+  assert(g_events.empty());
+
+  // Same cadence inside a self-test window → relaxed ON threshold 400.
+  reset_pipeline();
+  assert(audio_selftest_start(30000));
+  script_load(t3_quiet);
+  pump(/*tail_ms=*/0);
+  audio_selftest_status_t st;
+  assert(audio_selftest_status(&st));
+  assert(st.matched_type == AUDIO_EVENT_T3_SMOKE_ALARM &&
+         "self-test must hear a quiet (3 m) alarm the normal mode misses");
+  assert(st.peak_rms >= 550 && st.peak_rms <= 650);
+  assert(g_events.empty());
+  printf("ok  self-test hears a quiet alarm (peak=%u) that normal mode misses\n",
+         (unsigned)st.peak_rms);
+}
+
+// Window-edge leak guard: beeps that end just before the self-test expires
+// must NOT complete a NORMAL match during the post-expiry pause. Without
+// the ring wipe at the window edge, this exact script fired a real
+// AUDIO_EVENT_T3_SMOKE_ALARM into the callback ~0.5 s after the test ended.
+static void test_selftest_expiry_does_not_leak_events() {
+  reset_pipeline();
+  assert(audio_selftest_start(5000));  // minimum window
+  const int16_t LOUD = 2000;
+  script_load({
+      {2000, 0},                    // window opens at t=0; quiet until t=2.0s
+      {500, LOUD, 2}, {500, 0},     // full T3 burst, beep 3 ends at t=4.5s
+      {500, LOUD, 2}, {500, 0},
+      {500, LOUD, 2},
+      {4000, 0},                    // expiry at t=5.0s; pause continues after
+  });
+  pump(/*tail_ms=*/0);
+
+  audio_selftest_status_t st;
+  assert(audio_selftest_status(&st));
+  assert(!st.active && "the 5 s window must have expired");
+  assert(st.matched_type == AUDIO_EVENT_NONE &&
+         "pause never reached 1 s inside the window — no relaxed match");
+  audio_stats_t stats;
+  assert(audio_get_stats(&stats));
+  assert(stats.t3_detected == 0);
+  assert(g_events.empty() &&
+         "a test press ending at the window edge must not reach the callback");
+  printf("ok  self-test expiry wipes the ring — no event leaks to the callback\n");
+}
+
+static void test_selftest_refused_while_muted() {
+  reset_pipeline();
+  assert(audio_mute(true, AUDIO_MUTE_SOURCE_HTTP));
+  script_load({{100, 0}});
+  pump(/*tail_ms=*/100);  // apply the deferred mute
+  assert(audio_is_muted());
+  assert(!audio_selftest_start(30000) &&
+         "self-test must be refused while the mic is hard-muted");
+
+  assert(audio_mute(false, AUDIO_MUTE_SOURCE_HTTP));
+  script_load({{100, 0}});
+  pump(/*tail_ms=*/100);  // apply the deferred unmute
+  assert(!audio_is_muted());
+  assert(audio_selftest_start(30000));
+  printf("ok  self-test refused while muted, allowed after unmute\n");
+}
+
+// Dead-mic watchdog: an electrically dead PDM data line delivers a
+// perfectly flat signal — RMS computes exactly 0 forever, which no live
+// mic's noise floor does for 30 s. The streak lets the dashboard replace a
+// lying LISTENING badge with a "no signal from the microphone" warning,
+// and peak_rms==0 after a test window is the definitive hardware verdict.
+static void test_dead_mic_pins_zero_rms_streak() {
+  reset_pipeline();
+  assert(audio_selftest_start(60000));
+  // 32 s of a flat (all-zero) signal: 1600 frames > AUDIO_SILENT_STREAK_FRAMES.
+  script_load({{32000, 0}});
+  pump(/*tail_ms=*/0);
+
+  audio_stats_t stats;
+  assert(audio_get_stats(&stats));
+  assert(stats.zero_rms_streak >= AUDIO_SILENT_STREAK_FRAMES &&
+         "a flat signal must pin the zero-RMS streak past the 30 s floor");
+  audio_selftest_status_t st;
+  assert(audio_selftest_status(&st));
+  assert(st.peak_rms == 0 && st.transitions_seen == 0);
+
+  // One live frame resets the streak: the watchdog never latches.
+  script_load({{20, 500, 2}});
+  pump(/*tail_ms=*/0);
+  assert(audio_get_stats(&stats));
+  assert(stats.zero_rms_streak == 0 &&
+         "any live audio must reset the flat-signal streak");
+  printf("ok  dead mic pins zero_rms_streak (peak_rms stays 0); live audio resets it\n");
+}
+
+static void test_live_level_publishes_and_zeroes_on_mute() {
+  reset_pipeline();
+  script_load({{100, 1000, 2}});
+  pump(/*tail_ms=*/0);
+  uint16_t rms = 0;
+  uint32_t age_ms = UINT32_MAX;
+  assert(audio_get_live_level(&rms, &age_ms));
+  assert(rms >= 900 && rms <= 1100 &&
+         "live level must publish the envelope's own RMS scalar");
+
+  assert(audio_mute(true, AUDIO_MUTE_SOURCE_HTTP));
+  script_load({{100, 1000, 2}});
+  pump(/*tail_ms=*/100);
+  assert(!audio_get_live_level(&rms, &age_ms));
+  assert(rms == 0 && "the published level must read 0 while muted");
+  printf("ok  live level publishes RMS and zeroes on mute\n");
+}
+
 int main() {
   test_t3_smoke_cadence();
   test_t4_co_cadence();
@@ -432,6 +612,12 @@ int main() {
   test_dc_offset_reads_as_silence();
   test_stream_clock_survives_frozen_wall_clock();
   test_transitions_expose_tone_ratio();
+  test_selftest_records_match_without_events();
+  test_selftest_hears_quiet_alarm();
+  test_selftest_expiry_does_not_leak_events();
+  test_selftest_refused_while_muted();
+  test_dead_mic_pins_zero_rms_streak();
+  test_live_level_publishes_and_zeroes_on_mute();
   printf("test_audio_cadence: all tests passed\n");
   return 0;
 }

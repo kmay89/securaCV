@@ -3,7 +3,7 @@
 > Status: **display-side SHIPPED** (`FEATURE_ONBOARDING`, compile/CI-verified;
 > bench validation is runbook §F8). This closes the last "follow-up to finish
 > the magic" in [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md):
-> the flock can hand a display its *broker*, but only once the display is on
+> the fleet can hand a display its *broker*, but only once the display is on
 > the LAN — WiFi itself needed a human, and until now that human needed a
 > compiled `secrets.h`.
 
@@ -33,11 +33,11 @@ it should feel like the device is doing the work.
   "You're in." (green bloom)           ✓ draws in: "You're all set"
         cross-fade to the normal UI      "the display takes it from here"
   "looking for your canaries…"
-        → flock finds the broker (mDNS gossip) → fleet fades in
+        → fleet finds the broker (mDNS gossip) → fleet fades in
 ```
 
 The last step is the payoff of the whole discovery program: the moment WiFi
-exists, the **flock referral** (broker gossip, discovery doc §5.1) configures
+exists, the **fleet referral** (broker gossip, discovery doc §5.1) configures
 MQTT with zero further input. Onboarding ends at a *working* display, not at
 a joined network.
 
@@ -113,5 +113,5 @@ look failed on the phone — hard-won WAP lesson.)
 
 iPhone + Android camera-scan → auto-join → sheet pops → wrong-password round
 trip (specific reason, no dead end) → correct join → glass bloom → phone ✓ →
-flock referral lands the broker → fleet renders. Power-cycle mid-setup
+fleet referral lands the broker → fleet renders. Power-cycle mid-setup
 restarts clean. Panel-dead build provisions over serial.

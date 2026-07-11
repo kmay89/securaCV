@@ -43,6 +43,8 @@
 
 // Project composition header: flavor config (CD_*) + net/OTA/diag constants.
 #include "config.h"
+// FEATURE_* vs HAS_* compile-time cross-check (needs pins.h + config above).
+#include "feature_sanity.h"
 #include "version.h"
 #include "log.h"
 #include "topics.h"
@@ -64,6 +66,10 @@
 #endif
 #if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
 #include "provision.h"
+#endif
+#if defined(FEATURE_CARE) && FEATURE_CARE
+#include "care_glue.h"
+#include "mute_store.h"
 #endif
 #include "display.h"
 #include "chime.h"
@@ -125,7 +131,7 @@ static uint32_t g_page_touched_ms = 0;   // auto-return to overview
 static uint32_t g_mqtt_next_attempt_ms = 0;
 static uint32_t g_mqtt_attempts = 0;
 
-// Broker-outage clock for the flock-rediscovery rebind (wifi up, broker
+// Broker-outage clock for the fleet-rediscovery rebind (wifi up, broker
 // dark). Zero = link healthy or wifi down.
 static uint32_t g_mqtt_down_since_ms = 0;
 
@@ -157,7 +163,7 @@ static bool mqtt_supervise(uint32_t now) {
     g_last_health_ms = now;
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
     // Gossip only ground truth: we are connected to this broker right now,
-    // so the next device to join the WiFi can just ask the flock.
+    // so the next device to join the WiFi can just ask the fleet.
     canary::net::discovery_advertise_broker(canary::net::mqtt_broker_host(),
                                             canary::net::mqtt_broker_port());
 #endif
@@ -168,7 +174,7 @@ static bool mqtt_supervise(uint32_t now) {
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
   // Self-healing rebind: WiFi is fine but the broker has been dark past
   // the deadline — the classic cause is the broker host taking a new DHCP
-  // lease. Ask the flock (bounded ~3-6 s mDNS query; the link is already
+  // lease. Ask the fleet (bounded ~3-6 s mDNS query; the link is already
   // down, so the stall costs nothing), adopt any referral, and let the
   // normal backoff reconnect. Re-asks once per deadline window.
   if ((int32_t)(now - g_mqtt_down_since_ms) >= (int32_t)BROKER_REDISCOVER_MS) {
@@ -200,13 +206,14 @@ static bool mqtt_supervise(uint32_t now) {
 // Clock / quiet hours (SNTP; the watch's PCF8563 RTC is a follow-up)
 // ----------------------------------------------------------------------------
 
-static bool local_time(int* hh, int* mm) {
+static bool local_time(int* hh, int* mm, int* yday = nullptr) {
   time_t t = time(nullptr);
   if (t < 1700000000) return false;  // clock not synced yet
   struct tm lt;
   localtime_r(&t, &lt);
   if (hh) *hh = lt.tm_hour;
   if (mm) *mm = lt.tm_min;
+  if (yday) *yday = lt.tm_yday;
   return true;
 }
 
@@ -258,9 +265,51 @@ static void ui_ack_hold(bool active) {
 #endif
 }
 
+#if defined(FEATURE_CARE) && FEATURE_CARE
+// Mute toggle for one witness ("act on what you're looking at"): quiet
+// until morning (next CD_QUIET_END_HOUR) with the promise persisted to NVS;
+// clockless fallback is 8 h, this boot only. Un-muting clears both.
+static void toggle_mute(const canary::fleet::Witness& w, uint32_t now) {
+  auto& fleet = canary::fleet::the_fleet();
+  if (canary::fleet::Fleet::mute_active(w, now)) {
+    fleet.set_mute(w.id, false, 0);
+    canary::fleet::mute_store_put(w.id, 0);
+    boot_line("[input] long-press -> unmute witness");
+    return;
+  }
+  const uint32_t until_epoch = canary::care::mute_until_morning_epoch();
+  uint32_t until_ms;
+  const uint32_t now_epoch = (uint32_t)time(nullptr);
+  if (until_epoch > now_epoch) {
+    // Strictly-greater guard: an SNTP step between the two time() reads
+    // must not underflow into a ~49-day mute (review catch).
+    until_ms = now + (until_epoch - now_epoch) * 1000UL;
+    canary::fleet::mute_store_put(w.id, until_epoch);
+  } else {
+    until_ms = now + 8UL * 3600UL * 1000UL;  // no/odd clock: 8 h, unpersisted
+  }
+  fleet.set_mute(w.id, true, until_ms);
+  boot_line("[input] long-press -> mute witness until morning");
+}
+#endif
+
 static void handle_touch(uint32_t now) {
   const auto s = canary::hal::touch_read();
   auto& fleet = canary::fleet::the_fleet();
+
+#if defined(CD_FLAVOR_DASH) && defined(FEATURE_CARE) && FEATURE_CARE
+  // Cleaning mode (transparency sheet -> "wipe the glass"): a wall panel
+  // must survive a wet cloth without acking an alarm. Swallow everything
+  // until the lockout ends.
+  if (canary::ui::dash_ui_touch_locked(now)) {
+    if (g_touch_down) {
+      g_touch_down = false;
+      g_longpress_fired = false;
+      ui_ack_hold(false);
+    }
+    return;
+  }
+#endif
 
   if (s.touched && !g_touch_down) {
     g_touch_down = true;
@@ -274,17 +323,39 @@ static void handle_touch(uint32_t now) {
 
   if (s.touched && g_touch_down && !g_longpress_fired &&
       (int32_t)(now - g_touch_down_ms) >= (int32_t)CD_LONGPRESS_MS) {
-    // Long-press: acknowledge. Quiet, deliberate, works half-asleep.
     g_longpress_fired = true;
     ui_ack_hold(false);
-    fleet.acknowledge(now);
+    g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+
+#if defined(FEATURE_CARE) && FEATURE_CARE
+    // Long-press routes by what the finger is ON (the panel "bypass"
+    // pattern, made deliberate): a witness in view -> mute/unmute THAT
+    // witness; anywhere else -> the household acknowledge.
+#ifdef CD_FLAVOR_WATCH
+    if (g_page >= 1 && g_page <= fleet.count()) {
+      const auto* w = fleet.at(g_page - 1);
+      if (w) { toggle_mute(*w, now); return; }
+    }
+#endif
+#ifdef CD_FLAVOR_DASH
+    {
+      const int card = canary::ui::dash_ui_card_at(g_touch_x, g_touch_y);
+      if (card >= 0) {
+        const auto* w = fleet.at(card);
+        if (w) { toggle_mute(*w, now); return; }
+      }
+    }
+#endif
+#endif  // FEATURE_CARE
+
+    // Long-press: acknowledge. Quiet, deliberate, works half-asleep.
+    fleet.acknowledge_by(now, canary::cfg::get().device_id);
 #if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
     // Household ack-sync (spec §2): tell the sibling displays — only with
     // a real clock (no guessed timestamps on the wire).
     const time_t epoch = time(nullptr);
     if (epoch > 1700000000) canary::net::publish_fleet_ack((uint32_t)epoch);
 #endif
-    g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
     boot_line("[input] long-press -> acknowledge");
     return;
   }
@@ -300,6 +371,11 @@ static void handle_touch(uint32_t now) {
     if (was_awake) {
       g_page = (g_page + 1) % canary::ui::glance_page_count();
       g_page_touched_ms = now;
+    } else {
+      // Glance-first wake: waking from the dark always lands on the one
+      // big fact (the halo hero), never mid-rotation on a detail page —
+      // the distance-tiered pattern, keyed on the wake edge.
+      g_page = 0;
     }
 #endif
 #ifdef CD_FLAVOR_DASH
@@ -465,6 +541,12 @@ void setup() {
   canary::fleet::journal_begin();
 #endif
 
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  // Care wave: restore the learned rhythm baseline from NVS (mutes re-apply
+  // later, from care_loop, once SNTP gives both clocks).
+  canary::care::care_begin();
+#endif
+
   // Seed the heap-health snapshot so the first status publish carries real
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
@@ -477,16 +559,16 @@ void setup() {
 
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
   // Zero-config join: no broker was provisioned (fresh flash with the
-  // stock secrets template) — ask the flock before the first connect
+  // stock secrets template) — ask the fleet before the first connect
   // attempt. One hand-provisioned device on the LAN makes every later
   // one plug-and-play; the referral persists to NVS via mqtt_set_broker.
   if (canary::net::mqtt_broker_is_placeholder()) {
-    boot_kv("Broker", "unconfigured — asking the flock (mDNS)");
+    boot_kv("Broker", "unconfigured — asking the fleet (mDNS)");
     char host[64];
     uint16_t port = 1883;
     if (canary::net::discovery_find_broker(host, sizeof(host), &port)) {
       canary::net::mqtt_set_broker(host, port);
-      boot_kvf("Broker", "flock referral: %s:%u", host, (unsigned)port);
+      boot_kvf("Broker", "fleet referral: %s:%u", host, (unsigned)port);
     } else {
       boot_kv("Broker", "no referral yet — will keep asking from loop()");
     }
@@ -564,8 +646,11 @@ void loop() {
   }
 #endif
 
+#if !(defined(FEATURE_CARE) && FEATURE_CARE)
 #if defined(FEATURE_CHIME) && FEATURE_CHIME
-  // Sound identity (spec §5): tier grammar on severity transitions.
+  // Sound identity (spec §5) — legacy inline grammar, only compiled when
+  // the care wave is off (FEATURE_CARE owns the chime via its attention
+  // policy: same tiers, plus night suppression + ramp + morning summary).
   {
     using canary::fleet::Sev;
     static Sev s_prev_worst = Sev::Ok;
@@ -592,6 +677,7 @@ void loop() {
   }
   canary::hal::chime_loop(now);
 #endif
+#endif  // !FEATURE_CARE
 
   // ── Network supervision ──
   canary::net::wifi_loop(now);
@@ -601,6 +687,18 @@ void loop() {
   }
 
   const bool broker = mqtt_supervise(now);
+
+#if defined(FEATURE_CARE) && FEATURE_CARE
+  // Care wave (display_care_wave.md): the attention policy drives the chime
+  // (night-silent maintenance + ramp), harvests the overnight ledger, fires
+  // escalation-on-no-ack, applies persisted mutes once the clock is valid,
+  // and feeds the rhythm baseline.
+  {
+    int hh = 0, mm = 0, doy = -1;
+    const bool tv = local_time(&hh, &mm, &doy);
+    canary::care::care_loop(now, in_quiet_hours(), broker, tv, hh, mm, doy);
+  }
+#endif
 
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
   // Off-grid fallback (spec §6): while the broker is dark and WiFi may be

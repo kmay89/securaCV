@@ -40,13 +40,29 @@ static constexpr uint32_t HEARTBEAT_MS = CD_HEARTBEAT_MS;
 // witness pubkey to pin, but fleet tooling still wants the liveness row).
 static constexpr uint32_t HEALTH_PUBLISH_MS = 60000;
 
-// Flock-rediscovery deadline: broker dark this long (WiFi healthy) -> ask
-// the flock again and rebind (see canary/net/discovery.h).
+// Fleet-rediscovery deadline: broker dark this long (WiFi healthy) -> ask
+// the fleet again and rebind (see canary/net/discovery.h).
 static constexpr uint32_t BROKER_REDISCOVER_MS = CD_BROKER_REDISCOVER_MS;
 
 // -------------------- MQTT / HA --------------------
 static constexpr const char* HA_DISCOVERY_PREFIX = CD_HA_DISCOVERY_PREFIX;
 static constexpr size_t MQTT_BUFFER_BYTES        = CD_MQTT_BUFFER_BYTES;
+
+// -------------------- Care wave (display_care_wave.md) --------------------
+// Escalation-on-no-ack: a Tier-1 condition unacknowledged this long fires
+// ONE securacv/fleet/escalation event for automations to widen the circle.
+#ifndef CD_ESCALATE_UNACKED_MS
+#define CD_ESCALATE_UNACKED_MS 900000UL   // 15 min
+#endif
+// Per-site emergency contact (secrets.h override — it's personal data, so
+// it lives with the credentials, never in a committed config). When set,
+// the dash shows it during an unacked Tier-1: a panel dispatches, a witness
+// display INFORMS the person standing in front of it.
+#ifndef CD_EMERGENCY_CONTACT
+#define CD_EMERGENCY_CONTACT ""
+#endif
+static constexpr uint32_t ESCALATE_UNACKED_MS = CD_ESCALATE_UNACKED_MS;
+static constexpr const char* EMERGENCY_CONTACT = CD_EMERGENCY_CONTACT;
 
 // -------------------- WiFi robustness / power --------------------
 // STA supervision (S3-tree parity): non-blocking reconnect with exponential

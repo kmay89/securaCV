@@ -1,4 +1,4 @@
-// src/net/discovery.cpp — mDNS flock discovery (see discovery.h).
+// src/net/discovery.cpp — mDNS fleet discovery (see discovery.h).
 //
 // Uses the core's bundled ESPmDNS (no extra lib_deps). All queries are
 // bounded (~3 s inside ESPmDNS) and only run while the broker link is
@@ -79,7 +79,7 @@ bool discovery_init(const char* device_id, const char* device_type,
   make_hostname(device_id, hostname, sizeof(hostname));
 
   if (!MDNS.begin(hostname)) {
-    log_line("MDNS", "mDNS start FAILED — flock discovery disabled this boot.");
+    log_line("MDNS", "mDNS start FAILED — fleet discovery disabled this boot.");
     return false;
   }
   s_up = true;
@@ -91,7 +91,7 @@ bool discovery_init(const char* device_id, const char* device_type,
   MDNS.addServiceTxt(SVC, PROTO, "dt", device_type ? device_type : "");
 
   log_header("MDNS");
-  canary::dbg_serial().printf("Flock advert up as %s.local (_%s._%s)\n",
+  canary::dbg_serial().printf("Fleet advert up as %s.local (_%s._%s)\n",
                               hostname, SVC, PROTO);
   return true;
 }
@@ -118,7 +118,7 @@ void discovery_clear_broker() {
 bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out) {
   if (!s_up || !host_out || host_cap == 0) return false;
 
-  // 1) Ask the flock: any SecuraCV device that has a working broker link
+  // 1) Ask the fleet: any SecuraCV device that has a working broker link
   //    gossips it in its TXT records.
   int n = MDNS.queryService(SVC, PROTO);
   for (int i = 0; i < n; i++) {
@@ -130,7 +130,7 @@ bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out) 
     const long bp = MDNS.txt(i, "bport").toInt();
     if (port_out) *port_out = (bp > 0 && bp <= 65535) ? (uint16_t)bp : 1883;
     log_header("MDNS");
-    canary::dbg_serial().printf("Flock referral: broker %s:%u (from %s)\n",
+    canary::dbg_serial().printf("Fleet referral: broker %s:%u (from %s)\n",
                                 host_out, (unsigned)(port_out ? *port_out : 1883),
                                 MDNS.hostname(i).c_str());
     return true;
@@ -158,7 +158,7 @@ bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out) 
     }
   }
 
-  log_line("MDNS", "No broker referral on the LAN (flock quiet, no _mqtt._tcp).");
+  log_line("MDNS", "No broker referral on the LAN (fleet quiet, no _mqtt._tcp).");
   return false;
 }
 

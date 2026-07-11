@@ -27,11 +27,11 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
 - **Subscribes** to the fleet: `securacv/+/{status,availability,health,events,tamper,chain,state}`.
   Every Canary on the household broker appears automatically — retained
   topics repopulate the whole view in one round-trip. No pairing, ever.
-- **Flock discovery** (`FEATURE_MDNS_DISCOVERY`, see
+- **Fleet discovery** (`FEATURE_MDNS_DISCOVERY`, see
   [`display_discovery_and_resilience.md`](../../../docs/hardware/display_discovery_and_resilience.md)):
   advertises `_securacv._tcp` on the LAN and — once connected — gossips the
   broker address in its TXT records. A display flashed with **no broker
-  configured asks the flock and adopts the referral** (persisted to NVS);
+  configured asks the fleet and adopts the referral** (persisted to NVS);
   a broker that goes dark for 2 min (moved DHCP lease) triggers re-ask +
   rebind. Fallback: any `_mqtt._tcp` advert. One hand-provisioned device
   makes every later one plug-and-play.
@@ -97,7 +97,7 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   glass** (device-unique AP, per-session password), pops a captive portal on
   the phone (dark, self-contained, live status, specific failure reasons),
   persists credentials **on success only**, and cross-fades straight into the
-  fleet UI — where the flock referral lands the broker with zero further
+  fleet UI — where the fleet referral lands the broker with zero further
   input. Plug in → scan → password → watching your canaries. No dead ends.
 
 - **Trailblazer wave 3** ([spec](../../../docs/hardware/display_trailblazer_spec.md)):
@@ -112,6 +112,27 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
   **gossips the broker** (`FEATURE_MDNS_BROKER_GOSSIP`): configure one canary
   and every display self-discovers a provably-reachable broker with zero
   setup ([discovery doc](../../../docs/hardware/display_discovery_and_resilience.md) §5.1).
+
+- **The care wave** (`FEATURE_CARE` + `FEATURE_RHYTHM`,
+  [design + research trace](../../../docs/hardware/display_care_wave.md)):
+  the **clock is the idle face** (all-quiet watch hero = the time — every
+  glance at the clock absorbs the security state); the **attention policy**
+  ends 2 a.m. maintenance chirps forever — Warn-class sounds are suppressed
+  during quiet hours into an overnight ledger and surface as a **morning
+  summary** ("While you slept: 2 notices"), while unacked Alert/Tamper
+  remains the one sound that breaks the night, **ramping soft → full** across
+  re-voicings; **per-witness mute** (long-press a witness) is the honest
+  bypass — visible always, tamper punches through, persisted until morning;
+  **Roll Call** is a live walk test (last word · battery · RSSI, rows light
+  up as each canary answers); the **rhythm line** learns the home's first
+  stir on-device and says "Quiet past the usual wake" when it matters (the
+  post-Alexa-Together slot nobody fills); **escalation-on-no-ack** publishes
+  one `securacv/fleet/escalation` event after 15 unacknowledged minutes so
+  automations can widen the circle; and the **transparency page** mirrors on
+  the glass exactly what this display consumes, speaks, stores — and never
+  does. Plus: ack attribution ("acked · kitchen-dash"), room comfort lines,
+  an emergency contact on the dash during unacked alarms, glance-first wake,
+  and a cleaning-mode touch lockout.
 
 ## Build
 

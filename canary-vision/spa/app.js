@@ -1172,7 +1172,7 @@ function renderCanariesView() {
   if (devices.length === 0) {
     content.appendChild(el('div', { className: 'empty-state' }, [
       el('h2', { textContent: 'Protect every room' }),
-      el('p', { textContent: 'Canaries work best as a flock. Most homes start with one at the entry, then add coverage for living areas, bedrooms, and the garage.' }),
+      el('p', { textContent: 'Canaries work best as a fleet. Most homes start with one at the entry, then add coverage for living areas, bedrooms, and the garage.' }),
       el('div', { className: 'coverage-chips' }, [
         el('span', { className: 'coverage-chip', textContent: '🚪 Entry' }),
         el('span', { className: 'coverage-chip', textContent: '🛋 Living Room' }),
@@ -1275,7 +1275,7 @@ function renderCanariesView() {
     onClick: function () { Router.navigate('#/canaries/add'); },
   }));
 
-  // One quiet nudge while the flock is small. Dismissible, and it stays
+  // One quiet nudge while the fleet is small. Dismissible, and it stays
   // dismissed — no badges, no counters.
   var hintDismissed = false;
   try {
@@ -2106,7 +2106,7 @@ function renderAddCanaryView() {
       el('div', { className: 'pair-step-title', textContent: 'Already paired' }),
       el('div', {
         className: 'pair-step-subtitle',
-        textContent: (device.name || device.id) + ' is already in your flock. Not the box you meant? Blink it to check.',
+        textContent: (device.name || device.id) + ' is already in your fleet. Not the box you meant? Blink it to check.',
       }),
       el('button', {
         className: 'btn btn-secondary btn-block mt-12',
@@ -2229,13 +2229,13 @@ function renderAddCanaryView() {
   // ---- Step 4: done — invite the next one ----
   function stepDone(device) {
     var count = CanaryStorage.getDevices().length;
-    var flockLine;
+    var fleetLine;
     if (count === 1) {
-      flockLine = '1 Canary protecting your home. Most homes use 3–5 for full coverage — one per entry and shared space.';
+      fleetLine = '1 Canary protecting your home. Most homes use 3–5 for full coverage — one per entry and shared space.';
     } else if (count < 3) {
-      flockLine = count + ' Canaries protecting your home. Most homes use 3–5 for full coverage.';
+      fleetLine = count + ' Canaries protecting your home. Most homes use 3–5 for full coverage.';
     } else {
-      flockLine = count + ' Canaries protecting your home. Your flock is growing.';
+      fleetLine = count + ' Canaries protecting your home. Your fleet is growing.';
     }
 
     content.appendChild(el('div', { className: 'card pair-hero' }, [
@@ -2244,7 +2244,7 @@ function renderAddCanaryView() {
         className: 'pair-step-title',
         textContent: (device.name || device.id) + ' is watching',
       }),
-      el('div', { className: 'pair-step-subtitle', textContent: flockLine }),
+      el('div', { className: 'pair-step-subtitle', textContent: fleetLine }),
     ]));
 
     content.appendChild(el('button', {

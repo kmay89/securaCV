@@ -34,7 +34,7 @@ static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
 static Topics g_topics{};
 
-// Broker endpoint — rebindable (flock discovery). PubSubClient::setServer
+// Broker endpoint — rebindable (fleet discovery). PubSubClient::setServer
 // stores the caller's pointer, so the storage must be static and stable.
 static char s_broker_host[64] = {0};
 static uint16_t s_broker_port = 1883;
@@ -118,6 +118,9 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
     const int batt = doc["battery_soc"] | doc["battery"] | -1;
     if (st) fleet.on_status(device_id, dt, strcmp(st, "offline") != 0, batt, now);
     else    fleet.on_status(device_id, dt, true, batt, now);
+    // Self-reported WiFi RSSI rides the status row (every variant publishes
+    // it) — the Roll Call page's signal column.
+    if (doc["rssi"].is<int>()) fleet.on_rssi(device_id, doc["rssi"].as<int>(), now);
     return;
   }
 
@@ -184,6 +187,23 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
   if (doc["breathing_locked"].is<bool>()) {
     fleet.on_wellbeing(device_id, doc["breathing_locked"].as<bool>(), now);
   }
+  // Room comfort, when the variant reports it (spellings differ; °C either
+  // way). Tenths keep 21.5° honest on the glass.
+  {
+    bool have_temp = false;
+    int temp_c10 = 0;
+    if (doc["temperature"].is<float>()) {
+      temp_c10 = (int)(doc["temperature"].as<float>() * 10.0f);
+      have_temp = true;
+    } else if (doc["temp_c"].is<float>()) {
+      temp_c10 = (int)(doc["temp_c"].as<float>() * 10.0f);
+      have_temp = true;
+    }
+    const int rh = doc["humidity"] | -1;
+    if (have_temp || rh >= 0) {
+      fleet.on_comfort(device_id, temp_c10, have_temp, rh, now);
+    }
+  }
 }
 
 // ── MQTT callback ───────────────────────────────────────────────────────
@@ -223,7 +243,9 @@ static void handle_fleet_ack(const uint8_t* payload, unsigned int len) {
 
   s_last_ack_epoch = at;
   const uint32_t now_ms = canary::ms_now();
-  canary::fleet::the_fleet().acknowledge(now_ms - age_s * 1000UL);
+  // Attribution travels with the ack — the glass can say WHICH display
+  // quieted the house (the who-disarmed audit line security panels keep).
+  canary::fleet::the_fleet().acknowledge_by(now_ms - age_s * 1000UL, by);
   log_line("ACK", "Household acknowledge received (synced from a sibling).");
 }
 #endif
@@ -406,6 +428,35 @@ void publish_fleet_ack(uint32_t epoch_s) {
 #else
   (void)epoch_s;
 #endif
+}
+
+void publish_fleet_escalation(uint32_t epoch_s, const char* worst,
+                              const char* witness) {
+  if (!mqtt.connected() || epoch_s == 0) return;
+  // The witness name is human-authored (retained meta payload) — escape it
+  // for JSON or a name like `Living "Room"` breaks every downstream parser.
+  // Worst case doubles: 32 name chars -> 64 + NUL fits esc (review catch).
+  char esc[66];
+  {
+    size_t o = 0;
+    for (const char* p = witness ? witness : ""; *p && o + 2 < sizeof(esc);
+         p++) {
+      const unsigned char c = (unsigned char)*p;
+      if (c == '"' || c == '\\') esc[o++] = '\\';
+      else if (c < 0x20) continue;  // control chars have no place in a name
+      esc[o++] = (char)c;
+      if (o >= 64) break;  // cap the name at 32 source chars' worst case
+    }
+    esc[o] = '\0';
+  }
+  char msg[224];
+  snprintf(msg, sizeof(msg),
+           "{\"at\":%lu,\"by\":\"%s\",\"worst\":\"%s\",\"witness\":\"%s\"}",
+           (unsigned long)epoch_s, canary::cfg::get().device_id,
+           worst ? worst : "", esc);
+  // Deliberately NOT retained: an escalation is a moment, not a state — a
+  // display that reconnects hours later must not re-fire the phone tree.
+  publish_checked("ESCALATE", FleetSubs::FLEET_ESCALATION, msg, false);
 }
 
 bool mqtt_connect_attempt() {

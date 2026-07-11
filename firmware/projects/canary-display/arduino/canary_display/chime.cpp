@@ -42,6 +42,12 @@ const Step* s_seq = nullptr;
 int s_len = 0;
 int s_idx = -1;
 uint32_t s_step_until_ms = 0;
+uint8_t s_duty = 127;
+
+// Loudness ladder for chime_play()'s ramp: duty toward 50% is louder on a
+// passive piezo. Soft is genuinely soft (gentle first voicing at night);
+// full is the deterministic maximum this engine always used.
+constexpr uint8_t RAMP_DUTY[3] = {28, 70, 127};
 
 void tone_out(uint16_t freq) {
   if (s_pin < 0) return;
@@ -49,9 +55,9 @@ void tone_out(uint16_t freq) {
     cc_ledc_tone((uint8_t)s_pin, LEDC_CH, 0);
   } else {
     cc_ledc_tone((uint8_t)s_pin, LEDC_CH, freq);
-    // Passive piezo at ~50% duty; ledcWriteTone sets its own duty, this
-    // keeps loudness deterministic across core versions.
-    cc_ledc_write((uint8_t)s_pin, LEDC_CH, 127);
+    // ledcWriteTone sets its own duty; this override keeps loudness
+    // deterministic across core versions AND applies the ramp level.
+    cc_ledc_write((uint8_t)s_pin, LEDC_CH, s_duty);
   }
 }
 
@@ -64,8 +70,9 @@ void chime_init(int pin) {
   cc_ledc_tone((uint8_t)pin, LEDC_CH, 0);
 }
 
-void chime_play(Chime c) {
+void chime_play(Chime c, uint8_t ramp) {
   if (s_pin < 0) return;
+  s_duty = RAMP_DUTY[ramp > 2 ? 2 : ramp];
   switch (c) {
     case Chime::Tier1Alarm: s_seq = TIER1;     s_len = sizeof(TIER1) / sizeof(TIER1[0]);         break;
     case Chime::Tier2Warn:  s_seq = TIER2;     s_len = sizeof(TIER2) / sizeof(TIER2[0]);         break;

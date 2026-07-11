@@ -22,8 +22,13 @@ enum class Chime : uint8_t {
 // pin < 0 disables. Uses its own LEDC channel (not the backlight's).
 void chime_init(int pin);
 
-// Latch a pattern (replaces any pattern in progress).
-void chime_play(Chime c);
+// Latch a pattern (replaces any pattern in progress). `ramp` scales
+// loudness 0 (soft) / 1 (mid) / 2 (full): the attention policy starts an
+// alarm episode soft and escalates on each re-voice — wake gently, escalate
+// honestly. No comparable product ships a ramp; both of its complaint
+// classes ("siren scared the house" and "alarm too quiet to wake me") are
+// answered by the same ladder.
+void chime_play(Chime c, uint8_t ramp = 2);
 
 // Advance the pattern; call every loop pass. No-op when idle/uninitialized.
 void chime_loop(uint32_t now_ms);
