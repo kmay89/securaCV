@@ -222,6 +222,7 @@ var CanaryStorage = {
         name: d.name,
         base_url: d.base_url,
         room: d.room,
+        device_type: d.device_type,
         last_info: d.last_info,
         added_at: d.added_at,
       };
@@ -465,6 +466,142 @@ function labelFor(key) {
   if (FIELD_LABELS[key]) return FIELD_LABELS[key];
   var words = key.replace(/_/g, ' ').trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// --------------- Device Types ---------------
+//
+// The fleet spans three witness variants. Firmware advertises the
+// canonical type as `dt` in its mDNS TXT record; the HTTP API exposes it
+// as `device_type`. This registry drives type badges, the per-type
+// explanation cards, suggested names, and the wizard branch: WAP-class
+// devices pair over HTTP with a BOOT tap, while vision/sense have no
+// HTTP server and onboard through Home Assistant (MQTT discovery).
+
+var DEVICE_TYPES = {
+  'canary-wap': {
+    dt: 'canary-wap',
+    label: 'Canary WAP',
+    tagline: 'Witness beacon — GPS + signed event log with its own WiFi hotspot',
+    pairing: 'http',
+    whatsDifferent: [
+      'Keeps a GPS-timestamped, cryptographically signed event log',
+      'Runs its own WiFi hotspot, so it witnesses even with no infrastructure',
+      'Pairs right here over HTTP with a short tap of its BOOT button',
+    ],
+    icon: [
+      { tag: 'circle', attrs: { cx: '12', cy: '15', r: '2', fill: 'currentColor' } },
+      { tag: 'path', attrs: { d: 'M8.5 11.5a5 5 0 0 1 7 0' } },
+      { tag: 'path', attrs: { d: 'M5.5 8.5a9.2 9.2 0 0 1 13 0' } },
+    ],
+  },
+  'canary-vision': {
+    dt: 'canary-vision',
+    label: 'Canary Vision',
+    tagline: 'Camera witness — detects people, never stores video',
+    pairing: 'mqtt',
+    whatsDifferent: [
+      'Person detection happens on the sensor — frames never leave it',
+      'No video storage, ever: it emits semantic events only',
+      'Joins through Home Assistant automatically — no pairing token',
+    ],
+    proof: 'Walk in front of it and watch Presence flip on.',
+    icon: [
+      { tag: 'rect', attrs: { x: '3', y: '6.5', width: '18', height: '12', rx: '2.5' } },
+      { tag: 'circle', attrs: { cx: '12', cy: '12.5', r: '3.5' } },
+      { tag: 'circle', attrs: { cx: '12', cy: '12.5', r: '0.8', fill: 'currentColor' } },
+    ],
+  },
+  'canary-sense': {
+    dt: 'canary-sense',
+    label: 'Canary Sense',
+    tagline: 'Radar witness — senses presence and breathing through the air, no camera, no microphone',
+    pairing: 'mqtt',
+    whatsDifferent: [
+      '60 GHz radar senses presence, breathing, even heartbeat',
+      'No camera and no microphone — there is nothing to record',
+      'Joins through Home Assistant automatically — no pairing token',
+    ],
+    proof: 'Sit still nearby for ten seconds and watch Breathing lock.',
+    icon: [
+      { tag: 'circle', attrs: { cx: '6', cy: '18', r: '1.6', fill: 'currentColor' } },
+      { tag: 'path', attrs: { d: 'M6 12.5a5.5 5.5 0 0 1 5.5 5.5' } },
+      { tag: 'path', attrs: { d: 'M6 7.5a10.5 10.5 0 0 1 10.5 10.5' } },
+    ],
+  },
+  // Fallback for devices that predate `device_type`. Pairing stays
+  // 'http' — the classic BOOT-tap flow — and no badge is rendered.
+  unknown: {
+    dt: 'unknown',
+    label: 'Canary',
+    tagline: '',
+    pairing: 'http',
+    whatsDifferent: [],
+    icon: null,
+  },
+};
+
+// Fold any spelling ("Canary_Sense", "canary sense") onto the canonical
+// lowercase-hyphenated key the registry uses.
+function canonicalDeviceType(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/[_\s]+/g, '-');
+}
+
+function deviceTypeInfo(value) {
+  return DEVICE_TYPES[canonicalDeviceType(value)] || DEVICE_TYPES.unknown;
+}
+
+// Peers relayed by a WAP carry the mDNS TXT `dt` key; API payloads use
+// the long `device_type` spelling. Accept either.
+function peerDeviceType(peer) {
+  if (!peer) return '';
+  return canonicalDeviceType(peer.dt || peer.device_type || '');
+}
+
+// The wizard branch decision: 'http' devices run the BOOT-tap receipt
+// capture; 'mqtt' devices (vision/sense) have no HTTP server and are
+// onboarded through Home Assistant instead.
+function wizardPathForPeer(peer) {
+  return deviceTypeInfo(peerDeviceType(peer)).pairing;
+}
+
+function deviceTypeIcon(info) {
+  if (!info || !info.icon) return null;
+  var svgNs = 'http://www.w3.org/2000/svg';
+  var svg = document.createElementNS(svgNs, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'device-type-icon');
+  svg.setAttribute('aria-hidden', 'true');
+  info.icon.forEach(function (shape) {
+    var node = document.createElementNS(svgNs, shape.tag);
+    Object.keys(shape.attrs).forEach(function (key) {
+      node.setAttribute(key, shape.attrs[key]);
+    });
+    svg.appendChild(node);
+  });
+  return svg;
+}
+
+// Small icon+label chip. Returns null for unknown types so untyped rows
+// render exactly as before.
+function renderDeviceTypeBadge(value) {
+  var info = deviceTypeInfo(value);
+  if (info === DEVICE_TYPES.unknown) return null;
+  return el('span', { className: 'device-type-badge' }, [
+    deviceTypeIcon(info),
+    el('span', { textContent: info.label }),
+  ]);
+}
+
+// "What makes this one different" — the per-type explanation card shown
+// during onboarding.
+function renderDeviceTypeCard(info) {
+  return el('div', { className: 'card' }, [
+    el('div', { className: 'card-title mb-8', textContent: 'What makes this one different' }),
+    el('ul', { className: 'device-type-bullets' }, info.whatsDifferent.map(function (line) {
+      return el('li', { textContent: line });
+    })),
+  ]);
 }
 
 // --------------- Router ---------------
@@ -1220,6 +1357,7 @@ function renderCanariesView() {
       textContent: 'Checking…',
     });
     var statsRow = el('div', { className: 'fleet-device-stats' });
+    var typeInfo = deviceTypeInfo(device.device_type);
 
     var card = el('div', { className: 'card fleet-device-card cursor-pointer' });
     card.addEventListener('click', function () {
@@ -1229,6 +1367,10 @@ function renderCanariesView() {
     var header = el('div', { className: 'card-header' }, [
       el('div', {}, [
         el('div', { className: 'card-title', textContent: device.name || device.id }),
+        renderDeviceTypeBadge(typeInfo.dt),
+        typeInfo.tagline
+          ? el('div', { className: 'device-type-tagline', textContent: typeInfo.tagline })
+          : null,
         statusLabel,
       ]),
       statusDot,
@@ -1504,11 +1646,16 @@ function renderDiscoveredPeerSection(peers) {
 
   peers.forEach(function (peer) {
     var baseUrl = peerBaseUrl(peer);
+    var typeInfo = deviceTypeInfo(peerDeviceType(peer));
     var row = el('div', { className: 'card' }, [
       el('div', { className: 'card-header' }, [
         el('div', {}, [
           el('div', { className: 'card-title', textContent: peer.name || peer.device_id }),
+          renderDeviceTypeBadge(typeInfo.dt),
           el('div', { className: 'card-subtitle', textContent: baseUrl || peer.device_id }),
+          typeInfo.tagline
+            ? el('div', { className: 'device-type-tagline', textContent: typeInfo.tagline })
+            : null,
         ]),
         el('span', { className: 'status-dot' }),
       ]),
@@ -1516,12 +1663,13 @@ function renderDiscoveredPeerSection(peers) {
         className: 'btn btn-primary btn-block mt-12',
         textContent: 'Pair this Canary',
         onClick: function () {
-          // Pre-fill the Add form host so the user only needs to paste
-          // this device's token. The device_id is recovered from
-          // /api/v1/info during the pairing request, so we don't need
-          // to stash it separately.
+          // Pre-fill the Add form host (and type, so the wizard can pick
+          // the right branch) — the user only needs to paste this
+          // device's token. The device_id is recovered from /api/v1/info
+          // during the pairing request, so we don't stash it separately.
           try {
             sessionStorage.setItem('canary_prefill_host', baseUrl);
+            sessionStorage.setItem('canary_prefill_peer', JSON.stringify(peer));
           } catch (e) { /* ignore */ }
           Router.navigate('#/canaries/add');
         },
@@ -1607,11 +1755,14 @@ function completePairing(baseUrl, token, expectedDeviceId) {
   return CanaryAPI.request(baseUrl, '/api/v1/info', { token: token })
     .then(function (info) {
       var id = expectedDeviceId || info.device_id;
+      var deviceType = canonicalDeviceType(info.device_type || '');
       var existing = CanaryStorage.getDevice(id);
       if (existing) {
         // Refresh credentials but tell the caller — likely the user
         // tapped BOOT on a box they already paired.
-        CanaryStorage.updateDevice(id, { token: token, base_url: baseUrl, last_info: info });
+        var updates = { token: token, base_url: baseUrl, last_info: info };
+        if (deviceType) updates.device_type = deviceType;
+        CanaryStorage.updateDevice(id, updates);
         var dup = new Error('This Canary is already paired');
         dup.code = 'already_paired';
         dup.device = CanaryStorage.getDevice(id);
@@ -1622,6 +1773,7 @@ function completePairing(baseUrl, token, expectedDeviceId) {
         name: info.name || id,
         base_url: baseUrl,
         token: token,
+        device_type: deviceType,
         last_info: info,
         added_at: new Date().toISOString(),
       };
@@ -1814,11 +1966,16 @@ function renderAddCanaryView() {
   var capture = null;
 
   // One-shot prefill from "Pair this Canary" in the discovered list —
-  // the host is already known, so jump straight to the BOOT-tap step.
+  // the host (and peer record, when known) are already known, so jump
+  // straight to the right branch for the device's type.
   var prefillHost = '';
+  var prefillPeer = null;
   try {
     prefillHost = sessionStorage.getItem('canary_prefill_host') || '';
     sessionStorage.removeItem('canary_prefill_host');
+    var rawPeer = sessionStorage.getItem('canary_prefill_peer');
+    sessionStorage.removeItem('canary_prefill_peer');
+    if (rawPeer) prefillPeer = JSON.parse(rawPeer);
   } catch (e) { /* ignore */ }
 
   function setStep(renderStep) {
@@ -1885,17 +2042,28 @@ function renderAddCanaryView() {
         peers.forEach(function (peer) {
           var baseUrl = peerBaseUrl(peer);
           if (!baseUrl) return;
+          var typeInfo = deviceTypeInfo(peerDeviceType(peer));
           var row = el('div', { className: 'card cursor-pointer' }, [
             el('div', { className: 'card-header' }, [
               el('div', {}, [
                 el('div', { className: 'card-title', textContent: peer.name || peer.device_id }),
+                renderDeviceTypeBadge(typeInfo.dt),
                 el('div', { className: 'card-subtitle', textContent: baseUrl }),
+                typeInfo.tagline
+                  ? el('div', { className: 'device-type-tagline', textContent: typeInfo.tagline })
+                  : null,
               ]),
               el('span', { className: 'arrow', textContent: '›' }),
             ]),
           ]);
           row.addEventListener('click', function () {
-            setStep(function (slot) { stepCapture(slot, baseUrl); });
+            // Vision/sense have no HTTP server — the BOOT-tap flow would
+            // dead-end, so route them to the Home Assistant path instead.
+            if (wizardPathForPeer(peer) === 'mqtt') {
+              setStep(function () { stepMqttDevice(peer); });
+            } else {
+              setStep(function (slot) { stepCapture(slot, baseUrl); });
+            }
           });
           discoveredSlot.appendChild(row);
         });
@@ -2013,6 +2181,44 @@ function renderAddCanaryView() {
         }));
       },
     });
+  }
+
+  // ---- MQTT-only devices (vision/sense): no HTTP pairing ----
+  // These sensors carry no HTTP server, so there is nothing to pair here.
+  // They join through Home Assistant automatically via MQTT discovery;
+  // this step explains the type and walks the user to a live proof.
+  function stepMqttDevice(peer) {
+    var info = deviceTypeInfo(peerDeviceType(peer));
+
+    content.appendChild(el('div', { className: 'card pair-hero' }, [
+      el('div', { className: 'pair-type-icon' }, [deviceTypeIcon(info)]),
+      el('div', { className: 'pair-step-title', textContent: peer.name || peer.device_id }),
+      el('div', { className: 'pair-step-subtitle', textContent: info.tagline }),
+      el('div', { className: 'card-subtitle', textContent: peerBaseUrl(peer) || peer.device_id }),
+    ]));
+
+    content.appendChild(renderDeviceTypeCard(info));
+
+    content.appendChild(el('div', { className: 'card' }, [
+      el('div', { className: 'card-title mb-8', textContent: 'It joins through Home Assistant' }),
+      el('ol', { className: 'pair-guide-steps' }, [
+        el('li', { textContent: 'It’s already broadcasting on your network — no button to press.' }),
+        el('li', { textContent: 'Open Home Assistant: it appears as a device with its entities, no setup needed.' }),
+        el('li', { textContent: 'Press its “Identify” button in Home Assistant — the sensor blinks for 10 seconds so you know which one it is.' }),
+        el('li', { textContent: info.proof }),
+      ]),
+    ]));
+
+    content.appendChild(el('button', {
+      className: 'btn btn-primary btn-block mt-12',
+      textContent: 'Back to devices',
+      onClick: function () { Router.navigate('#/canaries'); },
+    }));
+    content.appendChild(el('button', {
+      className: 'btn btn-secondary btn-block mt-12',
+      textContent: 'Pair a different Canary',
+      onClick: function () { setStep(stepChoose); },
+    }));
   }
 
   // ---- Fallbacks: QR scan, pasted receipt, manual token ----
@@ -2136,16 +2342,22 @@ function renderAddCanaryView() {
   function stepConfirm(device) {
     var selectedRoom = device.room || '';
     var nameTouched = false;
+    // HTTP-paired devices without a device_type are WAP-class by
+    // definition — vision/sense never reach this step.
+    var typeInfo = deviceTypeInfo(device.device_type || 'canary-wap');
 
     content.appendChild(el('div', { className: 'card pair-hero' }, [
       el('div', { className: 'pair-check', textContent: '✓' }),
-      el('div', { className: 'pair-step-title', textContent: 'Canary paired' }),
+      el('div', { className: 'pair-step-title', textContent: typeInfo.label + ' paired' }),
+      el('div', { className: 'pair-step-subtitle', textContent: typeInfo.tagline }),
       el('div', {
         className: 'card-subtitle',
         textContent: device.id + (device.last_info && device.last_info.firmware_version
           ? ' · v' + device.last_info.firmware_version : ''),
       }),
     ]));
+
+    content.appendChild(renderDeviceTypeCard(typeInfo));
 
     // Blink the device so the user knows which physical box just joined —
     // essential when unboxing several identical units.
@@ -2193,10 +2405,10 @@ function renderAddCanaryView() {
       el('label', { className: 'form-label', textContent: 'Which room is it watching?' }),
       renderRoomPicker(selectedRoom, function (room) {
         selectedRoom = room;
-        // Polish: suggest the room as the device name until the user
-        // types their own.
+        // Polish: suggest "<Room> <Type label>" as the device name until
+        // the user types their own.
         if (!nameTouched && room) {
-          nameInput.value = room.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+          nameInput.value = room + ' ' + typeInfo.label;
         }
       }),
     ]));
@@ -2259,6 +2471,10 @@ function renderAddCanaryView() {
     }));
   }
 
+  if (prefillPeer && wizardPathForPeer(prefillPeer) === 'mqtt') {
+    setStep(function () { stepMqttDevice(prefillPeer); });
+    return;
+  }
   if (prefillHost) {
     var prefillBase = normalizeBaseUrl(prefillHost);
     if (prefillBase && isPrivateUrl(prefillBase)) {
@@ -2289,6 +2505,15 @@ function renderDeviceView(deviceId) {
   var content = el('div', { className: 'content' });
   var alertArea = el('div', { id: 'device-alert' });
   content.appendChild(alertArea);
+
+  // Type badge + tagline (unknown types render nothing)
+  var typeInfo = deviceTypeInfo(device.device_type);
+  if (typeInfo !== DEVICE_TYPES.unknown) {
+    content.appendChild(el('div', { className: 'device-type-line' }, [
+      renderDeviceTypeBadge(typeInfo.dt),
+      el('span', { className: 'device-type-tagline', textContent: typeInfo.tagline }),
+    ]));
+  }
 
   // Stats grid (placeholder until loaded)
   var statsGrid = el('div', { className: 'stats-grid', id: 'device-stats' }, [
@@ -2432,7 +2657,10 @@ function renderDeviceView(deviceId) {
   // Fetch live info
   CanaryAPI.request(device.base_url, '/api/v1/info')
     .then(function (info) {
-      CanaryStorage.updateDevice(deviceId, { last_info: info });
+      var updates = { last_info: info };
+      // Backfill the type for devices paired before device_type existed.
+      if (info.device_type) updates.device_type = canonicalDeviceType(info.device_type);
+      CanaryStorage.updateDevice(deviceId, updates);
       var grid = document.getElementById('device-stats');
       if (grid) {
         var uptimeHrs = Math.floor((info.uptime_s || 0) / 3600);

@@ -17,6 +17,7 @@ Choose your project and board:
 |---------|-------|----------|-------------|
 | **Canary WAP** | XIAO ESP32-S3 Sense | GPS tracking, SD storage, mesh network | [Get Started →](projects/canary-wap/) |
 | **Canary Vision** | ESP32-C3 + Grove Vision AI | Person detection, Home Assistant | [Get Started →](projects/canary-vision/) |
+| **Canary Sense** | XIAO ESP32-C6 + MR60BHA2 | Presence + breathing radar, Home Assistant | [Get Started →](projects/canary-sense/) |
 
 ### Canary WAP (Recommended First Project)
 
@@ -33,10 +34,12 @@ make upload
 make monitor
 ```
 
-Connect to WiFi **SecuraCV-XXXX** → http://192.168.4.1
+Connect to WiFi **SecuraCV-XXXX** → http://canary.local (or the numeric
+fallback http://192.168.4.1)
 
-> **Security Note:** The default AP password is for development only.
-> See `secrets/secrets.example.h` for configuration.
+> **Security Note:** The AP password is device-unique (derived from the
+> device key) and printed on the serial console at first boot — there is
+> no shared default. See `secrets/secrets.example.h` for optional overrides.
 
 ### Canary Vision
 
@@ -47,7 +50,32 @@ cd firmware/projects/canary-vision
 make secrets
 # Edit secrets/secrets.h with WiFi and MQTT credentials
 
-# Build and upload
+# Build and upload (flashes the default env: canary-vision-default, ESP32-C3 DevKit)
+make upload
+```
+
+> **Flashing a XIAO kit?** `make upload` targets the **ESP32-C3 DevKit** env
+> (`canary-vision-default`), whose I2C pins differ from the XIAO boards.
+> Select the env explicitly for XIAO hosts:
+>
+> ```bash
+> pio run -e canary-vision-xiao-c3 -t upload   # Seeed XIAO ESP32-C3
+> pio run -e canary-vision-xiao-s3 -t upload   # Seeed XIAO ESP32-S3 (Vision AI V2 Kit)
+> ```
+>
+> See the [board table in the project README](projects/canary-vision/README.md#supported-host-boards)
+> for the per-board I2C pin assignments.
+
+### Canary Sense
+
+```bash
+cd firmware/projects/canary-sense
+
+# Create secrets file
+make secrets
+# Edit secrets/secrets.h with WiFi and MQTT credentials
+
+# Build and upload (default env: canary-sense-default, presence-only)
 make upload
 ```
 
@@ -134,6 +162,31 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed composition rules, [VARIANT_
 - `securacv/<device_id>/state` - Current state
 - `securacv/<device_id>/status` - Device status
 
+### Canary Sense
+
+**Hardware:** XIAO ESP32-C6 + Seeed MR60BHA2 60GHz mmWave radar kit (+ BH1750 lux)
+
+**Features:**
+- Radar presence with 0/1/2+ occupant bucket and near/mid/far range band
+- Optional P1-gated wellbeing vitals (breathing lock; BPM in the opt-in wellbeing build only)
+- Ed25519 signed witness chain (NVS-persisted, wap-schema chain/health topics)
+- MQTT publishing with Home Assistant MQTT auto-discovery
+- Signed pull-OTA with HA `update` entity
+- mDNS fleet advert (`_securacv._tcp` with the canonical TXT schema)
+- Identify button in Home Assistant (blinks the LED for 10 s)
+
+**Build Configurations:**
+
+| Config | Use Case |
+|--------|----------|
+| `canary-sense-default` | Presence-only (vitals compiled out) |
+| `canary-sense-wellbeing` | Adds the P1-gated vitals lock (`-DCANARY_SENSE_VITALS`) |
+| `canary-sense-debug` | Verbose ESP-IDF logging |
+
+> New mDNS/identify features are compile/CI-verified; hardware bench
+> validation on the C6 kit is still pending — see the
+> [project README](projects/canary-sense/README.md) bench checklist.
+
 ---
 
 ## Build Systems
@@ -162,7 +215,9 @@ Then open `arduino/canary_wap/canary_wap.ino` in Arduino IDE.
 
 ### Make Targets
 
-All projects support these standard targets:
+The sensor firmware projects — `canary-wap`, `canary-vision`, and
+`canary-sense` — support these standard targets (`canary-display` and
+`canary-ota` are PlatformIO-only for now: use `pio run` there):
 
 ```bash
 make build       # Build firmware
@@ -186,6 +241,7 @@ See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIAN
 | **Arduino IDE (canary-wap)** | `projects/canary-wap/arduino/canary_wap/` | COMPATIBILITY | Monolithic sketch; full WAP UX |
 | **PlatformIO (canary-wap/)** | `projects/canary-wap/` | COMPATIBILITY | Uses common headers |
 | **canary-vision** | `projects/canary-vision/` | SPECIALIZED | ESP32-C3 + Grove Vision AI + MQTT/HA |
+| **canary-sense** | `projects/canary-sense/` | SPECIALIZED | XIAO ESP32-C6 + MR60BHA2 radar + MQTT/HA |
 | **canary-display** | `projects/canary-display/` | SPECIALIZED | Fleet status displays: watch puck (round) + 4.3" dash |
 | **canary-ota** | `projects/canary-ota/` | SPECIALIZED | OTA A/B subsystem |
 | **WAP Snapshot** | _(removed)_ | REMOVED | Frozen 2026-02-20, deleted 2026-05-29; history in git |
@@ -206,11 +262,20 @@ See [FEATURES.md](FEATURES.md) for the complete feature audit matrix and [VARIAN
 
 Fleet management lives in the **Canary Vision** companion app
 ([`canary-vision/`](../canary-vision/)) — the single supported multi-device
-dashboard. It pairs devices with the zero-typing BOOT-tap flow, shows fleet
-health (online/offline, events, uptime, signal), groups devices by room,
-and offers per-device **Identify** (blink LED + chirp), rename, logs, and
-witness-chain views. On desktop widths the dashboard lays device cards out
-in a multi-column grid.
+dashboard. For **Canary WAP** devices it pairs with the zero-typing BOOT-tap
+flow, shows fleet health (online/offline, events, uptime, signal), groups
+devices by room, and offers per-device **Identify** (blink LED + chirp),
+rename, logs, and witness-chain views. On desktop widths the dashboard lays
+device cards out in a multi-column grid.
+
+**Scope today:** the app's BOOT-tap pairing and Identify-over-HTTP apply to
+`canary-wap` (which runs an HTTP server). `canary-vision` and `canary-sense`
+are MQTT-only, advertise-only devices — they appear on the network via their
+`_securacv._tcp` mDNS adverts and integrate through **Home Assistant** MQTT
+auto-discovery, where each exposes its own **Identify** button (blinks the
+device LED for 10 s). Full companion-app pairing for these MQTT-only devices
+is on the roadmap — see
+[`docs/onboarding_unified_wizard.md`](../docs/onboarding_unified_wizard.md).
 
 ```bash
 cd canary-vision && npm install && npm run dev

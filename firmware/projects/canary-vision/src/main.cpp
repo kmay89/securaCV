@@ -26,6 +26,7 @@
 #include "pins.h"  // board identity (BOARD_NAME) from firmware/boards/<id>/pins
 #include "core/feature_sanity.h"  // FEATURE_* vs HAS_* compile-time cross-check
 #include "canary/net/wifi_mgr.h"
+#include "canary/net/mdns_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
 #include "canary/vision/vision_mgr.h"
@@ -83,6 +84,54 @@ static void aim_publish(const VisionSample& vs, uint32_t now_ms) {
            FRAME_W, FRAME_H);
   if (n <= 0 || (size_t)n >= sizeof(msg)) return;
   canary::net::publish_aim(TOPICS, msg);
+}
+
+// Identify (the wizard's "which device is which" moment): a 10 s LED
+// flash driven from HA's identify button or the companion app. Boards
+// without a user LED (XIAO ESP32-C3) still publish the MQTT echo so the
+// device card can pulse on screen instead.
+static uint32_t g_identify_until_ms = 0;  // 0 = idle
+
+#if defined(LED_BUILTIN) && (!defined(LED_BUILTIN_AVAILABLE) || LED_BUILTIN_AVAILABLE)
+#define IDENTIFY_HAS_LED 1
+#else
+#define IDENTIFY_HAS_LED 0
+#endif
+
+static void identify_led(bool on) {
+#if IDENTIFY_HAS_LED
+#if defined(LED_ACTIVE_LOW) && LED_ACTIVE_LOW
+  digitalWrite(LED_BUILTIN, on ? LOW : HIGH);
+#else
+  digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
+#endif
+#else
+  (void)on;
+#endif
+}
+
+static void identify_start(uint32_t now_ms) {
+  g_identify_until_ms = now_ms + 10000UL;
+  if (g_identify_until_ms == 0) g_identify_until_ms = 1;  // wrap guard
+#if IDENTIFY_HAS_LED
+  pinMode(LED_BUILTIN, OUTPUT);
+#endif
+  canary::net::publish_identify_echo(TOPICS, true);
+  canary::log_line("IDFY", IDENTIFY_HAS_LED
+                               ? "Identify: flashing LED for 10 s."
+                               : "Identify: no user LED on this board — MQTT echo only.");
+}
+
+static void identify_tick(uint32_t now_ms) {
+  if (!g_identify_until_ms) return;
+  if ((int32_t)(now_ms - g_identify_until_ms) >= 0) {
+    g_identify_until_ms = 0;
+    identify_led(false);
+    canary::net::publish_identify_echo(TOPICS, false);
+    return;
+  }
+  // 2 Hz flash — unmistakable against a steady status LED.
+  identify_led(((now_ms / 250) & 1) == 0);
 }
 
 static void set_last_event(const char* e) {
@@ -312,6 +361,12 @@ void setup() {
 
   canary::net::wifi_init_or_reboot();
 
+  // Fleet LAN presence: the _securacv._tcp advert (device_id/name/host/
+  // fw/model/dt/role TXT) that lets the companion app, canary-display,
+  // and sibling Canaries find and label this witness. Failure is
+  // non-fatal — MQTT/HA never depends on it.
+  canary::net::mdns_init();
+
   // Seed the heap-health snapshot so the first status publish carries real
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
@@ -349,6 +404,11 @@ void setup() {
   canary::net::mqtt_reconnect_blocking();
   canary::net::ha_discovery_publish_once(TOPICS);
 
+  // Broker link is up — gossip it on the fleet advert so a display or a
+  // sibling Canary that lost its broker can self-heal from ours.
+  canary::net::mdns_advertise_broker(canary::cfg::get().mqtt_host,
+                                     canary::cfg::get().mqtt_port);
+
   canary::net::publish_status_retained(TOPICS, "online");
   canary::net::publish_health_retained(TOPICS);   // carries public_key (TOFU)
   canary::net::publish_chain_retained(TOPICS);    // retained signed head
@@ -376,6 +436,7 @@ void setup() {
 void loop() {
   // STA supervision first: backoff reconnects, outage reboot (S3 parity).
   canary::net::wifi_loop(canary::ms_now());
+  canary::net::mdns_loop(canary::ms_now());  // drain deferred re-announce
   canary::diag::loop(canary::ms_now());
 
   if (!canary::net::mqtt_connected()) {
@@ -385,8 +446,13 @@ void loop() {
       return;
     }
     canary::log_line("MQTT", "Disconnected. Reconnecting...");
+    // Ground-truth-only gossip: stop referring the fleet to a broker we
+    // can't reach ourselves.
+    canary::net::mdns_clear_broker();
     canary::net::mqtt_reconnect_blocking();
     if (!canary::net::mqtt_connected()) return;  // WiFi dropped mid-attempt
+    canary::net::mdns_advertise_broker(canary::cfg::get().mqtt_host,
+                                       canary::cfg::get().mqtt_port);
     canary::net::publish_status_retained(TOPICS, "online");
     canary::net::publish_health_retained(TOPICS);
     canary::net::publish_chain_retained(TOPICS);
@@ -417,6 +483,10 @@ void loop() {
       aim_set(false, now_ms);
     }
   }
+
+  // Identify: drain the button press and drive the blink window.
+  if (canary::net::take_pending_identify()) identify_start(now_ms);
+  identify_tick(now_ms);
 
   if ((now_ms - last_heartbeat_ms) > HEARTBEAT_MS) {
     last_heartbeat_ms = now_ms;

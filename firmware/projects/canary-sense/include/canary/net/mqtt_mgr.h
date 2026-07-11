@@ -41,4 +41,11 @@ namespace canary::net {
   bool take_pending_install();   // true exactly once after HA pressed Install
   int take_pending_auto();       // -1 none; 0/1 = switch set off/on
 
+  // ── Identify (which-device-is-which) ──────────────────────────────────
+  // HA's identify button / the companion app writes identify/set; the
+  // callback latches it and main.cpp owns the 10 s blink window, echoing
+  // on/off (non-retained) so dashboards can pulse the card in sync.
+  bool take_pending_identify();  // true exactly once per inbound request
+  bool publish_identify_echo(const Topics& topics, bool active);
+
 } // namespace

@@ -14,7 +14,10 @@
 #include <config.h>
 
 // -------------------- Identity --------------------
-static constexpr const char* DEVICE_TYPE = "canary_vision";
+// Canonical device type: lowercase, hyphenated — must match HA's
+// DEVICE_TYPE_MODALITY map and the mDNS `dt` TXT key. (HA canonicalises
+// the legacy "canary_vision" spelling, but new payloads publish canonical.)
+static constexpr const char* DEVICE_TYPE = "canary-vision";
 static constexpr const char* DEVICE_ID   = "canary_vision_001";  // change per unit
 
 static constexpr const char* MANUFACTURER = "SecuraCV";

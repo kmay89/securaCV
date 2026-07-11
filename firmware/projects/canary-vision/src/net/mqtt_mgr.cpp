@@ -45,6 +45,11 @@ static int s_update_auto_cache = -1;
 static volatile int s_pending_aim = -1;
 static int s_aim_state_cache = -1;
 
+// Inbound identify command (HA identify button / companion app): the
+// wizard's "which device is which" moment. Latch-and-drain like the OTA
+// install command; main.cpp owns the blink window.
+static volatile bool s_pending_identify = false;
+
 // Inbound runtime detection settings (HA number entities). Latched by the
 // callback, drained from the main loop — same pattern as the OTA commands.
 // -1 = nothing pending.
@@ -108,7 +113,8 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
   const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
   const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
   const bool is_aim = (strcmp(topic, g_topics.aim_cmd) == 0);
-  if (!is_install && !is_auto && !is_aim) return;
+  const bool is_identify = (strcmp(topic, g_topics.identify_cmd) == 0);
+  if (!is_install && !is_auto && !is_aim && !is_identify) return;
 
   // Trim leading whitespace/quotes; require a token boundary after the
   // match so a mangled payload can't trigger a flash cycle.
@@ -118,6 +124,13 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
 
   if (is_install) {
     if (token_at(p, n, "install", 7)) s_pending_install = true;
+    return;
+  }
+  if (is_identify) {
+    if (token_at(p, n, "identify", 8) || token_at(p, n, "ON", 2) ||
+        token_at(p, n, "on", 2)) {
+      s_pending_identify = true;
+    }
     return;
   }
   if (is_aim) {
@@ -139,6 +152,12 @@ int take_pending_aim() {
   const int v = s_pending_aim;
   s_pending_aim = -1;
   return v;
+}
+
+bool take_pending_identify() {
+  if (!s_pending_identify) return false;
+  s_pending_identify = false;
+  return true;
 }
 
 bool take_pending_install() {
@@ -354,6 +373,14 @@ bool publish_aim_state_retained(const Topics& topics, bool enabled) {
   return publish_checked("AIM", topics.aim_state, enabled ? "ON" : "OFF", true);
 }
 
+bool publish_identify_echo(const Topics& topics, bool active) {
+  if (!mqtt.connected()) return false;
+  // Non-retained on purpose: the echo marks a live blink window, not a
+  // state — a card should only pulse while the LED is actually flashing.
+  return publish_checked("IDFY", topics.identify_echo, active ? "on" : "off",
+                         false);
+}
+
 void ha_discovery_publish_once(const Topics& topics) {
   if (discovery_done) return;
   canary::ha::publish_discovery(mqtt, topics);
@@ -420,6 +447,10 @@ void mqtt_reconnect_blocking() {
     publish_checked("OTA", g_topics.update_auto,
                     s_update_auto_cache ? "ON" : "OFF", true);
   }
+
+  // Identify button: re-subscribe so the wizard's blink request always
+  // reaches a connected device.
+  mqtt.subscribe(g_topics.identify_cmd, 1);
 
   // Aim assist: re-subscribe the switch command and reconcile the retained
   // state. Defaults to OFF on a boot where main.cpp hasn't set it yet.

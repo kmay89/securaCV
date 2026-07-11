@@ -130,6 +130,11 @@ setup_secrets() {
 #define WIFI_SSID           "your-wifi-ssid"
 #define WIFI_PASSWORD       "your-wifi-password"
 
+// WiFi Access Point settings
+// IMPORTANT: Change this password before deployment!
+// The default password is for development only.
+#define AP_PASSWORD_CUSTOM  "change-me-now"
+
 // MQTT credentials (optional)
 #define MQTT_BROKER         "192.168.1.100"
 #define MQTT_PORT           1883

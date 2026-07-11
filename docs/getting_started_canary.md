@@ -519,6 +519,100 @@ even after a restart.
 
 ---
 
+## The other Canaries: Vision and Sense
+
+Everything above describes the classic Wi-Fi-sensing Canary (the "WAP").
+Two sibling devices share the same witness DNA but sense differently and
+set up differently. Both are **MQTT-native**: they don't raise their own
+Wi-Fi network or serve a dashboard — they join your home Wi-Fi, talk to
+your MQTT broker, and live inside Home Assistant.
+
+### Canary Vision
+
+A person-detection witness. A Grove Vision AI V2 module runs the vision
+model on its own NPU and hands the ESP32 host nothing but boxes and
+scores over I2C — **no pixels ever cross the wire, and no video is ever
+stored**. What you get in Home Assistant: presence, dwelling, confidence,
+and a coarse voxel location.
+
+**Bring-up, in short** (full walkthrough:
+[`firmware/projects/canary-vision/`](../firmware/projects/canary-vision/README.md)):
+
+```bash
+cd firmware/projects/canary-vision
+make secrets          # copies secrets.example.h → secrets/secrets.h
+# edit secrets/secrets.h: your Wi-Fi SSID/password + MQTT broker IP
+pio run -e canary-vision-xiao-c3 -t upload   # pick the env for your board
+```
+
+There is **no captive portal** on this variant — Wi-Fi and the broker
+address are compiled in from `secrets/secrets.h`. Flash once over USB;
+after that, updates arrive over the air.
+
+### Canary Sense
+
+A radar witness. A 60 GHz mmWave module (Seeed MR60BHA2, XIAO ESP32-C6
+host) senses presence through the air — no camera, no microphone, no
+MAC addresses. It reports presence, a 0/1/2+ occupant bucket, and a
+near/mid/far range band. The **wellbeing build** adds a breathing lock;
+heart-rate entities exist **only** in that opt-in vitals build and are
+compiled out of the default image entirely.
+
+**Bring-up, in short** (full details:
+[`firmware/projects/canary-sense/`](../firmware/projects/canary-sense/README.md)):
+
+```bash
+cd firmware/projects/canary-sense
+make secrets          # copies secrets.example.h → secrets/secrets.h
+# edit secrets/secrets.h: your Wi-Fi SSID/password + MQTT broker IP
+make upload           # default env; `make upload-wellbeing` for vitals
+```
+
+Same deal as Vision: no captive portal, credentials compiled in, OTA
+after the first USB flash.
+
+### How they show up
+
+Once on your network, both variants:
+
+- **Announce themselves over mDNS.** Each advertises a `_securacv._tcp`
+  service carrying its device ID, name, hostname, firmware version,
+  model, and device type — the same advert every Canary (and the
+  fleet display) uses, so other SecuraCV devices and the companion app
+  can see them on the LAN. They advertise only; they don't run a web
+  server, so there's no `canary.local` dashboard to open for these two.
+- **Appear in Home Assistant automatically.** Point them at the same
+  MQTT broker HA uses and the entities register themselves via MQTT
+  discovery — no integration to install, same as the WAP.
+
+### Which device is which?
+
+Every Vision and Sense exposes an **Identify** button in Home Assistant
+(on the device page, next to its entities). Press it and that device
+blinks its LED for ten seconds — the fastest way to tell three
+identical white boxes apart while you're labelling rooms.
+
+### What's different from the WAP flow
+
+| | Canary (WAP) | Vision / Sense |
+|---|---|---|
+| First contact | Join its `SecuraCV-XXXX` network, open `canary.local` | Flash with your credentials over USB |
+| Own dashboard | Yes (full web UI) | No — Home Assistant is the UI |
+| Wi-Fi setup | Captive portal / Settings → Wi-Fi | Compiled in via `secrets/secrets.h` |
+| Broker address | Set on the dashboard | Compiled in via `secrets/secrets.h` |
+| Identify | Companion app (blink + chirp) | **Identify** button in Home Assistant |
+
+A unified onboarding wizard that closes this gap — pairing MQTT-only
+devices from the companion app without editing `secrets.h` — is on the
+roadmap: see
+[`docs/onboarding_unified_wizard.md`](onboarding_unified_wizard.md).
+
+> **Honesty note:** the mDNS announcement and Identify button are new in
+> this firmware and verified in CI builds; hardware bench validation is
+> still in progress.
+
+---
+
 ## Keeping it up to date
 
 You never need to take the Canary down off the shelf — or touch it at

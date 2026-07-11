@@ -10,6 +10,7 @@ function infoRoutes(state) {
       device_id: state.device.device_id,
       name: state.device.name,
       model: state.device.model,
+      device_type: state.device.device_type,
       firmware_version: state.device.firmware_version,
       uptime_s: state.getUptime(),
       last_seen: new Date().toISOString(),

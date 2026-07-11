@@ -39,6 +39,7 @@
 #include "canary/diagnostics.h"
 #include "canary/witness.h"
 #include "canary/net/wifi_mgr.h"
+#include "canary/net/mdns_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
 
@@ -125,16 +126,28 @@ static bool g_state_dirty = false;
 static uint32_t g_mqtt_next_attempt_ms = 0;
 static uint32_t g_mqtt_attempts = 0;
 
+// Broker gossip bookkeeping: advertise the working broker on the fleet
+// advert while the link is up, tombstone it the moment it drops
+// (ground-truth-only referral — same contract as canary-display/wap).
+static bool g_broker_gossiped = false;
+
 static bool mqtt_supervise(uint32_t now) {
   if (canary::net::mqtt_connected()) {
     g_mqtt_attempts = 0;
     return true;
+  }
+  if (g_broker_gossiped) {
+    canary::net::mdns_clear_broker();
+    g_broker_gossiped = false;
   }
   if (!canary::net::wifi_connected()) return false;  // wifi_loop owns this
   if ((int32_t)(now - g_mqtt_next_attempt_ms) < 0) return false;
 
   if (canary::net::mqtt_connect_attempt()) {
     g_mqtt_attempts = 0;
+    canary::net::mdns_advertise_broker(canary::cfg::get().mqtt_host,
+                                       canary::cfg::get().mqtt_port);
+    g_broker_gossiped = true;
     canary::net::publish_status_retained(TOPICS, "online");
     // Trust surface: health carries the pubkey HA TOFU-pins on; the
     // retained chain head lets HA verify continuity immediately.
@@ -198,13 +211,42 @@ static void led_show(uint8_t r, uint8_t g, uint8_t b) {
 #endif
 }
 
+// Identify (the wizard's "which device is which" moment): a 10 s white
+// flash driven from HA's identify button or the companion app. While the
+// window is open, identify owns the LED; the presence colour is restored
+// from g_led_presence when it closes.
+static uint32_t g_identify_until_ms = 0;  // 0 = idle
+static Presence g_led_presence = Presence::Unknown;
+
 static void led_for_presence(Presence p) {
+  g_led_presence = p;
+  if (g_identify_until_ms) return;  // identify owns the LED until it ends
   switch (p) {
     case Presence::Present: led_show(0, 24, 0);  break;  // green: someone here
     case Presence::Clear:   led_show(0, 0, 16);  break;  // blue: clear
     case Presence::Unknown:                              // fallthrough
     default:                led_show(24, 8, 0);  break;  // amber: no radar data
   }
+}
+
+static void identify_start(uint32_t now) {
+  g_identify_until_ms = now + 10000UL;
+  if (g_identify_until_ms == 0) g_identify_until_ms = 1;  // wrap guard
+  canary::net::publish_identify_echo(TOPICS, true);
+  boot_line("[identify] flashing LED for 10 s");
+}
+
+static void identify_tick(uint32_t now) {
+  if (!g_identify_until_ms) return;
+  if ((int32_t)(now - g_identify_until_ms) >= 0) {
+    g_identify_until_ms = 0;
+    canary::net::publish_identify_echo(TOPICS, false);
+    led_for_presence(g_led_presence);  // hand the LED back to presence
+    return;
+  }
+  // 2 Hz white flash — unmistakable against the steady presence colours.
+  const bool on = ((now / 250) & 1) == 0;
+  led_show(on ? 48 : 0, on ? 48 : 0, on ? 48 : 0);
 }
 
 // ----------------------------------------------------------------------------
@@ -449,6 +491,12 @@ void setup() {
 
   canary::net::wifi_init_or_reboot();
 
+  // Fleet LAN presence: the _securacv._tcp advert (device_id/name/host/
+  // fw/model/dt/role TXT) that lets the companion app, canary-display,
+  // and sibling Canaries find and label this witness. Failure is
+  // non-fatal — MQTT/HA never depends on it.
+  canary::net::mdns_init();
+
   // Seed the heap-health snapshot so the first status publish carries real
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
@@ -561,8 +609,13 @@ void loop() {
   }
 #endif
 
+  // Identify blink window: drive it every pass, broker or no broker —
+  // the LED must keep flashing through a mid-identify outage.
+  identify_tick(now);
+
   // ── Network supervision ──
   canary::net::wifi_loop(now);
+  canary::net::mdns_loop(now);  // drain deferred re-announce (event task latches only)
   canary::diag::loop(now);
 
   // Bounded, backoff-scheduled broker supervision: while the broker is
@@ -575,6 +628,9 @@ void loop() {
 
   canary::net::mqtt_loop();
   canary::net::ota_loop(now);
+
+  // Identify: drain the button press and open the blink window.
+  if (canary::net::take_pending_identify()) identify_start(now);
 
   if (g_state_dirty) {
     publish_state_now(now);

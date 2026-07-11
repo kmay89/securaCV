@@ -44,4 +44,50 @@ describe('GET /api/v1/peers', () => {
       assert.match(peer.mdns_hostname, /\.local$/);
     }
   });
+
+  it('peer entries carry a canonical device_type', async () => {
+    // The SPA branches its pairing wizard on this: WAP-class devices pair
+    // over HTTP, vision/sense are MQTT-onboarded via Home Assistant.
+    const res = await client.get('/api/v1/peers');
+    const types = ['canary-wap', 'canary-vision', 'canary-sense'];
+    for (const peer of res.json.peers) {
+      assert.ok(types.includes(peer.device_type),
+        `peer ${peer.device_id} has unexpected device_type ${peer.device_type}`);
+    }
+  });
+});
+
+describe('GET /api/v1/peers — dt normalization', () => {
+  let server, client;
+
+  before(async () => {
+    // Firmware fleet scans relay the mDNS TXT `dt` key; the API must
+    // normalize it to the long device_type spelling.
+    server = await startServer({
+      devMode: true,
+      peers: [
+        {
+          device_id: 'canary-f6a7',
+          name: 'Hallway',
+          dt: 'canary-sense',
+          ip: '192.168.1.120',
+          mdns_hostname: 'canary-f6a7.local',
+          last_seen: '2026-02-18T14:22:00Z',
+        },
+      ],
+    });
+    client = createClient(server.url, TOKEN);
+  });
+
+  after(async () => {
+    await server.close();
+  });
+
+  it('accepts the mDNS TXT `dt` spelling and serves device_type', async () => {
+    const res = await client.get('/api/v1/peers');
+    assert.equal(res.status, 200);
+    assert.equal(res.json.peers.length, 1);
+    assert.equal(res.json.peers[0].device_type, 'canary-sense');
+    assert.equal(res.json.peers[0].dt, undefined);
+  });
 });
