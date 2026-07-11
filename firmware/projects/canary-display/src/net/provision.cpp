@@ -37,7 +37,7 @@ namespace {
 
 // ── Choreography (see onboard_ui.h for the motion budget) ────────────────
 constexpr uint32_t HELLO_MS          = 2600;   // welcome beat before the QR
-constexpr uint32_t HINT_AFTER_MS     = 9000;   // phone joined, portal never hit
+constexpr uint32_t HINT_AFTER_MS     = 4000;   // phone joined, portal never hit
 constexpr uint32_t STA_TIMEOUT_MS    = 30000;  // WAP lesson: 15 s reads as
                                                // "wrong password" at range edge
 constexpr uint32_t AP_LINGER_MAX_MS  = 25000;  // success: wait for phone's ack…
@@ -237,6 +237,9 @@ scan(false);
 
 void send_portal() {
   g->portal_seen = true;
+  // no-store: the captive sheet caches aggressively, and a cached copy from
+  // a previous (aborted) onboarding session renders stale scan lists.
+  g->server.sendHeader("Cache-Control", "no-store");
   g->server.send_P(200, "text/html", PORTAL_HTML);
 }
 
@@ -381,10 +384,13 @@ void handle_not_found() {
       g->server.send(200, "text/plain", "Microsoft Connect Test");
       return;
     case Probe::ApplePortal:
-      // Deliberately NOT Apple's Success token: the Captive Network
-      // Assistant sheet pops and shows the portal.
-      send_portal();
-      return;
+      // Deliberately NOT Apple's Success token, so the Captive Network
+      // Assistant sheet pops — but answer with a REDIRECT, not the page
+      // itself: serving the portal inline on captive.apple.com rendered a
+      // blank sheet on a real iPhone (4.3B bench), while redirect-to-own-IP
+      // is the battle-tested CNA flow — the sheet lands on our actual
+      // origin, so the page and its /scan /join /status fetches all agree.
+      break;
     case Probe::None:
       break;
   }
@@ -395,19 +401,26 @@ void handle_not_found() {
 
 // A-only / NODATA captive DNS (see provision_core.h for why).
 void dns_pump() {
-  const int len = g->dns.parsePacket();
-  if (len <= 0) return;
-  uint8_t query[512];
-  const int got = g->dns.read(query, sizeof(query));
-  if (got < 12) return;
-  uint8_t resp[560];
-  const IPAddress ap_ip = WiFi.softAPIP();
-  const uint8_t ip[4] = {ap_ip[0], ap_ip[1], ap_ip[2], ap_ip[3]};
-  const size_t n = dns_build_response(query, (size_t)got, ip, resp, sizeof(resp));
-  if (n == 0) return;
-  g->dns.beginPacket(g->dns.remoteIP(), g->dns.remotePort());
-  g->dns.write(resp, n);
-  g->dns.endPacket();
+  // Drain the queue, not one packet: iPhones burst several queries at once
+  // (A + HTTPS types, plus impatient retries), and each wizard pass also
+  // pays for a full LVGL frame — one-answer-per-pass stacked seconds of
+  // resolution latency onto the captive sheet (bench: it sat blank).
+  for (int i = 0; i < 8; i++) {
+    const int len = g->dns.parsePacket();
+    if (len <= 0) return;
+    uint8_t query[512];
+    const int got = g->dns.read(query, sizeof(query));
+    if (got < 12) continue;
+    uint8_t resp[560];
+    const IPAddress ap_ip = WiFi.softAPIP();
+    const uint8_t ip[4] = {ap_ip[0], ap_ip[1], ap_ip[2], ap_ip[3]};
+    const size_t n =
+        dns_build_response(query, (size_t)got, ip, resp, sizeof(resp));
+    if (n == 0) continue;
+    g->dns.beginPacket(g->dns.remoteIP(), g->dns.remotePort());
+    g->dns.write(resp, n);
+    g->dns.endPacket();
+  }
 }
 
 const char* sta_failure_reason(wl_status_t st) {
@@ -519,8 +532,14 @@ void provision_run(bool glass_ok) {
         } else if (!ctx.portal_seen &&
                    (int32_t)(now - ctx.st_since) > (int32_t)HINT_AFTER_MS) {
           // Captive sheet never popped (some Androids with "stay connected"
-          // prompts): give the manual path, quietly.
+          // prompts, or a dismissed iOS sheet): give the manual path,
+          // quietly — the browser is the recovery, so name it (short form
+          // on the watch: the round face clips long bottom captions).
+#ifdef CD_FLAVOR_WATCH
           ui_hint("no page? open 192.168.4.1");
+#else
+          ui_hint("no page? open Safari to 192.168.4.1");
+#endif
         }
         break;
 

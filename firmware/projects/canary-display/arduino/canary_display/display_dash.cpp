@@ -88,6 +88,27 @@ bool display_init() {
   delay(60);
   pinMode(TOUCH_PIN_INT, INPUT);
 
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  // Bounce buffers (GFX 1.6.x, the core-3 pairing): two small internal-SRAM
+  // staging buffers the LCD DMA streams from instead of reading PSRAM
+  // directly. Without them the panel visibly jitters/shifts sideways the
+  // moment WiFi comes up — the radio and the renderer contend for PSRAM
+  // bandwidth and the RGB peripheral underruns (seen on the 4.3B bench).
+  // 2 x 800x10 px costs 32 KiB of internal RAM; 10 rows divides 480 evenly.
+  s_rgbpanel = new Arduino_ESP32RGBPanel(
+      LCD_PIN_DE, LCD_PIN_VSYNC, LCD_PIN_HSYNC, LCD_PIN_PCLK,
+      LCD_PIN_R3, LCD_PIN_R4, LCD_PIN_R5, LCD_PIN_R6, LCD_PIN_R7,
+      LCD_PIN_G2, LCD_PIN_G3, LCD_PIN_G4, LCD_PIN_G5, LCD_PIN_G6, LCD_PIN_G7,
+      LCD_PIN_B3, LCD_PIN_B4, LCD_PIN_B5, LCD_PIN_B6, LCD_PIN_B7,
+      0 /* hsync_polarity */, LCD_HSYNC_FRONT_PORCH, LCD_HSYNC_PULSE, LCD_HSYNC_BACK_PORCH,
+      0 /* vsync_polarity */, LCD_VSYNC_FRONT_PORCH, LCD_VSYNC_PULSE, LCD_VSYNC_BACK_PORCH,
+      1 /* pclk_active_neg */, LCD_PCLK_HZ,
+      false /* useBigEndian */, 0 /* de_idle_high */, 0 /* pclk_idle_high */,
+      (size_t)LCD_WIDTH * 10 /* bounce_buffer_size_px */);
+#else
+  // GFX 1.4.9 (the core-2 pairing) predates the bounce-buffer parameter —
+  // this path can show WiFi-load jitter on the 4.3B; the shipping answer
+  // for that pairing is under evaluation (lower PCLK trades refresh rate).
   s_rgbpanel = new Arduino_ESP32RGBPanel(
       LCD_PIN_DE, LCD_PIN_VSYNC, LCD_PIN_HSYNC, LCD_PIN_PCLK,
       LCD_PIN_R3, LCD_PIN_R4, LCD_PIN_R5, LCD_PIN_R6, LCD_PIN_R7,
@@ -96,6 +117,7 @@ bool display_init() {
       0 /* hsync_polarity */, LCD_HSYNC_FRONT_PORCH, LCD_HSYNC_PULSE, LCD_HSYNC_BACK_PORCH,
       0 /* vsync_polarity */, LCD_VSYNC_FRONT_PORCH, LCD_VSYNC_PULSE, LCD_VSYNC_BACK_PORCH,
       1 /* pclk_active_neg */, LCD_PCLK_HZ);
+#endif
   s_display = new Arduino_RGB_Display(LCD_WIDTH, LCD_HEIGHT, s_rgbpanel,
                                       0 /* rotation */, true /* auto_flush */);
   if (!s_display->begin()) {

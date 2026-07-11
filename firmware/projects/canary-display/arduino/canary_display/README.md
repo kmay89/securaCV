@@ -78,7 +78,11 @@ install).
    - Dash: Board → `ESP32S3 Dev Module`, PSRAM → `OPI PSRAM`, Flash Size →
      `16MB`, Partition Scheme → `Huge APP (3MB No OTA/1MB SPIFFS)`
 5. **Build.** With no `secrets.h` compiled in, the display boots into its
-   on-glass onboarding wizard — WiFi setup happens on the device.
+   on-glass onboarding wizard — WiFi setup happens on the device: scan the
+   QR (or join the `SecuraCV-XXXX` network it shows) from your phone, and
+   the setup page opens by itself via the captive-WiFi sheet. If no page
+   appears within a few seconds, open **Safari** (or any browser) and go to
+   `http://192.168.4.1` — the glass shows this hint too.
 
 (Using a **vendor board package** — e.g. Waveshare's own
 "ESP32-S3-Touch-LCD-4.3B" board entry? The sketch can't infer the flavor
