@@ -8,6 +8,9 @@ const DEVICE = {
   device_id: 'canary-a3f7',
   name: 'Front Porch',
   model: 'XIAO ESP32S3',
+  // Canonical witness type: the reference device-api models a WAP-class
+  // device (HTTP API + mDNS browse); vision/sense are MQTT-only.
+  device_type: 'canary-wap',
   firmware_version: '0.4.1',
   ip: '192.168.1.47',
   mac: 'AA:BB:CC:DD:EE:01',
@@ -59,6 +62,7 @@ const DEFAULT_PEERS = [
   {
     device_id: 'canary-b1c2',
     name: 'Garage',
+    device_type: 'canary-vision',
     ip: '192.168.1.103',
     mdns_hostname: 'canary-b1c2.local',
     last_seen: '2026-02-18T14:20:00Z',
@@ -66,11 +70,21 @@ const DEFAULT_PEERS = [
   {
     device_id: 'canary-d4e5',
     name: 'Back Yard',
+    device_type: 'canary-sense',
     ip: '192.168.1.110',
     mdns_hostname: 'canary-d4e5.local',
     last_seen: '2026-02-18T14:18:00Z',
   },
 ];
+
+// Peers arrive from mDNS TXT records, which spell the type `dt`; the
+// HTTP API uses the long `device_type` key. Accept either on the way in.
+function normalizePeer(peer) {
+  const p = structuredClone(peer);
+  if (!p.device_type && p.dt) p.device_type = p.dt;
+  delete p.dt;
+  return p;
+}
 
 function generateToken(deviceId) {
   const suffix = deviceId.split('-').pop() || 'xxxx';
@@ -442,7 +456,7 @@ function createDeviceState(overrides = {}) {
     lastRebootTime,
     updateInProgress,
     lastUpdateTime,
-    peers: structuredClone(overrides.peers || DEFAULT_PEERS),
+    peers: (overrides.peers || DEFAULT_PEERS).map(normalizePeer),
     addLog,
     addWitnessRecord,
     tryEmitEvent,

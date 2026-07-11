@@ -41,6 +41,7 @@ node --test tests/spa/csp-compliance.test.js
 node --test tests/spa/routing.test.js
 node --test tests/spa/token-storage.test.js
 node --test tests/spa/peer-discovery.test.js
+node --test tests/spa/device-types.test.js
 node --test tests/spa/magic-pairing.test.js
 node --test tests/spa/session-expiry.test.js
 node --test tests/spa/verified-timeline.test.js
