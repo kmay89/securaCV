@@ -36,7 +36,9 @@ namespace {
 
 constexpr int GRID_COLS = 2, GRID_ROWS = 4;
 constexpr int MAX_CARDS = GRID_COLS * GRID_ROWS;
-constexpr int EV_ROWS = 9;
+// 8 rows of the larger dash type (20 px name + 16 px meta, 42 px pitch)
+// fill the rail to y=437; a 9th ran past the footer at the new sizes.
+constexpr int EV_ROWS = 8;
 
 constexpr lv_coord_t HDR_H = 64;
 constexpr lv_coord_t TL_W = 272;
@@ -431,15 +433,18 @@ void dash_ui_create() {
     lv_obj_set_style_border_width(c.spine, 0, 0);
     lv_obj_set_style_bg_opa(c.spine, LV_OPA_COVER, 0);
     lv_obj_clear_flag(c.spine, LV_OBJ_FLAG_SCROLLABLE);
-    c.name = mk_label(c.box, font_body(), col_text());
-    lv_obj_set_pos(c.name, 26, 10);
+    // Four rows inside a 92 px card: label(20) + 3x caption(16) with 3-4 px
+    // gaps. font_body (24 on dash) doesn't fit this geometry — the name row
+    // would land exactly on the state row (post-#874 review catch).
+    c.name = mk_label(c.box, font_label(), col_text());
+    lv_obj_set_pos(c.name, 26, 8);
     c.state = mk_label(c.box, font_caption(), col_ok());
     lv_obj_set_style_text_letter_space(c.state, 1, 0);
-    lv_obj_set_pos(c.state, 26, 34);
+    lv_obj_set_pos(c.state, 26, 32);
     c.badge = mk_label(c.box, font_caption(), col_muted());
-    lv_obj_align(c.badge, LV_ALIGN_TOP_RIGHT, -12, 34);
+    lv_obj_align(c.badge, LV_ALIGN_TOP_RIGHT, -12, 32);
     c.event = mk_label(c.box, font_caption(), col_muted());
-    lv_obj_set_pos(c.event, 26, 52);
+    lv_obj_set_pos(c.event, 26, 51);
     c.meta = mk_label(c.box, font_caption(), col_faint());
     lv_obj_set_pos(c.meta, 26, 70);
     lv_obj_add_flag(c.box, LV_OBJ_FLAG_HIDDEN);
@@ -483,7 +488,8 @@ void dash_ui_create() {
     r.name = mk_label(s_scr, font_label(), col_text());
     lv_obj_set_pos(r.name, 800 - TL_W + 34, y);
     r.meta = mk_label(s_scr, font_caption(), col_muted());
-    lv_obj_set_pos(r.meta, 800 - TL_W + 34, y + 19);
+    // +23: clears the 20 px dash label font (+19 was tuned for 14 px).
+    lv_obj_set_pos(r.meta, 800 - TL_W + 34, y + 23);
   }
 
   // ── Footer + ack ring ──
@@ -498,12 +504,13 @@ void dash_ui_create() {
   lv_obj_set_style_shadow_color(s_proof, lv_color_black(), 0);
   lv_obj_set_style_shadow_opa(s_proof, LV_OPA_60, 0);
   s_proof_title = mk_label(s_proof, font_body(), col_text());
-  lv_obj_align(s_proof_title, LV_ALIGN_TOP_MID, 0, 14);
+  lv_obj_align(s_proof_title, LV_ALIGN_TOP_MID, 0, 12);
   s_proof_state = mk_label(s_proof, font_caption(), col_muted());
-  lv_obj_align(s_proof_state, LV_ALIGN_TOP_MID, 0, 38);
+  // 44/68: the 24 px dash title ends at 36 (14/38/60 was the 16 px tuning).
+  lv_obj_align(s_proof_state, LV_ALIGN_TOP_MID, 0, 44);
   lv_obj_t* qr_card = lv_obj_create(s_proof);
   lv_obj_set_size(qr_card, 256, 256);
-  lv_obj_align(qr_card, LV_ALIGN_TOP_MID, 0, 60);
+  lv_obj_align(qr_card, LV_ALIGN_TOP_MID, 0, 68);
   lv_obj_set_style_bg_color(qr_card, lv_color_white(), 0);
   lv_obj_set_style_bg_opa(qr_card, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(qr_card, 12, 0);
