@@ -55,7 +55,10 @@ def err(msg: str) -> None:
 
 
 def strip_comments(src: str) -> str:
-    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    # Block comments become an equal number of newlines so line numbers in
+    # the stripped text still match the original file in error reports.
+    src = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), src,
+                 flags=re.S)
     return re.sub(r"//[^\n]*", "", src)
 
 
@@ -114,14 +117,14 @@ def check_board_dir(entry):
                 f"directive: '{stripped[:60]}' — pin files must contain "
                 "only #define/#pragma/#if directives")
 
-    m = re.search(r'#define\s+BOARD_ID\s+"([^"]+)"', src)
+    m = re.search(r'#define\s+BOARD_ID\s+"([^"]+)"', bare)
     if not m:
         err(f"{bid}: pins/pins.h does not define BOARD_ID")
     elif m.group(1) != bid:
         err(f"{bid}: BOARD_ID is \"{m.group(1)}\" but the directory (and "
             f"registry id) is \"{bid}\"")
 
-    caps = dict(re.findall(r"#define\s+(HAS_\w+)\s+(\d+)", src))
+    caps = dict(re.findall(r"#define\s+(HAS_\w+)\s+(\d+)", bare))
     for cap in BASELINE_CAPS:
         if cap not in caps:
             err(f"{bid}: pins/pins.h missing baseline capability flag {cap} "
@@ -173,6 +176,10 @@ def main() -> int:
         entries = json.loads(REGISTRY.read_text())
     except (OSError, json.JSONDecodeError) as e:
         print(f"::error::cannot load {REGISTRY}: {e}")
+        return 1
+    if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+        print(f"::error::{REGISTRY} must be a JSON array of board objects "
+              "(same shape as flavors.json)")
         return 1
 
     check_registry_shape(entries)

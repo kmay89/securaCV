@@ -2,6 +2,10 @@
 # Host test for firmware/common/core/feature_sanity.h — asserts the #error
 # checks fire (and don't fire) for representative flag combinations.
 set -u
+if ! command -v g++ >/dev/null 2>&1; then
+  echo "Error: g++ is required to run the feature-sanity tests." >&2
+  exit 1
+fi
 H=firmware/common/core/feature_sanity.h
 pass=0 fail=0
 
@@ -49,16 +53,26 @@ expect err "touch on, no controller"    FEATURE_TOUCH=1 HAS_TOUCH=0
 expect err "dim on, on/off backlight"   FEATURE_BACKLIGHT_DIM=1 HAS_BACKLIGHT_PWM=0
 expect ok  "dim off, on/off backlight"  FEATURE_BACKLIGHT_DIM=0 HAS_BACKLIGHT_PWM=0
 
-# Real-world matrix: every shipped board's pins.h against the vision default
-# config's enabled feature set (vision default: VISION_AI+WIFI_STA+MQTT on).
+# Real-world matrix: every shipped Vision host board's pins.h against the
+# REAL vision default flavor config (not simulated -D flags — the same pair
+# the production include ladder assembles via canary/config.h + pins.h).
 for b in xiao-esp32s3 xiao-esp32c3 esp32-c3; do
-  if printf '#include "firmware/boards/%s/pins/pins.h"\n#include "%s"\n' "$b" "$H" \
-    | g++ -x c++ -fsyntax-only -I. -DFEATURE_VISION_AI=1 -DFEATURE_WIFI_STA=1 -DFEATURE_MQTT=1 - 2>/dev/null; then
+  if printf '#include "firmware/boards/%s/pins/pins.h"\n#include "firmware/configs/canary-vision/default/config.h"\n#include "%s"\n' "$b" "$H" \
+    | g++ -x c++ -fsyntax-only -I. - 2>/dev/null; then
     pass=$((pass+1))
   else
-    fail=$((fail+1)); echo "FAIL: vision defaults on $b"
+    fail=$((fail+1)); echo "FAIL: vision default config on $b"
   fi
 done
+
+# Negative proof: the real vision flavor config on a host WITHOUT Vision AI
+# capability must refuse to build.
+if printf '#include "firmware/configs/canary-vision/default/config.h"\n#include "%s"\n' "$H" \
+  | g++ -x c++ -fsyntax-only -I. -DHAS_VISION_AI=0 -DHAS_WIFI=1 - 2>/dev/null; then
+  fail=$((fail+1)); echo "FAIL: vision config on non-vision host should not compile"
+else
+  pass=$((pass+1))
+fi
 
 # Real-world matrix: both display flavors' shipped configs against their
 # boards' pin maps (these configs use live FEATURE_DISPLAY/TOUCH/DIM flags).
