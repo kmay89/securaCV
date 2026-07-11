@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+### security: re-derive the break-glass quorum at every verification point
+
+A security review found the break-glass path trusted a receipt's recorded
+`outcome: Granted` verbatim without ever recomputing the quorum. Because a
+`BreakGlassReceipt` is device-signed and hash-chained, a holder of the
+**device signing key alone** could forge `Granted` over an *empty* approval
+set, append it through the normal signed path, mint a token, and unseal —
+with zero genuine trustee approvals. That defeats Invariant V ("no single
+actor/credential/process can unilaterally access sealed evidence"); the
+device key is exactly the credential the quorum exists to render
+insufficient.
+
+- **H1 — quorum is now re-derived, never trusted.** Both the audit verifier
+  (`verify_approvals_against_policy`, shared by
+  `verify_break_glass_receipts_with` and the `receipts` CLI) and the runtime
+  unseal/export gate (`break_glass_receipt_outcome_for_verifier`) now
+  recompute the count of *distinct, valid, known-trustee* approvals against
+  the configured `QuorumPolicy` and refuse any `Granted` receipt that does
+  not meet `policy.n`. The runtime gate also checks the receipt's
+  `approvals_commitment` so a swapped `approvals_json` is rejected before the
+  count. New helper `count_valid_distinct_approvals` dedups on the public
+  KEY. Tests: a forged empty-approvals `Granted` receipt is rejected at both
+  the audit verifier and the unseal gate; a real quorum still passes.
+- **M1 — duplicate trustee keys rejected.** `QuorumPolicy::validate` enforced
+  id-uniqueness but not key-uniqueness, so one key-holder listed under two
+  ids filled two quorum slots and satisfied a k-of-n quorum alone. It now
+  rejects a public key reused across trustee entries.
+- **L1 — request-hash field framing.** `UnlockRequest::request_hash` now
+  length-prefixes the variable-length `envelope_id`/`purpose` (mirroring
+  `token_signing_hash`) so no boundary-shifted `(envelope, purpose)` pair can
+  collide.
+- **L2 — residual key zeroization.** `seal_v2` scrubs the source DEK copy
+  left in `DerivedDek` after wrapping it in the drop-guard, and the KEM
+  shared secret is zeroized after DEK derivation on both the seal and decrypt
+  paths.
+
+### firmware (canary-wap): beacon-audit SD recovery now requires chain linkage
+
+The beacon audit chain-head recovery adopted the last `"head":"…"` substring
+from `/beacon/audit.jsonl` verbatim, with none of the guards the witness
+recovery uses — a torn power-cut tail, a corrupt line, or a spliced fragment
+could silently redirect the append-only chain. The beacon format has no
+per-line sequence and its entries are peer-authored, so the witness recovery's
+seq-ahead and device-key checks do not port; the portable guard is **chain
+linkage**. Recovery now adopts the newest *complete* line's head only when its
+`prev` matches the previous line's `head` (or genesis for a first record),
+refusing an unlinkable tail and keeping the NVS head. Extracted the decision
+into the pure, host-tested `beacon_audit_recover.h`
+(`test_beacon_audit_recover.cpp`, wired into `firmware.yml`) and corrected the
+`witness_store.h` comment that overstated parity between the two recoveries.
+Per-beacon Ed25519 signatures remain the primary tamper-evidence for entry
+contents.
+
 ### kernel: chacha20poly1305 0.10 → 0.11 (vault AEAD, wire format unchanged)
 
 Supersedes the Dependabot bump (#828), which could not merge because the

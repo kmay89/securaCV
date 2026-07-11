@@ -75,6 +75,7 @@ impl QuorumPolicy {
             return Err(anyhow!("quorum threshold exceeds trustee count"));
         }
         let mut uniq = std::collections::HashSet::new();
+        let mut uniq_keys = std::collections::HashSet::new();
         for t in &self.trustees {
             if t.id.0.is_empty() {
                 return Err(anyhow!("trustee id cannot be empty"));
@@ -84,6 +85,16 @@ impl QuorumPolicy {
             }
             VerifyingKey::from_bytes(&t.public_key)
                 .map_err(|_| anyhow!("invalid public key for trustee {}", t.id.0))?;
+            // Reject a key reused across trustee slots: without this, one
+            // key-holder counts as several distinct trustees and can satisfy
+            // a k-of-n quorum alone (Invariant V). Quorum independence is a
+            // property of the KEYS, not just the ids.
+            if !uniq_keys.insert(t.public_key) {
+                return Err(anyhow!(
+                    "duplicate trustee public key for trustee {}",
+                    t.id.0
+                ));
+            }
         }
         Ok(())
     }
@@ -133,10 +144,19 @@ impl UnlockRequest {
     }
 
     pub fn request_hash(&self) -> [u8; 32] {
+        // Length-prefix the variable-length fields so no two distinct
+        // (envelope_id, purpose) pairs can collide by shifting the boundary
+        // between them (mirrors `token_signing_hash`'s framing). The fixed
+        // 32-byte ruleset hash and the two u64 bucket fields are
+        // self-delimiting and need no prefix.
         let mut hasher = Sha256::new();
-        hasher.update(self.vault_envelope_id.as_bytes());
+        let envelope_bytes = self.vault_envelope_id.as_bytes();
+        hasher.update((envelope_bytes.len() as u32).to_le_bytes());
+        hasher.update(envelope_bytes);
         hasher.update(self.ruleset_hash);
-        hasher.update(self.purpose.as_bytes());
+        let purpose_bytes = self.purpose.as_bytes();
+        hasher.update((purpose_bytes.len() as u32).to_le_bytes());
+        hasher.update(purpose_bytes);
         hasher.update(self.time_bucket.start_epoch_s.to_le_bytes());
         hasher.update(self.time_bucket.size_s.to_le_bytes());
         hasher.finalize().into()
@@ -194,6 +214,39 @@ pub fn verify_approval(public_key: &[u8; 32], request_hash: &[u8; 32], signature
         &sig_array,
     )
     .is_ok()
+}
+
+/// Re-derive the quorum: count the DISTINCT trustee public keys that carry a
+/// valid, domain-separated approval over `request_hash` under `policy`. This
+/// never trusts a recorded `BreakGlassOutcome` — it is the ground-truth
+/// recomputation used at receipt audit and at the unseal gate so that a
+/// device-key holder cannot forge `Granted` with too few (or zero) genuine
+/// trustee approvals. Deduping on the public KEY (not the id) means a reused
+/// key can never inflate the count even if a malformed policy slipped past
+/// `QuorumPolicy::validate`.
+pub fn count_valid_distinct_approvals(
+    policy: &QuorumPolicy,
+    request_hash: &[u8; 32],
+    approvals: &[Approval],
+) -> usize {
+    let mut distinct = std::collections::HashSet::new();
+    for approval in approvals {
+        if &approval.request_hash != request_hash {
+            continue;
+        }
+        let Some(trustee) = policy
+            .trustees
+            .iter()
+            .find(|t| t.id.0 == approval.trustee.0)
+        else {
+            continue;
+        };
+        if !verify_approval(&trustee.public_key, request_hash, &approval.signature) {
+            continue;
+        }
+        distinct.insert(trustee.public_key);
+    }
+    distinct.len()
 }
 
 fn canonical_approval_bytes(approval: &Approval) -> Vec<u8> {
@@ -1035,5 +1088,108 @@ mod tests {
             &approval_sig
         )
         .is_err());
+    }
+
+    // ─── M1: quorum independence is a property of the KEYS ───────────────
+
+    #[test]
+    fn validate_rejects_duplicate_public_key() {
+        // Two DISTINCT trustee ids sharing ONE key: without this rejection a
+        // single key-holder fills two quorum slots and satisfies a 2-of-2
+        // quorum alone (Invariant V).
+        let shared = SigningKey::from_bytes(&[42u8; 32])
+            .verifying_key()
+            .to_bytes();
+        let result = QuorumPolicy::new(
+            2,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: shared,
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: shared,
+                },
+            ],
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate trustee public key"));
+    }
+
+    // ─── L1: request_hash disambiguates variable-length field boundaries ──
+
+    #[test]
+    fn request_hash_length_prefix_disambiguates_boundary() {
+        // ("ab", "c") and ("a", "bc") differ only in where the envelope id
+        // ends and the purpose begins. Without length prefixes these hash the
+        // same concatenation; with them the hashes must differ.
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let a = UnlockRequest::new("ab", [0u8; 32], "c", bucket)
+            .unwrap()
+            .request_hash();
+        let b = UnlockRequest::new("a", [0u8; 32], "bc", bucket)
+            .unwrap()
+            .request_hash();
+        assert_ne!(a, b, "boundary shift must change the request hash");
+    }
+
+    // ─── H1: quorum re-derivation counts distinct valid trustees only ────
+
+    #[test]
+    fn count_valid_distinct_approvals_ground_truth() {
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let request = UnlockRequest::new("vault:count", [1u8; 32], "incident", bucket).unwrap();
+        let rh = request.request_hash();
+        let alice = SigningKey::from_bytes(&[1u8; 32]);
+        let bob = SigningKey::from_bytes(&[2u8; 32]);
+        let policy = QuorumPolicy::new(
+            2,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: alice.verifying_key().to_bytes(),
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: bob.verifying_key().to_bytes(),
+                },
+            ],
+        )
+        .unwrap();
+
+        // Empty set → zero (the forged-Granted case).
+        assert_eq!(count_valid_distinct_approvals(&policy, &rh, &[]), 0);
+
+        // One valid + one bogus signature → one distinct valid trustee.
+        let good = Approval::signed(TrusteeId::new("alice"), rh, &alice);
+        let bogus = Approval::new(TrusteeId::new("bob"), rh, vec![0u8; 64]);
+        assert_eq!(
+            count_valid_distinct_approvals(&policy, &rh, &[good.clone(), bogus]),
+            1
+        );
+
+        // Alice signing twice still counts once (dedup by key).
+        let good2 = Approval::signed(TrusteeId::new("alice"), rh, &alice);
+        assert_eq!(
+            count_valid_distinct_approvals(&policy, &rh, &[good.clone(), good2]),
+            1
+        );
+
+        // Two distinct valid trustees → two.
+        let bob_ok = Approval::signed(TrusteeId::new("bob"), rh, &bob);
+        assert_eq!(
+            count_valid_distinct_approvals(&policy, &rh, &[good, bob_ok]),
+            2
+        );
     }
 }

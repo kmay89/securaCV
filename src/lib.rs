@@ -3167,18 +3167,20 @@ pub fn break_glass_receipt_outcome_for_verifier(
     pq_public_key: Option<&PqPublicKey>,
 ) -> Result<break_glass::BreakGlassOutcome> {
     let mut stmt = conn.prepare(
-        "SELECT payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
+        "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
     )?;
     let row = stmt
         .query_row(params![receipt_entry_hash.to_vec()], |row| {
             let payload: String = row.get(0)?;
-            let prev_hash: Vec<u8> = row.get(1)?;
-            let entry_hash: Vec<u8> = row.get(2)?;
-            let signature: Vec<u8> = row.get(3)?;
-            let pq_signature: Option<Vec<u8>> = row.get(4)?;
-            let pq_scheme: Option<String> = row.get(5)?;
+            let approvals_json: String = row.get(1)?;
+            let prev_hash: Vec<u8> = row.get(2)?;
+            let entry_hash: Vec<u8> = row.get(3)?;
+            let signature: Vec<u8> = row.get(4)?;
+            let pq_signature: Option<Vec<u8>> = row.get(5)?;
+            let pq_scheme: Option<String> = row.get(6)?;
             Ok((
                 payload,
+                approvals_json,
                 prev_hash,
                 entry_hash,
                 signature,
@@ -3188,7 +3190,9 @@ pub fn break_glass_receipt_outcome_for_verifier(
         })
         .optional()?;
 
-    let Some((payload, prev_hash, entry_hash, signature, pq_signature, pq_scheme)) = row else {
+    let Some((payload, approvals_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme)) =
+        row
+    else {
         return Err(anyhow!("break-glass receipt not found for token"));
     };
 
@@ -3211,6 +3215,35 @@ pub fn break_glass_receipt_outcome_for_verifier(
         DOMAIN_BREAK_GLASS_RECEIPT,
     )?;
     let receipt: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+
+    // Quorum re-derivation at the unseal gate (Invariant V). The receipt is
+    // device-signed and hash-chained, but a device-key holder can still forge
+    // a `Granted` receipt with an empty (or under-quorum) approval set. Before
+    // this gate lets `assert_token_valid` release any cleartext, recompute the
+    // quorum against the configured policy: a Granted receipt is honored only
+    // if it actually carries >= policy.n distinct valid trustee approvals.
+    // The signed receipt commits to its approvals via `approvals_commitment`,
+    // so a swapped `approvals_json` is rejected before we count.
+    if matches!(receipt.outcome, break_glass::BreakGlassOutcome::Granted) {
+        let policy = crate::verify::load_break_glass_policy(conn)?
+            .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
+        let approvals: Vec<break_glass::Approval> = serde_json::from_str(&approvals_json)?;
+        if break_glass::approvals_commitment(&approvals) != receipt.approvals_commitment {
+            return Err(anyhow!(
+                "break-glass approvals commitment mismatch: receipt approvals were tampered"
+            ));
+        }
+        let valid =
+            break_glass::count_valid_distinct_approvals(&policy, &receipt.request_hash, &approvals);
+        if valid < policy.n as usize {
+            return Err(anyhow!(
+                "break-glass receipt claims Granted but only {} of the required {} distinct trustee approvals are valid",
+                valid,
+                policy.n
+            ));
+        }
+    }
+
     Ok(receipt.outcome)
 }
 
@@ -4688,6 +4721,71 @@ mod tests {
         )?;
         assert_eq!(bytes, b"vault bytes");
         assert!(data.is_empty());
+        Ok(())
+    }
+
+    /// H1: the runtime unseal gate re-derives the quorum against the policy
+    /// and refuses a `Granted` receipt that does not actually carry
+    /// `policy.n` distinct valid trustee approvals — even though the receipt
+    /// is device-signed and correctly hash-chained. This is the load-bearing
+    /// Invariant-V check: a device-key holder can append a forged receipt, but
+    /// cannot manufacture the trustee signatures the quorum requires.
+    #[test]
+    fn runtime_gate_rejects_forged_granted_receipt() -> Result<()> {
+        let (mut kernel, _cfg) = setup_test_kernel()?;
+        let bucket = TimeBucket::now(600)?;
+        let trustee = SigningKey::from_bytes(&[21u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: trustee.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&policy)?;
+        let request = UnlockRequest::new("vault:rt", [4u8; 32], "incident", bucket)?;
+
+        // Legit: a Granted receipt backed by one real trustee approval, stored
+        // via the device-signed hash-chain path. The gate returns Granted.
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &trustee);
+        let (_tok, legit) =
+            BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
+        let legit_hash =
+            kernel.append_break_glass_receipt(&legit, std::slice::from_ref(&approval))?;
+        let dev = kernel.device_verifying_key();
+        let outcome = break_glass_receipt_outcome_for_verifier(
+            &kernel.conn,
+            &dev,
+            &legit_hash,
+            kernel.device_pq_public_key_ref(),
+        )?;
+        assert!(matches!(outcome, BreakGlassOutcome::Granted));
+
+        // Forged: outcome=Granted with ZERO approvals, appended through the
+        // SAME device-signed hash-chain path (models a device-key holder). The
+        // signature and chain are valid, but the quorum re-derivation finds
+        // 0 < n valid approvals, so the gate rejects it.
+        let forged = BreakGlassReceipt {
+            vault_envelope_id: "vault:rt".to_string(),
+            request_hash: request.request_hash(),
+            ruleset_hash: [4u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![],
+            approvals_commitment: approvals_commitment(&[]),
+            outcome: BreakGlassOutcome::Granted,
+        };
+        let forged_hash = kernel.append_break_glass_receipt(&forged, &[])?;
+        let dev = kernel.device_verifying_key();
+        let result = break_glass_receipt_outcome_for_verifier(
+            &kernel.conn,
+            &dev,
+            &forged_hash,
+            kernel.device_pq_public_key_ref(),
+        );
+        assert!(
+            result.is_err(),
+            "forged empty-approvals Granted receipt must be rejected at the unseal gate"
+        );
         Ok(())
     }
 

@@ -100,6 +100,10 @@ fn export_succeeds_with_break_glass_token() -> Result<()> {
 
     let bucket = TimeBucket::now(600)?;
     let (request, approval, policy) = authorize_export(&cfg, bucket)?;
+    // Persist the quorum policy as the real flow does: the runtime unseal /
+    // export gate re-derives the quorum from the configured policy (Invariant
+    // V) and refuses a Granted receipt it cannot corroborate.
+    kernel.set_break_glass_policy(&policy)?;
     let (result, receipt) =
         BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
     let mut token = result.expect("token");
@@ -139,6 +143,10 @@ fn export_replay_of_token_file_is_refused_across_invocations() -> Result<()> {
 
     let bucket = TimeBucket::now(600)?;
     let (request, approval, policy) = authorize_export(&cfg, bucket)?;
+    // Persist the quorum policy as the real flow does: the runtime unseal /
+    // export gate re-derives the quorum from the configured policy (Invariant
+    // V) and refuses a Granted receipt it cannot corroborate.
+    kernel.set_break_glass_policy(&policy)?;
     let (result, receipt) =
         BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
     let mut token = result.expect("token");
@@ -201,6 +209,10 @@ fn export_bundle_verifies_and_detects_tampering() -> Result<()> {
 
     let bucket = TimeBucket::now(600)?;
     let (request, approval, policy) = authorize_export(&cfg, bucket)?;
+    // Persist the quorum policy as the real flow does: the runtime unseal /
+    // export gate re-derives the quorum from the configured policy (Invariant
+    // V) and refuses a Granted receipt it cannot corroborate.
+    kernel.set_break_glass_policy(&policy)?;
     let (result, receipt) =
         BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
     let mut token = result.expect("token");
@@ -300,6 +312,10 @@ fn break_glass_export_receipt_is_labeled_break_glass() -> Result<()> {
 
     let bucket = TimeBucket::now(600)?;
     let (request, approval, policy) = authorize_export(&cfg, bucket)?;
+    // Persist the quorum policy as the real flow does: the runtime unseal /
+    // export gate re-derives the quorum from the configured policy (Invariant
+    // V) and refuses a Granted receipt it cannot corroborate.
+    kernel.set_break_glass_policy(&policy)?;
     let (result, receipt) =
         BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
     let mut token = result.expect("token");

@@ -793,6 +793,7 @@ fn verify_approvals_against_policy(
     receipt: &BreakGlassReceipt,
     approvals: &[Approval],
 ) -> Result<()> {
+    let mut distinct_keys = std::collections::HashSet::new();
     for approval in approvals {
         if approval.request_hash != receipt.request_hash {
             return Err(anyhow!(
@@ -817,6 +818,21 @@ fn verify_approvals_against_policy(
         ) {
             return Err(anyhow!("invalid signature for trustee {}", trustee.id.0));
         }
+        distinct_keys.insert(trustee.public_key);
+    }
+    // Quorum re-derivation (Invariant V): never trust the receipt's recorded
+    // outcome. A Granted receipt MUST carry at least `policy.n` distinct valid
+    // trustee approvals. A device-key holder who forges `Granted` over an
+    // empty or under-quorum approval set is rejected here — the recorded
+    // outcome is not, by itself, evidence that the quorum was met.
+    if matches!(receipt.outcome, BreakGlassOutcome::Granted)
+        && distinct_keys.len() < policy.n as usize
+    {
+        return Err(anyhow!(
+            "break-glass receipt claims Granted but only {} of the required {} distinct trustee approvals are valid",
+            distinct_keys.len(),
+            policy.n
+        ));
     }
     Ok(())
 }
@@ -957,5 +973,60 @@ mod tests {
             verify_checkpoint_signature(&verifying_key, &checkpoint, SignatureMode::Compat, None);
         assert!(result.is_err());
         Ok(())
+    }
+
+    // ─── H1: the audit verifier re-derives the quorum, never trusting the
+    // recorded outcome. Covers both `verify_break_glass_receipts_with` and the
+    // CLI `cmd_receipts`, which share `verify_approvals_against_policy`. ─────
+
+    #[test]
+    fn granted_receipt_below_quorum_is_rejected() {
+        use crate::break_glass::{TrusteeEntry, TrusteeId, UnlockRequest};
+        use crate::TimeBucket;
+
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let key = SigningKey::from_bytes(&[1u8; 32]);
+        let request = UnlockRequest::new("vault:v", [1u8; 32], "incident", bucket).unwrap();
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: key.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+
+        // Forged: outcome=Granted with an EMPTY approval set (the device-key
+        // holder's forgery). Must be rejected — the recorded outcome is not
+        // self-authenticating.
+        let forged = BreakGlassReceipt {
+            vault_envelope_id: "vault:v".to_string(),
+            request_hash: request.request_hash(),
+            ruleset_hash: [1u8; 32],
+            time_bucket: bucket,
+            trustees_used: vec![],
+            approvals_commitment: approvals_commitment(&[]),
+            outcome: BreakGlassOutcome::Granted,
+        };
+        assert!(verify_approvals_against_policy(&policy, &forged, &[]).is_err());
+
+        // Legit: the same Granted receipt WITH a real trustee approval passes.
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &key);
+        assert!(
+            verify_approvals_against_policy(&policy, &forged, std::slice::from_ref(&approval))
+                .is_ok()
+        );
+
+        // A Denied receipt carries no quorum floor — empty approvals are fine.
+        let denied = BreakGlassReceipt {
+            outcome: BreakGlassOutcome::Denied {
+                reason: "insufficient".to_string(),
+            },
+            ..forged.clone()
+        };
+        assert!(verify_approvals_against_policy(&policy, &denied, &[]).is_ok());
     }
 }
