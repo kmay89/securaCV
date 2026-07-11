@@ -92,6 +92,16 @@
 #include "boot_banner.h"
 #include "device_pseudonym.h"  // salted, MAC-free device handle (Invariant III)
 
+// LVGL renders from loop(), and Arduino's default 8 KiB loopTask stack is
+// not enough for LVGL 9's renderer (its layout/draw recursion overflowed
+// the stack canary on the dash's first bench boot — nested flex containers
+// go several frames deeper per level than the 8.4 renderer did). 24 KiB
+// buys the deepest face (dash) comfortable margin; the macro has existed
+// since arduino-esp32 2.0.6, so both supported core lines honor it.
+#ifdef SET_LOOP_TASK_STACK_SIZE
+SET_LOOP_TASK_STACK_SIZE(24 * 1024);
+#endif
+
 // ----------------------------------------------------------------------------
 // State
 // ----------------------------------------------------------------------------
