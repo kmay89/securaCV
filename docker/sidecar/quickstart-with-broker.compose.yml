@@ -40,7 +40,7 @@ services:
     command: >-
       sh -c 'if [ -n "$$SECURACV_MQTT_PASSWORD" ]; then
       mosquitto_passwd -c -b /mosquitto/config/passwd securacv "$$SECURACV_MQTT_PASSWORD" &&
-      chown mosquitto:mosquitto /mosquitto/config/passwd &&
+      { chown mosquitto:mosquitto /mosquitto/config/passwd 2>/dev/null || true; } &&
       chmod 0600 /mosquitto/config/passwd &&
       printf "listener 1883 0.0.0.0\nallow_anonymous false\npassword_file /mosquitto/config/passwd\n"
       > /mosquitto/config/mosquitto.conf;

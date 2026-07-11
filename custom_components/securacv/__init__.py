@@ -469,9 +469,13 @@ def _safe_config_url(ap_ip: Any) -> str | None:
     """Build a configuration_url from a broker-supplied address, or None.
 
     The `ap_ip` field arrives over MQTT and is untrusted: it becomes a
-    clickable link on the HA device page, so only accept a plain IP address
-    or a simple hostname — never anything with a scheme, path, port,
-    credentials, or other URL syntax an attacker could smuggle in.
+    clickable link on the HA device page. Devices only ever report a LAN
+    address (their AP/STA IP, e.g. 192.168.4.1) or their mDNS hostname
+    (canary-<id>.local), so accept exactly those forms: a private or
+    link-local IP address, or a `.local` hostname. Public IPs, arbitrary
+    hostnames, and anything with URL syntax (scheme, port, path,
+    credentials) are rejected — a hostile broker must not be able to plant
+    an off-LAN phishing link.
     """
     if not isinstance(ap_ip, str) or not ap_ip or len(ap_ip) > 253:
         return None
@@ -479,11 +483,18 @@ def _safe_config_url(ap_ip: Any) -> str | None:
     import re
 
     try:
-        ipaddress.ip_address(ap_ip)
-        return f"http://{ap_ip}"
+        ip = ipaddress.ip_address(ap_ip)
     except ValueError:
         pass
-    if re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*", ap_ip):
+    else:
+        if not (ip.is_private or ip.is_link_local):
+            return None
+        # IPv6 literals need brackets in URLs.
+        return f"http://[{ap_ip}]" if ip.version == 6 else f"http://{ap_ip}"
+    if ap_ip.lower().endswith(".local") and re.fullmatch(
+        r"[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+",
+        ap_ip,
+    ):
         return f"http://{ap_ip}"
     return None
 
