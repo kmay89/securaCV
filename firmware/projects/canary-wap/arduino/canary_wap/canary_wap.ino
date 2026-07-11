@@ -3361,7 +3361,8 @@ static esp_err_t handle_audio_status(httpd_req_t* req) {
     "\"knock_detected\":%u,"
     "\"doorbell_detected\":%u,"
     "\"glass_break_detected\":%u,"
-    "\"i2s_read_errors\":%u"
+    "\"i2s_read_errors\":%u,"
+    "\"mic_silent\":%s"
     "}",
     audio_is_running() ? "true" : "false",
     audio_is_muted() ? "true" : "false",
@@ -3375,7 +3376,13 @@ static esp_err_t handle_audio_status(httpd_req_t* req) {
     (unsigned)stats.knock_detected,
     (unsigned)stats.doorbell_detected,
     (unsigned)stats.glass_break_detected,
-    (unsigned)stats.i2s_read_errors);
+    (unsigned)stats.i2s_read_errors,
+    // Flat-signal watchdog: the driver runs but every 20 ms window for
+    // 30+ s computed RMS == 0 — a dead data line, not a quiet room. The
+    // dashboard turns this into a "no signal from the microphone" warning
+    // instead of a lying LISTENING badge.
+    (audio_is_running() &&
+     stats.zero_rms_streak >= AUDIO_SILENT_STREAK_FRAMES) ? "true" : "false");
 
   if (len <= 0 || len >= (int)sizeof(buf)) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");
@@ -3434,6 +3441,12 @@ static esp_err_t handle_audio_selftest_get(httpd_req_t* req) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"audio not initialized\"}");
   }
 
+  // peak_rms alone doesn't tell the UI whether the test heard "enough" —
+  // ship the live ON threshold alongside so the failure copy can say
+  // "too quiet" (0 < peak < on) vs "loud but not an alarm" (peak ≥ on).
+  audio_config_t cfg = AUDIO_CONFIG_DEFAULT;
+  audio_get_config(&cfg);
+
   char buf[256];
   int len = snprintf(buf, sizeof(buf),
     "{"
@@ -3443,14 +3456,18 @@ static esp_err_t handle_audio_selftest_get(httpd_req_t* req) {
     "\"matched_name\":\"%s\","
     "\"matched_conf\":%u,"
     "\"remaining_ms\":%u,"
-    "\"transitions_seen\":%u"
+    "\"transitions_seen\":%u,"
+    "\"peak_rms\":%u,"
+    "\"rms_on_threshold\":%u"
     "}",
     st.active ? "true" : "false",
     (unsigned)st.matched_type,
     audio_event_name(st.matched_type),
     (unsigned)st.matched_conf,
     (unsigned)st.remaining_ms,
-    (unsigned)st.transitions_seen);
+    (unsigned)st.transitions_seen,
+    (unsigned)st.peak_rms,
+    (unsigned)cfg.rms_on_threshold);
 
   if (len <= 0 || len >= (int)sizeof(buf)) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"buffer overflow\"}");

@@ -123,6 +123,8 @@ When reviewing a firmware PR, confirm:
 ## See Also
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — module composition rules (the "what can import what" contract)
+- [HARDWARE.md](HARDWARE.md) — board support tiers (verified/community/compile-tested) — the *hardware* axis, orthogonal to the variant (code-lane) axis here
+- [PORTING.md](PORTING.md) — new-board bring-up guide and submission checklist
 - [FIRMWARE_VARIANT_AUDIT.md](FIRMWARE_VARIANT_AUDIT.md) — per-variant risk analysis
 - [FEATURES.md](FEATURES.md) — feature-parity matrix across variants
 - [canary/CONSOLIDATION.md](canary/CONSOLIDATION.md) — roadmap for collapsing the Arduino COMPATIBILITY tree into the ACTIVE canary PIO tree
