@@ -37,6 +37,18 @@ insufficient.
   left in `DerivedDek` after wrapping it in the drop-guard, and the KEM
   shared secret is zeroized after DEK derivation on both the seal and decrypt
   paths.
+- **R1 — receipts bind their policy era (review follow-up).** Re-deriving the
+  quorum against the *mutable current* policy would false-positive historical
+  `Granted` receipts after a legitimate policy rotation (raised threshold or
+  changed trustee set). Each receipt now records a signed `policy_commitment`
+  (`QuorumPolicy::commitment` — threshold + member count + sorted trustee
+  id/pubkeys). The audit verifier skips the quorum re-derivation for a receipt
+  whose commitment marks a different era (chain hash + device signature remain
+  its tamper evidence), so a rotation no longer raises false integrity alarms;
+  within the current era it re-derives in full. The runtime unseal gate instead
+  fails **closed** on a commitment mismatch — a token backed by a prior-era
+  receipt is refused rather than released against a rotated quorum. Old
+  receipts without the field default to the current-era treatment.
 
 ### firmware (canary-wap): beacon-audit SD recovery now requires chain linkage
 
@@ -53,7 +65,12 @@ into the pure, host-tested `beacon_audit_recover.h`
 (`test_beacon_audit_recover.cpp`, wired into `firmware.yml`) and corrected the
 `witness_store.h` comment that overstated parity between the two recoveries.
 Per-beacon Ed25519 signatures remain the primary tamper-evidence for entry
-contents.
+contents. The boot read window is 4 KiB — the writer caps a line at 768 bytes,
+and recovery needs a torn partial + the newest complete line + its predecessor
+(and the predecessor's starting delimiter) all in view, or the window could
+start inside the predecessor, find no verifiable predecessor, and keep a stale
+NVS head — forking the log in exactly the stale-cache case the guard exists to
+fix (review catch on this PR).
 
 ### kernel: chacha20poly1305 0.10 → 0.11 (vault AEAD, wire format unchanged)
 

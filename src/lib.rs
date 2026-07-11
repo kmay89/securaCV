@@ -3227,6 +3227,21 @@ pub fn break_glass_receipt_outcome_for_verifier(
     if matches!(receipt.outcome, break_glass::BreakGlassOutcome::Granted) {
         let policy = crate::verify::load_break_glass_policy(conn)?
             .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
+        // Unlike the audit path (which tolerates historical policy eras), the
+        // unseal gate must fail CLOSED: a token is minted under the policy in
+        // force at authorize time, so a receipt whose recorded policy_commitment
+        // no longer matches the active policy means the quorum was rotated out
+        // from under this token. Refuse and require re-authorization rather than
+        // release cleartext against a stale quorum decision. (A zero commitment
+        // marks a pre-field receipt and is re-derived against the current
+        // policy, preserving the original H1 check.)
+        if receipt.policy_commitment != [0u8; 32]
+            && receipt.policy_commitment != policy.commitment()
+        {
+            return Err(anyhow!(
+                "break-glass receipt policy commitment does not match the active quorum policy (policy rotated since authorization; re-authorize)"
+            ));
+        }
         let approvals: Vec<break_glass::Approval> = serde_json::from_str(&approvals_json)?;
         if break_glass::approvals_commitment(&approvals) != receipt.approvals_commitment {
             return Err(anyhow!(
@@ -4765,6 +4780,8 @@ mod tests {
         // SAME device-signed hash-chain path (models a device-key holder). The
         // signature and chain are valid, but the quorum re-derivation finds
         // 0 < n valid approvals, so the gate rejects it.
+        // Commitment matches the active policy so the gate runs the full quorum
+        // re-derivation (rather than short-circuiting on a policy-era mismatch).
         let forged = BreakGlassReceipt {
             vault_envelope_id: "vault:rt".to_string(),
             request_hash: request.request_hash(),
@@ -4772,6 +4789,7 @@ mod tests {
             time_bucket: bucket,
             trustees_used: vec![],
             approvals_commitment: approvals_commitment(&[]),
+            policy_commitment: policy.commitment(),
             outcome: BreakGlassOutcome::Granted,
         };
         let forged_hash = kernel.append_break_glass_receipt(&forged, &[])?;
@@ -4785,6 +4803,63 @@ mod tests {
         assert!(
             result.is_err(),
             "forged empty-approvals Granted receipt must be rejected at the unseal gate"
+        );
+        Ok(())
+    }
+
+    /// R1: the unseal gate fails CLOSED when the quorum policy was rotated
+    /// after a receipt was authorized — a token backed by a receipt from the
+    /// prior policy era must not release cleartext against the new policy.
+    #[test]
+    fn runtime_gate_refuses_receipt_from_rotated_policy() -> Result<()> {
+        let (mut kernel, _cfg) = setup_test_kernel()?;
+        let bucket = TimeBucket::now(600)?;
+        let alice = SigningKey::from_bytes(&[21u8; 32]);
+        let old_policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        kernel.set_break_glass_policy(&old_policy)?;
+        let request = UnlockRequest::new("vault:rt", [4u8; 32], "incident", bucket)?;
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+        let (_tok, receipt) = BreakGlass::authorize(
+            &old_policy,
+            &request,
+            std::slice::from_ref(&approval),
+            bucket,
+        );
+        let hash = kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
+
+        // Rotate the policy (add a second trustee, raise the threshold).
+        let bob = SigningKey::from_bytes(&[22u8; 32]);
+        let new_policy = QuorumPolicy::new(
+            2,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: alice.verifying_key().to_bytes(),
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: bob.verifying_key().to_bytes(),
+                },
+            ],
+        )?;
+        kernel.set_break_glass_policy(&new_policy)?;
+
+        let dev = kernel.device_verifying_key();
+        let result = break_glass_receipt_outcome_for_verifier(
+            &kernel.conn,
+            &dev,
+            &hash,
+            kernel.device_pq_public_key_ref(),
+        );
+        assert!(
+            result.is_err(),
+            "a receipt whose policy commitment no longer matches the active policy must be refused"
         );
         Ok(())
     }

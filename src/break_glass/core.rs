@@ -98,6 +98,33 @@ impl QuorumPolicy {
         }
         Ok(())
     }
+
+    /// A stable, order-independent commitment to this policy's quorum identity:
+    /// the threshold `n`, the member count `m`, and the set of trustee
+    /// `(id, public_key)` pairs (sorted, length-prefixed). Two policies with
+    /// the same members and threshold commit identically regardless of trustee
+    /// ordering; any change to the threshold or the trustee set changes it.
+    /// A receipt records this so an audit can tell whether the current policy
+    /// is the one the receipt was decided under.
+    pub fn commitment(&self) -> [u8; 32] {
+        let mut entries: Vec<(&str, &[u8; 32])> = self
+            .trustees
+            .iter()
+            .map(|t| (t.id.0.as_str(), &t.public_key))
+            .collect();
+        entries.sort();
+        let mut hasher = Sha256::new();
+        hasher.update((self.n as u32).to_le_bytes());
+        hasher.update((self.m as u32).to_le_bytes());
+        hasher.update((entries.len() as u32).to_le_bytes());
+        for (id, pk) in entries {
+            let id_bytes = id.as_bytes();
+            hasher.update((id_bytes.len() as u32).to_le_bytes());
+            hasher.update(id_bytes);
+            hasher.update(pk);
+        }
+        hasher.finalize().into()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -291,7 +318,20 @@ pub struct BreakGlassReceipt {
     pub trustees_used: Vec<TrusteeId>,
     #[serde(default = "empty_approvals_commitment")]
     pub approvals_commitment: [u8; 32],
+    /// Commitment to the quorum policy that was in force when this receipt was
+    /// authorized (`QuorumPolicy::commitment`). Lets an audit re-derive a
+    /// historical `Granted` receipt against ITS policy era instead of the
+    /// mutable current policy row: a later, legitimate policy rotation (raised
+    /// threshold, changed trustee set) must not turn an already-valid receipt
+    /// into a false tamper alarm. Defaults to all-zero for receipts written
+    /// before this field existed (treated as "current-policy era").
+    #[serde(default = "zero_policy_commitment")]
+    pub policy_commitment: [u8; 32],
     pub outcome: BreakGlassOutcome,
+}
+
+fn zero_policy_commitment() -> [u8; 32] {
+    [0u8; 32]
 }
 
 #[derive(Clone, Debug)]
@@ -545,6 +585,7 @@ impl BreakGlass {
                 time_bucket: now_bucket,
                 trustees_used: vec![],
                 approvals_commitment: approvals_commitment(approvals),
+                policy_commitment: policy.commitment(),
                 outcome: BreakGlassOutcome::Denied {
                     reason: format!(
                         "approval count {} exceeds maximum {}",
@@ -621,6 +662,7 @@ impl BreakGlass {
             time_bucket: now_bucket,
             trustees_used: trustees_used.clone(),
             approvals_commitment,
+            policy_commitment: policy.commitment(),
             outcome: outcome.clone(),
         };
 
@@ -727,6 +769,7 @@ mod tests {
             time_bucket: bucket,
             trustees_used: vec![],
             approvals_commitment: approvals_commitment(&[]),
+            policy_commitment: [0u8; 32],
             outcome: BreakGlassOutcome::Denied {
                 reason: "test".to_string(),
             },

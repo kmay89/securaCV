@@ -630,10 +630,16 @@ static bool sd_recover_chain_head(uint8_t out[32]) {
   const size_t size = f.size();
   if (size == 0) { f.close(); return false; }
 
-  // Lines are ≤768 bytes; a 2 KiB tail reliably contains the final line AND
-  // its predecessor, so the linkage guard has both to compare. Static (init
-  // is single-threaded, non-reentrant) to keep it off the loop-task stack.
-  static char tail[2048];
+  // The writer caps a line at `char line[768]`, so the linkage guard needs, in
+  // the worst case, a torn final partial (≤767) + the newest COMPLETE line
+  // (≤767) + its predecessor (≤767) + the predecessor's starting delimiter all
+  // in view — otherwise the window could start inside the predecessor, the
+  // guard would find no verifiable predecessor, refuse the (non-genesis) newest
+  // line, and keep a stale NVS head, forking the log in exactly the stale-cache
+  // case this guard exists to fix (codex on #865). 4 KiB clears 3×768 with
+  // margin. Static (init is single-threaded, non-reentrant) to stay off the
+  // loop-task stack.
+  static char tail[4096];
   const size_t want = (size < sizeof(tail)) ? size : sizeof(tail);
   if (!f.seek(size - want)) { f.close(); return false; }
   const size_t got = f.read((uint8_t*)tail, want);

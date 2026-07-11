@@ -793,6 +793,22 @@ fn verify_approvals_against_policy(
     receipt: &BreakGlassReceipt,
     approvals: &[Approval],
 ) -> Result<()> {
+    // A receipt is decided under the quorum policy in force at its authorize
+    // time, recorded as `policy_commitment`. If that differs from the current
+    // policy, this receipt belongs to an earlier policy era: its approvals were
+    // signed by trustee keys that may no longer be in the policy, and its
+    // quorum met a threshold that may since have changed. Re-deriving it
+    // against the *current* policy would raise false tamper alarms on a
+    // legitimate policy rotation (raised threshold, rotated trustee). The chain
+    // hash and device signature (checked by the caller) remain the tamper
+    // evidence for the receipt's bytes; the quorum re-derivation only applies
+    // when the current policy IS the one this receipt was decided under. A
+    // zero commitment marks a pre-field receipt and is treated as current-era.
+    let current = policy.commitment();
+    if receipt.policy_commitment != [0u8; 32] && receipt.policy_commitment != current {
+        return Ok(());
+    }
+
     let mut distinct_keys = std::collections::HashSet::new();
     for approval in approvals {
         if approval.request_hash != receipt.request_hash {
@@ -1002,6 +1018,10 @@ mod tests {
         // Forged: outcome=Granted with an EMPTY approval set (the device-key
         // holder's forgery). Must be rejected — the recorded outcome is not
         // self-authenticating.
+        // Forged: outcome=Granted with an EMPTY approval set (the device-key
+        // holder's forgery). Commitment matches the current policy so the
+        // re-derivation runs; it must be rejected — the recorded outcome is not
+        // self-authenticating.
         let forged = BreakGlassReceipt {
             vault_envelope_id: "vault:v".to_string(),
             request_hash: request.request_hash(),
@@ -1009,6 +1029,7 @@ mod tests {
             time_bucket: bucket,
             trustees_used: vec![],
             approvals_commitment: approvals_commitment(&[]),
+            policy_commitment: policy.commitment(),
             outcome: BreakGlassOutcome::Granted,
         };
         assert!(verify_approvals_against_policy(&policy, &forged, &[]).is_err());
@@ -1028,5 +1049,74 @@ mod tests {
             ..forged.clone()
         };
         assert!(verify_approvals_against_policy(&policy, &denied, &[]).is_ok());
+    }
+
+    // ─── R1: historical receipts audit against THEIR policy era, not the
+    // mutable current policy — a legitimate rotation must not false-positive. ─
+
+    #[test]
+    fn granted_receipt_from_earlier_policy_era_is_not_flagged() {
+        use crate::break_glass::{BreakGlass, TrusteeEntry, TrusteeId, UnlockRequest};
+        use crate::TimeBucket;
+
+        let bucket = TimeBucket {
+            start_epoch_s: 0,
+            size_s: 600,
+        };
+        let alice = SigningKey::from_bytes(&[1u8; 32]);
+        let request = UnlockRequest::new("vault:v", [1u8; 32], "incident", bucket).unwrap();
+
+        // Old policy: 1-of-1 (alice). A receipt authorized under it.
+        let old_policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )
+        .unwrap();
+        let approval = Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+        let (_r, receipt) = BreakGlass::authorize(
+            &old_policy,
+            &request,
+            std::slice::from_ref(&approval),
+            bucket,
+        );
+        assert!(matches!(receipt.outcome, BreakGlassOutcome::Granted));
+
+        // The policy is later rotated to 2-of-2 (alice + bob). Auditing the old
+        // 1-of-1 receipt against the NEW policy must NOT flag it: its commitment
+        // marks a different era, so the quorum re-derivation is skipped and the
+        // receipt is not treated as a forgery.
+        let bob = SigningKey::from_bytes(&[2u8; 32]);
+        let new_policy = QuorumPolicy::new(
+            2,
+            vec![
+                TrusteeEntry {
+                    id: TrusteeId::new("alice"),
+                    public_key: alice.verifying_key().to_bytes(),
+                },
+                TrusteeEntry {
+                    id: TrusteeId::new("bob"),
+                    public_key: bob.verifying_key().to_bytes(),
+                },
+            ],
+        )
+        .unwrap();
+        assert_ne!(new_policy.commitment(), old_policy.commitment());
+        assert!(verify_approvals_against_policy(
+            &new_policy,
+            &receipt,
+            std::slice::from_ref(&approval)
+        )
+        .is_ok());
+
+        // Under its OWN (old) policy it still fully re-derives and passes.
+        assert!(verify_approvals_against_policy(
+            &old_policy,
+            &receipt,
+            std::slice::from_ref(&approval)
+        )
+        .is_ok());
     }
 }
