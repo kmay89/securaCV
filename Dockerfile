@@ -26,7 +26,7 @@ COPY docs ./docs
 COPY examples ./examples
 COPY scripts ./scripts
 COPY tests ./tests
-COPY spec.md README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md ./
+COPY README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md ./
 
 ARG CARGO_FEATURES=rtsp-gstreamer
 RUN cargo build --release --features "${CARGO_FEATURES}"

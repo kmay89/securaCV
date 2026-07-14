@@ -10,7 +10,7 @@
 
 ## Document Governance
 
-**Sources:** [`spec.md`](https://github.com/kmay89/securaCV/blob/main/spec.md), [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)
+**Sources:** [`spec/`](https://github.com/kmay89/securaCV/blob/main/spec/README.md), [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)
 
 This document is **normative** where it reflects canonical specifications and **descriptive** elsewhere. It is intentionally conservative. Any future change MUST originate from edits to the underlying canonical sources and then be merged forward.
 
@@ -51,7 +51,7 @@ This document is **normative** where it reflects canonical specifications and **
 | Section | Source documents |
 |---|---|
 | [1. Introduction](#1-introduction) | [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md) |
-| [2. Purpose and Scope](#2-purpose-and-scope) | [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)<br>[`spec.md`](https://github.com/kmay89/securaCV/blob/main/spec.md) |
+| [2. Purpose and Scope](#2-purpose-and-scope) | [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)<br>[`spec/`](https://github.com/kmay89/securaCV/blob/main/spec/README.md) |
 | [3. System Philosophy: Witnessing vs Watching](#3-system-philosophy-witnessing-vs-watching) | [`docs/why_witnessing_matters.md`](https://github.com/kmay89/securaCV/blob/main/docs/why_witnessing_matters.md)<br>[`docs/why_this_matters.md`](https://github.com/kmay89/securaCV/blob/main/docs/why_this_matters.md) |
 | [4. Core System Overview](#4-core-system-overview) | [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)<br>[`kernel/architecture.md`](https://github.com/kmay89/securaCV/blob/main/kernel/architecture.md) |
 | [5. Canonical Invariants](#5-canonical-invariants) | [`spec/invariants.md`](https://github.com/kmay89/securaCV/blob/main/spec/invariants.md) |
@@ -84,7 +84,7 @@ This document unifies the project’s existing documentation into a single maint
 
 # 2. Purpose and Scope
 
-**Sources:** [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md), [`spec.md`](https://github.com/kmay89/securaCV/blob/main/spec.md)
+**Sources:** [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md), [`spec/`](https://github.com/kmay89/securaCV/blob/main/spec/README.md)
 
 The purpose of SecuraCV is to enable systems to answer the question:
 
