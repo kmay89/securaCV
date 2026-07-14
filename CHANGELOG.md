@@ -16,7 +16,10 @@
   firmware section lists all five Canary projects with the boards the
   PlatformIO envs actually target.
 - `docs/homeassistant_setup.md` gains transport and per-tamper-type
-  catalogs with honest Implemented / Experimental / Planned status per row.
+  catalogs with honest Implemented / Experimental / Planned status per row;
+  the transport catalog separates transport status from the per-transport
+  health entities, which are pending a firmware publisher
+  (`mqtt_publish_transport()` is defined but never called).
 
 ## [0.6.0] - Unreleased
 
