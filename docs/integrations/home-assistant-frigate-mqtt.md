@@ -220,7 +220,7 @@ Use this checklist to validate the v1 Home Assistant + Frigate MQTT integration 
 
 12. **Frigate + PWK integration works but the PWK sealed log is empty**
     - Confirm the PWK database path and permissions for the add-on/container.
-    - Use the `log_verify` tool described in `log_verify_README.md` if you need integrity checks.
+    - Use the `log_verify` tool described in `docs/log_verify.md` if you need integrity checks.
 
 ---
 
@@ -230,4 +230,4 @@ Use this checklist to validate the v1 Home Assistant + Frigate MQTT integration 
   - `docs/homeassistant_setup.md` (install + add-on config)
   - `docs/frigate_integration.md` (Frigate mode constraints and MQTT options)
 - Add a dedicated dashboard view for SecuraCV sensors and zone states.
-- If you need deeper verification, run `log_verify` as documented in `log_verify_README.md`.
+- If you need deeper verification, run `log_verify` as documented in `docs/log_verify.md`.

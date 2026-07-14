@@ -82,7 +82,7 @@ against what's actually in the tree today.
 | 2 | **The invisible payoff** | **Partially fixed** | "SecuraCV Verified Timeline" Lovelace card with a strict verified-✓ badge ([docs/lovelace_timeline.md](../lovelace_timeline.md)); daily-digest, chain-integrity sensors and a Verify Now button created automatically; add-on can generate a dashboard from live zones. **Still missing:** out-of-the-box mobile digest/alert, and screenshots of the payoff in the README — the most persuasive asset is still not in the pitch. |
 | 3 | **The unbuyable device** | **Open (DIY much improved)** | BOOT-tap pairing wizard, QR scan-to-pair, unique mDNS hostnames, Identify button, fleet manager ([docs/onboarding_workflow_evaluation.md](../onboarding_workflow_evaluation.md)). Builders are well served now; non-builders still can't buy a pre-flashed Canary. |
 | 4 | **The unusable proof** | **Open** | Break-glass trustees and signed export remain CLI-only. The moat still can't be *demonstrated* by a non-engineer under stress. |
-| 5 | **v1 credibility gap** | **Nearly closed** | README badge is `v1-rc`; the roadmap's CI gates (Frigate→HA e2e, RTSP e2e, audit-boundary doc) are closed per [v1-roadmap.md](../../v1-roadmap.md). Remaining: on-device hardware validation, then tag and align `CHANGELOG.md`. |
+| 5 | **v1 credibility gap** | **Nearly closed** | README badge is `v1-rc`; the roadmap's CI gates (Frigate→HA e2e, RTSP e2e, audit-boundary doc) are closed per [v1-roadmap.md](../v1-roadmap.md). Remaining: on-device hardware validation, then tag and align `CHANGELOG.md`. |
 
 **Verdict: yes — real value was created and the top friction item is substantially gone.** The
 install story went from developer-grade to a genuine 5-minute wizard, and the payoff (verified

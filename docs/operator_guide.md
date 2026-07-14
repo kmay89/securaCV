@@ -37,7 +37,7 @@ cargo run --bin export_verify -- --db demo_witness.db --bundle demo_out/export_b
 The device Ed25519 **verifying key** is stored locally in the witness database at
 `device_metadata.public_key` (row `id = 1`). External verification tools like `log_verify` read
 this public key from the database by default, or accept an explicit key via `--public-key` /
-`--public-key-file` as documented in `log_verify_README.md`.
+`--public-key-file` as documented in `docs/log_verify.md`.
 
 ## Break-glass policy management
 

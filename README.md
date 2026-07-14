@@ -231,7 +231,7 @@ Device firmware lives under [`firmware/`](firmware/):
 
 **v1 release candidate.** The Frigate → MQTT → sealed-log pipeline is verified end-to-end
 automatically in CI (including a real broker ingest test); on-device hardware validation and
-the v1 tag are still pending. Track progress in [`v1-roadmap.md`](v1-roadmap.md) and
+the v1 tag are still pending. Track progress in [`docs/v1-roadmap.md`](docs/v1-roadmap.md) and
 [`CHANGELOG.md`](CHANGELOG.md).
 
 ---

@@ -13,7 +13,7 @@ instruction: **do not assume anything is complete or finished.**
 
 ## Relationship to existing docs
 This review is deliberately **independent** of, and cross-checks, the authored strategy material in
-[`../strategy/`](../strategy/) and the root [`../../v1-roadmap.md`](../../v1-roadmap.md). Where they
+[`../strategy/`](../strategy/) and the root [`../v1-roadmap.md`](../v1-roadmap.md). Where they
 overclaim or are stale, the flag report says so (see F-01, F-02, F-13). The seven invariants in
 [`../../spec/invariants.md`](../../spec/invariants.md) remain the binding constraint on every
 recommendation.

@@ -55,7 +55,7 @@ tagging v1):**
   real Frigate ML detection (`verify_pipeline.sh`, now corrected) stays a manual smoke check, since
   ML detection on a fixture isn't deterministic.
 - ~~The "audit boundary vs security boundary" documentation item (Acceptance, below) is still open.~~
-  **Closed:** stated authoritatively in [`docs/security/THREAT_MODEL.md`](docs/security/THREAT_MODEL.md)
+  **Closed:** stated authoritatively in [`docs/security/THREAT_MODEL.md`](security/THREAT_MODEL.md)
   under *Trust Boundaries → Audit Boundary vs Security Boundary*.
 - ~~RTSP ingestion is documented, so under this definition it is **in scope** and must work
   (moved out of "nice to have").~~ **Closed:** the ffmpeg RTSP path now has an end-to-end CI
@@ -69,7 +69,7 @@ tagging v1):**
 - **Still open:** all of the above gates are green **in CI**, but the v1 tag also waits on
   **on-device hardware validation** (the kernel/bridge pipeline and firmware exercised on real
   ESP32 devices, not just CI). The concrete procedure, pass/fail criteria, and required
-  artifacts are in [`docs/hardware/v1_bench_validation_runbook.md`](docs/hardware/v1_bench_validation_runbook.md)
+  artifacts are in [`docs/hardware/v1_bench_validation_runbook.md`](hardware/v1_bench_validation_runbook.md)
   (Track A: single canary → HA verified-✓; Track B: kernel pipeline smoke; Track C: 2–3 board
   mesh/chirp fleet). Until that's done the README status stays `v1-rc`, the
   `CHANGELOG.md` `[1.0.0]` entry stays `Unreleased`, and no tag is cut.
@@ -126,7 +126,7 @@ Rationale: Signed log is easier to demonstrate end-to-end without designing enve
 signing key — is now **done**. Set `SECURACV_DB_KEY_SEED` to an independent secret and the kernel
 derives the DB key from it (`resolve_db_encryption_key`) instead of the Ed25519 signing key, so the
 DB key no longer pins the identity; `rekey_database_file()` rotates the DB key itself in place. See
-[`docs/db_key_rotation.md`](docs/db_key_rotation.md). **Still open** before signing-key rotation
+[`docs/db_key_rotation.md`](db_key_rotation.md). **Still open** before signing-key rotation
 works end-to-end: `Kernel::open` pins the device public key in `device_metadata` and rejects a
 mismatching identity, so rotation also needs identity-rotation support (record the new key, keep the
 log verifiable across the boundary). Beyond that, the higher bar is **hardware-backed keys**

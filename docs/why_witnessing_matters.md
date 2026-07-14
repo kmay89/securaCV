@@ -7,7 +7,7 @@ This document explains *why* cryptographically verifiable, non-surveillant perce
 
 > **Related:** This is the systems-level rationale. For a plain-language
 > explainer aimed at council members, trustees, and journalists, see
-> [`why_this_matters.md`](../why_this_matters.md).
+> [`why_this_matters.md`](why_this_matters.md).
 
 ---
 

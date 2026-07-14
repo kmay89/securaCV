@@ -4,7 +4,7 @@ This page covers the **operational** (stderr) logs emitted by the daemons.
 Operational logs are diagnostics for humans and log collectors — they are
 **not evidence**. Evidence lives in the sealed, hash-chained log inside the
 witness database and is verified with `log_verify` (see
-[`log_verify_README.md`](../log_verify_README.md)). Nothing security-relevant
+[`docs/log_verify.md`](log_verify.md)). Nothing security-relevant
 may *only* appear on stderr; anything the spec requires to be witnessed is
 sealed into the chain (see [`failure_semantics.md`](failure_semantics.md)).
 

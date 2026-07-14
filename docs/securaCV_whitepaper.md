@@ -52,21 +52,21 @@ This document is **normative** where it reflects canonical specifications and **
 |---|---|
 | [1. Introduction](#1-introduction) | [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md) |
 | [2. Purpose and Scope](#2-purpose-and-scope) | [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)<br>[`spec.md`](https://github.com/kmay89/securaCV/blob/main/spec.md) |
-| [3. System Philosophy: Witnessing vs Watching](#3-system-philosophy-witnessing-vs-watching) | [`docs/why_witnessing_matters.md`](https://github.com/kmay89/securaCV/blob/main/docs/why_witnessing_matters.md)<br>[`why_this_matters.md`](https://github.com/kmay89/securaCV/blob/main/why_this_matters.md) |
+| [3. System Philosophy: Witnessing vs Watching](#3-system-philosophy-witnessing-vs-watching) | [`docs/why_witnessing_matters.md`](https://github.com/kmay89/securaCV/blob/main/docs/why_witnessing_matters.md)<br>[`docs/why_this_matters.md`](https://github.com/kmay89/securaCV/blob/main/docs/why_this_matters.md) |
 | [4. Core System Overview](#4-core-system-overview) | [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)<br>[`kernel/architecture.md`](https://github.com/kmay89/securaCV/blob/main/kernel/architecture.md) |
 | [5. Canonical Invariants](#5-canonical-invariants) | [`spec/invariants.md`](https://github.com/kmay89/securaCV/blob/main/spec/invariants.md) |
 | [6. Event Model and Contracts](#6-event-model-and-contracts) | [`spec/event_contract.md`](https://github.com/kmay89/securaCV/blob/main/spec/event_contract.md) |
 | [7. Threat Model](#7-threat-model) | [`spec/threat_model.md`](https://github.com/kmay89/securaCV/blob/main/spec/threat_model.md) |
 | [8. System Architecture](#8-system-architecture) | [`kernel/architecture.md`](https://github.com/kmay89/securaCV/blob/main/kernel/architecture.md) |
-| [9. Integrity, Verification, and Trust](#9-integrity-verification-and-trust) | [`log_verify_README.md`](https://github.com/kmay89/securaCV/blob/main/log_verify_README.md)<br>[`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md) |
+| [9. Integrity, Verification, and Trust](#9-integrity-verification-and-trust) | [`docs/log_verify.md`](https://github.com/kmay89/securaCV/blob/main/docs/log_verify.md)<br>[`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md) |
 | [10. Confidentiality and the Vault](#10-confidentiality-and-the-vault) | [`kernel/architecture.md`](https://github.com/kmay89/securaCV/blob/main/kernel/architecture.md) |
 | [11. Break-Glass Mechanism](#11-break-glass-mechanism) | [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)<br>[`spec/break_glass.md`](https://github.com/kmay89/securaCV/blob/main/spec/break_glass.md) |
 | [12. Integrations Overview](#12-integrations-overview) | [`docs/integrations/home-assistant-frigate-mqtt.md`](https://github.com/kmay89/securaCV/blob/main/docs/integrations/home-assistant-frigate-mqtt.md)<br>[`docs/homeassistant_setup.md`](https://github.com/kmay89/securaCV/blob/main/docs/homeassistant_setup.md)<br>[`docs/frigate_integration.md`](https://github.com/kmay89/securaCV/blob/main/docs/frigate_integration.md) |
 | [13. Ingestion Backends](#13-ingestion-backends) | [`docs/rtsp_setup.md`](https://github.com/kmay89/securaCV/blob/main/docs/rtsp_setup.md)<br>[`docs/v4l2_setup.md`](https://github.com/kmay89/securaCV/blob/main/docs/v4l2_setup.md) |
 | [14. Operational Limitations (Root Paradox)](#14-operational-limitations-root-paradox) | [`docs/root_paradox.md`](https://github.com/kmay89/securaCV/blob/main/docs/root_paradox.md) |
 | [15. Governance, Contributions, and Security](#15-governance-contributions-and-security) | [`CONTRIBUTING.md`](https://github.com/kmay89/securaCV/blob/main/CONTRIBUTING.md)<br>[`SECURITY.md`](https://github.com/kmay89/securaCV/blob/main/SECURITY.md) |
-| [16. Release Discipline and Roadmap](#16-release-discipline-and-roadmap) | [`v1-roadmap.md`](https://github.com/kmay89/securaCV/blob/main/v1-roadmap.md)<br>[`CHANGELOG.md`](https://github.com/kmay89/securaCV/blob/main/CHANGELOG.md) |
-| [17. Appendix A: Tooling and Verification Utilities](#17-appendix-a-tooling-and-verification-utilities) | [`log_verify_README.md`](https://github.com/kmay89/securaCV/blob/main/log_verify_README.md) |
+| [16. Release Discipline and Roadmap](#16-release-discipline-and-roadmap) | [`docs/v1-roadmap.md`](https://github.com/kmay89/securaCV/blob/main/docs/v1-roadmap.md)<br>[`CHANGELOG.md`](https://github.com/kmay89/securaCV/blob/main/CHANGELOG.md) |
+| [17. Appendix A: Tooling and Verification Utilities](#17-appendix-a-tooling-and-verification-utilities) | [`docs/log_verify.md`](https://github.com/kmay89/securaCV/blob/main/docs/log_verify.md) |
 | [18. Appendix B: AI and Agent Interaction](#18-appendix-b-ai-and-agent-interaction) | [`AGENTS.md`](https://github.com/kmay89/securaCV/blob/main/AGENTS.md) |
 
 ---
@@ -109,7 +109,7 @@ The scope explicitly excludes:
 
 # 3. System Philosophy: Witnessing vs Watching
 
-**Sources:** [`docs/why_witnessing_matters.md`](https://github.com/kmay89/securaCV/blob/main/docs/why_witnessing_matters.md), [`why_this_matters.md`](https://github.com/kmay89/securaCV/blob/main/why_this_matters.md)
+**Sources:** [`docs/why_witnessing_matters.md`](https://github.com/kmay89/securaCV/blob/main/docs/why_witnessing_matters.md), [`docs/why_this_matters.md`](https://github.com/kmay89/securaCV/blob/main/docs/why_this_matters.md)
 
 SecuraCV is built around the distinction between **witnessing** and **watching**.
 
@@ -203,7 +203,7 @@ Architectural boundaries enforce separation between integrity and confidentialit
 
 # 9. Integrity, Verification, and Trust
 
-**Sources:** [`log_verify_README.md`](https://github.com/kmay89/securaCV/blob/main/log_verify_README.md), [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)
+**Sources:** [`docs/log_verify.md`](https://github.com/kmay89/securaCV/blob/main/docs/log_verify.md), [`README.md`](https://github.com/kmay89/securaCV/blob/main/README.md)
 
 Every event is signed using an Ed25519 device key.
 
@@ -291,7 +291,7 @@ Security disclosures follow documented procedures.
 
 # 16. Release Discipline and Roadmap
 
-**Sources:** [`v1-roadmap.md`](https://github.com/kmay89/securaCV/blob/main/v1-roadmap.md), [`CHANGELOG.md`](https://github.com/kmay89/securaCV/blob/main/CHANGELOG.md)
+**Sources:** [`docs/v1-roadmap.md`](https://github.com/kmay89/securaCV/blob/main/docs/v1-roadmap.md), [`CHANGELOG.md`](https://github.com/kmay89/securaCV/blob/main/CHANGELOG.md)
 
 Releases are gated by verification requirements.
 
@@ -304,7 +304,7 @@ Before v1:
 
 # 17. Appendix A: Tooling and Verification Utilities
 
-**Sources:** [`log_verify_README.md`](https://github.com/kmay89/securaCV/blob/main/log_verify_README.md)
+**Sources:** [`docs/log_verify.md`](https://github.com/kmay89/securaCV/blob/main/docs/log_verify.md)
 
 Included tools:
 - `log_verify`
