@@ -2,6 +2,24 @@
 
 Install the SecuraCV Home Assistant integration via HACS, then connect it to your SecuraCV Canary devices via MQTT or the Privacy Witness Kernel via HTTP API.
 
+## What you need
+
+| Item | Notes |
+|------|-------|
+| Raspberry Pi 4 (4 GB+) or x86 PC | Pi 5 works great; ~3 cameras at 10 fps |
+| Home Assistant OS | Installed from the official image |
+| IP camera(s) with RTSP | Hikvision, Dahua, Reolink, Amcrest, Ubiquiti, etc. |
+| HA Companion App (optional) | For push notifications to your phone |
+
+## Two witness logs, two trust roots
+
+> The kernel's sealed log covers the Frigate
+> pipeline. Canary devices are independent witnesses: each keeps its **own**
+> Ed25519-signed hash chain on-device and publishes signed events over MQTT, which the
+> Home Assistant integration verifies against that device's pinned key. Canary events are
+> *not* re-sealed into the kernel's log — a "fleet" today is N independently-signed
+> canaries converging in your dashboard, each verifiable on its own.
+
 ## Quick Start: Canary via MQTT (Recommended)
 
 Most users should use this path. Canary devices auto-discover in Home Assistant via MQTT Discovery.
@@ -151,6 +169,55 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/update/state` | Device → HA | Firmware update entity state (retained) |
 | `securacv/{device_id}/update/cmd` | HA → Device | `install` — start a firmware update |
 | `homeassistant/*/securacv_*/config` | Device → HA | HA MQTT Discovery config (retained) |
+
+### Transport catalog
+
+The integration models multi-transport resilience (`custom_components/securacv/const.py`).
+Status reflects what the code actually does today — **Implemented** means the transport
+carries witness data end-to-end, **Experimental** means partially wired (one side shipped,
+not verified end-to-end), **Planned** means the vocabulary is reserved and nothing emits it
+yet.
+
+> **Per-transport health entities do not appear yet.** The integration's
+> `SecuraCVCanaryTransportSensor` is only created when a device publishes
+> `securacv/{device_id}/transport` — and no current firmware calls its
+> `mqtt_publish_transport()` helper, so the *health sensors* below are pending a firmware
+> publisher for every row. The Status column describes the transport itself (does witness
+> data actually flow over it), not the health entity.
+
+| Transport | Description | Transport status | Health sensor |
+|-----------|-------------|------------------|---------------|
+| `wifi_sta` | WiFi station to your router (normal operation; carries all MQTT traffic) | Implemented | Pending firmware publisher |
+| `wifi_ap` | Direct WiFi AP mode (device dashboard / setup) | Implemented | Pending firmware publisher |
+| `mqtt` | MQTT broker connection — the primary witness-data path | Implemented | Pending firmware publisher |
+| `ble` | Bluetooth Low Energy (device-side scanning, chirp alerts) | Experimental | Pending firmware publisher |
+| `mesh` | Opera mesh network, peer-to-peer ([spec v0](../spec/canary_mesh_network_v0.md)) | Experimental | Pending firmware publisher |
+| `chirp` | Community alert network ([spec v0](../spec/chirp_channel_v0.md)) | Experimental | Pending firmware publisher |
+| `lora` | LoRa radio (see [Meshtastic notes](meshtastic_integration.md)) | Planned | — |
+| `audio` | SCQCS audio squawks | Planned | — |
+
+### Per-tamper-type sensor catalog
+
+Each tamper type below gets its own HA binary sensor (`binary_sensor.py`). Status is based
+on whether current firmware actually emits the corresponding signal, not on the sensor
+existing: the integration listens for several signals no firmware publishes yet.
+
+| Tamper type | HA sensor | Firmware signal today | Status |
+|-------------|-----------|----------------------|--------|
+| `sd_remove` | SD Removed | Canary WAP publishes `sd_mounted` in health | Implemented |
+| `sd_error` | SD Error | Canary publishes `sd_errors` in health | Implemented |
+| `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
+| `enclosure` | Enclosure Open | capacitive-touch tamper published on the tamper topic (as `enclosure_tamper`) | Experimental |
+| `power_loss` | Power Loss | none found (`power_loss_detected` never published) | Experimental |
+| `gps_jamming` | GPS Jamming | none found | Experimental |
+| `motion` | Unexpected Motion | none found (accelerometer signal not published) | Experimental |
+| `gpio` | GPIO Tamper | none found | Experimental |
+| `watchdog` | Watchdog Timeout | none found | Experimental |
+| `unexpected_reboot` | Unexpected Reboot | none found | Experimental |
+| `battery_remove` | — (no sensor) | none | Planned |
+| `gps_spoof` | — (no sensor) | none | Planned |
+| `capacitive` | — (no sensor; folded into `enclosure` on-device) | touch pad tamper | Planned |
+| `audio_anomaly` | — (no sensor) | none | Planned |
 
 ---
 

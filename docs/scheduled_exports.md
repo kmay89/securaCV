@@ -32,7 +32,7 @@ evidence viewer, or `export_verify` against the database).
 
 ```ini
 [Unit]
-Description=securaCV nightly self-export
+Description=SecuraCV nightly self-export
 
 [Service]
 Type=oneshot
@@ -49,7 +49,7 @@ ExecStart=/usr/local/bin/export_events \
 
 ```ini
 [Unit]
-Description=Run the securaCV self-export nightly
+Description=Run the SecuraCV self-export nightly
 
 [Timer]
 OnCalendar=daily

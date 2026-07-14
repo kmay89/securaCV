@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Repo legibility pass (structural only, no functional changes)
+
+- Root doc files relocated into `docs/` (`log_verify_README.md` ->
+  `docs/log_verify.md`, `why_this_matters.md`, `securaCV_whitepaper.md`,
+  `v1-roadmap.md`); superseded root `spec.md` pointer retired in favor of
+  `spec/README.md`; committed test-output dump `.tmp/t.txt` removed.
+- `.gitattributes` added: generated firmware trees (Canary Display Arduino
+  parity sketch, gzipped web-asset header) excluded from GitHub language
+  stats; `vendor/**` marked vendored.
+- README dieted to ~190 lines by linking out (Docker sidecar quickstart,
+  hardware table, trust-roots explainer now live in their docs pages);
+  firmware section lists all five Canary projects with the boards the
+  PlatformIO envs actually target.
+- `docs/homeassistant_setup.md` gains transport and per-tamper-type
+  catalogs with honest Implemented / Experimental / Planned status per row;
+  the transport catalog separates transport status from the per-transport
+  health entities, which are pending a firmware publisher
+  (`mqtt_publish_transport()` is defined but never called).
+
+## [0.6.0] - Unreleased
+
+**State summary.** The Frigate -> MQTT -> sealed-log pipeline is verified
+end-to-end in CI (real-broker ingest test included); the kernel test suite
+passes (458 tests). Five firmware projects build under
+`firmware/projects/` (Vision C3, WAP S3 Sense, Sense C6 + MR60BHA2 radar,
+Display S3, OTA S3/ESP-IDF). On-device hardware validation and the v1 tag
+remain open (`docs/v1-roadmap.md`); everything below shipped since 0.5.0.
+
 ### security: re-derive the break-glass quorum at every verification point
 
 A security review found the break-glass path trusted a receipt's recorded

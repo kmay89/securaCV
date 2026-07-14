@@ -40,7 +40,6 @@ External canonical source (not under `spec/`): [`kernel/architecture.md`](../ker
 
 Per-module conformance specs (the "Hello, World" module templates) live under
 [`spec/modules/`](modules/) — e.g. [`spec/modules/zone_crossing.md`](modules/zone_crossing.md),
-a 🟡 template/example, not a shipped contract. The repository's spec entry point is the root
-[`spec.md`](../spec.md) index, which points back into this set.
+a 🟡 template/example, not a shipped contract.
 
 Legacy HTML exports have been removed; refer to the canonical Markdown sources above.

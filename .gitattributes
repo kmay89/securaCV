@@ -1,0 +1,21 @@
+# Linguist overrides — keep the GitHub language bar honest about
+# first-party code. Only genuinely third-party or mechanically
+# generated trees are excluded.
+
+# Third-party dependency trees. Nothing third-party is committed today
+# (vendor/ holds only gitignored fetched ONNX models), but anything that
+# ever lands there must not count as first-party code.
+vendor/** linguist-vendored
+
+# Arduino IDE parity sketch for Canary Display: mechanically generated
+# from the canonical PlatformIO tree (see
+# firmware/projects/canary-display/arduino/PARITY.md — "the Arduino
+# sketch is mechanically generated from the PlatformIO tree, not a
+# hand-maintained fork"). NOTE: canary-wap/arduino is NOT marked — it is
+# the canonical source there (platformio.ini points src_dir at it).
+firmware/projects/canary-display/arduino/canary_display/** linguist-generated
+
+# Gzipped embedded web assets: byte arrays produced by
+# gen_web_assets_gz.py from web_ui.h / csi_dashboard_html.h /
+# companion_pwa.h ("AUTO-GENERATED ... DO NOT EDIT BY HAND").
+firmware/projects/canary-wap/arduino/canary_wap/web_assets_gz.h linguist-generated

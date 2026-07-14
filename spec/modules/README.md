@@ -6,5 +6,5 @@ module consumes the event contract and which outputs are forbidden.
 - [`zone_crossing.md`](zone_crossing.md) — reference example: detect an object crossing
   into a restricted zone.
 
-The repository's spec entry point is the root [`spec.md`](../../spec.md) index; the
+The repository's spec entry point is [`spec/README.md`](../README.md); the
 canonical, normative specs live in [`spec/`](../README.md).

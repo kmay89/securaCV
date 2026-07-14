@@ -109,7 +109,7 @@ product. Refusing them *is* our moat made visible. (See [`06-feature-prioritizat
 - **Now → ship v1.** The CI gates are now **closed** (Frigate→HA pipeline e2e, RTSP
   end-to-end in CI, the audit-vs-security-boundary doc, firmware MAC/GPS check); what
   remains is on-device hardware validation, then tag it and align
-  [`CHANGELOG.md`](../../CHANGELOG.md) and [`v1-roadmap.md`](../../v1-roadmap.md). *Without a shipped v1, "rely on
+  [`CHANGELOG.md`](../../CHANGELOG.md) and [`v1-roadmap.md`](../v1-roadmap.md). *Without a shipped v1, "rely on
   this for evidence" is hollow.*
 - **Next → kill the terminal + reveal the payoff.** One-click add-on with bundled
   detection; a polished timeline + verified badge; mobile digest/alerts out of the

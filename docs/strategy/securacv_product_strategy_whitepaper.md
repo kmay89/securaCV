@@ -9,7 +9,7 @@ and is bound by the seven invariants in [`spec/invariants.md`](../../spec/invari
 
 *Status discipline: nothing here claims more than the code delivers. Where a
 capability is in progress (vault setup UX, on-device validation, the v1 tag), it is named as
-such — matching the project's own bar in [`v1-roadmap.md`](../../v1-roadmap.md).*
+such — matching the project's own bar in [`v1-roadmap.md`](../v1-roadmap.md).*
 
 ---
 
@@ -347,7 +347,7 @@ The documented v1 gates are now **closed in CI** so "rely on this for evidence" 
 - ✅ **RTSP end-to-end** verified in CI (`ingest-rtsp` job + `tests/rtsp_e2e.rs`).
 - ✅ **"Audit boundary vs security boundary"** documentation item closed ([`docs/security/THREAT_MODEL.md`](../../docs/security/THREAT_MODEL.md)).
 - ✅ **Firmware** exposes no raw MAC / precise GPS across every tree (guardrail-enforced; see [`firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`](../../firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md)).
-- ⏳ **Remaining:** on-device hardware validation, then tag v1 and align [`CHANGELOG.md`](../../CHANGELOG.md) and [`v1-roadmap.md`](../../v1-roadmap.md) so docs never outrun code.
+- ⏳ **Remaining:** on-device hardware validation, then tag v1 and align [`CHANGELOG.md`](../../CHANGELOG.md) and [`v1-roadmap.md`](../v1-roadmap.md) so docs never outrun code.
 
 ### Phase 1 — Kill the terminal + reveal the payoff (least friction)
 - One-click HA add-on install with the **detection model bundled**.
