@@ -155,15 +155,20 @@ why exports work the way they do is in **[Why SecuraCV exports work this way](do
 
 ## Firmware
 
-Device firmware lives under [`firmware/`](firmware/):
+Device firmware lives under [`firmware/`](firmware/), one project per device:
 
-- **Canary Vision** (ESP32-C3 + Grove Vision AI V2): `firmware/projects/canary-vision/` —
-  publishes privacy-preserving semantic events and HA MQTT discovery.
-- **Canary WAP** (ESP32-S3 / XIAO ESP32-S3 Sense): `firmware/projects/canary-wap/` — WiFi CSI
-  sensing, mesh networking (Opera Protocol), BLE-Scout integration.
-- **Canary OTA**: `firmware/projects/canary-ota/` — over-the-air update engine (manifest
-  fetch, SHA256 verify, A/B rollback). Standalone today: not yet integrated into the
-  Canary firmware trees, and Ed25519 manifest signing lands before it ships (post-v1).
+- **Canary Vision** — ESP32-C3 (XIAO ESP32-C3 or C3-DevKitM; XIAO ESP32-S3 variant) + Grove
+  Vision AI V2: `firmware/projects/canary-vision/` — privacy-preserving semantic events + HA
+  MQTT discovery.
+- **Canary WAP** — XIAO ESP32-S3 Sense: `firmware/projects/canary-wap/` — WiFi CSI sensing,
+  Opera mesh, BLE-Scout, web dashboard.
+- **Canary Sense** — XIAO ESP32-C6 + Seeed MR60BHA2 60 GHz mmWave radar:
+  `firmware/projects/canary-sense/` — radar-native presence witness (no camera, no mic).
+- **Canary Display** — XIAO ESP32-S3 + Seeed Round Display ("watch") or ESP32-S3-DevKitC +
+  4.3" panel ("dash"): `firmware/projects/canary-display/` — fleet status on glass.
+- **Canary OTA** — XIAO ESP32-S3 (ESP-IDF): `firmware/projects/canary-ota/` — OTA engine
+  (manifest fetch, SHA256 verify, A/B rollback). Standalone today: not yet integrated into
+  the Canary trees; Ed25519 manifest signing lands before it ships (post-v1).
 
 **Hardware build plan & BOM:** to build a Canary from parts — audible chirp (buzzer), status LED, button/tamper/touch inputs, battery, and enclosure — see [`docs/hardware/`](docs/hardware/) ([build plan & BOM](docs/hardware/canary_peripheral_build_plan.md)).
 

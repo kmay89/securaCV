@@ -170,6 +170,47 @@ Full background, threat model, and rotation procedure: see
 | `securacv/{device_id}/update/cmd` | HA → Device | `install` — start a firmware update |
 | `homeassistant/*/securacv_*/config` | Device → HA | HA MQTT Discovery config (retained) |
 
+### Transport catalog
+
+The integration models multi-transport resilience (`custom_components/securacv/const.py`).
+Status reflects what the code actually does today — **Implemented** means the signal flows
+end-to-end, **Experimental** means one side is wired (device or HA) but not verified
+end-to-end, **Planned** means the vocabulary is reserved and nothing emits it yet.
+
+| Transport | Description | Status |
+|-----------|-------------|--------|
+| `wifi_sta` | WiFi station to your router (normal operation) | Implemented |
+| `wifi_ap` | Direct WiFi AP mode (device dashboard / setup) | Implemented |
+| `mqtt` | MQTT broker connection — the primary witness-data path | Implemented |
+| `ble` | Bluetooth Low Energy (device-side scanning, chirp alerts; HA sensor reflects device-reported state) | Experimental |
+| `mesh` | Opera mesh network, peer-to-peer ([spec v0](../spec/canary_mesh_network_v0.md)) | Experimental |
+| `chirp` | Community alert network ([spec v0](../spec/chirp_channel_v0.md)) | Experimental |
+| `lora` | LoRa radio (see [Meshtastic notes](meshtastic_integration.md)) | Planned |
+| `audio` | SCQCS audio squawks | Planned |
+
+### Per-tamper-type sensor catalog
+
+Each tamper type below gets its own HA binary sensor (`binary_sensor.py`). Status is based
+on whether current firmware actually emits the corresponding signal, not on the sensor
+existing: the integration listens for several signals no firmware publishes yet.
+
+| Tamper type | HA sensor | Firmware signal today | Status |
+|-------------|-----------|----------------------|--------|
+| `sd_remove` | SD Removed | Canary WAP publishes `sd_mounted` in health | Implemented |
+| `sd_error` | SD Error | Canary publishes `sd_errors` in health | Implemented |
+| `memory_critical` | Memory Critical | derived HA-side from published `free_heap` | Implemented |
+| `enclosure` | Enclosure Open | capacitive-touch tamper published on the tamper topic (as `enclosure_tamper`) | Experimental |
+| `power_loss` | Power Loss | none found (`power_loss_detected` never published) | Experimental |
+| `gps_jamming` | GPS Jamming | none found | Experimental |
+| `motion` | Unexpected Motion | none found (accelerometer signal not published) | Experimental |
+| `gpio` | GPIO Tamper | none found | Experimental |
+| `watchdog` | Watchdog Timeout | none found | Experimental |
+| `unexpected_reboot` | Unexpected Reboot | none found | Experimental |
+| `battery_remove` | — (no sensor) | none | Planned |
+| `gps_spoof` | — (no sensor) | none | Planned |
+| `capacitive` | — (no sensor; folded into `enclosure` on-device) | touch pad tamper | Planned |
+| `audio_anomaly` | — (no sensor) | none | Planned |
+
 ---
 
 ## Firmware Updates from Home Assistant
