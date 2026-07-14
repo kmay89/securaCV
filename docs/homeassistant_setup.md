@@ -173,20 +173,28 @@ Full background, threat model, and rotation procedure: see
 ### Transport catalog
 
 The integration models multi-transport resilience (`custom_components/securacv/const.py`).
-Status reflects what the code actually does today — **Implemented** means the signal flows
-end-to-end, **Experimental** means one side is wired (device or HA) but not verified
-end-to-end, **Planned** means the vocabulary is reserved and nothing emits it yet.
+Status reflects what the code actually does today — **Implemented** means the transport
+carries witness data end-to-end, **Experimental** means partially wired (one side shipped,
+not verified end-to-end), **Planned** means the vocabulary is reserved and nothing emits it
+yet.
 
-| Transport | Description | Status |
-|-----------|-------------|--------|
-| `wifi_sta` | WiFi station to your router (normal operation) | Implemented |
-| `wifi_ap` | Direct WiFi AP mode (device dashboard / setup) | Implemented |
-| `mqtt` | MQTT broker connection — the primary witness-data path | Implemented |
-| `ble` | Bluetooth Low Energy (device-side scanning, chirp alerts; HA sensor reflects device-reported state) | Experimental |
-| `mesh` | Opera mesh network, peer-to-peer ([spec v0](../spec/canary_mesh_network_v0.md)) | Experimental |
-| `chirp` | Community alert network ([spec v0](../spec/chirp_channel_v0.md)) | Experimental |
-| `lora` | LoRa radio (see [Meshtastic notes](meshtastic_integration.md)) | Planned |
-| `audio` | SCQCS audio squawks | Planned |
+> **Per-transport health entities do not appear yet.** The integration's
+> `SecuraCVCanaryTransportSensor` is only created when a device publishes
+> `securacv/{device_id}/transport` — and no current firmware calls its
+> `mqtt_publish_transport()` helper, so the *health sensors* below are pending a firmware
+> publisher for every row. The Status column describes the transport itself (does witness
+> data actually flow over it), not the health entity.
+
+| Transport | Description | Transport status | Health sensor |
+|-----------|-------------|------------------|---------------|
+| `wifi_sta` | WiFi station to your router (normal operation; carries all MQTT traffic) | Implemented | Pending firmware publisher |
+| `wifi_ap` | Direct WiFi AP mode (device dashboard / setup) | Implemented | Pending firmware publisher |
+| `mqtt` | MQTT broker connection — the primary witness-data path | Implemented | Pending firmware publisher |
+| `ble` | Bluetooth Low Energy (device-side scanning, chirp alerts) | Experimental | Pending firmware publisher |
+| `mesh` | Opera mesh network, peer-to-peer ([spec v0](../spec/canary_mesh_network_v0.md)) | Experimental | Pending firmware publisher |
+| `chirp` | Community alert network ([spec v0](../spec/chirp_channel_v0.md)) | Experimental | Pending firmware publisher |
+| `lora` | LoRa radio (see [Meshtastic notes](meshtastic_integration.md)) | Planned | — |
+| `audio` | SCQCS audio squawks | Planned | — |
 
 ### Per-tamper-type sensor catalog
 
