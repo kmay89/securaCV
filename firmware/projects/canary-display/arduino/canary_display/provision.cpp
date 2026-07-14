@@ -533,12 +533,13 @@ void provision_run(bool glass_ok) {
                    (int32_t)(now - ctx.st_since) > (int32_t)HINT_AFTER_MS) {
           // Captive sheet never popped (some Androids with "stay connected"
           // prompts, or a dismissed iOS sheet): give the manual path,
-          // quietly — the browser is the recovery, so name it (short form
-          // on the watch: the round face clips long bottom captions).
+          // quietly. "browser", not "Safari" — this glass onboards Android
+          // phones too (review catch). Short form on the watch: the round
+          // face clips long bottom captions.
 #ifdef CD_FLAVOR_WATCH
           ui_hint("no page? open 192.168.4.1");
 #else
-          ui_hint("no page? open Safari to 192.168.4.1");
+          ui_hint("no page? open your browser: 192.168.4.1");
 #endif
         }
         break;
