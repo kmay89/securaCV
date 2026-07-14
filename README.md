@@ -24,38 +24,18 @@ tamper-proof log that proves nobody — including you — altered the record.
 > for tamper-evident perception that records *that something happened* without building a
 > surveillance archive of *who*.
 
-> **The payoff — a verified-✓ timeline in your dashboard.** SecuraCV ships a Home Assistant
-> Lovelace card: events newest-first under a hash-chain status header, where the
-> **✓ "Signature verified"** badge appears only when an event's Ed25519 signature actually
-> verified — weaker states are labelled distinctly, so the badge never overclaims. Add it from
-> **Add Card → "SecuraCV Verified Timeline"**; see the [card guide](docs/lovelace_timeline.md).
-
 ---
 
-## Who it's for
+## Who it's for, and how it compares
 
-- **Privacy-conscious Home Assistant / homelab users** who want a private, no-subscription
-  camera and already run RTSP cameras and a Pi. *(Start here — best supported today.)*
-- **People who need records that hold up** — tenants, journalists, activists, abuse survivors —
-  who need proof that can't be quietly altered.
-- **Builders** who want tamper-aware ESP32 "Canary" sensors. See [Firmware](#firmware).
-
----
-
-## How it compares
-
-| What matters | Cloud cameras (Ring, Nest) | DIY NVR (Frigate, UniFi) | **SecuraCV** |
-|---|---|---|---|
-| Recurring fees | $5–20/month per setup | None | **None** |
-| Footage lives | Their cloud | Your disk | **Your disk, auto-deleting** |
-| Surveillance archive | Grows forever | Grows until disk fills | **24-hour memory** |
-| Proof the record wasn't altered | Trust the vendor | None | **Ed25519-signed hash chain** |
-
-SecuraCV doesn't replace Frigate — it runs alongside it and adds the two things no NVR gives
-you: a privacy boundary enforced in code, and a record you can *prove* nobody edited.
+Built for privacy-conscious Home Assistant / homelab users with RTSP cameras and a Pi
+(*start here — best supported today*), for people who need records that hold up — tenants,
+journalists, activists, abuse survivors — and for builders who want tamper-aware ESP32
+"Canary" sensors (see [Firmware](#firmware)). Unlike cloud cameras there are no recurring
+fees and footage never leaves your disk; unlike DIY NVRs the record is provably
+tamper-evident. SecuraCV doesn't replace Frigate — it runs alongside it and adds a privacy
+boundary enforced in code, plus a record you can *prove* nobody edited.
 ([Full market & cost analysis](docs/strategy/05-market-and-cost-comparison.md))
-
----
 
 ## Install
 
@@ -73,42 +53,23 @@ Mosquitto add-on (host, port, credentials — nothing to type).
 cameras', then start Frigate (Settings → Add-ons → Frigate → Start).
 Until this is done there are no detections for SecuraCV to witness.
 
-That's it. Your Frigate clips keep recording as usual; witness sensors, a
-daily-digest sensor, a chain-integrity sensor, and a **Verify Now** button
-appear in Home Assistant automatically. The add-on panel can generate a
-ready-made dashboard from your live zones.
-
-*(Alternative one-liner from the Terminal add-on:
+That's it. Frigate clips keep recording as usual; witness sensors, a daily-digest sensor,
+a chain-integrity sensor, and a **Verify Now** button appear in Home Assistant
+automatically, and the add-on panel can generate a ready-made dashboard from your live
+zones. *(Alternative one-liner from the Terminal add-on:
 `curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash`)*
 
 ### Docker, alongside an existing Frigate (5 minutes)
 
-```bash
-curl -fsSLO https://raw.githubusercontent.com/kmay89/securaCV/main/docker/sidecar/quickstart.compose.yml
-# edit one line: FRIGATE_MQTT_HOST → the broker Frigate publishes to
-docker compose -f quickstart.compose.yml up -d
-docker compose -f quickstart.compose.yml run --rm securacv doctor   # checks everything end-to-end
-```
-
-The device key is auto-generated into the data volume (back it up). See
-[`docs/frigate_integration.md`](docs/frigate_integration.md) for details
-and the bundled-broker variant.
-
-> **Where's the API token?** If you connect the integration in "Witness Kernel via
-> HTTP API" mode, keep the default token-file path (`/config/api_token`) — the kernel
-> rotates the token every 10 minutes and the integration follows the rotation
-> automatically. Only paste a static token for a kernel on another host.
+One compose file next to your existing Frigate: quickstart download, the end-to-end
+`doctor` check, the bundled-broker variant, and API-token handling are all in
+[`docs/frigate_integration.md`](docs/frigate_integration.md).
 
 ### What you need
 
-| Item | Notes |
-|------|-------|
-| Raspberry Pi 4 (4 GB+) or x86 PC | Pi 5 works great; ~3 cameras at 10 fps |
-| Home Assistant OS | Installed from the official image |
-| IP camera(s) with RTSP | Hikvision, Dahua, Reolink, Amcrest, Ubiquiti, etc. |
-| HA Companion App (optional) | For push notifications to your phone |
-
----
+A Raspberry Pi 4 (4 GB+) or x86 PC running Home Assistant OS, plus RTSP camera(s)
+(Hikvision, Dahua, Reolink, Amcrest, Ubiquiti, …) — details in the
+[hardware table](docs/homeassistant_setup.md#what-you-need).
 
 ## How it works (for normal people)
 
@@ -120,10 +81,8 @@ and the bundled-broker variant.
   that requires your chosen trustees to approve access. Tampering isn't impossible — it's
   *evident*: alter the record and verification fails. (For what the trust boundary does and
   doesn't cover, see [the root paradox](docs/root_paradox.md).)
-
-**Daily digest:** every morning, a push notification summarizes event counts per zone and
-confirms all witnesses are valid. **Pattern alerts:** unusual-hour activity or unexpectedly
-silent zones trigger a high-priority push automatically.
+- **Daily digest & pattern alerts:** a morning push summarizes event counts per zone and
+  confirms all witnesses are valid; unusual-hour activity or silent zones push automatically.
 
 ## How it works (for engineers)
 
@@ -149,14 +108,9 @@ Camera → Frigate (clips, detection) → MQTT → Privacy Witness Kernel
 ```
 
 The result: a forensic-grade event log that proves what the cameras saw, while discarding
-everything that could enable mass surveillance.
-
-> **Two witness logs, two trust roots.** The kernel's sealed log covers the Frigate
-> pipeline above. Canary devices are independent witnesses: each keeps its **own**
-> Ed25519-signed hash chain on-device and publishes signed events over MQTT, which the
-> Home Assistant integration verifies against that device's pinned key. Canary events are
-> *not* re-sealed into the kernel's log — a "fleet" today is N independently-signed
-> canaries converging in your dashboard, each verifiable on its own.
+everything that could enable mass surveillance. Canary devices are *independent* witnesses
+with their own on-device hash chains, verified against per-device pinned keys — not re-sealed
+into the kernel's log ([two witness logs, two trust roots](docs/homeassistant_setup.md#two-witness-logs-two-trust-roots)).
 
 ### Canonical specifications
 
@@ -165,25 +119,24 @@ everything that could enable mass surveillance.
 - [`spec/threat_model.md`](spec/threat_model.md) — threats in and out of scope
 - [`kernel/architecture.md`](kernel/architecture.md) — component isolation, trust boundaries
 
----
-
 ## Home Assistant integration
 
-SecuraCV integrates with Home Assistant via an **HTTP API** (required — event queries, vault
-storage, management) and optional **MQTT** (real-time updates from Canary devices, multi-transport
-resilience). It surfaces semantic witness events, hash-chain integrity, and device health —
-never raw video or identity data.
+SecuraCV integrates with Home Assistant via an **HTTP API** (required) and optional **MQTT**
+(real-time Canary updates). It surfaces semantic witness events, hash-chain integrity, and
+device health — never raw video or identity data.
 
 **HACS install:** HACS → ⋮ → Custom repositories → add `https://github.com/kmay89/securaCV` as an
 Integration → install "SecuraCV" → restart → Settings → Devices & Services → Add Integration →
 SecuraCV. Requires Home Assistant 2024.4.1+.
 
+A bundled Lovelace card ("SecuraCV Verified Timeline") shows events under a hash-chain
+status header, with a **✓ Signature verified** badge that appears only when an event's
+Ed25519 signature actually verified — see the [card guide](docs/lovelace_timeline.md).
+
 The full entity catalog (kernel sensors, Canary MQTT sensors, per-tamper-type sensors,
 multi-transport status, MQTT Discovery, Frigate mode), is in
 [`docs/homeassistant_setup.md`](docs/homeassistant_setup.md) and
 [`docs/frigate_integration.md`](docs/frigate_integration.md).
-
----
 
 ## Building from source (developers)
 
@@ -196,13 +149,9 @@ cargo run --bin demo
 cargo run --bin log_verify -- --db demo_witness.db
 ```
 
-For real cameras (RTSP / V4L2 / ESP32), local ONNX detection, container deployment, the
-break-glass and event-export CLIs, and the full Home Assistant entity reference, see the
-**[Operator Guide](docs/operator_guide.md)**. For a plain-language explanation of why exports
-and verification work the way they do (vs. "download the clip"), see
-**[Why securaCV exports work this way](docs/why_secure.md)**.
-
----
+Real cameras (RTSP / V4L2 / ESP32), local ONNX detection, container deployment, and the
+break-glass and event-export CLIs are in the **[Operator Guide](docs/operator_guide.md)**;
+why exports work the way they do is in **[Why SecuraCV exports work this way](docs/why_secure.md)**.
 
 ## Firmware
 
@@ -218,8 +167,6 @@ Device firmware lives under [`firmware/`](firmware/):
 
 **Hardware build plan & BOM:** to build a Canary from parts — audible chirp (buzzer), status LED, button/tamper/touch inputs, battery, and enclosure — see [`docs/hardware/`](docs/hardware/) ([build plan & BOM](docs/hardware/canary_peripheral_build_plan.md)).
 
----
-
 ## Project docs
 
 - **[docs/strategy/](docs/strategy/)** — codebase map, product strategy, market & cost analysis.
@@ -234,20 +181,11 @@ automatically in CI (including a real broker ingest test); on-device hardware va
 the v1 tag are still pending. Track progress in [`docs/v1-roadmap.md`](docs/v1-roadmap.md) and
 [`CHANGELOG.md`](CHANGELOG.md).
 
----
-
 ## Support the project
 
 SecuraCV is independent, open source (Apache-2.0), and built in the open. If *witnessing
-without watching* resonates with you:
-
-- ⭐ **Star the repo** — it's the main way new people find the project.
-- 🗣️ **Share it** with the Home Assistant and self-hosting communities — or anyone still
-  paying a monthly camera subscription.
-- 🛠️ **Help build it** — [open an issue](https://github.com/kmay89/securaCV/issues), join a
-  [discussion](https://github.com/kmay89/securaCV/discussions), or see
-  [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
----
+without watching* resonates with you: ⭐ star the repo, share it with the Home Assistant and
+self-hosting communities, or help build it — [open an issue](https://github.com/kmay89/securaCV/issues),
+join a [discussion](https://github.com/kmay89/securaCV/discussions), or see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 **SecuraCV** — a security camera with a 24-hour memory, and a tamper-proof log to prove it.

@@ -2,6 +2,24 @@
 
 Install the SecuraCV Home Assistant integration via HACS, then connect it to your SecuraCV Canary devices via MQTT or the Privacy Witness Kernel via HTTP API.
 
+## What you need
+
+| Item | Notes |
+|------|-------|
+| Raspberry Pi 4 (4 GB+) or x86 PC | Pi 5 works great; ~3 cameras at 10 fps |
+| Home Assistant OS | Installed from the official image |
+| IP camera(s) with RTSP | Hikvision, Dahua, Reolink, Amcrest, Ubiquiti, etc. |
+| HA Companion App (optional) | For push notifications to your phone |
+
+## Two witness logs, two trust roots
+
+> The kernel's sealed log covers the Frigate
+> pipeline. Canary devices are independent witnesses: each keeps its **own**
+> Ed25519-signed hash chain on-device and publishes signed events over MQTT, which the
+> Home Assistant integration verifies against that device's pinned key. Canary events are
+> *not* re-sealed into the kernel's log — a "fleet" today is N independently-signed
+> canaries converging in your dashboard, each verifiable on its own.
+
 ## Quick Start: Canary via MQTT (Recommended)
 
 Most users should use this path. Canary devices auto-discover in Home Assistant via MQTT Discovery.
