@@ -7,7 +7,7 @@
 >
 > For a shorter companion focused on exports — why there is no "download
 > the clip", why times are coarse, and how to handle a failed verification —
-> see [Why securaCV exports work this way](../why_secure.md).
+> see [Why SecuraCV exports work this way](../why_secure.md).
 
 ---
 

@@ -17,7 +17,7 @@
 
 | You want… | Read | Not |
 |---|---|---|
-| The binding v1 definition + stream status | [`../v1-roadmap.md`](../v1-roadmap.md) | here |
+| The binding v1 definition + stream status | [`v1-roadmap.md`](v1-roadmap.md) | here |
 | Rebuild-from-scratch requirements, every item tagged Implemented/Partial/Stub w/ file evidence | [`review/00-requirements-spec.md`](review/00-requirements-spec.md) | here |
 | Everything inconsistent/unfinished by severity (the `F-xx` flags) | [`review/01-flag-report.md`](review/01-flag-report.md) | here |
 | The independent, reconciled, phased roadmap (P0–P4) + hardware plan + 2026 market scan | [`review/02-roadmap.md`](review/02-roadmap.md) | here |

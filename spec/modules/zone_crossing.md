@@ -7,7 +7,7 @@ Last Updated: 2026-01-20
 > of conforming witness modules, **not** the system specification. The canonical,
 > normative specs live one level up in [`spec/`](../README.md): start with
 > [`invariants.md`](../invariants.md) and [`event_contract.md`](../event_contract.md).
-> The repository's spec entry point is the root [`spec.md`](../../spec.md) index.
+> The repository's spec entry point is [`spec/README.md`](../README.md).
 
 ## 1. Purpose
 `zone_crossing` detects when an object crosses from outside a configured boundary into a restricted zone.

@@ -1,4 +1,4 @@
-# Why securaCV exports work this way
+# Why SecuraCV exports work this way
 
 *A plain-language explainer for owners, and for anyone you hand evidence to.
 No cryptography background needed.*
@@ -11,7 +11,7 @@ entirely, and nothing about the file itself can prove otherwise. The moment it
 matters (an insurance dispute, a court, a newsroom), its credibility rests on
 trusting whoever handed it over.
 
-securaCV inverts this. The device records **less** — semantic events ("large
+SecuraCV inverts this. The device records **less** — semantic events ("large
 object crossed the boundary in zone A, around 14:10, confidence 0.93") instead
 of raw video — so that it can **prove** what it does record:
 
@@ -24,7 +24,7 @@ of raw video — so that it can **prove** what it does record:
   quietly extract data — the act of disclosure is itself part of the
   tamper-evident record, labeled with how it was authorized.
 
-So when you hand someone a securaCV evidence bundle, you're not asking them to
+So when you hand someone a SecuraCV evidence bundle, you're not asking them to
 trust you. They drop the file into the offline viewer (or run `envelope_verify`)
 and the math checks itself — no account, no network, no vendor involved.
 

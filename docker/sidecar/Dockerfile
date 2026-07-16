@@ -33,7 +33,7 @@ COPY docs ./docs
 COPY examples ./examples
 COPY scripts ./scripts
 COPY tests ./tests
-COPY spec.md log_verify_README.md README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md why_this_matters.md ./
+COPY README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md ./
 
 RUN cargo build --release \
     --bin witness_api \
