@@ -3,15 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="K. May — engineer, author, toymaker, founder. A desk of shipped worlds: ATM hardware, an award-winning bilingual book &amp; toy, Hive Mind, the Everything series, SCQCS, ERRER Labs, and securaCV.">
+<meta name="description" content="K. May — engineer, author, toymaker, founder. An isometric 2000s desk of shipped worlds: ATM hardware, an award-winning bilingual book &amp; toy, Hive Mind, the Everything series, SCQCS, ERRER Labs, and securaCV.">
 <meta name="theme-color" content="#0e0a07">
 <title>K. May — The Desk of Worlds</title>
 <style>
   :root{
     --room:#0e0a07;
     --room-deep:#080604;
-    --desk-hi:#3b2a1a;
-    --desk-lo:#241812;
     --lamp:#ffc97a;
     --ink:#f4e9d8;
     --ink-dim:#b9a88f;
@@ -46,6 +44,7 @@
     overflow:hidden;
     background:
       radial-gradient(120% 90% at 62% -10%, rgba(255,201,122,.16), transparent 55%),
+      radial-gradient(80% 60% at 50% 105%, rgba(58,36,20,.55), transparent 70%),
       linear-gradient(var(--room-deep), var(--room) 30%);
   }
   #dust{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
@@ -79,56 +78,75 @@
     line-height:1.55;
   }
 
-  /* ---------- desk ---------- */
-  .desk{
+  /* ---------- isometric desk ---------- */
+  .desk-wrap{
     position:relative;z-index:2;
     flex:1;
-    min-height:min(62vh,640px);
-    margin-top:clamp(.5rem,2vh,1.5rem);
-    background:
-      radial-gradient(85% 120% at 60% 0%, rgba(255,201,122,.28), rgba(255,201,122,.07) 45%, transparent 72%),
-      repeating-linear-gradient(97deg, rgba(255,222,170,.045) 0 2px, transparent 2px 26px, rgba(0,0,0,.06) 26px 28px, transparent 28px 61px),
-      linear-gradient(178deg, var(--desk-hi), var(--desk-lo) 70%);
-    border-top:1px solid rgba(255,201,122,.28);
-    box-shadow:0 -18px 60px rgba(0,0,0,.55) inset, 0 -1px 0 rgba(255,220,170,.12) inset;
+    overflow-x:auto;
+    overflow-y:hidden;
+    -webkit-overflow-scrolling:touch;
+    padding:clamp(.5rem,2vh,1.5rem) 0 0;
   }
-  .desk::after{ /* vignette so edges fall into the dark */
-    content:"";position:absolute;inset:0;pointer-events:none;
-    background:radial-gradient(90% 90% at 58% 18%, transparent 42%, rgba(8,6,4,.72) 100%);
-  }
-
-  .obj{
-    position:absolute;
-    left:var(--x);top:var(--y);
-    width:var(--w);
+  #iso{
+    display:block;
+    width:100%;
+    min-width:720px;
+    max-width:1180px;
+    margin:0 auto;
     transform:translate3d(var(--px,0px),var(--py,0px),0);
-    z-index:2;
   }
-  .bob{animation:bob 6s ease-in-out infinite;animation-delay:var(--bd,0s)}
-  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
-
-  .obj-btn{
-    display:block;width:100%;
-    background:none;border:0;cursor:pointer;color:inherit;
+  .iso-obj{cursor:pointer;outline:none}
+  .iso-obj > *{transition:transform .3s cubic-bezier(.2,.9,.3,1.35)}
+  .iso-obj:hover > *,.iso-obj:focus-visible > *{transform:translateY(-8px)}
+  .iso-obj:hover,.iso-obj:focus-visible{
+    filter:drop-shadow(0 0 14px color-mix(in srgb, var(--a) 55%, transparent));
+  }
+  .tip{
+    position:absolute;z-index:6;
+    transform:translate(-50%,-100%);
+    background:rgba(22,15,9,.94);
+    border:1px solid var(--a,#ffc97a);
+    border-radius:5px;
+    padding:.4em .8em;
     font-family:var(--mono);
-    transition:transform .35s cubic-bezier(.2,.9,.3,1.4), filter .35s ease;
-    filter:drop-shadow(0 14px 10px rgba(0,0,0,.55));
-    -webkit-tap-highlight-color:transparent;
+    font-size:.64rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink);
+    pointer-events:none;white-space:nowrap;
+    opacity:0;visibility:hidden;
+    transition:opacity .15s ease;
   }
-  .obj-btn svg{width:100%;height:auto;display:block}
-  .obj-btn .tag{
-    display:block;text-align:center;
-    margin-top:.55rem;
-    font-size:.62rem;letter-spacing:.18em;text-transform:uppercase;
-    color:var(--ink-faint);
-    transition:color .3s ease;
+  .tip.show{opacity:1;visibility:visible}
+  .legend{
+    position:relative;z-index:4;
+    display:flex;flex-wrap:wrap;gap:.5rem .6rem;justify-content:center;
+    padding:.9rem clamp(1.25rem,5vw,4rem) 0;
   }
-  .obj-btn:hover,.obj-btn:focus-visible{
-    transform:translateY(-10px) scale(1.045) rotate(var(--tilt,-1.2deg));
-    filter:drop-shadow(0 30px 22px rgba(0,0,0,.6)) drop-shadow(0 0 26px color-mix(in srgb, var(--a) 38%, transparent));
+  .legend button{
+    font-family:var(--mono);
+    font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-dim);
+    background:color-mix(in srgb, var(--a) 8%, transparent);
+    border:1px solid color-mix(in srgb, var(--a) 38%, transparent);
+    border-radius:999px;
+    padding:.42em .95em;
+    cursor:pointer;
+    transition:color .25s ease, background .25s ease;
   }
-  .obj-btn:hover .tag,.obj-btn:focus-visible .tag{color:var(--a)}
-  .obj-btn:focus-visible{outline:2px solid var(--a);outline-offset:8px;border-radius:6px}
+  .legend button:hover,.legend button:focus-visible{
+    color:var(--a);
+    background:color-mix(in srgb, var(--a) 18%, transparent);
+  }
+  .legend button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+  .steam{animation:steam 3.6s ease-in-out infinite;transform-origin:center bottom}
+  .steam.s2{animation-delay:-1.7s}
+  @keyframes steam{
+    0%,100%{opacity:.10;transform:translateY(0)}
+    50%{opacity:.34;transform:translateY(-5px)}
+  }
+  .led{animation:led 2.2s ease-in-out infinite}
+  @keyframes led{0%,100%{opacity:1}50%{opacity:.15}}
+  .crt-line{animation:crt 5s steps(2) infinite}
+  @keyframes crt{0%,92%,100%{opacity:1}94%{opacity:.55}}
 
   .hint{
     position:relative;z-index:4;
@@ -140,6 +158,8 @@
     background:linear-gradient(transparent, rgba(8,6,4,.6));
   }
   .hint .sep{opacity:.4}
+  .hint .pan-hint{display:none}
+  @media (max-width:760px){ .hint .pan-hint{display:inline} }
   .chip{
     font-family:var(--mono);
     font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;
@@ -181,7 +201,7 @@
   .d-head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
   .d-kicker{
     font-family:var(--mono);font-size:.66rem;letter-spacing:.22em;
-    text-transform:uppercase;color:var(--a,--lamp);color:var(--a)
+    text-transform:uppercase;color:var(--a)
   }
   .dossier h2{
     margin-top:.8rem;
@@ -225,22 +245,10 @@
   footer a:hover{color:var(--lamp);border-color:var(--lamp)}
   footer .cols{display:flex;flex-wrap:wrap;gap:.4rem 1.6rem}
 
-  /* ---------- mobile: desk becomes a tray grid ---------- */
-  @media (max-width:720px){
-    .desk{
-      display:grid;
-      grid-template-columns:repeat(2,1fr);
-      gap:1.4rem 1rem;
-      padding:2rem 1.25rem 2.5rem;
-      min-height:0;
-    }
-    .obj{position:static;width:100%;max-width:11rem;min-width:0;margin:0 auto;transform:none}
-    .obj-btn .tag{color:var(--ink-dim)}
-  }
   @media (prefers-reduced-motion:reduce){
-    .bob{animation:none}
-    .obj{transform:none !important}
-    .obj-btn,.dossier,.scrim{transition:none}
+    #iso{transform:none !important}
+    .iso-obj > *,.dossier,.scrim{transition:none}
+    .steam,.led,.crt-line{animation:none}
     html{scroll-behavior:auto}
   }
 </style>
@@ -251,155 +259,35 @@
   <canvas id="dust" aria-hidden="true"></canvas>
 
   <header class="intro">
-    <p class="eyebrow">K. May · ERRER Labs — Portfolio</p>
+    <p class="eyebrow">K. May · ERRER Labs — est. 1989</p>
     <!-- EDIT: swap "K. May" above and in <title>/footer for your full name -->
     <h1>Every object on this desk is an <em>entire world</em> I shipped.</h1>
-    <p class="lede">Electrical &amp; computer engineer, author, toymaker, game designer,
-    security founder, record label. Hardware taught me that how a thing <em>feels</em> is
-    engineered, not decorated — so pick something up. Each one has its own light, sound,
+    <p class="lede">Born in &rsquo;89 — raised on beige plastic, dial-up, and CRT glow.
+    Electrical &amp; computer engineer, author, toymaker, game designer, security founder,
+    record label. Pick something up off the desk; each world has its own light, sound,
     and pulse.</p>
   </header>
 
-  <div class="desk" id="desk">
-
-    <!-- The Everything series — four spines -->
-    <div class="obj" data-id="series" style="--x:6%;--y:10%;--w:130px;--depth:.55">
-      <div class="bob" style="--bd:-1.2s">
-        <button class="obj-btn" style="--a:var(--c-series);--tilt:-2deg" data-id="series" aria-haspopup="dialog">
-          <svg viewBox="0 0 104 122" role="img" aria-label="Four book spines: the Everything series">
-            <rect x="2"  y="14" width="22" height="106" rx="3" fill="#2b2140" stroke="#b79cff" stroke-width="1.5"/>
-            <rect x="28" y="6"  width="22" height="114" rx="3" fill="#1e3325" stroke="#63e6a9" stroke-width="1.5"/>
-            <rect x="54" y="18" width="22" height="102" rx="3" fill="#3a2030" stroke="#ff8ac2" stroke-width="1.5"/>
-            <rect x="80" y="10" width="22" height="110" rx="3" fill="#1d2a3e" stroke="#8fb7ff" stroke-width="1.5"/>
-            <circle cx="13" cy="30" r="4.5" fill="#b79cff"/>
-            <path d="M39 24 l5 9 h-10 z" fill="#63e6a9"/>
-            <circle cx="65" cy="34" r="4.5" fill="none" stroke="#ff8ac2" stroke-width="2"/>
-            <circle cx="91" cy="27" r="2" fill="#8fb7ff"/>
-            <circle cx="87" cy="33" r="2" fill="#8fb7ff"/>
-            <circle cx="95" cy="33" r="2" fill="#8fb7ff"/>
-          </svg>
-          <span class="tag">The Everything Series</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Bilingual book + toy -->
-    <div class="obj" data-id="toy" style="--x:28%;--y:6%;--w:150px;--depth:.8">
-      <div class="bob" style="--bd:-3.4s">
-        <button class="obj-btn" style="--a:var(--c-toy);--tilt:1.5deg" data-id="toy" aria-haspopup="dialog">
-          <svg viewBox="0 0 140 110" role="img" aria-label="An open bilingual book with a toy block">
-            <path d="M8 82 L64 70 L64 22 L8 34 Z" fill="#f2e3c9" stroke="#c9b490" stroke-width="1.5"/>
-            <path d="M120 82 L64 70 L64 22 L120 34 Z" fill="#e8d6b8" stroke="#c9b490" stroke-width="1.5"/>
-            <text x="30" y="58" font-family="Georgia,serif" font-size="20" fill="#a05a2c" transform="rotate(-8 30 58)">A</text>
-            <text x="88" y="56" font-family="Georgia,serif" font-size="20" fill="#a05a2c" transform="rotate(8 88 56)">Ñ</text>
-            <rect x="88" y="52" width="44" height="44" rx="7" fill="#ff8a5c" stroke="#d96a3e" stroke-width="2"/>
-            <text x="110" y="83" font-family="Georgia,serif" font-size="24" font-weight="bold" fill="#fff4e8" text-anchor="middle">B</text>
-            <circle cx="97" cy="61" r="2.5" fill="#fff4e8" opacity=".8"/>
-          </svg>
-          <span class="tag">Book + Toy · 3 Awards</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Hive Mind game -->
-    <div class="obj" data-id="hive" style="--x:55%;--y:9%;--w:120px;--depth:.5">
-      <div class="bob" style="--bd:-2.1s">
-        <button class="obj-btn" style="--a:var(--c-hive);--tilt:-1deg" data-id="hive" aria-haspopup="dialog">
-          <svg viewBox="0 0 112 104" role="img" aria-label="Honeycomb game tiles">
-            <polygon points="28,2 52,2 64,22 52,42 28,42 16,22" fill="#3a2c12" stroke="#f5b63f" stroke-width="2"/>
-            <polygon points="64,24 88,24 100,44 88,64 64,64 52,44" fill="#f5b63f" stroke="#ffd98a" stroke-width="2"/>
-            <polygon points="28,46 52,46 64,66 52,86 28,86 16,66" fill="#3a2c12" stroke="#f5b63f" stroke-width="2"/>
-            <circle cx="76" cy="44" r="5" fill="#241812"/>
-            <circle cx="40" cy="22" r="3" fill="#f5b63f"/>
-            <circle cx="40" cy="66" r="3" fill="#f5b63f"/>
-          </svg>
-          <span class="tag">Hive Mind — the game</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- SCQCS shield -->
-    <div class="obj" data-id="scqcs" style="--x:78%;--y:14%;--w:110px;--depth:.7">
-      <div class="bob" style="--bd:-4.6s">
-        <button class="obj-btn" style="--a:var(--c-scqcs);--tilt:2deg" data-id="scqcs" aria-haspopup="dialog">
-          <svg viewBox="0 0 84 96" role="img" aria-label="A security shield with a keyhole">
-            <path d="M42 4 L76 16 V42 C76 64 62 78 42 90 C22 78 8 64 8 42 V16 Z"
-                  fill="#301112" stroke="#ff5d5d" stroke-width="2.5"/>
-            <circle cx="42" cy="40" r="9" fill="none" stroke="#ff5d5d" stroke-width="3"/>
-            <rect x="39" y="46" width="6" height="16" rx="3" fill="#ff5d5d"/>
-          </svg>
-          <span class="tag">SCQCS Security</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Circuit board / the machine years -->
-    <div class="obj" data-id="board" style="--x:10%;--y:44%;--w:200px;--depth:1">
-      <div class="bob" style="--bd:-.6s">
-        <button class="obj-btn" style="--a:var(--c-board);--tilt:-1.6deg" data-id="board" aria-haspopup="dialog">
-          <svg viewBox="0 0 190 120" role="img" aria-label="A circuit board with a card reader slot">
-            <rect x="2" y="8" width="170" height="104" rx="8" fill="#0f2a1e" stroke="#63e6a9" stroke-width="2"/>
-            <rect x="64" y="42" width="44" height="36" rx="3" fill="#081a12" stroke="#63e6a9" stroke-width="1.5"/>
-            <path d="M20 26 H58 V48" fill="none" stroke="#63e6a9" stroke-width="1.5" opacity=".7"/>
-            <path d="M20 96 H52 V82 H64" fill="none" stroke="#63e6a9" stroke-width="1.5" opacity=".7"/>
-            <path d="M112 50 H140 V30 H156" fill="none" stroke="#63e6a9" stroke-width="1.5" opacity=".7"/>
-            <path d="M112 70 H148 V94" fill="none" stroke="#63e6a9" stroke-width="1.5" opacity=".7"/>
-            <circle cx="20" cy="26" r="3.5" fill="#63e6a9"/>
-            <circle cx="20" cy="96" r="3.5" fill="#63e6a9"/>
-            <circle cx="156" cy="30" r="3.5" fill="#63e6a9"/>
-            <circle cx="148" cy="94" r="3.5" fill="#63e6a9"/>
-            <rect x="150" y="52" width="38" height="18" rx="3" fill="#1a1a1f" stroke="#4a4a55" stroke-width="1.5"/>
-            <rect x="158" y="58" width="34" height="7" rx="1.5" fill="#e8d6b8" transform="rotate(-6 158 58)"/>
-            <rect x="160" y="59.5" width="7" height="4.5" rx="1" fill="#c9a227" transform="rotate(-6 160 59.5)"/>
-          </svg>
-          <span class="tag">The Machine Years — ATMs</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- securaCV camera -->
-    <div class="obj" data-id="cam" style="--x:44%;--y:48%;--w:130px;--depth:.9">
-      <div class="bob" style="--bd:-5.3s">
-        <button class="obj-btn" style="--a:var(--c-cam);--tilt:1deg" data-id="cam" aria-haspopup="dialog">
-          <svg viewBox="0 0 116 96" role="img" aria-label="A small open-source camera">
-            <rect x="10" y="14" width="96" height="58" rx="10" fill="#141c2c" stroke="#8fb7ff" stroke-width="2"/>
-            <circle cx="58" cy="43" r="19" fill="#0b1220" stroke="#8fb7ff" stroke-width="2"/>
-            <circle cx="58" cy="43" r="9" fill="#22335a"/>
-            <circle cx="53" cy="38" r="3" fill="#bcd4ff" opacity=".85"/>
-            <circle cx="92" cy="26" r="3.5" fill="#63e6a9"/>
-            <path d="M46 84 H70 M58 72 V84" stroke="#8fb7ff" stroke-width="3" stroke-linecap="round"/>
-            <path d="M22 26 h12 M22 32 h8" stroke="#8fb7ff" stroke-width="2" stroke-linecap="round" opacity=".55"/>
-          </svg>
-          <span class="tag">securaCV — open source</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- ERRER Labs vinyl -->
-    <div class="obj" data-id="vinyl" style="--x:71%;--y:36%;--w:165px;--depth:1.1">
-      <div class="bob" style="--bd:-2.8s">
-        <button class="obj-btn" style="--a:var(--c-vinyl);--tilt:-2.2deg" data-id="vinyl" aria-haspopup="dialog">
-          <svg viewBox="0 0 130 130" role="img" aria-label="A vinyl record: Echoes of Us">
-            <circle cx="65" cy="65" r="61" fill="#101418" stroke="#2b3238" stroke-width="2"/>
-            <circle cx="65" cy="65" r="50" fill="none" stroke="#242b31" stroke-width="1.5"/>
-            <circle cx="65" cy="65" r="41" fill="none" stroke="#242b31" stroke-width="1.5"/>
-            <circle cx="65" cy="65" r="32" fill="none" stroke="#242b31" stroke-width="1.5"/>
-            <circle cx="65" cy="65" r="20" fill="#7cd7e8"/>
-            <circle cx="65" cy="65" r="3.5" fill="#0e0a07"/>
-            <path d="M30 34 A48 48 0 0 1 96 30" fill="none" stroke="#3d474f" stroke-width="2" opacity=".8"/>
-            <text x="65" y="59" font-family="Georgia,serif" font-size="8.5" fill="#0b2830" text-anchor="middle" font-style="italic">Echoes</text>
-            <text x="65" y="79" font-family="Georgia,serif" font-size="8.5" fill="#0b2830" text-anchor="middle" font-style="italic">of Us</text>
-          </svg>
-          <span class="tag">ERRER Labs · Aethra Kairos</span>
-        </button>
-      </div>
-    </div>
-
+  <div class="desk-wrap">
+    <svg id="iso" viewBox="-410 -45 1010 560" role="group"
+         aria-label="An isometric 2000s desk holding seven interactive objects, one per world"></svg>
   </div>
+  <div class="tip" id="tip" aria-hidden="true"></div>
+
+  <nav class="legend" aria-label="Worlds on the desk">
+    <button data-id="board" style="--a:var(--c-board)">The machine years</button>
+    <button data-id="toy" style="--a:var(--c-toy)">Book + toy</button>
+    <button data-id="hive" style="--a:var(--c-hive)">Hive Mind</button>
+    <button data-id="series" style="--a:var(--c-series)">Everything series</button>
+    <button data-id="scqcs" style="--a:var(--c-scqcs)">SCQCS</button>
+    <button data-id="vinyl" style="--a:var(--c-vinyl)">Aethra Kairos</button>
+    <button data-id="cam" style="--a:var(--c-cam)">securaCV</button>
+  </nav>
 
   <div class="hint">
     <span>Hover to feel</span><span class="sep">/</span>
     <span>Click to pick up</span><span class="sep">/</span>
+    <span class="pan-hint">Drag the desk to pan</span><span class="sep pan-hint">/</span>
     <button id="sndBtn" class="chip" aria-pressed="true">Sound: on</button>
   </div>
 </main>
@@ -430,7 +318,281 @@
   "use strict";
   var REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  /* ---------------- worlds data ---------------- */
+  /* ================================================================
+     ISOMETRIC SCENE — classic 2:1 dimetric projection, generated
+     programmatically so light, outlines, and perspective stay consistent.
+     World axes: +x → screen right-down, +y → screen left-down, +z → up.
+     ================================================================ */
+  function P(x,y,z){ return [x - y, (x + y) / 2 - z]; }
+  function pj(x,y,z){ var p = P(x,y,z); return p[0].toFixed(1) + "," + p[1].toFixed(1); }
+  function shade(hex, f){
+    var n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    function ch(c){ c = f > 0 ? c + (255 - c) * f : c * (1 + f); return Math.round(Math.min(255, Math.max(0, c))); }
+    return "rgb(" + ch(r) + "," + ch(g) + "," + ch(b) + ")";
+  }
+  var OUT = 'stroke="rgba(26,14,6,.42)" stroke-width="1" stroke-linejoin="round"';
+  function polyW(cs, fill, extra){
+    return '<polygon points="' + cs.map(function(c){ return pj(c[0],c[1],c[2]); }).join(" ") + '" fill="' + fill + '" ' + (extra || OUT) + "/>";
+  }
+  // A box drawn with its three visible faces: left (y+d), right (x+w), top.
+  function box(x,y,z,w,d,h,c,o){
+    o = o || {};
+    var t = z + h, s = "";
+    s += polyW([[x,y+d,t],[x+w,y+d,t],[x+w,y+d,z],[x,y+d,z]], o.left  || shade(c,-.24));
+    s += polyW([[x+w,y,t],[x+w,y+d,t],[x+w,y+d,z],[x+w,y,z]], o.right || shade(c,-.08));
+    s += polyW([[x,y,t],[x+w,y,t],[x+w,y+d,t],[x,y+d,t]],     o.top   || shade(c,.20));
+    return s;
+  }
+  // 2D detail groups projected onto a face. Local (u,v) coords.
+  function mTop(x,y,z){ var p = P(x,y,z); return "matrix(1,0.5,-1,0.5," + p[0] + "," + p[1] + ")"; }
+  function mLeft(x,y,z){ var p = P(x,y,z); return "matrix(1,0.5,0,1," + p[0] + "," + p[1] + ")"; }
+  function gTop(x,y,z,inner,extra){ return '<g transform="' + mTop(x,y,z) + (extra||"") + '">' + inner + "</g>"; }
+  function gLeft(x,y,z,inner){ return '<g transform="' + mLeft(x,y,z) + '">' + inner + "</g>"; }
+  function shadowW(x,y,w,d,g,op){
+    g = g || 7;
+    return polyW([[x-g,y-g,0],[x+w+g,y-g,0],[x+w+g,y+d+g,0],[x-g,y+d+g,0]],
+      "rgba(12,6,2," + (op || .30) + ")", 'filter="url(#soft)"');
+  }
+  // Circles on the desk plane project to 2:1 ellipses.
+  function isoEllipse(cx,cy,z,r,fill,extra){
+    var p = P(cx,cy,z), R = r * 1.414;
+    return '<ellipse cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" rx="' + R.toFixed(1) + '" ry="' + (R/2).toFixed(1) + '" fill="' + fill + '" ' + (extra || OUT) + "/>";
+  }
+  function cyl(cx,cy,z,r,h,c){
+    var R = r * 1.414, pB = P(cx,cy,z), pT = P(cx,cy,z+h);
+    var s = '<path d="M' + (pT[0]-R).toFixed(1) + " " + pT[1].toFixed(1) +
+      " L" + (pB[0]-R).toFixed(1) + " " + pB[1].toFixed(1) +
+      " A" + R.toFixed(1) + " " + (R/2).toFixed(1) + " 0 0 0 " + (pB[0]+R).toFixed(1) + " " + pB[1].toFixed(1) +
+      " L" + (pT[0]+R).toFixed(1) + " " + pT[1].toFixed(1) + ' Z" fill="' + shade(c,-.14) + '" ' + OUT + "/>";
+    s += isoEllipse(cx,cy,z+h,r,shade(c,.16));
+    return s;
+  }
+  function txt(x,y,str,size,fill,extra){
+    return '<text x="' + x + '" y="' + y + '" font-size="' + size + '" fill="' + fill + '" ' + (extra || "") + ">" + str + "</text>";
+  }
+  var MONO = 'font-family="ui-monospace,Menlo,Consolas,monospace"';
+  var SERIF = 'font-family="Iowan Old Style,Palatino,Georgia,serif"';
+  function wrapObj(id,label,accent,inner){
+    return '<g class="iso-obj" data-id="' + id + '" tabindex="0" role="button" aria-haspopup="dialog" aria-label="' + label + '" style="--a:' + accent + '">' +
+      "<g>" + inner + "</g></g>";
+  }
+
+  /* ---------- build the desk ---------- */
+  var S = [];
+  S.push('<defs>' +
+    '<filter id="soft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="4"/></filter>' +
+    '<linearGradient id="wood" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#a06a3e"/><stop offset=".55" stop-color="#8a5734"/><stop offset="1" stop-color="#754828"/></linearGradient>' +
+    '<radialGradient id="disc" cx=".4" cy=".4" r=".75">' +
+      '<stop offset="0" stop-color="#e9fbff"/><stop offset=".45" stop-color="#9fdcec"/><stop offset=".75" stop-color="#5fb4cc"/><stop offset="1" stop-color="#b8eaf6"/></radialGradient>' +
+    '<radialGradient id="camGrad" cx=".35" cy=".3" r=".9">' +
+      '<stop offset="0" stop-color="#c6d8f2"/><stop offset=".55" stop-color="#7f97ba"/><stop offset="1" stop-color="#46536d"/></radialGradient>' +
+    '<radialGradient id="screenGlow" cx=".5" cy=".5" r=".7">' +
+      '<stop offset="0" stop-color="rgba(99,230,169,.35)"/><stop offset="1" stop-color="rgba(99,230,169,0)"/></radialGradient>' +
+  '</defs>');
+
+  // desk legs + modesty panel + tabletop (top surface = z 0)
+  S.push(box(30,50,-180,20,280,152,"#6b4527"));
+  S.push(box(510,50,-180,20,280,152,"#6b4527"));
+  S.push(box(50,60,-160,460,14,90,"#5d3a20"));
+  S.push(box(0,0,-28,560,380,28,"#8a5734",{top:"url(#wood)"}));
+  // wood grain + a couple of knots
+  S.push(gTop(0,0,0,
+    '<g stroke="#4a2c15" stroke-width="2" fill="none" opacity=".14">' +
+      '<path d="M20 40 Q 300 28 540 46"/><path d="M14 120 Q 280 108 546 124"/>' +
+      '<path d="M22 205 Q 300 190 542 208"/><path d="M16 292 Q 290 278 544 296"/>' +
+      '<path d="M20 348 Q 300 338 540 352"/></g>' +
+    '<ellipse cx="120" cy="86" rx="9" ry="4.5" fill="none" stroke="#4a2c15" opacity=".2" stroke-width="2"/>' +
+    '<ellipse cx="470" cy="250" rx="7" ry="3.5" fill="none" stroke="#4a2c15" opacity=".2" stroke-width="2"/>'));
+  // warm pool of light on the desk
+  S.push(gTop(0,0,0,'<ellipse cx="270" cy="170" rx="290" ry="220" fill="url(#screenGlow)" opacity=".0"/>' +
+    '<ellipse cx="260" cy="160" rx="300" ry="230" fill="rgba(255,201,122,.10)"/>', ''));
+
+  /* ---------- cast shadows (stay put when objects lift) ---------- */
+  S.push(shadowW(52,50,44,44,8,.26));            // mug
+  S.push(shadowW(150,50,180,212,12,.30));        // CRT + keyboard
+  S.push(shadowW(386,58,116,84,9,.30));          // book stack
+  S.push(shadowW(24,196,124,80,7,.24));          // kids book
+  S.push(shadowW(52,290,32,32,5,.22));           // alphabet block
+  S.push(shadowW(450,180,64,88,6,.26));          // keypad
+  S.push(shadowW(250,290,64,106,6,.26));         // game boy
+  S.push(shadowW(380,276,96,102,7,.26));         // jewel case
+  S.push(shadowW(480,305,58,58,4,.22));          // floppy
+  S.push(shadowW(150,300,90,70,4,.18));          // mousepad
+
+  /* ---------- charm: coffee mug (est. '89) ---------- */
+  var mug = cyl(72,72,0,20,36,"#c8502f");
+  mug += isoEllipse(72,72,36,15,"#3a2013",'stroke="rgba(26,14,6,.42)" stroke-width="1"'); // coffee
+  var mh = P(96,72,20);
+  mug += '<path d="M' + mh[0] + ' ' + (mh[1]-8) + ' q 16 2 12 14 q -3 9 -14 8" fill="none" stroke="' + shade("#c8502f",-.18) + '" stroke-width="6" stroke-linecap="round"/>';
+  var ms = P(72,72,40);
+  mug += '<g fill="none" stroke="#f4e9d8" stroke-width="2.5" stroke-linecap="round">' +
+    '<path class="steam" d="M' + (ms[0]-8) + " " + ms[1] + " q 4 -8 -1 -14 q -4 -6 1 -12\"/>" +
+    '<path class="steam s2" d="M' + (ms[0]+7) + " " + (ms[1]-3) + " q 4 -7 -1 -13 q -4 -6 1 -11\"/></g>";
+  S.push('<g aria-hidden="true">' + mug + "</g>");
+
+  /* ---------- toy: bilingual kids book + alphabet block ---------- */
+  var toy = box(24,196,0,124,80,9,"#e9ddc2",{top:shade("#e9ddc2",.08)});
+  toy += gTop(24,196,9,
+    '<rect x="3" y="3" width="58" height="74" rx="2" fill="#f7efdb" stroke="#d3b98a" stroke-width="1.5"/>' +
+    '<rect x="63" y="3" width="58" height="74" rx="2" fill="#f0e5c9" stroke="#d3b98a" stroke-width="1.5"/>' +
+    '<line x1="62" y1="3" x2="62" y2="77" stroke="#b08d55" stroke-width="2"/>' +
+    txt(31,50,"A",26,"#c25a2a",SERIF + ' text-anchor="middle" font-style="italic"') +
+    txt(93,50,"Ñ",26,"#c25a2a",SERIF + ' text-anchor="middle" font-style="italic"') +
+    '<g stroke="#c9ab72" stroke-width="1.5" opacity=".7">' +
+      '<line x1="12" y1="62" x2="50" y2="62"/><line x1="12" y1="68" x2="42" y2="68"/>' +
+      '<line x1="74" y1="62" x2="112" y2="62"/><line x1="74" y1="68" x2="104" y2="68"/></g>');
+  toy += box(52,290,0,32,32,32,"#ff8a5c");
+  toy += gLeft(52,322,32, txt(16,23,"B",18,"#fff4e8",SERIF + ' text-anchor="middle" font-weight="bold"'));
+  toy += gTop(52,290,32, '<path d="M16 6 l3 7 8 1 -6 5 2 8 -7 -4 -7 4 2 -8 -6 -5 8 -1 z" fill="#fff4e8" opacity=".9"/>');
+  S.push(wrapObj("toy","Book + toy · 3 awards","#ff8a5c",toy));
+
+  /* ---------- board: beige CRT + keyboard (the machine years) ---------- */
+  var crt = "";
+  crt += box(195,96,0,64,30,14,"#c9bda2");                       // stand
+  crt += box(170,42,14,110,52,92,"#c4b89c");                      // tube hump
+  crt += gTop(170,42,106,'<g stroke="#8f8368" stroke-width="2" opacity=".7">' +
+    '<line x1="14" y1="12" x2="96" y2="12"/><line x1="14" y1="20" x2="96" y2="20"/>' +
+    '<line x1="14" y1="28" x2="96" y2="28"/><line x1="14" y1="36" x2="96" y2="36"/></g>');
+  crt += box(150,90,14,150,34,112,"#d5c9ad");                     // bezel slab
+  crt += gLeft(150,124,126,                                        // screen face
+    '<rect x="10" y="10" width="130" height="84" rx="6" fill="#0a1a10" stroke="#8f8368" stroke-width="2"/>' +
+    '<g class="crt-line" ' + MONO + ' font-size="9" fill="#63e6a9">' +
+      txt(18,26,"C:\\ATM&gt; SELF-TEST",9,"#63e6a9") +
+      txt(18,40,"CARD READER ... OK",9,"#63e6a9") +
+      txt(18,54,"PSU +24V ...... OK",9,"#63e6a9") +
+      txt(18,68,"TOUCH PANEL ... OK",9,"#63e6a9") +
+      txt(18,82,"ALARM LOOP .... OK",9,"#63e6a9") + "</g>" +
+    '<polygon points="16,12 52,12 26,92 16,92" fill="rgba(255,255,255,.07)"/>' +
+    '<circle cx="136" cy="102" r="2.6" fill="#63e6a9" class="led"/>' +
+    txt(14,104,"MAYTRONIC 1500",6,"#8f8368",MONO));
+  crt += box(160,200,0,170,62,10,"#d5c9ad");                      // keyboard
+  var keys = "";
+  for (var r = 0; r < 3; r++)
+    for (var k = 0; k < 12; k++)
+      keys += '<rect x="' + (9 + k*12.8) + '" y="' + (7 + r*13) + '" width="10.5" height="10.5" rx="2" fill="#efe6cf" stroke="#9a8e72" stroke-width="1"/>';
+  keys += '<rect x="35" y="46" width="100" height="10.5" rx="2" fill="#efe6cf" stroke="#9a8e72" stroke-width="1"/>';
+  crt += gTop(160,200,10,keys);
+  S.push(wrapObj("board","The machine years — ATMs","#63e6a9",crt));
+
+  /* ---------- cam: ball webcam perched on the CRT ---------- */
+  var camTopZ = 126, cc = P(225,105,camTopZ + 15);
+  var cam = isoEllipse(225,105,camTopZ,10,"rgba(12,6,2,.30)",'filter="url(#soft)" stroke="none"');
+  cam += cyl(225,105,camTopZ,7,5,"#3a4254");
+  cam += '<circle cx="' + cc[0].toFixed(1) + '" cy="' + cc[1].toFixed(1) + '" r="15" fill="url(#camGrad)" ' + OUT + "/>" +
+    '<circle cx="' + (cc[0]+3).toFixed(1) + '" cy="' + (cc[1]+2).toFixed(1) + '" r="6.5" fill="#0b1220"/>' +
+    '<circle cx="' + (cc[0]+3).toFixed(1) + '" cy="' + (cc[1]+2).toFixed(1) + '" r="3" fill="#22335a"/>' +
+    '<circle cx="' + (cc[0]-5).toFixed(1) + '" cy="' + (cc[1]-6).toFixed(1) + '" r="2.4" fill="#e9f1ff" opacity=".9"/>' +
+    '<circle cx="' + (cc[0]+11).toFixed(1) + '" cy="' + (cc[1]-4).toFixed(1) + '" r="1.8" fill="#63e6a9" class="led"/>';
+  S.push(wrapObj("cam","securaCV — open source","#8fb7ff",cam));
+
+  /* ---------- charm: sticky note (front-left) ---------- */
+  S.push('<g aria-hidden="true">' + gTop(92,320,0,
+    '<rect width="36" height="36" fill="#ffe37a" stroke="rgba(120,90,20,.4)"/>' +
+    '<g stroke="#7a5c16" stroke-width="1.6" opacity=".65" fill="none">' +
+      '<path d="M6 12 h24"/><path d="M6 19 h18"/></g>' +
+    txt(6,30,"buy AA batts",5.6,"#7a5c16",SERIF + ' font-style="italic"'),
+    " rotate(8)") + "</g>");
+
+  /* ---------- charm: mousepad + ball mouse + cord ---------- */
+  var pad = gTop(150,300,0,
+    '<rect width="90" height="70" rx="10" fill="#33517c" stroke="rgba(10,16,28,.6)" stroke-width="1.5"/>' +
+    '<rect x="4" y="4" width="82" height="62" rx="8" fill="none" stroke="#4a6b9a" stroke-width="1.5" stroke-dasharray="4 4"/>');
+  var cordA = P(197,318,12), cordB = P(250,245,4), cordC = P(270,212,10);
+  pad += '<path d="M' + cordA[0] + " " + cordA[1] + " Q " + cordB[0] + " " + cordB[1] + " " + cordC[0] + " " + cordC[1] + '" fill="none" stroke="#584a3a" stroke-width="2.5" opacity=".8"/>';
+  pad += box(180,316,0,32,46,13,"#dcd3bd");
+  pad += gTop(180,316,13,'<line x1="16" y1="4" x2="16" y2="20" stroke="#9a8e72" stroke-width="1.5"/>' +
+    '<rect x="4" y="4" width="24" height="16" rx="6" fill="none" stroke="#9a8e72" stroke-width="1.2"/>');
+  S.push('<g aria-hidden="true">' + pad + "</g>");
+
+  /* ---------- series: stack of four Everything books ---------- */
+  var bookCols = ["#3c6fb0","#b8497e","#2f7d52","#6f56b8"];
+  var offs = [0,7,-4,3], series = "";
+  for (var i = 0; i < 4; i++){
+    var bx = 390 + offs[i], bz = i * 14;
+    series += box(bx,62,bz,108,78,14,bookCols[i]);
+    series += gLeft(bx,140,bz+14,'<rect x="2" y="2.5" width="104" height="8" fill="#efe6cf" opacity=".92" stroke="rgba(26,14,6,.3)"/>');
+  }
+  series += gTop(393,62,56,
+    txt(54,32,"Everything",15,"#efe8f8",SERIF + ' text-anchor="middle" font-style="italic"') +
+    txt(54,50,"that Glows",13,"#d8c8ff",SERIF + ' text-anchor="middle" font-style="italic"') +
+    '<circle cx="54" cy="62" r="3.5" fill="#ffe37a"/>');
+  S.push(wrapObj("series","The Everything series","#b79cff",series));
+
+  /* ---------- hive: atomic-purple Game Boy ---------- */
+  var gb = box(250,290,0,64,106,11,"#7e63cf");
+  var hex = function(cx,cy,r,fill){
+    var p = [];
+    for (var a = 0; a < 6; a++){
+      var t = Math.PI/3*a - Math.PI/6;
+      p.push((cx + r*Math.cos(t)).toFixed(1) + "," + (cy + r*Math.sin(t)).toFixed(1));
+    }
+    return '<polygon points="' + p.join(" ") + '" ' + fill + "/>";
+  };
+  gb += gTop(250,290,11,
+    '<rect x="6" y="7" width="52" height="52" rx="5" fill="#564a80" stroke="rgba(20,12,40,.5)"/>' +
+    '<rect x="11" y="12" width="42" height="40" rx="2" fill="#9bbf3b" stroke="rgba(20,30,8,.5)"/>' +
+    hex(26,26,7,'fill="#33520f"') + hex(38,32,7,'fill="none" stroke="#33520f" stroke-width="2"') + hex(28,40,7,'fill="#33520f"') +
+    txt(32,68,"HIVE MIND",6.5,"#ded5f6",MONO + ' text-anchor="middle" letter-spacing="1"') +
+    '<rect x="12" y="76" width="8" height="22" rx="2" fill="#2f2a44"/>' +
+    '<rect x="5" y="83" width="22" height="8" rx="2" fill="#2f2a44"/>' +
+    '<circle cx="46" cy="82" r="5" fill="#b34a68" stroke="rgba(60,10,25,.6)"/>' +
+    '<circle cx="56" cy="76" r="5" fill="#b34a68" stroke="rgba(60,10,25,.6)"/>' +
+    '<rect x="26" y="98" width="9" height="3.5" rx="1.7" fill="#2f2a44"/>' +
+    '<rect x="39" y="98" width="9" height="3.5" rx="1.7" fill="#2f2a44"/>' +
+    '<g stroke="#564a80" stroke-width="2"><line x1="52" y1="92" x2="58" y2="98"/><line x1="56" y1="90" x2="62" y2="96"/></g>');
+  S.push(wrapObj("hive","Hive Mind — the game","#f5b63f",gb));
+
+  /* ---------- scqcs: alarm keypad ---------- */
+  var kp = box(450,180,0,64,88,13,"#cfc6b4");
+  var kpKeys = "";
+  for (var kr = 0; kr < 4; kr++)
+    for (var kc = 0; kc < 3; kc++)
+      kpKeys += '<rect x="' + (9 + kc*16.5) + '" y="' + (32 + kr*13.5) + '" width="13" height="10" rx="2" fill="#efe8d8" stroke="#948a70" stroke-width="1"/>';
+  kp += gTop(450,180,13,
+    '<rect x="8" y="8" width="38" height="15" rx="2" fill="#9fb89a" stroke="#5e7059"/>' +
+    txt(12,19,"ARMED",7,"#2c3f2a",MONO + ' letter-spacing="1"') +
+    '<circle cx="54" cy="15" r="3.6" fill="#ff5d5d" class="led"/>' + kpKeys +
+    txt(32,86,"SCQCS",6,"#7d7358",MONO + ' text-anchor="middle" letter-spacing="2"'));
+  S.push(wrapObj("scqcs","SCQCS security","#ff5d5d",kp));
+
+  /* ---------- vinyl→CD: open jewel case, Echoes of Us ---------- */
+  var jc = box(382,278,0,92,7,64,"#7e858c");                       // lid standing open
+  jc += gLeft(382,285,64,
+    '<rect x="2.5" y="2.5" width="87" height="59" fill="#131c26" stroke="#39434e"/>' +
+    '<circle cx="24" cy="30" r="14" fill="none" stroke="#7cd7e8" stroke-width="2" opacity=".85"/>' +
+    '<circle cx="24" cy="30" r="6" fill="#7cd7e8" opacity=".5"/>' +
+    txt(44,22,"AETHRA",8,"#7cd7e8",MONO + ' letter-spacing="1.5"') +
+    txt(44,33,"KAIROS",8,"#7cd7e8",MONO + ' letter-spacing="1.5"') +
+    txt(44,49,"Echoes of Us",9,"#e8f4f7",SERIF + ' font-style="italic"') +
+    txt(44,58,"I · II · III",7,"#9db8c2",MONO));
+  jc += box(380,288,0,96,89,5,"#aab2b8",{top:shade("#aab2b8",.10)}); // tray
+  jc += isoEllipse(428,332,5,34,"url(#disc)");
+  jc += isoEllipse(428,332,5,10,"#d8e6ea");
+  jc += isoEllipse(428,332,5,4,"#39434e",'stroke="none"');
+  var arc = P(428,332,5);
+  jc += '<path d="M' + (arc[0]-38) + " " + (arc[1]-8) + " A 46 23 0 0 1 " + (arc[0]+20) + " " + (arc[1]-20) + '" fill="none" stroke="#ffffff" stroke-width="3" opacity=".55"/>';
+  S.push(wrapObj("vinyl","ERRER Labs · Aethra Kairos","#7cd7e8",jc));
+
+  /* ---------- charm: floppy + sticky note (front-right) ---------- */
+  var fl = box(480,305,0,58,58,5,"#2e3f66");
+  fl += gTop(480,305,5,
+    '<rect x="15" y="3" width="28" height="16" rx="1" fill="#9aa1ad" stroke="rgba(20,20,30,.5)"/>' +
+    '<rect x="31" y="6" width="8" height="10" fill="#2e3f66"/>' +
+    '<rect x="8" y="27" width="42" height="26" rx="1" fill="#e8e4d8" stroke="rgba(20,20,30,.4)"/>' +
+    '<g stroke="#5a5647" stroke-width="1.4" opacity=".7" fill="none">' +
+      '<path d="M12 34 h34"/><path d="M12 40 h26"/><path d="M12 46 h30"/></g>');
+  S.push('<g aria-hidden="true">' + fl + "</g>");
+  S.push('<g aria-hidden="true">' + gTop(334,206,0,
+    '<rect width="32" height="32" fill="#ffd0dc" stroke="rgba(130,50,70,.35)"/>' +
+    '<g stroke="#8a3a52" stroke-width="1.5" opacity=".6" fill="none"><path d="M5 11 h22"/><path d="M5 17 h16"/><path d="M5 23 h19"/></g>',
+    " rotate(-7)") + "</g>");
+
+  document.getElementById("iso").innerHTML = S.join("");
+
+  /* ================================================================
+     WORLDS — dossier content
+     ================================================================ */
   var WORLDS = {
     board: {
       kicker: "Electrical & Computer Engineering",
@@ -488,7 +650,9 @@
     }
   };
 
-  /* ---------------- audio engine (all synthesized) ---------------- */
+  /* ================================================================
+     AUDIO — synthesized, created only on an explicit user gesture
+     ================================================================ */
   var ctx = null, master = null, soundOn = true;
   function ac(force){
     if (!soundOn) return null;
@@ -569,7 +733,7 @@
       tone(900,  {type:"sine", at:0.12, dur:0.07, g:0.09});
       tone(1200, {type:"sine", at:0.24, dur:0.14, g:0.09});
     },
-    vinyl: function(){ // crackle + warm minor pad
+    vinyl: function(){ // disc spin-up + warm minor pad
       for (var i = 0; i < 6; i++) noise({filter:"highpass", freq:2500, at:Math.pow(i,1.3)*0.09, dur:0.02, g:0.05});
       tone(110.0,  {type:"sine", at:0.1, dur:1.1, g:0.07});
       tone(130.81, {type:"sine", at:0.1, dur:1.1, g:0.06});
@@ -589,7 +753,9 @@
     if (navigator.vibrate) { try { navigator.vibrate(HAPTICS[id] || 15); } catch(e){} }
   }
 
-  /* ---------------- dossier ---------------- */
+  /* ================================================================
+     DOSSIER dialog
+     ================================================================ */
   var dossier = document.getElementById("dossier");
   var scrim   = document.getElementById("scrim");
   var lastFocus = null;
@@ -642,8 +808,40 @@
     }
   });
 
-  /* ---------------- object wiring ---------------- */
-  document.querySelectorAll(".obj-btn").forEach(function(btn){
+  /* ================================================================
+     object wiring (SVG groups act as buttons)
+     ================================================================ */
+  var tip = document.getElementById("tip");
+  var scene = document.getElementById("scene");
+  function showTip(btn, accent){
+    tip.textContent = btn.getAttribute("aria-label");
+    tip.style.setProperty("--a", accent);
+    var r = btn.getBoundingClientRect(), s = scene.getBoundingClientRect();
+    tip.style.left = (r.left - s.left + r.width / 2) + "px";
+    tip.style.top  = (r.top - s.top - 10) + "px";
+    tip.classList.add("show");
+  }
+  function hideTip(){ tip.classList.remove("show"); }
+
+  document.querySelectorAll(".iso-obj").forEach(function(btn){
+    var id = btn.dataset.id;
+    var accent = getComputedStyle(btn).getPropertyValue("--a").trim() || "#ffc97a";
+    btn.addEventListener("pointerenter", function(){ SOUNDS.hover(); showTip(btn, accent); });
+    btn.addEventListener("pointerleave", hideTip);
+    btn.addEventListener("focus", function(){ showTip(btn, accent); });
+    btn.addEventListener("blur", hideTip);
+    btn.addEventListener("pointerdown", function(){ buzz(id); });
+    btn.addEventListener("click", function(){
+      ac(true); hideTip();
+      if (SOUNDS[id]) SOUNDS[id]();
+      openWorld(id, accent);
+    });
+    btn.addEventListener("keydown", function(e){
+      if (e.key === "Enter" || e.key === " "){ e.preventDefault(); btn.click(); }
+    });
+  });
+
+  document.querySelectorAll(".legend button").forEach(function(btn){
     var id = btn.dataset.id;
     var accent = getComputedStyle(btn).getPropertyValue("--a").trim() || "#ffc97a";
     btn.addEventListener("pointerenter", function(){ SOUNDS.hover(); });
@@ -664,9 +862,14 @@
     if (soundOn){ ac(true); SOUNDS.hover(); }
   });
 
-  /* ---------------- parallax ---------------- */
-  var desk = document.getElementById("desk");
-  var objs = Array.prototype.slice.call(document.querySelectorAll(".obj"));
+  /* ---------------- start small screens panned to the desk's center ---------------- */
+  var wrap = document.querySelector(".desk-wrap");
+  if (wrap.scrollWidth > wrap.clientWidth){
+    wrap.scrollLeft = (wrap.scrollWidth - wrap.clientWidth) / 2;
+  }
+
+  /* ---------------- gentle whole-scene parallax ---------------- */
+  var iso = document.getElementById("iso");
   if (!REDUCED && matchMedia("(pointer: fine)").matches){
     var raf = null, mx = 0, my = 0;
     document.getElementById("scene").addEventListener("pointermove", function(e){
@@ -674,11 +877,8 @@
       my = (e.clientY / innerHeight - 0.5);
       if (!raf) raf = requestAnimationFrame(function(){
         raf = null;
-        objs.forEach(function(o){
-          var d = parseFloat(o.style.getPropertyValue("--depth")) || 0.7;
-          o.style.setProperty("--px", (mx * -16 * d).toFixed(1) + "px");
-          o.style.setProperty("--py", (my * -10 * d).toFixed(1) + "px");
-        });
+        iso.style.setProperty("--px", (mx * -10).toFixed(1) + "px");
+        iso.style.setProperty("--py", (my * -6).toFixed(1) + "px");
       });
     });
   }
@@ -705,9 +905,8 @@
         p: Math.random() * Math.PI * 2
       });
     }
-    (function frame(t){
+    (function frame(){
       cx2.clearRect(0, 0, W, H);
-      // brighter near the lamp pool (upper 60%, centered ~60% across)
       motes.forEach(function(m){
         m.x += m.vx * 16; m.y += m.vy * 16; m.p += 0.01;
         if (m.y < -0.02){ m.y = 1.02; m.x = Math.random(); }
@@ -724,7 +923,7 @@
         }
       });
       requestAnimationFrame(frame);
-    })(0);
+    })();
   }
 })();
 </script>
