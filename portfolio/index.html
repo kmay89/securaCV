@@ -21,6 +21,9 @@
     --c-scqcs:#ff5d5d;
     --c-vinyl:#7cd7e8;
     --c-cam:#8fb7ff;
+    --c-off:#e0a458;
+    --c-out:#8fd18a;
+    --c-puz:#d9a0e8;
     --mono:ui-monospace,"Cascadia Code","Source Code Pro",Menlo,Consolas,monospace;
     --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
   }
@@ -137,6 +140,10 @@
     background:color-mix(in srgb, var(--a) 18%, transparent);
   }
   .legend button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+  .legend-sep{
+    align-self:center;width:1px;height:1.1em;
+    background:rgba(185,168,143,.35);
+  }
   .steam{animation:steam 3.6s ease-in-out infinite;transform-origin:center bottom}
   .steam.s2{animation-delay:-1.7s}
   @keyframes steam{
@@ -147,6 +154,13 @@
   @keyframes led{0%,100%{opacity:1}50%{opacity:.15}}
   .crt-line{animation:crt 5s steps(2) infinite}
   @keyframes crt{0%,92%,100%{opacity:1}94%{opacity:.55}}
+  .flutter{animation:flutter 1.4s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
+  @keyframes flutter{0%,100%{transform:scaleX(1)}50%{transform:scaleX(.35)}}
+  .bob2{animation:bob2 4.5s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
+  @keyframes bob2{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  .flame{animation:flame 1.1s ease-in-out infinite;transform-box:fill-box;transform-origin:center bottom}
+  @keyframes flame{0%,100%{transform:scale(1)}40%{transform:scale(1.25,1.4)}70%{transform:scale(.9,1.05)}}
+  .nozzle{animation:led 1.1s ease-in-out infinite}
 
   .hint{
     position:relative;z-index:4;
@@ -248,7 +262,7 @@
   @media (prefers-reduced-motion:reduce){
     #iso{transform:none !important}
     .iso-obj > *,.dossier,.scrim{transition:none}
-    .steam,.led,.crt-line{animation:none}
+    .steam,.led,.crt-line,.flutter,.bob2,.flame,.nozzle{animation:none}
     html{scroll-behavior:auto}
   }
 </style>
@@ -269,8 +283,8 @@
   </header>
 
   <div class="desk-wrap">
-    <svg id="iso" viewBox="-410 -45 1010 560" role="group"
-         aria-label="An isometric 2000s desk holding seven interactive objects, one per world"></svg>
+    <svg id="iso" viewBox="-465 -245 1135 815" role="group"
+         aria-label="An isometric 2000s room: a desk of seven interactive work objects, with hobbies filling the walls, window, and side table"></svg>
   </div>
   <div class="tip" id="tip" aria-hidden="true"></div>
 
@@ -282,6 +296,10 @@
     <button data-id="scqcs" style="--a:var(--c-scqcs)">SCQCS</button>
     <button data-id="vinyl" style="--a:var(--c-vinyl)">Aethra Kairos</button>
     <button data-id="cam" style="--a:var(--c-cam)">securaCV</button>
+    <span class="legend-sep" aria-hidden="true"></span>
+    <button data-id="offhours" style="--a:var(--c-off)">Off the clock</button>
+    <button data-id="outside" style="--a:var(--c-out)">The world outside</button>
+    <button data-id="puzzle" style="--a:var(--c-puz)">The thinking wall</button>
   </nav>
 
   <div class="hint">
@@ -346,8 +364,10 @@
   // 2D detail groups projected onto a face. Local (u,v) coords.
   function mTop(x,y,z){ var p = P(x,y,z); return "matrix(1,0.5,-1,0.5," + p[0] + "," + p[1] + ")"; }
   function mLeft(x,y,z){ var p = P(x,y,z); return "matrix(1,0.5,0,1," + p[0] + "," + p[1] + ")"; }
+  function mRight(x,y,z){ var p = P(x,y,z); return "matrix(1,-0.5,0,1," + p[0] + "," + p[1] + ")"; }
   function gTop(x,y,z,inner,extra){ return '<g transform="' + mTop(x,y,z) + (extra||"") + '">' + inner + "</g>"; }
   function gLeft(x,y,z,inner){ return '<g transform="' + mLeft(x,y,z) + '">' + inner + "</g>"; }
+  function gRight(x,y,z,inner){ return '<g transform="' + mRight(x,y,z) + '">' + inner + "</g>"; }
   function shadowW(x,y,w,d,g,op){
     g = g || 7;
     return polyW([[x-g,y-g,0],[x+w+g,y-g,0],[x+w+g,y+d+g,0],[x-g,y+d+g,0]],
@@ -389,7 +409,84 @@
       '<stop offset="0" stop-color="#c6d8f2"/><stop offset=".55" stop-color="#7f97ba"/><stop offset="1" stop-color="#46536d"/></radialGradient>' +
     '<radialGradient id="screenGlow" cx=".5" cy=".5" r=".7">' +
       '<stop offset="0" stop-color="rgba(99,230,169,.35)"/><stop offset="1" stop-color="rgba(99,230,169,0)"/></radialGradient>' +
+    '<linearGradient id="wallA" x1="0" y1="-235" x2="0" y2="150" gradientUnits="userSpaceOnUse">' +
+      '<stop offset="0" stop-color="#39291b"/><stop offset=".72" stop-color="#241a10"/><stop offset="1" stop-color="#0e0a07"/></linearGradient>' +
+    '<linearGradient id="wallB" x1="0" y1="-235" x2="0" y2="200" gradientUnits="userSpaceOnUse">' +
+      '<stop offset="0" stop-color="#2e2115"/><stop offset=".72" stop-color="#1d150c"/><stop offset="1" stop-color="#0e0a07"/></linearGradient>' +
+    '<linearGradient id="nightSky" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#141c3a"/><stop offset=".6" stop-color="#2a2547"/><stop offset="1" stop-color="#3d2f4a"/></linearGradient>' +
   '</defs>');
+
+  /* ---------- the room: two fading walls behind the desk ---------- */
+  S.push(polyW([[-30,-30,200],[-30,420,200],[-30,420,-60],[-30,-30,-60]], "url(#wallB)", 'stroke="none"'));
+  S.push(polyW([[-30,-30,200],[620,-30,200],[620,-30,-60],[-30,-30,-60]], "url(#wallA)", 'stroke="none"'));
+
+  /* ---------- wall B: the hung bike (rides) + VHS shelf (movie nights) ---------- */
+  var bike = '<g fill="none" stroke-linecap="round" transform="translate(0,-30)">' +
+    '<circle cx="120" cy="150" r="38" stroke="#26201a" stroke-width="7"/>' +
+    '<circle cx="120" cy="150" r="38" stroke="#6e6154" stroke-width="2"/>' +
+    '<circle cx="238" cy="150" r="38" stroke="#26201a" stroke-width="7"/>' +
+    '<circle cx="238" cy="150" r="38" stroke="#6e6154" stroke-width="2"/>' +
+    '<g stroke="#b8442f" stroke-width="5">' +
+      '<path d="M120 150 L168 92 L238 150"/>' +
+      '<path d="M120 150 L182 150 L168 92"/>' +
+      '<path d="M155 96 L146 82 M226 96 L238 150"/></g>' +
+    '<path d="M138 80 L158 80" stroke="#241d16" stroke-width="6"/>' +
+    '<path d="M228 88 Q 244 84 246 96" stroke="#241d16" stroke-width="5"/>' +
+    '<circle cx="182" cy="150" r="7" fill="#241d16" stroke="none"/>' +
+    '<path d="M182 150 L196 168" stroke="#241d16" stroke-width="4"/>' +
+    '<rect x="112" y="98" width="16" height="8" rx="2" fill="#3a2c1c" stroke="none"/>' +
+    '<rect x="230" y="98" width="16" height="8" rx="2" fill="#3a2c1c" stroke="none"/></g>';
+  S.push('<g aria-hidden="true">' + gRight(-30,400,190,bike) + "</g>");
+  S.push(box(-28,132,148,52,96,8,"#7a5a38"));
+  var vhs = box(-24,146,156,38,24,8,"#17171e") + box(-22,150,164,38,24,8,"#1c1c26");
+  vhs += gLeft(-24,170,164,'<rect x="4" y="1.5" width="22" height="5" rx="1" fill="#e8e4d8"/>' +
+    '<rect x="6" y="2.5" width="12" height="1.6" fill="#b8442f"/>');
+  vhs += gLeft(-22,174,172,'<rect x="4" y="1.5" width="22" height="5" rx="1" fill="#e8e4d8"/>' +
+    '<rect x="6" y="2.5" width="14" height="1.6" fill="#33517c"/>');
+  S.push('<g aria-hidden="true">' + vhs + "</g>");
+
+  /* ---------- wall A: window to the world outside ---------- */
+  var win = '<rect x="-8" y="-8" width="236" height="126" fill="#5d3a20" stroke="rgba(20,10,4,.5)" stroke-width="2"/>' +
+    '<rect x="0" y="0" width="220" height="110" fill="url(#nightSky)"/>' +
+    '<circle cx="176" cy="24" r="10" fill="#f2e9d4"/><circle cx="176" cy="24" r="15" fill="#f2e9d4" opacity=".14"/>' +
+    '<polygon points="0,72 46,30 76,58 96,40 128,72" fill="#222b4d"/>' +
+    '<polygon points="70,72 122,22 158,50 178,38 220,72 220,80 70,80" fill="#171e38"/>' +
+    '<path d="M124 30 L123 52" stroke="#cfe6f2" stroke-width="3" opacity=".7" stroke-linecap="round"/>' +
+    '<ellipse cx="123" cy="55" rx="5" ry="2" fill="#cfe6f2" opacity=".45"/>' +
+    '<rect x="0" y="76" width="220" height="34" fill="#2f2b17"/>' +
+    (function(){ var rows=""; for (var i=0;i<14;i++){ var rx=8+i*15.5;
+      rows += '<path d="M'+rx+' 110 L'+rx+' 88" stroke="#4a4426" stroke-width="2.5"/>' +
+              '<circle cx="'+rx+'" cy="86" r="1.6" fill="#5d5530"/>'; } return rows; })() +
+    '<ellipse cx="30" cy="100" rx="13" ry="5" fill="#ff9a3d" opacity=".28"/>' +
+    '<path d="M24 102 L36 102 M26 104 L34 104" stroke="#4a3018" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<path class="flame" d="M30 101 q -4 -6 0 -12 q 1.5 4 4 6 q 2 3 -1 6 z" fill="#ffb347"/>' +
+    '<g fill="#0c1020">' + // deer, watching the fire
+      '<path d="M56 100 l0 -7 q0 -4 4 -5 l10 0 q4 0 5 4 l0 8 -2.5 0 0 -6 -2 0 0 6 -2.5 0 0 -6 -5 0 0 6 z"/>' +
+      '<path d="M62 88 l-1 -5 2 0 .5 3 M64 88 l1 -5 -2 0" stroke="#0c1020" stroke-width="1.4" fill="none"/>' +
+      '<circle cx="61" cy="86" r="2.4"/></g>' +
+    '<g fill="#07070c">' + // skunk, minding its business
+      '<ellipse cx="196" cy="103" rx="7" ry="3.6"/>' +
+      '<circle cx="189" cy="101.6" r="2.2"/>' +
+      '<path d="M202 102 q 5 -2 4 -8 q 3 5 -1 9 z"/>' +
+      '<path d="M191 100.5 q 6 -2.5 11 -1.5" stroke="#efe8dd" stroke-width="1.6" fill="none"/></g>' +
+    '<g fill="#ffe37a">' +
+      '<circle cx="92" cy="58" r="1.5" class="led"/>' +
+      '<circle cx="142" cy="46" r="1.3" class="led" style="animation-delay:-.9s"/>' +
+      '<circle cx="58" cy="48" r="1.2" class="led" style="animation-delay:-1.6s"/></g>' +
+    '<polygon points="8,0 60,0 22,110 8,110" fill="rgba(255,255,255,.05)"/>' +
+    '<rect x="108" y="0" width="5" height="110" fill="#5d3a20"/>' +
+    '<rect x="-12" y="118" width="244" height="9" fill="#5d3a20" stroke="rgba(20,10,4,.5)"/>';
+  S.push(wrapObj("outside","The world outside","#8fd18a",gLeft(40,-30,170,win)));
+
+  /* ---------- wall A: the spiral frame (thinking wall) ---------- */
+  var spiral = '<rect x="-7" y="-7" width="104" height="104" fill="#2a1d12" stroke="rgba(20,10,4,.6)" stroke-width="2"/>' +
+    '<rect x="0" y="0" width="90" height="90" fill="#efe8dd"/>' +
+    (function(){ var s="", r=40; for (var i=0;i<6;i++){
+      s += '<circle cx="' + (45 + (i%2 ? 3.2 : -3.2)) + '" cy="45" r="' + r + '" fill="none" stroke="#191512" stroke-width="' + (5.5 - i*.5) + '"/>';
+      r -= 6.8; } return s; })() +
+    '<circle cx="45" cy="45" r="3" fill="#191512"/>';
+  S.push(wrapObj("puzzle","The thinking wall","#d9a0e8",gLeft(452,-30,160,spiral)));
 
   // desk legs + modesty panel + tabletop (top surface = z 0)
   S.push(box(30,50,-180,20,280,152,"#6b4527"));
@@ -419,6 +516,9 @@
   S.push(shadowW(380,276,96,102,7,.26));         // jewel case
   S.push(shadowW(480,305,58,58,4,.22));          // floppy
   S.push(shadowW(150,300,90,70,4,.18));          // mousepad
+  S.push(shadowW(310,36,52,44,6,.24));           // sourdough board
+  S.push(shadowW(34,332,26,26,4,.22));           // rubik's cube
+  S.push(shadowW(516,26,30,30,5,.22));           // flower pot
 
   /* ---------- charm: coffee mug (est. '89) ---------- */
   var mug = cyl(72,72,0,20,36,"#c8502f");
@@ -475,6 +575,19 @@
   crt += gTop(160,200,10,keys);
   S.push(wrapObj("board","The machine years — ATMs","#63e6a9",crt));
 
+  /* ---------- offhours: sourdough boule on a cutting board ---------- */
+  var pb = P(334,56,4);
+  var boule = gTop(308,34,0,'<rect width="56" height="48" rx="7" fill="#9a6a40" stroke="rgba(26,14,6,.42)"/>');
+  boule += '<ellipse cx="' + pb[0] + '" cy="' + (pb[1]-10) + '" rx="30" ry="21" fill="#d9a865" ' + OUT + "/>" +
+    '<ellipse cx="' + (pb[0]-7) + '" cy="' + (pb[1]-17) + '" rx="14" ry="8" fill="#ecc98f" opacity=".75" stroke="none"/>' +
+    '<g stroke="#8a5426" stroke-width="2.4" fill="none" stroke-linecap="round">' +
+      '<path d="M' + (pb[0]-16) + " " + (pb[1]-16) + " q 16 -9 32 2\"/>" +
+      '<path d="M' + (pb[0]-13) + " " + (pb[1]-9) + " q 13 -7 26 1\"/></g>" +
+    '<g fill="#f6ead2" opacity=".8"><circle cx="' + (pb[0]-20) + '" cy="' + (pb[1]-4) + '" r="1.4"/>' +
+    '<circle cx="' + (pb[0]+14) + '" cy="' + (pb[1]-24) + '" r="1.2"/>' +
+    '<circle cx="' + (pb[0]+22) + '" cy="' + (pb[1]-6) + '" r="1.3"/></g>';
+  S.push(wrapObj("offhours","Sourdough — off the clock","#e0a458",boule));
+
   /* ---------- cam: ball webcam perched on the CRT ---------- */
   var camTopZ = 126, cc = P(225,105,camTopZ + 15);
   var cam = isoEllipse(225,105,camTopZ,10,"rgba(12,6,2,.30)",'filter="url(#soft)" stroke="none"');
@@ -518,6 +631,44 @@
     txt(54,50,"that Glows",13,"#d8c8ff",SERIF + ' text-anchor="middle" font-style="italic"') +
     '<circle cx="54" cy="62" r="3.5" fill="#ffe37a"/>');
   S.push(wrapObj("series","The Everything series","#b79cff",series));
+
+  /* ---------- puzzle: scrambled Rubik's cube ---------- */
+  var CUBE_C = ["#e04b3c","#f5b63f","#3c6fb0","#4aa651","#efe8dd","#e88a2e"];
+  function stickers(pick){
+    var s = "";
+    for (var r = 0; r < 3; r++)
+      for (var c = 0; c < 3; c++)
+        s += '<rect x="' + (2 + c*7.6) + '" y="' + (2 + r*7.6) + '" width="6.4" height="6.4" rx="1" fill="' + CUBE_C[pick[r*3+c]] + '"/>';
+    return s;
+  }
+  var cube = box(34,332,0,24,24,24,"#141414");
+  cube += gTop(34,332,24, stickers([4,0,2,3,4,1,0,5,4]));
+  cube += gLeft(34,356,24, stickers([1,3,0,4,2,2,5,1,3]));
+  cube += gRight(58,356,24, stickers([2,5,4,0,1,3,3,4,0]));
+  S.push(wrapObj("puzzle","Thought puzzles","#d9a0e8",cube));
+
+  /* ---------- outside: flower pot, mushroom & butterfly ---------- */
+  var pot = cyl(530,40,0,13,20,"#b0603a");
+  pot += isoEllipse(530,40,20,10,"#3a2a1a",'stroke="none"');
+  var pt = P(530,40,20);
+  pot += '<path d="M' + pt[0] + " " + pt[1] + " q -2 -14 2 -24\" fill=\"none\" stroke=\"#4d7a3a\" stroke-width=\"2.5\" stroke-linecap=\"round\"/>" +
+    '<path d="M' + pt[0] + " " + (pt[1]-10) + " q -9 -2 -11 -9 q 9 -1 11 6 z\" fill=\"#5d8f47\"/>" +
+    '<path d="M' + (pt[0]+1.5) + " " + (pt[1]-15) + " q 8 -3 12 -9 q -10 -2 -12 6 z\" fill=\"#517d3e\"/>";
+  var fx = pt[0] + 2, fy = pt[1] - 26;
+  pot += '<g>' + [[0,-6],[6,-2],[4,5],[-4,5],[-6,-2]].map(function(o){
+      return '<circle cx="' + (fx+o[0]) + '" cy="' + (fy+o[1]) + '" r="4.4" fill="#ff9ab0" stroke="rgba(120,30,55,.4)"/>';
+    }).join("") + '<circle cx="' + fx + '" cy="' + fy + '" r="3.2" fill="#f5b63f"/></g>';
+  var mp = P(548,58,0);
+  pot += '<g><rect x="' + (mp[0]-1.5) + '" y="' + (mp[1]-7) + '" width="3" height="7" rx="1.2" fill="#e8ddc4"/>' +
+    '<path d="M' + (mp[0]-6) + " " + (mp[1]-6) + " q 6 -8 12 0 z\" fill=\"#c0442e\"/>" +
+    '<circle cx="' + (mp[0]-2.5) + '" cy="' + (mp[1]-8.5) + '" r="1" fill="#f2e6d0"/>' +
+    '<circle cx="' + (mp[0]+2.5) + '" cy="' + (mp[1]-9) + '" r=".8" fill="#f2e6d0"/></g>';
+  pot += '<g class="bob2"><g transform="translate(' + (fx+13) + "," + (fy-12) + ') rotate(-14)">' +
+    '<g class="flutter">' +
+      '<path d="M0 0 Q -9 -7 -8 1 Q -8 6 0 2 Z" fill="#f5b63f" stroke="rgba(120,70,10,.5)"/>' +
+      '<path d="M0 0 Q 9 -7 8 1 Q 8 6 0 2 Z" fill="#e88a2e" stroke="rgba(120,70,10,.5)"/></g>' +
+    '<ellipse cx="0" cy="1" rx="1.1" ry="3" fill="#3a2415"/></g></g>';
+  S.push(wrapObj("outside","Garden — the world outside","#8fd18a",pot));
 
   /* ---------- hive: atomic-purple Game Boy ---------- */
   var gb = box(250,290,0,64,106,11,"#7e63cf");
@@ -583,6 +734,29 @@
     '<g stroke="#5a5647" stroke-width="1.4" opacity=".7" fill="none">' +
       '<path d="M12 34 h34"/><path d="M12 40 h26"/><path d="M12 46 h30"/></g>');
   S.push('<g aria-hidden="true">' + fl + "</g>");
+
+  /* ---------- offhours: side table + the scratch-built 3D printer ---------- */
+  var tbl = isoEllipse(646,120,-132,64,"rgba(12,6,2,.28)",'filter="url(#soft)" stroke="none"');
+  tbl += box(584,64,-130,122,110,100,"#7a5a38",{top:shade("#7a5a38",.16)});
+  tbl += gLeft(584,174,-30,'<rect x="8" y="10" width="106" height="34" rx="3" fill="' + shade("#7a5a38",-.34) + '" stroke="rgba(26,14,6,.4)"/>' +
+    '<circle cx="61" cy="27" r="3.5" fill="#3a2c1c"/>');
+  var prn = box(596,84,-30,98,74,10,"#26262e");                       // printer base
+  prn += gTop(596,84,-20,'<rect x="6" y="52" width="30" height="16" rx="2" fill="#15151b" stroke="#3c3c48"/>' +
+    txt(21,63,"MERLIN",4.6,"#63e6a9",MONO + ' text-anchor="middle" letter-spacing="1"'));
+  prn += box(606,96,-20,74,54,4,"#101016");                           // heated bed
+  prn += gTop(606,96,-16,'<g stroke="#26303c" stroke-width="1"><path d="M6 6 h62 M6 16 h62 M6 26 h62 M6 36 h62 M6 46 h62"/></g>');
+  prn += box(600,128,-20,7,9,74,"#3a3a46");                           // gantry posts
+  prn += box(686,128,-20,7,9,74,"#3a3a46");
+  prn += box(600,128,50,93,9,8,"#3a3a46");                            // crossbar
+  prn += box(634,126,30,20,13,14,"#4a4a58");                          // carriage + hotend
+  var nz = P(644,140,26);
+  prn += '<circle cx="' + nz[0] + '" cy="' + nz[1] + '" r="2.6" fill="#ff9a3d" class="nozzle"/>';
+  var sp = P(700,132,66);
+  prn += '<circle cx="' + sp[0] + '" cy="' + sp[1] + '" r="13" fill="#2c4a68" ' + OUT + "/>" +
+    '<circle cx="' + sp[0] + '" cy="' + sp[1] + '" r="4.5" fill="#15151b"/>';
+  prn += box(636,112,-16,16,16,12,"#e0a458");                         // the print in progress
+  S.push(wrapObj("offhours","Scratch-built 3D printer — off the clock","#e0a458",tbl + prn));
+
   S.push('<g aria-hidden="true">' + gTop(334,206,0,
     '<rect width="32" height="32" fill="#ffd0dc" stroke="rgba(130,50,70,.35)"/>' +
     '<g stroke="#8a3a52" stroke-width="1.5" opacity=".6" fill="none"><path d="M5 11 h22"/><path d="M5 17 h16"/><path d="M5 23 h19"/></g>',
@@ -647,6 +821,27 @@
       story: "Open-source, privacy-first camera hardware built in the open from PCB to package: custom camera hardware, Linux kernel work, ESP32 firmware, and a Home Assistant integration — so the machine watching your home reports to you and no one else.",
       chips: ["Camera hardware","Linux kernel","ESP32 firmware","Home Assistant"],
       links: [{label:"github.com/kmay89/securaCV", href:"https://github.com/kmay89/securaCV"}]
+    },
+    offhours: {
+      kicker: "Off the Clock",
+      title: "The Maker Hours",
+      story: "The same hands, off duty. I ride, run, garden, cook, and bake sourdough that gets scored like sheet metal. The house is one long DIY project that never quite admits it's finished. And because buying a 3D printer felt like skipping the good part, I built my own from scratch around a Merlin board — then gave my Ender 3 Pro v2 a full set of home-grown upgrades anyway. Off hours is also where the writing happens, and the movies, and the music.",
+      chips: ["Bike rides","Running","Gardening","Sourdough","Cooking","Home DIY","Scratch-built Merlin 3D printer","Ender 3 Pro v2 upgrades","Writing","Movies","Music"],
+      links: []
+    },
+    outside: {
+      kicker: "Field Notes",
+      title: "The World Outside the Window",
+      story: "Everything I build gets refueled out there — waterfalls and mountains, cornfields and campfires, butterflies and hummingbirds, deer and the occasional unbothered skunk. Flowers, trees, insects, fungus: the original engineering portfolio, four billion years ahead of schedule. I keep the window in view while I work so the work remembers what it's for.",
+      chips: ["Mountains & waterfalls","Cornfields & campfires","Butterflies & hummingbirds","Deer & skunks","Flowers & trees","Insects & fungus"],
+      links: []
+    },
+    puzzle: {
+      kicker: "The Thinking Wall",
+      title: "Philosophy, Illusions, and Puzzles That Bite Back",
+      story: "I collect the things that make certainty wobble: optical illusions, thought puzzles, thrillers with clean mechanisms, documentaries about how anything actually works. The spiral on the wall isn't moving. But you checked.",
+      chips: ["Philosophy","Optical illusions","Thrillers","Documentaries","Thought puzzles"],
+      links: []
     }
   };
 
@@ -743,11 +938,28 @@
       noise({filter:"highpass", freq:1800, dur:0.03, g:0.16});
       noise({filter:"lowpass", freq:500, at:0.05, dur:0.05, g:0.12});
       tone(2200, {type:"sine", at:0.09, dur:0.05, g:0.03});
+    },
+    offhours: function(){ // stepper motors homing
+      tone(180, {type:"square", dur:0.28, g:0.035, end:540});
+      tone(540, {type:"square", at:0.32, dur:0.22, g:0.035, end:260});
+      noise({filter:"lowpass", freq:400, dur:0.55, g:0.03});
+    },
+    outside: function(){ // crickets + a breath of wind
+      tone(4200, {type:"sine", dur:0.04, g:0.03});
+      tone(4200, {type:"sine", at:0.11, dur:0.04, g:0.03});
+      tone(4200, {type:"sine", at:0.22, dur:0.04, g:0.025});
+      tone(3800, {type:"sine", at:0.48, dur:0.04, g:0.02});
+      noise({filter:"lowpass", freq:600, dur:0.9, g:0.035});
+    },
+    puzzle: function(){ // an unresolved interval, left hanging
+      tone(660,   {type:"sine", dur:0.6, g:0.05});
+      tone(933.6, {type:"sine", at:0.18, dur:0.6, g:0.045});
     }
   };
   var HAPTICS = {
     board:[10,40,10,40,20], toy:[12,30,12,30,12], hive:[70],
-    series:[10,25,10], scqcs:[25,60,25], vinyl:[8,90,8,90,8], cam:[18]
+    series:[10,25,10], scqcs:[25,60,25], vinyl:[8,90,8,90,8], cam:[18],
+    offhours:[15,30,15], outside:[5,45,5,45,5], puzzle:[30,30,30]
   };
   function buzz(id){
     if (navigator.vibrate) { try { navigator.vibrate(HAPTICS[id] || 15); } catch(e){} }
