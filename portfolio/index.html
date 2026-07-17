@@ -490,19 +490,25 @@
 
   /* ---------------- audio engine (all synthesized) ---------------- */
   var ctx = null, master = null, soundOn = true;
-  function ac(){
+  function ac(force){
     if (!soundOn) return null;
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
     if (!ctx){
+      if (!force) return null; // only create on an explicit gesture (autoplay policy)
       ctx = new AC();
       master = ctx.createGain();
       master.gain.value = 0.5;
       master.connect(ctx.destination);
     }
-    if (ctx.state === "suspended") ctx.resume();
+    if (ctx.state === "suspended" && force) ctx.resume();
     return ctx;
   }
+  // first real gesture anywhere unlocks audio, so hover sounds work from then on
+  ["pointerdown","keydown"].forEach(function(ev){
+    var unlock = function(){ ac(true); document.removeEventListener(ev, unlock); };
+    document.addEventListener(ev, unlock);
+  });
   function tone(freq, opts){
     var c = ac(); if (!c) return;
     opts = opts || {};
@@ -624,7 +630,16 @@
   });
   scrim.addEventListener("click", closeWorld);
   document.addEventListener("keydown", function(e){
-    if (e.key === "Escape" && !dossier.hidden) closeWorld();
+    if (dossier.hidden) return;
+    if (e.key === "Escape"){ closeWorld(); return; }
+    if (e.key === "Tab"){ // keep focus inside the open dossier
+      var f = dossier.querySelectorAll("button, a[href]");
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first){ last.focus(); e.preventDefault(); }
+      else if (!e.shiftKey && document.activeElement === last){ first.focus(); e.preventDefault(); }
+      else if (!dossier.contains(document.activeElement)){ first.focus(); e.preventDefault(); }
+    }
   });
 
   /* ---------------- object wiring ---------------- */
@@ -634,6 +649,7 @@
     btn.addEventListener("pointerenter", function(){ SOUNDS.hover(); });
     btn.addEventListener("pointerdown", function(){ buzz(id); });
     btn.addEventListener("click", function(){
+      ac(true);
       if (SOUNDS[id]) SOUNDS[id]();
       openWorld(id, accent);
     });
@@ -645,7 +661,7 @@
     soundOn = !soundOn;
     sndBtn.setAttribute("aria-pressed", String(soundOn));
     sndBtn.textContent = soundOn ? "Sound: on" : "Sound: off";
-    if (soundOn) SOUNDS.hover();
+    if (soundOn){ ac(true); SOUNDS.hover(); }
   });
 
   /* ---------------- parallax ---------------- */
