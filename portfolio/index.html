@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="K. May — engineer, author, toymaker, founder. A desk of shipped worlds: ATM hardware, an award-winning bilingual book &amp; toy, Hive Mind, the Everything series, SCQCS, ERRER Labs, and securaCV.">
+<meta name="theme-color" content="#0e0a07">
+<title>K. May — The Desk of Worlds</title>
+<style>
+  :root{
+    --room:#0e0a07;
+    --room-deep:#080604;
+    --desk-hi:#3b2a1a;
+    --desk-lo:#241812;
+    --lamp:#ffc97a;
+    --ink:#f4e9d8;
+    --ink-dim:#b9a88f;
+    --ink-faint:#7e6f5b;
+    --c-board:#63e6a9;
+    --c-toy:#ff8a5c;
+    --c-hive:#f5b63f;
+    --c-series:#b79cff;
+    --c-scqcs:#ff5d5d;
+    --c-vinyl:#7cd7e8;
+    --c-cam:#8fb7ff;
+    --mono:ui-monospace,"Cascadia Code","Source Code Pro",Menlo,Consolas,monospace;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--room);
+    color:var(--ink);
+    font-family:var(--serif);
+    overflow-x:hidden;
+    min-height:100vh;
+  }
+  ::selection{background:var(--lamp);color:var(--room)}
+
+  /* ---------- scene ---------- */
+  .scene{
+    position:relative;
+    min-height:100svh;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 62% -10%, rgba(255,201,122,.16), transparent 55%),
+      linear-gradient(var(--room-deep), var(--room) 30%);
+  }
+  #dust{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+
+  .intro{
+    position:relative;z-index:4;
+    padding:clamp(1.25rem,4vw,3rem) clamp(1.25rem,5vw,4rem) 0;
+    max-width:46rem;
+  }
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:.72rem;
+    letter-spacing:.22em;
+    color:var(--lamp);
+    text-transform:uppercase;
+  }
+  .intro h1{
+    margin-top:.9rem;
+    font-size:clamp(2.1rem,5.2vw,3.6rem);
+    line-height:1.05;
+    font-weight:600;
+    letter-spacing:-.01em;
+    text-wrap:balance;
+  }
+  .intro h1 em{font-style:italic;color:var(--lamp)}
+  .intro .lede{
+    margin-top:1rem;
+    max-width:34rem;
+    color:var(--ink-dim);
+    font-size:clamp(.98rem,1.5vw,1.12rem);
+    line-height:1.55;
+  }
+
+  /* ---------- desk ---------- */
+  .desk{
+    position:relative;z-index:2;
+    flex:1;
+    min-height:min(62vh,640px);
+    margin-top:clamp(.5rem,2vh,1.5rem);
+    background:
+      radial-gradient(85% 120% at 60% 0%, rgba(255,201,122,.28), rgba(255,201,122,.07) 45%, transparent 72%),
+      repeating-linear-gradient(97deg, rgba(255,222,170,.045) 0 2px, transparent 2px 26px, rgba(0,0,0,.06) 26px 28px, transparent 28px 61px),
+      linear-gradient(178deg, var(--desk-hi), var(--desk-lo) 70%);
+    border-top:1px solid rgba(255,201,122,.28);
+    box-shadow:0 -18px 60px rgba(0,0,0,.55) inset, 0 -1px 0 rgba(255,220,170,.12) inset;
+  }
+  .desk::after{ /* vignette so edges fall into the dark */
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(90% 90% at 58% 18%, transparent 42%, rgba(8,6,4,.72) 100%);
+  }
+
+  .obj{
+    position:absolute;
+    left:var(--x);top:var(--y);
+    width:var(--w);
+    transform:translate3d(var(--px,0px),var(--py,0px),0);
+    z-index:2;
+  }
+  .bob{animation:bob 6s ease-in-out infinite;animation-delay:var(--bd,0s)}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+
+  .obj-btn{
+    display:block;width:100%;
+    background:none;border:0;cursor:pointer;color:inherit;
+    font-family:var(--mono);
+    transition:transform .35s cubic-bezier(.2,.9,.3,1.4), filter .35s ease;
+    filter:drop-shadow(0 14px 10px rgba(0,0,0,.55));
+    -webkit-tap-highlight-color:transparent;
+  }
+  .obj-btn svg{width:100%;height:auto;display:block}
+  .obj-btn .tag{
+    display:block;text-align:center;
+    margin-top:.55rem;
+    font-size:.62rem;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--ink-faint);
+    transition:color .3s ease;
+  }
+  .obj-btn:hover,.obj-btn:focus-visible{
+    transform:translateY(-10px) scale(1.045) rotate(var(--tilt,-1.2deg));
+    filter:drop-shadow(0 30px 22px rgba(0,0,0,.6)) drop-shadow(0 0 26px color-mix(in srgb, var(--a) 38%, transparent));
+  }
+  .obj-btn:hover .tag,.obj-btn:focus-visible .tag{color:var(--a)}
+  .obj-btn:focus-visible{outline:2px solid var(--a);outline-offset:8px;border-radius:6px}
+
+  .hint{
+    position:relative;z-index:4;
+    display:flex;flex-wrap:wrap;align-items:center;gap:.9rem;
+    padding:1rem clamp(1.25rem,5vw,4rem) 1.4rem;
+    font-family:var(--mono);
+    font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ink-faint);
+    background:linear-gradient(transparent, rgba(8,6,4,.6));
+  }
+  .hint .sep{opacity:.4}
+  .chip{
+    font-family:var(--mono);
+    font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--lamp);
+    background:rgba(255,201,122,.08);
+    border:1px solid rgba(255,201,122,.35);
+    border-radius:999px;
+    padding:.45em 1em;
+    cursor:pointer;
+    transition:background .25s ease,color .25s ease;
+  }
+  .chip:hover,.chip:focus-visible{background:rgba(255,201,122,.18)}
+  .chip:focus-visible{outline:2px solid var(--lamp);outline-offset:2px}
+  .chip[aria-pressed="false"]{color:var(--ink-faint);border-color:rgba(185,168,143,.3);background:transparent}
+
+  /* ---------- dossier ---------- */
+  .scrim{
+    position:fixed;inset:0;z-index:40;
+    background:rgba(5,4,3,.62);
+    backdrop-filter:blur(3px);
+    opacity:0;transition:opacity .3s ease;
+  }
+  .scrim.show{opacity:1}
+  .dossier{
+    position:fixed;left:50%;bottom:0;z-index:41;
+    transform:translate(-50%,105%);
+    width:min(44rem,calc(100vw - 1.5rem));
+    max-height:min(78vh,40rem);
+    overflow-y:auto;
+    background:linear-gradient(160deg,#1d1610,#141009 55%);
+    border:1px solid color-mix(in srgb, var(--a,#ffc97a) 45%, transparent);
+    border-bottom:0;
+    border-radius:14px 14px 0 0;
+    box-shadow:0 -30px 80px rgba(0,0,0,.7), 0 0 60px color-mix(in srgb, var(--a,#ffc97a) 12%, transparent);
+    padding:clamp(1.25rem,3.5vw,2.25rem) clamp(1.25rem,4vw,2.5rem) clamp(1.75rem,4vw,2.5rem);
+    transition:transform .45s cubic-bezier(.2,.9,.25,1);
+  }
+  .dossier.show{transform:translate(-50%,0)}
+  .d-head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+  .d-kicker{
+    font-family:var(--mono);font-size:.66rem;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--a,--lamp);color:var(--a)
+  }
+  .dossier h2{
+    margin-top:.8rem;
+    font-size:clamp(1.4rem,3.4vw,2rem);
+    line-height:1.12;font-weight:600;text-wrap:balance;
+  }
+  .dossier .story{
+    margin-top:.9rem;color:var(--ink-dim);
+    line-height:1.62;font-size:1rem;max-width:60ch;
+  }
+  .chips{list-style:none;display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.2rem}
+  .chips li{
+    font-family:var(--mono);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink);
+    border:1px solid color-mix(in srgb, var(--a) 40%, transparent);
+    background:color-mix(in srgb, var(--a) 9%, transparent);
+    border-radius:4px;padding:.4em .7em;
+  }
+  .d-links{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:1.3rem}
+  .d-links a{
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;
+    color:var(--room);background:var(--a);
+    text-decoration:none;border-radius:4px;padding:.55em .9em;
+    transition:filter .2s ease;
+  }
+  .d-links a:hover,.d-links a:focus-visible{filter:brightness(1.15)}
+  .d-links a:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .d-links a::after{content:" ↗"}
+
+  /* ---------- footer ---------- */
+  footer{
+    border-top:1px solid rgba(255,201,122,.14);
+    padding:2rem clamp(1.25rem,5vw,4rem) 2.5rem;
+    display:flex;flex-wrap:wrap;gap:1rem 2.5rem;
+    align-items:baseline;justify-content:space-between;
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;
+    color:var(--ink-faint);
+    background:var(--room-deep);
+  }
+  footer a{color:var(--ink-dim);text-decoration:none;border-bottom:1px solid rgba(185,168,143,.35)}
+  footer a:hover{color:var(--lamp);border-color:var(--lamp)}
+  footer .cols{display:flex;flex-wrap:wrap;gap:.4rem 1.6rem}
+
+  /* ---------- mobile: desk becomes a tray grid ---------- */
+  @media (max-width:720px){
+    .desk{
+      display:grid;
+      grid-template-columns:repeat(2,1fr);
+      gap:1.4rem 1rem;
+      padding:2rem 1.25rem 2.5rem;
+      min-height:0;
+    }
+    .obj{position:static;width:100%;max-width:11rem;min-width:0;margin:0 auto;transform:none}
+    .obj-btn .tag{color:var(--ink-dim)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .bob{animation:none}
+    .obj{transform:none !important}
+    .obj-btn,.dossier,.scrim{transition:none}
+    html{scroll-behavior:auto}
+  }
+</style>
+</head>
+<body>
+
+<main class="scene" id="scene">
+  <canvas id="dust" aria-hidden="true"></canvas>
+
+  <header class="intro">
+    <p class="eyebrow">K. May · ERRER Labs — Portfolio</p>
+    <!-- EDIT: swap "K. May" above and in <title>/footer for your full name -->
+    <h1>Every object on this desk is an <em>entire world</em> I shipped.</h1>
+    <p class="lede">Electrical &amp; computer engineer, author, toymaker, game designer,
+    security founder, record label. Hardware taught me that how a thing <em>feels</em> is
+    engineered, not decorated — so pick something up. Each one has its own light, sound,
+    and pulse.</p>
+  </header>
+
+  <div class="desk" id="desk">
+
+    <!-- The Everything series — four spines -->
+    <div class="obj" data-id="series" style="--x:6%;--y:10%;--w:130px;--depth:.55">
+      <div class="bob" style="--bd:-1.2s">
+        <button class="obj-btn" style="--a:var(--c-series);--tilt:-2deg" data-id="series" aria-haspopup="dialog">
+          <svg viewBox="0 0 104 122" role="img" aria-label="Four book spines: the Everything series">
+            <rect x="2"  y="14" width="22" height="106" rx="3" fill="#2b2140" stroke="#b79cff" stroke-width="1.5"/>
+            <rect x="28" y="6"  width="22" height="114" rx="3" fill="#1e3325" stroke="#63e6a9" stroke-width="1.5"/>
+            <rect x="54" y="18" width="22" height="102" rx="3" fill="#3a2030" stroke="#ff8ac2" stroke-width="1.5"/>
+            <rect x="80" y="10" width="22" height="110" rx="3" fill="#1d2a3e" stroke="#8fb7ff" stroke-width="1.5"/>
+            <circle cx="13" cy="30" r="4.5" fill="#b79cff"/>
+            <path d="M39 24 l5 9 h-10 z" fill="#63e6a9"/>
+            <circle cx="65" cy="34" r="4.5" fill="none" stroke="#ff8ac2" stroke-width="2"/>
+            <circle cx="91" cy="27" r="2" fill="#8fb7ff"/>
+            <circle cx="87" cy="33" r="2" fill="#8fb7ff"/>
+            <circle cx="95" cy="33" r="2" fill="#8fb7ff"/>
+          </svg>
+          <span class="tag">The Everything Series</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Bilingual book + toy -->
+    <div class="obj" data-id="toy" style="--x:28%;--y:6%;--w:150px;--depth:.8">
+      <div class="bob" style="--bd:-3.4s">
+        <button class="obj-btn" style="--a:var(--c-toy);--tilt:1.5deg" data-id="toy" aria-haspopup="dialog">
+          <svg viewBox="0 0 140 110" role="img" aria-label="An open bilingual book with a toy block">
+            <path d="M8 82 L64 70 L64 22 L8 34 Z" fill="#f2e3c9" stroke="#c9b490" stroke-width="1.5"/>
+            <path d="M120 82 L64 70 L64 22 L120 34 Z" fill="#e8d6b8" stroke="#c9b490" stroke-width="1.5"/>
+            <text x="30" y="58" font-family="Georgia,serif" font-size="20" fill="#a05a2c" transform="rotate(-8 30 58)">A</text>
+            <text x="88" y="56" font-family="Georgia,serif" font-size="20" fill="#a05a2c" transform="rotate(8 88 56)">Ñ</text>
+            <rect x="88" y="52" width="44" height="44" rx="7" fill="#ff8a5c" stroke="#d96a3e" stroke-width="2"/>
+            <text x="110" y="83" font-family="Georgia,serif" font-size="24" font-weight="bold" fill="#fff4e8" text-anchor="middle">B</text>
+            <circle cx="97" cy="61" r="2.5" fill="#fff4e8" opacity=".8"/>
+          </svg>
+          <span class="tag">Book + Toy · 3 Awards</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Hive Mind game -->
+    <div class="obj" data-id="hive" style="--x:55%;--y:9%;--w:120px;--depth:.5">
+      <div class="bob" style="--bd:-2.1s">
+        <button class="obj-btn" style="--a:var(--c-hive);--tilt:-1deg" data-id="hive" aria-haspopup="dialog">
+          <svg viewBox="0 0 112 104" role="img" aria-label="Honeycomb game tiles">
+            <polygon points="28,2 52,2 64,22 52,42 28,42 16,22" fill="#3a2c12" stroke="#f5b63f" stroke-width="2"/>
+            <polygon points="64,24 88,24 100,44 88,64 64,64 52,44" fill="#f5b63f" stroke="#ffd98a" stroke-width="2"/>
+            <polygon points="28,46 52,46 64,66 52,86 28,86 16,66" fill="#3a2c12" stroke="#f5b63f" stroke-width="2"/>
+            <circle cx="76" cy="44" r="5" fill="#241812"/>
+            <circle cx="40" cy="22" r="3" fill="#f5b63f"/>
+            <circle cx="40" cy="66" r="3" fill="#f5b63f"/>
+          </svg>
+          <span class="tag">Hive Mind — the game</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- SCQCS shield -->
+    <div class="obj" data-id="scqcs" style="--x:78%;--y:14%;--w:110px;--depth:.7">
+      <div class="bob" style="--bd:-4.6s">
+        <button class="obj-btn" style="--a:var(--c-scqcs);--tilt:2deg" data-id="scqcs" aria-haspopup="dialog">
+          <svg viewBox="0 0 84 96" role="img" aria-label="A security shield with a keyhole">
+            <path d="M42 4 L76 16 V42 C76 64 62 78 42 90 C22 78 8 64 8 42 V16 Z"
+                  fill="#301112" stroke="#ff5d5d" stroke-width="2.5"/>
+            <circle cx="42" cy="40" r="9" fill="none" stroke="#ff5d5d" stroke-width="3"/>
+            <rect x="39" y="46" width="6" height="16" rx="3" fill="#ff5d5d"/>
+          </svg>
+          <span class="tag">SCQCS Security</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Circuit board / the machine years -->
+    <div class="obj" data-id="board" style="--x:10%;--y:44%;--w:200px;--depth:1">
+      <div class="bob" style="--bd:-.6s">
+        <button class="obj-btn" style="--a:var(--c-board);--tilt:-1.6deg" data-id="board" aria-haspopup="dialog">
+          <svg viewBox="0 0 190 120" role="img" aria-label="A circuit board with a card reader slot">
+            <rect x="2" y="8" width="170" height="104" rx="8" fill="#0f2a1e" stroke="#63e6a9" stroke-width="2"/>
+            <rect x="64" y="42" width="44" height="36" rx="3" fill="#081a12" stroke="#63e6a9" stroke-width="1.5"/>
+            <path d="M20 26 H58 V48" fill="none" stroke="#63e6a9" stroke-width="1.5" opacity=".7"/>
+            <path d="M20 96 H52 V82 H64" fill="none" stroke="#63e6a9" stroke-width="1.5" opacity=".7"/>
+            <path d="M112 50 H140 V30 H156" fill="none" stroke="#63e6a9" stroke-width="1.5" opacity=".7"/>
+            <path d="M112 70 H148 V94" fill="none" stroke="#63e6a9" stroke-width="1.5" opacity=".7"/>
+            <circle cx="20" cy="26" r="3.5" fill="#63e6a9"/>
+            <circle cx="20" cy="96" r="3.5" fill="#63e6a9"/>
+            <circle cx="156" cy="30" r="3.5" fill="#63e6a9"/>
+            <circle cx="148" cy="94" r="3.5" fill="#63e6a9"/>
+            <rect x="150" y="52" width="38" height="18" rx="3" fill="#1a1a1f" stroke="#4a4a55" stroke-width="1.5"/>
+            <rect x="158" y="58" width="34" height="7" rx="1.5" fill="#e8d6b8" transform="rotate(-6 158 58)"/>
+            <rect x="160" y="59.5" width="7" height="4.5" rx="1" fill="#c9a227" transform="rotate(-6 160 59.5)"/>
+          </svg>
+          <span class="tag">The Machine Years — ATMs</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- securaCV camera -->
+    <div class="obj" data-id="cam" style="--x:44%;--y:48%;--w:130px;--depth:.9">
+      <div class="bob" style="--bd:-5.3s">
+        <button class="obj-btn" style="--a:var(--c-cam);--tilt:1deg" data-id="cam" aria-haspopup="dialog">
+          <svg viewBox="0 0 116 96" role="img" aria-label="A small open-source camera">
+            <rect x="10" y="14" width="96" height="58" rx="10" fill="#141c2c" stroke="#8fb7ff" stroke-width="2"/>
+            <circle cx="58" cy="43" r="19" fill="#0b1220" stroke="#8fb7ff" stroke-width="2"/>
+            <circle cx="58" cy="43" r="9" fill="#22335a"/>
+            <circle cx="53" cy="38" r="3" fill="#bcd4ff" opacity=".85"/>
+            <circle cx="92" cy="26" r="3.5" fill="#63e6a9"/>
+            <path d="M46 84 H70 M58 72 V84" stroke="#8fb7ff" stroke-width="3" stroke-linecap="round"/>
+            <path d="M22 26 h12 M22 32 h8" stroke="#8fb7ff" stroke-width="2" stroke-linecap="round" opacity=".55"/>
+          </svg>
+          <span class="tag">securaCV — open source</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ERRER Labs vinyl -->
+    <div class="obj" data-id="vinyl" style="--x:71%;--y:36%;--w:165px;--depth:1.1">
+      <div class="bob" style="--bd:-2.8s">
+        <button class="obj-btn" style="--a:var(--c-vinyl);--tilt:-2.2deg" data-id="vinyl" aria-haspopup="dialog">
+          <svg viewBox="0 0 130 130" role="img" aria-label="A vinyl record: Echoes of Us">
+            <circle cx="65" cy="65" r="61" fill="#101418" stroke="#2b3238" stroke-width="2"/>
+            <circle cx="65" cy="65" r="50" fill="none" stroke="#242b31" stroke-width="1.5"/>
+            <circle cx="65" cy="65" r="41" fill="none" stroke="#242b31" stroke-width="1.5"/>
+            <circle cx="65" cy="65" r="32" fill="none" stroke="#242b31" stroke-width="1.5"/>
+            <circle cx="65" cy="65" r="20" fill="#7cd7e8"/>
+            <circle cx="65" cy="65" r="3.5" fill="#0e0a07"/>
+            <path d="M30 34 A48 48 0 0 1 96 30" fill="none" stroke="#3d474f" stroke-width="2" opacity=".8"/>
+            <text x="65" y="59" font-family="Georgia,serif" font-size="8.5" fill="#0b2830" text-anchor="middle" font-style="italic">Echoes</text>
+            <text x="65" y="79" font-family="Georgia,serif" font-size="8.5" fill="#0b2830" text-anchor="middle" font-style="italic">of Us</text>
+          </svg>
+          <span class="tag">ERRER Labs · Aethra Kairos</span>
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="hint">
+    <span>Hover to feel</span><span class="sep">/</span>
+    <span>Click to pick up</span><span class="sep">/</span>
+    <button id="sndBtn" class="chip" aria-pressed="true">Sound: on</button>
+  </div>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<section class="dossier" id="dossier" role="dialog" aria-modal="true" aria-labelledby="dTitle" hidden>
+  <div class="d-head">
+    <p class="d-kicker" id="dKicker"></p>
+    <button class="chip" id="dClose">Put it back ×</button>
+  </div>
+  <h2 id="dTitle"></h2>
+  <p class="story" id="dStory"></p>
+  <ul class="chips" id="dChips"></ul>
+  <div class="d-links" id="dLinks"></div>
+</section>
+
+<footer>
+  <div class="cols">
+    <a href="https://errerlabs.com">ERRERLabs.com</a>
+    <a href="https://scqcs.com">scqcs.com</a>
+    <a href="https://github.com/kmay89">github.com/kmay89</a>
+  </div>
+  <span>© 2026 K. May · ERRER Labs — built by hand, no frameworks, no trackers.</span>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------------- worlds data ---------------- */
+  var WORLDS = {
+    board: {
+      kicker: "Electrical & Computer Engineering",
+      title: "The Machine Years",
+      story: "Before I built worlds you could read or listen to, I built the ones people trust with their money. ATM systems end to end — the card reader that takes the first handshake, the power supplies that keep their promises, touch screens, processors, and the peripherals around them — plus security alarm systems watching over it all. Hardware taught me the rule everything since has followed: the feel of a product is engineered, not decorated.",
+      chips: ["ATM card readers","Peripherals","Power supplies","Touch screens","Processors","Security alarm systems"],
+      links: []
+    },
+    toy: {
+      kicker: "Author · Producer · Creator",
+      title: "A Book and a Toy That Speak Two Languages",
+      story: "I authored and produced a bilingual children's book with a companion toy — one world a kid can hold in both hands and both languages. It earned a Mom's Choice Award, was named a Target Bullseye Top Pick for the holidays, and took home an education award at Toy Fair.",
+      chips: ["Mom's Choice Award","Target Bullseye Top Pick — Holiday","Toy Fair Education Award","Bilingual"],
+      links: []
+    },
+    hive: {
+      kicker: "Game Design",
+      title: "Hive Mind",
+      story: "A game about what a group of minds can do that one mind can't. Designed, produced, and shipped — box, rules, and all.",
+      chips: ["Original game","Designed & produced"],
+      links: [{label:"hive-mind-game.com", href:"https://hive-mind-game.com"}]
+    },
+    series: {
+      kicker: "The Everything Series",
+      title: "Four Books, One Question: What Is Everything Doing?",
+      story: "An authored series where each volume owns a verb — what glows, what grows, what shows, what knows. Four small worlds that share one voice, each living at its own address.",
+      chips: ["Glows","Grows","Shows","Knows"],
+      links: [
+        {label:"everythingthatglows.com", href:"https://everythingthatglows.com"},
+        {label:"everything-that-grows.com", href:"https://everything-that-grows.com"},
+        {label:"everythingthatshows.com", href:"https://everythingthatshows.com"},
+        {label:"everything-that-knows.com", href:"https://everything-that-knows.com"}
+      ]
+    },
+    scqcs: {
+      kicker: "Founder · Security",
+      title: "SCQCS — Security, Grown Into a Company",
+      story: "The alarm-systems thread of the machine years, grown into its own firm. SCQCS is my security company: physical security engineering delivered with the same end-to-end discipline I learned building the machines it protects.",
+      chips: ["Founder","Physical security","Systems engineering"],
+      links: [{label:"scqcs.com", href:"https://scqcs.com"}]
+    },
+    vinyl: {
+      kicker: "ERRER Labs · Music",
+      title: "Aethra Kairos — Echoes of Us, I–III",
+      story: "ERRER Labs is my studio for things that don't fit in one company. It created the artist Aethra Kairos and produced three full albums — Echoes of Us, volumes one through three. A world complete enough to have a discography.",
+      chips: ["Echoes of Us — Album I","Echoes of Us — Album II","Echoes of Us — Album III"],
+      links: [{label:"ERRERLabs.com", href:"https://errerlabs.com"}]
+    },
+    cam: {
+      kicker: "ERRER Labs · Open Source",
+      title: "securaCV — A Camera That Answers to You",
+      story: "Open-source, privacy-first camera hardware built in the open from PCB to package: custom camera hardware, Linux kernel work, ESP32 firmware, and a Home Assistant integration — so the machine watching your home reports to you and no one else.",
+      chips: ["Camera hardware","Linux kernel","ESP32 firmware","Home Assistant"],
+      links: [{label:"github.com/kmay89/securaCV", href:"https://github.com/kmay89/securaCV"}]
+    }
+  };
+
+  /* ---------------- audio engine (all synthesized) ---------------- */
+  var ctx = null, master = null, soundOn = true;
+  function ac(){
+    if (!soundOn) return null;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!ctx){
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0.5;
+      master.connect(ctx.destination);
+    }
+    if (ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, opts){
+    var c = ac(); if (!c) return;
+    opts = opts || {};
+    var t = c.currentTime + (opts.at || 0);
+    var dur = opts.dur || 0.15;
+    var o = c.createOscillator(), g = c.createGain();
+    o.type = opts.type || "sine";
+    o.frequency.setValueAtTime(freq, t);
+    if (opts.end) o.frequency.exponentialRampToValueAtTime(opts.end, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(opts.g || 0.12, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+  function noise(opts){
+    var c = ac(); if (!c) return;
+    opts = opts || {};
+    var t = c.currentTime + (opts.at || 0);
+    var dur = opts.dur || 0.08;
+    var len = Math.max(1, Math.floor(c.sampleRate * dur));
+    var buf = c.createBuffer(1, len, c.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    var src = c.createBufferSource(); src.buffer = buf;
+    var f = c.createBiquadFilter();
+    f.type = opts.filter || "lowpass";
+    f.frequency.setValueAtTime(opts.freq || 1200, t);
+    if (opts.freqEnd) f.frequency.exponentialRampToValueAtTime(opts.freqEnd, t + dur);
+    f.Q.value = opts.q || 0.8;
+    var g = c.createGain(); g.gain.value = opts.g || 0.1;
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start(t);
+  }
+  var SOUNDS = {
+    hover: function(){ tone(1900, {type:"sine", dur:0.045, g:0.025}); },
+    board: function(){ // ATM keypress + card-reader chirp
+      noise({filter:"lowpass", freq:900, dur:0.05, g:0.14});
+      tone(880,  {type:"square", at:0.05, dur:0.09, g:0.05});
+      tone(1320, {type:"square", at:0.16, dur:0.12, g:0.05});
+    },
+    toy: function(){ // playful marimba arpeggio
+      tone(1046.5, {type:"triangle", dur:0.22, g:0.10});
+      tone(1318.5, {type:"triangle", at:0.10, dur:0.22, g:0.10});
+      tone(1568.0, {type:"triangle", at:0.20, dur:0.30, g:0.10});
+    },
+    hive: function(){ // a swarm: three detuned saws
+      tone(110, {type:"sawtooth", dur:0.55, g:0.045});
+      tone(113, {type:"sawtooth", dur:0.55, g:0.045});
+      tone(221, {type:"sawtooth", dur:0.45, g:0.028});
+    },
+    series: function(){ // page turn
+      noise({filter:"bandpass", freq:600, freqEnd:2600, q:1.1, dur:0.28, g:0.13});
+      tone(523.25, {type:"sine", at:0.22, dur:0.25, g:0.05});
+    },
+    scqcs: function(){ // alarm arming chirp
+      tone(1200, {type:"sine", dur:0.07, g:0.09});
+      tone(900,  {type:"sine", at:0.12, dur:0.07, g:0.09});
+      tone(1200, {type:"sine", at:0.24, dur:0.14, g:0.09});
+    },
+    vinyl: function(){ // crackle + warm minor pad
+      for (var i = 0; i < 6; i++) noise({filter:"highpass", freq:2500, at:Math.pow(i,1.3)*0.09, dur:0.02, g:0.05});
+      tone(110.0,  {type:"sine", at:0.1, dur:1.1, g:0.07});
+      tone(130.81, {type:"sine", at:0.1, dur:1.1, g:0.06});
+      tone(164.81, {type:"sine", at:0.1, dur:1.1, g:0.055});
+    },
+    cam: function(){ // shutter
+      noise({filter:"highpass", freq:1800, dur:0.03, g:0.16});
+      noise({filter:"lowpass", freq:500, at:0.05, dur:0.05, g:0.12});
+      tone(2200, {type:"sine", at:0.09, dur:0.05, g:0.03});
+    }
+  };
+  var HAPTICS = {
+    board:[10,40,10,40,20], toy:[12,30,12,30,12], hive:[70],
+    series:[10,25,10], scqcs:[25,60,25], vinyl:[8,90,8,90,8], cam:[18]
+  };
+  function buzz(id){
+    if (navigator.vibrate) { try { navigator.vibrate(HAPTICS[id] || 15); } catch(e){} }
+  }
+
+  /* ---------------- dossier ---------------- */
+  var dossier = document.getElementById("dossier");
+  var scrim   = document.getElementById("scrim");
+  var lastFocus = null;
+  function openWorld(id, accent){
+    var w = WORLDS[id]; if (!w) return;
+    lastFocus = document.activeElement;
+    dossier.style.setProperty("--a", accent);
+    document.getElementById("dKicker").textContent = w.kicker;
+    document.getElementById("dTitle").textContent = w.title;
+    document.getElementById("dStory").textContent = w.story;
+    var chips = document.getElementById("dChips");
+    chips.innerHTML = "";
+    w.chips.forEach(function(c){
+      var li = document.createElement("li"); li.textContent = c; chips.appendChild(li);
+    });
+    var links = document.getElementById("dLinks");
+    links.innerHTML = "";
+    w.links.forEach(function(l){
+      var a = document.createElement("a");
+      a.href = l.href; a.textContent = l.label;
+      a.target = "_blank"; a.rel = "noopener";
+      links.appendChild(a);
+    });
+    scrim.hidden = false; dossier.hidden = false;
+    requestAnimationFrame(function(){
+      scrim.classList.add("show"); dossier.classList.add("show");
+    });
+    document.getElementById("dClose").focus();
+  }
+  function closeWorld(){
+    scrim.classList.remove("show"); dossier.classList.remove("show");
+    var done = function(){ scrim.hidden = true; dossier.hidden = true; };
+    if (REDUCED) done(); else setTimeout(done, 460);
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  document.getElementById("dClose").addEventListener("click", function(){
+    SOUNDS.hover(); closeWorld();
+  });
+  scrim.addEventListener("click", closeWorld);
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape" && !dossier.hidden) closeWorld();
+  });
+
+  /* ---------------- object wiring ---------------- */
+  document.querySelectorAll(".obj-btn").forEach(function(btn){
+    var id = btn.dataset.id;
+    var accent = getComputedStyle(btn).getPropertyValue("--a").trim() || "#ffc97a";
+    btn.addEventListener("pointerenter", function(){ SOUNDS.hover(); });
+    btn.addEventListener("pointerdown", function(){ buzz(id); });
+    btn.addEventListener("click", function(){
+      if (SOUNDS[id]) SOUNDS[id]();
+      openWorld(id, accent);
+    });
+  });
+
+  /* ---------------- sound toggle ---------------- */
+  var sndBtn = document.getElementById("sndBtn");
+  sndBtn.addEventListener("click", function(){
+    soundOn = !soundOn;
+    sndBtn.setAttribute("aria-pressed", String(soundOn));
+    sndBtn.textContent = soundOn ? "Sound: on" : "Sound: off";
+    if (soundOn) SOUNDS.hover();
+  });
+
+  /* ---------------- parallax ---------------- */
+  var desk = document.getElementById("desk");
+  var objs = Array.prototype.slice.call(document.querySelectorAll(".obj"));
+  if (!REDUCED && matchMedia("(pointer: fine)").matches){
+    var raf = null, mx = 0, my = 0;
+    document.getElementById("scene").addEventListener("pointermove", function(e){
+      mx = (e.clientX / innerWidth  - 0.5);
+      my = (e.clientY / innerHeight - 0.5);
+      if (!raf) raf = requestAnimationFrame(function(){
+        raf = null;
+        objs.forEach(function(o){
+          var d = parseFloat(o.style.getPropertyValue("--depth")) || 0.7;
+          o.style.setProperty("--px", (mx * -16 * d).toFixed(1) + "px");
+          o.style.setProperty("--py", (my * -10 * d).toFixed(1) + "px");
+        });
+      });
+    });
+  }
+
+  /* ---------------- dust motes in the lamp light ---------------- */
+  var canvas = document.getElementById("dust");
+  if (canvas.getContext && !REDUCED){
+    var cx2 = canvas.getContext("2d");
+    var motes = [], W = 0, H = 0;
+    function resize(){
+      W = canvas.clientWidth; H = canvas.clientHeight;
+      var dpr = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      cx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    resize(); addEventListener("resize", resize);
+    for (var i = 0; i < 42; i++){
+      motes.push({
+        x: Math.random(), y: Math.random(),
+        r: 0.6 + Math.random() * 1.6,
+        vx: (Math.random() - 0.5) * 0.00012,
+        vy: -0.00006 - Math.random() * 0.00012,
+        a: 0.15 + Math.random() * 0.4,
+        p: Math.random() * Math.PI * 2
+      });
+    }
+    (function frame(t){
+      cx2.clearRect(0, 0, W, H);
+      // brighter near the lamp pool (upper 60%, centered ~60% across)
+      motes.forEach(function(m){
+        m.x += m.vx * 16; m.y += m.vy * 16; m.p += 0.01;
+        if (m.y < -0.02){ m.y = 1.02; m.x = Math.random(); }
+        if (m.x < -0.02) m.x = 1.02;
+        if (m.x > 1.02) m.x = -0.02;
+        var dx = m.x - 0.6, dy = m.y - 0.15;
+        var glow = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy) * 1.6);
+        var alpha = m.a * glow * (0.7 + 0.3 * Math.sin(m.p));
+        if (alpha > 0.01){
+          cx2.beginPath();
+          cx2.arc(m.x * W, m.y * H, m.r, 0, Math.PI * 2);
+          cx2.fillStyle = "rgba(255,214,150," + alpha.toFixed(3) + ")";
+          cx2.fill();
+        }
+      });
+      requestAnimationFrame(frame);
+    })(0);
+  }
+})();
+</script>
+</body>
+</html>
