@@ -1,6 +1,6 @@
 # ESP32-S3 Mesh Sensing Design — WiFi CSI + BLE Scout + Single-Node
 
-**Status:** Design proposal (no code yet). Phasing aligns with [`firmware/canary/CONSOLIDATION.md`](../firmware/canary/CONSOLIDATION.md) Phase 4–5.
+**Status:** Largely implemented — the proposed modules (multi-link fusion, empty-room calibration, sensing watchdog, channel-hop coordination) ship and are tracked in [`firmware/FEATURES.md`](../firmware/FEATURES.md); on-device hardware verification remains open (#610). Phasing aligned with [`firmware/canary/CONSOLIDATION.md`](../firmware/canary/CONSOLIDATION.md) Phase 4–5.
 **Owner:** firmware maintainers
 **Related:** [`spec/canary_free_signals_v0.md`](../spec/canary_free_signals_v0.md), [`spec/canary_mesh_network_v0.md`](../spec/canary_mesh_network_v0.md), [`docs/csi_modules.md`](csi_modules.md), [`docs/BLE_MESH_OPERA_TANDEM.md`](BLE_MESH_OPERA_TANDEM.md)
 
