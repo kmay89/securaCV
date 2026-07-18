@@ -113,7 +113,8 @@
      drawing itself — the TurboTax "we checked everything for you" moment, with
      plain language up front and the exact technical claim one line below. */
   ul.checks li.chk { animation:fade-slide .3s ease both; }
-  ul.checks li.chk svg path { stroke-dasharray:24; stroke-dashoffset:24; animation:draw .35s ease .08s forwards; }
+  /* dasharray must cover the longest icon path: tick ≈21px, cross ≈28px (two strokes). */
+  ul.checks li.chk svg path { stroke-dasharray:40; stroke-dashoffset:40; animation:draw .35s ease .08s forwards; }
   ul.checks li.chk.fail svg { color:var(--bad); }
   ul.checks li.chk.fail .c-plain { color:var(--bad); font-weight:600; }
   .c-plain { font-size:14px; }
@@ -308,7 +309,14 @@ const FAIL_PLAIN = {
 };
 
 // ---- main flow -----------------------------------------------------------
+// The animated reveal spans several awaits, so a newer selection (another file
+// dropped mid-animation) must invalidate the older run: each run takes a
+// sequence number and abandons itself the moment it is no longer the latest —
+// otherwise a stale run could paint its verdict over the new bundle's.
+let runSeq = 0;
 async function process(envelope, sourceLabel) {
+  const seq = ++runSeq;
+  const stale = () => seq !== runSeq;
   out.innerHTML = '<section id="run"></section><section id="report"></section>';
   if (!envelope || typeof envelope !== 'object') return renderBad('That does not look like an evidence bundle.', '');
 
@@ -316,10 +324,12 @@ async function process(envelope, sourceLabel) {
   // check by check. Nothing shown is speculative.
   let report;
   try { report = await V.verifyEnvelope(envelope); }
-  catch (e) { return renderBad('The verifier hit an unexpected error.', e.message); }
+  catch (e) { if (!stale()) renderBad('The verifier hit an unexpected error.', e.message); return; }
+  if (stale()) return;
 
-  await playChecks(report);
+  await playChecks(report, stale);
   await wait(300);
+  if (stale()) return;
 
   // Distinct from pass/fail: the bundle was neither verified nor rejected because this browser
   // can't run the signature check. Never show valid evidence as "rejected".
@@ -387,8 +397,8 @@ async function process(envelope, sourceLabel) {
 // Reveal the verifier's real, already-computed results one check at a time,
 // with a live counter and progress bar. On completion the panel stays put as
 // the "What was verified" record. Under prefers-reduced-motion everything
-// appears at once.
-async function playChecks(report) {
+// appears at once. `stale()` aborts the reveal if a newer run has started.
+async function playChecks(report, stale) {
   const checks = report.checks || [];
   const failed = !report.ok && !report.inconclusive;
   const total = checks.length + (failed ? 1 : 0);
@@ -418,6 +428,7 @@ async function playChecks(report) {
   const stepMs = Math.min(340, Math.max(150, 2400 / Math.max(total, 1)));
   for (let i = 0; i < checks.length; i++) {
     await wait(stepMs);
+    if (stale()) return;
     list.insertAdjacentHTML('beforeend', checkRow(checks[i], false));
     bar.firstElementChild.style.width = Math.round(((i + 1) / Math.max(total, 1)) * 100) + '%';
     count.textContent = 'Check ' + (i + 1) + ' of ' + total + ' passed';
@@ -425,6 +436,7 @@ async function playChecks(report) {
 
   if (failed) {
     await wait(stepMs);
+    if (stale()) return;
     const kind = report.failure && report.failure.kind;
     const plainFail = (kind && FAIL_PLAIN[kind]) || 'A cryptographic check failed';
     list.insertAdjacentHTML('beforeend',
@@ -630,6 +642,7 @@ function renderTimeline(envelope) {
 }
 
 function renderBad(msg, detail) {
+  runSeq++; // a fresh error display supersedes any in-flight animated run
   out.innerHTML = `<div class="banner bad">${ICONS.bad}<div>Could not verify<small>${esc(msg)}</small></div></div>`
     + (detail ? `<div class="panel"><h2>Details</h2><div class="mono" style="color:var(--bad)">${esc(detail)}</div></div>` : '')
     + actions(false);

@@ -173,9 +173,10 @@
       <li>No one person — including you — can open the vault alone. That's the point.</li>
       <li>Changed your mind? Closing a request just discards the approvals; the evidence stays sealed.</li>
     </ul>
-    <p class="tech" style="margin-top:10px">Access is quorum-gated per Invariant V. Every decision (granted
-      or denied) is recorded as an Ed25519-signed break-glass receipt, hash-chained into the sealed log and
-      visible to anyone who later verifies the record.</p>
+    <p class="tech" style="margin-top:10px">Access is quorum-gated per Invariant V. Every unseal decision
+      (granted or denied) is recorded as an Ed25519-signed break-glass receipt, hash-chained into the sealed
+      log and visible to anyone who later verifies the record. Opening, approving, or closing a request keeps
+      state in the server session only — the permanent record is written at the unseal decision.</p>
   </section>
 
   <!-- 1. Connect -->
@@ -197,8 +198,8 @@
   <!-- 2. Request -->
   <section class="panel step-off operator-only" id="p-request">
     <h2>2 · Open an unlock request</h2>
-    <p class="sub">Name the sealed envelope and say why you need it. The reason you give becomes part of
-      the permanent record — write it the way you'd want it read later.</p>
+    <p class="sub">Name the sealed envelope and say why you need it. If the vault is opened, the reason you
+      give is written into the permanent record — write it the way you'd want it read later.</p>
     <p class="tech">Produces the SHA-256 request hash that every trustee signs; approvals are bound to this
       exact envelope and purpose and can't be replayed elsewhere.</p>
     <div class="row">
@@ -280,7 +281,7 @@
   </section>
 
   <p class="muted operator-only" style="text-align:center; margin-top:20px">
-    Every action here is recorded as a tamper-evident break-glass receipt.
+    Every unseal decision — granted or denied — is recorded as a tamper-evident break-glass receipt.
     To <em>check</em> a record instead of opening one, use the offline Evidence Viewer.
   </p>
 </div>
