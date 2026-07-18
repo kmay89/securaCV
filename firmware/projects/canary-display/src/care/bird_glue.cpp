@@ -55,8 +55,10 @@ canary::ui::CanaryMood bird_mood_tick(uint32_t now_ms, bool night,
 
   // Hub-link flap counter: more than one drop in the hour = flapping.
   const bool hub_up = canary::net::mqtt_connected();
-  if ((int32_t)(now_ms - s_drop_window_ms) >= 3600000 ||
-      s_drop_window_ms == 0) {
+  // Unsigned elapsed math (review catch): these are since-timestamps that
+  // can legitimately go weeks between resets, and a signed cast flips
+  // negative past 24.8 days and freezes the window forever.
+  if (s_drop_window_ms == 0 || now_ms - s_drop_window_ms >= 3600000UL) {
     s_drop_window_ms = now_ms;
     s_drops = 0;
   }
@@ -97,7 +99,7 @@ canary::ui::CanaryMood bird_mood_tick(uint32_t now_ms, bool night,
   // reboot deliberately forgives a dirty morning rather than burning a
   // flash write per incident).
   if (s_last_minute_ms == 0 ||
-      (int32_t)(now_ms - s_last_minute_ms) >= 60000) {
+      now_ms - s_last_minute_ms >= 60000UL) {
     s_last_minute_ms = now_ms;
     bird_mood_minute(s_mood, in);
     if (time_valid && yday >= 0 && yday != s_last_yday) {

@@ -21,7 +21,8 @@ lv_obj_t* s_eye = nullptr;
 lv_obj_t* s_wing = nullptr;
 lv_obj_t* s_beak = nullptr;
 lv_timer_t* s_blink = nullptr;
-lv_timer_t* s_flourish = nullptr;  // idle scheduler-lite (Flipper cadence)
+lv_timer_t* s_flourish = nullptr;   // idle scheduler-lite (Flipper cadence)
+lv_timer_t* s_look_timer = nullptr;  // one-shot glance-aside return
 lv_anim_t s_bob;
 CanaryMood s_mood = CanaryMood::Hidden;
 int s_size = 0;
@@ -180,15 +181,22 @@ void look_back_cb(lv_timer_t* t) {
   lv_timer_del(t);  // one-shot: self-delete, no repeat count (a repeat
                     // count of 1 would auto-delete AND we'd delete —
                     // double free)
+  s_look_timer = nullptr;
 }
 
 // Glance aside: the eye saccades toward a side and returns (birds move
-// in steps, not tweens).
+// in steps, not tweens). The timer is TRACKED (review catch): an
+// untracked one-shot could outlive a bird deleted and recreated within
+// its 900 ms and poke the new bird's eye.
 void flourish_look() {
   if (!s_eye) return;
+  if (s_look_timer) {
+    lv_timer_del(s_look_timer);
+    s_look_timer = nullptr;
+  }
   const int dir = (esp_random() & 1) ? 1 : -1;
   lv_obj_set_x(s_eye, s_eye_x + dir * (s_eye_d / 2 + 1));
-  lv_timer_create(look_back_cb, 900, nullptr);
+  s_look_timer = lv_timer_create(look_back_cb, 900, nullptr);
 }
 
 void flourish_cb(lv_timer_t* t) {
@@ -236,6 +244,10 @@ void on_delete(lv_event_t*) {
   if (s_flourish) {
     lv_timer_del(s_flourish);
     s_flourish = nullptr;
+  }
+  if (s_look_timer) {
+    lv_timer_del(s_look_timer);
+    s_look_timer = nullptr;
   }
   if (s_bird) lv_anim_del(s_bird, nullptr);
   if (s_wing) lv_anim_del(s_wing, nullptr);
