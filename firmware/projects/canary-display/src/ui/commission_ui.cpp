@@ -56,7 +56,15 @@ char s_payload[336] = {0};
 uint32_t s_minted_ms = 0;
 uint32_t s_last_touch_ms = 0;
 uint32_t s_joined_at_ms = 0;
+// Joined-celebration baseline. Count alone is not enough (review catch):
+// opened during a broker reconnect, the retained replay of ALREADY-PAIRED
+// witnesses would grow the count and fake a success. The baseline is only
+// captured after the hub link has been continuously up for a settle
+// window (retained replays land within moments of subscribing), and a
+// link drop invalidates it until the link steadies again.
+constexpr uint32_t BASELINE_SETTLE_MS = 3000;
 int s_baseline_count = -1;
+uint32_t s_link_up_since_ms = 0;   // 0 = link down
 
 lv_obj_t* mk_label(lv_obj_t* parent, const lv_font_t* f, lv_color_t c) {
   lv_obj_t* l = lv_label_create(parent);
@@ -256,7 +264,8 @@ void commission_ui_open() {
   lv_obj_clear_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
   s_last_touch_ms = millis();
   s_joined_at_ms = 0;
-  s_baseline_count = -1;  // tick() records the baseline on its first pass
+  s_baseline_count = -1;  // tick() captures it once the hub link steadies
+  s_link_up_since_ms = 0;
 
   if (canary::cfg::wifi_is_placeholder()) {
     s_face = Face::NoWifi;
@@ -314,7 +323,19 @@ void commission_ui_tick(uint32_t now_ms, int fleet_count, bool urgent) {
     commission_ui_close();
     return;
   }
-  if (s_baseline_count < 0) s_baseline_count = fleet_count;
+  // Baseline discipline: capture the count only after the hub link has
+  // been continuously up for the settle window; drop it the moment the
+  // link drops, so a reconnect's retained replay of old witnesses can
+  // never masquerade as a fresh join (review catch).
+  if (canary::net::mqtt_connected()) {
+    if (s_link_up_since_ms == 0) s_link_up_since_ms = now_ms;
+    if (s_baseline_count < 0 &&
+        (int32_t)(now_ms - s_link_up_since_ms) >= (int32_t)BASELINE_SETTLE_MS)
+      s_baseline_count = fleet_count;
+  } else {
+    s_link_up_since_ms = 0;
+    s_baseline_count = -1;
+  }
 
   if (s_face == Face::Joined) {
     if ((int32_t)(now_ms - s_joined_at_ms) >= (int32_t)JOINED_HOLD_MS)
@@ -322,10 +343,11 @@ void commission_ui_tick(uint32_t now_ms, int fleet_count, bool urgent) {
     return;
   }
 
-  // The moment of truth: a new witness appeared while this surface was
-  // open. Transport-agnostic on purpose — QR, phone wifi code, or captive
-  // portal all end at the same celebration.
-  if (s_face == Face::Code && fleet_count > s_baseline_count) {
+  // The moment of truth: a new witness appeared over a steady link while
+  // this surface was open. Transport-agnostic on purpose — QR, phone wifi
+  // code, or captive portal all end at the same celebration.
+  if (s_face == Face::Code && s_baseline_count >= 0 &&
+      fleet_count > s_baseline_count) {
     s_joined_at_ms = now_ms;
     set_face(Face::Joined);
     return;

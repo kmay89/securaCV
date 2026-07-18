@@ -36,7 +36,7 @@ struct Provision {
   char pass[65];        // ≤64 bytes ('' = open network)
   char host[64];        // hub host, '' = discover via the fleet
   uint16_t port;        // 1883 when absent
-  char token[24];       // base64url fast-track token, '' = none
+  char token[24];       // base64url fast-track token (exactly 22), '' = none
   int64_t expires_at;   // unix epoch, 0 = none
   char name[33];        // suggested witness name, '' = none
   bool wifi_only;       // true = plain WIFI: payload (no hub, no token)
@@ -157,8 +157,10 @@ inline Parse parse_scv1(const char* d, size_t len, Provision& out) {
         break;
       }
       case 't':
-        if (vn == 0 || vn >= sizeof(out.token) ||
-            !pv_token_charset(buf, vn) ||
+        // Exactly 22 chars — a 128-bit base64url token, nothing shorter
+        // (review catch: low-entropy or truncated tokens must never enter
+        // the provisioning path looking valid).
+        if (vn != 22 || !pv_token_charset(buf, vn) ||
             !pv_copy(out.token, sizeof(out.token), buf, vn))
           return Parse::Malformed;
         break;
