@@ -15,6 +15,7 @@
 
 #include "canary/ui/glance_ui.h"
 #include "canary/ui/theme.h"
+#include "canary/ui/canary_mark.h"
 #include "canary/trust.h"
 #include "canary/version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
@@ -297,7 +298,11 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   // Hero: the one thing that matters.
   lv_obj_set_style_text_color(s_hero, tcol, 0);
   lv_obj_set_style_text_color(s_hero_sub, mcol, 0);
-  if (n == 0) {
+  canary_mark_mood(n == 0 && !st.night ? CanaryMood::Idle
+                                       : CanaryMood::Hidden);
+  if (n == 0 && !st.time_valid) {
+    // Nothing at all yet: no witnesses AND no clock. The only honest face
+    // is the listening state.
     lv_obj_set_style_text_font(s_hero, font_title(), 0);
     lv_label_set_text(s_hero, "Listening");
     lv_label_set_text(s_hero_sub,
@@ -305,12 +310,21 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                       (st.wifi_ok ? "finding your hub" : "waiting for wifi"));
     lv_label_set_text(s_hero_badge, "");
   } else if (worst <= Sev::Notice) {
+    // Standalone-first (nightstand wave): with a clock but no canaries yet,
+    // the glass is already a great bedside clock — time hero, weather and
+    // sun lines below. The fleet story joins when the first canary does.
     // All quiet: the TIME becomes the hero (display_care_wave.md §1) — a
     // bedside glance is a clock check 20x a day, and every one of them
     // absorbs the security state peripherally. Falls back to the words
     // when the clock isn't valid yet.
     lv_obj_set_style_text_font(s_hero, font_title(), 0);
-    if (st.time_valid) {
+    if (st.time_valid && n == 0) {
+      lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
+      lv_label_set_text(s_hero_sub,
+                        st.mqtt_ok ? "no canaries yet · plug one in"
+                                   : (st.wifi_ok ? "still looking for your hub"
+                                                 : "waiting for wifi"));
+    } else if (st.time_valid) {
       lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
       lv_label_set_text_fmt(s_hero_sub, "all quiet · %d %s", n,
                             n == 1 ? "canary" : "canaries");
@@ -387,14 +401,22 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   }
 
   // Small clock (redundant while the time IS the hero; honest otherwise).
-  const bool clock_is_hero = st.time_valid && n > 0 && worst <= Sev::Notice;
+  // n==0 counts: standalone clock mode also puts the time in the hero slot
+  // (review catch: without this the corner clock doubled it).
+  const bool clock_is_hero = st.time_valid && worst <= Sev::Notice;
   if (st.time_valid && !clock_is_hero) {
     lv_label_set_text_fmt(s_clock, "%02d:%02d", st.clock_hh, st.clock_mm);
   } else {
     lv_label_set_text(s_clock, "");
   }
   lv_obj_set_style_text_color(s_clock, mcol, 0);
-  if (!st.wifi_ok) {
+  if (n == 0) {
+    // Standalone clock mode: the hero sub already carries the link story
+    // ("still looking for your hub" / "waiting for wifi"), and with no
+    // witnesses there is no "last known" to be honest about — a duplicate
+    // red banner would just be noise on a nightstand.
+    lv_label_set_text(s_banner, "");
+  } else if (!st.wifi_ok) {
     lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  no wifi · reconnecting");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_alert(), 0);
@@ -726,6 +748,11 @@ void glance_ui_create() {
     s_arcs[i] = mk_ring(s_pg_halo, 232, 10);
     lv_obj_add_flag(s_arcs[i], LV_OBJ_FLAG_HIDDEN);
   }
+  // The brand canary perches above the hero while the glass has no fleet
+  // to speak for (listening / standalone clock). Hidden the moment the
+  // first witness arrives — the bird yields to the job.
+  lv_obj_t* bird = canary_mark_create(s_pg_halo, 40);
+  lv_obj_align(bird, LV_ALIGN_TOP_MID, 0, 26);
   s_hero = mk_label(s_pg_halo, font_title(), col_text());
   lv_obj_align(s_hero, LV_ALIGN_CENTER, 0, -26);
   s_hero_sub = mk_label(s_pg_halo, font_label(), col_muted());
