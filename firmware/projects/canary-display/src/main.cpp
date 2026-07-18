@@ -71,6 +71,9 @@
 #include "canary/care/care_glue.h"
 #include "canary/fleet/mute_store.h"
 #endif
+#if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+#include "canary/care/wake_glue.h"
+#endif
 #include "canary/hal/display.h"
 #include "canary/hal/chime.h"
 #include "canary/hal/core_compat.h"
@@ -255,9 +258,31 @@ static void apply_brightness(uint32_t now, bool night) {
   const bool urgent = fleet.worst(now) >= Sev::Alert && !fleet.ack_active(now);
 
   uint8_t level;
-  if (wake || urgent)  level = CD_BRIGHT_DAY;
-  else if (!night)     level = CD_BRIGHT_AMBIENT;
-  else                 level = CD_BRIGHT_NIGHT;
+  if (urgent) {
+    level = CD_BRIGHT_DAY;
+  } else if (wake) {
+    // Nightstand finding: a 3 a.m. time-check must not blast day
+    // brightness into dark-adapted eyes — night wakes peek dim.
+    level = night ? CD_BRIGHT_PEEK : CD_BRIGHT_DAY;
+  } else if (!night) {
+    level = CD_BRIGHT_AMBIENT;
+  } else {
+#if defined(FEATURE_NIGHT_BLACKOUT) && FEATURE_NIGHT_BLACKOUT
+    // True darkness by default (the #1 bedside-display complaint is "still
+    // too bright"). Honesty holds the veto: any Warn+ condition or a dead
+    // link keeps the night glow — silence is never rendered as safety.
+    const bool links_ok =
+        canary::net::wifi_connected() && canary::net::mqtt_connected();
+    level = (links_ok && fleet.worst(now) < Sev::Warn) ? 0 : CD_BRIGHT_NIGHT;
+#else
+    level = CD_BRIGHT_NIGHT;
+#endif
+  }
+#if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+  // Sunrise ramp override: dawn outranks the ladder, never dims it.
+  const int wl = canary::care::wake_alarm_backlight();
+  if (wl > (int)level) level = (uint8_t)wl;
+#endif
   canary::hal::backlight_set(level);
 }
 
@@ -377,6 +402,13 @@ static void handle_touch(uint32_t now) {
     // Tap. First tap in the dark only wakes; a lit tap navigates.
     const bool was_awake = (int32_t)(now - g_wake_until_ms) < 0 || !in_quiet_hours();
     g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+#if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+    // A live wake alarm owns the tap: dismiss, light the peek, done.
+    if (canary::care::wake_alarm_tap()) {
+      fleet.mark_dirty();
+      return;
+    }
+#endif
 #ifdef CD_FLAVOR_WATCH
     if (was_awake) {
       g_page = (g_page + 1) % canary::ui::glance_page_count();
@@ -503,6 +535,10 @@ void setup() {
   // Chime engine (spec §5) — only ever initialized when the piezo pad is
   // populated; the engine TU itself is always compiled for CI coverage.
   canary::hal::chime_init(BUZZER_PIN);
+#if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+  canary::care::wake_alarm_init();  // restore a persisted alarm — it must
+                                    // survive a power blip and still fire
+#endif
 #endif
 
   // Glass before the network too — a display that boots into a visible
@@ -686,6 +722,9 @@ void loop() {
     s_prev_worst = worst;
   }
   canary::hal::chime_loop(now);
+#if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+  canary::care::wake_alarm_loop(now);
+#endif
 #endif
 #endif  // !FEATURE_CARE
 

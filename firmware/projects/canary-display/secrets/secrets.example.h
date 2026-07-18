@@ -27,3 +27,13 @@
 //   Central EU:  "CET-1CEST,M3.5.0,M10.5.0/3"
 // #define CD_TZ "EST5EDT,M3.2.0,M11.1.0"
 
+
+// Optional: where this home is (nightstand wave). Enables on-device
+// sunrise/sunset lines — computed on the glass, never sent anywhere.
+// Leave unset to skip sun lines entirely.
+// #define CD_LAT 40.71
+// #define CD_LON -74.01
+
+// Optional: emergency contact shown during an unacknowledged alert
+// (dash footer). Personal data, so it lives here with the credentials.
+// #define CD_EMERGENCY_CONTACT "call Sam 555-0100"

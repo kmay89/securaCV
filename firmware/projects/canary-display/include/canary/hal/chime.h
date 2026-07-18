@@ -17,6 +17,8 @@ enum class Chime : uint8_t {
   Tier1Alarm,   // Alert/Tamper: 10 fast pulses, alternating 2.6/3.1 kHz
   Tier2Warn,    // Warn: 3 slow pulses, 1.8 kHz
   AllClear,     // falling two-tone 1.3 -> 0.9 kHz
+  Sunrise,      // wake chirp: two soft ascending notes (C6 -> E6) — off-
+                // resonance on purpose, so it is inherently gentle
 };
 
 // pin < 0 disables. Uses its own LEDC channel (not the backlight's).

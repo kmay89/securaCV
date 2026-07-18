@@ -49,6 +49,13 @@
                                         // on-device, never uploaded; wellbeing line)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
+// ── Nightstand wave (display_nightstand.md) — the dash is a WALL panel:
+// it gets the data lines but not the bedside behaviors (its backlight is
+// on/off only, and a hallway has no wake alarm) ──
+#define FEATURE_NIGHT_BLACKOUT      0   // dash night = dark theme + scheduled off
+#define FEATURE_COMFORT_WORDS       1
+#define FEATURE_HUB_WEATHER         1
+#define FEATURE_WAKE_ALARM          0
 
 // Features NOT used by this device — a display witnesses nothing itself.
 #define FEATURE_VISION_AI           0

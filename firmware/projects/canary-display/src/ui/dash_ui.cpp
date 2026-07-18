@@ -24,6 +24,9 @@
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
 #include "canary/care/care_glue.h"
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+#include "canary/care/bedside.h"
+#endif
 #endif
 
 namespace canary::ui {
@@ -765,6 +768,15 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   const int day_total = fleet.history_total();
   char today[192] = "";
   size_t to = 0;
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+  // Nightstand wave: weather-before-you-rise leads the morning line.
+  if (!st.night && st.time_valid && st.clock_hh < 10) {
+    char wx[72];
+    if (canary::care::bedside_morning_line(wx, sizeof(wx))) {
+      to += (size_t)snprintf(today + to, sizeof(today) - to, "%s   ·   ", wx);
+    }
+  }
+#endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
   if (!st.night && canary::care::night_ledger().count() > 0) {
     char sum[48];

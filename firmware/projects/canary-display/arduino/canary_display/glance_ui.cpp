@@ -23,6 +23,10 @@
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
 #include "care_glue.h"
+#if (defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER) || \
+    (defined(FEATURE_COMFORT_WORDS) && FEATURE_COMFORT_WORDS)
+#include "bedside.h"
+#endif
 #endif
 
 namespace canary::ui {
@@ -322,6 +326,24 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     if (!st.night && canary::care::night_ledger().count() > 0) {
       canary::care::night_ledger().summary(care_line, sizeof(care_line));
     }
+#endif
+    // Nightstand wave: at night the badge is the bedroom (peek = time +
+    // comfort); in the morning it is the day ahead (weather before you
+    // rise); in the evening, the sun going down.
+#if defined(FEATURE_COMFORT_WORDS) && FEATURE_COMFORT_WORDS
+    if (!care_line[0] && st.night) {
+      canary::care::bedside_comfort_line(fleet, care_line, sizeof(care_line));
+    }
+#endif
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+    if (!care_line[0] && !st.night && st.time_valid && st.clock_hh < 10) {
+      canary::care::bedside_morning_line(care_line, sizeof(care_line));
+    }
+    if (!care_line[0] && !st.night && st.time_valid && st.clock_hh >= 17) {
+      canary::care::bedside_evening_line(care_line, sizeof(care_line));
+    }
+#endif
+#if defined(FEATURE_CARE) && FEATURE_CARE
 #if defined(FEATURE_RHYTHM) && FEATURE_RHYTHM
     if (!care_line[0]) {
       canary::care::rhythm_line(care_line, sizeof(care_line));

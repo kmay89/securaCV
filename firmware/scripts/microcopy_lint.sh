@@ -280,6 +280,8 @@ GLASS_SOURCES=(
   "$GLASS_ROOT/src/ui/onboard_ui.cpp"
   "$GLASS_ROOT/src/ui/theme.cpp"
   "$GLASS_ROOT/src/net/provision.cpp"
+  "$GLASS_ROOT/src/care/bedside.cpp"
+  "$GLASS_ROOT/src/care/wake_glue.cpp"
 )
 GLASS_BANNED='broker|dBm|RSSI|payload|MQTT|mDNS|NVS|TOFU|endpoint'
 

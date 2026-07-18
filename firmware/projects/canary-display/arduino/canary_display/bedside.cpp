@@ -1,0 +1,182 @@
+// src/care/bedside.cpp — nightstand data lines: hub weather cache, bedroom
+// comfort words, on-device sun times. See bedside.h for the contract.
+#include "flavor_config.h"
+
+// LDF lesson: bundled-library includes stay ABOVE feature gates.
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <time.h>
+#include <ctype.h>
+#include <string.h>
+
+#include "bedside.h"
+#include "comfort.h"
+#include "suncalc.h"
+#include "log.h"
+
+namespace canary::care {
+
+namespace {
+
+// ── Hub weather cache ─────────────────────────────────────────────────────
+struct WeatherCache {
+  bool have = false;
+  int hi_c10 = 0, lo_c10 = 0;
+  int rain_pct = -1;
+  char cond[20] = {0};
+  int64_t ts = 0;              // hub's wall-clock stamp (staleness gate)
+};
+WeatherCache s_wx;
+
+// HA's fixed 15-state condition enum -> plain words (glass vocabulary).
+const char* cond_word(const char* c) {
+  struct Row { const char* key; const char* word; };
+  static const Row MAP[] = {
+      {"clear-night", "clear"},        {"cloudy", "cloudy"},
+      {"exceptional", "wild out"},     {"fog", "foggy"},
+      {"hail", "hail"},                {"lightning", "storms"},
+      {"lightning-rainy", "storms"},   {"partlycloudy", "some clouds"},
+      {"pouring", "heavy rain"},       {"rainy", "rain"},
+      {"snowy", "snow"},               {"snowy-rainy", "sleet"},
+      {"sunny", "sunny"},              {"windy", "windy"},
+      {"windy-variant", "windy"},
+  };
+  for (const Row& r : MAP) {
+    if (strcmp(c, r.key) == 0) return r.word;
+  }
+  return "";  // unknown condition string: show numbers, skip the word
+}
+
+bool weather_fresh() {
+  if (!s_wx.have) return false;
+  const time_t now = time(nullptr);
+  // A forecast is only honest for a few hours; and without valid wall
+  // clock we can't judge staleness, so we don't show it at all.
+  return now > 1700000000 && (int64_t)now - s_wx.ts < 3 * 3600;
+}
+
+// ── Sun cache (recomputed when the civil day changes) ────────────────────
+struct SunCache {
+  int yday = -1;
+  bool valid = false;
+  int rise_min = 0, set_min = 0;
+};
+SunCache s_sun;
+
+bool sun_today(int* rise_min, int* set_min) {
+  if (CD_LAT > 90.0 || CD_LAT < -90.0) return false;  // unset sentinel
+  const time_t now = time(nullptr);
+  if (now < 1700000000) return false;
+  struct tm lt;
+  localtime_r(&now, &lt);
+  if (s_sun.yday != lt.tm_yday) {
+    struct tm gt;
+    gmtime_r(&now, &gt);
+    // Local-vs-UTC offset in minutes, DST included, from the same instant.
+    int off = (lt.tm_hour - gt.tm_hour) * 60 + (lt.tm_min - gt.tm_min);
+    if (lt.tm_yday != gt.tm_yday) {
+      // Crossed a date line between the two views of "now".
+      const int dd = lt.tm_yday - gt.tm_yday;
+      off += (dd == 1 || dd < -1) ? 1440 : -1440;
+    }
+    s_sun.valid = sun_times(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
+                            CD_LAT, CD_LON, off, &s_sun.rise_min,
+                            &s_sun.set_min);
+    s_sun.yday = lt.tm_yday;
+  }
+  if (!s_sun.valid) return false;
+  *rise_min = s_sun.rise_min;
+  *set_min = s_sun.set_min;
+  return true;
+}
+
+}  // namespace
+
+void bedside_on_weather(const char* payload, unsigned len) {
+  JsonDocument doc;
+  if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+    canary::log_line("WX", "Weather payload didn't parse — ignored.");
+    return;
+  }
+  if (!doc["hi"].is<float>() || !doc["lo"].is<float>()) return;
+  s_wx.hi_c10 = (int)(doc["hi"].as<float>() * 10.0f);
+  s_wx.lo_c10 = (int)(doc["lo"].as<float>() * 10.0f);
+  s_wx.rain_pct = doc["rain"] | -1;
+  snprintf(s_wx.cond, sizeof(s_wx.cond), "%s", (const char*)(doc["cond"] | ""));
+  s_wx.ts = doc["ts"] | (int64_t)0;
+  s_wx.have = true;
+}
+
+bool bedside_morning_line(char* out, size_t cap) {
+  if (!weather_fresh()) return false;
+  const char* w = cond_word(s_wx.cond);
+  size_t o = (size_t)snprintf(out, cap, "%d\xC2\xB0/%d\xC2\xB0",
+                              (s_wx.hi_c10 + (s_wx.hi_c10 >= 0 ? 5 : -5)) / 10,
+                              (s_wx.lo_c10 + (s_wx.lo_c10 >= 0 ? 5 : -5)) / 10);
+  if (s_wx.rain_pct > 0 && o < cap) {
+    o += (size_t)snprintf(out + o, cap - o, " · rain %d%%", s_wx.rain_pct);
+  }
+  if (w[0] && o < cap) {
+    o += (size_t)snprintf(out + o, cap - o, " · %s", w);
+  }
+  int rise, set;
+  if (sun_today(&rise, &set) && o < cap) {
+    snprintf(out + o, cap - o, " · sun up %d:%02d", rise / 60, rise % 60);
+  }
+  return true;
+}
+
+bool bedside_evening_line(char* out, size_t cap) {
+  int rise, set;
+  if (!sun_today(&rise, &set)) return false;
+  snprintf(out, cap, "sun down %d:%02d", set / 60, set % 60);
+  return true;
+}
+
+bool bedside_comfort_line(const canary::fleet::Fleet& fleet, char* out,
+                          size_t cap) {
+  using canary::fleet::Witness;
+  // Case-insensitive substring (strcasestr is a GNU extension — spell it
+  // out so both toolchain rows compile it identically).
+  auto contains_ci = [](const char* hay, const char* needle) {
+    const size_t nl = strlen(needle);
+    if (nl == 0) return true;
+    for (const char* h = hay; *h; h++) {
+      size_t i = 0;
+      while (i < nl && h[i] &&
+             tolower((unsigned char)h[i]) == tolower((unsigned char)needle[i]))
+        i++;
+      if (i == nl) return true;
+    }
+    return false;
+  };
+  const Witness* pick = nullptr;
+  for (int i = 0; i < fleet.count(); i++) {
+    const Witness* w = fleet.at(i);
+    if (!w || !w->temp_present) continue;
+    if (!pick) pick = w;
+    if (w->room[0] && contains_ci(w->room, CD_BEDSIDE_ROOM)) {
+      pick = w;
+      break;
+    }
+  }
+  if (!pick) return false;
+
+  // Band state persists across calls so the hysteresis actually engages.
+  static TempBand s_tb = TempBand::None;
+  static RhBand s_rb = RhBand::None;
+  s_tb = temp_band(pick->temp_c10, s_tb);
+  const char* room = pick->room[0] ? pick->room : "bedroom";
+  const int whole = pick->temp_c10 / 10;
+  const int frac = (pick->temp_c10 < 0 ? -pick->temp_c10 : pick->temp_c10) % 10;
+  size_t o = (size_t)snprintf(out, cap, "%.9s %d.%d\xC2\xB0 %s", room, whole,
+                              frac, temp_word(s_tb));
+  if (pick->humidity_pct >= 0) {
+    s_rb = rh_band(pick->humidity_pct, s_rb);
+    const char* hw = rh_word(s_rb);
+    if (hw[0] && o < cap) snprintf(out + o, cap - o, " · %s", hw);
+  }
+  return true;
+}
+
+}  // namespace canary::care

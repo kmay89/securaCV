@@ -64,6 +64,27 @@ static constexpr size_t MQTT_BUFFER_BYTES        = CD_MQTT_BUFFER_BYTES;
 static constexpr uint32_t ESCALATE_UNACKED_MS = CD_ESCALATE_UNACKED_MS;
 static constexpr const char* EMERGENCY_CONTACT = CD_EMERGENCY_CONTACT;
 
+// -------------------- Nightstand wave --------------------
+// Site latitude/longitude for on-device sunrise/sunset (suncalc.h). Like
+// the emergency contact this is personal data: secrets.h only, never a
+// committed config. 999 = unset — sun lines simply don't render.
+#ifndef CD_LAT
+#define CD_LAT 999.0
+#endif
+#ifndef CD_LON
+#define CD_LON 999.0
+#endif
+// Which room name marks the bedside witness for the comfort line (substring
+// match, case-insensitive — "bed" catches Bedroom/bedside/Kids bedroom).
+#ifndef CD_BEDSIDE_ROOM
+#define CD_BEDSIDE_ROOM "bed"
+#endif
+// Night tap-to-peek brightness: bright enough to read the red clock,
+// nowhere near the daytime blast (the Echo Show bedside complaint).
+#ifndef CD_BRIGHT_PEEK
+#define CD_BRIGHT_PEEK 28
+#endif
+
 // -------------------- WiFi robustness / power --------------------
 // STA supervision (S3-tree parity): non-blocking reconnect with exponential
 // backoff, then a reboot as the recovery of last resort. Same constants as
