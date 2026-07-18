@@ -90,6 +90,7 @@ uint16_t s_cal_floor = 0;
 int  s_cal_blinks = 0;
 int  s_cal_retries = 0;
 bool s_cal_lit = false;
+bool s_cal_persisted = true;  // false = floor kept for tonight only
 lv_obj_t* s_cal_clock = nullptr;
 
 void build(Page pg);
@@ -454,10 +455,20 @@ void build_cal_warn() {
 void build_cal_done() {
   mk_back("black point");
   lv_obj_t* body = mk_label(s_host, font_body(), col_text());
-  lv_label_set_text(body,
-                    "Saved. Night light will\n"
-                    "never go below this —\n"
-                    "redo it here anytime.");
+  if (s_cal_persisted) {
+    lv_label_set_text(body,
+                      "Saved. Night light will\n"
+                      "never go below this —\n"
+                      "redo it here anytime.");
+  } else {
+    // Honesty over comfort: the floor works right now but storage balked,
+    // so it won't survive a restart. Say so instead of a false "saved".
+    lv_label_set_text(body,
+                      "Kept for tonight — but\n"
+                      "storage balked, so it\n"
+                      "resets on restart.\n"
+                      "Redo it here anytime.");
+  }
   lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(body, LV_ALIGN_CENTER, 0, 8);
 }
@@ -629,8 +640,10 @@ void dispatch(int id) {
 
     case Page::CalBlink:
       if (id == IT_YES) {
-        // The floor provably emits light on this panel: keep it.
-        nightcal_put(s_cal_floor);
+        // The floor provably emits light on this panel: keep it. RAM holds
+        // it for tonight regardless; the return says whether it survives a
+        // reboot, and CalDone tells the truth either way.
+        s_cal_persisted = nightcal_put(s_cal_floor);
         Settings& gs = settings_mut();
         gs.night_duty = night_step_duty(s_cal_floor, s_night_lvl);
         settings_mark_dirty();

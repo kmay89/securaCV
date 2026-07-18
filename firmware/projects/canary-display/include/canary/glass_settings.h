@@ -56,7 +56,11 @@ void settings_loop(uint32_t now_ms);
 void settings_reset();             // defaults; calibration untouched
 
 const NightCal& nightcal();
-void nightcal_put(uint16_t floor_duty);
+// Store the calibrated floor. RAM updates either way (tonight works even
+// with a broken storage layer); the return says whether it survives a
+// reboot — false = refused (suspicious floor) or flash write failed, and
+// the wizard tells the truth on the glass.
+bool nightcal_put(uint16_t floor_duty);
 
 // Derived day-profile levels (0..255), scaled by day_pct.
 uint8_t day_level();

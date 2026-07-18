@@ -64,17 +64,23 @@ void sanitize(Settings& s) {
   if (s.night_duty > NIGHT_DUTY_MAX) s.night_duty = NIGHT_DUTY_MAX;
 }
 
-void commit_now() {
+// Returns true when the blob actually landed in flash. On failure the
+// dirty flag STAYS set and the caller re-arms the debounce — a broken
+// storage layer must degrade to one retry per debounce window, never a
+// per-loop-pass hammer (review catch: a failed begin() would have retried
+// every ~5 ms pass forever).
+bool commit_now() {
   Preferences p;
-  if (!p.begin(STORE_NS, /*readOnly=*/false)) return;
+  if (!p.begin(STORE_NS, /*readOnly=*/false)) return false;
   Blob b = {};
   b.magic = BLOB_MAGIC;
   b.version = BLOB_VERSION;
   b.size = (uint8_t)sizeof(Blob);
   b.s = s_settings;
-  p.putBytes("cfg", &b, sizeof(b));
+  const bool ok = p.putBytes("cfg", &b, sizeof(b)) == sizeof(b);
   p.end();
-  s_dirty = false;
+  if (ok) s_dirty = false;
+  return ok;
 }
 
 }  // namespace
@@ -114,8 +120,14 @@ void settings_mark_dirty() {
 void settings_loop(uint32_t now_ms) {
   if (s_dirty && (int32_t)(now_ms - s_dirty_since_ms) >=
                      (int32_t)COMMIT_DEBOUNCE_MS) {
-    commit_now();
-    canary::log_line("GLASS", "Screen settings saved.");
+    if (commit_now()) {
+      canary::log_line("GLASS", "Screen settings saved.");
+    } else {
+      // Rate-limit the retry to the debounce window (review catch).
+      s_dirty_since_ms = now_ms;
+      canary::log_line("GLASS",
+                       "Screen settings not saved yet — retrying shortly.");
+    }
   }
 }
 
@@ -126,16 +138,23 @@ void settings_reset() {
 
 const NightCal& nightcal() { return s_cal; }
 
-void nightcal_put(uint16_t floor_duty) {
+bool nightcal_put(uint16_t floor_duty) {
   if (floor_duty < 1) floor_duty = 1;
-  if (floor_duty > NIGHT_FLOOR_CAP) return;  // suspicious floor: never store
+  if (floor_duty > NIGHT_FLOOR_CAP) return false;  // suspicious: never store
+  if (s_cal.valid && s_cal.floor_duty == floor_duty) return true;  // no wear
+  // RAM first ON PURPOSE: even with a broken storage layer, tonight's
+  // session keeps the floor the user just spent a dark room finding. The
+  // return value tells the wizard whether it survives a reboot, and the
+  // wizard tells the truth on the glass (review catch: a silent RAM/flash
+  // divergence would show "saved" for a floor that quietly vanishes).
   s_cal.valid = true;
   s_cal.floor_duty = floor_duty;
   Preferences p;
-  if (!p.begin(STORE_NS, /*readOnly=*/false)) return;
+  if (!p.begin(STORE_NS, /*readOnly=*/false)) return false;
   CalBlob c = {CAL_MAGIC, floor_duty};
-  p.putBytes("ncal", &c, sizeof(c));
+  const bool ok = p.putBytes("ncal", &c, sizeof(c)) == sizeof(c);
   p.end();
+  return ok;
 }
 
 uint8_t day_level() {
