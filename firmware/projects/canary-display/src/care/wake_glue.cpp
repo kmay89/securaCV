@@ -21,6 +21,10 @@ namespace canary::care {
 namespace {
 WakeAlarm s_alarm;
 uint32_t s_last_chirp_ms = 0;
+// The `at` of the last dismissed firing, persisted: a reboot or a broker
+// reconnect REPLAYS the retained config mid-window, and a dismissed alarm
+// must stay dismissed (review catch). A new `at` value re-arms normally.
+int64_t s_dismissed_at = 0;
 constexpr const char* NVS_NS = "scv-wake";
 
 int64_t epoch_now() {
@@ -34,7 +38,17 @@ void persist() {
   p.putLong64("at", s_alarm.at());
   p.putInt("ramp", s_alarm.ramp_min());
   p.putInt("p2", s_alarm.phase2_after_s());
+  p.putLong64("dis", s_dismissed_at);
   p.end();
+}
+
+void arm(int64_t at, int ramp_min, int p2_after_s) {
+  if (at != 0 && at == s_dismissed_at) {
+    // Same firing we already dismissed: stay quiet.
+    s_alarm.clear();
+    return;
+  }
+  s_alarm.set(at, ramp_min, p2_after_s);
 }
 }  // namespace
 
@@ -44,8 +58,9 @@ void wake_alarm_init() {
   const int64_t at = p.getLong64("at", 0);
   const int ramp = p.getInt("ramp", 20);
   const int p2 = p.getInt("p2", 420);
+  s_dismissed_at = p.getLong64("dis", 0);
   p.end();
-  if (at != 0) {
+  if (at != 0 && at != s_dismissed_at) {
     s_alarm.set(at, ramp, p2);
     canary::log_line("WAKE", "Alarm restored from storage.");
   }
@@ -64,7 +79,7 @@ void wake_alarm_on_config(const char* payload, unsigned len) {
   if (at == 0) {
     s_alarm.clear();
   } else {
-    s_alarm.set(at, doc["ramp_min"] | 20, doc["phase2_after_s"] | 420);
+    arm(at, doc["ramp_min"] | 20, doc["phase2_after_s"] | 420);
   }
   persist();
   canary::log_line("WAKE", at ? "Alarm set." : "Alarm cleared.");
@@ -112,6 +127,8 @@ bool wake_alarm_tap() {
   const int64_t now = epoch_now();
   if (now == 0) return false;
   if (!s_alarm.tap(now)) return false;
+  s_dismissed_at = s_alarm.at();
+  persist();  // dismissed survives reboot AND retained-config replay
   canary::log_line("WAKE", "Alarm dismissed by tap.");
   return true;
 }

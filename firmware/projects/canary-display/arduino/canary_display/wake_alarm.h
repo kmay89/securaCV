@@ -49,7 +49,10 @@ class WakeAlarm {
 
   // 0..100 through the ramp window (100 from alarm time on).
   int ramp_pct(int64_t now) const {
-    if (at_ == 0 || ramp_s_ == 0) return 0;
+    if (at_ == 0) return 0;
+    // No-ramp alarm: light snaps to full at T (review catch: returning 0
+    // here left the whole alarm at the dim floor).
+    if (ramp_s_ == 0) return now >= at_ ? 100 : 0;
     const int64_t into = now - (at_ - ramp_s_);
     if (into <= 0) return 0;
     if (into >= ramp_s_) return 100;

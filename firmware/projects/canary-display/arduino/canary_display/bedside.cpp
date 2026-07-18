@@ -51,8 +51,11 @@ bool weather_fresh() {
   if (!s_wx.have) return false;
   const time_t now = time(nullptr);
   // A forecast is only honest for a few hours; and without valid wall
-  // clock we can't judge staleness, so we don't show it at all.
-  return now > 1700000000 && (int64_t)now - s_wx.ts < 3 * 3600;
+  // clock we can't judge staleness, so we don't show it at all. The skew
+  // window rejects future-stamped blobs too (review catch: a hub with a
+  // wrong clock would otherwise be "fresh" forever).
+  const int64_t age = (int64_t)now - s_wx.ts;
+  return now > 1700000000 && age > -300 && age < 3 * 3600;
 }
 
 // ── Sun cache (recomputed when the civil day changes) ────────────────────
@@ -167,10 +170,12 @@ bool bedside_comfort_line(const canary::fleet::Fleet& fleet, char* out,
   static RhBand s_rb = RhBand::None;
   s_tb = temp_band(pick->temp_c10, s_tb);
   const char* room = pick->room[0] ? pick->room : "bedroom";
-  const int whole = pick->temp_c10 / 10;
-  const int frac = (pick->temp_c10 < 0 ? -pick->temp_c10 : pick->temp_c10) % 10;
-  size_t o = (size_t)snprintf(out, cap, "%.9s %d.%d\xC2\xB0 %s", room, whole,
-                              frac, temp_word(s_tb));
+  // Explicit sign: integer division loses the minus between -0.9 and
+  // -0.1 °C (the same trap the care wave hit — review catch, again).
+  const int at10 = pick->temp_c10 < 0 ? -pick->temp_c10 : pick->temp_c10;
+  size_t o = (size_t)snprintf(out, cap, "%.9s %s%d.%d\xC2\xB0 %s", room,
+                              pick->temp_c10 < 0 ? "-" : "", at10 / 10,
+                              at10 % 10, temp_word(s_tb));
   if (pick->humidity_pct >= 0) {
     s_rb = rh_band(pick->humidity_pct, s_rb);
     const char* hw = rh_word(s_rb);

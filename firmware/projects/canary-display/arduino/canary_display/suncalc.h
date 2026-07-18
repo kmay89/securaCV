@@ -45,7 +45,10 @@ inline bool sun_times(int year, int month, int day, double lat, double lon,
   // -0.833°: refraction (34') + solar semidiameter (16').
   const double cosw = (sin(-0.833 * DEG) - sin(lat * DEG) * sindecl) /
                       (cos(lat * DEG) * cosdecl);
-  if (cosw > 1.0 || cosw < -1.0) return false;
+  // Negated range check: NaN (possible where cos(lat) reaches 0 at the
+  // exact poles) fails BOTH ordinary comparisons and would otherwise walk
+  // into acos() and an integer cast — review catch.
+  if (!(cosw >= -1.0 && cosw <= 1.0)) return false;
   const double w = acos(cosw) / DEG;  // hour angle, degrees
 
   // Julian date -> minutes past local midnight of the requested civil day.

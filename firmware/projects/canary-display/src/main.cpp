@@ -535,10 +535,13 @@ void setup() {
   // Chime engine (spec §5) — only ever initialized when the piezo pad is
   // populated; the engine TU itself is always compiled for CI coverage.
   canary::hal::chime_init(BUZZER_PIN);
+#endif
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+  // OUTSIDE the chime gate on purpose (review catch): the sunrise ramp is
+  // the alarm's visual half and must restore even on a silent-piezo build
+  // — chime_play() itself no-ops when the pin was never initialized.
   canary::care::wake_alarm_init();  // restore a persisted alarm — it must
                                     // survive a power blip and still fire
-#endif
 #endif
 
   // Glass before the network too — a display that boots into a visible
