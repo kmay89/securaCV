@@ -74,6 +74,7 @@
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
 #include "wake_glue.h"
 #endif
+#include "bird_glue.h"
 #include "display.h"
 #include "chime.h"
 #include "core_compat.h"
@@ -543,6 +544,12 @@ static void render(uint32_t now) {
   // palette at the calibrated night glow. Brightness policy runs on the
   // schedule either way.
   const bool night_look = night && canary::glass::settings().red_shift != 0;
+  // Living canary: one face per pass from the mood engine; the UIs decide
+  // whether the current page offers a perch.
+  int yday = -1;
+  local_time(nullptr, nullptr, &yday);
+  const canary::ui::CanaryMood bird =
+      canary::care::bird_mood_tick(now, night, yday >= 0, yday);
 
 #ifdef CD_FLAVOR_WATCH
   // Auto-return to the overview page after idle.
@@ -555,6 +562,7 @@ static void render(uint32_t now) {
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+  st.bird = bird;
   canary::ui::glance_ui_update(fleet, now, st);
 #endif
 #ifdef CD_FLAVOR_DASH
@@ -564,6 +572,7 @@ static void render(uint32_t now) {
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+  st.bird = bird;
   canary::ui::dash_ui_update(fleet, now, st);
 #endif
 

@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "canary/fleet/fleet_instance.h"
+#include "canary/ui/canary_mark.h"
 
 // Watch Station face (240x240 round, LVGL "Quiet Glass"). Page model:
 //   0            halo — one smooth arc per witness, hero state center
@@ -21,6 +22,9 @@ struct GlanceState {
   bool time_valid = false;
   int  clock_hh = 0;
   int  clock_mm = 0;
+  // Living canary: the face the mood engine chose (care/bird_glue.h).
+  // The halo still decides whether the bird may perch at all.
+  CanaryMood bird = CanaryMood::Hidden;
 };
 
 void glance_ui_create();

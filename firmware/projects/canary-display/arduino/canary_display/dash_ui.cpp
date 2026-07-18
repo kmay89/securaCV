@@ -839,8 +839,10 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
 
   lv_obj_set_style_text_color(s_empty, mcol, 0);
   lv_label_set_text(s_empty, n == 0 ? "Plug in a canary — it finds\nthis display on its own" : "");
-  canary_mark_mood(n == 0 && !st.night ? CanaryMood::Idle
-                                       : CanaryMood::Hidden);
+  // Living canary: the dash bird only has a perch on the empty-nest face
+  // (with witnesses, the cards own the wall); the mood engine picks the
+  // face, including asleep at night.
+  canary_mark_mood(n == 0 ? st.bird : CanaryMood::Hidden);
 
   // ── Timeline ──
   lv_obj_set_style_text_color(s_tl_title, mcol, 0);
