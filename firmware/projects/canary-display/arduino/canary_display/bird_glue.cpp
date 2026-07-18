@@ -101,12 +101,15 @@ canary::ui::CanaryMood bird_mood_tick(uint32_t now_ms, bool night,
   if (s_last_minute_ms == 0 ||
       now_ms - s_last_minute_ms >= 60000UL) {
     s_last_minute_ms = now_ms;
-    bird_mood_minute(s_mood, in);
+    // Rollover BEFORE the minute: the first tick after midnight belongs to
+    // the new day. Applied the other way round, trouble at 00:00 would be
+    // pinned on the (clean) day being closed and then forgotten.
     if (time_valid && yday >= 0 && yday != s_last_yday) {
       if (s_last_yday >= 0) bird_mood_rollover(s_mood);
       s_last_yday = yday;
       persist(yday);
     }
+    bird_mood_minute(s_mood, in);
   }
 
   canary::ui::canary_mark_trust(s_mood.trust_days);
