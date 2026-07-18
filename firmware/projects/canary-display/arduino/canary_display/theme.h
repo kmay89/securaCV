@@ -39,6 +39,7 @@ lv_color_t sev_color(canary::fleet::Sev s, bool night);
 lv_color_t badge_color(canary::fleet::Badge b, bool night);
 const char* badge_text(canary::fleet::Badge b);   // "verified"/"signed"/...
 const char* link_label(canary::fleet::Link l);
+const char* signal_word(int dbm);   // "strong/ok/weak signal" — never dBm
 
 // ── Type scale (Montserrat AA; roles, not sizes, in calling code) ───────
 // Per-flavor: the watch is a 1.28" panel read at arm's length; the dash is

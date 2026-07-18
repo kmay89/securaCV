@@ -298,7 +298,7 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     lv_label_set_text(s_hero, "Listening");
     lv_label_set_text(s_hero_sub,
                       st.mqtt_ok ? "for canaries" :
-                      (st.wifi_ok ? "no broker yet" : "no wifi"));
+                      (st.wifi_ok ? "finding your hub" : "waiting for wifi"));
     lv_label_set_text(s_hero_badge, "");
   } else if (worst <= Sev::Notice) {
     // All quiet: the TIME becomes the hero (display_care_wave.md §1) — a
@@ -356,7 +356,7 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     }
     // Acknowledged carries its attribution — which glass quieted the house.
     if (st.acked && fleet.ack_by()[0]) {
-      lv_label_set_text_fmt(s_hero_badge, "acked · %.16s", fleet.ack_by());
+      lv_label_set_text_fmt(s_hero_badge, "handled · %.16s", fleet.ack_by());
     } else {
       lv_label_set_text(s_hero_badge,
                         st.acked ? "acknowledged" : "hold to acknowledge");
@@ -373,11 +373,11 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   }
   lv_obj_set_style_text_color(s_clock, mcol, 0);
   if (!st.wifi_ok) {
-    lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  wifi down");
+    lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  no wifi · reconnecting");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_alert(), 0);
   } else if (!st.mqtt_ok) {
-    lv_label_set_text(s_banner, "broker down · last known");
+    lv_label_set_text(s_banner, "hub lost · showing last known");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_warn(), 0);
   } else {
@@ -582,7 +582,8 @@ void update_rollcall(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                             (int)w->battery_pct);
     }
     if (w->rssi_present && o < sizeof(meta)) {
-      snprintf(meta + o, sizeof(meta) - o, " · %d dBm", (int)w->rssi_dbm);
+      snprintf(meta + o, sizeof(meta) - o, " · %s",
+               signal_word((int)w->rssi_dbm));
     }
     lv_obj_set_style_text_color(s_rc_meta[i], mcol, 0);
     lv_label_set_text(s_rc_meta[i], meta);
@@ -611,8 +612,8 @@ void update_about(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   lv_label_set_text_fmt(
       s_about_body,
       "watches %d %s\n"
-      "hears: your broker only\n"
-      "speaks: liveness · acks\n"
+      "hears: your home hub only\n"
+      "speaks: check-ins · your taps\n"
       "keeps: %d events, on-device\n"
       "never: cloud · camera · mic\n"
       "v%s",
@@ -640,7 +641,7 @@ void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_proof_who, pick ? pick->id : "");
     lv_label_set_text(s_proof_cap,
-                      pick ? "No signed chain to prove yet"
+                      pick ? "no proof yet · after first event"
                            : "No witnesses yet");
     return;
   }
@@ -652,7 +653,7 @@ void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                            pick->id, pk, pick->chain_raw);
   if (len <= 0 || (size_t)len >= sizeof(body)) {
     lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_proof_cap, "Proof payload too large");
+    lv_label_set_text(s_proof_cap, "too long for a QR · see hub log");
     return;
   }
   lv_obj_clear_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);

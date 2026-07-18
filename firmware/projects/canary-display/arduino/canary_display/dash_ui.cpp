@@ -224,11 +224,15 @@ void proof_render(const char* title, const char* id, const char* chain_raw,
                         "no app · no account · no cloud");
     } else {
       lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
-      lv_label_set_text(s_proof_cap, "Proof payload too large");
+      lv_label_set_text(s_proof_cap,
+                        "This proof is too long to draw as a QR code\n"
+                        "the full record is in your hub's event log");
     }
   } else {
     lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_proof_cap, "No signed chain to prove yet");
+    lv_label_set_text(s_proof_cap,
+                      "No proof to show yet\n"
+                      "it appears with this canary's first signed event");
   }
   snprintf(s_proof_id, sizeof(s_proof_id), "%s", id);
   lv_obj_move_foreground(s_proof);
@@ -339,7 +343,7 @@ void rc_render(const Fleet& fleet, uint32_t now) {
     }
     char rssi[16] = "—";
     if (w->rssi_present) {
-      snprintf(rssi, sizeof(rssi), "%d dBm", (int)w->rssi_dbm);
+      snprintf(rssi, sizeof(rssi), "%s", signal_word((int)w->rssi_dbm));
     }
     const Sev s = fleet.witness_sev(*w, now);
     lv_obj_set_style_text_color(
@@ -374,14 +378,14 @@ void about_open(const Fleet& fleet) {
 #endif
   lv_label_set_text_fmt(
       s_about_body,
-      "Watches: %d %s, via your broker only\n"
-      "Speaks: a liveness heartbeat and household acks\n"
+      "Watches: %d %s, through your home hub only\n"
+      "Speaks: its own check-ins, and the alerts you handle\n"
       "Keeps: %d events on this device — erasable in History\n"
-      "Never: cloud, camera, microphone, or your MAC\n\n"
+      "Never: cloud, camera, microphone, or tracking IDs\n\n"
       "Firmware v%s",
       fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
       CANARY_FW_VERSION);
-  lv_label_set_text(s_about_clean, LV_SYMBOL_REFRESH "  Wipe the glass (30 s touch lockout)");
+  lv_label_set_text(s_about_clean, LV_SYMBOL_REFRESH "  Wipe the glass — touch turns off for 30 s");
   lv_obj_move_foreground(s_about);
   lv_obj_clear_flag(s_about, LV_OBJ_FLAG_HIDDEN);
 }
@@ -622,7 +626,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (n == 0) {
     lv_label_set_text(s_headline,
                       st.mqtt_ok ? "Listening for canaries"
-                                 : (st.wifi_ok ? "Broker unreachable" : "WiFi down"));
+                                 : (st.wifi_ok ? "Can't reach your hub" : "No WiFi"));
   } else if (worst <= Sev::Notice) {
     lv_label_set_text_fmt(s_headline, "All quiet  ·  %d %s%s", n,
                           n == 1 ? "canary" : "canaries",
@@ -634,7 +638,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     lv_obj_set_style_text_color(s_headline, sev_color(worst, st.night), 0);
     // Acknowledged carries its attribution — which glass quieted the house.
     if (st.acked && fleet.ack_by()[0]) {
-      lv_label_set_text_fmt(s_headline, "%s  ·  acked by %.16s", word,
+      lv_label_set_text_fmt(s_headline, "%s  ·  handled by %.16s", word,
                             fleet.ack_by());
     } else {
       lv_label_set_text_fmt(s_headline, "%s%s", word,
@@ -689,6 +693,10 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
       lv_obj_set_style_text_color(c.state, sc, 0);
       if (w->tamper) {
         lv_label_set_text_fmt(c.state, "%s · TAMPER", state);
+      } else if (w->link == canary::fleet::Link::Lost) {
+        // A lost canary's next step is physical: it stopped answering, so
+        // someone should check the device — say so where the red is.
+        lv_label_set_text(c.state, "LOST · CHECK ITS POWER");
       } else {
         lv_label_set_text(c.state, state);
       }
@@ -792,7 +800,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   lv_label_set_text(s_today, today);
 
   lv_obj_set_style_text_color(s_empty, mcol, 0);
-  lv_label_set_text(s_empty, n == 0 ? "Canaries publishing to this\nbroker appear here" : "");
+  lv_label_set_text(s_empty, n == 0 ? "Plug in a canary — it finds\nthis display on its own" : "");
 
   // ── Timeline ──
   lv_obj_set_style_text_color(s_tl_title, mcol, 0);
@@ -851,10 +859,14 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     lv_label_set_text_fmt(s_footer, "Need help? %.48s", EMERGENCY_CONTACT);
   } else if (!st.wifi_ok) {
     lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_alert(), 0);
-    lv_label_set_text(s_footer, "WIFI DOWN — showing last known state");
+    // Failure formula: what happened — what it's doing about it · what to
+    // try if it persists. Never a dead end.
+    lv_label_set_text(s_footer,
+                      "No WiFi — reconnecting · if this stays, check your router");
   } else if (!st.mqtt_ok) {
     lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_warn(), 0);
-    lv_label_set_text(s_footer, "BROKER DOWN — showing last known state");
+    lv_label_set_text(s_footer,
+                      "Can't reach your hub — retrying · check the hub is on");
   } else {
     lv_obj_set_style_text_color(s_footer, fcol, 0);
     lv_label_set_text(s_footer, "status display · not a life-safety device");

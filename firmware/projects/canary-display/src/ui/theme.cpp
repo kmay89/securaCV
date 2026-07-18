@@ -38,8 +38,11 @@ const char* badge_text(Badge b) {
   switch (b) {
     case Badge::Verified: return LV_SYMBOL_OK " verified";
     case Badge::Signed:   return "signed";
-    case Badge::Failed:   return LV_SYMBOL_CLOSE " failed";
-    case Badge::Unsigned: return "unsigned";
+    // "proof failed" over bare "failed": the signature check failed, not
+    // the device — the words should say which. "no proof" over
+    // "unsigned": plain words for a device that simply doesn't sign.
+    case Badge::Failed:   return LV_SYMBOL_CLOSE " proof failed";
+    case Badge::Unsigned: return "no proof";
     case Badge::Unknown:  return "—";
   }
   return "—";
@@ -48,11 +51,22 @@ const char* badge_text(Badge b) {
 const char* link_label(Link l) {
   switch (l) {
     case Link::Online:  return "online";
-    case Link::Stale:   return "stale";
+    // "late" over "stale": a missed check-in reads as running late, not
+    // as spoiled data. Pairs with the transparency page's "check-ins".
+    case Link::Stale:   return "late";
     case Link::Lost:    return "lost";
     case Link::Offline: return "offline";
     default:            return "—";
   }
+}
+
+const char* signal_word(int dbm) {
+  // Same bands the setup portal's signal bars use (-60 / -72). Words, not
+  // dBm: a weak-signal label tells a person to move the canary; a raw
+  // negative decibel number tells them nothing.
+  if (dbm > -60) return "strong signal";
+  if (dbm > -72) return "ok signal";
+  return "weak signal";
 }
 
 void format_age(uint32_t now_ms, uint32_t then_ms, char* out, int cap) {
