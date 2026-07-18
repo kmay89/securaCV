@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Seal / unseal / vault UX pass — checked, plain-spoken, and rewarding
+
+- **Evidence Viewer now reveals its verification check-by-check.** After a
+  bundle is verified (verification still runs to completion first — nothing
+  shown is speculative), each real result slides in with a drawn tick, a
+  live "Check 3 of 7" counter, and a progress bar; the panel settles into
+  the permanent "What was verified" record. A failing bundle shows the
+  passed checks, then the failing one in red with a plain-language headline
+  keyed to the structured failure kind. Reduced-motion users get identical
+  content instantly.
+- **Dual-register check copy.** Every check row leads with plain language
+  ("Every event is chained to the one before it — nothing added, removed,
+  or reordered") with the verifier's exact technical claim one line below,
+  behind a "Show technical detail" toggle (always printed in the saved
+  report). Presentation-only: `verify_core.js` and its pinned strings are
+  untouched.
+- **Break-glass console gets a four-step tracker, an up-front "what
+  happens when you break the glass" reassurance panel, and a granted state
+  that explains the receipt.** Each step carries a one-sentence simple
+  explanation plus a labelled Technical line; quorum-reached and unseal
+  outcomes now say what was verified and that the decision (granted or
+  denied) was itself recorded as a signed receipt. Trustee share-link page
+  copy clarified likewise. Console behavior, endpoints, and the single
+  script block its tests extract are unchanged (`breakglass.test.js` still
+  green).
+
 ### First-boot install-path audit (HA OS + Raspberry Pi)
 
 - **Frigate config location corrected everywhere.** The Frigate add-on

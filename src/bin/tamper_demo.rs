@@ -31,7 +31,7 @@ fn open_encrypted(path: &str, seed: &str) -> Result<Connection> {
         db_key_seed_from_env().as_ref().map(|s| s.as_str()),
     );
     let conn = Connection::open(path)?;
-    conn.pragma_update(None, "key", format!("x'{}'", &*db_key))?;
+    conn.pragma_update(None, "key", format!("x'{}'", *db_key))?;
     Ok(conn)
 }
 
