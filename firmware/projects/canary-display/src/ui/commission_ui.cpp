@@ -127,10 +127,9 @@ bool mint_payload() {
 }
 
 void fmt_countdown(char* out, size_t cap, uint32_t now_ms) {
-  uint32_t left_ms = TOKEN_TTL_S * 1000UL;
-  const uint32_t age = now_ms - s_minted_ms;
-  left_ms = age >= left_ms ? 0 : left_ms - age;
-  const uint32_t s = left_ms / 1000;
+  // Seconds domain (repo rule): ms math on uint32 wraps at ~49.7 days.
+  const uint32_t age_s = (now_ms - s_minted_ms) / 1000;
+  const uint32_t s = age_s >= TOKEN_TTL_S ? 0 : TOKEN_TTL_S - age_s;
 #ifdef CD_FLAVOR_WATCH
   snprintf(out, cap, "fresh %lu:%02lu · tap = new", (unsigned long)(s / 60),
            (unsigned long)(s % 60));
@@ -333,10 +332,18 @@ void commission_ui_tick(uint32_t now_ms, int fleet_count, bool urgent) {
   }
 
   if (s_face == Face::Code) {
-    const uint32_t age = now_ms - s_minted_ms;
-    if (age >= TOKEN_TTL_S * 1000UL) {
-      // Expired codes silently refresh — no error state to squint at.
-      if (mint_payload()) build();
+    const uint32_t age_s = (now_ms - s_minted_ms) / 1000;  // seconds domain
+    if (age_s >= TOKEN_TTL_S) {
+      // Expired codes silently refresh — no error state to squint at. A
+      // failed re-mint (creds changed under us to something unfittable)
+      // closes rather than leaving a stale code up or retrying per-pass
+      // (review catch).
+      if (mint_payload()) {
+        build();
+      } else {
+        commission_ui_close();
+        return;
+      }
     } else if (s_count) {
       char c[40];
       fmt_countdown(c, sizeof(c), now_ms);

@@ -83,6 +83,7 @@ inline bool pv_token_charset(const char* s, size_t n) {
 // Unescape one segment (backslash escapes the next byte) into buf.
 // Returns unescaped length, or SIZE_MAX on truncation/trailing backslash.
 inline size_t pv_unescape(const char* s, size_t n, char* buf, size_t cap) {
+  if (cap == 0) return SIZE_MAX;  // review catch: cap 0 would write buf[0]
   size_t o = 0;
   for (size_t i = 0; i < n; i++) {
     char c = s[i];
@@ -118,7 +119,17 @@ inline Parse parse_scv1(const char* d, size_t len, Provision& out) {
     const char* val = d + i + 2;
     const size_t vraw = seg_len - 2;
 
-    // Unescape into a worst-case stack buffer, then cap per field.
+    // Unknown keys skip WITHOUT unescaping (review catch): forward
+    // compatibility means a future long field — g= will be a signature —
+    // must never trip a buffer sized for today's fields.
+    const bool known = key == 's' || key == 'p' || key == 'h' ||
+                       key == 'o' || key == 't' || key == 'x' || key == 'n';
+    if (!known) {
+      i = (j < len) ? j + 1 : len;
+      continue;
+    }
+
+    // Unescape into a stack buffer that covers every KNOWN field's cap.
     char buf[96];
     const size_t vn = pv_unescape(val, vraw, buf, sizeof(buf));
     if (vn == SIZE_MAX) return Parse::Malformed;
@@ -192,21 +203,21 @@ inline Parse parse_wifi(const char* d, size_t len, Provision& out) {
       j++;
     }
     if (j > len) return Parse::Malformed;
-    char buf[96];
-    const size_t vn = pv_unescape(d + i + 2, j - (i + 2), buf, sizeof(buf));
-    if (vn == SIZE_MAX) return Parse::Malformed;
-    switch (key) {
-      case 'S':
+    // Only S and P matter to joining; other keys (T/H/E and whatever a
+    // generator dreams up) skip raw so their length can never trip a
+    // buffer sized for ours (review catch).
+    if (key == 'S' || key == 'P') {
+      char buf[96];
+      const size_t vn = pv_unescape(d + i + 2, j - (i + 2), buf, sizeof(buf));
+      if (vn == SIZE_MAX) return Parse::Malformed;
+      if (key == 'S') {
         if (vn == 0 || !pv_copy(out.ssid, sizeof(out.ssid), buf, vn))
           return Parse::Malformed;
         saw_ssid = true;
-        break;
-      case 'P':
+      } else {
         if (!pv_copy(out.pass, sizeof(out.pass), buf, vn))
           return Parse::Malformed;
-        break;
-      default:
-        break;  // T:/H:/E: etc — irrelevant to joining
+      }
     }
     i = (j < len) ? j + 1 : len;
   }
