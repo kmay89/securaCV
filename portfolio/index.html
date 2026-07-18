@@ -1,0 +1,1409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="K. May — engineer, author, toymaker, founder. An isometric 2000s desk of shipped worlds: ATM hardware, an award-winning bilingual book &amp; toy, Hive Mind, the Everything series, SCQCS, ERRER Labs, and securaCV.">
+<meta name="theme-color" content="#0e0a07">
+<title>K. May — The Desk of Worlds</title>
+<style>
+  :root{
+    --room:#0e0a07;
+    --room-deep:#080604;
+    --lamp:#ffc97a;
+    --ink:#f4e9d8;
+    --ink-dim:#b9a88f;
+    --ink-faint:#7e6f5b;
+    --c-board:#63e6a9;
+    --c-toy:#ff8a5c;
+    --c-hive:#f5b63f;
+    --c-series:#b79cff;
+    --c-scqcs:#ff5d5d;
+    --c-vinyl:#7cd7e8;
+    --c-cam:#8fb7ff;
+    --c-off:#e0a458;
+    --c-out:#8fd18a;
+    --c-puz:#d9a0e8;
+    --c-utap:#ee6fbb;
+    --mono:ui-monospace,"Cascadia Code","Source Code Pro",Menlo,Consolas,monospace;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--room);
+    color:var(--ink);
+    font-family:var(--serif);
+    overflow-x:hidden;
+    min-height:100vh;
+  }
+  ::selection{background:var(--lamp);color:var(--room)}
+
+  /* ---------- scene ---------- */
+  .scene{
+    position:relative;
+    min-height:100svh;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 62% -10%, rgba(255,201,122,.16), transparent 55%),
+      radial-gradient(80% 60% at 50% 105%, rgba(58,36,20,.55), transparent 70%),
+      linear-gradient(var(--room-deep), var(--room) 30%);
+  }
+  #dust{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+
+  .intro{
+    position:relative;z-index:4;
+    padding:clamp(1.25rem,4vw,3rem) clamp(1.25rem,5vw,4rem) 0;
+    max-width:46rem;
+  }
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:.72rem;
+    letter-spacing:.22em;
+    color:var(--lamp);
+    text-transform:uppercase;
+  }
+  .intro h1{
+    margin-top:.9rem;
+    font-size:clamp(2.1rem,5.2vw,3.6rem);
+    line-height:1.05;
+    font-weight:600;
+    letter-spacing:-.01em;
+    text-wrap:balance;
+  }
+  .intro h1 em{font-style:italic;color:var(--lamp)}
+  .intro .lede{
+    margin-top:1rem;
+    max-width:34rem;
+    color:var(--ink-dim);
+    font-size:clamp(.98rem,1.5vw,1.12rem);
+    line-height:1.55;
+  }
+
+  /* ---------- isometric desk ---------- */
+  .desk-wrap{
+    position:relative;z-index:2;
+    flex:1;
+    overflow-x:auto;
+    overflow-y:hidden;
+    -webkit-overflow-scrolling:touch;
+    padding:clamp(.5rem,2vh,1.5rem) 0 0;
+  }
+  #iso{
+    display:block;
+    width:100%;
+    min-width:720px;
+    max-width:1180px;
+    margin:0 auto;
+    transform:translate3d(var(--px,0px),var(--py,0px),0);
+  }
+  .iso-obj{cursor:pointer;outline:none}
+  .iso-obj > *{transition:transform .3s cubic-bezier(.2,.9,.3,1.35)}
+  .iso-obj:hover > *,.iso-obj:focus-visible > *{transform:translateY(-8px)}
+  .iso-obj:hover,.iso-obj:focus-visible{
+    filter:drop-shadow(0 0 14px color-mix(in srgb, var(--a) 55%, transparent));
+  }
+  .tip{
+    position:absolute;z-index:6;
+    transform:translate(-50%,-100%);
+    background:rgba(22,15,9,.94);
+    border:1px solid var(--a,#ffc97a);
+    border-radius:5px;
+    padding:.4em .8em;
+    font-family:var(--mono);
+    font-size:.64rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink);
+    pointer-events:none;white-space:nowrap;
+    opacity:0;visibility:hidden;
+    transition:opacity .15s ease;
+  }
+  .tip.show{opacity:1;visibility:visible}
+  .legend{
+    position:relative;z-index:4;
+    display:flex;flex-wrap:wrap;gap:.5rem .6rem;justify-content:center;
+    padding:.9rem clamp(1.25rem,5vw,4rem) 0;
+  }
+  .legend button{
+    font-family:var(--mono);
+    font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-dim);
+    background:color-mix(in srgb, var(--a) 8%, transparent);
+    border:1px solid color-mix(in srgb, var(--a) 38%, transparent);
+    border-radius:999px;
+    padding:.42em .95em;
+    cursor:pointer;
+    transition:color .25s ease, background .25s ease;
+  }
+  .legend button:hover,.legend button:focus-visible{
+    color:var(--a);
+    background:color-mix(in srgb, var(--a) 18%, transparent);
+  }
+  .legend button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+  .legend-sep{
+    align-self:center;width:1px;height:1.1em;
+    background:rgba(185,168,143,.35);
+  }
+  .steam{animation:steam 3.6s ease-in-out infinite;transform-origin:center bottom}
+  .steam.s2{animation-delay:-1.7s}
+  @keyframes steam{
+    0%,100%{opacity:.10;transform:translateY(0)}
+    50%{opacity:.34;transform:translateY(-5px)}
+  }
+  .led{animation:led 2.2s ease-in-out infinite}
+  @keyframes led{0%,100%{opacity:1}50%{opacity:.15}}
+  .crt-line{animation:crt 5s steps(2) infinite}
+  @keyframes crt{0%,92%,100%{opacity:1}94%{opacity:.55}}
+  .flutter{animation:flutter 1.4s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
+  @keyframes flutter{0%,100%{transform:scaleX(1)}50%{transform:scaleX(.35)}}
+  .bob2{animation:bob2 4.5s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
+  @keyframes bob2{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  .flame{animation:flame 1.1s ease-in-out infinite;transform-box:fill-box;transform-origin:center bottom}
+  @keyframes flame{0%,100%{transform:scale(1)}40%{transform:scale(1.25,1.4)}70%{transform:scale(.9,1.05)}}
+  .nozzle{animation:led 1.1s ease-in-out infinite}
+  .wave{animation:wave 2.6s ease-in-out infinite;transform-box:fill-box;transform-origin:bottom center}
+  @keyframes wave{0%,55%,100%{transform:rotate(0deg)}65%,85%{transform:rotate(-22deg)}75%{transform:rotate(10deg)}}
+  .era-now{display:none}
+  #iso.now .era-now{display:inline}
+  #iso.now .era-old{display:none}
+
+  .hint{
+    position:relative;z-index:4;
+    display:flex;flex-wrap:wrap;align-items:center;gap:.9rem;
+    padding:1rem clamp(1.25rem,5vw,4rem) 1.4rem;
+    font-family:var(--mono);
+    font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ink-faint);
+    background:linear-gradient(transparent, rgba(8,6,4,.6));
+  }
+  .hint .sep{opacity:.4}
+  .hint .pan-hint{display:none}
+  @media (max-width:760px){ .hint .pan-hint{display:inline} }
+  .chip{
+    font-family:var(--mono);
+    font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--lamp);
+    background:rgba(255,201,122,.08);
+    border:1px solid rgba(255,201,122,.35);
+    border-radius:999px;
+    padding:.45em 1em;
+    cursor:pointer;
+    transition:background .25s ease,color .25s ease;
+  }
+  .chip:hover,.chip:focus-visible{background:rgba(255,201,122,.18)}
+  .chip:focus-visible{outline:2px solid var(--lamp);outline-offset:2px}
+  .chip[aria-pressed="false"]{color:var(--ink-faint);border-color:rgba(185,168,143,.3);background:transparent}
+
+  /* ---------- dossier ---------- */
+  .scrim{
+    position:fixed;inset:0;z-index:40;
+    background:rgba(5,4,3,.62);
+    backdrop-filter:blur(3px);
+    opacity:0;transition:opacity .3s ease;
+  }
+  .scrim.show{opacity:1}
+  .dossier{
+    position:fixed;left:50%;bottom:0;z-index:41;
+    transform:translate(-50%,105%);
+    width:min(44rem,calc(100vw - 1.5rem));
+    max-height:min(78vh,40rem);
+    overflow-y:auto;
+    background:linear-gradient(160deg,#1d1610,#141009 55%);
+    border:1px solid color-mix(in srgb, var(--a,#ffc97a) 45%, transparent);
+    border-bottom:0;
+    border-radius:14px 14px 0 0;
+    box-shadow:0 -30px 80px rgba(0,0,0,.7), 0 0 60px color-mix(in srgb, var(--a,#ffc97a) 12%, transparent);
+    padding:clamp(1.25rem,3.5vw,2.25rem) clamp(1.25rem,4vw,2.5rem) clamp(1.75rem,4vw,2.5rem);
+    transition:transform .45s cubic-bezier(.2,.9,.25,1);
+  }
+  .dossier.show{transform:translate(-50%,0)}
+  .d-head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+  .d-kicker{
+    font-family:var(--mono);font-size:.66rem;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--a)
+  }
+  .dossier h2{
+    margin-top:.8rem;
+    font-size:clamp(1.4rem,3.4vw,2rem);
+    line-height:1.12;font-weight:600;text-wrap:balance;
+  }
+  .dossier .story{
+    margin-top:.9rem;color:var(--ink-dim);
+    line-height:1.62;font-size:1rem;max-width:60ch;
+  }
+  .chips{list-style:none;display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.2rem}
+  .chips li{
+    font-family:var(--mono);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink);
+    border:1px solid color-mix(in srgb, var(--a) 40%, transparent);
+    background:color-mix(in srgb, var(--a) 9%, transparent);
+    border-radius:4px;padding:.4em .7em;
+  }
+  .d-links{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:1.3rem}
+  .d-links a{
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;
+    color:var(--room);background:var(--a);
+    text-decoration:none;border-radius:4px;padding:.55em .9em;
+    transition:filter .2s ease;
+  }
+  .d-links a:hover,.d-links a:focus-visible{filter:brightness(1.15)}
+  .d-links a:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .d-links a::after{content:" ↗"}
+
+  /* ---------- the built-in browser (game within the game) ---------- */
+  .browser{
+    position:fixed;left:50%;top:50%;z-index:42;
+    transform:translate(-50%,-46%) scale(.97);
+    width:min(56rem,calc(100vw - 1.5rem));
+    max-height:min(82vh,44rem);
+    display:flex;flex-direction:column;
+    background:linear-gradient(165deg,#1e1710,#140f09 60%);
+    border:1px solid rgba(255,201,122,.4);
+    border-radius:12px;
+    box-shadow:0 40px 100px rgba(0,0,0,.75), 0 0 70px rgba(255,201,122,.10);
+    opacity:0;visibility:hidden;
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  .browser.show{opacity:1;visibility:visible;transform:translate(-50%,-50%) scale(1)}
+  .b-bar{
+    display:flex;align-items:center;gap:.55rem;
+    padding:.7rem .9rem;
+    border-bottom:1px solid rgba(255,201,122,.16);
+  }
+  .b-bar .dot{width:11px;height:11px;border-radius:50%;flex:none}
+  .dot.d1{background:#ff5f57}.dot.d2{background:#febc2e}.dot.d3{background:#28c840}
+  .b-url{
+    flex:1;min-width:0;
+    font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;
+    color:var(--ink-dim);
+    background:rgba(255,201,122,.06);
+    border:1px solid rgba(255,201,122,.18);
+    border-radius:999px;
+    padding:.4em .9em;
+    margin:0 .3rem;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .b-grid{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));
+    gap:.8rem;padding:1rem;overflow-y:auto;
+  }
+  .b-card{
+    display:block;text-decoration:none;
+    border:1px solid rgba(255,201,122,.16);
+    border-radius:8px;overflow:hidden;
+    background:#221a11;
+    transition:transform .2s ease, border-color .2s ease;
+  }
+  .b-card:hover,.b-card:focus-visible{transform:translateY(-3px);border-color:var(--a)}
+  .b-card:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+  .b-thumb{height:92px;display:grid;place-items:center;background:var(--tg)}
+  .b-thumb svg{width:44px;height:44px}
+  .b-name{
+    font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;
+    color:var(--ink-dim);padding:.6em .8em;display:block;
+  }
+  .b-card:hover .b-name{color:var(--a)}
+
+  /* ---------- footer ---------- */
+  footer{
+    border-top:1px solid rgba(255,201,122,.14);
+    padding:2rem clamp(1.25rem,5vw,4rem) 2.5rem;
+    display:flex;flex-wrap:wrap;gap:1rem 2.5rem;
+    align-items:baseline;justify-content:space-between;
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;
+    color:var(--ink-faint);
+    background:var(--room-deep);
+  }
+  footer a{color:var(--ink-dim);text-decoration:none;border-bottom:1px solid rgba(185,168,143,.35)}
+  footer a:hover{color:var(--lamp);border-color:var(--lamp)}
+  footer .cols{display:flex;flex-wrap:wrap;gap:.4rem 1.6rem}
+
+  @media (prefers-reduced-motion:reduce){
+    #iso{transform:none !important}
+    .iso-obj > *,.dossier,.scrim{transition:none}
+    .steam,.led,.crt-line,.flutter,.bob2,.flame,.nozzle,.wave{animation:none}
+    html{scroll-behavior:auto}
+  }
+</style>
+</head>
+<body>
+
+<main class="scene" id="scene">
+  <canvas id="dust" aria-hidden="true"></canvas>
+
+  <header class="intro">
+    <p class="eyebrow">K. May · ERRER Labs — est. 1989</p>
+    <!-- EDIT: swap "K. May" above and in <title>/footer for your full name -->
+    <h1>Every object on this desk is an <em>entire world</em> I shipped.</h1>
+    <p class="lede">Born in &rsquo;89 — raised on beige plastic, dial-up, and CRT glow.
+    Electrical &amp; computer engineer, author, toymaker, game designer, security founder,
+    record label. Pick something up off the desk; each world has its own light, sound,
+    and pulse.</p>
+  </header>
+
+  <div class="desk-wrap">
+    <svg id="iso" viewBox="-465 -245 1135 815" role="group"
+         aria-label="An isometric 2000s room: a desk of seven interactive work objects, with hobbies filling the walls, window, and side table"></svg>
+  </div>
+  <div class="tip" id="tip" aria-hidden="true"></div>
+
+  <nav class="legend" aria-label="Worlds on the desk">
+    <button data-id="board" style="--a:var(--c-board)">The machine years</button>
+    <button data-id="toy" style="--a:var(--c-toy)">Book + toy</button>
+    <button data-id="hive" style="--a:var(--c-hive)">Hive Mind</button>
+    <button data-id="series" style="--a:var(--c-series)">Everything series</button>
+    <button data-id="scqcs" style="--a:var(--c-scqcs)">SCQCS</button>
+    <button data-id="vinyl" style="--a:var(--c-vinyl)">Aethra Kairos</button>
+    <button data-id="cam" style="--a:var(--c-cam)">securaCV</button>
+    <button data-id="utap" style="--a:var(--c-utap)">uTap</button>
+    <span class="legend-sep" aria-hidden="true"></span>
+    <button data-id="offhours" style="--a:var(--c-off)">Off the clock</button>
+    <button data-id="outside" style="--a:var(--c-out)">The world outside</button>
+    <button data-id="puzzle" style="--a:var(--c-puz)">The thinking wall</button>
+  </nav>
+
+  <div class="hint">
+    <span>Hover to feel</span><span class="sep">/</span>
+    <span>Click to pick up</span><span class="sep">/</span>
+    <span class="pan-hint">Drag the desk to pan</span><span class="sep pan-hint">/</span>
+    <button id="eraBtn" class="chip" aria-pressed="false">Year: 1999</button>
+    <button id="sndBtn" class="chip" aria-pressed="true">Sound: on</button>
+  </div>
+</main>
+
+<section class="browser" id="browser" role="dialog" aria-modal="true" aria-label="Built-in site browser" hidden>
+  <div class="b-bar">
+    <span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
+    <span class="b-url">kmay://worlds/index — every site, one desk</span>
+    <button class="chip" id="bClose">Close ×</button>
+  </div>
+  <div class="b-grid" id="bGrid"></div>
+</section>
+
+<div class="scrim" id="scrim" hidden></div>
+<section class="dossier" id="dossier" role="dialog" aria-modal="true" aria-labelledby="dTitle" hidden>
+  <div class="d-head">
+    <p class="d-kicker" id="dKicker"></p>
+    <button class="chip" id="dClose">Put it back ×</button>
+  </div>
+  <h2 id="dTitle"></h2>
+  <p class="story" id="dStory"></p>
+  <ul class="chips" id="dChips"></ul>
+  <div class="d-links" id="dLinks"></div>
+</section>
+
+<footer>
+  <div class="cols">
+    <a href="https://errerlabs.com">ERRERLabs.com</a>
+    <a href="https://scqcs.com">scqcs.com</a>
+    <a href="https://github.com/kmay89">github.com/kmay89</a>
+  </div>
+  <span>© 2026 K. May · ERRER Labs — built by hand, no frameworks, no trackers.</span>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ================================================================
+     ISOMETRIC SCENE — classic 2:1 dimetric projection, generated
+     programmatically so light, outlines, and perspective stay consistent.
+     World axes: +x → screen right-down, +y → screen left-down, +z → up.
+     ================================================================ */
+  function P(x,y,z){ return [x - y, (x + y) / 2 - z]; }
+  function pj(x,y,z){ var p = P(x,y,z); return p[0].toFixed(1) + "," + p[1].toFixed(1); }
+  function shade(hex, f){
+    var n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    function ch(c){ c = f > 0 ? c + (255 - c) * f : c * (1 + f); return Math.round(Math.min(255, Math.max(0, c))); }
+    return "rgb(" + ch(r) + "," + ch(g) + "," + ch(b) + ")";
+  }
+  var OUT = 'stroke="rgba(26,14,6,.42)" stroke-width="1" stroke-linejoin="round"';
+  function polyW(cs, fill, extra){
+    return '<polygon points="' + cs.map(function(c){ return pj(c[0],c[1],c[2]); }).join(" ") + '" fill="' + fill + '" ' + (extra || OUT) + "/>";
+  }
+  // A box drawn with its three visible faces: left (y+d), right (x+w), top.
+  function box(x,y,z,w,d,h,c,o){
+    o = o || {};
+    var t = z + h, s = "";
+    s += polyW([[x,y+d,t],[x+w,y+d,t],[x+w,y+d,z],[x,y+d,z]], o.left  || shade(c,-.24));
+    s += polyW([[x+w,y,t],[x+w,y+d,t],[x+w,y+d,z],[x+w,y,z]], o.right || shade(c,-.08));
+    s += polyW([[x,y,t],[x+w,y,t],[x+w,y+d,t],[x,y+d,t]],     o.top   || shade(c,.20));
+    return s;
+  }
+  // 2D detail groups projected onto a face. Local (u,v) coords.
+  function mTop(x,y,z){ var p = P(x,y,z); return "matrix(1,0.5,-1,0.5," + p[0] + "," + p[1] + ")"; }
+  function mLeft(x,y,z){ var p = P(x,y,z); return "matrix(1,0.5,0,1," + p[0] + "," + p[1] + ")"; }
+  function mRight(x,y,z){ var p = P(x,y,z); return "matrix(1,-0.5,0,1," + p[0] + "," + p[1] + ")"; }
+  function gTop(x,y,z,inner,extra){ return '<g transform="' + mTop(x,y,z) + (extra||"") + '">' + inner + "</g>"; }
+  function gLeft(x,y,z,inner){ return '<g transform="' + mLeft(x,y,z) + '">' + inner + "</g>"; }
+  function gRight(x,y,z,inner){ return '<g transform="' + mRight(x,y,z) + '">' + inner + "</g>"; }
+  function shadowW(x,y,w,d,g,op){
+    g = g || 7;
+    return polyW([[x-g,y-g,0],[x+w+g,y-g,0],[x+w+g,y+d+g,0],[x-g,y+d+g,0]],
+      "rgba(12,6,2," + (op || .30) + ")", 'filter="url(#soft)"');
+  }
+  // Circles on the desk plane project to 2:1 ellipses.
+  function isoEllipse(cx,cy,z,r,fill,extra){
+    var p = P(cx,cy,z), R = r * 1.414;
+    return '<ellipse cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" rx="' + R.toFixed(1) + '" ry="' + (R/2).toFixed(1) + '" fill="' + fill + '" ' + (extra || OUT) + "/>";
+  }
+  function cyl(cx,cy,z,r,h,c){
+    var R = r * 1.414, pB = P(cx,cy,z), pT = P(cx,cy,z+h);
+    var s = '<path d="M' + (pT[0]-R).toFixed(1) + " " + pT[1].toFixed(1) +
+      " L" + (pB[0]-R).toFixed(1) + " " + pB[1].toFixed(1) +
+      " A" + R.toFixed(1) + " " + (R/2).toFixed(1) + " 0 0 0 " + (pB[0]+R).toFixed(1) + " " + pB[1].toFixed(1) +
+      " L" + (pT[0]+R).toFixed(1) + " " + pT[1].toFixed(1) + ' Z" fill="' + shade(c,-.14) + '" ' + OUT + "/>";
+    s += isoEllipse(cx,cy,z+h,r,shade(c,.16));
+    return s;
+  }
+  function txt(x,y,str,size,fill,extra){
+    return '<text x="' + x + '" y="' + y + '" font-size="' + size + '" fill="' + fill + '" ' + (extra || "") + ">" + str + "</text>";
+  }
+  var MONO = 'font-family="ui-monospace,Menlo,Consolas,monospace"';
+  var SERIF = 'font-family="Iowan Old Style,Palatino,Georgia,serif"';
+  function wrapObj(id,label,accent,inner,cls){
+    return '<g class="iso-obj' + (cls ? " " + cls : "") + '" data-id="' + id + '" tabindex="0" role="button" aria-haspopup="dialog" aria-label="' + label + '" style="--a:' + accent + '">' +
+      "<g>" + inner + "</g></g>";
+  }
+
+  /* ---------- build the desk ---------- */
+  var S = [];
+  S.push('<defs>' +
+    '<filter id="soft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="4"/></filter>' +
+    '<linearGradient id="wood" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#a06a3e"/><stop offset=".55" stop-color="#8a5734"/><stop offset="1" stop-color="#754828"/></linearGradient>' +
+    '<radialGradient id="disc" cx=".4" cy=".4" r=".75">' +
+      '<stop offset="0" stop-color="#e9fbff"/><stop offset=".45" stop-color="#9fdcec"/><stop offset=".75" stop-color="#5fb4cc"/><stop offset="1" stop-color="#b8eaf6"/></radialGradient>' +
+    '<radialGradient id="camGrad" cx=".35" cy=".3" r=".9">' +
+      '<stop offset="0" stop-color="#c6d8f2"/><stop offset=".55" stop-color="#7f97ba"/><stop offset="1" stop-color="#46536d"/></radialGradient>' +
+    '<radialGradient id="screenGlow" cx=".5" cy=".5" r=".7">' +
+      '<stop offset="0" stop-color="rgba(99,230,169,.35)"/><stop offset="1" stop-color="rgba(99,230,169,0)"/></radialGradient>' +
+    '<linearGradient id="wallA" x1="0" y1="-235" x2="0" y2="150" gradientUnits="userSpaceOnUse">' +
+      '<stop offset="0" stop-color="#39291b"/><stop offset=".72" stop-color="#241a10"/><stop offset="1" stop-color="#0e0a07"/></linearGradient>' +
+    '<linearGradient id="wallB" x1="0" y1="-235" x2="0" y2="200" gradientUnits="userSpaceOnUse">' +
+      '<stop offset="0" stop-color="#2e2115"/><stop offset=".72" stop-color="#1d150c"/><stop offset="1" stop-color="#0e0a07"/></linearGradient>' +
+    '<linearGradient id="nightSky" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#141c3a"/><stop offset=".6" stop-color="#2a2547"/><stop offset="1" stop-color="#3d2f4a"/></linearGradient>' +
+    '<linearGradient id="lupSky" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#4a3a72"/><stop offset=".5" stop-color="#c05a80"/><stop offset="1" stop-color="#ff9a52"/></linearGradient>' +
+  '</defs>');
+
+  /* ---------- the room: two fading walls behind the desk ---------- */
+  S.push(polyW([[-30,-30,200],[-30,420,200],[-30,420,-60],[-30,-30,-60]], "url(#wallB)", 'stroke="none"'));
+  S.push(polyW([[-30,-30,200],[620,-30,200],[620,-30,-60],[-30,-30,-60]], "url(#wallA)", 'stroke="none"'));
+
+  /* ---------- wall B: the hung bike (rides) + VHS shelf (movie nights) ---------- */
+  var bike = '<g fill="none" stroke-linecap="round" transform="translate(0,-30)">' +
+    '<circle cx="120" cy="150" r="38" stroke="#26201a" stroke-width="7"/>' +
+    '<circle cx="120" cy="150" r="38" stroke="#6e6154" stroke-width="2"/>' +
+    '<circle cx="238" cy="150" r="38" stroke="#26201a" stroke-width="7"/>' +
+    '<circle cx="238" cy="150" r="38" stroke="#6e6154" stroke-width="2"/>' +
+    '<g stroke="#b8442f" stroke-width="5">' +
+      '<path d="M120 150 L168 92 L238 150"/>' +
+      '<path d="M120 150 L182 150 L168 92"/>' +
+      '<path d="M155 96 L146 82 M226 96 L238 150"/></g>' +
+    '<path d="M138 80 L158 80" stroke="#241d16" stroke-width="6"/>' +
+    '<path d="M228 88 Q 244 84 246 96" stroke="#241d16" stroke-width="5"/>' +
+    '<circle cx="182" cy="150" r="7" fill="#241d16" stroke="none"/>' +
+    '<path d="M182 150 L196 168" stroke="#241d16" stroke-width="4"/>' +
+    '<rect x="112" y="98" width="16" height="8" rx="2" fill="#3a2c1c" stroke="none"/>' +
+    '<rect x="230" y="98" width="16" height="8" rx="2" fill="#3a2c1c" stroke="none"/></g>';
+  S.push('<g aria-hidden="true">' + gRight(-30,400,190,bike) + "</g>");
+  S.push(box(-28,132,148,52,96,8,"#7a5a38"));
+  var vhs = box(-24,146,156,38,24,8,"#17171e") + box(-22,150,164,38,24,8,"#1c1c26");
+  vhs += gLeft(-24,170,164,'<rect x="4" y="1.5" width="22" height="5" rx="1" fill="#e8e4d8"/>' +
+    '<rect x="6" y="2.5" width="12" height="1.6" fill="#b8442f"/>');
+  vhs += gLeft(-22,174,172,'<rect x="4" y="1.5" width="22" height="5" rx="1" fill="#e8e4d8"/>' +
+    '<rect x="6" y="2.5" width="14" height="1.6" fill="#33517c"/>');
+  S.push('<g aria-hidden="true">' + vhs + "</g>");
+
+  /* ---------- wall B: the tie-dye shirt on its hanger ---------- */
+  var tee = '<circle cx="330" cy="16" r="4" fill="none" stroke="#8a7a5c" stroke-width="2.5"/>' +
+    '<path d="M330 20 L310 34 L350 34 Z" fill="none" stroke="#8a7a5c" stroke-width="2.5" stroke-linejoin="round"/>' +
+    '<clipPath id="teeClip"><path d="M310 36 L296 50 L306 60 L314 53 L314 108 L346 108 L346 53 L354 60 L364 50 L350 36 Q340 42 330 42 Q320 42 310 36 Z"/></clipPath>' +
+    '<path d="M310 36 L296 50 L306 60 L314 53 L314 108 L346 108 L346 53 L354 60 L364 50 L350 36 Q340 42 330 42 Q320 42 310 36 Z" fill="#f2ead8" stroke="rgba(26,14,6,.42)" stroke-width="1.5"/>' +
+    '<g clip-path="url(#teeClip)">' +
+      '<circle cx="330" cy="72" r="40" fill="#e2603f"/>' +
+      '<circle cx="327" cy="70" r="32" fill="#f5b63f"/>' +
+      '<circle cx="333" cy="74" r="24" fill="#63b86a"/>' +
+      '<circle cx="328" cy="71" r="16.5" fill="#4a7fd0"/>' +
+      '<circle cx="332" cy="74" r="9.5" fill="#8a5bb8"/>' +
+      '<circle cx="330" cy="72" r="4" fill="#f2ead8"/>' +
+      '<g stroke="rgba(255,255,255,.25)" stroke-width="1.4" fill="none">' +
+        '<path d="M330 22 L330 108"/><path d="M296 62 L364 78"/><path d="M300 92 L360 50"/></g></g>';
+  S.push(wrapObj("offhours","Tie-dye — off the clock","#e0a458",gRight(-30,400,190,tee)));
+
+  /* ---------- wall A: a polaroid of me, waving hi ---------- */
+  var pol = '<g transform="rotate(4)">' +
+    '<rect x="-6" y="-6" width="60" height="72" fill="#f2ead8" stroke="rgba(26,14,6,.4)" stroke-width="1.5"/>' +
+    '<rect x="0" y="0" width="48" height="48" fill="#2a3550"/>' +
+    '<circle cx="22" cy="22" r="11" fill="#f2c9a0"/>' +
+    '<path d="M12 18 q2 -9 10 -9 q8 0 10 9 q-3 -4 -10 -4 q-7 0 -10 4 z" fill="#5a3a22"/>' +
+    '<circle cx="18" cy="22" r="1.4" fill="#241a10"/><circle cx="26" cy="22" r="1.4" fill="#241a10"/>' +
+    '<path d="M18 27 q4 3.5 8 0" fill="none" stroke="#241a10" stroke-width="1.4" stroke-linecap="round"/>' +
+    '<path d="M14 40 q8 -6 16 0 l0 8 -16 0 z" fill="#63b86a"/>' +
+    '<g class="wave"><path d="M36 34 q1.5 -6 5 -8 q3 -1.5 3.5 1 q.5 2 -2 3.5 q3 -1 3.5 1.5 q.4 2 -2.5 3 q2.5 0 2 2.2 q-.5 2.3 -4 2.3 q-4.5 0 -5.5 -5.5 z" fill="#f2c9a0" stroke="rgba(90,50,20,.4)"/></g>' +
+    txt(24,60,"hi!",9,"#5a4a32",SERIF + ' text-anchor="middle" font-style="italic"') +
+    '<rect x="16" y="-9" width="16" height="7" fill="rgba(232,220,190,.65)" transform="rotate(-5 24 -6)"/></g>';
+  S.push('<g aria-hidden="true">' + gLeft(556,-30,158,pol) + "</g>");
+
+  /* ---------- wall A: window to the world outside ---------- */
+  var win = '<rect x="-8" y="-8" width="236" height="126" fill="#5d3a20" stroke="rgba(20,10,4,.5)" stroke-width="2"/>' +
+    '<rect x="0" y="0" width="220" height="110" fill="url(#nightSky)"/>' +
+    '<circle cx="176" cy="24" r="10" fill="#f2e9d4"/><circle cx="176" cy="24" r="15" fill="#f2e9d4" opacity=".14"/>' +
+    '<polygon points="0,72 46,30 76,58 96,40 128,72" fill="#222b4d"/>' +
+    '<polygon points="70,72 122,22 158,50 178,38 220,72 220,80 70,80" fill="#171e38"/>' +
+    '<path d="M124 30 L123 52" stroke="#cfe6f2" stroke-width="3" opacity=".7" stroke-linecap="round"/>' +
+    '<ellipse cx="123" cy="55" rx="5" ry="2" fill="#cfe6f2" opacity=".45"/>' +
+    '<rect x="0" y="76" width="220" height="34" fill="#2f2b17"/>' +
+    (function(){ var rows=""; for (var i=0;i<14;i++){ var rx=8+i*15.5;
+      rows += '<path d="M'+rx+' 110 L'+rx+' 88" stroke="#4a4426" stroke-width="2.5"/>' +
+              '<circle cx="'+rx+'" cy="86" r="1.6" fill="#5d5530"/>'; } return rows; })() +
+    '<ellipse cx="30" cy="100" rx="13" ry="5" fill="#ff9a3d" opacity=".28"/>' +
+    '<path d="M24 102 L36 102 M26 104 L34 104" stroke="#4a3018" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<path class="flame" d="M30 101 q -4 -6 0 -12 q 1.5 4 4 6 q 2 3 -1 6 z" fill="#ffb347"/>' +
+    '<g fill="#0c1020">' + // deer, watching the fire
+      '<path d="M56 100 l0 -7 q0 -4 4 -5 l10 0 q4 0 5 4 l0 8 -2.5 0 0 -6 -2 0 0 6 -2.5 0 0 -6 -5 0 0 6 z"/>' +
+      '<path d="M62 88 l-1 -5 2 0 .5 3 M64 88 l1 -5 -2 0" stroke="#0c1020" stroke-width="1.4" fill="none"/>' +
+      '<circle cx="61" cy="86" r="2.4"/></g>' +
+    '<g fill="#07070c">' + // skunk, minding its business
+      '<ellipse cx="196" cy="103" rx="7" ry="3.6"/>' +
+      '<circle cx="189" cy="101.6" r="2.2"/>' +
+      '<path d="M202 102 q 5 -2 4 -8 q 3 5 -1 9 z"/>' +
+      '<path d="M191 100.5 q 6 -2.5 11 -1.5" stroke="#efe8dd" stroke-width="1.6" fill="none"/></g>' +
+    '<g fill="#ffe37a">' +
+      '<circle cx="92" cy="58" r="1.5" class="led"/>' +
+      '<circle cx="142" cy="46" r="1.3" class="led" style="animation-delay:-.9s"/>' +
+      '<circle cx="58" cy="48" r="1.2" class="led" style="animation-delay:-1.6s"/></g>' +
+    '<polygon points="8,0 60,0 22,110 8,110" fill="rgba(255,255,255,.05)"/>' +
+    '<rect x="108" y="0" width="5" height="110" fill="#5d3a20"/>' +
+    '<rect x="-12" y="118" width="244" height="9" fill="#5d3a20" stroke="rgba(20,10,4,.5)"/>';
+  S.push(wrapObj("outside","The world outside","#8fd18a",gLeft(40,-30,170,win)));
+
+  /* ---------- wall A: the spiral frame (thinking wall) ---------- */
+  var spiral = '<rect x="-7" y="-7" width="104" height="104" fill="#2a1d12" stroke="rgba(20,10,4,.6)" stroke-width="2"/>' +
+    '<rect x="0" y="0" width="90" height="90" fill="#efe8dd"/>' +
+    (function(){ var s="", r=40; for (var i=0;i<6;i++){
+      s += '<circle cx="' + (45 + (i%2 ? 3.2 : -3.2)) + '" cy="45" r="' + r + '" fill="none" stroke="#191512" stroke-width="' + (5.5 - i*.5) + '"/>';
+      r -= 6.8; } return s; })() +
+    '<circle cx="45" cy="45" r="3" fill="#191512"/>';
+  S.push(wrapObj("puzzle","The thinking wall","#d9a0e8",gLeft(452,-30,160,spiral)));
+
+  // desk legs + modesty panel + tabletop (top surface = z 0)
+  S.push(box(30,50,-180,20,280,152,"#6b4527"));
+  S.push(box(510,50,-180,20,280,152,"#6b4527"));
+  S.push(box(50,60,-160,460,14,90,"#5d3a20"));
+  S.push(box(0,0,-28,560,380,28,"#8a5734",{top:"url(#wood)"}));
+  // wood grain + a couple of knots
+  S.push(gTop(0,0,0,
+    '<g stroke="#4a2c15" stroke-width="2" fill="none" opacity=".14">' +
+      '<path d="M20 40 Q 300 28 540 46"/><path d="M14 120 Q 280 108 546 124"/>' +
+      '<path d="M22 205 Q 300 190 542 208"/><path d="M16 292 Q 290 278 544 296"/>' +
+      '<path d="M20 348 Q 300 338 540 352"/></g>' +
+    '<ellipse cx="120" cy="86" rx="9" ry="4.5" fill="none" stroke="#4a2c15" opacity=".2" stroke-width="2"/>' +
+    '<ellipse cx="470" cy="250" rx="7" ry="3.5" fill="none" stroke="#4a2c15" opacity=".2" stroke-width="2"/>'));
+  // warm pool of light on the desk
+  S.push(gTop(0,0,0,'<ellipse cx="270" cy="170" rx="290" ry="220" fill="url(#screenGlow)" opacity=".0"/>' +
+    '<ellipse cx="260" cy="160" rx="300" ry="230" fill="rgba(255,201,122,.10)"/>', ''));
+
+  /* ---------- cast shadows (stay put when objects lift) ---------- */
+  S.push(shadowW(52,50,44,44,8,.26));            // mug
+  S.push(shadowW(150,50,180,212,12,.30));        // CRT + keyboard
+  S.push(shadowW(386,58,116,84,9,.30));          // book stack
+  S.push(shadowW(24,196,86,64,7,.24));           // Lupita book
+  S.push(shadowW(118,208,46,46,6,.24));          // doll box
+  S.push(shadowW(252,262,46,26,4,.22));          // uTap iPhone
+  S.push(shadowW(450,180,64,88,6,.26));          // keypad
+  S.push(shadowW(250,290,64,106,6,.26));         // game boy
+  S.push(shadowW(380,276,96,102,7,.26));         // jewel case
+  S.push(shadowW(480,305,58,58,4,.22));          // floppy
+  S.push(shadowW(150,300,90,70,4,.18));          // mousepad
+  S.push(shadowW(310,36,52,44,6,.24));           // sourdough board
+  S.push(shadowW(34,332,26,26,4,.22));           // rubik's cube
+  S.push(shadowW(516,26,30,30,5,.22));           // flower pot
+
+  /* ---------- charm: coffee mug (est. '89) ---------- */
+  var mug = cyl(72,72,0,20,36,"#c8502f");
+  mug += isoEllipse(72,72,36,15,"#3a2013",'stroke="rgba(26,14,6,.42)" stroke-width="1"'); // coffee
+  var mh = P(96,72,20);
+  mug += '<path d="M' + mh[0] + ' ' + (mh[1]-8) + ' q 16 2 12 14 q -3 9 -14 8" fill="none" stroke="' + shade("#c8502f",-.18) + '" stroke-width="6" stroke-linecap="round"/>';
+  var ms = P(72,72,40);
+  mug += '<g fill="none" stroke="#f4e9d8" stroke-width="2.5" stroke-linecap="round">' +
+    '<path class="steam" d="M' + (ms[0]-8) + " " + ms[1] + " q 4 -8 -1 -14 q -4 -6 1 -12\"/>" +
+    '<path class="steam s2" d="M' + (ms[0]+7) + " " + (ms[1]-3) + " q 4 -7 -1 -13 q -4 -6 1 -11\"/></g>";
+  S.push('<g aria-hidden="true">' + mug + "</g>");
+
+  /* ---------- toy: Lupita — the book and the doll in her floral box ---------- */
+  function flor(x,y,s,c){ // little Mexican-folk flower
+    var p = "";
+    for (var a = 0; a < 5; a++){
+      var t = Math.PI*2/5*a - Math.PI/2;
+      p += '<circle cx="' + (x + Math.cos(t)*s).toFixed(1) + '" cy="' + (y + Math.sin(t)*s).toFixed(1) + '" r="' + (s*.72).toFixed(1) + '" fill="' + c + '"/>';
+    }
+    return p + '<circle cx="' + x + '" cy="' + y + '" r="' + (s*.6).toFixed(1) + '" fill="#ffe37a"/>';
+  }
+  var toy = box(24,196,0,86,64,10,"#d8cbb0");
+  toy += gLeft(24,260,10,'<rect x="2" y="2" width="82" height="6" fill="#efe6cf" opacity=".9" stroke="rgba(26,14,6,.3)"/>');
+  toy += gTop(24,196,10,
+    '<rect width="86" height="64" rx="3" fill="url(#lupSky)" stroke="rgba(26,14,6,.45)" stroke-width="1.5"/>' +
+    '<polygon points="0,52 20,40 38,52 64,42 86,54 86,64 0,64" fill="#3a2c50" opacity=".85"/>' +
+    '<path d="M70 12 l1.6 4 4 1.6 -4 1.6 -1.6 4 -1.6 -4 -4 -1.6 4 -1.6 z" fill="#fff2c8"/>' +
+    '<path d="M8 50 q3 -8 6 0 M11 44 l0 8" stroke="#2f5d43" stroke-width="2.5" fill="none" stroke-linecap="round"/>' +
+    '<circle cx="80" cy="58" r="2.4" fill="#c8355c"/>' +
+    '<path d="M43 22 q-8 3 -8 16 q0 8 8 12 q8 -4 8 -12 q0 -13 -8 -16 z" fill="#3f9e63" stroke="rgba(20,60,35,.6)"/>' +
+    '<circle cx="43" cy="27" r="4.6" fill="#f2c9a0"/>' +
+    '<path d="M39 25 q4 -4 8 0 q-1 -4 -4 -4 q-3 0 -4 4 z" fill="#5a3a22"/>' +
+    '<path d="M38 33 l10 0 l-2 14 l-6 0 z" fill="#e2603f"/>' +
+    '<rect x="40" y="35" width="6" height="7" rx="1" fill="#e8d3a0" transform="rotate(-8 43 38)"/>' +
+    '<g fill="#d8f4e2" opacity=".85"><circle cx="38" cy="34" r=".7"/><circle cx="48" cy="30" r=".7"/><circle cx="46" cy="42" r=".7"/><circle cx="39" cy="44" r=".6"/></g>' +
+    txt(43,15,"Lupita",12,"#ffb347",SERIF + ' text-anchor="middle" font-style="italic" font-weight="bold" stroke="rgba(90,40,10,.55)" stroke-width=".6"'));
+  // the doll's box: black, covered in florals, with a window
+  toy += box(118,208,0,46,46,44,"#171215");
+  toy += gLeft(118,254,44,
+    '<rect x="1.5" y="1.5" width="43" height="41" fill="#171215" stroke="#2c2026"/>' +
+    flor(8,8,3.2,"#ff8ac2") + flor(38,10,2.8,"#7cd7e8") + flor(9,36,2.6,"#f5b63f") + flor(37,37,3,"#e2603f") +
+    '<rect x="14" y="8" width="18" height="30" rx="8" fill="#241a2e" stroke="#c9a86a" stroke-width="1.5"/>' +
+    '<path d="M23 12 q-5 2 -5 10 q0 6 5 9 q5 -3 5 -9 q0 -8 -5 -10 z" fill="#3f9e63"/>' +
+    '<circle cx="23" cy="16.5" r="3" fill="#f2c9a0"/>' +
+    '<path d="M20 21 l6 0 l-1.4 10 l-3.2 0 z" fill="#e2603f"/>');
+  toy += gTop(118,208,44,
+    '<rect width="46" height="46" fill="#171215" stroke="#2c2026"/>' +
+    flor(12,12,3,"#7cd7e8") + flor(34,16,2.6,"#ff8ac2") + flor(16,34,2.6,"#e2603f") + flor(36,36,2.8,"#f5b63f"));
+  S.push(wrapObj("toy","Lupita — book + doll · 3 awards","#ff8a5c",toy));
+
+  /* ---------- board: beige CRT + keyboard (the machine years) ---------- */
+  var crt = "";
+  crt += box(195,96,0,64,30,14,"#c9bda2");                       // stand
+  crt += box(170,42,14,110,52,92,"#c4b89c");                      // tube hump
+  crt += gTop(170,42,106,'<g stroke="#8f8368" stroke-width="2" opacity=".7">' +
+    '<line x1="14" y1="12" x2="96" y2="12"/><line x1="14" y1="20" x2="96" y2="20"/>' +
+    '<line x1="14" y1="28" x2="96" y2="28"/><line x1="14" y1="36" x2="96" y2="36"/></g>');
+  crt += box(150,90,14,150,34,112,"#d5c9ad");                     // bezel slab
+  crt += gLeft(150,124,126,                                        // screen face
+    '<rect x="10" y="10" width="130" height="84" rx="6" fill="#0a1a10" stroke="#8f8368" stroke-width="2"/>' +
+    '<g class="crt-line" ' + MONO + ' font-size="9" fill="#63e6a9">' +
+      txt(18,26,"C:\\ATM&gt; SELF-TEST",9,"#63e6a9") +
+      txt(18,40,"CARD READER ... OK",9,"#63e6a9") +
+      txt(18,54,"PSU +24V ...... OK",9,"#63e6a9") +
+      txt(18,68,"TOUCH PANEL ... OK",9,"#63e6a9") +
+      txt(18,82,"ALARM LOOP .... OK",9,"#63e6a9") + "</g>" +
+    '<polygon points="16,12 52,12 26,92 16,92" fill="rgba(255,255,255,.07)"/>' +
+    '<circle cx="136" cy="102" r="2.6" fill="#63e6a9" class="led"/>' +
+    txt(14,104,"MAYTRONIC 1500",6,"#8f8368",MONO));
+  crt += box(160,200,0,170,62,10,"#d5c9ad");                      // keyboard
+  var keys = "";
+  for (var r = 0; r < 3; r++)
+    for (var k = 0; k < 12; k++)
+      keys += '<rect x="' + (9 + k*12.8) + '" y="' + (7 + r*13) + '" width="10.5" height="10.5" rx="2" fill="#efe6cf" stroke="#9a8e72" stroke-width="1"/>';
+  keys += '<rect x="35" y="46" width="100" height="10.5" rx="2" fill="#efe6cf" stroke="#9a8e72" stroke-width="1"/>';
+  crt += gTop(160,200,10,keys);
+  S.push(wrapObj("board","The machine years — ATMs","#63e6a9",crt,"era-old"));
+
+  /* ---------- 2026: the modern rig (era toggle) ---------- */
+  var rig = box(196,96,0,78,24,5,"#9aa0a8");                        // stand foot
+  rig += box(224,96,5,22,12,26,"#84898f");                          // stand neck
+  rig += box(150,86,30,170,12,104,"#1f2126");                       // main display
+  var thumbsMini = "", THC = ["#f5b63f","#b79cff","#63e6a9","#ff8ac2","#8fb7ff","#ff5d5d","#7cd7e8","#e0a458"];
+  for (var ti = 0; ti < 8; ti++)
+    thumbsMini += '<rect x="' + (16 + (ti%4)*36 ) + '" y="' + (26 + Math.floor(ti/4)*26) + '" width="28" height="18" rx="2" fill="' + THC[ti] + '" opacity=".82"/>';
+  rig += gLeft(150,98,134,
+    '<rect x="5" y="5" width="160" height="94" rx="4" fill="#0d1420" stroke="#31353c" stroke-width="2"/>' +
+    '<rect x="10" y="10" width="150" height="9" rx="2" fill="#1a2334"/>' +
+    '<circle cx="16" cy="14.5" r="2" fill="#ff5f57"/><circle cx="23" cy="14.5" r="2" fill="#febc2e"/><circle cx="30" cy="14.5" r="2" fill="#28c840"/>' +
+    txt(85,17,"kmay://worlds",6,"#7e8ba0",MONO + ' text-anchor="middle"') +
+    thumbsMini +
+    '<polygon points="128,78 128,90 133,86 136,92 139,90 136,85 141,84" fill="#f4e9d8"/>');
+  rig += box(170,204,0,140,46,5,"#d8dce2");                          // low-profile keyboard
+  rig += gTop(170,204,5,'<g stroke="#a8adb6" stroke-width="1.2"><path d="M8 10 h124 M8 19 h124 M8 28 h124"/><rect x="42" y="34" width="56" height="7" rx="2" fill="#c6cbd3" stroke="none"/></g>');
+  rig += box(346,170,0,62,44,4,"#b9bec6");                           // MacBook base
+  rig += gTop(346,170,4,'<rect x="6" y="6" width="50" height="22" rx="2" fill="#9ea4ad"/><rect x="19" y="31" width="24" height="10" rx="2" fill="#a8aeb7"/>');
+  rig += box(346,164,4,62,7,40,"#2a2c33");                           // MacBook lid
+  rig += gLeft(346,171,44,'<rect x="3" y="3" width="56" height="34" rx="2" fill="#0d1420"/>' +
+    '<g ' + MONO + ' font-size="5" fill="#63e6a9">' +
+      txt(6,11,"$ make flash",5,"#63e6a9") + txt(6,19,"[ok] kernel",5,"#63e6a9") + txt(6,27,"[ok] witness",5,"#8fb7ff") + "</g>");
+  rig += box(366,146,0,44,7,58,"#3a3d44");                           // iPad, leaning on the books
+  rig += gLeft(366,153,58,'<rect x="3" y="3" width="38" height="52" rx="3" fill="#101828"/>' +
+    '<path d="M22 40 q-7 -2 -7 -10 q0 -7 7 -9 q7 2 7 9 q0 8 -7 10 z" fill="none" stroke="#ff9ab0" stroke-width="1.6"/>' +
+    '<circle cx="22" cy="30" r="2.2" fill="#f5b63f"/>');
+  S.push(wrapObj("web","Today's rig — browse every site","#ffc97a",rig,"era-now"));
+
+  /* ---------- offhours: sourdough boule on a cutting board ---------- */
+  var pb = P(334,56,4);
+  var boule = gTop(308,34,0,'<rect width="56" height="48" rx="7" fill="#9a6a40" stroke="rgba(26,14,6,.42)"/>');
+  boule += '<ellipse cx="' + pb[0] + '" cy="' + (pb[1]-10) + '" rx="30" ry="21" fill="#d9a865" ' + OUT + "/>" +
+    '<ellipse cx="' + (pb[0]-7) + '" cy="' + (pb[1]-17) + '" rx="14" ry="8" fill="#ecc98f" opacity=".75" stroke="none"/>' +
+    '<g stroke="#8a5426" stroke-width="2.4" fill="none" stroke-linecap="round">' +
+      '<path d="M' + (pb[0]-16) + " " + (pb[1]-16) + " q 16 -9 32 2\"/>" +
+      '<path d="M' + (pb[0]-13) + " " + (pb[1]-9) + " q 13 -7 26 1\"/></g>" +
+    '<g fill="#f6ead2" opacity=".8"><circle cx="' + (pb[0]-20) + '" cy="' + (pb[1]-4) + '" r="1.4"/>' +
+    '<circle cx="' + (pb[0]+14) + '" cy="' + (pb[1]-24) + '" r="1.2"/>' +
+    '<circle cx="' + (pb[0]+22) + '" cy="' + (pb[1]-6) + '" r="1.3"/></g>';
+  S.push(wrapObj("offhours","Sourdough — off the clock","#e0a458",boule));
+
+  /* ---------- cam: ball webcam perched on the CRT ---------- */
+  var camTopZ = 126, cc = P(225,105,camTopZ + 15);
+  var cam = isoEllipse(225,105,camTopZ,10,"rgba(12,6,2,.30)",'filter="url(#soft)" stroke="none"');
+  cam += cyl(225,105,camTopZ,7,5,"#3a4254");
+  cam += '<circle cx="' + cc[0].toFixed(1) + '" cy="' + cc[1].toFixed(1) + '" r="15" fill="url(#camGrad)" ' + OUT + "/>" +
+    '<circle cx="' + (cc[0]+3).toFixed(1) + '" cy="' + (cc[1]+2).toFixed(1) + '" r="6.5" fill="#0b1220"/>' +
+    '<circle cx="' + (cc[0]+3).toFixed(1) + '" cy="' + (cc[1]+2).toFixed(1) + '" r="3" fill="#22335a"/>' +
+    '<circle cx="' + (cc[0]-5).toFixed(1) + '" cy="' + (cc[1]-6).toFixed(1) + '" r="2.4" fill="#e9f1ff" opacity=".9"/>' +
+    '<circle cx="' + (cc[0]+11).toFixed(1) + '" cy="' + (cc[1]-4).toFixed(1) + '" r="1.8" fill="#63e6a9" class="led"/>';
+  S.push(wrapObj("cam","securaCV — open source","#8fb7ff",cam,"era-old"));
+
+  /* cam again in 2026 — perched on the big display */
+  var cc2 = P(235,92,134 + 15);
+  var cam2 = isoEllipse(235,92,134,9,"rgba(12,6,2,.30)",'filter="url(#soft)" stroke="none"');
+  cam2 += cyl(235,92,134,6,4,"#3a4254");
+  cam2 += '<circle cx="' + cc2[0].toFixed(1) + '" cy="' + cc2[1].toFixed(1) + '" r="13" fill="url(#camGrad)" ' + OUT + "/>" +
+    '<circle cx="' + (cc2[0]+3).toFixed(1) + '" cy="' + (cc2[1]+2).toFixed(1) + '" r="5.5" fill="#0b1220"/>' +
+    '<circle cx="' + (cc2[0]+3).toFixed(1) + '" cy="' + (cc2[1]+2).toFixed(1) + '" r="2.6" fill="#22335a"/>' +
+    '<circle cx="' + (cc2[0]-4).toFixed(1) + '" cy="' + (cc2[1]-5).toFixed(1) + '" r="2" fill="#e9f1ff" opacity=".9"/>' +
+    '<circle cx="' + (cc2[0]+9.5).toFixed(1) + '" cy="' + (cc2[1]-3.5).toFixed(1) + '" r="1.6" fill="#63e6a9" class="led"/>';
+  S.push(wrapObj("cam","securaCV — open source","#8fb7ff",cam2,"era-now"));
+
+  /* ---------- utap: the college iPhone, geofenced campus map ---------- */
+  var ph = box(252,262,0,46,26,5,"#101014");
+  ph += gTop(252,262,5,
+    '<rect width="46" height="26" rx="4" fill="#17171d" stroke="rgba(26,14,6,.45)"/>' +
+    '<rect x="6" y="3" width="34" height="20" rx="2" fill="#12233c"/>' +
+    '<g stroke="#27436a" stroke-width="1.4"><path d="M10 8 h26 M10 14 h26 M10 19 h26 M18 3 v20 M30 3 v20"/></g>' +
+    '<circle cx="24" cy="13" r="7.5" fill="none" stroke="#ee6fbb" stroke-width="1.4" stroke-dasharray="2.5 2"/>' +
+    '<circle cx="24" cy="13" r="2.4" fill="#ee6fbb"/>' +
+    '<circle cx="43" cy="13" r="1.8" fill="none" stroke="#3a3a44" stroke-width="1"/>');
+  S.push(wrapObj("utap","uTap — the campus app","#ee6fbb",ph));
+
+  /* ---------- charm: sticky note (front-left) ---------- */
+  S.push('<g aria-hidden="true">' + gTop(92,320,0,
+    '<rect width="36" height="36" fill="#ffe37a" stroke="rgba(120,90,20,.4)"/>' +
+    '<g stroke="#7a5c16" stroke-width="1.6" opacity=".65" fill="none">' +
+      '<path d="M6 12 h24"/><path d="M6 19 h18"/></g>' +
+    txt(6,30,"buy AA batts",5.6,"#7a5c16",SERIF + ' font-style="italic"'),
+    " rotate(8)") + "</g>");
+
+  /* ---------- charm: mousepad + ball mouse + cord ---------- */
+  var pad = gTop(150,300,0,
+    '<rect width="90" height="70" rx="10" fill="#33517c" stroke="rgba(10,16,28,.6)" stroke-width="1.5"/>' +
+    '<rect x="4" y="4" width="82" height="62" rx="8" fill="none" stroke="#4a6b9a" stroke-width="1.5" stroke-dasharray="4 4"/>');
+  var cordA = P(197,318,12), cordB = P(250,245,4), cordC = P(270,212,10);
+  pad += '<path d="M' + cordA[0] + " " + cordA[1] + " Q " + cordB[0] + " " + cordB[1] + " " + cordC[0] + " " + cordC[1] + '" fill="none" stroke="#584a3a" stroke-width="2.5" opacity=".8"/>';
+  pad += box(180,316,0,32,46,13,"#dcd3bd");
+  pad += gTop(180,316,13,'<line x1="16" y1="4" x2="16" y2="20" stroke="#9a8e72" stroke-width="1.5"/>' +
+    '<rect x="4" y="4" width="24" height="16" rx="6" fill="none" stroke="#9a8e72" stroke-width="1.2"/>');
+  S.push('<g aria-hidden="true">' + pad + "</g>");
+
+  /* ---------- series: stack of four Everything books ---------- */
+  var bookCols = ["#3c6fb0","#b8497e","#2f7d52","#6f56b8"];
+  var offs = [0,7,-4,3], series = "";
+  for (var i = 0; i < 4; i++){
+    var bx = 390 + offs[i], bz = i * 14;
+    series += box(bx,62,bz,108,78,14,bookCols[i]);
+    series += gLeft(bx,140,bz+14,'<rect x="2" y="2.5" width="104" height="8" fill="#efe6cf" opacity=".92" stroke="rgba(26,14,6,.3)"/>');
+  }
+  series += gTop(393,62,56,
+    txt(54,32,"Everything",15,"#efe8f8",SERIF + ' text-anchor="middle" font-style="italic"') +
+    txt(54,50,"that Glows",13,"#d8c8ff",SERIF + ' text-anchor="middle" font-style="italic"') +
+    '<circle cx="54" cy="62" r="3.5" fill="#ffe37a"/>');
+  S.push(wrapObj("series","The Everything series","#b79cff",series));
+
+  /* ---------- puzzle: scrambled Rubik's cube ---------- */
+  var CUBE_C = ["#e04b3c","#f5b63f","#3c6fb0","#4aa651","#efe8dd","#e88a2e"];
+  function stickers(pick){
+    var s = "";
+    for (var r = 0; r < 3; r++)
+      for (var c = 0; c < 3; c++)
+        s += '<rect x="' + (2 + c*7.6) + '" y="' + (2 + r*7.6) + '" width="6.4" height="6.4" rx="1" fill="' + CUBE_C[pick[r*3+c]] + '"/>';
+    return s;
+  }
+  var cube = box(34,332,0,24,24,24,"#141414");
+  cube += gTop(34,332,24, stickers([4,0,2,3,4,1,0,5,4]));
+  cube += gLeft(34,356,24, stickers([1,3,0,4,2,2,5,1,3]));
+  cube += gRight(58,356,24, stickers([2,5,4,0,1,3,3,4,0]));
+  S.push(wrapObj("puzzle","Thought puzzles","#d9a0e8",cube));
+
+  /* ---------- outside: flower pot, mushroom & butterfly ---------- */
+  var pot = cyl(530,40,0,13,20,"#b0603a");
+  pot += isoEllipse(530,40,20,10,"#3a2a1a",'stroke="none"');
+  var pt = P(530,40,20);
+  pot += '<path d="M' + pt[0] + " " + pt[1] + " q -2 -14 2 -24\" fill=\"none\" stroke=\"#4d7a3a\" stroke-width=\"2.5\" stroke-linecap=\"round\"/>" +
+    '<path d="M' + pt[0] + " " + (pt[1]-10) + " q -9 -2 -11 -9 q 9 -1 11 6 z\" fill=\"#5d8f47\"/>" +
+    '<path d="M' + (pt[0]+1.5) + " " + (pt[1]-15) + " q 8 -3 12 -9 q -10 -2 -12 6 z\" fill=\"#517d3e\"/>";
+  var fx = pt[0] + 2, fy = pt[1] - 26;
+  pot += '<g>' + [[0,-6],[6,-2],[4,5],[-4,5],[-6,-2]].map(function(o){
+      return '<circle cx="' + (fx+o[0]) + '" cy="' + (fy+o[1]) + '" r="4.4" fill="#ff9ab0" stroke="rgba(120,30,55,.4)"/>';
+    }).join("") + '<circle cx="' + fx + '" cy="' + fy + '" r="3.2" fill="#f5b63f"/></g>';
+  var mp = P(548,58,0);
+  pot += '<g><rect x="' + (mp[0]-1.5) + '" y="' + (mp[1]-7) + '" width="3" height="7" rx="1.2" fill="#e8ddc4"/>' +
+    '<path d="M' + (mp[0]-6) + " " + (mp[1]-6) + " q 6 -8 12 0 z\" fill=\"#c0442e\"/>" +
+    '<circle cx="' + (mp[0]-2.5) + '" cy="' + (mp[1]-8.5) + '" r="1" fill="#f2e6d0"/>' +
+    '<circle cx="' + (mp[0]+2.5) + '" cy="' + (mp[1]-9) + '" r=".8" fill="#f2e6d0"/></g>';
+  pot += '<g class="bob2"><g transform="translate(' + (fx+13) + "," + (fy-12) + ') rotate(-14)">' +
+    '<g class="flutter">' +
+      '<path d="M0 0 Q -9 -7 -8 1 Q -8 6 0 2 Z" fill="#f5b63f" stroke="rgba(120,70,10,.5)"/>' +
+      '<path d="M0 0 Q 9 -7 8 1 Q 8 6 0 2 Z" fill="#e88a2e" stroke="rgba(120,70,10,.5)"/></g>' +
+    '<ellipse cx="0" cy="1" rx="1.1" ry="3" fill="#3a2415"/></g></g>';
+  S.push(wrapObj("outside","Garden — the world outside","#8fd18a",pot));
+
+  /* ---------- hive: atomic-purple Game Boy ---------- */
+  var gb = box(250,290,0,64,106,11,"#7e63cf");
+  var hex = function(cx,cy,r,fill){
+    var p = [];
+    for (var a = 0; a < 6; a++){
+      var t = Math.PI/3*a - Math.PI/6;
+      p.push((cx + r*Math.cos(t)).toFixed(1) + "," + (cy + r*Math.sin(t)).toFixed(1));
+    }
+    return '<polygon points="' + p.join(" ") + '" ' + fill + "/>";
+  };
+  gb += gTop(250,290,11,
+    '<rect x="6" y="7" width="52" height="52" rx="5" fill="#564a80" stroke="rgba(20,12,40,.5)"/>' +
+    '<rect x="11" y="12" width="42" height="40" rx="2" fill="#9bbf3b" stroke="rgba(20,30,8,.5)"/>' +
+    hex(26,26,7,'fill="#33520f"') + hex(38,32,7,'fill="none" stroke="#33520f" stroke-width="2"') + hex(28,40,7,'fill="#33520f"') +
+    txt(32,68,"HIVE MIND",6.5,"#ded5f6",MONO + ' text-anchor="middle" letter-spacing="1"') +
+    '<rect x="12" y="76" width="8" height="22" rx="2" fill="#2f2a44"/>' +
+    '<rect x="5" y="83" width="22" height="8" rx="2" fill="#2f2a44"/>' +
+    '<circle cx="46" cy="82" r="5" fill="#b34a68" stroke="rgba(60,10,25,.6)"/>' +
+    '<circle cx="56" cy="76" r="5" fill="#b34a68" stroke="rgba(60,10,25,.6)"/>' +
+    '<rect x="26" y="98" width="9" height="3.5" rx="1.7" fill="#2f2a44"/>' +
+    '<rect x="39" y="98" width="9" height="3.5" rx="1.7" fill="#2f2a44"/>' +
+    '<g stroke="#564a80" stroke-width="2"><line x1="52" y1="92" x2="58" y2="98"/><line x1="56" y1="90" x2="62" y2="96"/></g>');
+  S.push(wrapObj("hive","Hive Mind — the game","#f5b63f",gb));
+
+  /* ---------- scqcs: alarm keypad ---------- */
+  var kp = box(450,180,0,64,88,13,"#cfc6b4");
+  var kpKeys = "";
+  for (var kr = 0; kr < 4; kr++)
+    for (var kc = 0; kc < 3; kc++)
+      kpKeys += '<rect x="' + (9 + kc*16.5) + '" y="' + (32 + kr*13.5) + '" width="13" height="10" rx="2" fill="#efe8d8" stroke="#948a70" stroke-width="1"/>';
+  kp += gTop(450,180,13,
+    '<rect x="8" y="8" width="38" height="15" rx="2" fill="#9fb89a" stroke="#5e7059"/>' +
+    txt(12,19,"ARMED",7,"#2c3f2a",MONO + ' letter-spacing="1"') +
+    '<circle cx="54" cy="15" r="3.6" fill="#ff5d5d" class="led"/>' + kpKeys +
+    txt(32,86,"SCQCS",6,"#7d7358",MONO + ' text-anchor="middle" letter-spacing="2"'));
+  S.push(wrapObj("scqcs","SCQCS security","#ff5d5d",kp));
+
+  /* ---------- vinyl→CD: open jewel case, Echoes of Us ---------- */
+  var jc = box(382,278,0,92,7,64,"#7e858c");                       // lid standing open
+  jc += gLeft(382,285,64,
+    '<rect x="2.5" y="2.5" width="87" height="59" fill="#131c26" stroke="#39434e"/>' +
+    '<circle cx="24" cy="30" r="14" fill="none" stroke="#7cd7e8" stroke-width="2" opacity=".85"/>' +
+    '<circle cx="24" cy="30" r="6" fill="#7cd7e8" opacity=".5"/>' +
+    txt(44,22,"AETHRA",8,"#7cd7e8",MONO + ' letter-spacing="1.5"') +
+    txt(44,33,"KAIROS",8,"#7cd7e8",MONO + ' letter-spacing="1.5"') +
+    txt(44,49,"Echoes of Us",9,"#e8f4f7",SERIF + ' font-style="italic"') +
+    txt(44,58,"I · II · III",7,"#9db8c2",MONO));
+  jc += box(380,288,0,96,89,5,"#aab2b8",{top:shade("#aab2b8",.10)}); // tray
+  jc += isoEllipse(428,332,5,34,"url(#disc)");
+  jc += isoEllipse(428,332,5,10,"#d8e6ea");
+  jc += isoEllipse(428,332,5,4,"#39434e",'stroke="none"');
+  var arc = P(428,332,5);
+  jc += '<path d="M' + (arc[0]-38) + " " + (arc[1]-8) + " A 46 23 0 0 1 " + (arc[0]+20) + " " + (arc[1]-20) + '" fill="none" stroke="#ffffff" stroke-width="3" opacity=".55"/>';
+  S.push(wrapObj("vinyl","ERRER Labs · Aethra Kairos","#7cd7e8",jc));
+
+  /* ---------- charm: floppy + sticky note (front-right) ---------- */
+  var fl = box(480,305,0,58,58,5,"#2e3f66");
+  fl += gTop(480,305,5,
+    '<rect x="15" y="3" width="28" height="16" rx="1" fill="#9aa1ad" stroke="rgba(20,20,30,.5)"/>' +
+    '<rect x="31" y="6" width="8" height="10" fill="#2e3f66"/>' +
+    '<rect x="8" y="27" width="42" height="26" rx="1" fill="#e8e4d8" stroke="rgba(20,20,30,.4)"/>' +
+    '<g stroke="#5a5647" stroke-width="1.4" opacity=".7" fill="none">' +
+      '<path d="M12 34 h34"/><path d="M12 40 h26"/><path d="M12 46 h30"/></g>');
+  S.push('<g aria-hidden="true">' + fl + "</g>");
+
+  /* ---------- offhours: side table + the scratch-built 3D printer ---------- */
+  var tbl = isoEllipse(646,120,-132,64,"rgba(12,6,2,.28)",'filter="url(#soft)" stroke="none"');
+  tbl += box(584,64,-130,122,110,100,"#7a5a38",{top:shade("#7a5a38",.16)});
+  tbl += gLeft(584,174,-30,'<rect x="8" y="10" width="106" height="34" rx="3" fill="' + shade("#7a5a38",-.34) + '" stroke="rgba(26,14,6,.4)"/>' +
+    '<circle cx="61" cy="27" r="3.5" fill="#3a2c1c"/>');
+  var prn = box(596,84,-30,98,74,10,"#26262e");                       // printer base
+  prn += gTop(596,84,-20,'<rect x="6" y="52" width="30" height="16" rx="2" fill="#15151b" stroke="#3c3c48"/>' +
+    txt(21,63,"MERLIN",4.6,"#63e6a9",MONO + ' text-anchor="middle" letter-spacing="1"'));
+  prn += box(606,96,-20,74,54,4,"#101016");                           // heated bed
+  prn += gTop(606,96,-16,'<g stroke="#26303c" stroke-width="1"><path d="M6 6 h62 M6 16 h62 M6 26 h62 M6 36 h62 M6 46 h62"/></g>');
+  prn += box(600,128,-20,7,9,74,"#3a3a46");                           // gantry posts
+  prn += box(686,128,-20,7,9,74,"#3a3a46");
+  prn += box(600,128,50,93,9,8,"#3a3a46");                            // crossbar
+  prn += box(634,126,30,20,13,14,"#4a4a58");                          // carriage + hotend
+  var nz = P(644,140,26);
+  prn += '<circle cx="' + nz[0] + '" cy="' + nz[1] + '" r="2.6" fill="#ff9a3d" class="nozzle"/>';
+  var sp = P(700,132,66);
+  prn += '<circle cx="' + sp[0] + '" cy="' + sp[1] + '" r="13" fill="#2c4a68" ' + OUT + "/>" +
+    '<circle cx="' + sp[0] + '" cy="' + sp[1] + '" r="4.5" fill="#15151b"/>';
+  prn += box(636,112,-16,16,16,12,"#e0a458");                         // the print in progress
+  S.push(wrapObj("offhours","Scratch-built 3D printer — off the clock","#e0a458",tbl + prn));
+
+  S.push('<g aria-hidden="true">' + gTop(334,206,0,
+    '<rect width="32" height="32" fill="#ffd0dc" stroke="rgba(130,50,70,.35)"/>' +
+    '<g stroke="#8a3a52" stroke-width="1.5" opacity=".6" fill="none"><path d="M5 11 h22"/><path d="M5 17 h16"/><path d="M5 23 h19"/></g>',
+    " rotate(-7)") + "</g>");
+
+  document.getElementById("iso").innerHTML = S.join("");
+
+  /* ================================================================
+     WORLDS — dossier content
+     ================================================================ */
+  var WORLDS = {
+    board: {
+      kicker: "Electrical & Computer Engineering",
+      title: "The Machine Years",
+      story: "Before I built worlds you could read or listen to, I built the ones people trust with their money. ATM systems end to end — the card reader that takes the first handshake, the power supplies that keep their promises, touch screens, processors, and the peripherals around them — plus security alarm systems watching over it all. Hardware taught me the rule everything since has followed: the feel of a product is engineered, not decorated.",
+      chips: ["ATM card readers","Peripherals","Power supplies","Touch screens","Processors","Security alarm systems"],
+      links: []
+    },
+    toy: {
+      kicker: "Author · Producer · Creator",
+      title: "Lupita — A Book and a Doll That Speak Two Languages",
+      story: "I authored and produced Lupita: a bilingual children's book — a little girl in a sparkling green veil, reading her scroll under a desert sunset — with a companion doll, packaged in a black box blooming with bright Mexican florals. One world a kid can hold in both hands and both languages. It earned a Mom's Choice Award, was named a Target Bullseye Top Pick for the holidays, and took home an education award at Toy Fair.",
+      chips: ["Lupita — the book","Companion doll","Bilingual","Mom's Choice Award","Target Bullseye Top Pick — Holiday","Toy Fair Education Award"],
+      links: []
+    },
+    utap: {
+      kicker: "iOS · The College Years",
+      title: "uTap — The Campus in Your Pocket",
+      story: "In college I built uTap, an iPhone app connecting students to what was happening around them: location-based, geofenced messaging that was anonymous and privacy-preserving by design. The network knew as little about you as possible — years before that was anyone's slide deck. That thread runs in a straight line from uTap to securaCV.",
+      chips: ["iPhone app","Location-based","Geofenced messaging","Anonymous","Privacy-preserving"],
+      links: []
+    },
+    hive: {
+      kicker: "Game Design",
+      title: "Hive Mind",
+      story: "A game about what a group of minds can do that one mind can't. Designed, produced, and shipped — box, rules, and all.",
+      chips: ["Original game","Designed & produced"],
+      links: [{label:"hive-mind-game.com", href:"https://hive-mind-game.com"}]
+    },
+    series: {
+      kicker: "The Everything Series",
+      title: "Four Books, One Question: What Is Everything Doing?",
+      story: "An authored series where each volume owns a verb — what glows, what grows, what shows, what knows. Four small worlds that share one voice, each living at its own address.",
+      chips: ["Glows","Grows","Shows","Knows"],
+      links: [
+        {label:"everythingthatglows.com", href:"https://everythingthatglows.com"},
+        {label:"everything-that-grows.com", href:"https://everything-that-grows.com"},
+        {label:"everythingthatshows.com", href:"https://everythingthatshows.com"},
+        {label:"everything-that-knows.com", href:"https://everything-that-knows.com"}
+      ]
+    },
+    scqcs: {
+      kicker: "Founder · Security",
+      title: "SCQCS — Security, Grown Into a Company",
+      story: "The alarm-systems thread of the machine years, grown into its own firm. SCQCS is my security company: physical security engineering delivered with the same end-to-end discipline I learned building the machines it protects.",
+      chips: ["Founder","Physical security","Systems engineering"],
+      links: [{label:"scqcs.com", href:"https://scqcs.com"}]
+    },
+    vinyl: {
+      kicker: "ERRER Labs · Music",
+      title: "Aethra Kairos — Echoes of Us, I–III",
+      story: "ERRER Labs is my studio for things that don't fit in one company. It created the artist Aethra Kairos and produced three full albums — Echoes of Us, volumes one through three. A world complete enough to have a discography.",
+      chips: ["Echoes of Us — Album I","Echoes of Us — Album II","Echoes of Us — Album III"],
+      links: [{label:"ERRERLabs.com", href:"https://errerlabs.com"}]
+    },
+    cam: {
+      kicker: "ERRER Labs · Open Source",
+      title: "securaCV — A Camera That Answers to You",
+      story: "Open-source, privacy-first camera hardware built in the open from PCB to package: custom camera hardware, Linux kernel work, ESP32 firmware, and a Home Assistant integration — so the machine watching your home reports to you and no one else.",
+      chips: ["Camera hardware","Linux kernel","ESP32 firmware","Home Assistant"],
+      links: [{label:"github.com/kmay89/securaCV", href:"https://github.com/kmay89/securaCV"}]
+    },
+    offhours: {
+      kicker: "Off the Clock",
+      title: "The Maker Hours",
+      story: "The same hands, off duty. I ride, run, garden, cook, and bake sourdough that gets scored like sheet metal. The house is one long DIY project that never quite admits it's finished. And because buying a 3D printer felt like skipping the good part, I built my own from scratch around a Merlin board — then gave my Ender 3 Pro v2 a full set of home-grown upgrades anyway. Off hours is also where the writing happens, and the movies, and the music.",
+      chips: ["Bike rides","Running","Gardening","Sourdough","Cooking","Home DIY","Scratch-built Merlin 3D printer","Ender 3 Pro v2 upgrades","Writing","Movies","Music"],
+      links: []
+    },
+    outside: {
+      kicker: "Field Notes",
+      title: "The World Outside the Window",
+      story: "Everything I build gets refueled out there — waterfalls and mountains, cornfields and campfires, butterflies and hummingbirds, deer and the occasional unbothered skunk. Flowers, trees, insects, fungus: the original engineering portfolio, four billion years ahead of schedule. I keep the window in view while I work so the work remembers what it's for.",
+      chips: ["Mountains & waterfalls","Cornfields & campfires","Butterflies & hummingbirds","Deer & skunks","Flowers & trees","Insects & fungus"],
+      links: []
+    },
+    puzzle: {
+      kicker: "The Thinking Wall",
+      title: "Philosophy, Illusions, and Puzzles That Bite Back",
+      story: "I collect the things that make certainty wobble: optical illusions, thought puzzles, thrillers with clean mechanisms, documentaries about how anything actually works. The spiral on the wall isn't moving. But you checked.",
+      chips: ["Philosophy","Optical illusions","Thrillers","Documentaries","Thought puzzles"],
+      links: []
+    }
+  };
+
+  /* ================================================================
+     AUDIO — synthesized, created only on an explicit user gesture
+     ================================================================ */
+  var ctx = null, master = null, soundOn = true;
+  function ac(force){
+    if (!soundOn) return null;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!ctx){
+      if (!force) return null; // only create on an explicit gesture (autoplay policy)
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0.5;
+      master.connect(ctx.destination);
+    }
+    if (ctx.state === "suspended" && force) ctx.resume();
+    return ctx;
+  }
+  // first real gesture anywhere unlocks audio, so hover sounds work from then on
+  ["pointerdown","keydown"].forEach(function(ev){
+    var unlock = function(){ ac(true); document.removeEventListener(ev, unlock); };
+    document.addEventListener(ev, unlock);
+  });
+  function tone(freq, opts){
+    var c = ac(); if (!c) return;
+    opts = opts || {};
+    var t = c.currentTime + (opts.at || 0);
+    var dur = opts.dur || 0.15;
+    var o = c.createOscillator(), g = c.createGain();
+    o.type = opts.type || "sine";
+    o.frequency.setValueAtTime(freq, t);
+    if (opts.end) o.frequency.exponentialRampToValueAtTime(opts.end, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(opts.g || 0.12, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+  function noise(opts){
+    var c = ac(); if (!c) return;
+    opts = opts || {};
+    var t = c.currentTime + (opts.at || 0);
+    var dur = opts.dur || 0.08;
+    var len = Math.max(1, Math.floor(c.sampleRate * dur));
+    var buf = c.createBuffer(1, len, c.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    var src = c.createBufferSource(); src.buffer = buf;
+    var f = c.createBiquadFilter();
+    f.type = opts.filter || "lowpass";
+    f.frequency.setValueAtTime(opts.freq || 1200, t);
+    if (opts.freqEnd) f.frequency.exponentialRampToValueAtTime(opts.freqEnd, t + dur);
+    f.Q.value = opts.q || 0.8;
+    var g = c.createGain(); g.gain.value = opts.g || 0.1;
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start(t);
+  }
+  var SOUNDS = {
+    hover: function(){ tone(1900, {type:"sine", dur:0.045, g:0.025}); },
+    board: function(){ // ATM keypress + card-reader chirp
+      noise({filter:"lowpass", freq:900, dur:0.05, g:0.14});
+      tone(880,  {type:"square", at:0.05, dur:0.09, g:0.05});
+      tone(1320, {type:"square", at:0.16, dur:0.12, g:0.05});
+    },
+    toy: function(){ // playful marimba arpeggio
+      tone(1046.5, {type:"triangle", dur:0.22, g:0.10});
+      tone(1318.5, {type:"triangle", at:0.10, dur:0.22, g:0.10});
+      tone(1568.0, {type:"triangle", at:0.20, dur:0.30, g:0.10});
+    },
+    hive: function(){ // a swarm: three detuned saws
+      tone(110, {type:"sawtooth", dur:0.55, g:0.045});
+      tone(113, {type:"sawtooth", dur:0.55, g:0.045});
+      tone(221, {type:"sawtooth", dur:0.45, g:0.028});
+    },
+    series: function(){ // page turn
+      noise({filter:"bandpass", freq:600, freqEnd:2600, q:1.1, dur:0.28, g:0.13});
+      tone(523.25, {type:"sine", at:0.22, dur:0.25, g:0.05});
+    },
+    scqcs: function(){ // alarm arming chirp
+      tone(1200, {type:"sine", dur:0.07, g:0.09});
+      tone(900,  {type:"sine", at:0.12, dur:0.07, g:0.09});
+      tone(1200, {type:"sine", at:0.24, dur:0.14, g:0.09});
+    },
+    vinyl: function(){ // disc spin-up + warm minor pad
+      for (var i = 0; i < 6; i++) noise({filter:"highpass", freq:2500, at:Math.pow(i,1.3)*0.09, dur:0.02, g:0.05});
+      tone(110.0,  {type:"sine", at:0.1, dur:1.1, g:0.07});
+      tone(130.81, {type:"sine", at:0.1, dur:1.1, g:0.06});
+      tone(164.81, {type:"sine", at:0.1, dur:1.1, g:0.055});
+    },
+    cam: function(){ // shutter
+      noise({filter:"highpass", freq:1800, dur:0.03, g:0.16});
+      noise({filter:"lowpass", freq:500, at:0.05, dur:0.05, g:0.12});
+      tone(2200, {type:"sine", at:0.09, dur:0.05, g:0.03});
+    },
+    offhours: function(){ // stepper motors homing
+      tone(180, {type:"square", dur:0.28, g:0.035, end:540});
+      tone(540, {type:"square", at:0.32, dur:0.22, g:0.035, end:260});
+      noise({filter:"lowpass", freq:400, dur:0.55, g:0.03});
+    },
+    outside: function(){ // crickets + a breath of wind
+      tone(4200, {type:"sine", dur:0.04, g:0.03});
+      tone(4200, {type:"sine", at:0.11, dur:0.04, g:0.03});
+      tone(4200, {type:"sine", at:0.22, dur:0.04, g:0.025});
+      tone(3800, {type:"sine", at:0.48, dur:0.04, g:0.02});
+      noise({filter:"lowpass", freq:600, dur:0.9, g:0.035});
+    },
+    puzzle: function(){ // an unresolved interval, left hanging
+      tone(660,   {type:"sine", dur:0.6, g:0.05});
+      tone(933.6, {type:"sine", at:0.18, dur:0.6, g:0.045});
+    },
+    utap: function(){ // message ping
+      tone(987.77, {type:"triangle", dur:0.1, g:0.08});
+      tone(1318.5, {type:"triangle", at:0.11, dur:0.2, g:0.08});
+    },
+    web: function(){ // startup chord
+      tone(369.99, {type:"sine", dur:0.9, g:0.045});
+      tone(466.16, {type:"sine", at:0.02, dur:0.9, g:0.04});
+      tone(554.37, {type:"sine", at:0.04, dur:0.9, g:0.038});
+      tone(739.99, {type:"sine", at:0.06, dur:0.9, g:0.03});
+    },
+    era: function(){ // time travel
+      noise({filter:"bandpass", freq:300, freqEnd:2400, q:1.2, dur:0.5, g:0.1});
+      tone(200, {type:"sine", dur:0.5, g:0.05, end:800});
+    }
+  };
+  var HAPTICS = {
+    board:[10,40,10,40,20], toy:[12,30,12,30,12], hive:[70],
+    series:[10,25,10], scqcs:[25,60,25], vinyl:[8,90,8,90,8], cam:[18],
+    offhours:[15,30,15], outside:[5,45,5,45,5], puzzle:[30,30,30],
+    utap:[20,40,20], web:[10,20,10]
+  };
+  function buzz(id){
+    if (navigator.vibrate) { try { navigator.vibrate(HAPTICS[id] || 15); } catch(e){} }
+  }
+
+  /* ================================================================
+     DOSSIER dialog
+     ================================================================ */
+  var dossier = document.getElementById("dossier");
+  var scrim   = document.getElementById("scrim");
+  var lastFocus = null;
+  function openWorld(id, accent){
+    var w = WORLDS[id]; if (!w) return;
+    lastFocus = document.activeElement;
+    dossier.style.setProperty("--a", accent);
+    document.getElementById("dKicker").textContent = w.kicker;
+    document.getElementById("dTitle").textContent = w.title;
+    document.getElementById("dStory").textContent = w.story;
+    var chips = document.getElementById("dChips");
+    chips.innerHTML = "";
+    w.chips.forEach(function(c){
+      var li = document.createElement("li"); li.textContent = c; chips.appendChild(li);
+    });
+    var links = document.getElementById("dLinks");
+    links.innerHTML = "";
+    w.links.forEach(function(l){
+      var a = document.createElement("a");
+      a.href = l.href; a.textContent = l.label;
+      a.target = "_blank"; a.rel = "noopener";
+      links.appendChild(a);
+    });
+    scrim.hidden = false; dossier.hidden = false;
+    requestAnimationFrame(function(){
+      scrim.classList.add("show"); dossier.classList.add("show");
+    });
+    document.getElementById("dClose").focus();
+  }
+  function closeWorld(){
+    scrim.classList.remove("show"); dossier.classList.remove("show");
+    var done = function(){ scrim.hidden = true; dossier.hidden = true; };
+    if (REDUCED) done(); else setTimeout(done, 460);
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  /* ---------------- the built-in browser ---------------- */
+  var browser = document.getElementById("browser");
+  var SITES = [
+    {name:"hive-mind-game.com", href:"https://hive-mind-game.com", a:"#f5b63f", tg:"linear-gradient(140deg,#3a2c12,#6b4d16)",
+     glyph:'<polygon points="22,4 38,13 38,31 22,40 6,31 6,13" fill="none" stroke="#f5b63f" stroke-width="3"/><circle cx="22" cy="22" r="4" fill="#f5b63f"/>'},
+    {name:"everythingthatglows.com", href:"https://everythingthatglows.com", a:"#b79cff", tg:"radial-gradient(circle at 50% 45%,#4a3a72,#1d1533)",
+     glyph:'<circle cx="22" cy="22" r="8" fill="#e8ddff"/><g stroke="#b79cff" stroke-width="2.5" stroke-linecap="round"><path d="M22 4 v6 M22 34 v6 M4 22 h6 M34 22 h6 M9 9 l4 4 M31 31 l4 4 M35 9 l-4 4 M13 31 l-4 4"/></g>'},
+    {name:"everything-that-grows.com", href:"https://everything-that-grows.com", a:"#63e6a9", tg:"linear-gradient(160deg,#173a26,#0d2417)",
+     glyph:'<path d="M22 40 V20" stroke="#63e6a9" stroke-width="3" stroke-linecap="round"/><path d="M22 26 q-11 -2 -13 -14 q12 1 13 12 z" fill="#63e6a9"/><path d="M22 20 q11 -3 13 -13 q-12 0 -13 11 z" fill="#3fae7c"/>'},
+    {name:"everythingthatshows.com", href:"https://everythingthatshows.com", a:"#ff8ac2", tg:"linear-gradient(150deg,#42152e,#241019)",
+     glyph:'<path d="M4 22 q18 -16 36 0 q-18 16 -36 0 z" fill="none" stroke="#ff8ac2" stroke-width="2.5"/><circle cx="22" cy="22" r="6" fill="#ff8ac2"/><circle cx="24" cy="20" r="2" fill="#42152e"/>'},
+    {name:"everything-that-knows.com", href:"https://everything-that-knows.com", a:"#8fb7ff", tg:"linear-gradient(155deg,#152642,#0d1830)",
+     glyph:'<circle cx="14" cy="14" r="3" fill="#8fb7ff"/><circle cx="31" cy="12" r="3" fill="#8fb7ff"/><circle cx="10" cy="30" r="3" fill="#8fb7ff"/><circle cx="28" cy="32" r="3" fill="#8fb7ff"/><circle cx="36" cy="24" r="3" fill="#8fb7ff"/><g stroke="#3c5c94" stroke-width="1.6"><path d="M14 14 L31 12 M14 14 L10 30 M31 12 L36 24 M10 30 L28 32 M28 32 L36 24 M14 14 L28 32"/></g>'},
+    {name:"scqcs.com", href:"https://scqcs.com", a:"#ff5d5d", tg:"linear-gradient(150deg,#3c1214,#22090a)",
+     glyph:'<path d="M22 4 L38 10 V22 C38 32 31 38 22 42 C13 38 6 32 6 22 V10 Z" fill="none" stroke="#ff5d5d" stroke-width="3"/><circle cx="22" cy="20" r="4" fill="none" stroke="#ff5d5d" stroke-width="2.5"/><rect x="20.5" y="23" width="3" height="8" rx="1.5" fill="#ff5d5d"/>'},
+    {name:"ERRERLabs.com", href:"https://errerlabs.com", a:"#7cd7e8", tg:"linear-gradient(150deg,#0f2e38,#091a20)",
+     glyph:'<path d="M4 22 h6 l3 -10 4 20 4 -16 3 6 h16" fill="none" stroke="#7cd7e8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'},
+    {name:"github.com/kmay89/securaCV", href:"https://github.com/kmay89/securaCV", a:"#8fb7ff", tg:"linear-gradient(150deg,#1c2536,#10151f)",
+     glyph:'<rect x="6" y="12" width="32" height="20" rx="5" fill="none" stroke="#8fb7ff" stroke-width="2.5"/><circle cx="22" cy="22" r="6" fill="none" stroke="#8fb7ff" stroke-width="2.5"/><circle cx="33" cy="16" r="1.8" fill="#63e6a9"/>'}
+  ];
+  var bGrid = document.getElementById("bGrid");
+  SITES.forEach(function(s){
+    var a = document.createElement("a");
+    a.className = "b-card";
+    a.href = s.href; a.target = "_blank"; a.rel = "noopener";
+    a.style.setProperty("--a", s.a);
+    a.innerHTML = '<span class="b-thumb" style="--tg:' + s.tg + '"><svg viewBox="0 0 44 44" aria-hidden="true">' + s.glyph + "</svg></span>" +
+      '<span class="b-name">' + s.name + "</span>";
+    bGrid.appendChild(a);
+  });
+  function openBrowser(){
+    lastFocus = document.activeElement;
+    scrim.hidden = false; browser.hidden = false;
+    requestAnimationFrame(function(){ scrim.classList.add("show"); browser.classList.add("show"); });
+    document.getElementById("bClose").focus();
+  }
+  function closeBrowser(){
+    scrim.classList.remove("show"); browser.classList.remove("show");
+    var done = function(){ scrim.hidden = true; browser.hidden = true; };
+    if (REDUCED) done(); else setTimeout(done, 320);
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  document.getElementById("bClose").addEventListener("click", function(){ SOUNDS.hover(); closeBrowser(); });
+
+  function activeModal(){
+    if (!dossier.hidden) return dossier;
+    if (!browser.hidden) return browser;
+    return null;
+  }
+  function closeModal(){
+    if (!dossier.hidden) closeWorld();
+    else if (!browser.hidden) closeBrowser();
+  }
+  document.getElementById("dClose").addEventListener("click", function(){
+    SOUNDS.hover(); closeWorld();
+  });
+  scrim.addEventListener("click", closeModal);
+  document.addEventListener("keydown", function(e){
+    var m = activeModal();
+    if (!m) return;
+    if (e.key === "Escape"){ closeModal(); return; }
+    if (e.key === "Tab"){ // keep focus inside the open dialog
+      var f = m.querySelectorAll("button, a[href]");
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first){ last.focus(); e.preventDefault(); }
+      else if (!e.shiftKey && document.activeElement === last){ first.focus(); e.preventDefault(); }
+      else if (!m.contains(document.activeElement)){ first.focus(); e.preventDefault(); }
+    }
+  });
+
+  /* ================================================================
+     object wiring (SVG groups act as buttons)
+     ================================================================ */
+  var tip = document.getElementById("tip");
+  var scene = document.getElementById("scene");
+  function showTip(btn, accent){
+    tip.textContent = btn.getAttribute("aria-label");
+    tip.style.setProperty("--a", accent);
+    var r = btn.getBoundingClientRect(), s = scene.getBoundingClientRect();
+    tip.style.left = (r.left - s.left + r.width / 2) + "px";
+    tip.style.top  = (r.top - s.top - 10) + "px";
+    tip.classList.add("show");
+  }
+  function hideTip(){ tip.classList.remove("show"); }
+
+  document.querySelectorAll(".iso-obj").forEach(function(btn){
+    var id = btn.dataset.id;
+    var accent = getComputedStyle(btn).getPropertyValue("--a").trim() || "#ffc97a";
+    btn.addEventListener("pointerenter", function(){ SOUNDS.hover(); showTip(btn, accent); });
+    btn.addEventListener("pointerleave", hideTip);
+    btn.addEventListener("focus", function(){ showTip(btn, accent); });
+    btn.addEventListener("blur", hideTip);
+    btn.addEventListener("pointerdown", function(){ buzz(id); });
+    btn.addEventListener("click", function(){
+      ac(true); hideTip();
+      if (SOUNDS[id]) SOUNDS[id]();
+      if (id === "web") openBrowser();
+      else openWorld(id, accent);
+    });
+    btn.addEventListener("keydown", function(e){
+      if (e.key === "Enter" || e.key === " "){ e.preventDefault(); btn.click(); }
+    });
+  });
+
+  document.querySelectorAll(".legend button").forEach(function(btn){
+    var id = btn.dataset.id;
+    var accent = getComputedStyle(btn).getPropertyValue("--a").trim() || "#ffc97a";
+    btn.addEventListener("pointerenter", function(){ SOUNDS.hover(); });
+    btn.addEventListener("pointerdown", function(){ buzz(id); });
+    btn.addEventListener("click", function(){
+      ac(true);
+      if (SOUNDS[id]) SOUNDS[id]();
+      openWorld(id, accent);
+    });
+  });
+
+  /* ---------------- era toggle: 1999 ⇄ 2026 ---------------- */
+  var eraBtn = document.getElementById("eraBtn");
+  var isoEl = document.getElementById("iso");
+  eraBtn.addEventListener("click", function(){
+    ac(true);
+    var now = isoEl.classList.toggle("now");
+    eraBtn.setAttribute("aria-pressed", String(now));
+    eraBtn.textContent = now ? "Year: 2026" : "Year: 1999";
+    hideTip();
+    SOUNDS.era();
+    if (navigator.vibrate){ try { navigator.vibrate([10,30,10,30,40]); } catch(err){} }
+  });
+
+  /* ---------------- sound toggle ---------------- */
+  var sndBtn = document.getElementById("sndBtn");
+  sndBtn.addEventListener("click", function(){
+    soundOn = !soundOn;
+    sndBtn.setAttribute("aria-pressed", String(soundOn));
+    sndBtn.textContent = soundOn ? "Sound: on" : "Sound: off";
+    if (soundOn){ ac(true); SOUNDS.hover(); }
+  });
+
+  /* ---------------- start small screens panned to the desk's center ---------------- */
+  var wrap = document.querySelector(".desk-wrap");
+  if (wrap.scrollWidth > wrap.clientWidth){
+    wrap.scrollLeft = (wrap.scrollWidth - wrap.clientWidth) / 2;
+  }
+
+  /* ---------------- gentle whole-scene parallax ---------------- */
+  var iso = document.getElementById("iso");
+  if (!REDUCED && matchMedia("(pointer: fine)").matches){
+    var raf = null, mx = 0, my = 0;
+    document.getElementById("scene").addEventListener("pointermove", function(e){
+      mx = (e.clientX / innerWidth  - 0.5);
+      my = (e.clientY / innerHeight - 0.5);
+      if (!raf) raf = requestAnimationFrame(function(){
+        raf = null;
+        iso.style.setProperty("--px", (mx * -10).toFixed(1) + "px");
+        iso.style.setProperty("--py", (my * -6).toFixed(1) + "px");
+      });
+    });
+  }
+
+  /* ---------------- dust motes in the lamp light ---------------- */
+  var canvas = document.getElementById("dust");
+  if (canvas.getContext && !REDUCED){
+    var cx2 = canvas.getContext("2d");
+    var motes = [], W = 0, H = 0;
+    function resize(){
+      W = canvas.clientWidth; H = canvas.clientHeight;
+      var dpr = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      cx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    resize(); addEventListener("resize", resize);
+    for (var i = 0; i < 42; i++){
+      motes.push({
+        x: Math.random(), y: Math.random(),
+        r: 0.6 + Math.random() * 1.6,
+        vx: (Math.random() - 0.5) * 0.00012,
+        vy: -0.00006 - Math.random() * 0.00012,
+        a: 0.15 + Math.random() * 0.4,
+        p: Math.random() * Math.PI * 2
+      });
+    }
+    (function frame(){
+      cx2.clearRect(0, 0, W, H);
+      motes.forEach(function(m){
+        m.x += m.vx * 16; m.y += m.vy * 16; m.p += 0.01;
+        if (m.y < -0.02){ m.y = 1.02; m.x = Math.random(); }
+        if (m.x < -0.02) m.x = 1.02;
+        if (m.x > 1.02) m.x = -0.02;
+        var dx = m.x - 0.6, dy = m.y - 0.15;
+        var glow = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy) * 1.6);
+        var alpha = m.a * glow * (0.7 + 0.3 * Math.sin(m.p));
+        if (alpha > 0.01){
+          cx2.beginPath();
+          cx2.arc(m.x * W, m.y * H, m.r, 0, Math.PI * 2);
+          cx2.fillStyle = "rgba(255,214,150," + alpha.toFixed(3) + ")";
+          cx2.fill();
+        }
+      });
+      requestAnimationFrame(frame);
+    })();
+  }
+})();
+</script>
+</body>
+</html>
