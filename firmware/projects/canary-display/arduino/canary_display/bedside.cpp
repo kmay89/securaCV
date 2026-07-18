@@ -95,7 +95,7 @@ bool sun_today(int* rise_min, int* set_min) {
 void bedside_on_weather(const char* payload, unsigned len) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
-    canary::log_line("WX", "Weather payload didn't parse — ignored.");
+    canary::log_line("WX", "Weather update didn't parse — ignored.");
     return;
   }
   if (!doc["hi"].is<float>() || !doc["lo"].is<float>()) return;
