@@ -29,9 +29,16 @@ LOVELACE_DIR="${HA_CONFIG_DIR}/lovelace"
 
 MOSQUITTO_SLUG="core_mosquitto"
 FRIGATE_REPO="https://github.com/blakeblackshear/frigate-hass-addons"
-FRIGATE_SLUG="blakeblackshear_frigate.frigate"
+# Supervisor add-on slugs are "<repo-hash>_<addon-slug>" where repo-hash is
+# sha1(lowercased repo URL)[:8] — ccab4aaf for blakeblackshear's repo,
+# d0491a67 for this one.
+FRIGATE_SLUG="ccab4aaf_frigate"
+# The Frigate add-on (0.16+) reads its config from its own add-on config
+# directory, NOT /config/frigate.yml. Visible from the Terminal/SSH add-on
+# at /addon_configs once the Frigate add-on is installed.
+FRIGATE_ADDON_CONFIG_DIR="/addon_configs/${FRIGATE_SLUG}"
 SECURACV_ADDON_REPO="https://github.com/kmay89/securaCV"
-SECURACV_ADDON_SLUG="privacy_witness_kernel"
+SECURACV_ADDON_SLUG="d0491a67_privacy_witness_kernel"
 
 # ---------------------------------------------------------------------------
 # Terminal colours (gracefully degraded if not a tty)
@@ -155,32 +162,22 @@ install_mosquitto() {
 install_frigate() {
   log_step "Installing Frigate NVR add-on"
 
-  # Add Frigate repository if not already present
-  local repos_json
-  repos_json=$(ha addons repositories 2>/dev/null || echo "[]")
-
-  if ! echo "$repos_json" | grep -q "blakeblackshear"; then
-    log_info "Adding Frigate add-on repository…"
-    ha addons repository add "$FRIGATE_REPO" || {
-      log_warn "Could not add Frigate repository automatically."
-      log_warn "Add it manually: Settings → Add-ons → ⋮ → Repositories → ${FRIGATE_REPO}"
-    }
-  else
-    log_ok "Frigate repository already added"
-  fi
-
   local state
   state=$(ha addons info "$FRIGATE_SLUG" 2>/dev/null | grep -E '^state:' | awk '{print $2}' || echo "not_installed")
 
-  if [ "$state" != "not_installed" ]; then
+  if [ "$state" != "not_installed" ] && [ -n "$state" ]; then
     log_ok "Frigate already installed (state: ${state}) — skipping"
     return 0
   fi
 
+  # The ha CLI has no command to add an add-on repository, so if the Frigate
+  # repo isn't registered yet the install below fails and we fall back to
+  # manual instructions.
   log_info "Installing Frigate (this may take a few minutes)…"
   ha addons install "$FRIGATE_SLUG" || {
-    log_warn "Automated Frigate install failed."
-    log_warn "Install it manually: Settings → Add-ons → Add-on Store → search 'Frigate'"
+    log_warn "Automated Frigate install failed — its add-on repository is probably not added yet."
+    log_warn "Add it: Settings → Add-ons → Add-on Store → ⋮ → Repositories → ${FRIGATE_REPO}"
+    log_warn "then install Frigate from the store (or re-run this script)."
     log_warn "SecuraCV setup will continue — complete Frigate setup before first run."
     return 0
   }
@@ -232,32 +229,21 @@ install_integration() {
 install_addon() {
   log_step "Installing SecuraCV Privacy Witness Kernel add-on"
 
-  # Add SecuraCV add-on repository
-  local repos_json
-  repos_json=$(ha addons repositories 2>/dev/null || echo "[]")
-
-  if ! echo "$repos_json" | grep -q "kmay89"; then
-    log_info "Adding SecuraCV add-on repository…"
-    ha addons repository add "$SECURACV_ADDON_REPO" || {
-      log_warn "Could not add SecuraCV add-on repository automatically."
-      log_warn "Add manually: Settings → Add-ons → ⋮ → Repositories → ${SECURACV_ADDON_REPO}"
-    }
-  else
-    log_ok "SecuraCV add-on repository already added"
-  fi
-
   local state
   state=$(ha addons info "$SECURACV_ADDON_SLUG" 2>/dev/null | grep -E '^state:' | awk '{print $2}' || echo "not_installed")
 
-  if [ "$state" != "not_installed" ]; then
+  if [ "$state" != "not_installed" ] && [ -n "$state" ]; then
     log_ok "SecuraCV add-on already installed (state: ${state}) — skipping"
     return 0
   fi
 
+  # As with Frigate, the ha CLI cannot add add-on repositories; if the
+  # SecuraCV repo isn't registered yet the install fails with manual steps.
   log_info "Installing Privacy Witness Kernel add-on…"
   ha addons install "$SECURACV_ADDON_SLUG" || {
-    log_warn "Automated add-on install failed."
-    log_warn "Install manually: Settings → Add-ons → Add-on Store → search 'Privacy Witness Kernel'"
+    log_warn "Automated add-on install failed — the SecuraCV add-on repository is probably not added yet."
+    log_warn "Add it: Settings → Add-ons → Add-on Store → ⋮ → Repositories → ${SECURACV_ADDON_REPO}"
+    log_warn "then install 'Privacy Witness Kernel' from the store (or re-run this script)."
     return 0
   }
   log_ok "Privacy Witness Kernel add-on installed"
@@ -386,7 +372,24 @@ detectors:
 EOF
     log_ok "Frigate config template written"
   else
-    log_ok "Frigate config already exists — not overwriting"
+    log_ok "Frigate config template already exists — not overwriting"
+  fi
+
+  # The Frigate add-on does NOT read /config/frigate.yml — it reads
+  # config.yml inside its own add-on config directory. If that directory is
+  # visible (Frigate add-on installed and /addon_configs mapped into this
+  # shell), seed it with the same template so Frigate picks it up directly.
+  if [ -d "$FRIGATE_ADDON_CONFIG_DIR" ]; then
+    if [ ! -f "${FRIGATE_ADDON_CONFIG_DIR}/config.yml" ] && [ ! -f "${FRIGATE_ADDON_CONFIG_DIR}/config.yaml" ]; then
+      cp "$frigate_conf" "${FRIGATE_ADDON_CONFIG_DIR}/config.yml"
+      log_ok "Frigate config seeded at ${FRIGATE_ADDON_CONFIG_DIR}/config.yml"
+    else
+      log_ok "Frigate already has a config in ${FRIGATE_ADDON_CONFIG_DIR} — not overwriting"
+    fi
+  else
+    log_warn "Frigate reads its config from ${FRIGATE_ADDON_CONFIG_DIR}/config.yml — copy"
+    log_warn "the template there (or paste it into the Frigate Web UI config editor)"
+    log_warn "after installing Frigate."
   fi
 
   # Install automations
@@ -466,7 +469,9 @@ print_next_steps() {
   printf "${BOLD}Next steps:${NC}\n\n"
 
   printf "  1. ${BOLD}Configure Frigate cameras${NC}\n"
-  printf "     Edit  ${HA_CONFIG_DIR}/frigate.yml  with your camera RTSP URLs.\n"
+  printf "     Frigate reads:  ${FRIGATE_ADDON_CONFIG_DIR}/config.yml\n"
+  printf "     (template also at ${HA_CONFIG_DIR}/frigate.yml — same contents)\n"
+  printf "     Replace the placeholder RTSP URLs with your cameras'.\n"
   printf "     Then start Frigate: Settings → Add-ons → Frigate → Start\n\n"
 
   printf "  2. ${BOLD}Add the SecuraCV integration${NC}\n"

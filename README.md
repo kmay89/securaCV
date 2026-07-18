@@ -41,17 +41,23 @@ boundary enforced in code, plus a record you can *prove* nobody edited.
 
 ### Home Assistant (5 minutes)
 
-**1.** Settings → Add-ons → Add-on Store → ⋮ → Repositories → add
-`https://github.com/kmay89/securaCV` → install **Privacy Witness Kernel**.
+**1.** Settings → Add-ons → Add-on Store: install **Mosquitto broker** (official
+add-on), then ⋮ → Repositories → add both
+`https://github.com/blakeblackshear/frigate-hass-addons` (install **Frigate**) and
+`https://github.com/kmay89/securaCV` (install **Privacy Witness Kernel**).
 
-**2.** Open the add-on's Web UI and click through the setup wizard.
-Device key: auto-generated. MQTT broker: auto-discovered from the
-Mosquitto add-on (host, port, credentials — nothing to type).
+**2.** Open the Privacy Witness Kernel add-on's Web UI and click through the setup
+wizard. Device key: auto-generated. MQTT broker: auto-discovered from the
+Mosquitto add-on (host, port, credentials — nothing to type). The wizard checks
+that Mosquitto and Frigate are present and warns if not.
 
-**3.** **Point Frigate at your cameras** — edit `/config/frigate.yml`
-(the wizard generates it) and replace the placeholder RTSP URLs with your
-cameras', then start Frigate (Settings → Add-ons → Frigate → Start).
-Until this is done there are no detections for SecuraCV to witness.
+**3.** **Point Frigate at your cameras** — the wizard writes a ready-made config
+template to `/config/frigate.yml`; copy its contents into Frigate's own config
+(the Frigate add-on reads `/addon_configs/ccab4aaf_frigate/config.yml`, editable
+from the Frigate Web UI's configuration editor or a file editor add-on), replace
+the placeholder RTSP URLs with your cameras', then start Frigate
+(Settings → Add-ons → Frigate → Start). Until this is done there are no
+detections for SecuraCV to witness.
 
 That's it. Frigate clips keep recording as usual; witness sensors, a daily-digest sensor,
 a chain-integrity sensor, and a **Verify Now** button appear in Home Assistant
