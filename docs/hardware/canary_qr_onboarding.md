@@ -64,15 +64,34 @@ TOFU + on-glass blessing, same as every other join path.
 - A live unacked alert closes the surface instantly; onboarding never
   outranks an alarm.
 
-## The canary side (next wave — spec locked)
+## The canary side (canary-wap: shipped)
 
-- **Scanner:** quirc (ISC license, vendored — a security product should
-  be able to attest its QR input path), grayscale QVGA at ~10 Hz with a
-  fast reject; escalate to VGA when the small watch code needs more
-  pixels; try the inverted image every Nth frame.
-- **Token echo:** a canary provisioned via `SCV1` includes the token in
-  its first hello; the display matches it against the code it minted
-  (`commission_ui_token()`) for automatic blessing. Without a token
+The WAP already carried a quirc scanner (vendored, ISC — an attestable
+QR input path) behind `FEATURE_QR_PROVISION`; the onboarding wave taught
+it the shared grammar and made it scan on its own:
+
+- **Shared grammar first:** the scan task parses `SCV1` and the modern
+  `WIFI:` dialects via the sync-guarded copy of
+  `firmware/common/provision_qr/provision_qr.h` (the legacy `SECURACV:`
+  wizard format still works). Expired `SCV1` codes fail fast — before
+  any join attempt — when the clock is valid.
+- **Boot scan-to-join:** an unprovisioned canary with a usable camera
+  runs 60 s scan windows with a short breather, forever — power it on,
+  point it at the display's code, done. No phone, no session. A phone
+  captive-portal session takes the camera over cleanly at any time.
+- **Session vs. proximity auth:** the display-minted `SCV1` path carries
+  its own expiring token, so the phone-session pair-token gates don't
+  apply to it; a plain `WIFI:` code in boot-scan mode joins Wi-Fi and
+  leaves trust to the display's blessing.
+- **Hub handoff:** `h=`/`o=` from the code point the canary's MQTT
+  bridge at the hub immediately (config saved + re-init), so the flock —
+  and the display's celebration — sees it the moment Wi-Fi comes up.
+- **It answers out loud:** credentials accepted = ascending chirp (LED
+  blink on silent hardware); stale code = error buzz. Garbled or foreign
+  codes never end the scan — it says so and keeps watching.
+- **Still to come:** the full count-coded LED grammar (below) and the
+  token echo in the first hello; the display matches it against
+  `commission_ui_token()` for automatic blessing. Without a token
   (plain `WIFI:` join), the display asks for one tap.
 - **LED grammar** (single-color cadence carries the meaning; color is
   reinforcement; count-coded errors so a user can *say* what they see):

@@ -190,6 +190,8 @@ extern "C" {
 
 #if FEATURE_QR_PROVISION
 #include "qr_scanner.h"
+#include "provision_qr.h"  // shared SCV1/WIFI: grammar (firmware/common —
+                           // the display mints these codes; sync-guarded)
 #endif
 
 // BLE Discovery Subsystem (Opera/Chirp/Nearby)
@@ -826,6 +828,14 @@ static const uint32_t BLE_DISCOVERY_MAX_HOLD_MS = 300000;  // 5 min
 // variable declared below its first use does not compile.
 #if FEATURE_QR_PROVISION
 static volatile bool g_qr_scan_active = false;
+// Boot scan-to-join (onboarding wave): an unprovisioned canary with a
+// working camera scans for a provisioning code on its own — power it on,
+// point it at the display, done. True while the scan task was started by
+// the loop tick rather than a phone captive-portal session; the phone
+// session's pair-token gates don't apply to the display-minted SCV1 path
+// (its own expiring token + physical proximity is the auth).
+static volatile bool g_qr_auto_scan = false;
+static uint32_t g_qr_auto_next_ms = 0;
 #endif
 
 // Camera state
@@ -6528,9 +6538,11 @@ static void qr_scan_task_fn(void* param) {
   if (!scanner_ready) {
     strncpy(g_qr_scan_error, "Scanner init failed", sizeof(g_qr_scan_error));
     g_qr_scan_active = false;
+    if (g_qr_auto_scan) g_qr_auto_next_ms = millis() + 5000;
+    g_qr_auto_scan = false;
     if (sensor && orig_framesize >= 0)
       sensor->set_framesize(sensor, (framesize_t)orig_framesize);
-    g_qr_scan_task = nullptr;
+    __atomic_store_n(&g_qr_scan_task, (TaskHandle_t) nullptr, __ATOMIC_RELEASE);
     vTaskDelete(nullptr);
     return;
   }
@@ -6540,7 +6552,10 @@ static void qr_scan_task_fn(void* param) {
 
   while (g_qr_scan_active) {
     if (millis() - start > QR_SCAN_TIMEOUT_MS) {
-      strncpy(g_qr_scan_error, "timeout", sizeof(g_qr_scan_error));
+      // The boot scan-to-join loop restarts quietly (scanning is the safe
+      // idle); only a phone-session scan reports its window timing out.
+      if (!g_qr_auto_scan)
+        strncpy(g_qr_scan_error, "timeout", sizeof(g_qr_scan_error));
       break;
     }
 
@@ -6558,26 +6573,78 @@ static void qr_scan_task_fn(void* param) {
       char pass[65] = {};
       char qr_token[csi_integration::PAIR_TOKEN_HEX_LEN + 1] = {};
       bool parsed = false;
+      bool fatal = false;   // stop this scan window vs keep watching
+      bool hub_saved = false;
 
-      if (qr_scanner::parse_securacv(payload, ssid, sizeof(ssid),
-                                     pass, sizeof(pass),
-                                     qr_token, sizeof(qr_token))) {
+      // Shared grammar first (provision_qr.h): SCV1 is what the display
+      // mints; it also owns the modern WIFI: dialects. Legacy SECURACV:
+      // stays below for old wizards.
+      securacv::qr::Provision prov;
+      const securacv::qr::Parse pr =
+          securacv::qr::parse(payload, strlen(payload), prov);
+      if (pr == securacv::qr::Parse::Ok) {
+        const time_t now_epoch = time(nullptr);
+        if (!prov.wifi_only && prov.expires_at > 0 &&
+            now_epoch > 1700000000 && (int64_t)now_epoch > prov.expires_at) {
+          // Fail fast on a stale code (checked before any join attempt);
+          // the boot scan keeps watching for a fresh one.
+          strncpy(g_qr_scan_error, "Code expired - make a new one",
+                  sizeof(g_qr_scan_error));
+          audible_chirp::play_pattern(audible_chirp::PATTERN_ERROR);
+          fatal = !g_qr_auto_scan;
+        } else if (prov.wifi_only && !g_qr_auto_scan &&
+                   !csi_integration::pair_token_valid(g_qr_scan_token)) {
+          // A phone-session scan keeps its session gate for plain wifi
+          // codes; the boot scan lets them in — trust still lands on the
+          // display's one-tap blessing, never here.
+          strncpy(g_qr_scan_error, "Session token expired",
+                  sizeof(g_qr_scan_error));
+          fatal = true;
+        } else {
+          parsed = true;
+          strlcpy(ssid, prov.ssid, sizeof(ssid));
+          strlcpy(pass, prov.pass, sizeof(pass));
+          if (!prov.wifi_only && prov.host[0]) {
+            // The display told us where the hub lives: point the MQTT
+            // bridge there and re-init (idempotent) so the flock sees
+            // this canary the moment WiFi comes up — the display's
+            // "it's in the flock" celebration keys on that.
+            csi_mqtt::Config mc;
+            if (csi_mqtt::config_load(&mc)) {
+              strlcpy(mc.host, prov.host, sizeof(mc.host));
+              mc.port = prov.port;
+              mc.enabled = true;
+              if (csi_mqtt::config_save(mc)) {
+                char pubkey_hex[65];
+                hex_to_str(pubkey_hex, g_device.pubkey, 32);
+                csi_mqtt::init(g_device.device_id, FIRMWARE_VERSION,
+                               pubkey_hex);
+                hub_saved = true;
+              }
+            }
+          }
+        }
+        memset(&prov, 0, sizeof(prov));  // held wifi credentials
+      } else if (pr == securacv::qr::Parse::Malformed) {
+        // Ours but broken (or a hostile over-cap field): say so and keep
+        // watching — a garbled code must never end the scan (the Wyze
+        // silent-forever-loop lesson, inverted honestly).
+        strncpy(g_qr_scan_error, "Code hard to read - hold steady",
+                sizeof(g_qr_scan_error));
+      } else if (qr_scanner::parse_securacv(payload, ssid, sizeof(ssid),
+                                            pass, sizeof(pass),
+                                            qr_token, sizeof(qr_token))) {
         parsed = true;
         const char* tok = qr_token[0] ? qr_token : g_qr_scan_token;
         if (!csi_integration::pair_token_valid(tok)) {
           strncpy(g_qr_scan_error, "Invalid token in QR", sizeof(g_qr_scan_error));
           memset(pass, 0, sizeof(pass));
-          break;
-        }
-      } else if (qr_scanner::parse_wifi(payload, ssid, sizeof(ssid),
-                                        pass, sizeof(pass))) {
-        parsed = true;
-        if (!csi_integration::pair_token_valid(g_qr_scan_token)) {
-          strncpy(g_qr_scan_error, "Session token expired", sizeof(g_qr_scan_error));
-          memset(pass, 0, sizeof(pass));
-          break;
+          parsed = false;
+          fatal = true;
         }
       }
+      // (Foreign codes — someone's wallpaper — fall through unparsed and
+      // the scan keeps watching.)
 
       if (parsed && ssid[0]) {
         strncpy(g_wifi_creds.ssid, ssid, sizeof(g_wifi_creds.ssid) - 1);
@@ -6590,13 +6657,20 @@ static void qr_scan_task_fn(void* param) {
 
         strncpy(g_qr_scanned_ssid, ssid, sizeof(g_qr_scanned_ssid) - 1);
         g_qr_scan_success = true;
+        // The "for sure it saw it" answer: an ascending chirp (or LED
+        // blink on silent hardware) the moment credentials are accepted.
+        audible_chirp::play_pattern(audible_chirp::PATTERN_SUCCESS);
         log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-                   "WiFi credentials applied via QR scan", ssid);
+                   hub_saved ? "WiFi + hub applied via QR scan"
+                             : "WiFi credentials applied via QR scan",
+                   ssid);
       }
 
       memset(pass, 0, sizeof(pass));
       memset(payload, 0, sizeof(payload));
-      break;
+      if (parsed || fatal) break;
+      vTaskDelay(pdMS_TO_TICKS(300));
+      continue;
     }
 
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -6607,15 +6681,82 @@ static void qr_scan_task_fn(void* param) {
     sensor->set_framesize(sensor, (framesize_t)orig_framesize);
 
   g_qr_scan_active = false;
-  g_qr_scan_task = nullptr;
+  // The breather between windows starts when the window ENDS, not when it
+  // began (review catch: a start-anchored cooldown is long expired after a
+  // 60 s window, and the camera would scan back-to-back forever).
+  if (g_qr_auto_scan) g_qr_auto_next_ms = millis() + 5000;
+  g_qr_auto_scan = false;
+  // Release-store: the start handler and the auto tick poll this handle
+  // from other tasks/cores (review catch — repo atomic convention).
+  __atomic_store_n(&g_qr_scan_task, (TaskHandle_t) nullptr, __ATOMIC_RELEASE);
   vTaskDelete(nullptr);
+}
+
+// Boot scan-to-join tick (called every loop pass while FEATURE_QR_PROVISION):
+// an unprovisioned canary with a usable camera runs 60 s scan windows with a
+// short breather, forever, until WiFi is configured — power it on, point it
+// at the display's add-a-canary code, done. A phone captive-portal session
+// can still run the classic wizard at any time (its start handler simply
+// takes over; this tick stands down while any scan or peek is live).
+static void qr_auto_scan_tick(uint32_t now) {
+  if (g_wifi_creds.configured) return;
+  if (g_qr_scan_active ||
+      __atomic_load_n(&g_qr_scan_task, __ATOMIC_ACQUIRE) != nullptr)
+    return;
+#if FEATURE_CAMERA_PEEK
+  if (g_peek_active) return;
+#endif
+  if (!camera_usable()) return;
+  if ((int32_t)(now - g_qr_auto_next_ms) < 0) return;
+  g_qr_auto_next_ms = now + 5000;  // retry gap if the task fails to start;
+                                   // the real between-window breather is
+                                   // re-armed at task exit
+
+  // Same claim-before-wake ordering as the session start handler: the
+  // busy flag must be up before a standby camera is woken, or the power
+  // tick can park the sensor mid-wake.
+  g_qr_scan_active = true;
+#if FEATURE_CAMERA_PEEK
+  if (!camera_ensure_awake()) {
+    g_qr_scan_active = false;
+    return;
+  }
+#endif
+  g_qr_auto_scan = true;
+  g_qr_scan_success = false;
+  g_qr_scan_error[0] = '\0';
+  g_qr_scanned_ssid[0] = '\0';
+  g_qr_scan_token[0] = '\0';
+  if (xTaskCreatePinnedToCore(qr_scan_task_fn, "qr_scan", 16384, nullptr, 1,
+                              &g_qr_scan_task, 0) != pdPASS) {
+    g_qr_scan_active = false;
+    g_qr_auto_scan = false;
+  }
 }
 
 static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   g_health.http_requests++;
 
   if (g_qr_scan_active) {
-    return http_send_json(req, "{\"ok\":false,\"error\":\"Scan already active\"}");
+    if (!g_qr_auto_scan) {
+      return http_send_json(req, "{\"ok\":false,\"error\":\"Scan already active\"}");
+    }
+    // The boot scan-to-join yields to an explicit phone session: push the
+    // auto tick's cooldown out first (so it can't reclaim the camera in
+    // the gap), stop the window, and wait for the task to unwind.
+    g_qr_auto_next_ms = millis() + 15000;
+    g_qr_scan_active = false;
+    // Atomic loads: the handle is nulled by the scan task on core 0 while
+    // this handler polls from the httpd task (repo convention — same as
+    // the provisioning gate's cross-core reads).
+    for (int i = 0;
+         i < 40 && __atomic_load_n(&g_qr_scan_task, __ATOMIC_ACQUIRE) != nullptr;
+         i++) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    if (__atomic_load_n(&g_qr_scan_task, __ATOMIC_ACQUIRE) != nullptr) {
+      return http_send_json(req, "{\"ok\":false,\"error\":\"Scan already active\"}");
+    }
   }
 
 #if FEATURE_CAMERA_PEEK
@@ -6649,6 +6790,7 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   // what marks it as in use — waking first would race the park (codex
   // P2 on #847). Every failure path below must clear the claim.
   g_qr_scan_active = true;
+  g_qr_auto_scan = false;  // a phone session takes over from the boot scan
 
   #if FEATURE_CAMERA_PEEK
   // Explicit user action: wake a standby camera before the scan task
@@ -10606,6 +10748,13 @@ void loop() {
   boot_stage("loop:ble-finalize");   // prime wdt-starvation suspect (~17 s
   ble_discovery_start_if_due();      // post-boot); the breadcrumb convicts
   boot_stage("loop:steady");         // or clears it on the next crash
+
+  #if FEATURE_QR_PROVISION
+  // Onboarding wave: unprovisioned + camera up = scanning for a code is
+  // the safe idle. Stands down the moment WiFi is configured or a phone
+  // session / peek owns the camera.
+  qr_auto_scan_tick(millis());
+  #endif
 
   #if FEATURE_VAULT_SNAPSHOT
   // Adopt a finished seal worker (emits the frame_sealed witness event and
