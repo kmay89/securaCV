@@ -18,6 +18,7 @@
 
 #include "dash_ui.h"
 #include "theme.h"
+#include "canary_mark.h"
 #include "trust.h"
 #include "version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
@@ -475,6 +476,8 @@ void dash_ui_create() {
   lv_obj_align(s_more, LV_ALIGN_BOTTOM_LEFT, 20, -8);
   s_today = mk_label(s_scr, font_caption(), col_muted());
   lv_obj_align(s_today, LV_ALIGN_BOTTOM_LEFT, 20, -28);
+  lv_obj_t* bird = canary_mark_create(s_scr, 64);
+  lv_obj_align(bird, LV_ALIGN_LEFT_MID, 110, -64);
   s_empty = mk_label(s_scr, font_body(), col_muted());
   lv_obj_set_style_text_align(s_empty, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(s_empty, LV_ALIGN_LEFT_MID, 90, 0);
@@ -826,6 +829,8 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
 
   lv_obj_set_style_text_color(s_empty, mcol, 0);
   lv_label_set_text(s_empty, n == 0 ? "Plug in a canary — it finds\nthis display on its own" : "");
+  canary_mark_mood(n == 0 && !st.night ? CanaryMood::Idle
+                                       : CanaryMood::Hidden);
 
   // ── Timeline ──
   lv_obj_set_style_text_color(s_tl_title, mcol, 0);

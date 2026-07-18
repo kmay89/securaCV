@@ -271,14 +271,18 @@ static void apply_brightness(uint32_t now, bool night) {
     // True darkness by default (the #1 bedside-display complaint is "still
     // too bright"). Honesty holds the veto: any Warn+ condition or a dead
     // link keeps the night glow — silence is never rendered as safety.
-    // With ZERO witnesses that veto doesn't apply: nothing is being
-    // guarded, so a standalone bedside clock earns its dark room even
-    // before the hub or the first canary shows up.
+    // A NEVER-CONFIGURED hub is the true standalone signal (review catch:
+    // an empty fleet is also what a configured display sees rebooting
+    // mid-outage, and THAT display must keep the honest glow). A display
+    // that never had a hub guards nothing — it earns its dark room.
     const bool links_ok =
         canary::net::wifi_connected() && canary::net::mqtt_connected();
-    level = (fleet.count() == 0 || (links_ok && fleet.worst(now) < Sev::Warn))
-                ? 0
-                : CD_BRIGHT_NIGHT;
+    if (canary::net::mqtt_broker_is_placeholder() ||
+        (links_ok && fleet.worst(now) < Sev::Warn)) {
+      level = 0;
+    } else {
+      level = CD_BRIGHT_NIGHT;
+    }
 #else
     level = CD_BRIGHT_NIGHT;
 #endif

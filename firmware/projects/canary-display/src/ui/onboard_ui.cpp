@@ -13,6 +13,7 @@
 
 #include "canary/ui/onboard_ui.h"
 #include "canary/ui/theme.h"
+#include "canary/ui/canary_mark.h"
 #include "canary/net/provision_core.h"
 
 namespace canary::ui {
@@ -182,6 +183,17 @@ void onboard_ui_create(const char* ap_ssid, const char* ap_pass) {
     return l;
   };
 
+  // The brand canary welcomes — the first thing anyone meets on first
+  // boot. Hidden while the QR needs the room, hops once on success.
+#ifdef CD_FLAVOR_WATCH
+  lv_obj_t* bird = canary_mark_create(s_content, 40);
+  lv_obj_align(bird, LV_ALIGN_CENTER, 0, -64);
+#else
+  lv_obj_t* bird = canary_mark_create(s_content, 64);
+  lv_obj_align(bird, LV_ALIGN_CENTER, 0, -104);
+#endif
+  (void)bird;
+
 #ifdef CD_FLAVOR_WATCH
   s_title = mk(font_body(), col_text());
   lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 28);
@@ -235,6 +247,7 @@ void onboard_ui_stage(ObStage st, const char* detail) {
   switch (st) {
     case ObStage::Hello:
       show_qr(false);
+      canary_mark_mood(CanaryMood::Idle);
       lv_label_set_text(s_title, "Hello.");
       lv_obj_align(s_title, LV_ALIGN_CENTER, 0, -12);
       lv_label_set_text(s_body, "Let's get you connected.");
@@ -245,6 +258,7 @@ void onboard_ui_stage(ObStage st, const char* detail) {
 
     case ObStage::Join:
       show_qr(true);
+      canary_mark_mood(CanaryMood::Hidden);  // the QR owns the room
 #ifdef CD_FLAVOR_WATCH
       lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 24);
       lv_label_set_text(s_title, "Scan me");
@@ -262,6 +276,7 @@ void onboard_ui_stage(ObStage st, const char* detail) {
 
     case ObStage::PhoneJoined:
       show_qr(false);
+      canary_mark_mood(CanaryMood::Idle);
       lv_obj_align(s_title, LV_ALIGN_CENTER, 0, -16);
       lv_label_set_text(s_title, "Nice - check your phone");
       lv_obj_align(s_body, LV_ALIGN_CENTER, 0, 14);
@@ -272,6 +287,7 @@ void onboard_ui_stage(ObStage st, const char* detail) {
 
     case ObStage::Connecting:
       show_qr(false);
+      canary_mark_mood(CanaryMood::Idle);
       lv_obj_align(s_title, LV_ALIGN_CENTER, 0, -16);
       lv_label_set_text(s_title, "Joining");
       lv_obj_align(s_body, LV_ALIGN_CENTER, 0, 14);
@@ -282,6 +298,7 @@ void onboard_ui_stage(ObStage st, const char* detail) {
 
     case ObStage::Fail:
       show_qr(false);
+      canary_mark_mood(CanaryMood::Hidden);  // no mascot on a miss
       lv_obj_align(s_title, LV_ALIGN_CENTER, 0, -16);
       lv_obj_set_style_text_color(s_title, col_warn(), 0);
       lv_label_set_text(s_title, detail ? detail : "That didn't work");
@@ -293,6 +310,7 @@ void onboard_ui_stage(ObStage st, const char* detail) {
 
     case ObStage::Success:
       show_qr(false);
+      canary_mark_mood(CanaryMood::Happy);   // the hop is earned
       lv_obj_set_style_text_color(s_title, col_text(), 0);
       lv_obj_align(s_title, LV_ALIGN_CENTER, 0, -16);
       lv_label_set_text(s_title, "You're in.");
