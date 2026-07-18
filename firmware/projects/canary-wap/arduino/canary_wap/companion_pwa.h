@@ -1381,7 +1381,15 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
       bluetooth: (p) => {
         if (p.status === 'fail') return 'Bluetooth didn\'t start. Unplug the Canary for five seconds and power it back on, then tap Run again. If it keeps failing, this unit\'s Bluetooth may be faulty — you can still continue; Wi-Fi features work without it.';
         if (p.status === 'skip') {
-          if (p && p.metric && p.metric.safe_mode === true) return 'Bluetooth is paused while the Canary is in recovery mode. It comes back on its own once the device has run steadily — nothing to fix.';
+          if (p && p.metric && p.metric.safe_mode === true) {
+            let why = 'Bluetooth is paused while the Canary is in recovery mode. It comes back on its own once the device has run steadily — nothing to fix.';
+            if (p.metric.last_crash_stage) {
+              why += ' Why it went into recovery: the last crash (' +
+                     (p.metric.last_crash_reason || 'crash') + ') happened during "' +
+                     p.metric.last_crash_stage + '".';
+            }
+            return why;
+          }
           if (p && p.metric && p.metric.init_attempted === false) return 'Bluetooth is still starting up. Give it a few seconds, then tap Run again.';
           return 'Bluetooth is on but idle right now — nothing is paired yet. You can continue and pair later.';
         }
@@ -1396,7 +1404,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
       },
       sd: (p) => {
         if (p.status === 'fail') return 'The SD card couldn\'t be read. Reseat it, or try another microSD card formatted as FAT32, then tap Run again.';
-        if (p.status === 'absent') return 'No SD card is inserted. Insert a microSD card formatted as FAT32 to keep recordings and the witness log on-device. The Canary still runs without one, but stores less history.';
+        if (p.status === 'absent') return 'No SD card could be read. If a card IS inserted: cards over 32 GB come formatted as exFAT, which this Canary can\'t read — reformat it as FAT32. On a XIAO Sense the card slot rides the snap-on expansion board, so reseat that too. If there\'s truly no card, that\'s fine — the Canary runs without one, but stores less history.';
         return '';
       },
       power: (p) => {
@@ -1464,12 +1472,35 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
         : '';
     }
 
-    return { ICON, ICON_LABEL, hintFor, leadFor, verdict, safeModeNote };
+    // Expansion-board correlator. On a XIAO ESP32S3 Sense the camera, the
+    // microphone AND the microSD slot all ride the snap-on Sense expansion
+    // board — when all three fail together, the likely fault is ONE loose
+    // board, not three broken parts. Say so once, above the rows, instead
+    // of letting three separate hints send the user chasing three ghosts.
+    function expansionNote(j) {
+      if (!j || !Array.isArray(j.probes)) return '';
+      const by = {};
+      j.probes.forEach((p) => { if (p && p.name) by[p.name.toLowerCase()] = p; });
+      const bad = (p, hard) => !!p && (p.status === 'fail' || (!hard && p.status === 'absent'));
+      const cam = by.camera, mic = by.microphone, sd = by.sd;
+      const sdBad = !!sd && sd.status !== 'pass' && sd.status !== 'skip';
+      if (bad(cam, false) && bad(mic, true) && sdBad) {
+        return 'Camera, microphone and SD card all failed together — on a XIAO Sense ' +
+               'all three live on the snap-on expansion board. Power off, press the ' +
+               'expansion board firmly onto the main board (both connectors), reseat ' +
+               'the camera ribbon on it, then power on and Run again.';
+      }
+      return '';
+    }
+
+    return { ICON, ICON_LABEL, hintFor, leadFor, verdict, safeModeNote,
+             expansionNote };
   })();
   if (typeof module !== 'undefined' && module.exports) { module.exports = SelftestLogic; }
   /* SELFTEST_LOGIC:END */
 
-  const { ICON, ICON_LABEL, hintFor, leadFor, verdict, safeModeNote } = SelftestLogic;
+  const { ICON, ICON_LABEL, hintFor, leadFor, verdict, safeModeNote,
+          expansionNote } = SelftestLogic;
 
   function escText(s) {
     // The detail/metric strings come from the device, but the device
@@ -1568,7 +1599,10 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
     // in safe mode doesn't read as broken.
     const safeNote = $w('wiz-st-safemode');
     if (safeNote) {
-      const msg = safeModeNote(j);
+      // Recovery banner and the expansion-board correlator share the slot:
+      // the correlator wins when it fires (it names the concrete fix; the
+      // recovery text is covered by the Bluetooth row's note).
+      const msg = expansionNote(j) || safeModeNote(j);
       safeNote.textContent = msg;
       safeNote.style.display = msg ? 'block' : 'none';
     }
