@@ -381,8 +381,12 @@ EOF
   # shell), seed it with the same template so Frigate picks it up directly.
   if [ -d "$FRIGATE_ADDON_CONFIG_DIR" ]; then
     if [ ! -f "${FRIGATE_ADDON_CONFIG_DIR}/config.yml" ] && [ ! -f "${FRIGATE_ADDON_CONFIG_DIR}/config.yaml" ]; then
-      cp "$frigate_conf" "${FRIGATE_ADDON_CONFIG_DIR}/config.yml"
-      log_ok "Frigate config seeded at ${FRIGATE_ADDON_CONFIG_DIR}/config.yml"
+      if cp "$frigate_conf" "${FRIGATE_ADDON_CONFIG_DIR}/config.yml" 2>/dev/null; then
+        log_ok "Frigate config seeded at ${FRIGATE_ADDON_CONFIG_DIR}/config.yml"
+      else
+        log_warn "Could not write ${FRIGATE_ADDON_CONFIG_DIR}/config.yml (permissions?)."
+        log_warn "Copy ${frigate_conf} there manually, or paste it into the Frigate Web UI config editor."
+      fi
     else
       log_ok "Frigate already has a config in ${FRIGATE_ADDON_CONFIG_DIR} — not overwriting"
     fi
