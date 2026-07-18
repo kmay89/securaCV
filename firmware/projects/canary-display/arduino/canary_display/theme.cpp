@@ -43,9 +43,9 @@ const char* badge_text(Badge b) {
     // "unsigned": plain words for a device that simply doesn't sign.
     case Badge::Failed:   return LV_SYMBOL_CLOSE " proof failed";
     case Badge::Unsigned: return "no proof";
-    case Badge::Unknown:  return "—";
+    case Badge::Unknown:  return "-";
   }
-  return "—";
+  return "-";
 }
 
 const char* link_label(Link l) {
@@ -56,7 +56,7 @@ const char* link_label(Link l) {
     case Link::Stale:   return "late";
     case Link::Lost:    return "lost";
     case Link::Offline: return "offline";
-    default:            return "—";
+    default:            return "-";
   }
 }
 

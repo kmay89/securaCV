@@ -139,7 +139,7 @@ void fmt_countdown(char* out, size_t cap, uint32_t now_ms) {
   const uint32_t age_s = (now_ms - s_minted_ms) / 1000;
   const uint32_t s = age_s >= TOKEN_TTL_S ? 0 : TOKEN_TTL_S - age_s;
 #ifdef CD_FLAVOR_WATCH
-  snprintf(out, cap, "fresh %lu:%02lu · tap = new", (unsigned long)(s / 60),
+  snprintf(out, cap, "fresh %lu:%02lu • tap = new", (unsigned long)(s / 60),
            (unsigned long)(s % 60));
 #else
   snprintf(out, cap, "fresh for %lu:%02lu", (unsigned long)(s / 60),
@@ -196,8 +196,8 @@ void build() {
       lv_label_set_text(coach,
                         "Power the canary near this\n"
                         "screen. Point its lens at the\n"
-                        "code — a hand-width to two\n"
-                        "away — and hold it steady.\n\n"
+                        "code - a hand-width to two\n"
+                        "away - and hold it steady.\n\n"
                         "Tilt the glass away from\n"
                         "lights if it glares. When the\n"
                         "canary joins, this screen\n"
@@ -220,7 +220,7 @@ void build() {
       lv_obj_t* body = mk_label(s_scr, font_body(), col_text());
       lv_label_set_text(body,
                         "This glass needs its own\n"
-                        "wifi first — finish setup,\n"
+                        "wifi first - finish setup,\n"
                         "then add canaries here.");
       lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
       lv_obj_align(body, LV_ALIGN_CENTER, 0, 0);
@@ -232,7 +232,7 @@ void build() {
       lv_label_set_text(body,
                         "Your wifi name + password\n"
                         "are too long for a code\n"
-                        "this small — add canaries\n"
+                        "this small - add canaries\n"
                         "from the wall panel.");
       lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
       lv_obj_align(body, LV_ALIGN_CENTER, 0, 0);

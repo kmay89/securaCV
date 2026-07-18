@@ -98,7 +98,7 @@ bool sun_today(int* rise_min, int* set_min) {
 void bedside_on_weather(const char* payload, unsigned len) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
-    canary::log_line("WX", "Weather update didn't parse — ignored.");
+    canary::log_line("WX", "Weather update didn't parse - ignored.");
     return;
   }
   if (!doc["hi"].is<float>() || !doc["lo"].is<float>()) return;
@@ -117,14 +117,14 @@ bool bedside_morning_line(char* out, size_t cap) {
                               (s_wx.hi_c10 + (s_wx.hi_c10 >= 0 ? 5 : -5)) / 10,
                               (s_wx.lo_c10 + (s_wx.lo_c10 >= 0 ? 5 : -5)) / 10);
   if (s_wx.rain_pct > 0 && o < cap) {
-    o += (size_t)snprintf(out + o, cap - o, " · rain %d%%", s_wx.rain_pct);
+    o += (size_t)snprintf(out + o, cap - o, " • rain %d%%", s_wx.rain_pct);
   }
   if (w[0] && o < cap) {
-    o += (size_t)snprintf(out + o, cap - o, " · %s", w);
+    o += (size_t)snprintf(out + o, cap - o, " • %s", w);
   }
   int rise, set;
   if (sun_today(&rise, &set) && o < cap) {
-    snprintf(out + o, cap - o, " · sun up %d:%02d", rise / 60, rise % 60);
+    snprintf(out + o, cap - o, " • sun up %d:%02d", rise / 60, rise % 60);
   }
   return true;
 }
@@ -179,7 +179,7 @@ bool bedside_comfort_line(const canary::fleet::Fleet& fleet, char* out,
   if (pick->humidity_pct >= 0) {
     s_rb = rh_band(pick->humidity_pct, s_rb);
     const char* hw = rh_word(s_rb);
-    if (hw[0] && o < cap) snprintf(out + o, cap - o, " · %s", hw);
+    if (hw[0] && o < cap) snprintf(out + o, cap - o, " • %s", hw);
   }
   return true;
 }

@@ -18,6 +18,7 @@ namespace {
 
 lv_obj_t* s_bird = nullptr;    // container (nullptr when no live bird)
 lv_obj_t* s_eye = nullptr;
+lv_obj_t* s_shine = nullptr;   // eye catchlight (child of the eye)
 lv_obj_t* s_wing = nullptr;
 lv_obj_t* s_beak = nullptr;
 lv_timer_t* s_blink = nullptr;
@@ -117,6 +118,7 @@ void pose_rest() {
   if (!s_bird) return;
   lv_obj_set_size(s_eye, s_eye_d, s_eye_d);
   lv_obj_set_pos(s_eye, s_eye_x, s_eye_y);
+  if (s_shine) lv_obj_clear_flag(s_shine, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_pos(s_wing, s_wing_x, s_wing_y);
   // Size AND position: the calling pose opens the beak taller, and a rest
   // that only moved it would leave the beak stuck open (review catch).
@@ -137,7 +139,9 @@ void pose_worried() {
 
 void pose_asleep() {
   // Eye becomes a line; beak tucks down a notch; everything else still.
+  // The catchlight sleeps too — a closed eye doesn't sparkle.
   pose_rest();
+  if (s_shine) lv_obj_add_flag(s_shine, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_size(s_eye, s_eye_d * 3 / 2, 2);
   lv_obj_set_pos(s_eye, s_eye_x - s_eye_d / 4, s_eye_y + s_eye_d / 2);
   lv_obj_set_y(s_beak, s_beak_y + s_size * 5 / 100);
@@ -338,6 +342,7 @@ void on_delete(lv_event_t*) {
   if (s_wing) lv_anim_del(s_wing, nullptr);
   s_bird = nullptr;
   s_eye = nullptr;
+  s_shine = nullptr;
   s_wing = nullptr;
   s_beak = nullptr;
   s_mood = CanaryMood::Hidden;
@@ -371,12 +376,22 @@ lv_obj_t* canary_mark_create(lv_obj_t* parent, int s) {
   s_beak_y = s * 24 / 100;
   s_beak = dot(c, s_beak_x, s_beak_y, s * 14 / 100, s * 10 / 100,
                col_beak());                                              // beak
-  const int eye = s * 8 / 100 < 3 ? 3 : s * 8 / 100;
-  s_eye_x = s * 66 / 100;
-  s_eye_y = s * 20 / 100;
+  // Cheek blush: a soft warm dot under the eye — reads as "alive and
+  // sweet" at any size, costs one object. Sits on the head, behind the
+  // eye in z-order (added first).
+  dot(c, s * 58 / 100, s * 33 / 100, s * 13 / 100, s * 8 / 100,
+      lv_color_hex(0xF2A38F));
+  const int eye = s * 10 / 100 < 3 ? 3 : s * 10 / 100;  // a touch bigger:
+  s_eye_x = s * 66 / 100;                               // big eyes read as
+  s_eye_y = s * 19 / 100;                               // young and kind
   s_eye_d = eye;
   s_eye = dot(c, s_eye_x, s_eye_y, eye, eye,
               lv_color_hex(0x1A1A1A));                                   // eye
+  // Catchlight: the single white spark that turns a dot into a LOOK. A
+  // child of the eye, so blinks and saccades carry it automatically.
+  const int shine = eye / 3 < 1 ? 1 : eye / 3;
+  s_shine = dot(s_eye, eye / 5, eye / 6, shine, shine,
+                lv_color_hex(0xFFFFFF));
 
   s_bird = c;
   s_size = s;
