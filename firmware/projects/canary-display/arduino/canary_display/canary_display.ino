@@ -80,6 +80,7 @@
 
 #include <lvgl.h>
 #include "lvgl_port.h"
+#include "splash.h"
 #ifdef CD_FLAVOR_WATCH
 #include "glance_ui.h"
 #endif
@@ -558,6 +559,10 @@ void setup() {
   g_display_ok = canary::hal::display_init();
   if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
   if (g_display_ok) {
+    // Boot splash: the canary hops in over the wordmark, then cross-fades
+    // into the face. Runs BEFORE the face exists so the one-live-bird rule
+    // hands off cleanly, and it usefully masks the WiFi bring-up below.
+    canary::ui::splash_play(1700);
 #ifdef CD_FLAVOR_WATCH
     canary::ui::glance_ui_create();
 #endif
