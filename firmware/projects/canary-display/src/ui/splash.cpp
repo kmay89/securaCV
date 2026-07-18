@@ -1,7 +1,17 @@
 // src/ui/splash.cpp — boot splash. See splash.h.
+//
+// Two splashes live here. The FIRST boot ever is a meeting, not a logo:
+// the bird hops in, notices you, and introduces itself in a speech
+// bubble, one short typed line at a time. The craft is in the timing —
+// presence before speech (the bird arrives, settles, and tilts its head
+// BEFORE the first word), a typewriter that breathes at punctuation, and
+// a tap that always advances (respect beats spectacle). Every later boot
+// plays the short familiar splash instead: you have already met.
 #include <config.h>
 #include <Arduino.h>
+#include <Preferences.h>
 #include <lvgl.h>
+#include <string.h>
 
 #include "canary/ui/splash.h"
 #include "canary/ui/canary_mark.h"
@@ -9,6 +19,68 @@
 #include "canary/hal/display.h"
 
 namespace canary::ui {
+
+namespace {
+
+// Rising touch edge, tracked locally: the intro runs before the main
+// loop's gesture machine exists, so it keeps its own tiny one.
+bool tap_edge() {
+  static bool was = false;
+  const auto t = canary::hal::touch_read();
+  const bool edge = t.touched && !was;
+  was = t.touched;
+  return edge;
+}
+
+// Pump LVGL for ms. When skippable, a tap returns true immediately —
+// the user outranks the storyboard.
+bool pump(uint32_t ms, bool skippable) {
+  const uint32_t t0 = millis();
+  while ((int32_t)(millis() - t0) < (int32_t)ms) {
+    lv_timer_handler();
+    if (skippable && tap_edge()) return true;
+    delay(5);
+  }
+  return false;
+}
+
+// Typewriter with a breath at punctuation. A tap reveals the whole line
+// (the second tap, in the caller, moves on) — standard dialogue manners.
+void type_line(lv_obj_t* lbl, const char* text) {
+  char buf[96];
+  const size_t n = strlen(text) < sizeof(buf) - 1 ? strlen(text)
+                                                  : sizeof(buf) - 1;
+  for (size_t i = 1; i <= n; ++i) {
+    memcpy(buf, text, i);
+    buf[i] = '\0';
+    lv_label_set_text(lbl, buf);
+    const char c = text[i - 1];
+    const uint32_t d = (c == '.' || c == '!' || c == '?') ? 260
+                       : (c == ',')                       ? 140
+                                                          : 38;
+    if (pump(d, true)) {
+      lv_label_set_text(lbl, text);
+      return;
+    }
+  }
+}
+
+bool met_before() {
+  Preferences p;
+  if (!p.begin("scv-hello", /*readOnly=*/true)) return false;
+  const bool met = p.getUChar("met", 0) != 0;
+  p.end();
+  return met;
+}
+
+void remember_meeting() {
+  Preferences p;
+  if (!p.begin("scv-hello", /*readOnly=*/false)) return;
+  p.putUChar("met", 1);
+  p.end();
+}
+
+}  // namespace
 
 void splash_play(uint32_t hold_ms) {
   lv_obj_t* prev = lv_scr_act();
@@ -18,16 +90,25 @@ void splash_play(uint32_t hold_ms) {
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
+  const bool first_meeting = !met_before();
+
 #ifdef CD_FLAVOR_WATCH
   constexpr int BIRD = 64;
   constexpr int BIRD_Y = -42, WORD_Y = 26, TAG_Y = 56;
+  // Intro: bird high, bubble CENTERED — the round glass is widest at its
+  // middle, and a wrapped line low on the disc would clip its corners.
+  constexpr int INTRO_BIRD_Y = -70;
+  constexpr int BUB_W = 196, BUB_Y = 5;
 #else
   constexpr int BIRD = 96;
   constexpr int BIRD_Y = -66, WORD_Y = 34, TAG_Y = 78;
+  constexpr int INTRO_BIRD_Y = -80;
+  constexpr int BUB_W = 420, BUB_Y = 24;
 #endif
 
   lv_obj_t* bird = canary_mark_create(scr, BIRD);
-  lv_obj_align(bird, LV_ALIGN_CENTER, 0, BIRD_Y);
+  lv_obj_align(bird, LV_ALIGN_CENTER, 0,
+               first_meeting ? INTRO_BIRD_Y : BIRD_Y);
 
   lv_obj_t* word = lv_label_create(scr);
   lv_obj_set_style_text_font(word, font_title(), 0);
@@ -42,19 +123,108 @@ void splash_play(uint32_t hold_ms) {
   lv_label_set_text(tag, "a canary that shows");
   lv_obj_align(tag, LV_ALIGN_CENTER, 0, TAG_Y);
 
+  // Speech bubble: card surface, soft corners, a small tail rotated out
+  // of a square, pointing up at the speaker.
+  lv_obj_t* bub = lv_obj_create(scr);
+  lv_obj_set_width(bub, BUB_W);
+  lv_obj_set_height(bub, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_color(bub, col_surface(), 0);
+  lv_obj_set_style_bg_opa(bub, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(bub, col_edge(), 0);
+  lv_obj_set_style_border_width(bub, 1, 0);
+  lv_obj_set_style_radius(bub, 12, 0);
+  lv_obj_set_style_pad_all(bub, 10, 0);
+  lv_obj_clear_flag(bub, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_align(bub, LV_ALIGN_CENTER, 0, BUB_Y);
+
+  lv_obj_t* tail = lv_obj_create(scr);
+  lv_obj_set_size(tail, 12, 12);
+  lv_obj_set_style_bg_color(tail, col_surface(), 0);
+  lv_obj_set_style_bg_opa(tail, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(tail, col_edge(), 0);
+  lv_obj_set_style_border_width(tail, 1, 0);
+  lv_obj_set_style_radius(tail, 2, 0);
+#if LVGL_VERSION_MAJOR >= 9
+  lv_obj_set_style_transform_rotation(tail, 450, 0);
+#else
+  lv_obj_set_style_transform_angle(tail, 450, 0);
+#endif
+  lv_obj_clear_flag(tail, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* line = lv_label_create(bub);
+  lv_obj_set_width(line, LV_PCT(100));
+  lv_label_set_long_mode(line, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(line, font_label(), 0);
+  lv_obj_set_style_text_color(line, col_text(), 0);
+  lv_label_set_text(line, "");
+
   lv_scr_load(scr);
   canary::hal::backlight_set(CD_BRIGHT_DAY);
-  canary_mark_mood(CanaryMood::Happy);  // the hop is the hello
 
-  uint32_t t0 = millis();
-  while ((int32_t)(millis() - t0) < (int32_t)hold_ms) {
-    lv_timer_handler();
-    delay(5);
+  if (first_meeting) {
+    // ── The first meeting ────────────────────────────────────────────
+    // Wordmark waits in the wings; the bird speaks first.
+    lv_obj_add_flag(word, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(tag, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
+
+    // Presence before speech: an empty beat, the hop in, a settle, and
+    // the little head-tilt that says "it sees you."
+    pump(350, false);
+    canary_mark_mood(CanaryMood::Happy);  // the hop is the hello
+    pump(900, true);
+    canary_mark_mood(CanaryMood::Idle);
+    pump(500, true);
+    canary_mark_react(CanaryReact::Tilt);
+    pump(450, true);
+
+    // The tail hangs off the bubble's top edge, under the bird.
+    lv_obj_align_to(tail, bub, LV_ALIGN_OUT_TOP_MID, 0, 5);
+    lv_obj_clear_flag(bub, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(tail, LV_OBJ_FLAG_HIDDEN);
+
+    // Four short lines. Warm, plain, and honest — the privacy promise is
+    // spoken by the bird itself, because that is who keeps it.
+    struct Beat { const char* text; uint32_t hold_ms; };
+    static const Beat BEATS[] = {
+        {"Oh! Hello.", 1100},
+        {"I'm your canary. I keep watch, so you don't have to.", 1600},
+        {"What I see stays here. That's a promise.", 1600},
+        {"Ready when you are.", 1000},
+    };
+    constexpr size_t N_BEATS = sizeof(BEATS) / sizeof(BEATS[0]);
+    for (size_t i = 0; i < N_BEATS; ++i) {
+      if (i == N_BEATS - 1) canary_mark_mood(CanaryMood::Happy);
+      type_line(line, BEATS[i].text);
+      pump(BEATS[i].hold_ms, true);
+    }
+
+    // The bubble bows out; the wordmark takes the stage for one beat, so
+    // the name lands AFTER the friend does.
+    lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(word, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(tag, LV_OBJ_FLAG_HIDDEN);
+    pump(900, true);
+
+    remember_meeting();
+  } else {
+    // ── Hello again ──────────────────────────────────────────────────
+    // The short familiar splash: hop, wordmark — and the tagline becomes
+    // a quiet greeting, because you two have already met. No bubble, no
+    // extra time; a returning boot must never feel slower than home.
+    lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(tag, "hello again");
+    canary_mark_mood(CanaryMood::Happy);
+    pump(hold_ms, false);
   }
+
   // Cross-fade home; auto-delete tears the splash (and, via its DELETE
   // hook, the bird's timers) down so the next face starts clean.
   lv_scr_load_anim(prev, LV_SCR_LOAD_ANIM_FADE_ON, 380, 0, true);
-  t0 = millis();
+  uint32_t t0 = millis();
   while ((int32_t)(millis() - t0) < 420) {
     lv_timer_handler();
     delay(5);
