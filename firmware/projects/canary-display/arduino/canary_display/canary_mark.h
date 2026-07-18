@@ -25,6 +25,19 @@ enum class CanaryMood : uint8_t {
   Worried,     // eye narrowed, wing half-raised, scanning saccades
   Distressed,  // pacing, fidgeting wing — maintenance overdue
   Asleep,      // eye a line, head tucked, slow breath, no flourishes
+  Searching,   // a witness is late: leaning to the edge, looking out
+  Calling,     // a witness is lost: beak open, calling for them
+};
+
+// One-shot reactions layered over the current mood, then the pose settles
+// back. Honesty rule holds: each maps 1:1 to a log-able event. Ignored
+// while Hidden or Asleep — never startle a sleeping bird. Tilt/Startle
+// are rate-limited; Greeting/Joyful (rare by construction) are not.
+enum class CanaryReact : uint8_t {
+  Tilt,      // a verified pass just completed: brief curious head-tilt
+  Startle,   // the glass was touched while the bird is on stage
+  Greeting,  // first wake of the day: slow wing stretch
+  Joyful,    // trust milestone (first clean week / month): the song
 };
 
 // Builds the bird inside `parent` (size_px square). Recreating (e.g. on a
@@ -33,6 +46,8 @@ enum class CanaryMood : uint8_t {
 lv_obj_t* canary_mark_create(lv_obj_t* parent, int size_px);
 
 void canary_mark_mood(CanaryMood m);
+
+void canary_mark_react(CanaryReact r);
 
 // Trust ladder (consecutive clean days, from the mood engine): gates the
 // rare idle flourishes so a long-healthy system is visibly different from

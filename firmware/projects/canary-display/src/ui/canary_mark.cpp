@@ -62,10 +62,11 @@ void blink_cb(lv_timer_t* t) {
     s_eye_shut = false;
     // Next blink lands 2.4–4 s out — dithered off the tick so a room of
     // displays never blinks in lockstep. A worried bird blinks faster.
-    const uint32_t base = s_mood == CanaryMood::Worried ||
-                                  s_mood == CanaryMood::Distressed
-                              ? 1500
-                              : 2400;
+    const bool uneasy = s_mood == CanaryMood::Worried ||
+                        s_mood == CanaryMood::Distressed ||
+                        s_mood == CanaryMood::Searching ||
+                        s_mood == CanaryMood::Calling;
+    const uint32_t base = uneasy ? 1500 : 2400;
     lv_timer_set_period(t, base + (lv_tick_get() % 1600));
   } else {
     lv_obj_add_flag(s_eye, LV_OBJ_FLAG_HIDDEN);
@@ -139,6 +140,35 @@ void pose_asleep() {
   lv_obj_set_y(s_beak, s_beak_y + s_size * 5 / 100);
 }
 
+void pose_searching() {
+  // Someone is late: the bird leans toward the edge it faces, eye held
+  // outward and fully open — looking FOR them, not afraid of them.
+  pose_rest();
+  lv_obj_set_x(s_bird, s_base_x + s_size * 6 / 100);
+  lv_obj_set_x(s_eye, s_eye_x + s_eye_d / 2 + 1);
+}
+
+void pose_calling() {
+  // Someone is lost: beak open (taller, opening downward), wing half
+  // raised — the body says it is calling out for them.
+  pose_rest();
+  lv_obj_set_height(s_beak, s_size * 16 / 100);
+  lv_obj_set_y(s_wing, s_wing_y - s_size * 4 / 100);
+}
+
+// Restore whatever pose the CURRENT mood owns (used by reactions and any
+// settle path — never blindly rest).
+void pose_current() {
+  switch (s_mood) {
+    case CanaryMood::Worried:
+    case CanaryMood::Distressed: pose_worried(); break;
+    case CanaryMood::Searching:  pose_searching(); break;
+    case CanaryMood::Calling:    pose_calling(); break;
+    case CanaryMood::Asleep:     pose_asleep(); break;
+    default:                     pose_rest(); break;
+  }
+}
+
 // ── Idle flourish scheduler-lite (the Flipper manifest, miniaturized) ───
 //
 // Every 25–60 s (jittered) in Idle, pick one small flourish by weight;
@@ -148,9 +178,10 @@ void pose_asleep() {
 void wing_settle_cb(lv_anim_t*) {
   if (!s_wing) return;
   // Settle back into the CURRENT pose, not blindly into rest — a worried
-  // bird keeps its half-raised wing after a fidget.
+  // (or calling) bird keeps its half-raised wing after a fidget.
   const bool lifted = s_mood == CanaryMood::Worried ||
-                      s_mood == CanaryMood::Distressed;
+                      s_mood == CanaryMood::Distressed ||
+                      s_mood == CanaryMood::Calling;
   lv_obj_set_y(s_wing, lifted ? s_wing_y - s_size * 4 / 100 : s_wing_y);
 }
 
@@ -199,6 +230,25 @@ void flourish_look() {
   s_look_timer = lv_timer_create(look_back_cb, 900, nullptr);
 }
 
+// Searching scan: glance back toward the room, then return to the held
+// outward gaze (look_back_cb restores rest-x; the searching pose is
+// re-asserted so the outward hold survives the scan).
+void search_scan_back_cb(lv_timer_t* t) {
+  if (s_bird && s_mood == CanaryMood::Searching) pose_searching();
+  lv_timer_del(t);
+  s_look_timer = nullptr;
+}
+
+void flourish_search_scan() {
+  if (!s_eye) return;
+  if (s_look_timer) {
+    lv_timer_del(s_look_timer);
+    s_look_timer = nullptr;
+  }
+  lv_obj_set_x(s_eye, s_eye_x - (s_eye_d / 2 + 1));  // check over the shoulder
+  s_look_timer = lv_timer_create(search_scan_back_cb, 700, nullptr);
+}
+
 void flourish_cb(lv_timer_t* t) {
   if (!s_bird || lv_obj_has_flag(s_bird, LV_OBJ_FLAG_HIDDEN)) return;
   // Re-jitter the cadence every fire so the bird never feels metronomic.
@@ -224,6 +274,17 @@ void flourish_cb(lv_timer_t* t) {
       // Scanning saccades only — no play while something is late.
       flourish_look();
       break;
+    case CanaryMood::Searching:
+      // Mostly the held outward watch; sometimes a quick scan back over
+      // the shoulder, sometimes a small hop toward the edge.
+      if (roll < 60) flourish_search_scan();
+      else start_hop();
+      break;
+    case CanaryMood::Calling:
+      // Restless body while calling — wing fidget or a glance around.
+      if (roll < 50) flourish_wing(2, 220);
+      else flourish_look();
+      break;
     case CanaryMood::Distressed:
       // Fidgety wing, restless glances.
       if (roll < 50) flourish_wing(3, 160);
@@ -232,6 +293,22 @@ void flourish_cb(lv_timer_t* t) {
     default:
       break;  // Asleep/Happy/Hidden: no flourishes
   }
+}
+
+// ── One-shot reactions (event-driven, layered over the mood) ─────────────
+
+lv_timer_t* s_react_timer = nullptr;  // tracked pose-restore one-shot
+uint32_t s_last_small_react = 0;      // Tilt/Startle ration clock
+
+void react_restore_cb(lv_timer_t* t) {
+  if (s_bird) pose_current();
+  lv_timer_del(t);
+  s_react_timer = nullptr;
+}
+
+void arm_react_restore(uint32_t ms) {
+  if (s_react_timer) lv_timer_del(s_react_timer);
+  s_react_timer = lv_timer_create(react_restore_cb, ms, nullptr);
 }
 
 void on_delete(lv_event_t*) {
@@ -248,6 +325,10 @@ void on_delete(lv_event_t*) {
   if (s_look_timer) {
     lv_timer_del(s_look_timer);
     s_look_timer = nullptr;
+  }
+  if (s_react_timer) {
+    lv_timer_del(s_react_timer);
+    s_react_timer = nullptr;
   }
   if (s_bird) lv_anim_del(s_bird, nullptr);
   if (s_wing) lv_anim_del(s_wing, nullptr);
@@ -306,6 +387,7 @@ lv_obj_t* canary_mark_create(lv_obj_t* parent, int s) {
 
 void canary_mark_mood(CanaryMood m) {
   if (!s_bird || m == s_mood) return;
+  const CanaryMood prev = s_mood;
   s_mood = m;
   if (m == CanaryMood::Hidden) {
     lv_anim_del(s_bird, nullptr);
@@ -315,6 +397,9 @@ void canary_mark_mood(CanaryMood m) {
     lv_timer_pause(s_flourish);
     return;
   }
+  // Undo the searching lean before re-reading the base, or the offset
+  // would be baked into s_base_x and the bird would creep edgeward.
+  if (prev == CanaryMood::Searching) lv_obj_set_x(s_bird, s_base_x);
   s_base_y = lv_obj_get_y(s_bird);
   s_base_x = lv_obj_get_x(s_bird);
   lv_obj_clear_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
@@ -339,6 +424,18 @@ void canary_mark_mood(CanaryMood m) {
       lv_timer_resume(s_flourish);
       start_bob(1100, 2);  // breath quickens a touch
       break;
+    case CanaryMood::Searching:
+      pose_searching();
+      lv_timer_resume(s_blink);
+      lv_timer_resume(s_flourish);
+      start_bob(1100, 2);
+      break;
+    case CanaryMood::Calling:
+      pose_calling();
+      lv_timer_resume(s_blink);
+      lv_timer_resume(s_flourish);
+      start_bob(1100, 2);
+      break;
     case CanaryMood::Happy:
       pose_rest();
       lv_timer_resume(s_blink);
@@ -355,5 +452,46 @@ void canary_mark_mood(CanaryMood m) {
 }
 
 void canary_mark_trust(uint16_t days) { s_trust_days = days; }
+
+void canary_mark_react(CanaryReact r) {
+  // Never while off stage, and never startle a sleeping bird (night is
+  // sacred — the greeting fires after the wake transition, not during).
+  if (!s_bird || s_mood == CanaryMood::Hidden || s_mood == CanaryMood::Asleep)
+    return;
+  const uint32_t now = lv_tick_get();
+  const bool small = r == CanaryReact::Tilt || r == CanaryReact::Startle;
+  if (small && now - s_last_small_react < 8000) return;  // rationed
+  if (small) s_last_small_react = now;
+
+  switch (r) {
+    case CanaryReact::Tilt:
+      // Curious head-cock: beak dips while the eye rises a step.
+      lv_obj_set_y(s_beak, s_beak_y + s_size * 3 / 100);
+      lv_obj_set_y(s_eye, lv_obj_get_y(s_eye) - s_size * 2 / 100);
+      arm_react_restore(700);
+      break;
+    case CanaryReact::Startle: {
+      // Quick hop with a momentarily wide eye.
+      const int d = s_eye_d + 2;
+      lv_obj_set_size(s_eye, d, d);
+      lv_obj_set_pos(s_eye, s_eye_x - 1, s_eye_y - 1);
+      start_hop();
+      arm_react_restore(500);
+      break;
+    }
+    case CanaryReact::Greeting:
+      // Morning stretch: one slow, high wing lift.
+      flourish_wing(1, 700);
+      arm_react_restore(1600);
+      break;
+    case CanaryReact::Joyful:
+      // The song: a hop with a long double ruffle. Rare by construction —
+      // the glue only sends it at a trust milestone.
+      start_hop();
+      flourish_wing(6, 150);
+      arm_react_restore(2000);
+      break;
+  }
+}
 
 }  // namespace canary::ui
