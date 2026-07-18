@@ -77,10 +77,12 @@
 #include "canary/hal/display.h"
 #include "canary/hal/chime.h"
 #include "canary/hal/core_compat.h"
+#include "canary/glass_settings.h"
 
 #include <lvgl.h>
 #include "canary/ui/lvgl_port.h"
 #include "canary/ui/splash.h"
+#include "canary/ui/settings_ui.h"
 #ifdef CD_FLAVOR_WATCH
 #include "canary/ui/glance_ui.h"
 #endif
@@ -234,10 +236,16 @@ static bool local_time(int* hh, int* mm, int* yday = nullptr) {
 static bool in_quiet_hours() {
   int hh = 0;
   if (!local_time(&hh, nullptr)) return false;  // unknown time = day mode
-  if (CD_QUIET_START_HOUR == CD_QUIET_END_HOUR) return false;
-  if (CD_QUIET_START_HOUR < CD_QUIET_END_HOUR)
-    return hh >= CD_QUIET_START_HOUR && hh < CD_QUIET_END_HOUR;
-  return hh >= CD_QUIET_START_HOUR || hh < CD_QUIET_END_HOUR;  // wraps midnight
+  // Runtime schedule (settings wave); CD_QUIET_* are the first-boot seeds.
+  const auto& gs = canary::glass::settings();
+  return canary::glass::hours_in_window(hh, gs.night_start_hh, gs.night_end_hh);
+}
+
+// Wake-window length: the day window is generous; a night peek is short and
+// user-tunable (settings wave, the Hatch tap-to-peek pattern).
+static uint32_t wake_window_ms(bool night) {
+  if (!night) return CD_TOUCH_WAKE_MS;
+  return (uint32_t)canary::glass::settings().peek_s * 1000UL;
 }
 
 // ----------------------------------------------------------------------------
@@ -254,45 +262,54 @@ static bool in_quiet_hours() {
 // nothing but an unacked Alert/Tamper ever overrides the Night floor.
 static void apply_brightness(uint32_t now, bool night) {
   using canary::fleet::Sev;
+  namespace glass = canary::glass;
+  // A live brightness editor / black-point wizard IS the brightness policy
+  // while it's open (The Screen Is the Preview) — stand down until it exits.
+  if (canary::ui::settings_ui_owns_backlight()) return;
   auto& fleet = canary::fleet::the_fleet();
   const bool wake = (int32_t)(now - g_wake_until_ms) < 0;
   const bool urgent = fleet.worst(now) >= Sev::Alert && !fleet.ack_active(now);
 
-  uint8_t level;
-  if (urgent) {
-    level = CD_BRIGHT_DAY;
-  } else if (wake) {
-    // Nightstand finding: a 3 a.m. time-check must not blast day
-    // brightness into dark-adapted eyes — night wakes peek dim.
-    level = night ? CD_BRIGHT_PEEK : CD_BRIGHT_DAY;
-  } else if (!night) {
-    level = CD_BRIGHT_AMBIENT;
-  } else {
-#if defined(FEATURE_NIGHT_BLACKOUT) && FEATURE_NIGHT_BLACKOUT
-    // True darkness by default (the #1 bedside-display complaint is "still
-    // too bright"). Honesty holds the veto: any Warn+ condition or a dead
-    // link keeps the night glow — silence is never rendered as safety.
-    // A NEVER-CONFIGURED hub is the true standalone signal (review catch:
-    // an empty fleet is also what a configured display sees rebooting
-    // mid-outage, and THAT display must keep the honest glow). A display
-    // that never had a hub guards nothing — it earns its dark room.
-    const bool links_ok =
-        canary::net::wifi_connected() && canary::net::mqtt_connected();
-    if (canary::net::mqtt_broker_is_placeholder() ||
-        (links_ok && fleet.worst(now) < Sev::Warn)) {
-      level = 0;
-    } else {
-      level = CD_BRIGHT_NIGHT;
-    }
-#else
-    level = CD_BRIGHT_NIGHT;
-#endif
-  }
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
   // Sunrise ramp override: dawn outranks the ladder, never dims it.
   const int wl = canary::care::wake_alarm_backlight();
-  if (wl > (int)level) level = (uint8_t)wl;
+#else
+  const int wl = -1;
 #endif
+
+  uint8_t level;
+  if (urgent) {
+    level = glass::day_level();
+  } else if (wake) {
+    // Nightstand finding: a 3 a.m. time-check must not blast day
+    // brightness into dark-adapted eyes — night wakes peek dim.
+    level = night ? CD_BRIGHT_PEEK : glass::day_level();
+  } else if (!night) {
+    level = glass::ambient_level();
+  } else {
+    // Steady night: the runtime "screen at night" choice, on the fine
+    // 13-bit night profile so the calibrated floor is actually reachable.
+    if (wl > 0) {
+      canary::hal::backlight_set((uint8_t)wl);  // dawn is already rising
+      return;
+    }
+    bool dark_ok = false;
+    if (glass::settings().night_screen == glass::NIGHT_SCREEN_OFF) {
+      // Going dark is a choice, but honesty holds the veto: any Warn+
+      // condition or a dead link keeps the night glow — silence is never
+      // rendered as safety. A NEVER-CONFIGURED hub is the true standalone
+      // signal (an empty fleet is also what a configured display sees
+      // rebooting mid-outage, and THAT display must keep the honest glow).
+      const bool links_ok =
+          canary::net::wifi_connected() && canary::net::mqtt_connected();
+      dark_ok = canary::net::mqtt_broker_is_placeholder() ||
+                (links_ok && fleet.worst(now) < Sev::Warn);
+    }
+    canary::hal::backlight_night_set(dark_ok ? 0
+                                             : glass::night_duty_effective());
+    return;
+  }
+  if (wl > (int)level) level = (uint8_t)wl;
   canary::hal::backlight_set(level);
 }
 
@@ -342,6 +359,43 @@ static void handle_touch(uint32_t now) {
   const auto s = canary::hal::touch_read();
   auto& fleet = canary::fleet::the_fleet();
 
+  // If the settings surface closed out from under a held finger (urgent
+  // close on a live alert), the remainder of that touch must be swallowed —
+  // otherwise the base face sees the same held finger age past the
+  // long-press deadline and fires an acknowledge/mute the user never made
+  // (review catch). Marking the long-press as already-fired parks both the
+  // hold action and the release tap.
+  static bool s_settings_had_touch = false;
+  if (s_settings_had_touch && !canary::ui::settings_ui_active()) {
+    if (g_touch_down) g_longpress_fired = true;
+    s_settings_had_touch = false;
+  }
+
+  // While the settings surface is open it owns every gesture: taps route to
+  // its zones, long-press is the quick way out, and the face's page/ack/
+  // mute gestures stay parked. The wake window is pinned so the glass never
+  // dims mid-adjustment.
+  if (canary::ui::settings_ui_active()) {
+    s_settings_had_touch = true;
+    g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+    if (s.touched && !g_touch_down) {
+      g_touch_down = true;
+      g_touch_down_ms = now;
+      g_touch_x = s.x;
+      g_touch_y = s.y;
+      g_longpress_fired = false;
+    } else if (s.touched && g_touch_down && !g_longpress_fired &&
+               (int32_t)(now - g_touch_down_ms) >= (int32_t)CD_LONGPRESS_MS) {
+      g_longpress_fired = true;
+      canary::ui::settings_ui_close();
+    } else if (!s.touched && g_touch_down) {
+      g_touch_down = false;
+      if (!g_longpress_fired)
+        canary::ui::settings_ui_handle_tap(g_touch_x, g_touch_y);
+    }
+    return;
+  }
+
 #if defined(CD_FLAVOR_DASH) && defined(FEATURE_CARE) && FEATURE_CARE
   // Cleaning mode (transparency sheet -> "wipe the glass"): a wall panel
   // must survive a wet cloth without acking an alarm. Swallow everything
@@ -371,6 +425,15 @@ static void handle_touch(uint32_t now) {
     g_longpress_fired = true;
     ui_ack_hold(false);
     g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+
+#ifdef CD_FLAVOR_WATCH
+    // Settings doorway (settings wave): a long-press on its page opens the
+    // settings surface — never the ack, never a mute.
+    if (g_page == canary::ui::glance_settings_page()) {
+      canary::ui::settings_ui_open();
+      return;
+    }
+#endif
 
 #if defined(FEATURE_CARE) && FEATURE_CARE
     // Long-press routes by what the finger is ON (the panel "bypass"
@@ -409,9 +472,12 @@ static void handle_touch(uint32_t now) {
     g_touch_down = false;
     ui_ack_hold(false);
     if (g_longpress_fired) return;
-    // Tap. First tap in the dark only wakes; a lit tap navigates.
-    const bool was_awake = (int32_t)(now - g_wake_until_ms) < 0 || !in_quiet_hours();
-    g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
+    // Tap. First tap in the dark only wakes; a lit tap navigates. A night
+    // wake is a short peek (user-tunable), a day wake the full window.
+    const bool night_now = in_quiet_hours();
+    const bool was_awake = (int32_t)(now - g_wake_until_ms) < 0 || !night_now;
+    g_wake_until_ms = now + (was_awake ? CD_TOUCH_WAKE_MS
+                                       : wake_window_ms(night_now));
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
     // A live wake alarm owns the tap: dismiss, light the peek, done.
     if (canary::care::wake_alarm_tap()) {
@@ -449,6 +515,11 @@ static void render(uint32_t now) {
   if (!g_display_ok) return;
   auto& fleet = canary::fleet::the_fleet();
   const bool night = in_quiet_hours();
+  // "Night look" (settings wave): the red-shifted palette is the default
+  // night face, but it's a preference — with it off, night keeps the day
+  // palette at the calibrated night glow. Brightness policy runs on the
+  // schedule either way.
+  const bool night_look = night && canary::glass::settings().red_shift != 0;
 
 #ifdef CD_FLAVOR_WATCH
   // Auto-return to the overview page after idle.
@@ -456,7 +527,7 @@ static void render(uint32_t now) {
 
   canary::ui::GlanceState st;
   st.page = g_page;
-  st.night = night;
+  st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
@@ -465,7 +536,7 @@ static void render(uint32_t now) {
 #endif
 #ifdef CD_FLAVOR_DASH
   canary::ui::DashState st;
-  st.night = night;
+  st.night = night_look;
   st.wifi_ok = canary::net::wifi_connected();
   st.mqtt_ok = canary::net::mqtt_connected();
   st.acked = fleet.ack_active(now);
@@ -533,8 +604,13 @@ void setup() {
            CD_FLEET_MAX_DEVICES,
            (unsigned long)(CD_STALE_AFTER_MS / 1000),
            (unsigned long)(CD_LOST_AFTER_MS / 1000));
+  // Runtime screen settings (settings wave): load before anything reads
+  // quiet hours or brightness. Compile-time CD_* values are first-boot
+  // seeds; the on-glass settings surface owns them from here.
+  canary::glass::settings_init();
   boot_kvf("Quiet",  "%02d:00-%02d:00 local (%s)",
-           CD_QUIET_START_HOUR, CD_QUIET_END_HOUR, CD_TZ);
+           canary::glass::settings().night_start_hh,
+           canary::glass::settings().night_end_hh, CD_TZ);
   boot_blank();
 
   // Trust store before the network: retained chain payloads replay the
@@ -691,6 +767,16 @@ void loop() {
   //    network (staleness deadlines run locally) ──
   handle_touch(now);
   fleet.tick(now);
+
+  // Settings wave: debounced flash commit + settings-surface housekeeping
+  // (idle close, live wizard clock, instant close on a real alarm).
+  canary::glass::settings_loop(now);
+  {
+    using canary::fleet::Sev;
+    const bool urgent =
+        fleet.worst(now) >= Sev::Alert && !fleet.ack_active(now);
+    canary::ui::settings_ui_tick(now, urgent);
+  }
 
 #if defined(FEATURE_PRESENCE_WAKE) && FEATURE_PRESENCE_WAKE
   // Presence-wake (spec §3): a fresh Notice+ event promotes Ambient to

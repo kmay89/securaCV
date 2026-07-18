@@ -100,6 +100,14 @@ lv_obj_t* s_pg_about = nullptr;
 lv_obj_t* s_about_title = nullptr;
 lv_obj_t* s_about_body = nullptr;
 
+// Settings doorway (settings wave): the rotation's last stop. It only
+// invites — the long-press opens the real settings surface (settings_ui),
+// so a sleepy tap-cycle past it can never rearrange the screen.
+lv_obj_t* s_pg_settings = nullptr;
+lv_obj_t* s_set_glyph = nullptr;
+lv_obj_t* s_set_title = nullptr;
+lv_obj_t* s_set_hint = nullptr;
+
 // Proof page (trailblazer spec §1)
 lv_obj_t* s_pg_proof = nullptr;
 lv_obj_t* s_proof_card = nullptr;   // white ground behind the QR
@@ -188,9 +196,11 @@ void fade_cb(void* var, int32_t v) {
 }
 
 // Page order after the per-device details: events, [history], [roll call],
-// proof, transparency. One map so the count and the dispatch can't drift.
+// proof, transparency, settings. One map so the count and the dispatch
+// can't drift.
 struct PageMap {
   int events = -1, history = -1, rollcall = -1, proof = -1, about = -1;
+  int settings = -1;
   int count = 0;
 };
 
@@ -206,6 +216,7 @@ PageMap page_map(int devices) {
 #endif
   m.proof = idx++;
   m.about = idx++;
+  m.settings = idx++;
   m.count = idx;
   return m;
 }
@@ -216,6 +227,7 @@ void show_page(lv_obj_t* page) {
   // rationed CPU).
   if (page != s_pg_halo) breathe(nullptr, false);
   lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev, s_pg_proof, s_pg_about,
+                       s_pg_settings,
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
                        s_pg_history,
 #endif
@@ -665,6 +677,15 @@ void update_about(const Fleet& fleet, uint32_t now, const GlanceState& st) {
       CANARY_FW_VERSION);
 }
 
+// Settings doorway: recolors with the night palette like every page.
+void update_settings_page(const GlanceState& st) {
+  const lv_color_t tcol = st.night ? ncol_text() : col_text();
+  const lv_color_t mcol = st.night ? ncol_muted() : col_muted();
+  lv_obj_set_style_text_color(s_set_glyph, mcol, 0);
+  lv_obj_set_style_text_color(s_set_title, tcol, 0);
+  lv_obj_set_style_text_color(s_set_hint, mcol, 0);
+}
+
 // Proof page: QR of the most urgent witness's signed chain head — the
 // exact bytes it published, plus the pinned pubkey (spec §1). Dark-on-
 // light on purpose: scanners want it, and scanning implies the user is
@@ -735,6 +756,8 @@ void heartbeat_pulse() {
 // ── Public API ───────────────────────────────────────────────────────────
 
 int glance_page_count() { return page_map(the_fleet().count()).count; }
+
+int glance_settings_page() { return page_map(the_fleet().count()).settings; }
 
 void glance_ui_create() {
   s_scr = lv_scr_act();
@@ -859,6 +882,19 @@ void glance_ui_create() {
   s_proof_cap = mk_label(s_pg_proof, font_caption(), col_muted());
   lv_obj_align(s_proof_cap, LV_ALIGN_BOTTOM_MID, 0, -26);
 
+  // ── Settings doorway (settings wave) ──
+  s_pg_settings = mk_page(s_scr);
+  s_set_glyph = mk_label(s_pg_settings, font_hero(), col_muted());
+  lv_label_set_text(s_set_glyph, LV_SYMBOL_SETTINGS);
+  lv_obj_align(s_set_glyph, LV_ALIGN_CENTER, 0, -30);
+  s_set_title = mk_label(s_pg_settings, font_body(), col_text());
+  lv_label_set_text(s_set_title, "screen settings");
+  lv_obj_align(s_set_title, LV_ALIGN_CENTER, 0, 18);
+  s_set_hint = mk_label(s_pg_settings, font_caption(), col_muted());
+  lv_label_set_text(s_set_hint, "hold to open");
+  lv_obj_align(s_set_hint, LV_ALIGN_CENTER, 0, 44);
+  lv_obj_add_flag(s_pg_settings, LV_OBJ_FLAG_HIDDEN);
+
   // ── Heartbeat ring (starts invisible; pulses only when earned) ──
   s_beat_ring = mk_ring(s_scr, 238, 2);
   lv_obj_set_style_arc_color(s_beat_ring, col_ok(), LV_PART_MAIN);
@@ -894,7 +930,8 @@ void glance_ui_update(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     else if (page == m.rollcall) show_page(s_pg_rc);
 #endif
     else if (page == m.proof)  show_page(s_pg_proof);
-    else                       show_page(s_pg_about);
+    else if (page == m.about)  show_page(s_pg_about);
+    else                       show_page(s_pg_settings);
   }
 
   if (page == 0)             update_halo(fleet, now, st);
@@ -907,7 +944,8 @@ void glance_ui_update(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   else if (page == m.rollcall) update_rollcall(fleet, now, st);
 #endif
   else if (page == m.proof)  update_proof(fleet, now, st);
-  else                       update_about(fleet, now, st);
+  else if (page == m.about)  update_about(fleet, now, st);
+  else                       update_settings_page(st);
 
   // The heartbeat: earned, daytime, once a minute (spec §4). Absence is
   // information — any lesser state and the ring stays dark.

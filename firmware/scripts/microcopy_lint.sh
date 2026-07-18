@@ -283,6 +283,7 @@ GLASS_SOURCES=(
   "$GLASS_ROOT/src/care/bedside.cpp"
   "$GLASS_ROOT/src/care/wake_glue.cpp"
   "$GLASS_ROOT/src/ui/splash.cpp"
+  "$GLASS_ROOT/src/ui/settings_ui.cpp"
 )
 GLASS_BANNED='broker|dBm|RSSI|payload|MQTT|mDNS|NVS|TOFU|endpoint'
 

@@ -99,6 +99,8 @@
 #define CD_TOUCH_WAKE_MS        20000   // backlight back on after a tap, then off
 #define CD_LONGPRESS_MS         900     // acknowledge gesture
 
+// First-boot seeds — the on-glass settings surface owns the runtime
+// schedule (glass_settings.h).
 #define CD_QUIET_START_HOUR     22
 #define CD_QUIET_END_HOUR       7
 #ifndef CD_TZ

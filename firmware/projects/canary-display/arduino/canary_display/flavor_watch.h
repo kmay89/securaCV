@@ -52,8 +52,9 @@
 // ── Nightstand wave (display_nightstand.md) ──
 #define FEATURE_NIGHT_BLACKOUT      0   // bench verdict: LCD backlight bleed makes
                                         // "off" a glowing gray panel - worse than a
-                                        // calm dim glow. Stays opt-in until the
-                                        // settings panel + floor calibration land.
+                                        // calm dim glow. Now just the first-boot
+                                        // seed for the runtime "at night" choice
+                                        // (settings surface, glass_settings.h).
 #define FEATURE_COMFORT_WORDS       1   // bedroom temp/humidity as sleep-science words
 #define FEATURE_HUB_WEATHER         1   // hub-republished forecast (securacv/env/weather)
 #define FEATURE_WAKE_ALARM          1   // on-device two-phase gentle wake (needs the
@@ -113,8 +114,8 @@
 #define CD_TOUCH_WAKE_MS        15000   // full brightness after a tap, then re-dim
 #define CD_LONGPRESS_MS         900     // acknowledge gesture
 
-// Quiet hours (local time; requires SNTP). Compiled defaults — NVS-backed
-// runtime overrides are a follow-up alongside the settings UI.
+// Quiet hours (local time; requires SNTP). First-boot seeds — the on-glass
+// settings surface owns the runtime schedule (glass_settings.h).
 #define CD_QUIET_START_HOUR     22
 #define CD_QUIET_END_HOUR       7
 // POSIX TZ string for local time. Default UTC; set yours in secrets.h

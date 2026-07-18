@@ -30,6 +30,13 @@ void display_flush();
 // HAL maps them onto what the glass can actually do.
 void backlight_set(uint8_t level);
 
+// Night-profile backlight: 1 kHz / 13-bit PWM whose bottom steps subdivide
+// what the day profile calls "duty 1" — the resolution the calibrated night
+// floor needs (settings wave). Watch swaps the LEDC profile on the fly and
+// swaps back on the next backlight_set(); dash renders any duty > 0 as on.
+// Duty range 0..8191 (canary::glass::NIGHT_DUTY_MAX).
+void backlight_night_set(uint16_t duty13);
+
 struct TouchSample {
   bool touched = false;
   int16_t x = 0;

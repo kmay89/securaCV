@@ -35,6 +35,15 @@ inline void cc_ledc_tone(uint8_t pin, uint8_t /*ch*/, uint32_t freq_hz) {
   ledcWriteTone(pin, freq_hz);
 }
 
+// Re-configure an already-attached pin to a new freq/resolution (backlight
+// day<->night profile swap). Core 3 refuses ledcAttach on an attached pin,
+// so detach first; core 2 re-runs setup+attach below.
+inline void cc_ledc_reconfig(uint8_t pin, uint8_t /*ch*/, uint32_t freq_hz,
+                             uint8_t res_bits) {
+  ledcDetach(pin);
+  ledcAttach(pin, freq_hz, res_bits);
+}
+
 inline void cc_task_wdt_arm(uint32_t timeout_s) {
   esp_task_wdt_config_t cfg = {};
   cfg.timeout_ms = timeout_s * 1000;
@@ -58,6 +67,14 @@ inline void cc_ledc_write(uint8_t /*pin*/, uint8_t ch, uint32_t duty) {
 }
 inline void cc_ledc_tone(uint8_t /*pin*/, uint8_t ch, uint32_t freq_hz) {
   ledcWriteTone(ch, freq_hz);
+}
+
+// Re-configure a channel to a new freq/resolution (backlight day<->night
+// profile swap). Core 2's ledcSetup is idempotent per channel.
+inline void cc_ledc_reconfig(uint8_t pin, uint8_t ch, uint32_t freq_hz,
+                             uint8_t res_bits) {
+  ledcSetup(ch, freq_hz, res_bits);
+  ledcAttachPin(pin, ch);
 }
 
 inline void cc_task_wdt_arm(uint32_t timeout_s) {

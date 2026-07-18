@@ -25,8 +25,29 @@ Arduino_DataBus* s_bus = nullptr;
 Arduino_GFX* s_panel = nullptr;
 
 constexpr uint8_t LEDC_CHANNEL = 0;
-constexpr uint32_t LEDC_FREQ_HZ = 5000;
-constexpr uint8_t LEDC_RES_BITS = 8;
+
+// Two backlight profiles (settings wave). Day: 5 kHz / 8-bit — silent,
+// flicker-free, coarse steps nobody notices at reading brightness. Night:
+// 1 kHz / 13-bit — the longer period keeps the shortest on-pulse above the
+// backlight transistor's turn-on time, and 13 bits put ~30 distinguishable
+// steps inside what used to be the single gap between "off" and duty 1/255.
+constexpr uint32_t DAY_FREQ_HZ = 5000;
+constexpr uint8_t  DAY_RES_BITS = 8;
+constexpr uint32_t NIGHT_FREQ_HZ = 1000;
+constexpr uint8_t  NIGHT_RES_BITS = 13;
+constexpr uint16_t NIGHT_DUTY_MAX = 8191;
+
+bool s_night_profile = false;
+
+void ensure_profile(bool night) {
+  if (night == s_night_profile) return;
+  s_night_profile = night;
+  if (night) {
+    cc_ledc_reconfig(TFT_PIN_BL, LEDC_CHANNEL, NIGHT_FREQ_HZ, NIGHT_RES_BITS);
+  } else {
+    cc_ledc_reconfig(TFT_PIN_BL, LEDC_CHANNEL, DAY_FREQ_HZ, DAY_RES_BITS);
+  }
+}
 
 // CST816S registers (vendor datasheet + the usual community drivers).
 constexpr uint8_t CST_REG_GESTURE = 0x01;  // gesture id
@@ -47,7 +68,7 @@ bool cst816s_read(uint8_t reg, uint8_t* buf, size_t len) {
 bool display_init() {
   // Backlight first, held dark until the first frame is flushed — no
   // white-flash at boot on a device that may live in a bedroom.
-  cc_ledc_setup(TFT_PIN_BL, LEDC_CHANNEL, LEDC_FREQ_HZ, LEDC_RES_BITS);
+  cc_ledc_setup(TFT_PIN_BL, LEDC_CHANNEL, DAY_FREQ_HZ, DAY_RES_BITS);
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, 0);
 
   s_bus = new Arduino_ESP32SPI(TFT_PIN_DC, TFT_PIN_CS, TFT_PIN_SCK,
@@ -79,10 +100,21 @@ Arduino_GFX* gfx() { return s_panel; }
 void display_flush() { /* LVGL flushes dirty regions itself */ }
 
 void backlight_set(uint8_t level) {
+  ensure_profile(false);
 #if TFT_BL_ACTIVE_HIGH
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, level);
 #else
   cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, 255 - level);
+#endif
+}
+
+void backlight_night_set(uint16_t duty13) {
+  if (duty13 > NIGHT_DUTY_MAX) duty13 = NIGHT_DUTY_MAX;
+  ensure_profile(true);
+#if TFT_BL_ACTIVE_HIGH
+  cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, duty13);
+#else
+  cc_ledc_write(TFT_PIN_BL, LEDC_CHANNEL, NIGHT_DUTY_MAX - duty13);
 #endif
 }
 
