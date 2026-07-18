@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### First-boot install-path audit (HA OS + Raspberry Pi)
+
+- **Frigate config location corrected everywhere.** The Frigate add-on
+  (0.16+) reads `/addon_configs/ccab4aaf_frigate/config.yml`, not
+  `/config/frigate.yml`. README install steps, `docs/frigate_integration.md`,
+  and `scripts/install.sh` now say so; the install script additionally seeds
+  Frigate's real config directory with the generated template when visible.
+  (The add-on wizard still writes only the `/config/frigate.yml` template —
+  wiring it to Frigate's config dir needs an `all_addon_configs` mapping and
+  is left as a code follow-up.)
+- **`scripts/install.sh` slugs fixed**: `ccab4aaf_frigate` and
+  `d0491a67_privacy_witness_kernel` (Supervisor slugs are
+  `sha1(repo-url)[:8]_<addon>`); the previous values could never resolve.
+  Removed calls to `ha addons repository add` / `ha addons repositories` —
+  the ha CLI has no repository commands, so the script now falls back to
+  clear manual instructions instead of silently failing.
+- **README HA install steps** now include the Mosquitto add-on and the
+  Frigate add-on repository as explicit prerequisites.
+
 ### Repo legibility pass (structural only, no functional changes)
 
 - Root doc files relocated into `docs/` (`log_verify_README.md` ->
