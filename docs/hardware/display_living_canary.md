@@ -83,6 +83,27 @@ the pool to scanning; Distressed to fidgets; Asleep plays nothing.
    security hygiene, not by grinding.
 5. Exit gracefully under fire: alarms get instrument-grade UI, bird-free.
 
+## The first meeting (splash)
+
+The first boot ever is a meeting, not a logo. Presence before speech: an
+empty beat, the hop in, a settle, the head-tilt that says *it sees you*
+— and only then the speech bubble, typed one character at a time with a
+breath at punctuation:
+
+> Oh! Hello.
+> I'm your canary. I keep watch, so you don't have to.
+> What I see stays here. That's a promise.
+> Ready when you are.
+
+The privacy promise is spoken by the bird itself, because that is who
+keeps it. The wordmark enters only after the last line — the name lands
+AFTER the friend does. A tap always advances (first tap completes the
+line, next tap moves on): the user outranks the storyboard. The meeting
+is remembered in NVS (`scv-hello`), and every later boot plays the short
+familiar splash instead, with the tagline swapped for a quiet
+"hello again" — you two have already met, and a returning boot must
+never feel slower than home.
+
 ## Next pass (spec locked, not yet built)
 
 The dash stage: perch-corner bird with speech-bubble slots and
