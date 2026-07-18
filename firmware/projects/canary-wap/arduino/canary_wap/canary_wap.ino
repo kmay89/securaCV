@@ -6538,6 +6538,7 @@ static void qr_scan_task_fn(void* param) {
   if (!scanner_ready) {
     strncpy(g_qr_scan_error, "Scanner init failed", sizeof(g_qr_scan_error));
     g_qr_scan_active = false;
+    if (g_qr_auto_scan) g_qr_auto_next_ms = millis() + 5000;
     g_qr_auto_scan = false;
     if (sensor && orig_framesize >= 0)
       sensor->set_framesize(sensor, (framesize_t)orig_framesize);
@@ -6680,6 +6681,10 @@ static void qr_scan_task_fn(void* param) {
     sensor->set_framesize(sensor, (framesize_t)orig_framesize);
 
   g_qr_scan_active = false;
+  // The breather between windows starts when the window ENDS, not when it
+  // began (review catch: a start-anchored cooldown is long expired after a
+  // 60 s window, and the camera would scan back-to-back forever).
+  if (g_qr_auto_scan) g_qr_auto_next_ms = millis() + 5000;
   g_qr_auto_scan = false;
   // Release-store: the start handler and the auto tick poll this handle
   // from other tasks/cores (review catch — repo atomic convention).
@@ -6703,7 +6708,9 @@ static void qr_auto_scan_tick(uint32_t now) {
 #endif
   if (!camera_usable()) return;
   if ((int32_t)(now - g_qr_auto_next_ms) < 0) return;
-  g_qr_auto_next_ms = now + 5000;  // breather between windows
+  g_qr_auto_next_ms = now + 5000;  // retry gap if the task fails to start;
+                                   // the real between-window breather is
+                                   // re-armed at task exit
 
   // Same claim-before-wake ordering as the session start handler: the
   // busy flag must be up before a standby camera is woken, or the power
