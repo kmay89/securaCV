@@ -83,6 +83,7 @@
 #include "lvgl_port.h"
 #include "splash.h"
 #include "settings_ui.h"
+#include "commission_ui.h"
 #ifdef CD_FLAVOR_WATCH
 #include "glance_ui.h"
 #endif
@@ -266,6 +267,12 @@ static void apply_brightness(uint32_t now, bool night) {
   // A live brightness editor / black-point wizard IS the brightness policy
   // while it's open (The Screen Is the Preview) — stand down until it exits.
   if (canary::ui::settings_ui_owns_backlight()) return;
+  // A commissioning code needs a bright glass: a camera lens is squinting
+  // at it from a hand-width away.
+  if (canary::ui::commission_ui_active()) {
+    canary::hal::backlight_set(CD_BRIGHT_DAY);
+    return;
+  }
   auto& fleet = canary::fleet::the_fleet();
   const bool wake = (int32_t)(now - g_wake_until_ms) < 0;
   const bool urgent = fleet.worst(now) >= Sev::Alert && !fleet.ack_active(now);
@@ -359,24 +366,26 @@ static void handle_touch(uint32_t now) {
   const auto s = canary::hal::touch_read();
   auto& fleet = canary::fleet::the_fleet();
 
-  // If the settings surface closed out from under a held finger (urgent
-  // close on a live alert), the remainder of that touch must be swallowed —
-  // otherwise the base face sees the same held finger age past the
-  // long-press deadline and fires an acknowledge/mute the user never made
-  // (review catch). Marking the long-press as already-fired parks both the
-  // hold action and the release tap.
-  static bool s_settings_had_touch = false;
-  if (s_settings_had_touch && !canary::ui::settings_ui_active()) {
+  // If a modal surface (settings / commissioning) closed out from under a
+  // held finger (urgent close on a live alert), the remainder of that touch
+  // must be swallowed — otherwise the base face sees the same held finger
+  // age past the long-press deadline and fires an acknowledge/mute the user
+  // never made (review catch). Marking the long-press as already-fired
+  // parks both the hold action and the release tap.
+  const bool modal_settings = canary::ui::settings_ui_active();
+  const bool modal_commission = canary::ui::commission_ui_active();
+  static bool s_modal_had_touch = false;
+  if (s_modal_had_touch && !modal_settings && !modal_commission) {
     if (g_touch_down) g_longpress_fired = true;
-    s_settings_had_touch = false;
+    s_modal_had_touch = false;
   }
 
-  // While the settings surface is open it owns every gesture: taps route to
-  // its zones, long-press is the quick way out, and the face's page/ack/
-  // mute gestures stay parked. The wake window is pinned so the glass never
+  // While a modal surface is open it owns every gesture: taps route to its
+  // zones, long-press is the quick way out, and the face's page/ack/mute
+  // gestures stay parked. The wake window is pinned so the glass never
   // dims mid-adjustment.
-  if (canary::ui::settings_ui_active()) {
-    s_settings_had_touch = true;
+  if (modal_settings || modal_commission) {
+    s_modal_had_touch = true;
     g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
     if (s.touched && !g_touch_down) {
       g_touch_down = true;
@@ -387,11 +396,18 @@ static void handle_touch(uint32_t now) {
     } else if (s.touched && g_touch_down && !g_longpress_fired &&
                (int32_t)(now - g_touch_down_ms) >= (int32_t)CD_LONGPRESS_MS) {
       g_longpress_fired = true;
-      canary::ui::settings_ui_close();
+      if (modal_settings) canary::ui::settings_ui_close();
+      else canary::ui::commission_ui_close();
     } else if (!s.touched && g_touch_down) {
       g_touch_down = false;
-      if (!g_longpress_fired)
-        canary::ui::settings_ui_handle_tap(g_touch_x, g_touch_y);
+      if (!g_longpress_fired) {
+        // Re-check which surface is live: a settings tap may have handed
+        // off to commissioning within this very gesture.
+        if (canary::ui::settings_ui_active())
+          canary::ui::settings_ui_handle_tap(g_touch_x, g_touch_y);
+        else if (canary::ui::commission_ui_active())
+          canary::ui::commission_ui_handle_tap(g_touch_x, g_touch_y);
+      }
     }
     return;
   }
@@ -431,6 +447,13 @@ static void handle_touch(uint32_t now) {
     // settings surface — never the ack, never a mute.
     if (g_page == canary::ui::glance_settings_page()) {
       canary::ui::settings_ui_open();
+      return;
+    }
+    // Empty-nest doorway (onboarding wave): with no canaries there is
+    // nothing to acknowledge, so a long-press on the hero page mints the
+    // add-a-canary code — the hero sub-line invites exactly this.
+    if (g_page == 0 && fleet.count() == 0) {
+      canary::ui::commission_ui_open();
       return;
     }
 #endif
@@ -768,14 +791,16 @@ void loop() {
   handle_touch(now);
   fleet.tick(now);
 
-  // Settings wave: debounced flash commit + settings-surface housekeeping
-  // (idle close, live wizard clock, instant close on a real alarm).
+  // Settings wave: debounced flash commit + modal-surface housekeeping
+  // (idle close, live wizard clock, commissioning countdown/celebration,
+  // instant close on a real alarm).
   canary::glass::settings_loop(now);
   {
     using canary::fleet::Sev;
     const bool urgent =
         fleet.worst(now) >= Sev::Alert && !fleet.ack_active(now);
     canary::ui::settings_ui_tick(now, urgent);
+    canary::ui::commission_ui_tick(now, fleet.count(), urgent);
   }
 
 #if defined(FEATURE_PRESENCE_WAKE) && FEATURE_PRESENCE_WAKE

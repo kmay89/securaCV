@@ -18,6 +18,7 @@
 
 #include "dash_ui.h"
 #include "settings_ui.h"
+#include "commission_ui.h"
 #include "theme.h"
 #include "canary_mark.h"
 #include "trust.h"
@@ -135,6 +136,7 @@ lv_obj_t* s_about_title = nullptr;
 lv_obj_t* s_about_body = nullptr;
 lv_obj_t* s_about_clean = nullptr;
 lv_obj_t* s_about_settings = nullptr;  // gear row -> settings surface
+lv_obj_t* s_about_add = nullptr;       // plus row -> commissioning QR
 lv_obj_t* s_clean_note = nullptr;    // full-screen countdown while locked
 uint32_t s_clean_until_ms = 0;
 
@@ -394,6 +396,7 @@ void about_open(const Fleet& fleet) {
       CANARY_FW_VERSION);
   lv_label_set_text(s_about_clean, LV_SYMBOL_REFRESH "  Wipe the glass — touch turns off for 30 s");
   lv_label_set_text(s_about_settings, LV_SYMBOL_SETTINGS "  Screen settings");
+  lv_label_set_text(s_about_add, LV_SYMBOL_PLUS "  Add a canary");
   lv_obj_move_foreground(s_about);
   lv_obj_clear_flag(s_about, LV_OBJ_FLAG_HIDDEN);
 }
@@ -625,6 +628,8 @@ void dash_ui_create() {
   s_about_body = mk_label(s_about, font_caption(), col_muted());
   lv_obj_set_style_text_line_space(s_about_body, 7, 0);
   lv_obj_set_pos(s_about_body, 24, 56);
+  s_about_add = mk_label(s_about, font_caption(), col_muted());
+  lv_obj_align(s_about_add, LV_ALIGN_BOTTOM_LEFT, 24, -76);
   s_about_settings = mk_label(s_about, font_caption(), col_muted());
   lv_obj_align(s_about_settings, LV_ALIGN_BOTTOM_LEFT, 24, -46);
   s_about_clean = mk_label(s_about, font_caption(), col_muted());
@@ -949,6 +954,12 @@ bool dash_ui_handle_tap(int16_t x, int16_t y) {
     if (x >= ca.x1 - 8 && x <= ca.x2 + 8 && y >= ca.y1 - 8 && y <= ca.y2 + 8) {
       about_close();
       settings_ui_open();
+      return true;
+    }
+    lv_obj_get_coords(s_about_add, &ca);
+    if (x >= ca.x1 - 8 && x <= ca.x2 + 8 && y >= ca.y1 - 8 && y <= ca.y2 + 8) {
+      about_close();
+      commission_ui_open();
       return true;
     }
     about_close();

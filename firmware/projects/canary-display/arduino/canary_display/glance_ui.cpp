@@ -333,7 +333,7 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     if (st.time_valid && n == 0) {
       lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
       lv_label_set_text(s_hero_sub,
-                        st.mqtt_ok ? "no canaries yet · plug one in"
+                        st.mqtt_ok ? "no canaries yet · hold to add"
                                    : (st.wifi_ok ? "still looking for your hub"
                                                  : "waiting for wifi"));
     } else if (st.time_valid) {
