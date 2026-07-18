@@ -118,6 +118,9 @@ void pose_rest() {
   lv_obj_set_size(s_eye, s_eye_d, s_eye_d);
   lv_obj_set_pos(s_eye, s_eye_x, s_eye_y);
   lv_obj_set_pos(s_wing, s_wing_x, s_wing_y);
+  // Size AND position: the calling pose opens the beak taller, and a rest
+  // that only moved it would leave the beak stuck open (review catch).
+  lv_obj_set_size(s_beak, s_size * 14 / 100, s_size * 10 / 100);
   lv_obj_set_pos(s_beak, s_beak_x, s_beak_y);
   lv_obj_set_x(s_bird, s_base_x);
 }
@@ -299,6 +302,7 @@ void flourish_cb(lv_timer_t* t) {
 
 lv_timer_t* s_react_timer = nullptr;  // tracked pose-restore one-shot
 uint32_t s_last_small_react = 0;      // Tilt/Startle ration clock
+bool s_base_recorded = false;         // base captured once, post-placement
 
 void react_restore_cb(lv_timer_t* t) {
   if (s_bird) pose_current();
@@ -337,6 +341,7 @@ void on_delete(lv_event_t*) {
   s_wing = nullptr;
   s_beak = nullptr;
   s_mood = CanaryMood::Hidden;
+  s_base_recorded = false;  // the next bird records its own base
 }
 
 }  // namespace
@@ -389,19 +394,38 @@ void canary_mark_mood(CanaryMood m) {
   if (!s_bird || m == s_mood) return;
   const CanaryMood prev = s_mood;
   s_mood = m;
+  // A mood change invalidates any in-flight one-shot: a pending glance
+  // return or reaction restore firing later would clobber the new pose
+  // (review catch).
+  if (s_look_timer) {
+    lv_timer_del(s_look_timer);
+    s_look_timer = nullptr;
+  }
+  if (s_react_timer) {
+    lv_timer_del(s_react_timer);
+    s_react_timer = nullptr;
+  }
   if (m == CanaryMood::Hidden) {
     lv_anim_del(s_bird, nullptr);
     lv_anim_del(s_wing, nullptr);
+    // Normalize the searching lean before going off stage so the hidden
+    // bird parks at its true base (review catch).
+    if (prev == CanaryMood::Searching && s_base_recorded)
+      lv_obj_set_x(s_bird, s_base_x);
     lv_obj_add_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
     lv_timer_pause(s_blink);
     lv_timer_pause(s_flourish);
     return;
   }
-  // Undo the searching lean before re-reading the base, or the offset
-  // would be baked into s_base_x and the bird would creep edgeward.
-  if (prev == CanaryMood::Searching) lv_obj_set_x(s_bird, s_base_x);
-  s_base_y = lv_obj_get_y(s_bird);
-  s_base_x = lv_obj_get_x(s_bird);
+  // Capture the base ONCE, at the first on-stage mood after the host has
+  // placed the bird. Re-reading on every transition would bake live
+  // bob/hop offsets (up to the 12 px hop apex) into the base and the
+  // bird would drift (review catch). The poses restore from this base.
+  if (!s_base_recorded) {
+    s_base_y = lv_obj_get_y(s_bird);
+    s_base_x = lv_obj_get_x(s_bird);
+    s_base_recorded = true;
+  }
   lv_obj_clear_flag(s_bird, LV_OBJ_FLAG_HIDDEN);
   lv_anim_del(s_bird, nullptr);
   lv_anim_del(s_wing, nullptr);
@@ -462,6 +486,12 @@ void canary_mark_react(CanaryReact r) {
   const bool small = r == CanaryReact::Tilt || r == CanaryReact::Startle;
   if (small && now - s_last_small_react < 8000) return;  // rationed
   if (small) s_last_small_react = now;
+  // A pending glance return firing mid-reaction would clobber the
+  // reaction's eye placement (review catch).
+  if (s_look_timer) {
+    lv_timer_del(s_look_timer);
+    s_look_timer = nullptr;
+  }
 
   switch (r) {
     case CanaryReact::Tilt:
