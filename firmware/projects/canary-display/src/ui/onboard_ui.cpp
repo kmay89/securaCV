@@ -263,12 +263,12 @@ void onboard_ui_stage(ObStage st, const char* detail) {
       lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 24);
       lv_label_set_text(s_title, "Scan me");
       lv_label_set_text(s_body, "");
-      lv_label_set_text_fmt(s_creds, "%s  ·  %s", s_ap_ssid, s_ap_pass);
+      lv_label_set_text_fmt(s_creds, "%s  •  %s", s_ap_ssid, s_ap_pass);
 #else
       lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 64);
       lv_label_set_text(s_title, "Scan with your phone camera");
       lv_label_set_text(s_body, "");
-      lv_label_set_text_fmt(s_creds, "or join \"%s\"  ·  password  %s",
+      lv_label_set_text_fmt(s_creds, "or join \"%s\"  •  password  %s",
                             s_ap_ssid, s_ap_pass);
 #endif
       ring_breathe();

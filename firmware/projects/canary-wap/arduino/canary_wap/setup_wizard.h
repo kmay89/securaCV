@@ -106,23 +106,31 @@ inline void stop_captive_portal() {
 
 inline void dns_process() {
   if (!s_dns_running) return;
-  int pkt_size = s_dns_udp.parsePacket();
-  if (pkt_size <= 0) return;
+  // Drain a small burst per loop pass, not one packet. A phone probing the
+  // captive network fires several DNS queries back-to-back (connectivity
+  // check, OS probe hosts, the portal URL); answering one per pass under a
+  // busy loop let the rest time out and the first captive sheet attempt
+  // "fail" — retry then worked off warm caches. Budget-bounded so a DNS
+  // flood still can't own the loop task.
+  for (int budget = 0; budget < 6; ++budget) {
+    int pkt_size = s_dns_udp.parsePacket();
+    if (pkt_size <= 0) return;
 
-  uint8_t buf[512];
-  int len = s_dns_udp.read(buf, sizeof(buf));
-  if (len < 12) return;
+    uint8_t buf[512];
+    int len = s_dns_udp.read(buf, sizeof(buf));
+    if (len < 12) continue;
 
-  IPAddress ap_ip = WiFi.softAPIP();
-  uint8_t ip[4] = { ap_ip[0], ap_ip[1], ap_ip[2], ap_ip[3] };
-  uint8_t response[512];
-  size_t out_len = captive_dns::build_response(buf, (size_t)len, ip,
-                                               response, sizeof(response));
-  if (out_len == 0) return;
+    IPAddress ap_ip = WiFi.softAPIP();
+    uint8_t ip[4] = { ap_ip[0], ap_ip[1], ap_ip[2], ap_ip[3] };
+    uint8_t response[512];
+    size_t out_len = captive_dns::build_response(buf, (size_t)len, ip,
+                                                 response, sizeof(response));
+    if (out_len == 0) continue;
 
-  s_dns_udp.beginPacket(s_dns_udp.remoteIP(), s_dns_udp.remotePort());
-  s_dns_udp.write(response, out_len);
-  s_dns_udp.endPacket();
+    s_dns_udp.beginPacket(s_dns_udp.remoteIP(), s_dns_udp.remotePort());
+    s_dns_udp.write(response, out_len);
+    s_dns_udp.endPacket();
+  }
 }
 
 inline void check_timeout() {

@@ -316,6 +316,38 @@ else
   green "Display glass plain-words audit OK — no jargon in on-glass strings."
 fi
 
+# ── Renderable-glyph audit ────────────────────────────────────────────────
+# LVGL's built-in Montserrat fonts carry ASCII plus a handful of extras
+# (° U+00B0, • U+2022); anything else renders as a tofu box on the glass —
+# the bench caught "Plug in a canary □ it finds…". Middle dots, em-dashes
+# and ellipses in on-glass literals must be • / - / ... instead. The
+# captive-portal HTML (provision.cpp) renders in a BROWSER and is exempt.
+GLYPH_HITS=""
+for f in "${GLASS_SOURCES[@]}"; do
+  [ -f "$f" ] || continue
+  case "$f" in */provision.cpp) continue ;; esac
+  # Allow ° (C2 B0) and • (E2 80 A2); flag every other non-ASCII byte.
+  HITS=$(grep -vE '^[[:space:]]*(#include|//)' "$f" \
+           | grep -oE '"[^"]*"' \
+           | perl -ne 'my $s=$_; $s =~ s/\xC2\xB0//g; $s =~ s/\xE2\x80\xA2//g; print if $s =~ /[^\x00-\x7F]/' \
+       || true)
+  if [ -n "$HITS" ]; then
+    GLYPH_HITS="$GLYPH_HITS$(basename "$f"):
+$HITS
+"
+  fi
+done
+
+if [ -n "$GLYPH_HITS" ]; then
+  red "Glass glyph audit FAILED — characters LVGL's built-in fonts can't draw:"
+  echo "$GLYPH_HITS" | head -20
+  echo ""
+  echo "Use • for ·, - for — and – , ... for … . Allowed non-ASCII: ° and •."
+  ERRORS=$((ERRORS + 1))
+else
+  green "Glass glyph audit OK — every on-glass character has a glyph."
+fi
+
 # ─────────────────────────────────────────────────────────────────────────
 
 echo ""

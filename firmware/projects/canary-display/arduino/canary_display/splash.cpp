@@ -82,8 +82,16 @@ void remember_meeting() {
 
 }  // namespace
 
+// The exit curtain: an opaque layer-top overlay dropped by splash_play and
+// lifted by splash_reveal once the real face has painted beneath it.
+lv_obj_t* s_curtain = nullptr;
+
 void splash_play(uint32_t hold_ms) {
   lv_obj_t* prev = lv_scr_act();
+  // The default boot screen is theme-styled (bright) — paint it our black
+  // so no frame of it can ever read as a flash.
+  lv_obj_set_style_bg_color(prev, col_bg(), 0);
+  lv_obj_set_style_bg_opa(prev, LV_OPA_COVER, 0);
 
   lv_obj_t* scr = lv_obj_create(NULL);
   lv_obj_set_style_bg_color(scr, col_bg(), 0);
@@ -151,9 +159,14 @@ void splash_play(uint32_t hold_ms) {
 #endif
   lv_obj_clear_flag(tail, LV_OBJ_FLAG_SCROLLABLE);
 
+  // Fixed label width, centered text. A percent-sized child inside a
+  // content-sized parent is circular in LVGL and inflated the bubble into
+  // a giant empty pill on the bench; the fixed width also lets short lines
+  // sit centered instead of lopsided against the left pad.
   lv_obj_t* line = lv_label_create(bub);
-  lv_obj_set_width(line, LV_PCT(100));
+  lv_obj_set_width(line, BUB_W - 24);
   lv_label_set_long_mode(line, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(line, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(line, font_label(), 0);
   lv_obj_set_style_text_color(line, col_text(), 0);
   lv_label_set_text(line, "");
@@ -221,14 +234,59 @@ void splash_play(uint32_t hold_ms) {
     pump(hold_ms, false);
   }
 
-  // Cross-fade home; auto-delete tears the splash (and, via its DELETE
-  // hook, the bird's timers) down so the next face starts clean.
-  lv_scr_load_anim(prev, LV_SCR_LOAD_ANIM_FADE_ON, 380, 0, true);
-  uint32_t t0 = millis();
-  while ((int32_t)(millis() - t0) < 420) {
+  // Drop the curtain (opaque, on the global top layer), then cut to the
+  // black base screen and tear the splash down — its DELETE hook cleans
+  // the bird's timers so the face can build its own. The face paints
+  // UNDER the curtain; splash_reveal() lifts it.
+  const int W = lv_disp_get_hor_res(NULL);
+  const int H = lv_disp_get_ver_res(NULL);
+  s_curtain = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(s_curtain, W, H + 4);
+  lv_obj_set_pos(s_curtain, 0, 0);
+  lv_obj_set_style_bg_color(s_curtain, col_bg(), 0);
+  lv_obj_set_style_bg_grad_color(s_curtain, lv_color_hex(0x241A00), 0);
+  lv_obj_set_style_bg_grad_dir(s_curtain, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(s_curtain, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(s_curtain, 0, 0);
+  lv_obj_set_style_radius(s_curtain, 0, 0);
+  lv_obj_set_style_pad_all(s_curtain, 0, 0);
+  lv_obj_clear_flag(s_curtain, LV_OBJ_FLAG_SCROLLABLE);
+  // The arcade edge: a thin canary-yellow scanline leading the wipe.
+  lv_obj_t* edge = lv_obj_create(s_curtain);
+  lv_obj_set_size(edge, W, 3);
+  lv_obj_align(edge, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_style_bg_color(edge, lv_color_hex(0xFFD44F), 0);
+  lv_obj_set_style_bg_opa(edge, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(edge, 0, 0);
+  lv_obj_set_style_radius(edge, 0, 0);
+
+  lv_scr_load(prev);
+  lv_obj_del(scr);
+  lv_timer_handler();
+}
+
+void splash_reveal() {
+  if (!s_curtain) return;
+  // Wipe the curtain up off the painted face: ease-in so it gathers speed,
+  // the yellow scanline leading. Blocking pump, same as the splash beats.
+  const int H = lv_disp_get_ver_res(NULL);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, s_curtain);
+  lv_anim_set_exec_cb(&a, [](void* var, int32_t v) {
+    lv_obj_set_y((lv_obj_t*)var, v);
+  });
+  lv_anim_set_values(&a, 0, -(H + 8));
+  lv_anim_set_time(&a, 460);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+  lv_anim_start(&a);
+  const uint32_t t0 = millis();
+  while ((int32_t)(millis() - t0) < 520) {
     lv_timer_handler();
     delay(5);
   }
+  lv_obj_del(s_curtain);
+  s_curtain = nullptr;
 }
 
 }  // namespace canary::ui

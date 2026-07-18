@@ -102,6 +102,62 @@ describe('safeModeNote', () => {
   });
 });
 
+describe('expansionNote — Sense expansion-board correlator', () => {
+  const probes = (cam, mic, sd) => ({ probes: [
+    { name: 'camera',     status: cam },
+    (typeof mic === 'object') ? Object.assign({ name: 'microphone' }, mic)
+                              : { name: 'microphone', status: mic },
+    { name: 'sd',         status: sd },
+  ]});
+  // The mic's real-world bring-up failure shape: never 'fail' (optional
+  // peripherals must not gate setup) — 'skip' with a negative code.
+  const MIC_DOWN = { status: 'skip', code: -1 };
+  it('fires on the bench scenario: camera absent + mic skip(code<0) + SD absent', () => {
+    const note = L.expansionNote(probes('absent', MIC_DOWN, 'absent'));
+    assert.ok(note.length > 0);
+    assert.match(note, /expansion board/i);
+    assert.match(note, /reseat/i);
+    // Also fires on hard fails.
+    assert.ok(L.expansionNote(probes('fail', 'fail', 'fail')).length > 0);
+  });
+  it('stays silent when any of the three is healthy or benignly paused', () => {
+    assert.equal(L.expansionNote(probes('pass', MIC_DOWN, 'absent')), '');
+    assert.equal(L.expansionNote(probes('absent', 'pass', 'absent')), '');
+    assert.equal(L.expansionNote(probes('absent', MIC_DOWN, 'pass')), '');
+    // Muted-by-user is deliberate, not evidence (skip, code 0).
+    assert.equal(L.expansionNote(probes('absent',
+        { status: 'skip', code: 0, metric: { muted: true } }, 'absent')), '');
+    // A code-less skip (e.g. still starting) does not convict.
+    assert.equal(L.expansionNote(probes('absent', { status: 'skip' }, 'absent')), '');
+    // SD merely skipped (safe mode) does not convict the board either.
+    assert.equal(L.expansionNote(probes('absent', MIC_DOWN, 'skip')), '');
+  });
+  it('survives missing/garbage reports', () => {
+    assert.equal(L.expansionNote(undefined), '');
+    assert.equal(L.expansionNote({}), '');
+    assert.equal(L.expansionNote({ probes: 'nope' }), '');
+    assert.equal(L.expansionNote({ probes: [null, {}] }), '');
+  });
+});
+
+describe('hintFor — bluetooth crash evidence', () => {
+  it('names the crash stage and reason in the recovery note', () => {
+    const p = { name: 'bluetooth', status: 'skip',
+                metric: { safe_mode: true,
+                          last_crash_stage: 'loop:ble-finalize',
+                          last_crash_reason: 'task-watchdog' } };
+    const note = L.hintFor(p);
+    assert.match(note, /loop:ble-finalize/);
+    assert.match(note, /task-watchdog/);
+  });
+  it('keeps the plain recovery note when no evidence is recorded', () => {
+    const p = { name: 'bluetooth', status: 'skip', metric: { safe_mode: true } };
+    const note = L.hintFor(p);
+    assert.match(note, /recovery/i);
+    assert.doesNotMatch(note, /crash \(/i);
+  });
+});
+
 describe('hintFor — robustness', () => {
   it('never throws and returns a string for any input', () => {
     const inputs = [null, undefined, {}, { name: 'nope', status: 'fail' }, probe('', 'fail')];

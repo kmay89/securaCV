@@ -337,12 +337,12 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     if (st.time_valid && n == 0) {
       lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
       lv_label_set_text(s_hero_sub,
-                        st.mqtt_ok ? "no canaries yet · hold to add"
+                        st.mqtt_ok ? "no canaries yet • hold to add"
                                    : (st.wifi_ok ? "still looking for your hub"
                                                  : "waiting for wifi"));
     } else if (st.time_valid) {
       lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
-      lv_label_set_text_fmt(s_hero_sub, "all quiet · %d %s", n,
+      lv_label_set_text_fmt(s_hero_sub, "all quiet • %d %s", n,
                             n == 1 ? "canary" : "canaries");
     } else {
       lv_label_set_text(s_hero, "All quiet");
@@ -408,7 +408,7 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     }
     // Acknowledged carries its attribution — which glass quieted the house.
     if (st.acked && fleet.ack_by()[0]) {
-      lv_label_set_text_fmt(s_hero_badge, "handled · %.16s", fleet.ack_by());
+      lv_label_set_text_fmt(s_hero_badge, "handled • %.16s", fleet.ack_by());
     } else {
       lv_label_set_text(s_hero_badge,
                         st.acked ? "acknowledged" : "hold to acknowledge");
@@ -433,11 +433,11 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     // red banner would just be noise on a nightstand.
     lv_label_set_text(s_banner, "");
   } else if (!st.wifi_ok) {
-    lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  no wifi · reconnecting");
+    lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  no wifi • reconnecting");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_alert(), 0);
   } else if (!st.mqtt_ok) {
-    lv_label_set_text(s_banner, "hub lost · showing last known");
+    lv_label_set_text(s_banner, "hub lost • showing last known");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_warn(), 0);
   } else {
@@ -462,7 +462,7 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
 
   lv_obj_set_style_text_color(s_dev_name, tcol, 0);
   if (w->name[0] && w->room[0]) {
-    lv_label_set_text_fmt(s_dev_name, "%.12s · %.10s", w->name, w->room);
+    lv_label_set_text_fmt(s_dev_name, "%.12s • %.10s", w->name, w->room);
   } else {
     lv_label_set_text_fmt(s_dev_name, "%.18s", Fleet::display_name(*w));
   }
@@ -487,14 +487,14 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
     lv_label_set_text(s_dev_event, "no events yet");
   }
 
-  char batt[96] = "";  // "·"/"—"/LVGL symbols are multi-byte; keep headroom
+  char batt[96] = "";  // "•"/"-"/LVGL symbols are multi-byte; keep headroom
   if (w->wb_present) {
-    snprintf(batt, sizeof(batt), "  ·  breathing %s",
-             w->wb_breathing ? LV_SYMBOL_OK : "—");
+    snprintf(batt, sizeof(batt), "  •  breathing %s",
+             w->wb_breathing ? LV_SYMBOL_OK : "-");
   }
   if (w->battery_present && w->battery_pct >= 0) {
     const size_t off = strlen(batt);
-    snprintf(batt + off, sizeof(batt) - off, "  ·  %s %d%%",
+    snprintf(batt + off, sizeof(batt) - off, "  •  %s %d%%",
              w->battery_pct < 25 ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_3,
              (int)w->battery_pct);
   }
@@ -507,10 +507,10 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
     const int whole = abs(w->temp_c10 / 10);
     const int frac = abs(w->temp_c10 % 10);
     if (w->humidity_pct >= 0) {
-      snprintf(batt + off, sizeof(batt) - off, "  ·  %s%d.%d\xC2\xB0 %d%%",
+      snprintf(batt + off, sizeof(batt) - off, "  •  %s%d.%d\xC2\xB0 %d%%",
                sign, whole, frac, (int)w->humidity_pct);
     } else {
-      snprintf(batt + off, sizeof(batt) - off, "  ·  %s%d.%d\xC2\xB0",
+      snprintf(batt + off, sizeof(batt) - off, "  •  %s%d.%d\xC2\xB0",
                sign, whole, frac);
     }
   }
@@ -519,7 +519,7 @@ void update_device(const Fleet& fleet, uint32_t now, const GlanceState& st,
 
   lv_obj_set_style_text_color(s_dev_pos, st.night ? ncol_muted() : col_faint(), 0);
 #if defined(FEATURE_CARE) && FEATURE_CARE
-  lv_label_set_text_fmt(s_dev_pos, "%d of %d · hold to %s", idx + 1,
+  lv_label_set_text_fmt(s_dev_pos, "%d of %d • hold to %s", idx + 1,
                         fleet.count(), muted ? "unmute" : "mute");
 #else
   lv_label_set_text_fmt(s_dev_pos, "%d of %d", idx + 1, fleet.count());
@@ -547,8 +547,8 @@ void update_events(const Fleet& fleet, uint32_t now, const GlanceState& st) {
         s_ev_name[i], e->sev >= Sev::Warn ? sev_color(e->sev, st.night) : tcol, 0);
     lv_label_set_text_fmt(s_ev_name[i], "%.24s", human);
     lv_obj_set_style_text_color(s_ev_meta[i], mcol, 0);
-    lv_label_set_text_fmt(s_ev_meta[i], "%s · %.14s%s", age, e->device,
-                          e->signed_flag ? " · signed" : "");
+    lv_label_set_text_fmt(s_ev_meta[i], "%s • %.14s%s", age, e->device,
+                          e->signed_flag ? " • signed" : "");
   }
 }
 
@@ -597,7 +597,7 @@ void update_history(const Fleet& fleet, uint32_t now, const GlanceState& st) {
         0);
     lv_label_set_text_fmt(s_thist_name[i], "%.22s", human);
     lv_obj_set_style_text_color(s_thist_meta[i], mcol, 0);
-    lv_label_set_text_fmt(s_thist_meta[i], "%s · %s", stamp,
+    lv_label_set_text_fmt(s_thist_meta[i], "%s • %s", stamp,
                           badge_text((canary::fleet::Badge)r->badge));
   }
 }
@@ -638,11 +638,11 @@ void update_rollcall(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     char meta[64];
     size_t o = (size_t)snprintf(meta, sizeof(meta), "%s ago", age);
     if (w->battery_present && w->battery_pct >= 0 && o < sizeof(meta)) {
-      o += (size_t)snprintf(meta + o, sizeof(meta) - o, " · %d%%",
+      o += (size_t)snprintf(meta + o, sizeof(meta) - o, " • %d%%",
                             (int)w->battery_pct);
     }
     if (w->rssi_present && o < sizeof(meta)) {
-      snprintf(meta + o, sizeof(meta) - o, " · %s",
+      snprintf(meta + o, sizeof(meta) - o, " • %s",
                signal_word((int)w->rssi_dbm));
     }
     lv_obj_set_style_text_color(s_rc_meta[i], mcol, 0);
@@ -652,7 +652,7 @@ void update_rollcall(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   if (n > RC_ROWS) {
     lv_label_set_text_fmt(s_rc_more, "+%d more", n - RC_ROWS);
   } else {
-    lv_label_set_text(s_rc_more, n > 0 ? "walk past one — it lights up" : "");
+    lv_label_set_text(s_rc_more, n > 0 ? "walk past one - it lights up" : "");
   }
 }
 #endif  // FEATURE_CARE
@@ -673,9 +673,9 @@ void update_about(const Fleet& fleet, uint32_t now, const GlanceState& st) {
       s_about_body,
       "watches %d %s\n"
       "hears: your home hub only\n"
-      "speaks: check-ins · your taps\n"
+      "speaks: check-ins • your taps\n"
       "keeps: %d events, on-device\n"
-      "never: cloud · camera · mic\n"
+      "never: cloud • camera • mic\n"
       "v%s",
       fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
       CANARY_FW_VERSION);
@@ -710,7 +710,7 @@ void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_proof_who, pick ? pick->id : "");
     lv_label_set_text(s_proof_cap,
-                      pick ? "no proof yet · after first event"
+                      pick ? "no proof yet • after first event"
                            : "No witnesses yet");
     return;
   }
@@ -722,13 +722,13 @@ void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                            pick->id, pk, pick->chain_raw);
   if (len <= 0 || (size_t)len >= sizeof(body)) {
     lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_proof_cap, "too long for a QR · see hub log");
+    lv_label_set_text(s_proof_cap, "too long for a QR • see hub log");
     return;
   }
   lv_obj_clear_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
   lv_qrcode_update(s_proof_qr, body, (uint32_t)len);
   lv_label_set_text_fmt(s_proof_who, "%.18s", pick->id);
-  lv_label_set_text(s_proof_cap, "Scan to verify · no cloud");
+  lv_label_set_text(s_proof_cap, "Scan to verify • no cloud");
 }
 
 void ack_cb(void* var, int32_t v) {

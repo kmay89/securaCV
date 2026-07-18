@@ -126,7 +126,7 @@ void settings_loop(uint32_t now_ms) {
       // Rate-limit the retry to the debounce window (review catch).
       s_dirty_since_ms = now_ms;
       canary::log_line("GLASS",
-                       "Screen settings not saved yet — retrying shortly.");
+                       "Screen settings not saved yet - retrying shortly.");
     }
   }
 }

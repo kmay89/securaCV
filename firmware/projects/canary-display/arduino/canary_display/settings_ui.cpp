@@ -122,7 +122,7 @@ lv_obj_t* mk_row(int y, const char* name, const char* value, int id,
   lv_obj_t* l = mk_label(s_host, font_body(), selected ? col_signed()
                                                        : col_text());
   if (value && value[0])
-    lv_label_set_text_fmt(l, "%s · %s", name, value);
+    lv_label_set_text_fmt(l, "%s • %s", name, value);
   else
     lv_label_set_text(l, name);
   lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
@@ -247,7 +247,7 @@ void cal_blink_cb(lv_timer_t*) {
 // ── Page builders ────────────────────────────────────────────────────────
 
 void build_root() {
-  mk_back("settings · tap to leave");
+  mk_back("settings • tap to leave");
   char v[24];
   int y = ROOT_Y0;
   const Settings& gs = settings();
@@ -266,7 +266,7 @@ void build_root() {
   mk_row(y, "night look", gs.red_shift ? "soft red" : "plain", IT_ROW_LOOK);
   y += ROW_H;
   mk_row(y, "at night",
-         gs.night_screen == NIGHT_SCREEN_OFF ? "off · peek" : "glow",
+         gs.night_screen == NIGHT_SCREEN_OFF ? "off • peek" : "glow",
          IT_ROW_SCREEN);
   y += ROW_H;
 #ifdef CD_FLAVOR_WATCH
@@ -303,7 +303,7 @@ void build_edit_night() {
   lv_label_set_text_fmt(hero, "%d", s_night_lvl);
   lv_obj_align(hero, LV_ALIGN_CENTER, 0, -14);
   lv_obj_t* cap = mk_label(s_host, font_caption(), col_muted());
-  lv_label_set_text_fmt(cap, "of %d · shown at this glow", NIGHT_STEPS);
+  lv_label_set_text_fmt(cap, "of %d • shown at this glow", NIGHT_STEPS);
   lv_obj_align(cap, LV_ALIGN_CENTER, 0, 26);
   mk_stepper();
   set_owns_backlight(true);
@@ -350,11 +350,11 @@ void build_edit_screen() {
 #ifdef CD_FLAVOR_WATCH
   mk_row(y, "keep a low glow", !off ? "on" : nullptr, IT_OPT_A, !off);
   y += ROW_H;
-  mk_row(y, "go dark · tap peeks", off ? "on" : nullptr, IT_OPT_B, off);
+  mk_row(y, "go dark • tap peeks", off ? "on" : nullptr, IT_OPT_B, off);
 #else
   mk_row(y, "stay lit, dark look", !off ? "on" : nullptr, IT_OPT_A, !off);
   y += ROW_H;
-  mk_row(y, "go dark · tap wakes", off ? "on" : nullptr, IT_OPT_B, off);
+  mk_row(y, "go dark • tap wakes", off ? "on" : nullptr, IT_OPT_B, off);
 #endif
   y += ROW_H;
   if (off) {
@@ -376,7 +376,7 @@ void build_cal_intro() {
                     "Best done at night, with\n"
                     "the room lights how you\n"
                     "sleep. The glass dims on\n"
-                    "its own — tap the moment\n"
+                    "its own - tap the moment\n"
                     "the glow disappears.");
   lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(body, LV_ALIGN_CENTER, 0, -8);
@@ -413,7 +413,7 @@ void build_cal_comfort() {
   lv_label_set_text_fmt(hero, "%d", s_night_lvl);
   lv_obj_align(hero, LV_ALIGN_CENTER, 0, -14);
   lv_obj_t* cap = mk_label(s_host, font_caption(), col_muted());
-  lv_label_set_text(cap, "pick a 3 a.m. glow · tap here");
+  lv_label_set_text(cap, "pick a 3 a.m. glow • tap here");
   lv_obj_align(cap, LV_ALIGN_CENTER, 0, 26);
   add_item(cap, IT_GO);
   add_item(hero, IT_GO);
@@ -449,9 +449,9 @@ void build_cal_warn() {
   mk_back("black point");
   lv_obj_t* body = mk_label(s_host, font_body(), col_text());
   lv_label_set_text(body,
-                    "That floor came out bright —\n"
+                    "That floor came out bright -\n"
                     "something looks off. Keeping\n"
-                    "the factory floor · try again\n"
+                    "the factory floor • try again\n"
                     "on a darker night.");
   lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(body, LV_ALIGN_CENTER, 0, 8);
@@ -463,13 +463,13 @@ void build_cal_done() {
   if (s_cal_persisted) {
     lv_label_set_text(body,
                       "Saved. Night light will\n"
-                      "never go below this —\n"
+                      "never go below this -\n"
                       "redo it here anytime.");
   } else {
     // Honesty over comfort: the floor works right now but storage balked,
     // so it won't survive a restart. Say so instead of a false "saved".
     lv_label_set_text(body,
-                      "Kept for tonight — but\n"
+                      "Kept for tonight - but\n"
                       "storage balked, so it\n"
                       "resets on restart.\n"
                       "Redo it here anytime.");

@@ -670,9 +670,11 @@ void setup() {
   g_display_ok = canary::hal::display_init();
   if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
   if (g_display_ok) {
-    // Boot splash: the canary hops in over the wordmark, then cross-fades
-    // into the face. Runs BEFORE the face exists so the one-live-bird rule
-    // hands off cleanly, and it usefully masks the WiFi bring-up below.
+    // Boot splash, then face, then the curtain lift. splash_play() ends by
+    // dropping an opaque curtain over the glass instead of fading into the
+    // default screen (whose unstyled bright frame WAS the "flash"); the
+    // face builds and paints beneath it, and splash_reveal() wipes the
+    // curtain up off a fully-drawn face — an arcade curtain, not a blink.
     canary::ui::splash_play(1700);
 #ifdef CD_FLAVOR_WATCH
     canary::ui::glance_ui_create();
@@ -682,6 +684,7 @@ void setup() {
 #endif
     render(canary::ms_now());
     lv_timer_handler();
+    canary::ui::splash_reveal();
     canary::hal::backlight_set(CD_BRIGHT_DAY);
   }
 

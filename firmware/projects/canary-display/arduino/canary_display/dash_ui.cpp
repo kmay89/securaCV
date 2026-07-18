@@ -230,7 +230,7 @@ void proof_render(const char* title, const char* id, const char* chain_raw,
       lv_obj_clear_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
       lv_label_set_text(s_proof_cap,
                         "Scan to verify this signed chain\n"
-                        "no app · no account · no cloud");
+                        "no app • no account • no cloud");
     } else {
       lv_obj_add_flag(s_proof_qr, LV_OBJ_FLAG_HIDDEN);
       lv_label_set_text(s_proof_cap,
@@ -251,7 +251,7 @@ void proof_render(const char* title, const char* id, const char* chain_raw,
 // Open the proof sheet for one live witness.
 void proof_open(const canary::fleet::Witness& w) {
   char state[48];
-  snprintf(state, sizeof(state), "%s  ·  %s", link_label(w.link),
+  snprintf(state, sizeof(state), "%s  •  %s", link_label(w.link),
            badge_text(w.badge));
   proof_render(Fleet::display_name(w), w.id, w.chain_raw, state);
 }
@@ -272,7 +272,7 @@ void proof_open_record(const canary::fleet::JournalRecord& r) {
   char stamp[16];
   fmt_stamp(r.epoch, stamp, sizeof(stamp));
   char state[64];
-  snprintf(state, sizeof(state), "%s  ·  %s", stamp,
+  snprintf(state, sizeof(state), "%s  •  %s", stamp,
            badge_text((canary::fleet::Badge)r.badge));
   const char* title = r.name[0] ? r.name : r.id;
   proof_render(title, r.id, r.chain_raw, state);
@@ -296,7 +296,7 @@ void hist_open() {
     char since[24] = "";
     if (oldest) fmt_stamp(oldest, since, sizeof(since));
     lv_label_set_text_fmt(s_hist_summary, "%d event%s%s%s", n,
-                          n == 1 ? "" : "s", oldest ? " · since " : "",
+                          n == 1 ? "" : "s", oldest ? " • since " : "",
                           oldest ? since : "");
   }
 
@@ -311,7 +311,7 @@ void hist_open() {
     // (never a bare color) — honesty travels with the history.
     lv_obj_set_style_text_color(s_hist_rows[i],
                                 sev_color((Sev)r->sev, false), 0);
-    lv_label_set_text_fmt(s_hist_rows[i], "%s   ·   %.12s   ·   %.18s   ·   %s",
+    lv_label_set_text_fmt(s_hist_rows[i], "%s   •   %.12s   •   %.18s   •   %s",
                           stamp, who, human,
                           badge_text((canary::fleet::Badge)r->badge));
   }
@@ -319,9 +319,9 @@ void hist_open() {
   const int shown = n < HIST_ROWS ? n : HIST_ROWS;
   if (n > shown) {
     lv_label_set_text_fmt(s_hist_hint,
-                          "showing %d of %d · tap a row to prove it", shown, n);
+                          "showing %d of %d • tap a row to prove it", shown, n);
   } else {
-    lv_label_set_text(s_hist_hint, "tap a row to prove it · tap away to close");
+    lv_label_set_text(s_hist_hint, "tap a row to prove it • tap away to close");
   }
   lv_label_set_text(s_hist_erase, "Erase all history");
   s_hist_erase_armed = false;
@@ -346,11 +346,11 @@ void rc_render(const Fleet& fleet, uint32_t now) {
     const bool just_answered = age_ms >= 0 && age_ms < 5000;
     char age[8];
     format_age(now, w->last_seen_ms, age, sizeof(age));
-    char batt[12] = "—";
+    char batt[12] = "-";
     if (w->battery_present && w->battery_pct >= 0) {
       snprintf(batt, sizeof(batt), "%d%%", (int)w->battery_pct);
     }
-    char rssi[16] = "—";
+    char rssi[16] = "-";
     if (w->rssi_present) {
       snprintf(rssi, sizeof(rssi), "%s", signal_word((int)w->rssi_dbm));
     }
@@ -361,7 +361,7 @@ void rc_render(const Fleet& fleet, uint32_t now) {
                       : (s >= Sev::Warn ? sev_color(s, false) : col_text()),
         0);
     lv_label_set_text_fmt(s_rc_rows[i],
-                          "%.16s   ·   %s ago   ·   %s   ·   %s%s",
+                          "%.16s   •   %s ago   •   %s   •   %s%s",
                           Fleet::display_name(*w), age, batt, rssi,
                           just_answered ? "   " LV_SYMBOL_OK : "");
   }
@@ -389,12 +389,12 @@ void about_open(const Fleet& fleet) {
       s_about_body,
       "Watches: %d %s, through your home hub only\n"
       "Speaks: its own check-ins, and the alerts you handle\n"
-      "Keeps: %d events on this device — erasable in History\n"
+      "Keeps: %d events on this device - erasable in History\n"
       "Never: cloud, camera, microphone, or tracking IDs\n\n"
       "Firmware v%s",
       fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
       CANARY_FW_VERSION);
-  lv_label_set_text(s_about_clean, LV_SYMBOL_REFRESH "  Wipe the glass — touch turns off for 30 s");
+  lv_label_set_text(s_about_clean, LV_SYMBOL_REFRESH "  Wipe the glass - touch turns off for 30 s");
   lv_label_set_text(s_about_settings, LV_SYMBOL_SETTINGS "  Screen settings");
   lv_label_set_text(s_about_add, LV_SYMBOL_PLUS "  Add a canary");
   lv_obj_move_foreground(s_about);
@@ -610,7 +610,7 @@ void dash_ui_create() {
   }
   s_rc_hint = mk_label(s_rc, font_caption(), col_faint());
   lv_label_set_text(s_rc_hint,
-                    "walk past a canary — its row lights as it answers · tap away to close");
+                    "walk past a canary - its row lights as it answers • tap away to close");
   lv_obj_align(s_rc_hint, LV_ALIGN_BOTTOM_MID, 0, -12);
   lv_obj_add_flag(s_rc, LV_OBJ_FLAG_HIDDEN);
 #endif
@@ -659,9 +659,9 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
                       st.mqtt_ok ? "Listening for canaries"
                                  : (st.wifi_ok ? "Can't reach your hub" : "No WiFi"));
   } else if (worst <= Sev::Notice) {
-    lv_label_set_text_fmt(s_headline, "All quiet  ·  %d %s%s", n,
+    lv_label_set_text_fmt(s_headline, "All quiet  •  %d %s%s", n,
                           n == 1 ? "canary" : "canaries",
-                          fleet.all_verified() ? "  ·  verified" : "");
+                          fleet.all_verified() ? "  •  verified" : "");
   } else {
     char word[16];
     snprintf(word, sizeof(word), "%s", canary::fleet::sev_name(worst));
@@ -669,11 +669,11 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     lv_obj_set_style_text_color(s_headline, sev_color(worst, st.night), 0);
     // Acknowledged carries its attribution — which glass quieted the house.
     if (st.acked && fleet.ack_by()[0]) {
-      lv_label_set_text_fmt(s_headline, "%s  ·  handled by %.16s", word,
+      lv_label_set_text_fmt(s_headline, "%s  •  handled by %.16s", word,
                             fleet.ack_by());
     } else {
       lv_label_set_text_fmt(s_headline, "%s%s", word,
-                            st.acked ? "  ·  acknowledged" : "");
+                            st.acked ? "  •  acknowledged" : "");
     }
   }
   if (st.time_valid) {
@@ -706,7 +706,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
 
     lv_obj_set_style_text_color(c.name, tcol, 0);
     if (w->name[0] && w->room[0]) {
-      lv_label_set_text_fmt(c.name, "%.12s · %.9s", w->name, w->room);
+      lv_label_set_text_fmt(c.name, "%.12s • %.9s", w->name, w->room);
     } else {
       lv_label_set_text_fmt(c.name, "%.18s", Fleet::display_name(*w));
     }
@@ -718,16 +718,16 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     if (muted && !w->tamper && s < Sev::Alert) {
       // The honest bypass: card stays, spine goes hairline, state says so.
       lv_obj_set_style_text_color(c.state, fcol, 0);
-      lv_label_set_text(c.state, "MUTED · UNTIL MORNING");
+      lv_label_set_text(c.state, "MUTED • UNTIL MORNING");
       lv_obj_set_style_bg_color(c.spine, st.night ? ncol_muted() : col_edge(), 0);
     } else {
       lv_obj_set_style_text_color(c.state, sc, 0);
       if (w->tamper) {
-        lv_label_set_text_fmt(c.state, "%s · TAMPER", state);
+        lv_label_set_text_fmt(c.state, "%s • TAMPER", state);
       } else if (w->link == canary::fleet::Link::Lost) {
         // A lost canary's next step is physical: it stopped answering, so
         // someone should check the device — say so where the red is.
-        lv_label_set_text(c.state, "LOST · CHECK ITS POWER");
+        lv_label_set_text(c.state, "LOST • CHECK ITS POWER");
       } else {
         lv_label_set_text(c.state, state);
       }
@@ -741,7 +741,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
       char human[40], age[8];
       humanize_event(w->last_event, human, sizeof(human));
       format_age(now, w->last_event_ms, age, sizeof(age));
-      lv_label_set_text_fmt(c.event, "%s  ·  %s", human, age);
+      lv_label_set_text_fmt(c.event, "%s  •  %s", human, age);
     } else {
       lv_label_set_text(c.event, "No events yet");
     }
@@ -750,7 +750,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     char wb[48] = "";
     if (w->wb_present) {
       snprintf(wb, sizeof(wb), "   breathing %s",
-               w->wb_breathing ? LV_SYMBOL_OK : "—");
+               w->wb_breathing ? LV_SYMBOL_OK : "-");
     }
     // Room comfort, when the witness reports it (parent-unit table stakes).
     // Sign carried explicitly: -0.5° would otherwise render as 0.5°, since
@@ -761,7 +761,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
       const int whole = abs(w->temp_c10 / 10);
       const int frac = abs(w->temp_c10 % 10);
       if (w->humidity_pct >= 0) {
-        snprintf(wb + off, sizeof(wb) - off, "   %s%d.%d\xC2\xB0 · %d%%",
+        snprintf(wb + off, sizeof(wb) - off, "   %s%d.%d\xC2\xB0 • %d%%",
                  sign, whole, frac, (int)w->humidity_pct);
       } else {
         snprintf(wb + off, sizeof(wb) - off, "   %s%d.%d\xC2\xB0",
@@ -801,7 +801,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (!st.night && st.time_valid && st.clock_hh < 10) {
     char wx[72];
     if (canary::care::bedside_morning_line(wx, sizeof(wx))) {
-      to = appendf(today, sizeof(today), to, "%s   ·   ", wx);
+      to = appendf(today, sizeof(today), to, "%s   •   ", wx);
     }
   }
 #endif
@@ -809,13 +809,13 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (!st.night && canary::care::night_ledger().count() > 0) {
     char sum[48];
     canary::care::night_ledger().summary(sum, sizeof(sum));
-    to = appendf(today, sizeof(today), to, "%s   ·   ", sum);
+    to = appendf(today, sizeof(today), to, "%s   •   ", sum);
   }
 #if defined(FEATURE_RHYTHM) && FEATURE_RHYTHM
   {
     char rl[80];
     if (canary::care::rhythm_line(rl, sizeof(rl)) > 0 && to < sizeof(today)) {
-      to = appendf(today, sizeof(today), to, "%s   ·   ", rl);
+      to = appendf(today, sizeof(today), to, "%s   •   ", rl);
     }
   }
 #endif
@@ -823,22 +823,22 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (!st.time_valid || n == 0) {
     // no day story without a clock/witnesses; care segments may still show
   } else if (day_total == 0) {
-    to = appendf(today, sizeof(today), to, "Past 24h · nothing witnessed");
+    to = appendf(today, sizeof(today), to, "Past 24h • nothing witnessed");
   } else {
-    to = appendf(today, sizeof(today), to, "Past 24h · %d %s · worst: %s",
+    to = appendf(today, sizeof(today), to, "Past 24h • %d %s • worst: %s",
                  day_total, day_total == 1 ? "event" : "events",
                  canary::fleet::sev_name(fleet.history_worst_day()));
   }
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
   if (today[0] && canary::fleet::the_journal().count() > 0 &&
       to < sizeof(today)) {
-    snprintf(today + to, sizeof(today) - to, "   ·   tap to review");
+    snprintf(today + to, sizeof(today) - to, "   •   tap to review");
   }
 #endif
   lv_label_set_text(s_today, today);
 
   lv_obj_set_style_text_color(s_empty, mcol, 0);
-  lv_label_set_text(s_empty, n == 0 ? "Plug in a canary — it finds\nthis display on its own" : "");
+  lv_label_set_text(s_empty, n == 0 ? "Plug in a canary - it finds\nthis display on its own" : "");
   // Living canary: the dash bird only has a perch on the empty-nest face
   // (with witnesses, the cards own the wall); the mood engine picks the
   // face, including asleep at night.
@@ -868,8 +868,8 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
                                 e->sev >= Sev::Warn ? ec : tcol, 0);
     lv_label_set_text_fmt(r.name, "%.26s", human);
     lv_obj_set_style_text_color(r.meta, mcol, 0);
-    lv_label_set_text_fmt(r.meta, "%s ago  ·  %.14s%s", age, e->device,
-                          e->signed_flag ? "  ·  signed" : "");
+    lv_label_set_text_fmt(r.meta, "%s ago  •  %.14s%s", age, e->device,
+                          e->signed_flag ? "  •  signed" : "");
   }
 
   // The heartbeat (spec §4): the header glow swells once a minute, only
@@ -904,14 +904,14 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     // Failure formula: what happened — what it's doing about it · what to
     // try if it persists. Never a dead end.
     lv_label_set_text(s_footer,
-                      "No WiFi — reconnecting · if this stays, check your router");
+                      "No WiFi - reconnecting • if this stays, check your router");
   } else if (!st.mqtt_ok) {
     lv_obj_set_style_text_color(s_footer, st.night ? ncol_alert() : col_warn(), 0);
     lv_label_set_text(s_footer,
-                      "Can't reach your hub — retrying · check the hub is on");
+                      "Can't reach your hub - retrying • check the hub is on");
   } else {
     lv_obj_set_style_text_color(s_footer, fcol, 0);
-    lv_label_set_text(s_footer, "status display · not a life-safety device");
+    lv_label_set_text(s_footer, "status display • not a life-safety device");
   }
 
 #if defined(FEATURE_CARE) && FEATURE_CARE
@@ -924,7 +924,7 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (s_clean_note) {
     if ((int32_t)(now - s_clean_until_ms) < 0) {
       lv_obj_move_foreground(s_clean_note);
-      lv_label_set_text_fmt(s_clean_note, "Wipe away — touch wakes in %lu s",
+      lv_label_set_text_fmt(s_clean_note, "Wipe away - touch wakes in %lu s",
                             (unsigned long)((s_clean_until_ms - now) / 1000 + 1));
     } else if (lv_label_get_text(s_clean_note)[0]) {
       lv_label_set_text(s_clean_note, "");
@@ -1011,7 +1011,7 @@ bool dash_ui_handle_tap(int16_t x, int16_t y) {
     return true;
   }
 
-  // Base layer: tapping the "Past 24h · tap to review" line opens the machine.
+  // Base layer: tapping the "Past 24h • tap to review" line opens the machine.
   if (s_today && canary::fleet::the_journal().count() > 0) {
     lv_area_t ta;
     lv_obj_get_coords(s_today, &ta);

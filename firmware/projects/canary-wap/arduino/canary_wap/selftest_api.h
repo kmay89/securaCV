@@ -272,6 +272,10 @@ inline void probe_bluetooth(ProbeResult* r, JsonObject metric) {
   metric["available"]      = avail;
   metric["init_attempted"] = init_done;
   metric["safe_mode"]      = safe_mode;
+  // Crash evidence (persisted in NVS by safe_mode_check): lets the wizard
+  // say WHY the device is in recovery mode instead of just that it is.
+  if (g_hw.last_crash_stage[0])  metric["last_crash_stage"]  = (const char*)g_hw.last_crash_stage;
+  if (g_hw.last_crash_reason[0]) metric["last_crash_reason"] = (const char*)g_hw.last_crash_reason;
 
   r->status = (Status)selftest_logic::bluetooth_status(
       compiled_in, init_done, avail, safe_mode, any_active);

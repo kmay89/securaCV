@@ -141,6 +141,12 @@ struct HardwareState {
   uint32_t last_stable_ms;        // Last known stable operation time
   esp_reset_reason_t last_reset_reason;  // Why the chip last reset
   bool     last_reset_was_crash;  // Did the last reset look like a crash?
+
+  // Most recent CRASH evidence, persisted in NVS across any number of clean
+  // reboots — so the wizard/dashboard can answer "why is this thing in
+  // recovery mode?" without a serial cable. Empty strings = never crashed.
+  char     last_crash_stage[48];   // breadcrumb, e.g. "loop:ble-finalize"
+  char     last_crash_reason[16];  // reset cause, e.g. "task-watchdog"
 };
 
 // Global hardware state instance
@@ -823,10 +829,14 @@ bool safe_mode_check() {
     Serial.printf("[SAFE] Crash reset (%s) - consecutive crash count %u/%u\n",
                   reset_reason_name(g_hw.last_reset_reason),
                   rapid_count, hw_config::SAFE_MODE_REBOOT_LIMIT);
+    // Persist the crash evidence so the phone can see it (selftest API):
+    // one small NVS write per CRASH reboot only, never on clean boots.
+    g_hw_nvs.putString("crumb_rst", reset_reason_name(g_hw.last_reset_reason));
     if (g_crash_stage_magic == CRASH_STAGE_MAGIC && g_crash_stage[0]) {
       g_crash_stage[sizeof(g_crash_stage) - 1] = '\0';
       Serial.printf("[SAFE] Last breadcrumb before the crash: %s\n",
                     g_crash_stage);
+      g_hw_nvs.putString("crumb", g_crash_stage);
     }
   } else {
     Serial.printf("[SAFE] Clean reset (%s) - not counted toward safe mode\n",
@@ -837,6 +847,14 @@ bool safe_mode_check() {
   }
   boot_stage("early-boot");
   g_hw.rapid_boot_count = rapid_count;
+
+  // Load the most recent crash evidence (this boot's, or an earlier one's)
+  // into g_hw for the selftest API — the answer to "why is it in recovery
+  // mode?" must not require a serial cable.
+  g_hw_nvs.getString("crumb", g_hw.last_crash_stage,
+                     sizeof(g_hw.last_crash_stage));
+  g_hw_nvs.getString("crumb_rst", g_hw.last_crash_reason,
+                     sizeof(g_hw.last_crash_reason));
 
   g_hw_nvs.end();
 
