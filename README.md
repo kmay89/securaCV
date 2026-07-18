@@ -26,6 +26,24 @@ tamper-proof log that proves nobody — including you — altered the record.
 
 ---
 
+## New here? Start where you are
+
+- **"I have Home Assistant and cameras."** You're the best-supported user today.
+  [Install in 5 minutes](#install) — Frigate keeps recording as usual; SecuraCV adds the
+  tamper-proof witness log and the privacy boundary.
+- **"I like building little devices."** The [Canary firmware](#firmware) turns cheap ESP32
+  boards into independent witnesses — camera, radar, and WiFi-sensing variants, plus a
+  round "watch" and a wall "dash" display with a living canary mascot that shows system
+  health through its mood. New canaries join by scanning a QR code off the display's screen.
+- **"I just want to understand it."** Read [How it works (for normal people)](#how-it-works-for-normal-people)
+  — five bullets, no jargon — then [why witnessing matters](docs/why_witnessing_matters.md).
+- **Questions or ideas?** [Discussions](https://github.com/kmay89/securaCV/discussions) is the
+  place to ask anything. The [open issues](https://github.com/kmay89/securaCV/issues) are
+  mostly forward-looking trackers (labeled `v2`) — they're the future list, not a pile of
+  broken things.
+
+---
+
 ## Who it's for, and how it compares
 
 Built for privacy-conscious Home Assistant / homelab users with RTSP cameras and a Pi
@@ -161,17 +179,24 @@ why exports work the way they do is in **[Why SecuraCV exports work this way](do
 
 ## Firmware
 
-Device firmware lives under [`firmware/`](firmware/), one project per device:
+Device firmware lives under [`firmware/`](firmware/), one project per device. Each Canary
+is an *independent* witness with its own signed hash chain — they corroborate each other
+instead of trusting a central box:
 
 - **Canary Vision** — ESP32-C3 (XIAO ESP32-C3 or C3-DevKitM; XIAO ESP32-S3 variant) + Grove
-  Vision AI V2: `firmware/projects/canary-vision/` — privacy-preserving semantic events + HA
-  MQTT discovery.
-- **Canary WAP** — XIAO ESP32-S3 Sense: `firmware/projects/canary-wap/` — WiFi CSI sensing,
-  Opera mesh, BLE-Scout, web dashboard.
+  Vision AI V2: `firmware/projects/canary-vision/` — person detection runs on the camera
+  module's own chip; only "someone is here" ever crosses the wire. No pixels leave the device.
+- **Canary WAP** — XIAO ESP32-S3 Sense: `firmware/projects/canary-wap/` — senses presence
+  through WiFi itself (how bodies disturb the radio field), no camera needed; device-to-device
+  mesh, Bluetooth beacon tracking, and a built-in web dashboard.
 - **Canary Sense** — XIAO ESP32-C6 + Seeed MR60BHA2 60 GHz mmWave radar:
   `firmware/projects/canary-sense/` — radar-native presence witness (no camera, no mic).
-- **Canary Display** — XIAO ESP32-S3 + Seeed Round Display ("watch") or ESP32-S3-DevKitC +
-  4.3" panel ("dash"): `firmware/projects/canary-display/` — fleet status on glass.
+- **Canary Display** — XIAO ESP32-S3 + Seeed Round Display ("watch") or a Waveshare 4.3"
+  touch panel ("dash"): `firmware/projects/canary-display/` — the family's face. A calm
+  glass that sleeps at night, a **living canary mascot** whose mood honestly mirrors system
+  health (worried when a sensor is late, searching for it at the edge of the screen, asleep
+  when the house sleeps), on-glass settings, and QR onboarding: the display shows a code,
+  a new canary looks at it, and it joins — no typing.
 - **Canary OTA** — XIAO ESP32-S3 (ESP-IDF): `firmware/projects/canary-ota/` — OTA engine
   (manifest fetch, SHA256 verify, A/B rollback). Standalone today: not yet integrated into
   the Canary trees; Ed25519 manifest signing lands before it ships (post-v1).
@@ -191,6 +216,11 @@ Device firmware lives under [`firmware/`](firmware/), one project per device:
 automatically in CI (including a real broker ingest test); on-device hardware validation and
 the v1 tag are still pending. Track progress in [`docs/v1-roadmap.md`](docs/v1-roadmap.md) and
 [`CHANGELOG.md`](CHANGELOG.md).
+
+**Reading the issue tracker:** open issues are almost all *forward-looking* — `v2` feature
+trackers (bigger meshes, learned room models, new radios) and hardware-bench checklists.
+Each carries a current status comment mapping it against today's code, so you can tell at a
+glance what's real, what's planned, and what's waiting on a soldering iron.
 
 ## Support the project
 
