@@ -13,6 +13,7 @@
 #include <time.h>
 
 #include "settings_ui.h"
+#include "commission_ui.h"
 #include "theme.h"
 #include "glass_settings.h"
 #include "display.h"
@@ -26,8 +27,8 @@ namespace {
 // ── Flavor metrics: one tree, two renderers ──────────────────────────────
 #ifdef CD_FLAVOR_WATCH
 constexpr int PANEL_W = 240;
-constexpr int ROW_H = 27;
-constexpr int ROOT_Y0 = 44;
+constexpr int ROW_H = 24;      // 8 root rows on the round glass
+constexpr int ROOT_Y0 = 40;
 constexpr int HIT_PAD = 8;
 constexpr uint32_t IDLE_CLOSE_MS = 60000;
 #else
@@ -60,7 +61,7 @@ enum class Page {
 enum : int {
   IT_BACK = 1,
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
-  IT_ROW_CAL, IT_ROW_RESET,
+  IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
   IT_MINUS, IT_PLUS, IT_OPT_A, IT_OPT_B, IT_PEEK, IT_GO,
   IT_YES, IT_NO,
 };
@@ -270,6 +271,10 @@ void build_root() {
   y += ROW_H;
 #ifdef CD_FLAVOR_WATCH
   mk_row(y, "find the black point", nullptr, IT_ROW_CAL);
+  y += ROW_H;
+  // Not a screen setting, but the watch's only always-reachable doorway to
+  // commissioning (the dash has its own on the transparency sheet).
+  mk_row(y, "add a canary", nullptr, IT_ROW_ADD);
   y += ROW_H;
 #endif
   mk_row(y, "reset", nullptr, IT_ROW_RESET);
@@ -557,6 +562,27 @@ void step_value(int dir) {
   }
 }
 
+// Instant, animation-free close for the commissioning handoff: the fade
+// close leaves lv_scr_act() ambiguous mid-anim, and the commissioning
+// surface must capture the FACE as its return screen, never a dying
+// settings screen.
+void close_instant() {
+  if (!s_scr) return;
+  if (s_cal_timer) {
+    lv_timer_del(s_cal_timer);
+    s_cal_timer = nullptr;
+  }
+  s_cal_clock = nullptr;
+  s_item_n = 0;
+  set_owns_backlight(false);
+  lv_obj_t* dying = s_scr;
+  s_scr = nullptr;
+  s_host = nullptr;
+  lv_scr_load(s_prev);
+  s_prev = nullptr;
+  lv_obj_del(dying);
+}
+
 void dispatch(int id) {
   switch (s_page) {
     case Page::Root:
@@ -569,6 +595,10 @@ void dispatch(int id) {
         case IT_ROW_SCREEN: build(Page::EditScreen); return;
         case IT_ROW_CAL:    build(Page::CalIntro); return;
         case IT_ROW_RESET:  build(Page::ResetConfirm); return;
+        case IT_ROW_ADD:
+          close_instant();
+          commission_ui_open();
+          return;
       }
       return;
 
