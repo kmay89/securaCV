@@ -104,6 +104,24 @@ if [ -f "$WITSTORE_CANONICAL" ]; then
     fi
 fi
 
+# Provisioning QR grammar (onboarding wave): the canonical shared parser
+# lives in firmware/common/provision_qr/; the canary-wap sketch carries a
+# staged copy (the display's setup.sh stages its own via regen).
+PROVQR_CANONICAL="firmware/common/provision_qr/provision_qr.h"
+PROVQR_STAGED="$STAGED/provision_qr.h"
+if [ -f "$PROVQR_CANONICAL" ]; then
+    if [ ! -f "$PROVQR_STAGED" ]; then
+        echo "::error::Missing staged copy: $PROVQR_STAGED"
+        echo "         Run: cp $PROVQR_CANONICAL $PROVQR_STAGED"
+        drift=1
+    elif ! cmp -s "$PROVQR_CANONICAL" "$PROVQR_STAGED"; then
+        echo "::error::Drift detected: $PROVQR_STAGED differs from $PROVQR_CANONICAL"
+        echo "--- diff ($PROVQR_CANONICAL vs $PROVQR_STAGED) ---"
+        diff -u "$PROVQR_CANONICAL" "$PROVQR_STAGED" || true
+        drift=1
+    fi
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources."
@@ -111,4 +129,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity + witness-store library copies are in sync."
+echo "CSI + identity + witness-store + provision-qr library copies are in sync."
