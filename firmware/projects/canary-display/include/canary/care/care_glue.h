@@ -30,7 +30,8 @@ const NightLedger& night_ledger();
 // Rhythm line for the glass; returns length (0 = nothing worth saying).
 int rhythm_line(char* buf, size_t cap);
 
-// Compute the "until morning" mute deadline: next CD_QUIET_END_HOUR as an
+// Compute the "until morning" mute deadline: next runtime night-end hour
+// (glass_settings; CD_QUIET_END_HOUR is only the first-boot seed) as an
 // epoch (0 when the clock isn't valid — caller falls back to a millis-only
 // mute). Exposed for main's long-press routing.
 uint32_t mute_until_morning_epoch();

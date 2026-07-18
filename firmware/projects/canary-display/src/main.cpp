@@ -359,11 +359,24 @@ static void handle_touch(uint32_t now) {
   const auto s = canary::hal::touch_read();
   auto& fleet = canary::fleet::the_fleet();
 
+  // If the settings surface closed out from under a held finger (urgent
+  // close on a live alert), the remainder of that touch must be swallowed —
+  // otherwise the base face sees the same held finger age past the
+  // long-press deadline and fires an acknowledge/mute the user never made
+  // (review catch). Marking the long-press as already-fired parks both the
+  // hold action and the release tap.
+  static bool s_settings_had_touch = false;
+  if (s_settings_had_touch && !canary::ui::settings_ui_active()) {
+    if (g_touch_down) g_longpress_fired = true;
+    s_settings_had_touch = false;
+  }
+
   // While the settings surface is open it owns every gesture: taps route to
   // its zones, long-press is the quick way out, and the face's page/ack/
   // mute gestures stay parked. The wake window is pinned so the glass never
   // dims mid-adjustment.
   if (canary::ui::settings_ui_active()) {
+    s_settings_had_touch = true;
     g_wake_until_ms = now + CD_TOUCH_WAKE_MS;
     if (s.touched && !g_touch_down) {
       g_touch_down = true;

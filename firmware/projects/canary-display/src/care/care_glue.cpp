@@ -17,6 +17,7 @@
 #include "canary/care/rhythm.h"
 #endif
 #include "canary/config.h"
+#include "canary/glass_settings.h"
 #include "canary/log.h"
 #include "canary/fleet/fleet_instance.h"
 #include "canary/fleet/mute_store.h"
@@ -216,7 +217,11 @@ uint32_t mute_until_morning_epoch() {
   struct tm lt;
   localtime_r(&t, &lt);
   struct tm morning = lt;
-  morning.tm_hour = CD_QUIET_END_HOUR;
+  // "Morning" is the RUNTIME night-end hour (settings wave) — a mute made
+  // under edited night hours must expire with them, not with the compiled
+  // 07:00 seed (review catch: the display would re-alert mid-night or stay
+  // muted into the user's configured day).
+  morning.tm_hour = canary::glass::settings().night_end_hh;
   morning.tm_min = 0;
   morning.tm_sec = 0;
   time_t m = mktime(&morning);
