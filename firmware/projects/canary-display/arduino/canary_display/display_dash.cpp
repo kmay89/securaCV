@@ -154,6 +154,15 @@ void backlight_set(uint8_t level) {
   ch422g_set_bits(CH422G_BIT_BACKLIGHT, level > 0);
 }
 
+void backlight_night_set(uint16_t duty13) {
+  // Same binary truth for the fine-grained night path: the CH422G cannot
+  // PWM (I2C bit-bang "dimming" would flicker), so the dash's real night
+  // options are the dark theme or off + tap-to-wake. A one-wire mod
+  // (backlight EN to a free GPIO) is documented in display_settings.md for
+  // anyone who wants true dimming.
+  ch422g_set_bits(CH422G_BIT_BACKLIGHT, duty13 > 0);
+}
+
 TouchSample touch_read() {
   TouchSample s;
   if (!s_gt911_addr) return s;

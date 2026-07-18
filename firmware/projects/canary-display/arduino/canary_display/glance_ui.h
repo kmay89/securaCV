@@ -34,4 +34,8 @@ void glance_ui_ack_hold(bool active);
 
 int glance_page_count();
 
+// Rotation index of the settings doorway page — main.cpp routes a
+// long-press there into settings_ui_open() instead of ack/mute.
+int glance_settings_page();
+
 }  // namespace canary::ui
