@@ -37,6 +37,13 @@ constexpr Step ALL_CLEAR[] = {
     {1300, 160}, {0, 60}, {900, 220}, {0, 0},
 };
 
+// Sunrise — wake chirp (nightstand wave): two ascending notes far below
+// piezo resonance, so even at full duty this is a murmur next to the
+// alarm grammar. Rising pitch = morning; the security sounds never rise.
+constexpr Step SUNRISE[] = {
+    {1046, 120}, {0, 90}, {1318, 170}, {0, 0},
+};
+
 int s_pin = -1;
 const Step* s_seq = nullptr;
 int s_len = 0;
@@ -77,6 +84,7 @@ void chime_play(Chime c, uint8_t ramp) {
     case Chime::Tier1Alarm: s_seq = TIER1;     s_len = sizeof(TIER1) / sizeof(TIER1[0]);         break;
     case Chime::Tier2Warn:  s_seq = TIER2;     s_len = sizeof(TIER2) / sizeof(TIER2[0]);         break;
     case Chime::AllClear:   s_seq = ALL_CLEAR; s_len = sizeof(ALL_CLEAR) / sizeof(ALL_CLEAR[0]); break;
+    case Chime::Sunrise:    s_seq = SUNRISE;   s_len = sizeof(SUNRISE) / sizeof(SUNRISE[0]);     break;
   }
   s_idx = -1;
   s_step_until_ms = 0;  // advance immediately on the next loop pass

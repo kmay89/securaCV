@@ -49,6 +49,12 @@
                                         // on-device, never uploaded; wellbeing line)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
+// ── Nightstand wave (display_nightstand.md) ──
+#define FEATURE_NIGHT_BLACKOUT      1   // true darkness at night; tap = dim red peek
+#define FEATURE_COMFORT_WORDS       1   // bedroom temp/humidity as sleep-science words
+#define FEATURE_HUB_WEATHER         1   // hub-republished forecast (securacv/env/weather)
+#define FEATURE_WAKE_ALARM          1   // on-device two-phase gentle wake (needs the
+                                        // piezo populated to be audible — ramp works now)
 
 // Features NOT used by this device — a display witnesses nothing itself.
 #define FEATURE_VISION_AI           0

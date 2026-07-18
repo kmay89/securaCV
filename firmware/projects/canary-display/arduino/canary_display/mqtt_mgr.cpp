@@ -26,6 +26,12 @@
 #include "trust.h"           // TOFU pins + Ed25519 chain verify
 #include "fleet_instance.h"
 #include "wifi_mgr.h"    // RSSI + link state
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+#include "bedside.h"    // nightstand wave: hub weather feed
+#endif
+#if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+#include "wake_glue.h"  // nightstand wave: alarm config
+#endif
 #include "device_pseudonym.h"  // MAC-free client-ID suffix (Invariant III)
 
 namespace canary::net {
@@ -278,6 +284,19 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
     if (payload_is(payload, len, "OFF") || payload_is(payload, len, "off")) s_pending_auto = 0;
     return;
   }
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+  // Nightstand wave: the hub's ONE retained forecast blob.
+  if (strcmp(topic, FleetSubs::WEATHER) == 0) {
+    canary::care::bedside_on_weather((const char*)payload, len);
+    return;
+  }
+#endif
+#if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+  if (strcmp(topic, g_topics.alarm_set) == 0) {
+    canary::care::wake_alarm_on_config((const char*)payload, len);
+    return;
+  }
+#endif
 
   char device_id[48];
   const char* suffix = nullptr;
@@ -522,6 +541,12 @@ bool mqtt_connect_attempt() {
   // may have dropped them) and reconcile the retained states.
   mqtt.subscribe(g_topics.update_cmd, 1);
   mqtt.subscribe(g_topics.update_auto_cmd, 1);
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+  mqtt.subscribe(FleetSubs::WEATHER, 1);
+#endif
+#if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
+  mqtt.subscribe(g_topics.alarm_set, 1);
+#endif
   if (s_update_state_set) {
     publish_checked("OTA", g_topics.update_state, s_update_state_cache, true);
   }

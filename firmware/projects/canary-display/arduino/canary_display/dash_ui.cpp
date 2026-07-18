@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include <lvgl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -24,6 +25,9 @@
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
 #include "care_glue.h"
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+#include "bedside.h"
+#endif
 #endif
 
 namespace canary::ui {
@@ -398,6 +402,20 @@ void about_close() {
 
 // ── Public API ───────────────────────────────────────────────────────────
 
+// Bounded append for composed lines: snprintf returns the WOULD-BE length,
+// so unchecked `to +=` can sail past the buffer and underflow the next
+// call's remaining-space math (review catch). This keeps `to` in bounds.
+static size_t appendf(char* buf, size_t cap, size_t to, const char* fmt, ...) {
+  if (to >= cap) return cap - 1;
+  va_list ap;
+  va_start(ap, fmt);
+  const int w = vsnprintf(buf + to, cap - to, fmt, ap);
+  va_end(ap);
+  if (w <= 0) return to;
+  to += (size_t)w;
+  return to >= cap ? cap - 1 : to;
+}
+
 void dash_ui_create() {
   s_scr = lv_scr_act();
   lv_obj_set_style_bg_color(s_scr, col_bg(), 0);
@@ -765,17 +783,26 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   const int day_total = fleet.history_total();
   char today[192] = "";
   size_t to = 0;
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+  // Nightstand wave: weather-before-you-rise leads the morning line.
+  if (!st.night && st.time_valid && st.clock_hh < 10) {
+    char wx[72];
+    if (canary::care::bedside_morning_line(wx, sizeof(wx))) {
+      to = appendf(today, sizeof(today), to, "%s   ·   ", wx);
+    }
+  }
+#endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
   if (!st.night && canary::care::night_ledger().count() > 0) {
     char sum[48];
     canary::care::night_ledger().summary(sum, sizeof(sum));
-    to += (size_t)snprintf(today + to, sizeof(today) - to, "%s   ·   ", sum);
+    to = appendf(today, sizeof(today), to, "%s   ·   ", sum);
   }
 #if defined(FEATURE_RHYTHM) && FEATURE_RHYTHM
   {
     char rl[80];
     if (canary::care::rhythm_line(rl, sizeof(rl)) > 0 && to < sizeof(today)) {
-      to += (size_t)snprintf(today + to, sizeof(today) - to, "%s   ·   ", rl);
+      to = appendf(today, sizeof(today), to, "%s   ·   ", rl);
     }
   }
 #endif
@@ -783,13 +810,11 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   if (!st.time_valid || n == 0) {
     // no day story without a clock/witnesses; care segments may still show
   } else if (day_total == 0) {
-    to += (size_t)snprintf(today + to, sizeof(today) - to,
-                           "Past 24h · nothing witnessed");
+    to = appendf(today, sizeof(today), to, "Past 24h · nothing witnessed");
   } else {
-    to += (size_t)snprintf(today + to, sizeof(today) - to,
-                           "Past 24h · %d %s · worst: %s", day_total,
-                           day_total == 1 ? "event" : "events",
-                           canary::fleet::sev_name(fleet.history_worst_day()));
+    to = appendf(today, sizeof(today), to, "Past 24h · %d %s · worst: %s",
+                 day_total, day_total == 1 ? "event" : "events",
+                 canary::fleet::sev_name(fleet.history_worst_day()));
   }
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
   if (today[0] && canary::fleet::the_journal().count() > 0 &&
