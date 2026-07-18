@@ -224,8 +224,12 @@ function poll(){fetch('/status').then(function(r){return r.json()})
 else if(j.state==='fail'){fail(j.reason||'Could not connect.')}
 else setTimeout(poll,900)})
 .catch(function(){setTimeout(poll,1200)})}
+function tip(m){if(/password/i.test(m))return" — check for typos (it is case-sensitive)";
+if(/not found/i.test(m))return" — note: this display only sees 2.4 GHz WiFi, so a 5 GHz-only network is invisible to it";
+if(/connect/i.test(m))return" — try moving the display closer to your router, then retry";
+return""}
 function fail(m){busy=false;var b=$('join');b.disabled=false;b.textContent='Join';
-$('msg').textContent=m;var s=$('sheet');s.classList.remove('err');
+$('msg').textContent=m+tip(m);var s=$('sheet');s.classList.remove('err');
 void s.offsetWidth;s.classList.add('err');$('pw').value='';$('pw').focus()}
 function win(){$('sheet').classList.remove('open');
 $('nets').style.display='none';$('rescan').style.display='none';
@@ -564,6 +568,16 @@ void provision_run(bool glass_ok) {
           WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
           enter(St::Fail, now);
           ui_stage(canary::ui::ObStage::Fail, ctx.fail_reason);
+          // Every failure carries its most likely fix (the portal shows a
+          // longer version of the same tip). The classic silent killer is
+          // a 5 GHz-only network the radio literally cannot see.
+          if (ws == WL_NO_SSID_AVAIL) {
+            ui_hint("it only sees 2.4 GHz wifi - not 5");
+          } else if (ws == WL_CONNECT_FAILED) {
+            ui_hint("passwords are case-sensitive");
+          } else {
+            ui_hint("try moving it closer to the router");
+          }
         }
         break;
       }

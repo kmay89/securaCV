@@ -49,6 +49,13 @@
                                         // on-device, never uploaded; wellbeing line)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
+// ── Nightstand wave (display_nightstand.md) — the dash is a WALL panel:
+// it gets the data lines but not the bedside behaviors (its backlight is
+// on/off only, and a hallway has no wake alarm) ──
+#define FEATURE_NIGHT_BLACKOUT      0   // dash night = dark theme + scheduled off
+#define FEATURE_COMFORT_WORDS       1
+#define FEATURE_HUB_WEATHER         1
+#define FEATURE_WAKE_ALARM          0
 
 // Features NOT used by this device — a display witnesses nothing itself.
 #define FEATURE_VISION_AI           0
@@ -92,6 +99,8 @@
 #define CD_TOUCH_WAKE_MS        20000   // backlight back on after a tap, then off
 #define CD_LONGPRESS_MS         900     // acknowledge gesture
 
+// First-boot seeds — the on-glass settings surface owns the runtime
+// schedule (glass_settings.h).
 #define CD_QUIET_START_HOUR     22
 #define CD_QUIET_END_HOUR       7
 #ifndef CD_TZ

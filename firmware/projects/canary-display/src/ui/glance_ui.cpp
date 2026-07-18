@@ -15,6 +15,7 @@
 
 #include "canary/ui/glance_ui.h"
 #include "canary/ui/theme.h"
+#include "canary/ui/canary_mark.h"
 #include "canary/trust.h"
 #include "canary/version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
@@ -23,6 +24,10 @@
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
 #include "canary/care/care_glue.h"
+#if (defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER) || \
+    (defined(FEATURE_COMFORT_WORDS) && FEATURE_COMFORT_WORDS)
+#include "canary/care/bedside.h"
+#endif
 #endif
 
 namespace canary::ui {
@@ -94,6 +99,14 @@ lv_obj_t* s_rc_more = nullptr;
 lv_obj_t* s_pg_about = nullptr;
 lv_obj_t* s_about_title = nullptr;
 lv_obj_t* s_about_body = nullptr;
+
+// Settings doorway (settings wave): the rotation's last stop. It only
+// invites — the long-press opens the real settings surface (settings_ui),
+// so a sleepy tap-cycle past it can never rearrange the screen.
+lv_obj_t* s_pg_settings = nullptr;
+lv_obj_t* s_set_glyph = nullptr;
+lv_obj_t* s_set_title = nullptr;
+lv_obj_t* s_set_hint = nullptr;
 
 // Proof page (trailblazer spec §1)
 lv_obj_t* s_pg_proof = nullptr;
@@ -183,9 +196,11 @@ void fade_cb(void* var, int32_t v) {
 }
 
 // Page order after the per-device details: events, [history], [roll call],
-// proof, transparency. One map so the count and the dispatch can't drift.
+// proof, transparency, settings. One map so the count and the dispatch
+// can't drift.
 struct PageMap {
   int events = -1, history = -1, rollcall = -1, proof = -1, about = -1;
+  int settings = -1;
   int count = 0;
 };
 
@@ -201,6 +216,7 @@ PageMap page_map(int devices) {
 #endif
   m.proof = idx++;
   m.about = idx++;
+  m.settings = idx++;
   m.count = idx;
   return m;
 }
@@ -211,6 +227,7 @@ void show_page(lv_obj_t* page) {
   // rationed CPU).
   if (page != s_pg_halo) breathe(nullptr, false);
   lv_obj_t* pages[] = {s_pg_halo, s_pg_dev, s_pg_ev, s_pg_proof, s_pg_about,
+                       s_pg_settings,
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
                        s_pg_history,
 #endif
@@ -293,20 +310,33 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   // Hero: the one thing that matters.
   lv_obj_set_style_text_color(s_hero, tcol, 0);
   lv_obj_set_style_text_color(s_hero_sub, mcol, 0);
-  if (n == 0) {
+  canary_mark_mood(n == 0 && !st.night ? CanaryMood::Idle
+                                       : CanaryMood::Hidden);
+  if (n == 0 && !st.time_valid) {
+    // Nothing at all yet: no witnesses AND no clock. The only honest face
+    // is the listening state.
     lv_obj_set_style_text_font(s_hero, font_title(), 0);
     lv_label_set_text(s_hero, "Listening");
     lv_label_set_text(s_hero_sub,
                       st.mqtt_ok ? "for canaries" :
-                      (st.wifi_ok ? "no broker yet" : "no wifi"));
+                      (st.wifi_ok ? "finding your hub" : "waiting for wifi"));
     lv_label_set_text(s_hero_badge, "");
   } else if (worst <= Sev::Notice) {
+    // Standalone-first (nightstand wave): with a clock but no canaries yet,
+    // the glass is already a great bedside clock — time hero, weather and
+    // sun lines below. The fleet story joins when the first canary does.
     // All quiet: the TIME becomes the hero (display_care_wave.md §1) — a
     // bedside glance is a clock check 20x a day, and every one of them
     // absorbs the security state peripherally. Falls back to the words
     // when the clock isn't valid yet.
     lv_obj_set_style_text_font(s_hero, font_title(), 0);
-    if (st.time_valid) {
+    if (st.time_valid && n == 0) {
+      lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
+      lv_label_set_text(s_hero_sub,
+                        st.mqtt_ok ? "no canaries yet · plug one in"
+                                   : (st.wifi_ok ? "still looking for your hub"
+                                                 : "waiting for wifi"));
+    } else if (st.time_valid) {
       lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
       lv_label_set_text_fmt(s_hero_sub, "all quiet · %d %s", n,
                             n == 1 ? "canary" : "canaries");
@@ -322,6 +352,24 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     if (!st.night && canary::care::night_ledger().count() > 0) {
       canary::care::night_ledger().summary(care_line, sizeof(care_line));
     }
+#endif
+    // Nightstand wave: at night the badge is the bedroom (peek = time +
+    // comfort); in the morning it is the day ahead (weather before you
+    // rise); in the evening, the sun going down.
+#if defined(FEATURE_COMFORT_WORDS) && FEATURE_COMFORT_WORDS
+    if (!care_line[0] && st.night) {
+      canary::care::bedside_comfort_line(fleet, care_line, sizeof(care_line));
+    }
+#endif
+#if defined(FEATURE_HUB_WEATHER) && FEATURE_HUB_WEATHER
+    if (!care_line[0] && !st.night && st.time_valid && st.clock_hh < 10) {
+      canary::care::bedside_morning_line(care_line, sizeof(care_line));
+    }
+    if (!care_line[0] && !st.night && st.time_valid && st.clock_hh >= 17) {
+      canary::care::bedside_evening_line(care_line, sizeof(care_line));
+    }
+#endif
+#if defined(FEATURE_CARE) && FEATURE_CARE
 #if defined(FEATURE_RHYTHM) && FEATURE_RHYTHM
     if (!care_line[0]) {
       canary::care::rhythm_line(care_line, sizeof(care_line));
@@ -356,7 +404,7 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     }
     // Acknowledged carries its attribution — which glass quieted the house.
     if (st.acked && fleet.ack_by()[0]) {
-      lv_label_set_text_fmt(s_hero_badge, "acked · %.16s", fleet.ack_by());
+      lv_label_set_text_fmt(s_hero_badge, "handled · %.16s", fleet.ack_by());
     } else {
       lv_label_set_text(s_hero_badge,
                         st.acked ? "acknowledged" : "hold to acknowledge");
@@ -365,19 +413,27 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   }
 
   // Small clock (redundant while the time IS the hero; honest otherwise).
-  const bool clock_is_hero = st.time_valid && n > 0 && worst <= Sev::Notice;
+  // n==0 counts: standalone clock mode also puts the time in the hero slot
+  // (review catch: without this the corner clock doubled it).
+  const bool clock_is_hero = st.time_valid && worst <= Sev::Notice;
   if (st.time_valid && !clock_is_hero) {
     lv_label_set_text_fmt(s_clock, "%02d:%02d", st.clock_hh, st.clock_mm);
   } else {
     lv_label_set_text(s_clock, "");
   }
   lv_obj_set_style_text_color(s_clock, mcol, 0);
-  if (!st.wifi_ok) {
-    lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  wifi down");
+  if (n == 0) {
+    // Standalone clock mode: the hero sub already carries the link story
+    // ("still looking for your hub" / "waiting for wifi"), and with no
+    // witnesses there is no "last known" to be honest about — a duplicate
+    // red banner would just be noise on a nightstand.
+    lv_label_set_text(s_banner, "");
+  } else if (!st.wifi_ok) {
+    lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  no wifi · reconnecting");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_alert(), 0);
   } else if (!st.mqtt_ok) {
-    lv_label_set_text(s_banner, "broker down · last known");
+    lv_label_set_text(s_banner, "hub lost · showing last known");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_warn(), 0);
   } else {
@@ -582,7 +638,8 @@ void update_rollcall(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                             (int)w->battery_pct);
     }
     if (w->rssi_present && o < sizeof(meta)) {
-      snprintf(meta + o, sizeof(meta) - o, " · %d dBm", (int)w->rssi_dbm);
+      snprintf(meta + o, sizeof(meta) - o, " · %s",
+               signal_word((int)w->rssi_dbm));
     }
     lv_obj_set_style_text_color(s_rc_meta[i], mcol, 0);
     lv_label_set_text(s_rc_meta[i], meta);
@@ -611,13 +668,22 @@ void update_about(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   lv_label_set_text_fmt(
       s_about_body,
       "watches %d %s\n"
-      "hears: your broker only\n"
-      "speaks: liveness · acks\n"
+      "hears: your home hub only\n"
+      "speaks: check-ins · your taps\n"
       "keeps: %d events, on-device\n"
       "never: cloud · camera · mic\n"
       "v%s",
       fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
       CANARY_FW_VERSION);
+}
+
+// Settings doorway: recolors with the night palette like every page.
+void update_settings_page(const GlanceState& st) {
+  const lv_color_t tcol = st.night ? ncol_text() : col_text();
+  const lv_color_t mcol = st.night ? ncol_muted() : col_muted();
+  lv_obj_set_style_text_color(s_set_glyph, mcol, 0);
+  lv_obj_set_style_text_color(s_set_title, tcol, 0);
+  lv_obj_set_style_text_color(s_set_hint, mcol, 0);
 }
 
 // Proof page: QR of the most urgent witness's signed chain head — the
@@ -640,7 +706,7 @@ void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_proof_who, pick ? pick->id : "");
     lv_label_set_text(s_proof_cap,
-                      pick ? "No signed chain to prove yet"
+                      pick ? "no proof yet · after first event"
                            : "No witnesses yet");
     return;
   }
@@ -652,7 +718,7 @@ void update_proof(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                            pick->id, pk, pick->chain_raw);
   if (len <= 0 || (size_t)len >= sizeof(body)) {
     lv_obj_add_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_proof_cap, "Proof payload too large");
+    lv_label_set_text(s_proof_cap, "too long for a QR · see hub log");
     return;
   }
   lv_obj_clear_flag(s_proof_card, LV_OBJ_FLAG_HIDDEN);
@@ -691,6 +757,8 @@ void heartbeat_pulse() {
 
 int glance_page_count() { return page_map(the_fleet().count()).count; }
 
+int glance_settings_page() { return page_map(the_fleet().count()).settings; }
+
 void glance_ui_create() {
   s_scr = lv_scr_act();
   lv_obj_set_style_bg_color(s_scr, col_bg(), 0);
@@ -703,6 +771,11 @@ void glance_ui_create() {
     s_arcs[i] = mk_ring(s_pg_halo, 232, 10);
     lv_obj_add_flag(s_arcs[i], LV_OBJ_FLAG_HIDDEN);
   }
+  // The brand canary perches above the hero while the glass has no fleet
+  // to speak for (listening / standalone clock). Hidden the moment the
+  // first witness arrives — the bird yields to the job.
+  lv_obj_t* bird = canary_mark_create(s_pg_halo, 40);
+  lv_obj_align(bird, LV_ALIGN_TOP_MID, 0, 26);
   s_hero = mk_label(s_pg_halo, font_title(), col_text());
   lv_obj_align(s_hero, LV_ALIGN_CENTER, 0, -26);
   s_hero_sub = mk_label(s_pg_halo, font_label(), col_muted());
@@ -809,6 +882,19 @@ void glance_ui_create() {
   s_proof_cap = mk_label(s_pg_proof, font_caption(), col_muted());
   lv_obj_align(s_proof_cap, LV_ALIGN_BOTTOM_MID, 0, -26);
 
+  // ── Settings doorway (settings wave) ──
+  s_pg_settings = mk_page(s_scr);
+  s_set_glyph = mk_label(s_pg_settings, font_hero(), col_muted());
+  lv_label_set_text(s_set_glyph, LV_SYMBOL_SETTINGS);
+  lv_obj_align(s_set_glyph, LV_ALIGN_CENTER, 0, -30);
+  s_set_title = mk_label(s_pg_settings, font_body(), col_text());
+  lv_label_set_text(s_set_title, "screen settings");
+  lv_obj_align(s_set_title, LV_ALIGN_CENTER, 0, 18);
+  s_set_hint = mk_label(s_pg_settings, font_caption(), col_muted());
+  lv_label_set_text(s_set_hint, "hold to open");
+  lv_obj_align(s_set_hint, LV_ALIGN_CENTER, 0, 44);
+  lv_obj_add_flag(s_pg_settings, LV_OBJ_FLAG_HIDDEN);
+
   // ── Heartbeat ring (starts invisible; pulses only when earned) ──
   s_beat_ring = mk_ring(s_scr, 238, 2);
   lv_obj_set_style_arc_color(s_beat_ring, col_ok(), LV_PART_MAIN);
@@ -844,7 +930,8 @@ void glance_ui_update(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     else if (page == m.rollcall) show_page(s_pg_rc);
 #endif
     else if (page == m.proof)  show_page(s_pg_proof);
-    else                       show_page(s_pg_about);
+    else if (page == m.about)  show_page(s_pg_about);
+    else                       show_page(s_pg_settings);
   }
 
   if (page == 0)             update_halo(fleet, now, st);
@@ -857,7 +944,8 @@ void glance_ui_update(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   else if (page == m.rollcall) update_rollcall(fleet, now, st);
 #endif
   else if (page == m.proof)  update_proof(fleet, now, st);
-  else                       update_about(fleet, now, st);
+  else if (page == m.about)  update_about(fleet, now, st);
+  else                       update_settings_page(st);
 
   // The heartbeat: earned, daytime, once a minute (spec §4). Absence is
   // information — any lesser state and the ring stays dark.

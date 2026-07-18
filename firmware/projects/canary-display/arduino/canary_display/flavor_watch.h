@@ -49,6 +49,16 @@
                                         // on-device, never uploaded; wellbeing line)
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
+// ── Nightstand wave (display_nightstand.md) ──
+#define FEATURE_NIGHT_BLACKOUT      0   // bench verdict: LCD backlight bleed makes
+                                        // "off" a glowing gray panel - worse than a
+                                        // calm dim glow. Now just the first-boot
+                                        // seed for the runtime "at night" choice
+                                        // (settings surface, glass_settings.h).
+#define FEATURE_COMFORT_WORDS       1   // bedroom temp/humidity as sleep-science words
+#define FEATURE_HUB_WEATHER         1   // hub-republished forecast (securacv/env/weather)
+#define FEATURE_WAKE_ALARM          1   // on-device two-phase gentle wake (needs the
+                                        // piezo populated to be audible — ramp works now)
 
 // Features NOT used by this device — a display witnesses nothing itself.
 #define FEATURE_VISION_AI           0
@@ -98,12 +108,14 @@
 #define CD_UI_FRAME_MS          100     // ~10 fps render tick (canvas flush)
 #define CD_BRIGHT_DAY           255     // LEDC duty (8-bit)
 #define CD_BRIGHT_AMBIENT       100     // idle daytime dim (illumination ladder)
-#define CD_BRIGHT_NIGHT         10      // near-dark glance floor
+#define CD_BRIGHT_NIGHT         3       // near-dark glance floor (bench: 10 was
+                                        // visibly bright at 3 a.m.; 3 is the dimmest
+                                        // stable duty on this backlight)
 #define CD_TOUCH_WAKE_MS        15000   // full brightness after a tap, then re-dim
 #define CD_LONGPRESS_MS         900     // acknowledge gesture
 
-// Quiet hours (local time; requires SNTP). Compiled defaults — NVS-backed
-// runtime overrides are a follow-up alongside the settings UI.
+// Quiet hours (local time; requires SNTP). First-boot seeds — the on-glass
+// settings surface owns the runtime schedule (glass_settings.h).
 #define CD_QUIET_START_HOUR     22
 #define CD_QUIET_END_HOUR       7
 // POSIX TZ string for local time. Default UTC; set yours in secrets.h

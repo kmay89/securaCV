@@ -12,6 +12,7 @@ struct Topics {
   char update_cmd[96];
   char update_auto[96];
   char update_auto_cmd[96];
+  char alarm_set[96];   // nightstand wake alarm config (retained, own topic)
 };
 
 // device_id comes from canary::cfg::get() — NVS-backed, so topics stay
@@ -24,6 +25,7 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.update_cmd,      sizeof(t.update_cmd),      "securacv/%s/update/cmd",      device_id);
   snprintf(t.update_auto,     sizeof(t.update_auto),     "securacv/%s/update/auto",     device_id);
   snprintf(t.update_auto_cmd, sizeof(t.update_auto_cmd), "securacv/%s/update/auto/cmd", device_id);
+  snprintf(t.alarm_set,       sizeof(t.alarm_set),       "securacv/%s/alarm/set",       device_id);
   return t;
 }
 
@@ -57,4 +59,8 @@ struct FleetSubs {
   // Rooms & names (trailblazer spec §8): retained {"name","room"} published
   // by HA / the companion app / mosquitto_pub — the glass speaks "Kitchen".
   static constexpr const char* META         = "securacv/+/meta";
+  // Nightstand wave: ONE retained weather blob the hub republishes from its
+  // own forecast integration (docs/hardware/display_nightstand.md has the
+  // HA automation). The display never fetches weather itself.
+  static constexpr const char* WEATHER      = "securacv/env/weather";
 };

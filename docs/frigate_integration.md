@@ -325,7 +325,13 @@ cargo run --bin event_mqtt_bridge -- \
 
 Here's how to configure Frigate + PWK for maximum privacy:
 
-### Frigate Config (frigate.yml)
+### Frigate Config
+
+> **Where this file lives:** the Frigate **Home Assistant add-on** (0.16+) reads
+> `/addon_configs/ccab4aaf_frigate/config.yml` (editable from the Frigate Web UI's
+> configuration editor or a file editor add-on) — *not* `/config/frigate.yml`, which
+> SecuraCV only uses as a generated template. In a **Docker** deployment it's whatever
+> config file you mount into the Frigate container.
 
 ```yaml
 mqtt:
@@ -377,7 +383,7 @@ retention_days: 90  # Keep events for 90 days
 
 1. **Check Frigate MQTT is enabled**:
    ```yaml
-   # frigate.yml
+   # Frigate config (see "Where this file lives" above)
    mqtt:
      enabled: true
    ```

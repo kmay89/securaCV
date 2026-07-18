@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Seal / unseal / vault UX pass — checked, plain-spoken, and rewarding
+
+- **Evidence Viewer now reveals its verification check-by-check.** After a
+  bundle is verified (verification still runs to completion first — nothing
+  shown is speculative), each real result slides in with a drawn tick, a
+  live "Check 3 of 7" counter, and a progress bar; the panel settles into
+  the permanent "What was verified" record. A failing bundle shows the
+  passed checks, then the failing one in red with a plain-language headline
+  keyed to the structured failure kind. Reduced-motion users get identical
+  content instantly.
+- **Dual-register check copy.** Every check row leads with plain language
+  ("Every event is chained to the one before it — nothing added, removed,
+  or reordered") with the verifier's exact technical claim one line below,
+  behind a "Show technical detail" toggle (always printed in the saved
+  report). Presentation-only: `verify_core.js` and its pinned strings are
+  untouched.
+- **Break-glass console gets a four-step tracker, an up-front "what
+  happens when you break the glass" reassurance panel, and a granted state
+  that explains the receipt.** Each step carries a one-sentence simple
+  explanation plus a labelled Technical line; quorum-reached and unseal
+  outcomes now say what was verified and that the decision (granted or
+  denied) was itself recorded as a signed receipt. Trustee share-link page
+  copy clarified likewise. Console behavior, endpoints, and the single
+  script block its tests extract are unchanged (`breakglass.test.js` still
+  green).
+
+### First-boot install-path audit (HA OS + Raspberry Pi)
+
+- **Frigate config location corrected everywhere.** The Frigate add-on
+  (0.16+) reads `/addon_configs/ccab4aaf_frigate/config.yml`, not
+  `/config/frigate.yml`. README install steps, `docs/frigate_integration.md`,
+  and `scripts/install.sh` now say so; the install script additionally seeds
+  Frigate's real config directory with the generated template when visible.
+  (The add-on wizard still writes only the `/config/frigate.yml` template —
+  wiring it to Frigate's config dir needs an `all_addon_configs` mapping and
+  is left as a code follow-up.)
+- **`scripts/install.sh` slugs fixed**: `ccab4aaf_frigate` and
+  `d0491a67_privacy_witness_kernel` (Supervisor slugs are
+  `sha1(repo-url)[:8]_<addon>`); the previous values could never resolve.
+  Removed calls to `ha addons repository add` / `ha addons repositories` —
+  the ha CLI has no repository commands, so the script now falls back to
+  clear manual instructions instead of silently failing.
+- **README HA install steps** now include the Mosquitto add-on and the
+  Frigate add-on repository as explicit prerequisites.
+
 ### Repo legibility pass (structural only, no functional changes)
 
 - Root doc files relocated into `docs/` (`log_verify_README.md` ->

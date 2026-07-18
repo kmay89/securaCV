@@ -66,7 +66,7 @@ fn seed_break_glass(kernel: &mut Kernel, ruleset_hash: [u8; 32]) -> Result<Break
     let approval = Approval::new(
         TrusteeId::new("alice"),
         request.request_hash(),
-        signature.to_vec(),
+        signature.to_bytes().to_vec(),
     );
     let policy = QuorumPolicy::new(
         1,
