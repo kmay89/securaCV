@@ -28,9 +28,12 @@
   header.site p { margin:2px 0 0; color:var(--muted); font-size:13px; }
   .wrap { max-width:880px; margin:0 auto; padding:20px 16px 64px; }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
-           box-shadow:var(--shadow); padding:18px 20px; margin:16px 0; }
+           box-shadow:var(--shadow); padding:18px 20px; margin:16px 0;
+           transition:opacity .35s ease, transform .35s ease; }
   .panel h2 { margin:0 0 4px; font-size:15px; }
-  .panel .sub { color:var(--muted); font-size:13px; margin:0 0 12px; }
+  .panel .sub { color:var(--muted); font-size:13.5px; margin:0 0 4px; }
+  .panel .tech { color:var(--muted); font-size:12px; margin:0 0 12px; opacity:.85; }
+  .panel .tech::before { content:"Technical: "; font-weight:600; }
   label { display:block; font-size:13px; font-weight:600; margin:10px 0 4px; }
   input[type=text], textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px;
            background:var(--bg); color:var(--fg); font-size:14px; }
@@ -46,7 +49,7 @@
   .hash { word-break:break-all; padding:10px 12px; background:var(--bg); border:1px dashed var(--line);
           border-radius:8px; font-size:13px; }
   .banner { padding:10px 12px; border-radius:8px; font-size:13.5px; margin:10px 0; display:none; }
-  .banner.show { display:block; }
+  .banner.show { display:block; animation:fade-slide .3s ease; }
   .banner.ok { background:var(--ok-bg); border:1px solid var(--ok); color:var(--ok); }
   .banner.bad { background:var(--bad-bg); border:1px solid var(--bad); color:var(--bad); }
   .banner.warn { background:var(--warn-bg); border:1px solid var(--warn); color:var(--warn); }
@@ -54,7 +57,7 @@
   th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-weight:600; }
   .pill { display:inline-block; padding:1px 8px; border-radius:20px; font-size:12px; font-weight:600; border:1px solid var(--line); }
-  .pill.in { color:var(--ok); background:var(--ok-bg); border-color:var(--ok); }
+  .pill.in { color:var(--ok); background:var(--ok-bg); border-color:var(--ok); animation:pop .35s ease; }
   .pill.out { color:var(--muted); }
   .quorum { font-size:22px; font-weight:700; }
   .trust { margin-top:8px; }
@@ -68,13 +71,62 @@
   .progress > div { height:100%; width:0; background:var(--accent); transition:width .3s; }
   .progress.ready > div { background:var(--ok); }
   body.trustee-mode .operator-only { display:none; }
+
+  /* Step tracker: where you are, what's done, what's next. */
+  .steps { display:flex; align-items:center; gap:8px; max-width:880px; margin:18px auto 0; padding:0 16px; }
+  .step { display:flex; align-items:center; gap:8px; }
+  .step .dot { width:26px; height:26px; border-radius:50%; border:2px solid var(--line); display:inline-flex;
+               align-items:center; justify-content:center; font-size:13px; font-weight:700; color:var(--muted);
+               background:var(--panel); flex:0 0 auto; transition:border-color .3s, background .3s, color .3s; }
+  .step .lbl { font-size:12.5px; font-weight:600; line-height:1.15; color:var(--muted); display:flex; flex-direction:column; }
+  .step .lbl small { font-weight:400; font-size:11px; }
+  .step.current .dot { border-color:var(--accent); color:var(--accent); }
+  .step.current .lbl { color:var(--fg); }
+  .step.done .dot { border-color:var(--ok); background:var(--ok); color:#fff; animation:pop .35s ease; }
+  .step.done .lbl { color:var(--ok); }
+  .steps .bar { flex:1 1 12px; min-width:10px; height:2px; background:var(--line); }
+  @media (max-width:640px) { .step .lbl small { display:none; } }
+
+  /* Reassurance checklist (intro + success). */
+  ul.assure { list-style:none; margin:8px 0 0; padding:0; }
+  ul.assure li { display:flex; align-items:flex-start; gap:8px; padding:3px 0; font-size:13.5px; }
+  ul.assure li::before { content:"✓"; color:var(--ok); font-weight:700; flex:0 0 auto; }
+
+  /* Granted: a moment that should feel earned — a drawn check, then the receipt story. */
+  #grant-view { display:none; margin-top:14px; padding:16px 18px; border:1px solid var(--ok);
+                background:var(--ok-bg); border-radius:var(--radius); animation:fade-slide .4s ease; }
+  #grant-view .head { display:flex; align-items:center; gap:12px; }
+  #grant-view .head strong { font-size:16px; color:var(--ok); }
+  .grant-check { width:44px; height:44px; flex:0 0 auto; }
+  .grant-check circle { fill:none; stroke:var(--ok); stroke-width:2.5;
+                        stroke-dasharray:160; stroke-dashoffset:160; animation:draw .6s ease forwards; }
+  .grant-check path { fill:none; stroke:var(--ok); stroke-width:3.5; stroke-linecap:round; stroke-linejoin:round;
+                      stroke-dasharray:40; stroke-dashoffset:40; animation:draw .45s ease .45s forwards; }
+
+  @keyframes pop { 0% { transform:scale(.6); } 60% { transform:scale(1.15); } 100% { transform:scale(1); } }
+  @keyframes fade-slide { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  @keyframes draw { to { stroke-dashoffset:0; } }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration:.01ms !important; animation-delay:0ms !important; transition-duration:.01ms !important; }
+  }
 </style>
 </head>
 <body>
 <header class="site">
   <h1>Break-glass console</h1>
-  <p>Quorum-gated evidence access (Invariant&nbsp;V) — operator-mediated. Trustees sign offline; you collect their signatures here.</p>
+  <p>Open sealed evidence — with your trustees' approval, on the record.
+     <span class="operator-only">Quorum-gated access (Invariant&nbsp;V): trustees sign, you collect the signatures here.</span></p>
 </header>
+
+<nav class="steps operator-only" aria-label="Progress through the four steps">
+  <div class="step current" id="st-1"><span class="dot" id="st-1-dot">1</span><span class="lbl">Connect<small>prove it's you</small></span></div>
+  <div class="bar"></div>
+  <div class="step" id="st-2"><span class="dot" id="st-2-dot">2</span><span class="lbl">Request<small>say what &amp; why</small></span></div>
+  <div class="bar"></div>
+  <div class="step" id="st-3"><span class="dot" id="st-3-dot">3</span><span class="lbl">Approvals<small>trustees sign</small></span></div>
+  <div class="bar"></div>
+  <div class="step" id="st-4"><span class="dot" id="st-4-dot">4</span><span class="lbl">Unseal<small>open, on the record</small></span></div>
+</nav>
 
 <div class="wrap">
 
@@ -85,13 +137,16 @@
        the operator leaves it. -->
   <section class="panel" id="p-trustee-sign" style="display:none">
     <h2>Sign an unlock request</h2>
-    <p class="sub">The operator asked you to approve break-glass access to sealed evidence.
-      Signing happens entirely in this tab — your key is never sent anywhere.</p>
+    <p class="sub">Someone you agreed to act as a trustee for is asking your approval to open sealed
+      evidence. Nothing happens unless enough trustees like you say yes.</p>
+    <p class="tech">Signing runs entirely in this tab (WebCrypto Ed25519). Your key never leaves it;
+      only the signature you copy out does. This page makes no network requests.</p>
     <div><strong>Envelope:</strong> <span class="mono" id="ts-envelope"></span></div>
     <label>Request hash you are signing</label>
     <div class="hash mono" id="ts-hash"></div>
-    <p class="muted" style="margin:8px 0 0">Confirm this hash with the operator over a channel you
-      trust (read it aloud, compare the first and last 8 characters) before signing.</p>
+    <p class="muted" style="margin:8px 0 0">Before signing, confirm this hash with the operator over a channel you
+      trust (read it aloud, compare the first and last 8 characters). If it matches, you're approving exactly
+      the request they opened — nothing more.</p>
     <label for="ts-sk">Your signing key (32-byte hex seed)</label>
     <input type="text" id="ts-sk" class="mono" placeholder="64 hex chars" autocomplete="off" spellcheck="false" />
     <div style="margin-top:10px"><button class="btn primary" id="ts-btn-sign">Sign in this browser</button></div>
@@ -102,13 +157,34 @@
         <div class="hash mono" id="ts-sig"></div>
         <div style="flex:0 0 auto"><button class="btn" id="ts-btn-copy">Copy</button></div>
       </div>
+      <p class="muted" style="margin:8px 0 0">That's it — you're done. The signature only approves this one
+        request; it can't be reused for anything else.</p>
     </div>
+  </section>
+
+  <!-- What breaking the glass means: reassurance before the first field. -->
+  <section class="panel operator-only" id="p-intro">
+    <h2>What happens when you break the glass</h2>
+    <p class="sub">Sealed evidence stays encrypted until enough of your chosen trustees agree to open it.
+      This console walks you through the four steps above. It's hard to get wrong, and safe to try:</p>
+    <ul class="assure">
+      <li>Nothing here can delete or alter the record — opening the vault only <em>adds</em> to the log.</li>
+      <li>It can't happen silently: the unseal itself is written into the permanent, tamper-evident record.</li>
+      <li>No one person — including you — can open the vault alone. That's the point.</li>
+      <li>Changed your mind? Closing a request just discards the approvals; the evidence stays sealed.</li>
+    </ul>
+    <p class="tech" style="margin-top:10px">Access is quorum-gated per Invariant V. Every decision (granted
+      or denied) is recorded as an Ed25519-signed break-glass receipt, hash-chained into the sealed log and
+      visible to anyone who later verifies the record.</p>
   </section>
 
   <!-- 1. Connect -->
   <section class="panel operator-only" id="p-connect">
     <h2>1 · Connect</h2>
-    <p class="sub">Paste the capability token from the server's token file. It stays in this tab and is sent only to this server.</p>
+    <p class="sub">Paste the capability token from the machine that runs securaCV. It proves to the server
+      that you're allowed to ask.</p>
+    <p class="tech">Read it from the server's token file. It stays in this tab and is sent only to this
+      server, as a Bearer credential.</p>
     <label for="token">Capability token</label>
     <input type="text" id="token" class="mono" placeholder="hex token" autocomplete="off" spellcheck="false" />
     <div class="row" style="margin-top:10px">
@@ -121,7 +197,10 @@
   <!-- 2. Request -->
   <section class="panel step-off operator-only" id="p-request">
     <h2>2 · Open an unlock request</h2>
-    <p class="sub">Names the sealed envelope and the reason. Produces the request hash every trustee must sign.</p>
+    <p class="sub">Name the sealed envelope and say why you need it. The reason you give becomes part of
+      the permanent record — write it the way you'd want it read later.</p>
+    <p class="tech">Produces the SHA-256 request hash that every trustee signs; approvals are bound to this
+      exact envelope and purpose and can't be replayed elsewhere.</p>
     <div class="row">
       <div>
         <label for="envelope">Vault envelope id</label>
@@ -154,7 +233,11 @@
   <!-- 3. Collect approvals -->
   <section class="panel step-off operator-only" id="p-approvals">
     <h2>3 · Collect approvals</h2>
-    <p class="sub">Each trustee signs the request hash with their own key (offline via <code class="k">break_glass approve</code>) and gives you the signature. Paste it below, or use the in-browser signer if a trustee is signing here.</p>
+    <p class="sub">Each trustee reviews the request and sends you back a signature. Paste each one below —
+      they'll turn green as they're verified and counted.</p>
+    <p class="tech">Trustees sign the request hash with their own key (offline via
+      <code class="k">break_glass approve</code>, or the share link's in-browser signer). The server verifies
+      each Ed25519 signature against the trustee's registered public key before counting it.</p>
     <table>
       <thead><tr><th style="width:140px">Trustee</th><th>Signature (hex) &amp; submit</th><th style="width:70px">Status</th></tr></thead>
       <tbody id="trustee-rows"></tbody>
@@ -178,6 +261,10 @@
   <!-- 4. Status + unseal -->
   <section class="panel step-off operator-only" id="p-unseal">
     <h2>4 · Quorum &amp; unseal</h2>
+    <p class="sub">When enough trustees have signed, the Unseal button lights up. Opening the vault also
+      writes a receipt of who approved it and why — that's what keeps the record trustworthy.</p>
+    <p class="tech">Unsealed evidence is written to the server's output directory, never returned over the
+      network. A signed break-glass receipt is appended to the log whether access is granted or denied.</p>
     <div class="row" style="align-items:center">
       <div style="flex:0 0 auto"><span class="quorum mono" id="quorum">0 / 0</span></div>
       <div class="progress" id="quorum-bar"><div></div></div>
@@ -186,12 +273,15 @@
       <div style="flex:0 0 auto"><button class="btn" id="btn-close">Close request</button></div>
     </div>
     <p class="muted" id="poll-note" style="margin:6px 0 0; display:none">Status refreshes
-      automatically every few seconds while the request is open.</p>
+      automatically every few seconds while the request is open — approvals from other machines
+      appear here by themselves.</p>
     <div class="banner" id="unseal-msg"></div>
+    <div id="grant-view"></div>
   </section>
 
   <p class="muted operator-only" style="text-align:center; margin-top:20px">
-    All actions are recorded as tamper-evident break-glass receipts. Unsealed evidence is written to the server's output directory, not returned over the network.
+    Every action here is recorded as a tamper-evident break-glass receipt.
+    To <em>check</em> a record instead of opening one, use the offline Evidence Viewer.
   </p>
 </div>
 
@@ -208,6 +298,18 @@ function banner(id, kind, msg) {
 function clearBanner(id) { const el = $(id); el.className = "banner"; el.textContent = ""; }
 function enableStep(id) { $(id).classList.remove("step-off"); }
 function disableStep(id) { $(id).classList.add("step-off"); }
+
+// Step tracker. setStep(n): steps below n are done (green check), step n is
+// current, the rest upcoming; n = 5 marks everything done (vault opened).
+function setStep(n) {
+  for (let i = 1; i <= 4; i++) {
+    const el = $("st-" + i);
+    const dot = $("st-" + i + "-dot");
+    if (i < n) { el.className = "step done"; dot.textContent = "✓"; }
+    else if (i === n) { el.className = "step current"; dot.textContent = String(i); }
+    else { el.className = "step"; dot.textContent = String(i); }
+  }
+}
 
 function hexToBytes(hex) {
   const h = hex.trim().toLowerCase();
@@ -261,8 +363,10 @@ $("btn-connect").onclick = guarded("btn-connect", "connect-msg", async () => {
   if (status !== 200) { banner("connect-msg", "bad", "Unexpected response (" + status + ")."); return; }
   state.trustees = (json.trustees || []).map((t) => t.id);
   renderPolicy(json);
-  banner("connect-msg", "ok", "Connected. Policy is " + json.n + "-of-" + json.m + ".");
+  banner("connect-msg", "ok", "Connected — you're in the right place. This vault opens only when " +
+    json.n + " of its " + json.m + " trustees agree.");
   enableStep("p-request");
+  setStep(2);
 });
 
 function renderPolicy(p) {
@@ -301,10 +405,12 @@ $("btn-open").onclick = guarded("btn-open", "request-msg", async () => {
   $("share-link").textContent = window.location.origin + window.location.pathname +
     "#sign&hash=" + json.request_hash + "&envelope=" + encodeURIComponent(envelope);
   $("request-view").style.display = "block";
-  banner("request-msg", "ok", "Request open. " + json.needed + " trustee signature(s) required.");
+  banner("request-msg", "ok", "Request recorded. Now collect " + json.needed +
+    " trustee signature(s) — send each trustee their link below.");
   renderTrusteeRows();
   enableStep("p-approvals");
   enableStep("p-unseal");
+  setStep(3);
   refreshStatus();
   startPolling();
 });
@@ -370,10 +476,11 @@ async function submitApproval(trustee, signature) {
   if (!signature) { banner("approval-msg", "bad", "Paste a signature for " + trustee + " first."); return; }
   const { status, json } = await api("POST", "/breakglass/approve", { trustee, signature });
   if (status === 200) {
-    banner("approval-msg", "ok", "Accepted approval from " + trustee + ".");
+    banner("approval-msg", "ok", "Verified and counted: " + trustee + " has approved.");
     applyStatus(json);
   } else if (status === 422) {
-    banner("approval-msg", "bad", "Rejected: " + (json.reason || "invalid") + " (" + trustee + ").");
+    banner("approval-msg", "bad", "Rejected: " + (json.reason || "invalid") + " (" + trustee + "). " +
+      "Nothing was counted — check the signature was copied whole, or ask the trustee to sign again.");
   } else {
     banner("approval-msg", "bad", "Error (" + status + "): " + (json.error || ""));
   }
@@ -533,9 +640,38 @@ function applyStatus(s) {
     if (!pill) return;
     const has = collected.indexOf(id) !== -1;
     pill.className = "pill " + (has ? "in" : "out");
-    pill.textContent = has ? "signed" : "pending";
+    pill.textContent = has ? "signed ✓" : "pending";
   });
   $("btn-unseal").disabled = !s.ready;
+  setStep(s.ready ? 4 : 3);
+  if (s.ready) {
+    banner("unseal-msg", "ok", "Quorum reached — " + collected.length + " of " + s.needed +
+      " required approvals verified. You can unseal now.");
+  }
+}
+
+// The granted moment: make success feel earned and explain the receipt that
+// was just written, instead of a one-line banner.
+function showGrantView(outputPath) {
+  const gv = $("grant-view");
+  gv.innerHTML =
+    '<div class="head">' +
+      '<svg class="grant-check" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="24"/><path d="M15 27l8 8 15-16"/></svg>' +
+      '<div><strong>The vault is open — and it’s on the record.</strong>' +
+      '<div class="muted" style="margin-top:2px">Quorum verified. Every approval checked out.</div></div>' +
+    '</div>' +
+    '<div style="margin-top:12px"><strong>Your evidence was written to:</strong>' +
+      '<div class="hash mono" style="margin-top:6px; border-style:solid">' + escapeHtml(outputPath) + '</div>' +
+      '<div class="muted" style="margin-top:4px">On the server — it was never sent over the network.</div></div>' +
+    '<ul class="assure" style="margin-top:12px">' +
+      '<li>A signed receipt of this unseal — who approved it, and the purpose you gave — is now part of the tamper-evident log.</li>' +
+      '<li>Anyone who later verifies the record will see this access. That transparency is what keeps the rest of the record credible.</li>' +
+      '<li>You’re done here — collect the files from the folder above. Nothing else needs closing or cleaning up.</li>' +
+    '</ul>';
+  gv.style.display = "block";
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
 $("btn-unseal").onclick = async () => {
@@ -546,14 +682,16 @@ $("btn-unseal").onclick = async () => {
   try { res = await api("POST", "/breakglass/unseal"); } catch (e) { banner("unseal-msg", "bad", (e && e.message) || String(e)); btn.disabled = false; return; }
   const { status, json } = res;
   if (status === 200) {
-    banner("unseal-msg", "ok", "Granted. Unsealed evidence written to: " + json.output_path);
     // Stays disabled: the request is consumed.
     stopPolling();
+    setStep(5);
+    showGrantView(json.output_path);
   } else if (status === 409) {
     banner("unseal-msg", "warn", "Quorum not met yet (" + (json.collected ? json.collected.length : 0) + "/" + (json.needed || state.needed) + ").");
     btn.disabled = false;
   } else if (status === 403) {
-    banner("unseal-msg", "bad", "Denied: " + (json.reason || "authorization failed"));
+    banner("unseal-msg", "bad", "Denied: " + (json.reason || "authorization failed") +
+      " — this denial was also recorded as a signed receipt.");
     btn.disabled = false;
   } else {
     banner("unseal-msg", "bad", "Error (" + status + "): " + (json.error || ""));
@@ -562,7 +700,7 @@ $("btn-unseal").onclick = async () => {
 };
 
 $("btn-close").onclick = async () => {
-  if (!confirm("Close this request? All collected approvals are discarded, and trustees must sign a new request hash to start again.")) return;
+  if (!confirm("Close this request? All collected approvals are discarded, and trustees must sign a new request hash to start again. The sealed evidence itself is untouched.")) return;
   // Notify the server, but always clear local state even if it's unreachable.
   try { await api("POST", "/breakglass/close"); } catch (e) { /* ignore */ }
   stopPolling();
@@ -572,12 +710,16 @@ $("btn-close").onclick = async () => {
   $("request-view").style.display = "none";
   $("trustee-rows").innerHTML = "";
   $("btn-unseal").disabled = true;
+  $("grant-view").style.display = "none";
   state.requestHash = "";
   clearBanner("request-msg");
-  banner("unseal-msg", "warn", "Request closed and approvals wiped.");
+  banner("unseal-msg", "warn", "Request closed and approvals wiped. The evidence stays sealed — open a new request any time.");
   disableStep("p-approvals");
   disableStep("p-unseal");
+  setStep(2);
 };
+
+setStep(1);
 </script>
 </body>
 </html>

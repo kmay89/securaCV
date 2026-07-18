@@ -75,9 +75,12 @@
   .trust ul { margin:8px 0; padding-left:20px; }
 
   .banner { border-radius:var(--radius); padding:16px 18px; margin:0 0 18px; display:flex; align-items:center;
-            gap:12px; font-size:16px; font-weight:650; box-shadow:var(--shadow); }
+            gap:12px; font-size:16px; font-weight:650; box-shadow:var(--shadow); animation:fade-slide .35s ease; }
   .banner svg { width:24px; height:24px; flex:0 0 auto; }
   .banner.ok { background:var(--ok-bg); border:1px solid var(--ok); color:var(--ok); }
+  .banner.ok svg circle, .banner.ok svg path { stroke-dasharray:60; stroke-dashoffset:60;
+                                               animation:draw .5s ease forwards; }
+  .banner.ok svg path { animation-delay:.35s; }
   .banner.warn { background:var(--warn-bg); border:1px solid var(--warn); color:var(--warn); }
   .banner.bad { background:var(--bad-bg); border:1px solid var(--bad); color:var(--bad); }
   .banner small { display:block; font-weight:400; font-size:13px; color:var(--muted); margin-top:2px; }
@@ -106,6 +109,35 @@
   ul.warns { margin:0; padding-left:20px; color:var(--warn); font-size:13.5px; }
   ul.warns li { padding:2px 0; }
 
+  /* Live check rows: each real, already-computed result slides in with its tick
+     drawing itself — the TurboTax "we checked everything for you" moment, with
+     plain language up front and the exact technical claim one line below. */
+  ul.checks li.chk { animation:fade-slide .3s ease both; }
+  ul.checks li.chk svg path { stroke-dasharray:24; stroke-dashoffset:24; animation:draw .35s ease .08s forwards; }
+  ul.checks li.chk.fail svg { color:var(--bad); }
+  ul.checks li.chk.fail .c-plain { color:var(--bad); font-weight:600; }
+  .c-plain { font-size:14px; }
+  .c-tech { display:none; color:var(--muted); font-size:12px;
+            font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; margin-top:1px; }
+  body.show-tech .c-tech { display:block; }
+  .runhead { display:flex; align-items:flex-start; gap:12px; margin-bottom:10px; }
+  .runhead .grow { flex:1; }
+  .run-title { font-size:15px; font-weight:650; }
+  .runbar { height:8px; background:var(--bg); border:1px solid var(--line); border-radius:6px;
+            overflow:hidden; margin:4px 0 10px; }
+  .runbar > div { height:100%; width:0; background:var(--accent); transition:width .3s ease; }
+  .runbar.ok > div { background:var(--ok); }
+  .runbar.bad > div { background:var(--bad); }
+  .runbar.warn > div { background:var(--warn); }
+  button.btn.toggle { font-size:12px; padding:5px 10px; color:var(--muted); flex:0 0 auto; }
+  .fade-in { animation:fade-slide .45s ease both; }
+
+  @keyframes fade-slide { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+  @keyframes draw { to { stroke-dashoffset:0; } }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration:.01ms !important; animation-delay:0ms !important; transition-duration:.01ms !important; }
+  }
+
   table { width:100%; border-collapse:collapse; font-size:13.5px; }
   th,td { text-align:left; padding:8px 9px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
@@ -117,7 +149,11 @@
 
   footer { color:var(--muted); font-size:12px; text-align:center; padding:26px 24px; }
   footer a { color:var(--muted); text-decoration:underline; }
-  @media print { #drop, .actions, .trust, .offline-badge, footer { display:none; } .panel { box-shadow:none; } }
+  @media print {
+    #drop, .actions, .trust, .offline-badge, footer, button.btn.toggle { display:none; }
+    .panel { box-shadow:none; }
+    .c-tech { display:block; } /* the printed record carries the full technical claims */
+  }
 </style>
 </head>
 <body>
@@ -137,7 +173,8 @@
     <div id="drop" role="button" tabindex="0" aria-label="Drop an evidence bundle or press Enter to choose a file">
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       <div class="big">Drop an evidence bundle (.json) to verify</div>
-      <div class="hint">or click to choose a file — nothing is uploaded; verification runs locally</div>
+      <div class="hint">or click to choose a file — nothing is uploaded, nothing is changed, and checking
+        can't hurt the file. Verification runs locally.</div>
       <input type="file" id="file" accept="application/json,.json">
     </div>
     <div class="actions">
@@ -1483,7 +1520,14 @@ const ICONS = {
   warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4"/><circle cx="12" cy="17.5" r=".6" fill="currentColor"/></svg>',
   bad: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></svg>',
   tick: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 6"/></svg>',
+  cross: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m7 7 10 10M17 7 7 17"/></svg>',
 };
+
+// Reveal timing. Motion is presentation only: every result shown was already
+// computed before the first row appears — nothing is staged or faked, and
+// reduced-motion users get the identical content instantly.
+const REDUCED = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wait = (ms) => (REDUCED || ms <= 0) ? Promise.resolve() : new Promise((r) => setTimeout(r, ms));
 
 // ---- input wiring --------------------------------------------------------
 drop.addEventListener('click', () => fileInput.click());
@@ -1516,14 +1560,59 @@ function fmtBucket(tb) {
   return esc(iso) + ' <span style="color:var(--muted)">· ' + (tb.size_s || 0) + 's</span>';
 }
 
+// ---- dual-register check copy --------------------------------------------
+// Plain-language headline for each technical check string the verifier emits
+// (presentation only — the strings themselves stay pinned in verify_core.js).
+// The original string is kept as the technical subline, so both readings are
+// always available and can never drift apart in meaning.
+const CHECK_PLAIN = [
+  [/^Envelope format and version/, 'This file is a genuine securaCV evidence bundle'],
+  [/^Manifest matches the canonical/, 'The privacy rules travelled inside the bundle and match the official spec'],
+  [/^Bundle fingerprint recomputed/, 'The bundle’s fingerprint recomputes from scratch — the file is exactly what was exported'],
+  [/^Sealed-event hash chain intact/, 'Every event is chained to the one before it — nothing added, removed, or reordered'],
+  [/^Device Ed25519 signatures valid/, 'Every event carries a valid signature from the device’s own key'],
+  [/^Checkpoint signature valid/, 'Older, pruned history is anchored by a valid signed checkpoint'],
+  [/^Break-glass receipts verified/, 'Every vault access left a signed, verifiable receipt — none happened off the books'],
+  [/^Human-readable artifact bound/, 'The readable summary matches the sealed data exactly'],
+  [/^Export receipt signature valid/, 'This export itself was signed by the device — its origin is proven'],
+];
+function checkPlain(c) {
+  for (const [re, plain] of CHECK_PLAIN) { if (re.test(c)) return plain; }
+  return null;
+}
+function checkRow(c, failed) {
+  const plain = checkPlain(c);
+  const icon = failed ? ICONS.cross : ICONS.tick;
+  const head = plain || c;
+  const tech = plain ? `<div class="c-tech">${esc(c)}</div>` : '';
+  return `<li class="chk${failed ? ' fail' : ''}">${icon}<div><div class="c-plain">${esc(head)}</div>${tech}</div></li>`;
+}
+// Plain-language headline for the check that failed, keyed by the structured
+// failure kind (details live in failureDiagnosis below).
+const FAIL_PLAIN = {
+  prev_hash_mismatch: 'The chain breaks here — an entry no longer links to the one before it',
+  entry_hash_mismatch: 'An entry’s data no longer matches the hash sealed over it',
+  signature_mismatch: 'A signature does not verify under the device’s key',
+  key_rotation_invalid: 'A device-key rotation record fails validation',
+  checkpoint_invalid: 'The retention checkpoint fails validation',
+  approvals_commitment_mismatch: 'Break-glass approvals do not match the sealed receipt',
+  policy_violation: 'A break-glass receipt violates the quorum policy',
+  untrusted_signer: 'A checkpoint signer is not in the device’s key lineage',
+};
+
 // ---- main flow -----------------------------------------------------------
 async function process(envelope, sourceLabel) {
-  out.innerHTML = '<div class="panel">Verifying…</div>';
+  out.innerHTML = '<section id="run"></section><section id="report"></section>';
   if (!envelope || typeof envelope !== 'object') return renderBad('That does not look like an evidence bundle.', '');
 
+  // Verify first (it takes milliseconds), then reveal the real results
+  // check by check. Nothing shown is speculative.
   let report;
   try { report = await V.verifyEnvelope(envelope); }
   catch (e) { return renderBad('The verifier hit an unexpected error.', e.message); }
+
+  await playChecks(report);
+  await wait(300);
 
   // Distinct from pass/fail: the bundle was neither verified nor rejected because this browser
   // can't run the signature check. Never show valid evidence as "rejected".
@@ -1533,7 +1622,7 @@ async function process(envelope, sourceLabel) {
   const icon = report.ok ? (report.warnings.length ? ICONS.warn : ICONS.ok) : ICONS.bad;
   const title = report.ok ? (report.warnings.length ? 'Verified — with notes' : 'Verified — integrity intact') : 'Not verified — bundle rejected';
   const sub = report.ok
-    ? 'Every cryptographic check below was recomputed locally and passed.'
+    ? 'Every cryptographic check above was recomputed locally on this device — and every one passed.'
     : 'A check failed. Do not trust the contents of this bundle.';
 
   let html = `<div class="banner ${cls}">${icon}<div>${title}<small>${esc(sub)}</small></div></div>`;
@@ -1544,11 +1633,10 @@ async function process(envelope, sourceLabel) {
     html += `<div class="panel"><h2>What failed</h2>`;
     if (report.failure) html += failureDiagnosis(report.failure);
     html += `<div class="hint">Raw error:</div><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div>`;
-    if (report.checks.length) html += `<div class="hint">Checks that passed before the failure:</div>${checklist(report.checks)}`;
     html += `</div>`;
     html += provesPanel();
     html += actions(true);
-    out.innerHTML = html;
+    $('report').innerHTML = `<div class="fade-in">${html}</div>`;
     wire();
     return;
   }
@@ -1558,8 +1646,6 @@ async function process(envelope, sourceLabel) {
     <div class="finger"><code id="fp">${esc(report.whole_envelope_digest || '')}</code>
       <button class="btn copy" id="copyfp" type="button">Copy</button></div>
     <div class="hint">SHA-256 of the canonical bundle — quote this to refer to this exact evidence.</div></div>`;
-
-  html += `<div class="panel"><h2>What was verified</h2>${checklist(report.checks)}</div>`;
 
   html += `<div class="panel"><h2>Contents</h2><div class="stats">
     ${stat(report.sealed_events, 'Sealed events')}
@@ -1587,8 +1673,69 @@ async function process(envelope, sourceLabel) {
   html += renderTimeline(envelope);
   html += provesPanel();
   html += actions(true);
-  out.innerHTML = html;
+  $('report').innerHTML = `<div class="fade-in">${html}</div>`;
   wire();
+}
+
+// Reveal the verifier's real, already-computed results one check at a time,
+// with a live counter and progress bar. On completion the panel stays put as
+// the "What was verified" record. Under prefers-reduced-motion everything
+// appears at once.
+async function playChecks(report) {
+  const checks = report.checks || [];
+  const failed = !report.ok && !report.inconclusive;
+  const total = checks.length + (failed ? 1 : 0);
+  $('run').innerHTML = `<div class="panel" id="runpanel">
+      <div class="runhead">
+        <div class="grow">
+          <div class="run-title" id="runtitle">Checking this bundle, from scratch…</div>
+          <div class="hint" id="runcount" style="margin-top:2px">Re-deriving every proof locally — the bundle is not taken at its word.</div>
+        </div>
+        <button class="btn toggle" id="techtoggle" type="button" aria-pressed="false">Show technical detail</button>
+      </div>
+      <div class="runbar" id="runbar"><div></div></div>
+      <ul class="checks" id="runlist"></ul>
+    </div>`;
+  const list = $('runlist'), bar = $('runbar'), count = $('runcount'), title = $('runtitle');
+  // The preference lives on <body> so it survives "Verify another bundle";
+  // the freshly-rendered button must reflect it, not reset it.
+  const toggle = $('techtoggle');
+  const syncToggle = () => {
+    const on = document.body.classList.contains('show-tech');
+    toggle.textContent = on ? 'Hide technical detail' : 'Show technical detail';
+    toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+  };
+  toggle.addEventListener('click', () => { document.body.classList.toggle('show-tech'); syncToggle(); });
+  syncToggle();
+
+  const stepMs = Math.min(340, Math.max(150, 2400 / Math.max(total, 1)));
+  for (let i = 0; i < checks.length; i++) {
+    await wait(stepMs);
+    list.insertAdjacentHTML('beforeend', checkRow(checks[i], false));
+    bar.firstElementChild.style.width = Math.round(((i + 1) / Math.max(total, 1)) * 100) + '%';
+    count.textContent = 'Check ' + (i + 1) + ' of ' + total + ' passed';
+  }
+
+  if (failed) {
+    await wait(stepMs);
+    const kind = report.failure && report.failure.kind;
+    const plainFail = (kind && FAIL_PLAIN[kind]) || 'A cryptographic check failed';
+    list.insertAdjacentHTML('beforeend',
+      `<li class="chk fail">${ICONS.cross}<div><div class="c-plain">${esc(plainFail)}</div><div class="c-tech">${esc(report.error || '')}</div></div></li>`);
+    bar.firstElementChild.style.width = '100%';
+    bar.className = 'runbar bad';
+    title.textContent = 'A check failed';
+    count.textContent = checks.length + ' of ' + total + ' checks passed — verification stopped at the failure';
+  } else if (report.inconclusive) {
+    bar.className = 'runbar warn';
+    title.textContent = 'Structural checks passed — signatures untestable in this browser';
+    count.textContent = checks.length + ' check' + (checks.length === 1 ? '' : 's') + ' completed';
+  } else {
+    bar.firstElementChild.style.width = '100%';
+    bar.className = 'runbar ok';
+    title.textContent = 'What was verified — all ' + total + ' checks passed';
+    count.textContent = 'Everything below was recomputed on this device, offline.';
+  }
 }
 
 // Plain-language diagnosis for a structured chain failure. Mirrors the Rust
@@ -1695,7 +1842,6 @@ function provesPanel() {
 }
 
 function stat(n, label) { return `<div class="stat"><div class="n">${n}</div><div class="l">${esc(label)}</div></div>`; }
-function checklist(items) { return `<ul class="checks">${items.map((c) => `<li>${ICONS.tick}<span>${esc(c)}</span></li>`).join('')}</ul>`; }
 
 // Action bar shown under a result. `withPrint` adds a "Save / print report" button for the
 // court-grade record (hidden in the printed output itself via the print stylesheet).
@@ -1721,7 +1867,7 @@ function whatThisMeans(kind) {
   const reproduce = 'Anyone can repeat this check offline with this same viewer — they don’t have to trust you, or us.';
   const copy = {
     verified: {
-      what: 'The record’s integrity is intact: every event was signed by the device’s key, and nothing has been added, removed, or altered since it was sealed.',
+      what: 'The record’s integrity is intact: every event was signed by the device’s key, and nothing has been added, removed, or altered since it was sealed. You did everything right — the checks above are the same ones an expert would run.',
       next: ['Keep the original <strong>.json</strong> bundle file — it is the evidence; this page is only a check of it.',
              'Use <strong>Save / print report</strong> below for a dated record of <em>what</em> you verified and <em>when</em>.',
              'To let someone else confirm it, send them the bundle file and this viewer. ' + reproduce] },
@@ -1730,7 +1876,7 @@ function whatThisMeans(kind) {
       next: ['Read the <strong>Notes</strong> panel so you can explain each one.',
              'Save / print the report and keep the original bundle, exactly as for a clean pass.'] },
     rejected: {
-      what: 'At least one cryptographic check failed, so this bundle cannot be relied on as an unaltered record. That is not proof someone tampered with it — a truncated download or an incomplete export fails the same way — but as it stands it is not verifiable evidence.',
+      what: 'At least one cryptographic check failed, so this bundle cannot be relied on as an unaltered record. That is not proof someone tampered with it — a truncated download or an incomplete export fails the same way — and it is not something you did wrong. But as it stands it is not verifiable evidence.',
       next: ['Re-export a fresh bundle from the source and verify that copy.',
              'If a fresh copy still fails, preserve <em>both</em> the file and this report and treat the discrepancy as significant — do not edit the file to “fix” it.'] },
     inconclusive: {
@@ -1745,16 +1891,15 @@ function whatThisMeans(kind) {
 }
 
 // Browser can't run Ed25519 — neither a pass nor a failure. Must read clearly as inconclusive
-// so a valid bundle is never mistaken for forged.
+// so a valid bundle is never mistaken for forged. (The checks that did complete stay visible
+// in the animated panel above this report.)
 function renderInconclusive(report, sourceLabel) {
   let html = `<div class="banner warn">${ICONS.warn}<div>Couldn't finish verifying in this browser<small>Inconclusive — this is not a pass and not a failure.</small></div></div>`;
-  html += `<div class="panel"><h2>What happened</h2><div>${esc(report.error || '')}</div>`;
-  if (report.checks && report.checks.length) html += `<div class="hint">Checks completed before signatures could be tested:</div>${checklist(report.checks)}`;
-  html += `</div>`;
+  html += `<div class="panel"><h2>What happened</h2><div>${esc(report.error || '')}</div></div>`;
   html += whatThisMeans('inconclusive');
   html += metaPanel(sourceLabel, 'Inconclusive — signatures not checked in this browser');
   html += actions(true);
-  out.innerHTML = html;
+  $('report').innerHTML = `<div class="fade-in">${html}</div>`;
   wire();
 }
 
