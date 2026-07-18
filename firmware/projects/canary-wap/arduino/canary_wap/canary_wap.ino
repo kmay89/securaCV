@@ -4077,6 +4077,105 @@ static void apply_default_sensor_tuning() {
 
 // Single attempt at esp_camera_init with the supplied config. Returns ESP_OK
 // or the error code so the caller can decide whether to retry.
+// ── Sensor whoami (bench triage) ─────────────────────────────────────────
+// Runs only after EVERY init attempt failed with the driver's anonymous
+// "Detected camera not supported" (0x106). That error hides the one datum
+// that matters: WHICH ID the probe saw. We re-ask the sensor directly:
+// drive XCLK ourselves (a sensor only answers SCCB while clocked), then
+// read the product ID over I2C at the two OmniVision addresses. Outcomes:
+//   - PID 0x26xx at 0x30  -> OV2640 (supported; failure is elsewhere)
+//   - 0x3660 / 0x5640 at 0x3C -> newer Sense camera module batch
+//   - garbage / no ACK    -> the snap-on board or ribbon isn't seated
+#include <Wire.h>
+#include <driver/ledc.h>
+static void camera_whoami_after_failure() {
+  ledc_timer_config_t t = {};
+  t.speed_mode      = LEDC_LOW_SPEED_MODE;
+  t.timer_num       = LEDC_TIMER_3;      // top of the range: clear of the
+  t.duty_resolution = LEDC_TIMER_1_BIT;  // core's auto-assigned channels
+  t.freq_hz         = 20000000;
+  t.clk_cfg         = LEDC_AUTO_CLK;
+  ledc_channel_config_t c = {};
+  c.gpio_num   = CAM_PIN_XCLK;
+  c.speed_mode = LEDC_LOW_SPEED_MODE;
+  c.channel    = LEDC_CHANNEL_7;
+  c.timer_sel  = LEDC_TIMER_3;
+  c.duty       = 1;                      // 50% at 1-bit resolution
+  if (ledc_timer_config(&t) != ESP_OK || ledc_channel_config(&c) != ESP_OK) {
+    Serial.println("[CAMERA] whoami: couldn't start probe clock — skipping");
+    return;
+  }
+  delay(20);
+  Wire1.begin((int)CAM_PIN_SIOD, (int)CAM_PIN_SIOC, 100000);
+  auto ack = [](uint8_t a) {
+    Wire1.beginTransmission(a);
+    return Wire1.endTransmission() == 0;
+  };
+  auto rd8 = [](uint8_t a, uint8_t reg, uint8_t* out) {
+    Wire1.beginTransmission(a);
+    Wire1.write(reg);
+    if (Wire1.endTransmission(false) != 0) return false;
+    if (Wire1.requestFrom((int)a, 1) != 1) return false;
+    *out = (uint8_t)Wire1.read();
+    return true;
+  };
+  auto rd16 = [](uint8_t a, uint16_t reg, uint8_t* out) {
+    Wire1.beginTransmission(a);
+    Wire1.write((uint8_t)(reg >> 8));
+    Wire1.write((uint8_t)(reg & 0xFF));
+    if (Wire1.endTransmission(false) != 0) return false;
+    if (Wire1.requestFrom((int)a, 1) != 1) return false;
+    *out = (uint8_t)Wire1.read();
+    return true;
+  };
+
+  if (ack(0x30)) {
+    // OV2640 family: select the sensor register bank, read PID/VER.
+    Wire1.beginTransmission(0x30);
+    Wire1.write(0xFF);
+    Wire1.write(0x01);
+    Wire1.endTransmission();
+    uint8_t pid = 0, ver = 0;
+    if (rd8(0x30, 0x0A, &pid) && rd8(0x30, 0x0B, &ver)) {
+      Serial.printf("[CAMERA] whoami: sensor at 0x30 reports PID 0x%02X%02X\n", pid, ver);
+      if (pid == 0x26) {
+        Serial.println("[CAMERA] whoami: that IS an OV2640 — the sensor is fine and");
+        Serial.println("[CAMERA] whoami: seated; the failure is in the init config path.");
+      } else {
+        Serial.println("[CAMERA] whoami: unfamiliar ID at the OV2640 address — likely a");
+        Serial.println("[CAMERA] whoami: clone module; send this PID upstream.");
+      }
+    } else {
+      Serial.println("[CAMERA] whoami: 0x30 ACKed but register read failed — marginal");
+      Serial.println("[CAMERA] whoami: connection; re-seat the camera board/ribbon.");
+    }
+  } else if (ack(0x3C)) {
+    uint8_t idh = 0, idl = 0;
+    if (rd16(0x3C, 0x300A, &idh) && rd16(0x3C, 0x300B, &idl)) {
+      const uint16_t id = ((uint16_t)idh << 8) | idl;
+      Serial.printf("[CAMERA] whoami: sensor at 0x3C reports chip ID 0x%04X\n", id);
+      if (id == 0x3660) {
+        Serial.println("[CAMERA] whoami: that's an OV3660 — a newer Sense camera batch.");
+        Serial.println("[CAMERA] whoami: this build's camera library rejected it; report");
+        Serial.println("[CAMERA] whoami: this line so OV3660 support gets enabled.");
+      } else if (id == 0x5640) {
+        Serial.println("[CAMERA] whoami: that's an OV5640 — report this line so OV5640");
+        Serial.println("[CAMERA] whoami: support gets enabled in the build.");
+      }
+    } else {
+      Serial.println("[CAMERA] whoami: 0x3C ACKed but ID read failed — re-seat the");
+      Serial.println("[CAMERA] whoami: camera board/ribbon and retry.");
+    }
+  } else {
+    Serial.println("[CAMERA] whoami: NO sensor answered on the camera bus.");
+    Serial.println("[CAMERA] whoami: power off, pop the Sense expansion board off and");
+    Serial.println("[CAMERA] whoami: back on firmly, and check the ribbon latch.");
+  }
+  Wire1.end();
+  ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_7, 0);
+  gpio_reset_pin((gpio_num_t)CAM_PIN_XCLK);
+}
+
 static esp_err_t try_camera_init(const camera_config_t& cfg, const char* label) {
   esp_err_t err = esp_camera_init(&cfg);
   if (err == ESP_OK) {
@@ -4229,6 +4328,7 @@ static bool init_camera() {
   if (chosen < 0) {
     Serial.printf("[CAMERA] All init attempts failed — last err=0x%x (%s)\n",
                   last_err, esp_err_to_name(last_err));
+    camera_whoami_after_failure();
     return false;
   }
   g_peek_last_init_err = 0;
@@ -9587,6 +9687,7 @@ void setup() {
   // the camera init before WiFi reliably gives the driver a clean heap.
   #if FEATURE_CAMERA_PEEK
   if (!in_safe_mode) {
+    boot_stage("camera-init");
     Serial.println("[..] Initializing camera for peek/preview...");
     g_camera_initialized = init_camera();
     g_hw.camera_available = g_camera_initialized;
@@ -9648,6 +9749,7 @@ void setup() {
   // Initialize SD card storage (with timeout, non-blocking)
   #if FEATURE_SD_STORAGE
   if (!in_safe_mode) {
+    boot_stage("sd-init");
     Serial.println("[..] Initializing SD card storage (with timeout)...");
     g_sd_spi.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
 
@@ -9705,6 +9807,7 @@ void setup() {
   // signed, so the attestation stays the first record of every boot.
   bool mic_boot_muted = false;
   if (!in_safe_mode) {
+    boot_stage("audio-init");
     Serial.println("[..] Initializing PDM acoustic event detection...");
     audio_config_t audio_cfg = AUDIO_CONFIG_DEFAULT;
     // Apply the user's persisted room-noise sensitivity (set via
@@ -9868,11 +9971,13 @@ void setup() {
 
   // Start WiFi Access Point
   #if FEATURE_WIFI_AP
+  boot_stage("wifi-ap-start");
   Serial.println("[..] Starting WiFi Access Point...");
   if (start_wifi_ap()) {
     Serial.printf("[WIFI] AP started: %s (password: %s)\n", g_device.ap_ssid, g_device.ap_password);
 
     #if FEATURE_HTTP_SERVER
+    boot_stage("api-start");
     Serial.println("[..] Starting API server...");
     start_http_server();
     #endif
@@ -9886,6 +9991,7 @@ void setup() {
   // Initialize mesh network (opera)
   #if FEATURE_MESH_NETWORK
   if (!in_safe_mode) {
+    boot_stage("mesh-init");
     Serial.println("[..] Initializing mesh network (opera)...");
     if (mesh_network::init(g_device.privkey, g_device.pubkey, g_device.device_id)) {
       Serial.println("[OK] Mesh network initialized");
@@ -9976,6 +10082,7 @@ void setup() {
   // Initialize WiFi Presence Detection
   #if FEATURE_WIFI_PRESENCE
   if (!in_safe_mode) {
+    boot_stage("wifi-presence-init");
     Serial.println("[..] Initializing WiFi presence detection...");
     if (wifi_presence::start()) {
       Serial.println("[OK] WiFi presence monitoring active (probe request counting)");
@@ -10128,6 +10235,7 @@ void setup() {
   }
   
   // Create boot attestation record
+  boot_stage("boot-attestation");
   Serial.println("[..] Creating boot attestation record...");
   uint8_t boot_payload[256];
   size_t boot_len = 0;
@@ -10490,7 +10598,9 @@ void loop() {
   // Start BLE Discovery's radio activity once the SoftAP join window is clear
   // (STA joined home WiFi, or AP-only settle elapsed) — deferred from setup()
   // so its active scan can't starve a provisioning phone's WPA2 handshake.
-  ble_discovery_start_if_due();
+  boot_stage("loop:ble-finalize");   // prime wdt-starvation suspect (~17 s
+  ble_discovery_start_if_due();      // post-boot); the breadcrumb convicts
+  boot_stage("loop:steady");         // or clears it on the next crash
 
   #if FEATURE_VAULT_SNAPSHOT
   // Adopt a finished seal worker (emits the frame_sealed witness event and

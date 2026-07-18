@@ -23,6 +23,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <Preferences.h>
+#include <esp_attr.h>     // RTC_NOINIT_ATTR (crash-stage breadcrumb)
 #include <esp_system.h>   // esp_reset_reason()
 #include <esp_task_wdt.h> // fed while waiting on the SD mount worker
 
@@ -777,6 +778,22 @@ bool reset_is_crash(esp_reset_reason_t r) {
 // volatile state — chiefly the witness chain head/seq — to NVS. Without it
 // a recovery reboot would roll the chain back to the last throttled persist
 // and reuse sequence numbers, breaking the tamper-evidence guarantee.
+// ── Crash-stage breadcrumb (bench triage) ────────────────────────────────
+// The task-watchdog abort names the starved TASK but not what the firmware
+// was DOING — and field crashes rarely come with the build's ELF for
+// symbolizing backtraces. So the sketch drops a named breadcrumb into
+// RTC-noinit memory before each risky stage; it survives every reset
+// except power-on, and safe_mode_check() prints it on the crash reboot.
+// One line of serial output replaces an addr2line session.
+RTC_NOINIT_ATTR char     g_crash_stage[48];
+RTC_NOINIT_ATTR uint32_t g_crash_stage_magic;
+constexpr uint32_t CRASH_STAGE_MAGIC = 0x53544147;  // "STAG"
+
+inline void boot_stage(const char* stage) {
+  strlcpy(g_crash_stage, stage, sizeof(g_crash_stage));
+  g_crash_stage_magic = CRASH_STAGE_MAGIC;
+}
+
 typedef void (*safe_mode_pre_reboot_fn)();
 safe_mode_pre_reboot_fn g_safe_mode_pre_reboot = nullptr;
 
@@ -806,10 +823,19 @@ bool safe_mode_check() {
     Serial.printf("[SAFE] Crash reset (%s) - consecutive crash count %u/%u\n",
                   reset_reason_name(g_hw.last_reset_reason),
                   rapid_count, hw_config::SAFE_MODE_REBOOT_LIMIT);
+    if (g_crash_stage_magic == CRASH_STAGE_MAGIC && g_crash_stage[0]) {
+      g_crash_stage[sizeof(g_crash_stage) - 1] = '\0';
+      Serial.printf("[SAFE] Last breadcrumb before the crash: %s\n",
+                    g_crash_stage);
+    }
   } else {
     Serial.printf("[SAFE] Clean reset (%s) - not counted toward safe mode\n",
                   reset_reason_name(g_hw.last_reset_reason));
+    // RTC-noinit is garbage after a true power-on: invalidate so a stale
+    // or random breadcrumb can never masquerade as evidence.
+    if (g_hw.last_reset_reason == ESP_RST_POWERON) g_crash_stage_magic = 0;
   }
+  boot_stage("early-boot");
   g_hw.rapid_boot_count = rapid_count;
 
   g_hw_nvs.end();
