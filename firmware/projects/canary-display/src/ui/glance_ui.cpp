@@ -297,7 +297,9 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   // Hero: the one thing that matters.
   lv_obj_set_style_text_color(s_hero, tcol, 0);
   lv_obj_set_style_text_color(s_hero_sub, mcol, 0);
-  if (n == 0) {
+  if (n == 0 && !st.time_valid) {
+    // Nothing at all yet: no witnesses AND no clock. The only honest face
+    // is the listening state.
     lv_obj_set_style_text_font(s_hero, font_title(), 0);
     lv_label_set_text(s_hero, "Listening");
     lv_label_set_text(s_hero_sub,
@@ -305,12 +307,21 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                       (st.wifi_ok ? "finding your hub" : "waiting for wifi"));
     lv_label_set_text(s_hero_badge, "");
   } else if (worst <= Sev::Notice) {
+    // Standalone-first (nightstand wave): with a clock but no canaries yet,
+    // the glass is already a great bedside clock — time hero, weather and
+    // sun lines below. The fleet story joins when the first canary does.
     // All quiet: the TIME becomes the hero (display_care_wave.md §1) — a
     // bedside glance is a clock check 20x a day, and every one of them
     // absorbs the security state peripherally. Falls back to the words
     // when the clock isn't valid yet.
     lv_obj_set_style_text_font(s_hero, font_title(), 0);
-    if (st.time_valid) {
+    if (st.time_valid && n == 0) {
+      lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
+      lv_label_set_text(s_hero_sub,
+                        st.mqtt_ok ? "no canaries yet · plug one in"
+                                   : (st.wifi_ok ? "still looking for your hub"
+                                                 : "waiting for wifi"));
+    } else if (st.time_valid) {
       lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
       lv_label_set_text_fmt(s_hero_sub, "all quiet · %d %s", n,
                             n == 1 ? "canary" : "canaries");
@@ -394,7 +405,13 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
     lv_label_set_text(s_clock, "");
   }
   lv_obj_set_style_text_color(s_clock, mcol, 0);
-  if (!st.wifi_ok) {
+  if (n == 0) {
+    // Standalone clock mode: the hero sub already carries the link story
+    // ("still looking for your hub" / "waiting for wifi"), and with no
+    // witnesses there is no "last known" to be honest about — a duplicate
+    // red banner would just be noise on a nightstand.
+    lv_label_set_text(s_banner, "");
+  } else if (!st.wifi_ok) {
     lv_label_set_text(s_banner, LV_SYMBOL_WIFI "  no wifi · reconnecting");
     lv_obj_set_style_text_color(s_banner,
                                 st.night ? ncol_alert() : col_alert(), 0);

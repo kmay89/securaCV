@@ -118,3 +118,23 @@ the piezo actually being populated; the sunrise ramp works regardless.
 
 Every new line went through the glass vocabulary rules (microcopy lint
 check 5): no dBm, no topic names, no jargon on the wall.
+
+## Standalone mode — great before it's fully set up
+
+The nightstand experience does not wait for the fleet. With **just WiFi**
+(no hub, no canaries), the watch is already a proper bedside clock:
+
+- **Clock hero** the moment SNTP lands, with a calm status sub-line
+  ("no canaries yet · plug one in" / "still looking for your hub") — never
+  a permanent "Listening" placeholder, and no red banner noise while
+  there's nothing to guard.
+- **Night blackout + tap-to-peek** work immediately: with zero witnesses
+  the honesty veto doesn't apply (nothing is being guarded), so the room
+  gets its darkness on day one.
+- **Wake alarm** fires fully on-device once set (it does need WiFi for the
+  clock — there is no battery-backed RTC).
+- **Sun lines** need only `CD_LAT`/`CD_LON` in secrets.h.
+
+Add a **hub** and the weather line joins. Add a **canary** with a
+temp/humidity sensor and the comfort words join. Every step of setup makes
+it better; no step is required for it to be good.
