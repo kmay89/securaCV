@@ -1086,7 +1086,7 @@ mod tests {
         use ed25519_dalek::Signer;
         let key = SigningKey::from_bytes(&[2u8; 32]);
         let (policy, request) = single_trustee_policy("bob", &key);
-        let bare = key.sign(&request.request_hash()).to_vec();
+        let bare = key.sign(&request.request_hash()).to_bytes().to_vec();
         assert!(!verify_approval(
             &key.verifying_key().to_bytes(),
             &request.request_hash(),
