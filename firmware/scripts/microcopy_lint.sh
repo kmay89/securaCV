@@ -259,6 +259,59 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────
+# 5. Display glass plain-words audit
+# ─────────────────────────────────────────────────────────────────────────
+#
+# The Canary Display renders copy straight from C string literals (no COPY
+# bank), so this check extracts every double-quoted literal from the glass
+# UI sources + the onboarding portal and greps them for terms a household
+# should never read on a wall: broker, dBm, RSSI, payload, MQTT, mDNS.
+# (The glass vocabulary: broker -> "hub", RSSI/dBm -> "signal", acked ->
+# "handled", stale -> "late".) Comments and identifiers are free to use
+# the technical words — only quoted strings gate.
+
+echo ""
+echo "── Display glass plain-words audit ──"
+
+GLASS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)/firmware/projects/canary-display"
+GLASS_SOURCES=(
+  "$GLASS_ROOT/src/ui/glance_ui.cpp"
+  "$GLASS_ROOT/src/ui/dash_ui.cpp"
+  "$GLASS_ROOT/src/ui/onboard_ui.cpp"
+  "$GLASS_ROOT/src/ui/theme.cpp"
+  "$GLASS_ROOT/src/net/provision.cpp"
+)
+GLASS_BANNED='broker|dBm|RSSI|payload|MQTT|mDNS|NVS|TOFU|endpoint'
+
+GLASS_HITS=""
+for f in "${GLASS_SOURCES[@]}"; do
+  [ -f "$f" ] || continue
+  # Pull only the contents of double-quoted string literals (skip include
+  # lines — their quotes hold header paths, not copy), then grep the
+  # extracted literals for banned words.
+  HITS=$(grep -vE '^[[:space:]]*#include' "$f" \
+           | grep -oE '"[^"]*"' \
+           | grep -wiE "$GLASS_BANNED" \
+       || true)
+  if [ -n "$HITS" ]; then
+    GLASS_HITS="$GLASS_HITS$(basename "$f"):
+$HITS
+"
+  fi
+done
+
+if [ -n "$GLASS_HITS" ]; then
+  red "Display glass plain-words audit FAILED — jargon in on-glass string literals:"
+  echo "$GLASS_HITS" | head -20
+  echo ""
+  echo "Glass vocabulary: broker -> hub · RSSI/dBm -> signal_word() ·"
+  echo "payload -> never user-visible. Comments/identifiers are exempt."
+  ERRORS=$((ERRORS + 1))
+else
+  green "Display glass plain-words audit OK — no jargon in on-glass strings."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────
 
 echo ""
 if [ "$ERRORS" -eq 0 ]; then
