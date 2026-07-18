@@ -4173,7 +4173,12 @@ static void camera_whoami_after_failure() {
   }
   Wire1.end();
   ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_7, 0);
+  // Release every pin we borrowed (review catch): /api/peek/init can retry
+  // the real camera driver later on these exact pins, and a half-released
+  // I2C matrix routing would sabotage that retry.
   gpio_reset_pin((gpio_num_t)CAM_PIN_XCLK);
+  gpio_reset_pin((gpio_num_t)CAM_PIN_SIOD);
+  gpio_reset_pin((gpio_num_t)CAM_PIN_SIOC);
 }
 
 static esp_err_t try_camera_init(const camera_config_t& cfg, const char* label) {
