@@ -101,4 +101,25 @@ inline BirdFace bird_face(const BirdMood& m, const BirdInputs& in) {
   return BirdFace::Calm;
 }
 
+// Posture refinement inside the Worried band: the CAUSE picks the story.
+// Searching — someone is late, the bird looks for them at the edge of the
+// glass. Calling — someone is lost, the bird calls out for them. Lost
+// outranks late; link trouble stays plain Worried (there is nobody
+// specific to look for).
+enum class BirdPosture : uint8_t { AsFace, Searching, Calling };
+
+inline BirdPosture bird_posture(BirdFace f, const BirdInputs& in) {
+  if (f != BirdFace::Worried) return BirdPosture::AsFace;
+  if (in.lost_witnesses > 0) return BirdPosture::Calling;
+  if (in.stale_witnesses > 0) return BirdPosture::Searching;
+  return BirdPosture::AsFace;
+}
+
+// Trust milestones worth a one-shot celebration: the first clean week and
+// the first clean month. True only on the exact crossing, so the song
+// plays once per milestone, not once per day.
+inline bool bird_trust_milestone(uint16_t prev_days, uint16_t days) {
+  return (prev_days < 7 && days >= 7) || (prev_days < 30 && days >= 30);
+}
+
 }  // namespace canary::care

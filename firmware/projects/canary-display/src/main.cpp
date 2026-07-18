@@ -434,6 +434,9 @@ static void handle_touch(uint32_t now) {
     g_touch_y = s.y;
     g_longpress_fired = false;
     ui_ack_hold(true);   // sweep starts; a tap only ever shows a sliver
+    // Touch-startle: the bird notices you. The mark rations these and
+    // refuses them while hidden or asleep, so this stays a cheap poke.
+    canary::ui::canary_mark_react(canary::ui::CanaryReact::Startle);
     return;
   }
 

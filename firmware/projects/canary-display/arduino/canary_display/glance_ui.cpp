@@ -310,14 +310,12 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
   // Hero: the one thing that matters.
   lv_obj_set_style_text_color(s_hero, tcol, 0);
   lv_obj_set_style_text_color(s_hero_sub, mcol, 0);
-  // Living canary: the bird perches above the hero whenever the clock (or
-  // the empty-nest invitation) owns the stage — including asleep at night.
-  // A status-word hero means something needs the room: the stage goes
-  // bird-free (calm-tech handoff; the mood engine independently hides it
-  // during a live alarm).
-  canary_mark_mood(n == 0 || (st.time_valid && worst <= Sev::Notice)
-                       ? st.bird
-                       : CanaryMood::Hidden);
+  // Living canary: the engine owns the perch. It hides the bird during a
+  // live unacked alarm (the instrument-grade handoff), and during Warn-band
+  // trouble it now shows the CAUSE — Searching above a "quiet too long"
+  // hero (looking for the late bird), Calling when one is lost. Only the
+  // no-clock-with-witnesses fallback stays a UI decision.
+  canary_mark_mood(n == 0 || st.time_valid ? st.bird : CanaryMood::Hidden);
   if (n == 0 && !st.time_valid) {
     // Nothing at all yet: no witnesses AND no clock. The only honest face
     // is the listening state.
