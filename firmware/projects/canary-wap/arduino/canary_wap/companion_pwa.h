@@ -1483,8 +1483,18 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
       j.probes.forEach((p) => { if (p && p.name) by[p.name.toLowerCase()] = p; });
       const bad = (p, hard) => !!p && (p.status === 'fail' || (!hard && p.status === 'absent'));
       const cam = by.camera, mic = by.microphone, sd = by.sd;
+      // The mic never reports 'fail' (an optional peripheral must not gate
+      // setup) — a bring-up fault is 'skip' with a negative code, distinct
+      // from muted-by-user (code 0). Review catch: keying on 'fail' alone
+      // missed the exact bench scenario this correlator exists for. A
+      // safe-mode pause doesn't sneak in here: the camera's own status
+      // stays 'skip' in safe mode, which the camera condition rejects.
+      const micBad = !!mic && (mic.status === 'fail' ||
+                     (mic.status === 'skip' &&
+                      typeof mic.code === 'number' && mic.code < 0 &&
+                      !(mic.metric && mic.metric.muted)));
       const sdBad = !!sd && sd.status !== 'pass' && sd.status !== 'skip';
-      if (bad(cam, false) && bad(mic, true) && sdBad) {
+      if (bad(cam, false) && micBad && sdBad) {
         return 'Camera, microphone and SD card all failed together — on a XIAO Sense ' +
                'all three live on the snap-on expansion board. Power off, press the ' +
                'expansion board firmly onto the main board (both connectors), reseat ' +

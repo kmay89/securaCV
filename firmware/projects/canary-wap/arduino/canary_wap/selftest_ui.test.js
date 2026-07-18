@@ -105,25 +105,32 @@ describe('safeModeNote', () => {
 describe('expansionNote — Sense expansion-board correlator', () => {
   const probes = (cam, mic, sd) => ({ probes: [
     { name: 'camera',     status: cam },
-    { name: 'microphone', status: mic },
+    (typeof mic === 'object') ? Object.assign({ name: 'microphone' }, mic)
+                              : { name: 'microphone', status: mic },
     { name: 'sd',         status: sd },
   ]});
-  it('fires only when camera, mic and SD all failed together', () => {
-    const note = L.expansionNote(probes('absent', 'fail', 'absent'));
+  // The mic's real-world bring-up failure shape: never 'fail' (optional
+  // peripherals must not gate setup) — 'skip' with a negative code.
+  const MIC_DOWN = { status: 'skip', code: -1 };
+  it('fires on the bench scenario: camera absent + mic skip(code<0) + SD absent', () => {
+    const note = L.expansionNote(probes('absent', MIC_DOWN, 'absent'));
     assert.ok(note.length > 0);
     assert.match(note, /expansion board/i);
     assert.match(note, /reseat/i);
-    // Also fires on a hard camera fail.
+    // Also fires on hard fails.
     assert.ok(L.expansionNote(probes('fail', 'fail', 'fail')).length > 0);
   });
-  it('stays silent when any of the three is healthy or merely skipped', () => {
-    assert.equal(L.expansionNote(probes('pass', 'fail', 'absent')), '');
+  it('stays silent when any of the three is healthy or benignly paused', () => {
+    assert.equal(L.expansionNote(probes('pass', MIC_DOWN, 'absent')), '');
     assert.equal(L.expansionNote(probes('absent', 'pass', 'absent')), '');
-    assert.equal(L.expansionNote(probes('absent', 'fail', 'pass')), '');
-    // A skipped mic (safe mode) is not evidence — recovery banner owns that.
-    assert.equal(L.expansionNote(probes('absent', 'skip', 'absent')), '');
+    assert.equal(L.expansionNote(probes('absent', MIC_DOWN, 'pass')), '');
+    // Muted-by-user is deliberate, not evidence (skip, code 0).
+    assert.equal(L.expansionNote(probes('absent',
+        { status: 'skip', code: 0, metric: { muted: true } }, 'absent')), '');
+    // A code-less skip (e.g. still starting) does not convict.
+    assert.equal(L.expansionNote(probes('absent', { status: 'skip' }, 'absent')), '');
     // SD merely skipped (safe mode) does not convict the board either.
-    assert.equal(L.expansionNote(probes('absent', 'fail', 'skip')), '');
+    assert.equal(L.expansionNote(probes('absent', MIC_DOWN, 'skip')), '');
   });
   it('survives missing/garbage reports', () => {
     assert.equal(L.expansionNote(undefined), '');
