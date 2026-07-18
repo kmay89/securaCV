@@ -6538,9 +6538,10 @@ static void qr_scan_task_fn(void* param) {
   if (!scanner_ready) {
     strncpy(g_qr_scan_error, "Scanner init failed", sizeof(g_qr_scan_error));
     g_qr_scan_active = false;
+    g_qr_auto_scan = false;
     if (sensor && orig_framesize >= 0)
       sensor->set_framesize(sensor, (framesize_t)orig_framesize);
-    g_qr_scan_task = nullptr;
+    __atomic_store_n(&g_qr_scan_task, (TaskHandle_t) nullptr, __ATOMIC_RELEASE);
     vTaskDelete(nullptr);
     return;
   }
@@ -6600,8 +6601,8 @@ static void qr_scan_task_fn(void* param) {
           fatal = true;
         } else {
           parsed = true;
-          strncpy(ssid, prov.ssid, sizeof(ssid) - 1);
-          strncpy(pass, prov.pass, sizeof(pass) - 1);
+          strlcpy(ssid, prov.ssid, sizeof(ssid));
+          strlcpy(pass, prov.pass, sizeof(pass));
           if (!prov.wifi_only && prov.host[0]) {
             // The display told us where the hub lives: point the MQTT
             // bridge there and re-init (idempotent) so the flock sees
@@ -6609,8 +6610,7 @@ static void qr_scan_task_fn(void* param) {
             // "it's in the flock" celebration keys on that.
             csi_mqtt::Config mc;
             if (csi_mqtt::config_load(&mc)) {
-              strncpy(mc.host, prov.host, sizeof(mc.host) - 1);
-              mc.host[sizeof(mc.host) - 1] = '\0';
+              strlcpy(mc.host, prov.host, sizeof(mc.host));
               mc.port = prov.port;
               mc.enabled = true;
               if (csi_mqtt::config_save(mc)) {
@@ -6681,7 +6681,9 @@ static void qr_scan_task_fn(void* param) {
 
   g_qr_scan_active = false;
   g_qr_auto_scan = false;
-  g_qr_scan_task = nullptr;
+  // Release-store: the start handler and the auto tick poll this handle
+  // from other tasks/cores (review catch — repo atomic convention).
+  __atomic_store_n(&g_qr_scan_task, (TaskHandle_t) nullptr, __ATOMIC_RELEASE);
   vTaskDelete(nullptr);
 }
 
@@ -6693,7 +6695,9 @@ static void qr_scan_task_fn(void* param) {
 // takes over; this tick stands down while any scan or peek is live).
 static void qr_auto_scan_tick(uint32_t now) {
   if (g_wifi_creds.configured) return;
-  if (g_qr_scan_active || g_qr_scan_task) return;
+  if (g_qr_scan_active ||
+      __atomic_load_n(&g_qr_scan_task, __ATOMIC_ACQUIRE) != nullptr)
+    return;
 #if FEATURE_CAMERA_PEEK
   if (g_peek_active) return;
 #endif
@@ -6735,10 +6739,15 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
     // the gap), stop the window, and wait for the task to unwind.
     g_qr_auto_next_ms = millis() + 15000;
     g_qr_scan_active = false;
-    for (int i = 0; i < 40 && g_qr_scan_task; i++) {
+    // Atomic loads: the handle is nulled by the scan task on core 0 while
+    // this handler polls from the httpd task (repo convention — same as
+    // the provisioning gate's cross-core reads).
+    for (int i = 0;
+         i < 40 && __atomic_load_n(&g_qr_scan_task, __ATOMIC_ACQUIRE) != nullptr;
+         i++) {
       vTaskDelay(pdMS_TO_TICKS(50));
     }
-    if (g_qr_scan_task) {
+    if (__atomic_load_n(&g_qr_scan_task, __ATOMIC_ACQUIRE) != nullptr) {
       return http_send_json(req, "{\"ok\":false,\"error\":\"Scan already active\"}");
     }
   }
