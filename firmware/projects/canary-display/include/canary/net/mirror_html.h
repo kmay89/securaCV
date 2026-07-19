@@ -26,7 +26,7 @@ touch-action:none}
 .dev{position:relative;transform-style:preserve-3d;
 transform:rotateX(-8deg) rotateY(14deg);transition:transform .08s linear}
 .face{position:absolute;inset:0;backface-visibility:hidden;border-radius:inherit}
-.glass{background:#000;border:10px solid #1b1b1d;overflow:hidden;
+.glass{background:var(--bg);border:10px solid #1b1b1d;overflow:hidden;
 box-shadow:0 22px 44px rgba(0,0,0,.55)}
 .backp{background:#151517;border:10px solid #1b1b1d;transform:rotateY(180deg);
 display:flex;align-items:center;justify-content:center;color:#3a3a3e;
@@ -233,6 +233,11 @@ function tick(){fetch("/api/glass").then(function(r){return r.json()})
 .then(function(g){
 document.body.className=(g.flavor==="watch"?"watch":"dash")+
 (g.night?" night":"");
+// The wall's Character re-skins the mirror (absent on older firmware).
+if(g.pal){var PM={bg:"bg",cd:"card",ed:"edge",tx:"tx",mu:"mut",
+ok:"ok",wa:"warn",al:"bad",si:"blu"};
+for(var pk in PM)if(g.pal[pk])
+document.documentElement.style.setProperty("--"+PM[pk],"#"+g.pal[pk]);}
 $("ns_off").textContent=g.flavor==="dash"?"off, tap wakes":"off, tap peeks";
 $("live").className="dot"+(g.wifi?" on":"");
 var t=g.time_valid?pad(g.hh)+":"+pad(g.mm):"--:--";
