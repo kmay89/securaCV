@@ -11,7 +11,8 @@
 
 > **A security camera with a 24-hour memory — and a canary that vouches for it.**
 > Clips stay on your hardware and auto-delete. What survives is a signed, hash-chained
-> log that proves nobody — including you — edited the record. It's $0/month forever,
+> log: tamper-evident, so any edit — by anyone, including you — breaks verification.
+> It's $0/month forever,
 > Apache-2.0 top to bottom, rides your existing Home Assistant + Frigate stack, and the
 > sensors are ESP32 boards you can flash from a browser and case in enclosures you print
 > yourself from parametric OpenSCAD. Before you buy or build anything, the firmware runs
@@ -57,7 +58,11 @@ Honesty first — this is a **different category**, and the comparison must say 
 
 We do not out-app Ring and we do not replace Frigate — we ride alongside Frigate for
 +$0 and +5 minutes and add the two things nobody in the row above has: a **privacy
-boundary enforced in code** and a **record you can prove nobody edited**.
+boundary enforced in code** and a **tamper-evident record — any edit breaks
+verification**. (Phrasing rule for all materials: "tamper-evident" and "verifiable",
+never "tamper-proof" or "impossible to edit" — a root/admin on the host sits outside
+the trust boundary, per [docs/root_paradox.md](../root_paradox.md), and doc 13's
+Promise Card forbids overclaiming.)
 
 Quality notes for the honest footnote: video quality is whatever your RTSP cameras and
 Frigate deliver (typically better than cloud-cam compression); Canary Vision detection
@@ -163,7 +168,8 @@ and **"Join the kit waitlist"** (commitment).
 - vs **Ring/Nest**: "Five years of their fees costs more than our entire hardware
   stack. And they can watch your footage; we built a system that can't."
 - vs **Eufy/Reolink**: "Local is necessary, not sufficient. Local footage can still be
-  edited. Ours comes with a tamper-evident chain that proves it wasn't."
+  edited without a trace. Ours comes with a tamper-evident chain — edit it and
+  verification fails."
 - vs **Frigate**: "We're not a Frigate alternative — we're the witness that rides
   alongside it. Keep Frigate. Add proof."
 - vs **DIY from scratch**: "You could build this. We wrote it down — BOMs with part

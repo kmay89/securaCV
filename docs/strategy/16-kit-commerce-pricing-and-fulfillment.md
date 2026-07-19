@@ -124,8 +124,10 @@ Adopt the ESPHome/WLED pattern: **ESP Web Tools** on a static page in the Lab
 (`canary-local/flash.html` or the GitHub Pages deployment).
 
 - CI already builds the flavors; add a release artifact per flavor: single merged image
-  (`esptool --chip esp32s3 merge_bin` of bootloader + partition table + app) plus an
-  ESP Web Tools `manifest.json` (chip family, version, offsets).
+  (`esptool merge_bin` of bootloader + partition table + app, with `--chip` derived
+  from each PlatformIO env — `esp32s3` for WAP/displays, `esp32c3` for the Vision C3
+  flavors; bootloader offsets differ per chip, so one hard-coded command cannot serve
+  every flavor) plus an ESP Web Tools `manifest.json` (chip family, version, offsets).
 - User plugs the XIAO into USB, opens the page in Chrome/Edge, clicks **Install** —
   WebSerial does the rest. No Python, no drivers ceremony, no cloud (the page serves
   static binaries; Invariant IV holds — nothing phones anywhere else).
