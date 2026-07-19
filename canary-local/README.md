@@ -14,6 +14,7 @@ canary-local/
   house.html            "The Canary House" — isometric home, whole flock in place
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   wap.html              "The WAP — first boot" — captive-portal setup, serial + MQTT (§4i)
+  vault.html            "The Vault" — sealed evidence + break-glass by quorum (§4j)
   assets/
     app.js              card gallery + device sheets + guide player
     start.js            the Get Started driver (copy-gate policy + deep links, DOM-free core tested)
@@ -505,6 +506,57 @@ this is not).
 | Generator | `canary-local/tools/gen_wap.py` |
 | Honesty gates | `tests/wap.test.js` + `tests/wap_probe.mjs` |
 
+## 4j. The Vault: sealed evidence & break-glass by quorum (`vault.html`)
+
+The other pages teach a device; **The Vault teaches three words** — *vault*,
+*sealed*, *quorum* — with the docs and the code standing right behind every
+claim. It's the answer to "what happens to the rare frame that actually
+matters?": nothing is captured unless you armed it, what is captured is
+**sealed** so the device can't read it back, and getting it out again takes a
+**quorum** — no one alone.
+
+- **Vault** — write-only escrow. The device holds only the operator's *public*
+  X25519 key; everything is off by default; files stay local. The fail-closed
+  capture decision table is the firmware's own (`vault_logic::capture_decision`).
+- **Sealed** — a scrubbable five-step walk of the real construction (ephemeral
+  X25519 → HKDF-SHA256, info `securacv/vault/seal/v1` → ChaCha20-Poly1305), the
+  **byte-exact 64-byte `SVLT` header** (which is the AEAD associated data), and a
+  *flip a header byte* toggle that shows the tag failing. The key derivation runs
+  for real in WebCrypto where supported; the AEAD step is labelled as illustrated.
+- **Quorum** — the interactive centrepiece, and **not theater**: it generates the
+  trustees' Ed25519 keys in your browser, signs each approval with the kernel's
+  exact domain separation (`securacv:pwk:trustee-approval:v2`), and counts
+  *distinct* valid signatures exactly like `count_valid_distinct_approvals`. Meet
+  the threshold and a single-use token unseals the evidence; try to force it with
+  too few approvals, reuse one key for two slots, or re-open a spent token, and it
+  refuses — in front of you. Every decision lands in a signed receipt log.
+
+Anti-rot, same rule as everything here:
+
+| Fact on the page | Source of truth |
+|---|---|
+| Quorum bounds, the `distinct ≥ n` grant rule, token fields | `src/break_glass/core.rs` |
+| The three `:v2` signing domains | `src/crypto/signatures.rs` |
+| Kernel envelope (`VLT2`, ChaCha20-Poly1305, DEK-wrap) | `src/vault/{crypto,format}.rs`; wired in `src/bin/witnessd.rs` |
+| Device `.svlt` seal (info string, `SVLT` magic, ring bound, decisions) | firmware `vault_snapshot.cpp` / `vault_logic.h` + `docs/sealed_snapshot_vault.md` |
+| Invariant I (No Raw Export) + V (Break-Glass by Quorum) | `spec/invariants.md` |
+
+`tools/gen_vault.py` regenerates `devices/vault.json` and `sys.exit`s if any of
+those literals moved; the drift gate re-runs it and `git diff --exit-code`s.
+`tests/vault.test.js` re-derives the honesty (constants, domains, magic and
+invariants must still exist in source) **and runs a real Ed25519 approval
+round-trip** so the demo's quorum math is pinned; `tests/vault_probe.mjs` drives
+the page in headless Chromium — seal walk, tamper toggle, and break-glass to a
+real 2-of-3 with all the guardrails.
+
+| Piece | File |
+|---|---|
+| The page | `canary-local/vault.html` + `assets/vault.js` |
+| Seal walk + real-Ed25519 quorum demo (DOM-free cores exported) | `canary-local/assets/vault-ui.js` |
+| Generated data | `canary-local/devices/vault.json` |
+| Generator | `canary-local/tools/gen_vault.py` |
+| Honesty gates | `tests/vault.test.js` + `tests/vault_probe.mjs` |
+
 ## 5. Where this lives (repo → Pages → securacv.com)
 
 Three tiers, no lock-in, one source of truth:
@@ -591,3 +643,9 @@ without a toolchain; CI rebuilds them and fails on drift.
   cores; the probe walks first boot in headless Chromium (power on → the phone
   catches the SoftAP → the firmware's captive HTML → the wizard reaches online
   → retained MQTT + all 24 discovery entities land → a smoke cadence alarms).
+- `tests/vault.test.js` + `tests/vault_probe.mjs` — the Vault explainer (§4j):
+  the honesty test pins the quorum constants, the three signing domains, the
+  `VLT2`/`SVLT` magics and Invariants I & V to their source **and runs a real
+  Ed25519 approval round-trip**; the probe drives the seal walk, the tamper
+  toggle, and a real 2-of-3 break-glass with every guardrail (forge → denied,
+  single-use → refused, reused key can't fill two slots).

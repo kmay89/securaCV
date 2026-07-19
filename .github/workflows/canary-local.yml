@@ -14,6 +14,11 @@ on:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
       - "docs/getting_started_canary.md"
+      - "src/vault/**"
+      - "src/break_glass/**"
+      - "src/crypto/signatures.rs"
+      - "spec/invariants.md"
+      - "docs/sealed_snapshot_vault.md"
       - "docs/frigate_integration.md"
       - "README.md"
       - "firmware/projects/canary-display/**"
@@ -33,6 +38,11 @@ on:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
       - "docs/getting_started_canary.md"
+      - "src/vault/**"
+      - "src/break_glass/**"
+      - "src/crypto/signatures.rs"
+      - "spec/invariants.md"
+      - "docs/sealed_snapshot_vault.md"
       - "docs/frigate_integration.md"
       - "README.md"
       - "firmware/projects/canary-display/**"
@@ -71,6 +81,7 @@ jobs:
           node --test canary-local/tests/boardroom.test.js
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/wap.test.js
+          node --test canary-local/tests/vault.test.js
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
@@ -99,6 +110,13 @@ jobs:
           python3 canary-local/tools/gen_wap.py
           if ! git diff --exit-code -- canary-local/devices/wap.json; then
             echo "::error::generated WAP data stale — run canary-local/tools/gen_wap.py and commit (the firmware moved)"
+            exit 1
+          fi
+      - name: Vault data drift (parsed from src/vault, src/break_glass + specs)
+        run: |
+          python3 canary-local/tools/gen_vault.py
+          if ! git diff --exit-code -- canary-local/devices/vault.json; then
+            echo "::error::generated Vault data stale — run canary-local/tools/gen_vault.py and commit (the code moved)"
             exit 1
           fi
 
@@ -142,6 +160,8 @@ jobs:
         run: node canary-local/tests/render_probe.mjs
       - name: WAP probe — first-boot, captive portal, serial + MQTT
         run: node canary-local/tests/wap_probe.mjs
+      - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
+        run: node canary-local/tests/vault_probe.mjs
       - name: Build both flavors from THIS tree
         run: |
           cd canary-local/emulator
