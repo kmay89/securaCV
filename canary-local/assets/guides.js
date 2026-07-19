@@ -323,6 +323,280 @@ export const DISPLAY_FIXES = [
   },
 ];
 
+// ── The bench's debug curriculum ────────────────────────────────────────
+// Symptom-first flows for the PHYSICAL layer — cable, battery, switch,
+// buttons, the hardwired lights. ctx additionally carries `bench` (the
+// BenchPower plane from emulator/web/bench.js). Same honesty rules: every
+// staged state is exactly what the power plane would do to real silicon,
+// and where hardware genuinely can't do a thing (turn off a rail LED from
+// software), the flow says so instead of pretending.
+export const BENCH_FIXES = [
+  {
+    symptom: "A red light is always on — can I turn it off?",
+    steps: [
+      {
+        title: "Those lights don't answer to software",
+        body:
+          "The power/charge LEDs (PWR, CHG, DONE on the dash; CHG on the " +
+          "watch's XIAO) are wired to the power rail and the charge chip — " +
+          "not to any pin the ESP32 controls. No setting, no firmware " +
+          "update, no amount of code can switch them off while the board " +
+          "is powered. The bench proves it: the firmware is running right " +
+          "now, and it has no knob for this.",
+        stage: async (ctx) => {
+          ctx.bench?.setUsb(true);
+          ctx.note?.("watch the LED rail — the firmware has no say in it");
+        },
+      },
+      {
+        title: "What actually turns them off",
+        body:
+          "Physics only: PWR follows the rail (cut all power and it dies), " +
+          "CHG goes out when charging finishes or USB leaves, DONE only " +
+          "glows while a full battery sits on USB. We just unplugged USB — " +
+          "watch the charge lights drop while the board rides the battery.",
+        stage: async (ctx) => {
+          ctx.bench?.setBattery(true);
+          ctx.bench?.setSwitch(true);
+          ctx.bench?.setUsb(false);
+        },
+        onDevice:
+          "If the glow bothers you at night: the enclosures are designed to " +
+          "shade the board LEDs, and a small square of matte tape over the " +
+          "light is bench-legal. Don't desolder — the CHG/DONE pair is your " +
+          "only honest window into the charger.",
+      },
+      {
+        title: "The one exception",
+        body:
+          "The watch's XIAO carries a USER LED on GPIO21 — that one IS " +
+          "firmware territory. This firmware leaves it dark on purpose " +
+          "(a bedside device must not grow unexplained lights), which is " +
+          "why you've never seen it.",
+      },
+    ],
+  },
+  {
+    symptom: "The charge light is flickering",
+    steps: [
+      {
+        title: "It's hunting for a battery",
+        body:
+          "On the watch's XIAO, a flickering CHG light with USB in means no " +
+          "battery is fitted — the charge chip keeps probing for a cell and " +
+          "finding nothing. Completely healthy on a USB-only bench. We just " +
+          "staged it: USB in, battery out.",
+        stage: async (ctx) => {
+          ctx.bench?.setUsb(true);
+          ctx.bench?.setBattery(false);
+        },
+      },
+      {
+        title: "Fit the battery and it settles",
+        body:
+          "Battery back in: CHG goes steady while filling, then hands over " +
+          "(off on the watch, DONE on the dash) when the cell is full. Use " +
+          "the bench's fast-forward to watch the handover without waiting.",
+        stage: async (ctx) => {
+          ctx.bench?.setUsb(true);
+          ctx.bench?.setBattery(true);
+        },
+      },
+    ],
+  },
+  {
+    symptom: "Screen dark, but the power light is on",
+    steps: [
+      {
+        title: "First guess: it's asleep, not broken",
+        body:
+          "During quiet hours the glass idles near-dark (watch) or off " +
+          "(dash) on purpose, while the board — and its PWR light — stay " +
+          "up. Tap the glass for a dim peek. Staged: 23:00.",
+        stage: async (ctx) => {
+          ctx.bench?.setUsb(true);
+          ctx.emu.setTimeScale(1);
+          ctx.setHour(23);
+        },
+      },
+      {
+        title: "Second guess: it's in download mode",
+        body:
+          "If BOOT was held (or wedged by an enclosure misfit) when the " +
+          "board last reset, the ROM sits in download mode: rail up, PWR " +
+          "lit, screen dead, serial saying 'waiting for download'. We just " +
+          "did exactly that. Press RESET — alone — and it boots normally.",
+        stage: async (ctx) => {
+          ctx.bench?.setBootHeld(true);
+          ctx.bench?.pressReset();
+          ctx.bench?.setBootHeld(false);
+          ctx.note?.("check the serial panel — then press RESET on the bench to recover");
+        },
+        onDevice:
+          "Serial silent AND the screen dark at 10:00? Now suspect the " +
+          "display ribbon or the panel supply — the brain and the glass " +
+          "have separate failure modes.",
+      },
+    ],
+  },
+  {
+    symptom: "Serial says 'waiting for download'",
+    steps: [
+      {
+        title: "That's the ROM, not a fault",
+        body:
+          "BOOT (GPIO0) was low when reset released, so the mask ROM " +
+          "parked the chip for flashing instead of running the app. It " +
+          "will wait forever — that's its job. It happens on a bench when " +
+          "you hold BOOT out of habit, or a case presses the button.",
+        stage: async (ctx) => {
+          ctx.bench?.setBootHeld(true);
+          ctx.bench?.pressReset();
+          ctx.bench?.setBootHeld(false);
+        },
+      },
+      {
+        title: "Recovery is one button",
+        body:
+          "Press RESET with BOOT released and the app boots — nothing was " +
+          "lost; NVS never noticed. Do it on the bench now and watch the " +
+          "real boot banner replace the ROM's.",
+        stage: async (ctx) => {
+          ctx.bench?.pressReset();
+        },
+      },
+    ],
+  },
+  {
+    symptom: "Nothing at all — no lights, no glass",
+    steps: [
+      {
+        title: "No light means no power — full stop",
+        body:
+          "The PWR/CHG LEDs sit ahead of everything the firmware does. If " +
+          "every light is dark, the board has no rail: cable, switch, or " +
+          "battery. We just staged the worst case — everything removed.",
+        stage: async (ctx) => {
+          ctx.bench?.setUsb(false);
+          ctx.bench?.setBattery(false);
+        },
+      },
+      {
+        title: "Work the power path in order",
+        body:
+          "USB first (a DATA cable — charge-only leads are the classic " +
+          "bench trap), then the switch (it only matters on battery), then " +
+          "the battery itself. Restore USB on the bench and watch the ROM " +
+          "banner and the splash come back on their own — NVS kept " +
+          "everything through the outage.",
+        stage: async (ctx) => {
+          ctx.bench?.setUsb(true);
+        },
+        onDevice:
+          "Real bench, still dark on a known-good data cable? Try a 5 V/1 A+ " +
+          "supply — the dash's RGB panel browns out weak laptop ports.",
+      },
+    ],
+  },
+  {
+    symptom: "It died the moment I unplugged the cable",
+    steps: [
+      {
+        title: "The switch only gates the battery",
+        body:
+          "On both boards the ON/OFF switch is in the battery path, not " +
+          "the USB path. USB in → the board runs regardless of the switch. " +
+          "So if pulling USB kills it, either the switch is OFF, no " +
+          "battery is fitted, or the battery is flat. Staged: switch OFF, " +
+          "USB out — instant dark.",
+        stage: async (ctx) => {
+          ctx.bench?.setUsb(true);
+          ctx.bench?.setBattery(true);
+          ctx.bench?.setSwitch(false);
+          ctx.bench?.setUsb(false);
+        },
+      },
+      {
+        title: "…and the ride-through, done right",
+        body:
+          "Switch ON, healthy battery, pull USB: the firmware never even " +
+          "notices — same uptime, same fleet, same everything. That's the " +
+          "whole point of the battery. Watch the serial log: no reboot.",
+        stage: async (ctx) => {
+          ctx.bench?.setUsb(true);
+          ctx.bench?.setBattery(true);
+          ctx.bench?.setSwitch(true);
+          ctx.bench?.setUsb(false);
+        },
+      },
+    ],
+  },
+  {
+    symptom: "It reboots by itself",
+    steps: [
+      {
+        title: "Recovery of last resort, on schedule",
+        body:
+          "A display that loses Wi-Fi retries on backoff and — after five " +
+          "continuous minutes — reboots deliberately, because starting " +
+          "clean beats wedging forever. We cut Wi-Fi and ran time at ×60: " +
+          "watch the serial log count down to its own reset, then come " +
+          "back with memory intact.",
+        stage: async (ctx) => {
+          ctx.emu.setWifi(false);
+          ctx.emu.setTimeScale(60);
+          ctx.note?.("×60 — the 5-minute outage deadline lands in seconds");
+        },
+      },
+      {
+        title: "Tell deliberate reboots from brownouts",
+        body:
+          "The reset reason in the ROM banner never lies: RTC_SW_SYS_RST " +
+          "is the firmware rebooting itself; a brownout means power, not " +
+          "software — undersized supply or a dying battery. Restore Wi-Fi " +
+          "and the reboots stop.",
+        stage: async (ctx) => {
+          ctx.emu.setWifi(true);
+          ctx.emu.setTimeScale(1);
+        },
+        onDevice:
+          "Reboot-looping on real glass? Read the rst: line at the top of " +
+          "each boot. POWERON in a loop = power problem. RTC_SW_SYS_RST in " +
+          "a loop = it can't reach your network — fix the network, not the " +
+          "board.",
+      },
+    ],
+  },
+  {
+    symptom: "Pressing BOOT does nothing",
+    steps: [
+      {
+        title: "Correct — and that's a design fact",
+        body:
+          "BOOT is GPIO0, a strapping pin the ROM samples at reset. While " +
+          "the firmware runs, this display never reads it (witness canaries " +
+          "use theirs as a presence gate; the displays deliberately don't). " +
+          "Hold it now — nothing. Hold it AND press RESET — download mode. " +
+          "That's its entire vocabulary.",
+        stage: async (ctx) => {
+          ctx.bench?.setBootHeld(true);
+          ctx.note?.("BOOT held — the running firmware doesn't even see it");
+        },
+      },
+      {
+        title: "Release it before the next reset",
+        body:
+          "The only way BOOT 'does something' is by being low at the wrong " +
+          "moment. Released, every reset boots the app. (We released it " +
+          "for you.)",
+        stage: async (ctx) => {
+          ctx.bench?.setBootHeld(false);
+        },
+      },
+    ],
+  },
+];
+
 // Witnesses (no glass): the decoder cards the page shows instead of an
 // emulator — LED grammar + chirp meanings, from canary_qr_onboarding.md
 // and canary_peripheral_build_plan.md §7.

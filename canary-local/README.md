@@ -34,6 +34,8 @@ canary-local/
     shim/               the silicon boundary (see below)
     src/                emulator-side HAL + scenario bus
     web/emu-shell.js    the bench: power, LAN, fleet, serial, a finger
+    web/bench.js        the power plane: cable, battery, switch, straps,
+                        hardwired LEDs, ROM banners (DOM-free, tested)
     web/harness.html    bare oscilloscope page (dev + CI boot test)
     dist/               committed artifacts + build stamps (*.meta.json)
 ```
@@ -153,6 +155,24 @@ Three doors into the same live device, all driven by one scenario API
   2/3/4/5) and the chirp vocabulary.
 - **Try it** — free play: link switches, time controls, staged events,
   tamper, household ack-sync from a "sibling display".
+- **Bench** — the physical test bench: the layer the firmware *can't*
+  see, modeled where it lives (outside the silicon boundary, in
+  `emulator/web/bench.js`). Pull the USB cable mid-frame, remove or
+  brown out the battery, flip the board's ON/OFF slide switch (it gates
+  the battery path only — its documented job), hold BOOT through RESET
+  and park the mask ROM in download mode, then recover. The hardwired
+  lights (PWR on the rail, CHG/DONE on the charge chip, the watch's
+  batteryless-CHG flicker) answer only to physics — no firmware here or
+  on your desk can turn them off, and the bench says so to your face.
+  Rail transitions print the ESP32-S3 ROM's verbatim reset banners
+  (staged — the ROM is the one program we can't compile to wasm;
+  everything after the banner is the real firmware), NVS rides through
+  every power event like the flash it is, and a live diagnostics pane
+  (power source, boot stage, uptime, backlight duty, flush count, link,
+  MQTT session, NVS keys) plus symptom-first debug flows ("a red light
+  is always on", "waiting for download", "it died when I unplugged it")
+  make it a troubleshooting mode for the real bench. Hardware facts per
+  board come from the registry's `bench` block, never from code.
 
 Plus **Wire** (the same USB-CDC boot log and MQTT traffic a bench
 shows — because it's the same firmware) and **Specs** (registry facts +
@@ -370,7 +390,20 @@ without a toolchain; CI rebuilds them and fails on drift.
   it), LED cadence translation covers every documented grammar row, and
   registry entries are checked against the committed artifacts' build
   stamps and the firmware tree's `CANARY_FW_VERSION`.
+- `tests/bench.test.js` — the power plane's truth table, pinned:
+  rail up ⇔ USB ∨ (battery ∧ switch ∧ charge>0); the switch gates only
+  the battery; straps are sampled only at reset (BOOT low → download
+  mode, even through `ESP.restart()`); LEDs follow the rail/charger and
+  never the firmware; brownout at 0 %; the ROM banners' exact text; and
+  every `BENCH_FIXES` flow stages cleanly. Registry `bench` blocks are
+  validated (drivers name real wires, every LED carries its honesty
+  note, witnesses carry no bench).
 - `tests/boot_probe.mjs` + CI (`.github/workflows/canary-local.yml`):
   rebuilds both flavors from the tree, boots the watch in headless
   Chromium, and asserts the framebuffer flushed, the boot banner sang,
   MQTT round-tripped, TOFU pinning fired, and no page errors.
+- `tests/bench_probe.mjs` — drives the real page's Bench tab in headless
+  Chromium: USB pull with battery ride-through (the firmware never
+  notices), switch-off rail death (honest-dark glass + serial), power
+  restore (ROM banner, then a true re-boot), BOOT+RESET into download
+  mode and back.

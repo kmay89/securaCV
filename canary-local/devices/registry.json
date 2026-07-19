@@ -37,6 +37,46 @@
         "module": "emulator/dist/canary-display-watch.js",
         "factory": "createCanaryEmuWatch"
       },
+      "bench": {
+        "power": {
+          "usb": "USB-C on the XIAO — power + serial",
+          "battery": "LiPo cell on the Round Display's battery connector (onboard charger)",
+          "switch": {
+            "label": "ON/OFF",
+            "controls": "battery",
+            "note": "the Round Display's slide switch gates the battery path only — on USB the board is always up"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "B · BOOT",
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "R · RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": [
+          {
+            "id": "chg",
+            "label": "CHG",
+            "color": "amber",
+            "driver": "charger",
+            "flicker_without_battery": true,
+            "note": "wired to the XIAO's charge chip — lit while charging, off when full; flickers when no battery is fitted. No firmware can drive it."
+          },
+          {
+            "id": "user",
+            "label": "USER",
+            "color": "amber",
+            "driver": "gpio",
+            "note": "the one firmware-controllable LED (GPIO21) — the display firmware leaves it dark on purpose"
+          }
+        ]
+      },
       "enclosure": "docs/hardware/enclosure/canary_watch_station.scad",
       "docs": [
         "docs/hardware/display_ux_design.md",
@@ -80,6 +120,52 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash"
+      },
+      "bench": {
+        "power": {
+          "usb": "USB-C — power + serial (use a 5 V/1 A+ supply on the real bench)",
+          "battery": "single-cell lithium pack on the board's battery header (onboard charger)",
+          "switch": {
+            "label": "ON/OFF",
+            "controls": "battery",
+            "note": "the board-edge power switch gates the battery path only — plugged into USB, the panel is always up"
+          }
+        },
+        "buttons": [
+          {
+            "id": "boot",
+            "label": "BOOT",
+            "note": "GPIO0 strapping pin, sampled only at reset — this firmware never reads it while running"
+          },
+          {
+            "id": "reset",
+            "label": "RESET",
+            "note": "chip reset — RAM clears, NVS flash survives"
+          }
+        ],
+        "leds": [
+          {
+            "id": "pwr",
+            "label": "PWR",
+            "color": "red",
+            "driver": "rail",
+            "note": "wired straight to the power rail — lit whenever the board is up, from either source. No firmware can turn it off."
+          },
+          {
+            "id": "chg",
+            "label": "CHG",
+            "color": "red",
+            "driver": "charger",
+            "note": "lit while the onboard charger is filling the battery"
+          },
+          {
+            "id": "done",
+            "label": "DONE",
+            "color": "red",
+            "driver": "charger",
+            "note": "lit when the battery is full and USB is still supplying"
+          }
+        ]
       },
       "enclosure": "docs/hardware/enclosure/canary_dash_display.scad",
       "docs": [

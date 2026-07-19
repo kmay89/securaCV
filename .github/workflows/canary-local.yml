@@ -54,6 +54,7 @@ jobs:
           node --test canary-local/tests/workshop.test.js
           node --test canary-local/tests/boards.test.js
           node --test canary-local/tests/assembly.test.js
+          node --test canary-local/tests/bench.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -94,6 +95,8 @@ jobs:
         run: node canary-local/tests/boot_probe.mjs
       - name: Workshop probe — the configurator drives the real catalog
         run: node canary-local/tests/workshop_probe.mjs
+      - name: Bench probe — the physical test bench drives the live firmware
+        run: node canary-local/tests/bench_probe.mjs
       - name: Build both flavors from THIS tree
         run: |
           cd canary-local/emulator

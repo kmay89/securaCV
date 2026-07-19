@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### canary.local — the physical test bench (the layer the firmware can't see)
+
+- **The Bench tab.** Display sheets gain a full physical test bench:
+  the USB-C cable, the battery (with live state-of-charge, charging,
+  and brownout-at-empty), the board's ON/OFF slide switch, and the
+  BOOT/RESET buttons — all interactable, all driving the live wasm
+  firmware through the same boundary the power rail drives silicon.
+  Pull the cable mid-frame and the glass dies (or rides the battery and
+  the firmware never notices); NVS is flash, so everything learned
+  survives every power event.
+- **The hardwired lights, honestly.** PWR/CHG/DONE on the dash and the
+  XIAO's CHG (including its documented no-battery flicker) + the unused
+  USER LED on the watch are modeled on the wires they actually hang off
+  — rail and charge chip. The bench's answer to "can firmware turn them
+  off?" is the true one: no, here or on your desk.
+- **Straps behave like straps.** BOOT is sampled only at reset: held
+  through RESET (or even a software restart) it parks the mask ROM in
+  download mode — screen dead, rail up, serial saying `waiting for
+  download` — and a plain RESET recovers. Rail transitions print the
+  ESP32-S3 ROM's verbatim reset banners, staged and labeled as such
+  (the ROM is the one program that can't compile to wasm); everything
+  after the banner is the real firmware.
+- **Debug mode.** A live diagnostics pane (power source, boot stage,
+  uptime, backlight duty, framebuffer flushes, link state, MQTT
+  session, NVS key count) plus a symptom-first bench troubleshooting
+  curriculum (`BENCH_FIXES`): always-on lights, flickering CHG, dark
+  screen with PWR lit, download mode, dead-on-unplug, self-reboots,
+  "BOOT does nothing".
+- **Honest data path, pinned.** Per-board bench hardware facts live in
+  the device registry's new `bench` block (never in code);
+  `tests/bench.test.js` pins the power truth table (rail up ⇔ USB ∨
+  battery∧switch∧charge), the strap semantics, the LED wiring, and the
+  ROM banner text; `tests/bench_probe.mjs` drives the real page's
+  Bench tab in headless Chromium through the whole loop (ride-through,
+  rail death, restore, download mode) in CI.
+
 ### canary.local polish — the rail is the ring
 
 - **Style chips wear their Characters.** Each chip in the lab's style
