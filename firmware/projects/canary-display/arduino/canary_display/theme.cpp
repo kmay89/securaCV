@@ -46,12 +46,13 @@ lv_color_t col_muted()   { return ground(pal().muted, NIGHT_MUTED); }
 lv_color_t col_faint()   { return ground(pal().faint, NIGHT_FAINT); }
 lv_color_t col_accent()  { return ground(pal().accent, NIGHT_ACCENT); }
 
-// Semantics: the active Character's set — canonical bytes on every dark
-// ground, darkened-within-family on the light one (character.cpp table).
-lv_color_t col_ok()      { return lv_color_hex(active_character_def().sem.ok); }
-lv_color_t col_warn()    { return lv_color_hex(active_character_def().sem.warn); }
-lv_color_t col_alert()   { return lv_color_hex(active_character_def().sem.alert); }
-lv_color_t col_signed()  { return lv_color_hex(active_character_def().sem.signed_); }
+// Semantics: canonical bytes on every dark ground, darkened-within-family
+// on the light one — and at night always the canonical set, because the
+// floor is dark for everyone (active_semantics() holds the policy).
+lv_color_t col_ok()      { return lv_color_hex(active_semantics().ok); }
+lv_color_t col_warn()    { return lv_color_hex(active_semantics().warn); }
+lv_color_t col_alert()   { return lv_color_hex(active_semantics().alert); }
+lv_color_t col_signed()  { return lv_color_hex(active_semantics().signed_); }
 
 const lv_font_t* font_hero()    { return ladder().hero; }
 const lv_font_t* font_title()   { return ladder().title; }

@@ -159,10 +159,24 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
 constexpr Character k_ring[] = {Character::Heirloom, Character::QuietGlass,
                                 Character::Almanac, Character::Aqua,
                                 Character::Neon};
+// Every Character appears on the ring exactly once, enforced at compile
+// time: a future wave that grows the enum but forgets the ring would
+// otherwise index past the array (character_at_ring wraps by Count, not
+// by the array's real length). An explicit [Count] bound would miss the
+// too-few case — missing entries zero-fill into duplicate QuietGlass —
+// so the assert checks the element count instead (review catch).
+static_assert(sizeof(k_ring) / sizeof(k_ring[0]) ==
+                  (size_t)(uint8_t)Character::Count,
+              "every Character must appear on the ring exactly once");
 
 // Valid before settings load, so the splash and any early draw wear the
 // default.
 Character s_active = Character::QuietGlass;
+// Written by the render tick, read by the theme accessors — all on the
+// loop task by construction (the faces, LVGL timers, settings, splash,
+// and even the glass web server's handleClient run there; glass_web.cpp
+// documents the same single-task property). No atomics until something
+// off-loop reads the theme — and nothing does, by rule.
 bool s_night = false;   // see character_set_night()
 
 uint8_t clamp_idx(Character c) {
@@ -188,6 +202,13 @@ const CharacterDef& active_character_def() {
 }
 
 const Voice& active_voice() { return k_defs[clamp_idx(s_active)].voice; }
+
+const Semantics& active_semantics() {
+  // Night forces the dark floor (theme.cpp), so it forces the dark-ground
+  // semantic bytes with it: Almanac's paper stops are ~3:1 on black —
+  // right on paper, wrong in the dark. One policy, one place.
+  return s_night ? k_sem_canonical : k_defs[clamp_idx(s_active)].sem;
+}
 
 void character_set_night(bool night) { s_night = night; }
 bool character_night() { return s_night; }

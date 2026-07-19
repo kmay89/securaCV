@@ -426,6 +426,17 @@ static size_t appendf(char* buf, size_t cap, size_t to, const char* fmt, ...) {
 }
 
 void dash_ui_create() {
+  // Re-entrant (ground-change rebuild): the caller cleaned the screen, so
+  // every widget pointer is rebuilt below — but motion/modal state that
+  // POINTS at old widgets must not survive into the new face
+  // (use-after-free in breathe()/ack otherwise).
+  s_breathing = nullptr;
+  s_ack_holding = false;
+  s_glow_pulsing = false;
+  s_proof_id[0] = '\0';
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+  s_hist_erase_armed = false;
+#endif
   s_scr = lv_scr_act();
   lv_obj_set_style_bg_color(s_scr, col_bg(), 0);
   lv_obj_set_style_bg_opa(s_scr, LV_OPA_COVER, 0);

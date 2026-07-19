@@ -92,6 +92,13 @@ Character active_character();
 const CharacterDef& active_character_def();   // theme.cpp's choke point
 const Voice& active_voice();                  // ambient copy, never alarms
 
+// The semantic set the theme should serve RIGHT NOW. By day: the active
+// Character's (canonical on dark grounds, darkened-in-family on the light
+// one). At night: always the canonical dark-ground set — the night floor
+// is dark for everyone, so Almanac's paper-darkened stops (~3:1 on black,
+// measured) would be the wrong bytes there (review catch).
+const Semantics& active_semantics();
+
 // Night is a MODE and it is uniform: while set, the ground/tier tiers the
 // theme serves are Quiet Glass's dark set for EVERY Character — a cream
 // glass must never glow at 3 a.m., and "at night it is the same calm
