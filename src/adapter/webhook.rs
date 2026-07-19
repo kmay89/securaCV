@@ -132,6 +132,25 @@ impl Shared {
         };
         let now = Instant::now();
         let mut map = self.buckets.lock().expect("rate bucket mutex");
+        // Hard cap (docs/strategy/12, K6): paths are attacker-controlled, so
+        // an unbounded per-path map is a memory leak on demand — the same
+        // trap the API's RateLimiter already closes. A bucket idle for 60 s
+        // has refilled to capacity anyway, so sweeping it loses nothing; if
+        // rotation keeps everything fresh, evict the stalest bucket.
+        const MAX_TRACKED_PATHS: usize = 1024;
+        if !map.contains_key(path) && map.len() >= MAX_TRACKED_PATHS {
+            map.retain(|_, (_, last)| now.duration_since(*last) < Duration::from_secs(60));
+            while map.len() >= MAX_TRACKED_PATHS {
+                let stalest = map
+                    .iter()
+                    .min_by_key(|(_, (_, last))| *last)
+                    .map(|(path, _)| path.clone());
+                match stalest {
+                    Some(path) => map.remove(&path),
+                    None => break,
+                };
+            }
+        }
         let entry = map.entry(path.to_string()).or_insert((rl.capacity, now));
         let elapsed = now.duration_since(entry.1).as_secs_f64();
         entry.1 = now;

@@ -237,6 +237,9 @@ impl ApiServer {
     }
 }
 
+/// Hard bound on tracked failing IPs — mirrors `RATE_MAX_TRACKED_IPS`.
+const AUTH_MAX_TRACKED_IPS: usize = 4096;
+
 /// Per-IP auth failure tracker with exponential backoff.
 /// Aligned with firmware's DEFAULT_AUTH_LOCKOUT_BASE_SEC / DEFAULT_AUTH_LOCKOUT_CAP_SEC.
 struct AuthFailureTracker {
@@ -283,6 +286,27 @@ impl AuthFailureTracker {
     }
 
     fn record_failure(&mut self, ip: std::net::IpAddr) {
+        // Same hard cap the RateLimiter already has (docs/strategy/12, K6):
+        // entries are added per distinct failing IP and previously removed
+        // only on auth *success*, so a source cycling addresses grew this
+        // map without bound. Sweep expired lockouts first; if rotation kept
+        // everything live, evict the soonest-expiring entry — that client
+        // merely restarts its failure count, which beats unbounded memory.
+        if !self.entries.contains_key(&ip) && self.entries.len() >= AUTH_MAX_TRACKED_IPS {
+            let now = Self::now_ms();
+            self.entries.retain(|_, e| e.locked_until_ms > now);
+            while self.entries.len() >= AUTH_MAX_TRACKED_IPS {
+                let soonest = self
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, e)| e.locked_until_ms)
+                    .map(|(ip, _)| *ip);
+                match soonest {
+                    Some(ip) => self.entries.remove(&ip),
+                    None => break,
+                };
+            }
+        }
         let entry = self.entries.entry(ip).or_insert(AuthFailureEntry {
             failure_count: 0,
             lockout_count: 0,
@@ -723,6 +747,10 @@ fn period_of_day(epoch_s: u64) -> &'static str {
 
 fn read_request(stream: &mut TcpStream) -> Result<HttpRequest> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    // A response write can block forever against a peer that stops reading;
+    // on this single-threaded accept loop that wedges every endpoint
+    // including /health (docs/strategy/12, K6).
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let mut buf = [0u8; 1024];
     let mut data = Vec::new();
     loop {
@@ -956,6 +984,22 @@ mod tests {
             assert!(
                 limiter.windows.len() <= RATE_MAX_TRACKED_IPS,
                 "tracked-IP map exceeded its cap at request {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_failure_tracker_is_hard_bounded_under_ip_rotation() {
+        // One failed auth from each of many distinct IPs. Entries were
+        // previously removed only on auth success, so rotation grew the map
+        // without bound; the cap must hold even though nothing ever succeeds.
+        let mut tracker = AuthFailureTracker::new();
+        for i in 0..(AUTH_MAX_TRACKED_IPS as u128 + 500) {
+            let ip = std::net::IpAddr::V6(std::net::Ipv6Addr::from(0xfd00_0000_0000_1000_u128 + i));
+            tracker.record_failure(ip);
+            assert!(
+                tracker.entries.len() <= AUTH_MAX_TRACKED_IPS,
+                "auth-failure map exceeded its cap at request {i}"
             );
         }
     }
