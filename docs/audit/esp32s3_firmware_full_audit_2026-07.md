@@ -462,7 +462,7 @@ The hard single-antenna limits (physics, not code):
 - **802.11bf sounding** — no ESP32 exposes it (§2 claim #5, REFUTED). The C6's *potential* edge is
   802.11ax HE-LTF CSI, richer than HT-LTF — but note ESP-IDF's C6 CSI path exposes HT-LTF (~52/108
   subcarriers), not HE-LTF, and this firmware's HAL caps ingest at 128 subcarriers, so the ~242-tone
-  path isn't available here today. A C6 is a reasonable *future board* to evaluate, but the CSI-path
+  path isn't available here today. A C6 is a reasonable *future board* to evaluate, but the CSI path
   and HAL work to actually exploit HE-LTF would have to be built and verified first; unrelated to 11bf.
 
 What IS cutting-edge **and** feasible here:
