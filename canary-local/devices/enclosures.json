@@ -1,6 +1,15 @@
 {
  "generated_by": "canary-local/tools/gen_enclosures.py",
  "source": "docs/hardware/enclosure",
+ "print_settings": {
+  "source": "docs/hardware/enclosure/README.md §Suggested print settings",
+  "material": "PETG or ASA for heat/UV exposure; PLA only for indoor/bench",
+  "gasket_material": "TPU 90–95A · 2 perimeters · 100% infill · slow",
+  "layer_height_mm": 0.2,
+  "walls": 3,
+  "infill_pct": "20–30",
+  "orientation": "parts print flat as modeled — no supports by design; lids/faces print face-down so chamfers, seats and debossed labels land on the first layers"
+ },
  "sets": [
   {
    "id": "wap-compact",
@@ -12,11 +21,15 @@
    "parts": [
     {
      "name": "base",
-     "file": "canary_wap_enclosure_compact_base.stl"
+     "file": "canary_wap_enclosure_compact_base.stl",
+     "print_note": "prints flat, open side up — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "lid",
-     "file": "canary_wap_enclosure_compact_lid.stl"
+     "file": "canary_wap_enclosure_compact_lid.stl",
+     "print_note": "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -31,11 +44,15 @@
    "parts": [
     {
      "name": "base",
-     "file": "canary_wap_enclosure_battery_base.stl"
+     "file": "canary_wap_enclosure_battery_base.stl",
+     "print_note": "prints flat, open side up — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "lid",
-     "file": "canary_wap_enclosure_battery_lid.stl"
+     "file": "canary_wap_enclosure_battery_lid.stl",
+     "print_note": "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -50,15 +67,21 @@
    "parts": [
     {
      "name": "base",
-     "file": "canary_wap_enclosure_weather_base.stl"
+     "file": "canary_wap_enclosure_weather_base.stl",
+     "print_note": "prints flat, open side up — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "lid",
-     "file": "canary_wap_enclosure_weather_lid.stl"
+     "file": "canary_wap_enclosure_weather_lid.stl",
+     "print_note": "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "gasket",
-     "file": "canary_wap_enclosure_weather_gasket.stl"
+     "file": "canary_wap_enclosure_weather_gasket.stl",
+     "print_note": "TPU 90–95A, 100% infill, slow — the seal is the print",
+     "material": "TPU 90–95A"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -73,7 +96,9 @@
    "parts": [
     {
      "name": "coupon",
-     "file": "canary_wap_enclosure_clip_coupon.stl"
+     "file": "canary_wap_enclosure_clip_coupon.stl",
+     "print_note": "print FIRST — 15-minute fit tuner for your printer's tolerances",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -88,11 +113,15 @@
    "parts": [
     {
      "name": "back",
-     "file": "canary_vision_enclosure_xiao_indoor_back.stl"
+     "file": "canary_vision_enclosure_xiao_indoor_back.stl",
+     "print_note": "prints flat — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "front",
-     "file": "canary_vision_enclosure_xiao_indoor_front.stl"
+     "file": "canary_vision_enclosure_xiao_indoor_front.stl",
+     "print_note": "prints face-down without support",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_vision_enclosure.scad"
@@ -107,15 +136,21 @@
    "parts": [
     {
      "name": "back",
-     "file": "canary_vision_enclosure_xiao_weather_back.stl"
+     "file": "canary_vision_enclosure_xiao_weather_back.stl",
+     "print_note": "prints flat — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "front",
-     "file": "canary_vision_enclosure_xiao_weather_front.stl"
+     "file": "canary_vision_enclosure_xiao_weather_front.stl",
+     "print_note": "prints face-down without support",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "gasket",
-     "file": "canary_vision_enclosure_xiao_weather_gasket.stl"
+     "file": "canary_vision_enclosure_xiao_weather_gasket.stl",
+     "print_note": "TPU 90–95A, 100% infill, slow — the seal is the print",
+     "material": "TPU 90–95A"
     }
    ],
    "scad": "canary_vision_enclosure.scad"
@@ -130,11 +165,15 @@
    "parts": [
     {
      "name": "back",
-     "file": "canary_vision_enclosure_devkit_indoor_back.stl"
+     "file": "canary_vision_enclosure_devkit_indoor_back.stl",
+     "print_note": "prints flat — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "front",
-     "file": "canary_vision_enclosure_devkit_indoor_front.stl"
+     "file": "canary_vision_enclosure_devkit_indoor_front.stl",
+     "print_note": "prints face-down without support",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_vision_enclosure.scad"
@@ -149,11 +188,15 @@
    "parts": [
     {
      "name": "bracket",
-     "file": "canary_vision_enclosure_bracket.stl"
+     "file": "canary_vision_enclosure_bracket.stl",
+     "print_note": "prints flat; GoPro prongs vertical for in-plane strength",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "knob",
-     "file": "canary_vision_enclosure_knob.stl"
+     "file": "canary_vision_enclosure_knob.stl",
+     "print_note": "prints flat on its face",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_vision_enclosure.scad"
@@ -168,23 +211,33 @@
    "parts": [
     {
      "name": "body",
-     "file": "canary_vision_doorbell_body.stl"
+     "file": "canary_vision_doorbell_body.stl",
+     "print_note": "prints flat as modeled — no supports by design",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "face",
-     "file": "canary_vision_doorbell_face.stl"
+     "file": "canary_vision_doorbell_face.stl",
+     "print_note": "prints face-down without support (edge rounds off the bed)",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "plate",
-     "file": "canary_vision_doorbell_plate.stl"
+     "file": "canary_vision_doorbell_plate.stl",
+     "print_note": "prints flat on the wall face",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "wedge 15°",
-     "file": "canary_vision_doorbell_plate_wedge15.stl"
+     "file": "canary_vision_doorbell_plate_wedge15.stl",
+     "print_note": "prints flat on the wall face",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "gasket",
-     "file": "canary_vision_doorbell_gasket.stl"
+     "file": "canary_vision_doorbell_gasket.stl",
+     "print_note": "TPU 90–95A, 100% infill, slow — the seal is the print",
+     "material": "TPU 90–95A"
     }
    ],
    "scad": "canary_vision_doorbell.scad"
@@ -199,11 +252,15 @@
    "parts": [
     {
      "name": "back",
-     "file": "canary_sense_back.stl"
+     "file": "canary_sense_back.stl",
+     "print_note": "prints flat — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "front",
-     "file": "canary_sense_front.stl"
+     "file": "canary_sense_front.stl",
+     "print_note": "prints face-down without support",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_sense_enclosure.scad"
@@ -218,11 +275,15 @@
    "parts": [
     {
      "name": "shield",
-     "file": "canary_wap_enclosure_weather_shield.stl"
+     "file": "canary_wap_enclosure_weather_shield.stl",
+     "print_note": "prints as oriented; louvers are self-supporting at 45°",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "tray",
-     "file": "canary_wap_enclosure_tray.stl"
+     "file": "canary_wap_enclosure_tray.stl",
+     "print_note": "prints flat — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -239,17 +300,23 @@
     {
      "name": "drum",
      "file": "preview/canary_watch_station_drum.stl",
-     "preview_mesh": true
+     "preview_mesh": true,
+     "print_note": "prints open-face-up; keyhole pockets in the back (canary_watch_station.scad)",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "bezel",
      "file": "preview/canary_watch_station_bezel.stl",
-     "preview_mesh": true
+     "preview_mesh": true,
+     "print_note": "flat ring, prints face-down; seats the display disc",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "stand",
      "file": "preview/canary_watch_station_stand.stl",
-     "preview_mesh": true
+     "preview_mesh": true,
+     "print_note": "tilted cradle prints upright — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_watch_station.scad"
@@ -398,17 +465,23 @@
     {
      "name": "frame",
      "file": "preview/canary_dash_display_frame.stl",
-     "preview_mesh": true
+     "preview_mesh": true,
+     "print_note": "prints face-down: the A-surface is your textured build plate",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "back",
      "file": "preview/canary_dash_display_back.stl",
-     "preview_mesh": true
+     "preview_mesh": true,
+     "print_note": "prints outer-face-down; vents + keyholes need no support",
+     "material": "PETG / ASA (PLA indoors)"
     },
     {
      "name": "stand",
      "file": "preview/canary_dash_display_stand.stl",
-     "preview_mesh": true
+     "preview_mesh": true,
+     "print_note": "prints flat; fin + rails are additive — no supports",
+     "material": "PETG / ASA (PLA indoors)"
     }
    ],
    "scad": "canary_dash_display.scad"

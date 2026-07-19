@@ -1,0 +1,851 @@
+{
+ "generated_by": "canary-local/tools/gen_enclosures.py",
+ "sbom": {
+  "note": "Software Bill of Materials: CycloneDX 1.5 JSON, generated in CI on every main push (sbom.yml) — Rust kernel, Node tools, and the ESP32 firmware stack (esp-idf, FreeRTOS, mbedtls, lwip, cJSON…). Download from the SBOM Generation workflow's artifacts.",
+  "source": "sbom/README.md",
+  "link": "https://github.com/kmay89/securaCV/actions/workflows/sbom.yml"
+ },
+ "devices": {
+  "canary-wap": {
+   "bom": {
+    "source": "docs/hardware/bom_canary_wap.csv",
+    "rows": [
+     {
+      "ref": "U1",
+      "qty": "1",
+      "required": true,
+      "category": "MCU Board",
+      "desc": "XIAO ESP32-S3 Sense (ESP32-S3, 8MB flash, 8MB PSRAM, OV2640 camera, PDM mic)",
+      "mpn": "102010469",
+      "mfr": "Seeed Studio",
+      "usd": 14.9,
+      "notes": "Main controller; onboard LiPo charger (BAT pads); operating -40 to +65 C; verified Mouser/DigiKey SKU"
+     },
+     {
+      "ref": "CBL1",
+      "qty": "1",
+      "required": true,
+      "category": "Cable",
+      "desc": "USB-C cable, data-capable (not charge-only)",
+      "mpn": "USB-C-DATA-1M",
+      "mfr": "Generic",
+      "usd": 3.5,
+      "notes": "Required for flashing and 5V power"
+     },
+     {
+      "ref": "SD1",
+      "qty": "1",
+      "required": true,
+      "category": "Storage",
+      "desc": "microSD high-endurance 32GB+ FAT32 (24/7 continuous-write rated)",
+      "mpn": "SDSQQNR-032G-GN6IA",
+      "mfr": "SanDisk",
+      "usd": 8.5,
+      "notes": "High Endurance line (or MAX Endurance SDSQQVR for heaviest duty); temperature-proof/waterproof; NOT a consumer card"
+     },
+     {
+      "ref": "BZ1",
+      "qty": "1",
+      "required": false,
+      "category": "Buzzer",
+      "desc": "Passive piezo transducer, 1-3 kHz usable, low current (1-3mA)",
+      "mpn": "CPT-9019S-SMT-TR",
+      "mfr": "CUI Devices",
+      "usd": 0.55,
+      "notes": "CHIRP_GPIO=GPIO2 (D1); LEDC PWM 2kHz/8-bit. For outdoor use a sealed IP67 piezo OR mount behind GORE vent (VENT1). Piezo preferred over magnetic (moisture/coil wear)"
+     },
+     {
+      "ref": "Q1",
+      "qty": "1",
+      "required": false,
+      "category": "Buzzer Driver",
+      "desc": "N-channel MOSFET (only needed for MAGNETIC buzzers)",
+      "mpn": "2N7002",
+      "mfr": "onsemi",
+      "usd": 0.1,
+      "notes": "Magnetic buzzers draw 30-50mA and are moisture-susceptible; not needed for the recommended piezo BZ1"
+     },
+     {
+      "ref": "Dfb1",
+      "qty": "1",
+      "required": false,
+      "category": "Buzzer Driver",
+      "desc": "Flyback/clamp diode (small-signal) across magnetic buzzer",
+      "mpn": "1N4148",
+      "mfr": "onsemi",
+      "usd": 0.05,
+      "notes": "Clamps inductive spike to protect Q1 when driving a MAGNETIC buzzer; not needed for piezo BZ1"
+     },
+     {
+      "ref": "R1",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Resistor 100 ohm 1/8W 0805 (buzzer series/inrush)",
+      "mpn": "RC0805FR-07100RL",
+      "mfr": "Yageo",
+      "usd": 0.02,
+      "notes": "Series with buzzer"
+     },
+     {
+      "ref": "DLED1",
+      "qty": "1",
+      "required": false,
+      "category": "Indicator",
+      "desc": "WS2812B addressable RGB LED (5050), -40 to +85 C",
+      "mpn": "WS2812B",
+      "mfr": "Worldsemi",
+      "usd": 0.15,
+      "notes": "EXT_LED_PIN_DEFAULT=GPIO3 (D2), active HIGH. FIRMWARE: pin defined but NOT driven by canary-wap today (active indicator is LED_BUILTIN GPIO21) - needs RGB driver code. Conformal-coat for humid/outdoor"
+     },
+     {
+      "ref": "R2",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Resistor 330 ohm 1/8W 0805 (WS2812 data series)",
+      "mpn": "RC0805FR-07330RL",
+      "mfr": "Yageo",
+      "usd": 0.02,
+      "notes": "In series with WS2812 DIN"
+     },
+     {
+      "ref": "C1",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Capacitor 0.1uF 50V X7R 0805 (WS2812 decoupling)",
+      "mpn": "CL21B104KBCNNNC",
+      "mfr": "Samsung",
+      "usd": 0.02,
+      "notes": "Local bypass at pixel V+/GND; X7R good over temp"
+     },
+     {
+      "ref": "SW2",
+      "qty": "1",
+      "required": false,
+      "category": "Sensor",
+      "desc": "Reed switch, SPST normally-closed (tamper), hermetic glass",
+      "mpn": "59140-1-S-02-A",
+      "mfr": "Littelfuse",
+      "usd": 1.8,
+      "notes": "TAMPER_PIN_DEFAULT=GPIO4 (D3), INPUT_PULLUP active LOW. FIRMWARE: FEATURE_TAMPER_GPIO defined but NOT yet consumed - needs firmware support, OR use securacv_touch enclosure-tamper mode. GPIO4 shared with touch default (see build plan 5.1). Hermetic glass = wide-temp, near-zero idle current"
+     },
+     {
+      "ref": "SW2-ALT",
+      "qty": "1",
+      "required": false,
+      "category": "Sensor",
+      "desc": "ALT: Hall-effect switch (tamper) in place of reed",
+      "mpn": "AH3572-P-B",
+      "mfr": "Diodes Inc",
+      "usd": 0.45,
+      "notes": "Alternative to reed; draws continuous quiescent current (reed preferred for battery devices)"
+     },
+     {
+      "ref": "MAG1",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "Magnet, Ni-coated neodymium disc (or SmCo for high temp) for tamper",
+      "mpn": "NEO-6X3-NI",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Lid-mounted; separates from SW2 when enclosure opens. Ni/epoxy coat for corrosion; NdFeB max ~80C, use SmCo if hot"
+     },
+     {
+      "ref": "SW1",
+      "qty": "1",
+      "required": false,
+      "category": "Switch",
+      "desc": "Tactile push button 6mm momentary (multifunction) - INDOOR",
+      "mpn": "B3F-1000",
+      "mfr": "Omron",
+      "usd": 0.12,
+      "notes": "Parallel to BOOT/GPIO0; hold>=2000ms. NOT sealed - for outdoor use SW1-ALT or just reuse onboard BOOT"
+     },
+     {
+      "ref": "SW1-ALT",
+      "qty": "1",
+      "required": false,
+      "category": "Switch",
+      "desc": "ALT: sealed IP67 tactile / panel button for outdoor",
+      "mpn": "PTS645Sama (sealed) / panel dome",
+      "mfr": "C&K",
+      "usd": 1.5,
+      "notes": "Use instead of B3F-1000 if button must be exposed outdoors; or prefer cap-touch TP1 through sealed wall"
+     },
+     {
+      "ref": "TP1",
+      "qty": "1",
+      "required": false,
+      "category": "Input",
+      "desc": "Capacitive touch electrode (Cu pad / adhesive foil)",
+      "mpn": "CU-FOIL-PAD",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "securacv_touch TOUCH_PIN_NUM default=GPIO4 (D3). FIRMWARE: lib wired into firmware/canary build (not canary-wap .ino) - integrate to use. To coexist with tamper on GPIO4, set -DTOUCH_PIN_NUM=5 and wire to D4/GPIO5. Senses THROUGH sealed wall = best weatherproof input"
+     },
+     {
+      "ref": "R6",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Resistor 1k ohm 1/8W 0805 (touch ESD series)",
+      "mpn": "RC0805FR-071KL",
+      "mfr": "Yageo",
+      "usd": 0.02,
+      "notes": "Series with touch electrode"
+     },
+     {
+      "ref": "BT1",
+      "qty": "1",
+      "required": false,
+      "category": "Power",
+      "desc": "Battery - chemistry per climate; default 3.7V LiPo (INDOOR/mild), PROTECTED PACK w/ PCM, JST-PH 2.0",
+      "mpn": "LP-503450-1100-PCM",
+      "mfr": "Generic",
+      "usd": 7.5,
+      "notes": "SAFETY-CRITICAL - see build plan section 6.5/9.2. Use only certified protected cells (IEC 62133/UL). INDOOR/mild only: LiPo cannot charge <0C, swells in heat. Charges off XIAO onboard charger"
+     },
+     {
+      "ref": "BT1-ALT1",
+      "qty": "1",
+      "required": false,
+      "category": "Power",
+      "desc": "ALT (outdoor cold/hot): LiFePO4 PROTECTED cell/pack + external LiFePO4 charger w/ temp cutoff",
+      "mpn": "LIFEPO4-14500-PCM+CTRL",
+      "mfr": "Generic",
+      "usd": 9.0,
+      "notes": "SAFETY-CRITICAL. Tolerates heat better; STILL no charge below cell spec. XIAO LiPo charger will NOT correctly charge LiFePO4 (4.2 vs 3.6V) - needs chemistry-matched external charger + thermistor/BMS"
+     },
+     {
+      "ref": "BT1-ALT2",
+      "qty": "1",
+      "required": false,
+      "category": "Power",
+      "desc": "ALT (wide-temp, non-rechargeable): Li-SOCl2 primary cell + buck",
+      "mpn": "TL-5903",
+      "mfr": "Tadiran",
+      "usd": 6.0,
+      "notes": "SAFETY-CRITICAL. -40 to +85C, long shelf life; PRIMARY (do NOT charge). Add reverse/charge protection; follow datasheet/UN38.3"
+     },
+     {
+      "ref": "R4,R5",
+      "qty": "2",
+      "required": false,
+      "category": "Passive",
+      "desc": "Resistor 100k ohm 1% 0805 (VBAT 2:1 divider, qty 2)",
+      "mpn": "RC0805FR-07100KL",
+      "mfr": "Yageo",
+      "usd": 0.04,
+      "notes": "VBAT->R4->GPIO1(A0)->R5->GND; VBAT_DIVIDER_RATIO=2.0"
+     },
+     {
+      "ref": "M1",
+      "qty": "1",
+      "required": false,
+      "category": "Module",
+      "desc": "L76K GNSS receiver module (UART), -40 to +85 C",
+      "mpn": "L76K",
+      "mfr": "Quectel/Seeed",
+      "usd": 15.9,
+      "notes": "UART 9600 on D6/D7 (GPIO43/44); FEATURE_GNSS"
+     },
+     {
+      "ref": "ENC1",
+      "qty": "1",
+      "required": false,
+      "category": "Enclosure",
+      "desc": "Polycarbonate enclosure, IP66/67, NEMA 4X, UV-stabilized (Hammond 1554/1555)",
+      "mpn": "1554F2GYCL",
+      "mfr": "Hammond",
+      "usd": 18.0,
+      "notes": "-40 to +110C, IK08 impact, UL listed. Clear-lid variant doubles as camera window. ABS 1551 (prior pick) was INDOOR-ONLY - corrected"
+     },
+     {
+      "ref": "VENT1",
+      "qty": "1",
+      "required": false,
+      "category": "Sealing",
+      "desc": "GORE adhesive acoustic/protective vent (ePTFE)",
+      "mpn": "GORE PMF (adhesive series)",
+      "mfr": "W. L. Gore",
+      "usd": 3.0,
+      "notes": "Lets buzzer sound out + pressure equalization while maintaining IP67/68; use in front of BZ1 in sealed enclosure"
+     },
+     {
+      "ref": "LP1",
+      "qty": "1",
+      "required": false,
+      "category": "Optomechanical",
+      "desc": "Light pipe, single, vertical (LED to face)",
+      "mpn": "PLP1-250",
+      "mfr": "Bivar",
+      "usd": 0.45,
+      "notes": "Carries DLED1 to enclosure face; gasketed press-fit keeps IP rating"
+     },
+     {
+      "ref": "ANT1",
+      "qty": "1",
+      "required": false,
+      "category": "RF",
+      "desc": "External 2.4GHz antenna, u.FL/IPEX (if onboard insufficient)",
+      "mpn": "2.4G-UFL-WHIP",
+      "mfr": "Generic",
+      "usd": 2.2,
+      "notes": "Optional; XIAO has onboard antenna. Outdoor mount needs IP-rated bulkhead/SMA"
+     },
+     {
+      "ref": "SCR3",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
+      "mpn": "M2X8-ST-CSK",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "For the 3D-printed enclosure corner posts (enclosure/ v0.7) - the lid seats are countersink cones, so use flat-head. Max ~0.3 N-m or the printed posts strip"
+     },
+     {
+      "ref": "CW1",
+      "qty": "1",
+      "required": false,
+      "category": "Optomechanical",
+      "desc": "Clear disc 12 x 1 mm, PMMA (acrylic) or polycarbonate (camera window)",
+      "mpn": "DISC-PMMA-12X1",
+      "mfr": "Generic",
+      "usd": 0.6,
+      "notes": "Seats in the printed lid's recessed camera seat (enclosure/ v0.7 weather mode); keep untinted"
+     },
+     {
+      "ref": "ADH1",
+      "qty": "1",
+      "required": false,
+      "category": "Sealing",
+      "desc": "Silicone adhesive/sealant, NEUTRAL-CURE (oxime/alkoxy), clear",
+      "mpn": "SIL-NEUTRAL-CLR",
+      "mfr": "Generic",
+      "usd": 6.0,
+      "notes": "Bonds CW1 + beds LP1 + seals ANT1 bulkhead. Acid-cure (acetoxy) attacks polycarbonate - do not substitute"
+     },
+     {
+      "ref": "PLUG1",
+      "qty": "1",
+      "required": false,
+      "category": "Sealing",
+      "desc": "Silicone USB-C dust plug with flange",
+      "mpn": "USBC-PLUG-FLG",
+      "mfr": "Generic",
+      "usd": 0.5,
+      "notes": "Seats in the printed enclosure's USB recess (weather mode); remove to charge/flash"
+     },
+     {
+      "ref": "SCR4",
+      "qty": "2",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "#6 / M3.5 pan-head screw + wall anchor (keyhole mount)",
+      "mpn": "M3.5-PAN-ANCHOR",
+      "mfr": "Generic",
+      "usd": 0.6,
+      "notes": "For the printed enclosure's blind keyhole mounts (opt_mount); head <= 7mm dia, <= 2.5mm tall"
+     },
+     {
+      "ref": "FIL1",
+      "qty": "1",
+      "required": false,
+      "category": "Material",
+      "desc": "TPU filament 90-95A (printed gasket), ~5g per gasket",
+      "mpn": "TPU-95A",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "Printed perimeter gasket for enclosure/ weather mode; 2 perimeters, 100% infill, slow"
+     },
+     {
+      "ref": "INS1",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",
+      "mpn": "M2-HSI-3.5X4",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Service-grade lid threads: set screw_insert=true in the enclosure (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers"
+     }
+    ],
+    "required_usd": 26.9,
+    "full_usd": 102.89
+   },
+   "assembly": {
+    "source": "docs/hardware/enclosure/README.md §Assembly",
+    "steps": [
+     "(battery variant) Drop the LiPo in the bay; route the leads through the wire channel notched in the bay ribs along the +Y wall to the XIAO BAT pads. Read the battery safety notice in build plan §6.5 first.",
+     "Press the PCB straight down until the four edge clips snap over it, USB-C aligned to the wall cutout — no screws needed for the board. (To remove, gently splay the clips outward and lift.)",
+     "Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes it permanent); add a GORE vent over the seat if sealing; press the light pipe into the LED port.",
+     "(weather mode) Seat the TPU gasket in the rim groove; glue the clear disc into the camera seat.",
+     "Close the lid (lip nests into the base) and drive 4 × M2 screws — snug diagonally first, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty)."
+    ]
+   }
+  },
+  "canary-vision": {
+   "bom": {
+    "source": "docs/hardware/bom_canary_vision.csv",
+    "rows": [
+     {
+      "ref": "U1",
+      "qty": "1",
+      "required": true,
+      "category": "MCU Board",
+      "desc": "ESP32-C3-DevKitM-1 (RISC-V single-core, 4MB flash)",
+      "mpn": "ESP32-C3-DevKitM-1",
+      "mfr": "Espressif",
+      "usd": 8.0,
+      "notes": "Vision controller (Grove-cable host flavor); NO onboard LiPo charger; operating -40 to +85 C"
+     },
+     {
+      "ref": "U1-ALT",
+      "qty": "1",
+      "required": false,
+      "category": "MCU Board",
+      "desc": "ALT (recommended): XIAO ESP32-C3 or ESP32-S3 + header pins, seated in U2's stacking socket",
+      "mpn": "XIAO-ESP32C3 / XIAO-ESP32S3",
+      "mfr": "Seeed Studio",
+      "usd": 5.5,
+      "notes": "Stacked-host flavor (canary-vision-xiao-c3/-s3 build envs; device guide section 3) - zero wiring, replaces U1+CBL2. USB-Cs must face the same direction when seating. Printed enclosure ENC2 host=xiao targets this"
+     },
+     {
+      "ref": "U2",
+      "qty": "1",
+      "required": true,
+      "category": "Sensor",
+      "desc": "Grove Vision AI V2 (Himax WiseEye2 HX6538, Arm Cortex-M55 + Ethos-U55)",
+      "mpn": "101021040",
+      "mfr": "Seeed Studio",
+      "usd": 29.0,
+      "notes": "I2C on GPIO4 (SDA) / GPIO5 (SCL); Seeed product 5851. Camera (e.g. OV5647) sold separately on some SKUs"
+     },
+     {
+      "ref": "CBL2",
+      "qty": "1",
+      "required": true,
+      "category": "Cable",
+      "desc": "Grove 4-pin cable",
+      "mpn": "110990210",
+      "mfr": "Seeed Studio",
+      "usd": 1.2,
+      "notes": "Usually ships with U2; connects U2 to U1"
+     },
+     {
+      "ref": "CBL1",
+      "qty": "1",
+      "required": true,
+      "category": "Cable",
+      "desc": "USB-C cable, data-capable (not charge-only)",
+      "mpn": "USB-C-DATA-1M",
+      "mfr": "Generic",
+      "usd": 3.5,
+      "notes": "Power + flashing"
+     },
+     {
+      "ref": "DLED1",
+      "qty": "1",
+      "required": false,
+      "category": "Indicator",
+      "desc": "WS2812B addressable RGB LED (5050)",
+      "mpn": "WS2812B",
+      "mfr": "Worldsemi",
+      "usd": 0.15,
+      "notes": "EXT_LED=GPIO3; onboard LED_BUILTIN=GPIO8"
+     },
+     {
+      "ref": "R2",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Resistor 330 ohm 1/8W 0805 (WS2812 data series)",
+      "mpn": "RC0805FR-07330RL",
+      "mfr": "Yageo",
+      "usd": 0.02,
+      "notes": "In series with WS2812 DIN"
+     },
+     {
+      "ref": "C1",
+      "qty": "1",
+      "required": false,
+      "category": "Passive",
+      "desc": "Capacitor 0.1uF 50V X7R 0805 (WS2812 decoupling)",
+      "mpn": "CL21B104KBCNNNC",
+      "mfr": "Samsung",
+      "usd": 0.02,
+      "notes": "Local bypass at DLED1 V+/GND; recommended close to WS2812B power pins"
+     },
+     {
+      "ref": "SW1",
+      "qty": "1",
+      "required": false,
+      "category": "Switch",
+      "desc": "Tactile push button 6mm momentary (multifunction)",
+      "mpn": "B3F-1000",
+      "mfr": "Omron",
+      "usd": 0.12,
+      "notes": "Parallel to BOOT/GPIO9; or reuse onboard BOOT. Indoor; see WAP BOM SW1-ALT for outdoor"
+     },
+     {
+      "ref": "BZ1",
+      "qty": "1",
+      "required": false,
+      "category": "Buzzer",
+      "desc": "Passive piezo buzzer (UNPOPULATED - not in Vision firmware build)",
+      "mpn": "CPT-9019S-SMT-TR",
+      "mfr": "CUI Devices",
+      "usd": 0.0,
+      "notes": "BUZZER_PIN_DEFAULT=GPIO2; requires firmware fork (FEATURE_AUDIBLE_CHIRP off on Vision)"
+     },
+     {
+      "ref": "BT1",
+      "qty": "1",
+      "required": false,
+      "category": "Power",
+      "desc": "Battery (PROTECTED pack) + chemistry-matched external charger (C3 DevKit has NO charger)",
+      "mpn": "LIFEPO4-PCM+CTRL or LiPo-PCM+TP4056",
+      "mfr": "Generic",
+      "usd": 11.0,
+      "notes": "SAFETY-CRITICAL - see build plan section 6.5/9.2. Certified protected cells only (IEC 62133/UL); temperature-gated charger. Indoor: LiPo. Outdoor: LiFePO4 w/ temp cutoff or Li-SOCl2 primary"
+     },
+     {
+      "ref": "ENC1",
+      "qty": "1",
+      "required": false,
+      "category": "Enclosure",
+      "desc": "Polycarbonate enclosure w/ clear lid (Hammond 1554/1555 + clear lid); camera window",
+      "mpn": "1554F2GYCL",
+      "mfr": "Hammond",
+      "usd": 18.0,
+      "notes": "UV-stabilized IP66/NEMA4X, -40 to +110C. Clear lid = camera aperture for Grove Vision AI V2; keep optically clear (no smoke tint)"
+     },
+     {
+      "ref": "CAM1",
+      "qty": "1",
+      "required": false,
+      "category": "Sensor",
+      "desc": "OV5647 camera module, Raspberry Pi cam v1.3 form (25 x 24 mm, 21 x 12.5 mm M2 holes), FPC to CSI",
+      "mpn": "OV5647-62",
+      "mfr": "Seeed/Generic",
+      "usd": 8.0,
+      "notes": "Required for the printed-enclosure path (mounts to the front-face posts); -62/-67/-160 FOV variants supported by U2; some U2 kit SKUs include it"
+     },
+     {
+      "ref": "ENC2",
+      "qty": "1",
+      "required": false,
+      "category": "Enclosure",
+      "desc": "3D-printed Canary Vision enclosure (back + front + bracket + knob)",
+      "mpn": "canary_vision_enclosure.scad",
+      "mfr": "SecuraCV",
+      "usd": 1.5,
+      "notes": "Parametric OpenSCAD in docs/hardware/enclosure/; GoPro-compatible adjustable hinge with detent teeth; weather preset is ~IP54 splash-resistant - NOT an ENC1 substitute for harsh exposure"
+     },
+     {
+      "ref": "SCR5",
+      "qty": "8",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 self-tapping screws, 6-10mm: 4x pan head (camera posts) + 4x head per case (front corners)",
+      "mpn": "M2X8-ST-MIX",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "4x 6mm PAN for the OV5647 posts. Front corners: FLAT/countersunk head on the Vision case (cone seats), PAN head on the doorbell face (flat counterbores). Max ~0.3 N-m"
+     },
+     {
+      "ref": "SCR6",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M5 x 25 bolt + nut (or GoPro-style M5 knurled thumbscrew)",
+      "mpn": "M5X25+NUT",
+      "mfr": "Generic",
+      "usd": 1.2,
+      "notes": "Hinge clamp; the printed knob part captures a standard M5 nut"
+     },
+     {
+      "ref": "SCR7",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "#8 / M4 countersunk screw + wall anchor (bracket fixing)",
+      "mpn": "M4-CSK-ANCHOR",
+      "mfr": "Generic",
+      "usd": 1.2,
+      "notes": "Bracket wall mounting; or hang on the bracket's keyhole slots"
+     },
+     {
+      "ref": "NUT1",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "1/4-20 hex nut (tripod mount, captive in bracket)",
+      "mpn": "NUT-1/4-20",
+      "mfr": "Generic",
+      "usd": 0.15,
+      "notes": "Drops into the bracket's rear pocket; any standard tripod stud threads in"
+     },
+     {
+      "ref": "CW2",
+      "qty": "1",
+      "required": false,
+      "category": "Optomechanical",
+      "desc": "Clear disc 14 x 1 mm, PMMA or polycarbonate (lens window)",
+      "mpn": "DISC-PMMA-14X1",
+      "mfr": "Generic",
+      "usd": 0.6,
+      "notes": "Bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). For sealing also see WAP BOM items 23-26 (silicone, USB plug, TPU, GORE vent)"
+     },
+     {
+      "ref": "INS1",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",
+      "mpn": "M2-HSI-3.5X4",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Service-grade front threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws for the front corners"
+     },
+     {
+      "ref": "BTN2",
+      "qty": "1",
+      "required": false,
+      "category": "Switch",
+      "desc": "12mm panel-mount illuminated momentary button, SHORT body, IP65, LED ring",
+      "mpn": "PBM12-LED-IP65",
+      "mfr": "Generic",
+      "usd": 2.5,
+      "notes": "Doorbell enclosure face (canary_vision_doorbell.scad): switch to the multifunction input (GPIO9), LED ring to the status LED pin; body+terminals <= 18mm behind panel (btn_body_l is assert-checked)"
+     },
+     {
+      "ref": "SCR8",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 x 10 security screw (Torx pin / tri-wing), self-tapping",
+      "mpn": "M2X10-SEC-TX",
+      "mfr": "Generic",
+      "usd": 0.3,
+      "notes": "Doorbell anti-theft lock: drives up through the wall plate's foot into the body's blind boss - tool-only removal, Ring-style"
+     },
+     {
+      "ref": "GRM1",
+      "qty": "1",
+      "required": false,
+      "category": "Sealing",
+      "desc": "Cable grommet / bushing for 12x7mm oval (or seal with neutral-cure silicone)",
+      "mpn": "GROMMET-12X7",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Doorbell rear cable exit; pair with a right-angle USB-C plug"
+     }
+    ],
+    "required_usd": 41.7,
+    "full_usd": 93.16
+   },
+   "assembly": {
+    "source": "docs/hardware/enclosure/README.md §Assembly",
+    "steps": [
+     "Screw the OV5647 to the four posts inside the front face (M2 self-tappers, lens through the aperture); bond the clear disc into the seat.",
+     "(xiao host) Seat the XIAO in the module's socket — both USB-C ports must face the same direction; backwards seating feeds power into GPIO and can kill either board (device guide §3). Click the stack into the tall side rails, module up, both ports aligned to the two bottom-wall openings (model port above, firmware port below). (devkit host) Click the Vision AI V2 and the DevKitM-1 into their snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the module's own USB-C faces the middle gap — open the case to reflash models.",
+     "Route the camera FPC to the module's CSI connector (and, devkit host, the Grove cable across the middle gap to the DevKit pins).",
+     "(weather) Seat the TPU gasket in the rim groove.",
+     "Close the front (lip nests into the back) and drive the 4 × M2 corner screws — snug diagonally, then final quarter-turns.",
+     "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
+    ]
+   }
+  },
+  "canary-display-watch": {
+   "bom": {
+    "source": "docs/hardware/bom_canary_display.csv",
+    "rows": [
+     {
+      "ref": "W-U1",
+      "qty": "1",
+      "required": true,
+      "category": "MCU Board",
+      "desc": "XIAO ESP32-S3 (plain, 8MB flash / 8MB PSRAM) — WATCH build",
+      "mpn": "113991114",
+      "mfr": "Seeed Studio",
+      "usd": 7.49,
+      "notes": "Seats in W-U2's back socket, zero wiring (same stack pattern as Vision/Sense). Plain, NOT Sense: a display needs no camera/mic, and their absence is a privacy feature. Seeed list $7.49; 3-pack ~$5.97/pc; street (Amazon) $9-12"
+     },
+     {
+      "ref": "W-U2",
+      "qty": "1",
+      "required": true,
+      "category": "Display",
+      "desc": "Seeed Round Display for XIAO (1.28in 240x240 GC9A01, CST816S touch, PCF8563 RTC, microSD, LiPo charger, JST 1.25)",
+      "mpn": "104040143",
+      "mfr": "Seeed Studio",
+      "usd": 18.0,
+      "notes": "ORDERED 2026-07 (bench validation unit). Seeed list $18.00 (street $24-26). Firmware: canary-display-watch. Backlight on D6/GPIO43 is PWM-dimmable = bedside night floor. VERIFY pin map against board revision (docs/../boards/xiao-esp32s3-round)"
+     },
+     {
+      "ref": "W-ENC1",
+      "qty": "1",
+      "required": false,
+      "category": "Enclosure",
+      "desc": "3D-printed Watch Station puck (drum + bezel + 25deg stand)",
+      "mpn": "canary_watch_station.scad",
+      "mfr": "SecuraCV",
+      "usd": 1.0,
+      "notes": "docs/hardware/enclosure/canary_watch_station.scad (v0.1-dev, not print-validated). Prints flat, no supports; wall-mounts via blind keyholes without the stand"
+     },
+     {
+      "ref": "W-SCR1",
+      "qty": "2",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 x 8 self-tapping pan head (bezel posts)",
+      "mpn": "M2X8-ST",
+      "mfr": "Generic",
+      "usd": 0.1,
+      "notes": "~$5-8 per 100 on Amazon/uxcell; max ~0.3 N-m into printed posts"
+     },
+     {
+      "ref": "W-BT1",
+      "qty": "1",
+      "required": false,
+      "category": "Power",
+      "desc": "LiPo 302030 150mAh PROTECTED cell, JST 1.25 — battery-backed watch",
+      "mpn": "ADA-1317-CLASS",
+      "mfr": "Adafruit/Generic",
+      "usd": 5.95,
+      "notes": "SAFETY: protected (PCM) cells only. VERIFY JST 1.25 polarity against the display board before plugging — vendor pigtails vary. Fits the drum's opt_batt fence rails. Bulk 10+: $1-2.20/cell"
+     },
+     {
+      "ref": "W-BZ1",
+      "qty": "1",
+      "required": false,
+      "category": "Buzzer",
+      "desc": "Passive piezo (UNPOPULATED in v0.1 firmware — future severity-tiered chime)",
+      "mpn": "CPT-9019S-SMT-TR",
+      "mfr": "CUI Devices",
+      "usd": 0.0,
+      "notes": "Reserved: display_ux_design.md sound spec (IEC 60601-1-8-informed tiers, falling all-clear tone). No firmware support yet"
+     },
+     {
+      "ref": "CBL1",
+      "qty": "1",
+      "required": true,
+      "category": "Cable",
+      "desc": "USB-C cable, data-capable (not charge-only), 1m",
+      "mpn": "USB-C-DATA-1M",
+      "mfr": "Generic",
+      "usd": 1.5,
+      "notes": "Power + flashing. Both builds. 10-packs ~$1.30-1.60/cable"
+     },
+     {
+      "ref": "PSU1",
+      "qty": "1",
+      "required": true,
+      "category": "Power",
+      "desc": "USB-C PSU 5V/2A wall adapter (UL/ETL listed)",
+      "mpn": "5V2A-USBC-UL",
+      "mfr": "Generic",
+      "usd": 8.0,
+      "notes": "Both builds; always-on appliance — use a listed adapter. Bulk 100+: $0.60-1.50 landed (certified, Alibaba)"
+     }
+    ],
+    "required_usd": 34.99,
+    "full_usd": 42.04
+   }
+  },
+  "canary-display-dash": {
+   "bom": {
+    "source": "docs/hardware/bom_canary_display.csv",
+    "rows": [
+     {
+      "ref": "D-U1",
+      "qty": "1",
+      "required": true,
+      "category": "Display",
+      "desc": "Waveshare ESP32-S3-Touch-LCD-4.3 (800x480 IPS, GT911 5-pt touch, CH422G expander, 16MB flash / 8MB octal PSRAM) — DASH build",
+      "mpn": "ESP32-S3-Touch-LCD-4.3",
+      "mfr": "Waveshare",
+      "usd": 33.0,
+      "notes": "ORDERED 2026-07 as the 4.3B with-case SKU (bench unit; pin-identical + CAN/RS485 terminals, mic-free, bundled case replaces D-ENC1/D-SCR1). Plain ~$28-33; 4.3B $36.99. Firmware: canary-display-dash. Backlight is ON/OFF only (CH422G) — night mode is dark theme + backlight-off. VERIFY RGB timings/expander bits per board revision"
+     },
+     {
+      "ref": "D-U1-ALT",
+      "qty": "1",
+      "required": false,
+      "category": "Display",
+      "desc": "ALT: Waveshare ESP32-S3-Touch-LCD-4.3C \"AI voice\" variant, BOX SKU ships WITH plastic case (resellers: XYGStudy etc.)",
+      "mpn": "ESP32-S3-Touch-LCD-4.3C-BOX",
+      "mfr": "Waveshare",
+      "usd": 0.0,
+      "notes": "Expected firmware-compatible (same RGB control pins/data GPIOs, GT911, CH422G; VERIFY ST7701 timings + extra LCD_RST expander bit at bench). Included case replaces D-ENC1/D-SCR1. CAVEAT: onboard dual-MIC array + ES8311 codec — inert (firmware never inits I2S) but physically present, so the no-mic-by-construction privacy posture does not hold on this SKU. Its speaker path is a v0.2 chime candidate"
+     },
+     {
+      "ref": "D-ENC1",
+      "qty": "1",
+      "required": false,
+      "category": "Enclosure",
+      "desc": "3D-printed Dash case (bezel frame + vented back + 25deg stand)",
+      "mpn": "canary_dash_display.scad",
+      "mfr": "SecuraCV",
+      "usd": 2.5,
+      "notes": "docs/hardware/enclosure/canary_dash_display.scad (v0.1-dev, not print-validated). Back carries 2x keyholes + 75mm horizontal M4 pair. MEASURE your panel before printing"
+     },
+     {
+      "ref": "D-SCR1",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 x 8 self-tapping pan head (corner lobes, frame-to-back)",
+      "mpn": "M2X8-ST",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "Same stock as W-SCR1"
+     },
+     {
+      "ref": "D-SCR2",
+      "qty": "2",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M4 x 10 machine screw (75mm-pair wall mount) or 2x #6 pan screws for keyholes",
+      "mpn": "M4X10",
+      "mfr": "Generic",
+      "usd": 0.3,
+      "notes": "Only for wall mounting; desk stand needs no hardware"
+     },
+     {
+      "ref": "CBL1",
+      "qty": "1",
+      "required": true,
+      "category": "Cable",
+      "desc": "USB-C cable, data-capable (not charge-only), 1m",
+      "mpn": "USB-C-DATA-1M",
+      "mfr": "Generic",
+      "usd": 1.5,
+      "notes": "Power + flashing. Both builds. 10-packs ~$1.30-1.60/cable"
+     },
+     {
+      "ref": "PSU1",
+      "qty": "1",
+      "required": true,
+      "category": "Power",
+      "desc": "USB-C PSU 5V/2A wall adapter (UL/ETL listed)",
+      "mpn": "5V2A-USBC-UL",
+      "mfr": "Generic",
+      "usd": 8.0,
+      "notes": "Both builds; always-on appliance — use a listed adapter. Bulk 100+: $0.60-1.50 landed (certified, Alibaba)"
+     }
+    ],
+    "required_usd": 42.5,
+    "full_usd": 45.5
+   }
+  },
+  "canary-sense": {
+   "bom_note": "Sense BOM pending — parts list lives in firmware/projects/canary-sense/README.md."
+  }
+ }
+}

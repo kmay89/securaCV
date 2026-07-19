@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Display Character wave 4 — Terminal, Blueprint, and a mirror that dresses to match
+
+- **Two more ages on the ring**
+  ([`docs/hardware/display_character.md`](docs/hardware/display_character.md)
+  §6): **Terminal** — aged phosphor on green-black (AAA), cursor-phosphor
+  accent, machine-steady temperament, console voice ("All nominal" /
+  "back online") — and **Blueprint** — white ink on Prussian blue (AAA),
+  chalk-cyan accent, careful-drafter temperament, drafting voice
+  ("All to plan" / "as you were"). Both dark grounds carry the canonical
+  semantic bytes (measured ≥3:1 on both tiers); the ring is now seven
+  ages, and a compile-time static_assert refuses an age that doesn't
+  take a ring seat.
+- **The phone mirror wears your Character.** `/api/glass` carries the
+  active look's day palette and semantic set; the mirror re-skins its
+  page live (ground, tiers, severity hues), with older mirror HTML
+  ignoring the field harmlessly and the mirror's warm-dim night
+  emulation unchanged on top.
+
 ### Display Character wave 3 — Almanac, the paper Character
 
 - **The ring's first light ground**

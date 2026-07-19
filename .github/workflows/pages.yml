@@ -9,8 +9,12 @@
 #                     built site folder onto any static host — the pages
 #                     are self-contained and fetch nothing external.
 #
-# First run requires enabling Pages once: Settings → Pages → Source →
-# "GitHub Actions".
+# One-time setup: a repo admin must enable Pages once — Settings → Pages
+# → Source → "GitHub Actions" (github.com/kmay89/securaCV/settings/pages).
+# The Actions token cannot create the site itself (site creation needs
+# admin; the API answers "Resource not accessible by integration").
+# After that click, the configure-pages step below verifies the site on
+# every run — and would self-enable if the token ever gains the right.
 name: pages
 
 on:
@@ -36,6 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: "Pages enabled? (one-time fix: Settings → Pages → Source = GitHub Actions)"
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Regenerate enclosure catalog (drift-checked in canary-local CI)
         run: python3 canary-local/tools/gen_enclosures.py
       - name: Assemble site

@@ -151,6 +151,42 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
      // signed 6.2/5.6 : 1 on bg/surface; canonical amber is 1.98:1 on
      // paper — invisible, which is the dishonest option).
      {0x276B2B, 0x8F5300, 0xB71C1C, 0x01579B}},
+    // [Terminal] — the CRT age: phosphor on near-black green. All chrome
+    // is the phosphor family; the semantic set stays canonical (measured:
+    // ok 6.1, warn 8.4, alert 4.7, signed 7.6 : 1 on bg).
+    {"Terminal", "phosphor & glow • the CRT age",
+     {
+         0x030A04,  // bg — powered-down glass, green-black
+         0x0A140B,  // surface — tube face
+         0x1C3320,  // edge — scanline hairline
+         0xB9F0C5,  // text — aged phosphor (~15.6:1 on bg — AAA)
+         0x55B274,  // muted — dimmed phosphor (~7.6:1)
+         0x2A5C3C,  // faint — afterglow
+         0x36E06A,  // accent — the cursor's phosphor (~11.5:1)
+     },
+     k_ladder_default,
+     {1.0f, 1.20f, 0.95f},     // machine-steady: flourishes are rare events
+     // Voice: console register — status words, no ceremony.
+     {"All nominal", "all nominal", "back online"},
+     k_sem_canonical},
+    // [Blueprint] — the drafting room: white ink on Prussian blue, chalk-
+    // cyan accent. Semantics canonical (ok 5.2, warn 7.3, alert 4.1,
+    // signed 6.5 : 1 on bg — all >=3:1 on surface too).
+    {"Blueprint", "ink & cyan • the drafting room",
+     {
+         0x0D1B33,  // bg — Prussian blue paper
+         0x142643,  // surface — title block
+         0x2A4A78,  // edge — grid line
+         0xEAF2FC,  // text — white ink (~15.2:1 on bg — AAA)
+         0x9DB8DC,  // muted — construction line (~8.5:1)
+         0x4C688F,  // faint — erased line
+         0x7FD4FF,  // accent — chalk cyan (~10.5:1; day-only, night outranks)
+     },
+     k_ladder_default,
+     {1.05f, 1.10f, 0.95f},    // the careful drafter
+     // Voice: drafting-room register — the plan, holding.
+     {"All to plan", "all to plan", "as you were"},
+     k_sem_canonical},
 };
 
 // Ring (flip-through) order — display order, not enum order: the warm
@@ -158,6 +194,7 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
 // enum 0 (the fallback) wherever it sits on the ring.
 constexpr Character k_ring[] = {Character::Heirloom, Character::QuietGlass,
                                 Character::Almanac, Character::Aqua,
+                                Character::Blueprint, Character::Terminal,
                                 Character::Neon};
 // Every Character appears on the ring exactly once, enforced at compile
 // time: a future wave that grows the enum but forgets the ring would

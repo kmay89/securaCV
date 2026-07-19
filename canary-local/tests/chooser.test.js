@@ -88,6 +88,72 @@ test("enclosures.json: released parts exist on disk; previews rendered", () => {
   assert.deepStrictEqual(part.enum, ["drum", "bezel", "stand", "all"]);
 });
 
+test("mesh slicing: a unit cube's cross-section is its square perimeter", async () => {
+  const { sliceSegments } = await import("../assets/print-guide.js");
+  // 10 mm cube, 2 triangles per side face (z from 0 to 10)
+  const pos = [];
+  const idx = [];
+  const quad = (a, b, c, d) => {
+    const base = pos.length / 3;
+    pos.push(...a, ...b, ...c, ...d);
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+  quad([0, 0, 0], [10, 0, 0], [10, 0, 10], [0, 0, 10]);     // front
+  quad([10, 0, 0], [10, 10, 0], [10, 10, 10], [10, 0, 10]); // right
+  quad([10, 10, 0], [0, 10, 0], [0, 10, 10], [10, 10, 10]); // back
+  quad([0, 10, 0], [0, 0, 0], [0, 0, 10], [0, 10, 10]);     // left
+  const segs = sliceSegments({ pos, idx }, 5);
+  assert.strictEqual(segs.length / 6, 8, "8 crossing triangles → 8 segments");
+  for (let i = 0; i < segs.length; i += 3) {
+    assert.strictEqual(segs[i + 2], 5, "every point at slice height");
+    const onPerimeter =
+      segs[i] === 0 || segs[i] === 10 || segs[i + 1] === 0 || segs[i + 1] === 10;
+    assert.ok(onPerimeter, "points lie on the square perimeter");
+  }
+});
+
+test("mesh slicing: a vertex exactly on the plane yields one clean segment", async () => {
+  const { sliceSegments } = await import("../assets/print-guide.js");
+  // Triangle with vertex C exactly at the slice height — both of C's
+  // edges intersect AT C; without dedup the duplicate ate the real
+  // segment and left contour gaps (review catch).
+  const pos = [0, 0, 0, 10, 0, 10, 0, 0, 5];
+  const idx = [0, 1, 2];
+  const segs = sliceSegments({ pos, idx }, 5);
+  assert.strictEqual(segs.length / 6, 1, "exactly one segment");
+  const [x1, y1, , x2, y2] = [segs[0], segs[1], segs[2], segs[3], segs[4]];
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  assert.ok(len > 1, `segment is non-degenerate (len=${len})`);
+});
+
+test("display BOMs split by flavor: watch never carries the dash panel", () => {
+  const b = JSON.parse(readFileSync(join(ROOT, "devices/build.json"), "utf8"));
+  const watch = b.devices["canary-display-watch"].bom;
+  const dash = b.devices["canary-display-dash"].bom;
+  assert.ok(watch.rows.every((r) => !r.ref.startsWith("D-")), "no D-* rows in watch");
+  assert.ok(dash.rows.every((r) => !r.ref.startsWith("W-")), "no W-* rows in dash");
+  assert.ok(dash.rows.some((r) => /Waveshare/.test(r.desc) && r.required), "dash owns its panel");
+  assert.ok(watch.rows.some((r) => r.ref === "PSU1"), "shared rows serve watch");
+  assert.ok(dash.rows.some((r) => r.ref === "PSU1"), "shared rows serve dash");
+});
+
+test("print guidance rides the catalog: notes + materials per part", () => {
+  const enc = JSON.parse(readFileSync(join(ROOT, "devices/enclosures.json"), "utf8"));
+  assert.ok(enc.print_settings.layer_height_mm === 0.2);
+  assert.match(enc.print_settings.material, /PETG/);
+  for (const s of enc.sets) {
+    for (const p of s.parts) {
+      assert.ok(p.print_note, `${s.id}/${p.name} has a print note`);
+      assert.ok(p.material, `${s.id}/${p.name} has a material`);
+    }
+  }
+  const weather = enc.sets.find((s) => s.id === "wap-weather");
+  const gasket = weather.parts.find((p) => p.file.includes("gasket"));
+  assert.match(gasket.material, /TPU/);
+  const lid = weather.parts.find((p) => p.file.includes("lid"));
+  assert.match(lid.print_note, /face-down/);
+});
+
 test("STL parser handles the real preview meshes", async () => {
   const { parseSTL } = await import("../assets/stl.js");
   const buf = readFileSync(join(ROOT, "enclosures/preview/canary_watch_station_drum.stl"));

@@ -164,6 +164,18 @@ while IFS= read -r -d '' f; do LVGL_SRCS+=("$f"); done \
   < <(find "$TP/lvgl/src" -name '*.c' -print0 | sort -z)
 
 # ── Compile ─────────────────────────────────────────────────────────────
+# Incremental correctness: an object is stale when ANY header in the
+# include graph changed, not just its own source — a warm .build/ after a
+# header-only edit (a new Character in the enum, a theme token) otherwise
+# links stale inlined constants into dist, which CI's clean rebuild then
+# refuses (drift-gate escape, PR #916). Third_party stays out of the
+# check: it is pinned and immutable after clone.
+NEWEST_HDR=""
+while IFS= read -r -d '' h; do
+  if [[ -z "$NEWEST_HDR" || "$h" -nt "$NEWEST_HDR" ]]; then NEWEST_HDR="$h"; fi
+done < <(find "$PROJ/include" "$CFG_DIR" "$PINS_DIR" "$FW/common" \
+             "$EMU_DIR/shim" "$EMU_DIR/src" -name '*.h' -print0)
+
 OBJS=()
 compile() {
   local src="$1" std_is_c="$2"
@@ -171,7 +183,8 @@ compile() {
   rel="$(echo "$src" | sed 's|[/.]|_|g')"
   obj="$OBJ/$rel.o"
   OBJS+=("$obj")
-  if [[ -f "$obj" && "$obj" -nt "$src" ]]; then return; fi
+  if [[ -f "$obj" && "$obj" -nt "$src" &&
+        ( -z "$NEWEST_HDR" || "$obj" -nt "$NEWEST_HDR" ) ]]; then return; fi
   if [[ "$std_is_c" == "c" ]]; then
     emcc -c "$src" "${CFLAGS[@]}" -o "$obj"
   else
