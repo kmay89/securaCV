@@ -118,6 +118,19 @@ function drawYard() {
   // lawn
   box(g, yard.x0, yard.y0, yard.x1, yard.y1, -0.55, 0.4,
     ["#131a16", "#0a0e0c", "#0d1210"], "lawn");
+  // faint survey grid on the lawn — quiet, technical, intentional
+  for (let gx = Math.ceil(yard.x0); gx <= Math.floor(yard.x1); gx++) {
+    const [ax, ay] = px(gx, yard.y0, -0.14), [bx, by] = px(gx, yard.y1, -0.14);
+    g.append(el("line", { x1: ax, y1: ay, x2: bx, y2: by,
+      stroke: "rgba(210,230,215,0.03)", "stroke-width": 0.8 }));
+  }
+  for (let gy = Math.ceil(yard.y0); gy <= Math.floor(yard.y1); gy++) {
+    const [ax, ay] = px(yard.x0, gy, -0.14), [bx, by] = px(yard.x1, gy, -0.14);
+    g.append(el("line", { x1: ax, y1: ay, x2: bx, y2: by,
+      stroke: "rgba(210,230,215,0.03)", "stroke-width": 0.8 }));
+  }
+  // the house's grounding shadow
+  g.append(planRing(5.1, 3.3, -0.13, 6.4, { fill: "url(#groundShadow)" }, "house-shadow"));
   // walkway from the street to the porch
   box(g, 5.65, 8.5, 6.95, 10.0, -0.18, 0.1, ["#20242a", "#14161a", "#181b20"]);
   // porch slab
@@ -127,8 +140,9 @@ function drawYard() {
   for (const [bx, by, r] of [[-1.1, 7.6, 0.8], [11.6, 8.2, 0.65], [-1.3, 1.2, 0.7]]) {
     const [sx, sy] = px(bx, by, 0.16);
     const b = el("g", { transform: `translate(${sx},${sy})` });
-    b.append(el("ellipse", { cx: 0, cy: 0, rx: r * UX, ry: r * UY, fill: "#16201a" }));
-    b.append(el("ellipse", { cx: 0, cy: -r * 9, rx: r * UX * 0.8, ry: r * UY * 0.9, fill: "#1b2817" }));
+    b.append(el("ellipse", { cx: 0, cy: 0, rx: r * UX, ry: r * UY, fill: "#111813" }));
+    b.append(el("ellipse", { cx: 0, cy: -r * 9, rx: r * UX * 0.8, ry: r * UY * 0.9, fill: "#162015" }));
+    b.append(el("ellipse", { cx: r * 6, cy: -r * 14, rx: r * UX * 0.5, ry: r * UY * 0.6, fill: "#1a2519" }));
     g.append(b);
   }
 }
@@ -150,9 +164,10 @@ function drawFloor(floorId) {
     ? [["x", 1.4, 2.6], ["x", 3.2, 4.4], ["y", 5.6, 6.8], ["y", 8.2, 9.4]]
     : [["x", 1.2, 2.4], ["x", 3.0, 4.2], ["y", 6.2, 7.4], ["y", 8.4, 9.6]];
   for (const [axis, a0, a1] of windows) {
+    const attrs = { fill: "#453714", stroke: "#66521f", "stroke-width": 0.8, filter: "url(#warmGlow)" };
     const w = axis === "x"
-      ? el("polygon", { points: pts([[0, a0, z + 1.1], [0, a1, z + 1.1], [0, a1, z + 2.3], [0, a0, z + 2.3]]) }, "window")
-      : el("polygon", { points: pts([[a0, 0, z + 1.1], [a1, 0, z + 1.1], [a1, 0, z + 2.3], [a0, 0, z + 2.3]]) }, "window");
+      ? el("polygon", { points: pts([[0, a0, z + 1.1], [0, a1, z + 1.1], [0, a1, z + 2.3], [0, a0, z + 2.3]]), ...attrs }, "window")
+      : el("polygon", { points: pts([[a0, 0, z + 1.1], [a1, 0, z + 1.1], [a1, 0, z + 2.3], [a0, 0, z + 2.3]]), ...attrs }, "window");
     g.append(w);
   }
   // ghost dividers
@@ -165,8 +180,13 @@ function drawLabels() {
   for (const r of ROOMS.filter((r) => !r.outside)) {
     const z = floorOf(r).z;
     const [sx, sy] = px((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, z);
-    const t = el("text", { x: sx, y: sy + 4, "text-anchor": "middle" }, "room-label");
-    t.textContent = r.label;
+    // type is styled inline so a cached stylesheet can never blow it up
+    const t = el("text", {
+      x: sx, y: sy + 4, "text-anchor": "middle",
+      fill: "#7c7f88", "font-size": "10", "font-weight": "600",
+      "letter-spacing": "1.6", opacity: "0.85",
+    }, "room-label");
+    t.textContent = r.label.toUpperCase();
     layers[r.floor].append(t);
   }
 }
@@ -187,7 +207,8 @@ function drawFurniture() {
   // front door frame on the entry's open face — the doorbell's perch
   const g = layers.ground;
   wall(g, 5.55, 6.5, 6.55, 6.5, 0, 2.25, "#2a2c33", "doorframe");
-  wall(g, 5.62, 6.5, 6.48, 6.5, 0.05, 2.1, "#3a2d1a", "doorlight");
+  wall(g, 5.62, 6.5, 6.48, 6.5, 0.05, 2.1, "#54401b", "doorlight")
+    .setAttribute("filter", "url(#warmGlow)");
   // LoRa relay pole in the yard
   const relay = PLACEMENTS.find((p) => p.id === "relay");
   if (relay) {
@@ -204,11 +225,19 @@ function fieldFor(p) {
   const w = worldOf(p);
   const g = el("g", { "data-field": p.id }, `field field-${p.sense}`);
   if (p.sense === "camera") {
-    g.append(planWedge(w.x, w.y, w.z - p.at.z, p.aim, 24, p.range,
-      { fill: "url(#coneFill)" }, "cone"));
+    // a true view frustum: apex at the lens, base swept on the floor —
+    // light falling from the camera, not a puddle beside it
+    const zf = w.z - p.at.z;
+    const beam = [px(w.x, w.y, w.z)];
+    for (let a = p.aim - 24; a <= p.aim + 24; a += 6) {
+      beam.push(px(w.x + p.range * Math.cos(rad(a)), w.y + p.range * Math.sin(rad(a)), zf));
+    }
+    g.append(el("polygon", {
+      points: beam.map((q) => q.join(",")).join(" "), fill: "url(#coneFill)",
+    }, "cone"));
     for (let i = 1; i <= 3; i++) {
       const a = planArc(w.x, w.y, w.z - p.at.z, p.aim, 22, (p.range * i) / 3.2,
-        { stroke: "var(--canary)", "stroke-width": 1.1 }, "scan");
+        { stroke: "#ffd44f", "stroke-width": 1.1 }, "scan");
       a.style.animationDelay = `${i * 0.5}s`;
       g.append(a);
     }
@@ -217,8 +246,8 @@ function fieldFor(p) {
     for (let i = 0; i < n; i++) {
       const ring = planRing(w.x, w.y, w.z - p.at.z, p.range,
         p.sense === "lora"
-          ? { fill: "none", stroke: "#7fb7d8", "stroke-width": 1, "stroke-dasharray": "5 7" }
-          : { fill: "none", stroke: "var(--canary)", "stroke-width": 1.2 },
+          ? { fill: "none", stroke: "#7fb7d8", "stroke-width": 1, "stroke-dasharray": "5 7", "stroke-opacity": 0.55 }
+          : { fill: "none", stroke: "#ffd44f", "stroke-width": 1.2 },
         "ripple");
       ring.style.animationDelay = `${(i * (p.sense === "lora" ? 2.4 : 1.3)).toFixed(1)}s`;
       g.append(ring);
@@ -226,7 +255,7 @@ function fieldFor(p) {
   } else if (p.sense === "radar" || p.sense === "breath") {
     const zf = w.z - p.at.z;
     for (let i = 1; i <= 3; i++) {
-      const a = planArc(w.x, w.y, zf, p.aim, 38, (p.range * i) / 3,
+      const a = planArc(w.x, w.y, zf, p.aim, 30, (p.range * i) / 3,
         { stroke: p.sense === "breath" ? "#8fd3a8" : "#c9a4f0", "stroke-width": 1.3 }, "sweep");
       a.style.animationDelay = `${i * 0.45}s`;
       g.append(a);
@@ -267,14 +296,18 @@ function markerFor(p, info) {
     "data-marker": p.id,
     "aria-label": `${info.title} — ${p.spot}. ${p.headline}`,
   }, "marker");
+  // presentation attrs are inline so the marker reads even with no CSS;
+  // house.css repeats these values and adds hover/selection states.
   g.append(
-    el("ellipse", { cx: 0, cy: 12, rx: 10, ry: 4.5 }, "marker-shadow"),
-    el("circle", { cx: 0, cy: 0, r: 12.5 }, "marker-pulse"),
-    el("circle", { cx: 0, cy: 0, r: 9 }, "marker-body"),
-    el("path", { d: GLYPHS[p.sense] || GLYPHS.display, transform: "scale(0.95)" }, "marker-glyph"),
+    el("ellipse", { cx: 0, cy: 12, rx: 10, ry: 4.5, fill: "rgba(0,0,0,0.5)" }, "marker-shadow"),
+    el("circle", { cx: 0, cy: 0, r: 12.5, fill: "none", stroke: "rgba(255,212,79,0.55)", "stroke-width": 1.2 }, "marker-pulse"),
+    el("circle", { cx: 0, cy: 0, r: 9, fill: "#141414", stroke: "#ffd44f", "stroke-width": 1.6, filter: "url(#glow)" }, "marker-body"),
+    el("path", { d: GLYPHS[p.sense] || GLYPHS.display, transform: "scale(0.95)",
+      fill: "none", stroke: "#ffd44f", "stroke-width": 1.5,
+      "stroke-linecap": "round", "stroke-linejoin": "round" }, "marker-glyph"),
   );
   if (info.status !== "released") {
-    g.append(el("circle", { cx: 7.5, cy: -7.5, r: 3 }, "marker-dev"));
+    g.append(el("circle", { cx: 7.5, cy: -7.5, r: 3, fill: "#fb8c00", stroke: "#000", "stroke-width": 0.8 }, "marker-dev"));
   }
   return g;
 }
@@ -290,7 +323,25 @@ defs.innerHTML = `
   <radialGradient id="coneFill">
     <stop offset="0%" stop-color="rgba(255,212,79,0.30)"/>
     <stop offset="100%" stop-color="rgba(255,212,79,0.02)"/>
-  </radialGradient>`;
+  </radialGradient>
+  <radialGradient id="poolWarm">
+    <stop offset="0%" stop-color="rgba(255,212,79,0.16)"/>
+    <stop offset="65%" stop-color="rgba(255,212,79,0.05)"/>
+    <stop offset="100%" stop-color="rgba(255,212,79,0)"/>
+  </radialGradient>
+  <radialGradient id="groundShadow">
+    <stop offset="0%" stop-color="rgba(0,0,0,0.6)"/>
+    <stop offset="70%" stop-color="rgba(0,0,0,0.28)"/>
+    <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+  </radialGradient>
+  <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+    <feGaussianBlur stdDeviation="2.2" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="warmGlow" x="-120%" y="-120%" width="340%" height="340%">
+    <feGaussianBlur stdDeviation="4.5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>`;
 svg.prepend(defs);
 
 // ── build ──────────────────────────────────────────────────────────────
@@ -324,6 +375,11 @@ for (const p of PLACEMENTS) {
   const layer = room.outside ? layers.fx : layers[room.floor];
   const f = fieldFor(p);
   const m = markerFor(p, info);
+  // a soft pool of light under every sensing witness — the Hue trick
+  if (p.sense !== "display" && p.sense !== "lora") {
+    const w = worldOf(p);
+    f.prepend(planRing(w.x, w.y, w.z - p.at.z, 1.7, { fill: "url(#poolWarm)" }, "pool"));
+  }
   layer.append(f, m);
   fieldEls[p.id] = f;
   markerEls[p.id] = m;
@@ -335,10 +391,14 @@ for (const p of PLACEMENTS) {
 
 // visitor
 const person = el("g", { id: "visitor" }, "visitor hidden");
+const personInner = el("g", {}, "visitor-inner");
+personInner.append(
+  el("path", { d: "M-4.5 2 q0 -9 4.5 -9 q4.5 0 4.5 9 z", fill: "#e8e8ec" }, "visitor-body"),
+  el("circle", { cx: 0, cy: -10.5, r: 3.6, fill: "#e8e8ec" }, "visitor-head"),
+);
 person.append(
-  el("ellipse", { cx: 0, cy: 3, rx: 7, ry: 3.2 }, "visitor-shadow"),
-  el("path", { d: "M-4.5 2 q0 -9 4.5 -9 q4.5 0 4.5 9 z" }, "visitor-body"),
-  el("circle", { cx: 0, cy: -10.5, r: 3.6 }, "visitor-head"),
+  el("ellipse", { cx: 0, cy: 3, rx: 7, ry: 3.2, fill: "rgba(0,0,0,0.55)" }, "visitor-shadow"),
+  personInner,
 );
 layers.person.append(person);
 
