@@ -26,8 +26,12 @@ const el = (tag, cls, text) => {
 
 const ENC_BASE = "../docs/hardware/enclosure/";
 // first clause of a BOM description — enough to shop by; the full sheet
-// is one link away
-const shortDesc = (d) => (d || "").split(/[,;(]/)[0].trim();
+// is one link away. ALT rows say what the alternative IS, not just "ALT".
+const shortDesc = (d) => {
+  const alt = /^ALT\b[^:]*:\s*(.*)$/.exec(d || "");
+  if (alt) return "alt: " + alt[1].split(/[,;(]/)[0].trim();
+  return (d || "").split(/[,;(]/)[0].trim();
+};
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const PETG_G_CM3 = 1.27; // typical PETG density — used only for the solid-weight ceiling
 
@@ -145,6 +149,44 @@ function optionBomRows() {
   return { rows, usd };
 }
 
+// what ticking this option adds to the cart (primary parts; ALTs are
+// either/or choices and don't stack)
+// ref → row lookup, built once per BOM (this runs for every option card
+// on every re-render — no need to rebuild a Map each time)
+function bomByRef(bom) {
+  if (!bom._byRef) bom._byRef = new Map(bom.rows.map((r) => [r.ref, r]));
+  return bom._byRef;
+}
+
+function optionCost(o) {
+  const bom = state.build.devices?.[state.dev]?.bom;
+  if (!bom || !o.bom) return 0;
+  const byRef = bomByRef(bom);
+  return o.bom.filter((ref) => !/-ALT/.test(ref))
+    .reduce((s, ref) => s + (byRef.get(ref)?.usd || 0), 0);
+}
+
+// a package's indicative all-in parts price (core + its ticked options).
+// Union the refs BEFORE summing — options share parts (camera and seal
+// both want ADH1) and per-option sums would double-count them, making
+// the card disagree with the deduped checklist/gather totals.
+function packagePrice(p) {
+  const bom = state.build.devices?.[state.dev]?.bom;
+  if (!bom || !p.options) return null;
+  const byRef = bomByRef(bom);
+  const opts = wsDev().options || [];
+  const refs = new Set();
+  for (const [id, on] of Object.entries(p.options)) {
+    if (!on) continue;
+    for (const ref of opts.find((x) => x.id === id)?.bom || []) {
+      if (!/-ALT/.test(ref)) refs.add(ref);
+    }
+  }
+  let sum = bom.required_usd || 0;
+  for (const ref of refs) sum += byRef.get(ref)?.usd || 0;
+  return sum;
+}
+
 function requiredBom() {
   const bom = state.build.devices?.[state.dev]?.bom;
   if (!bom) return { rows: [], usd: 0 };
@@ -172,6 +214,30 @@ function impliedFlags() {
 // name says everything: device, package-or-options, what the file IS.
 //   canary-wap_battery-weather_openscad-params.json
 //   canary-wap_custom-gps-batt-seal_openscad-params.json
+// The Apple-configurator register: every option leads with what it DOES
+// for the home, then the honest mechanics underneath. Curated page copy —
+// the technical truth stays generated (consequence, refs, flags, prices).
+const BENEFIT = {
+  opt_camera: "eyes for the witness — semantic events, never frames",
+  opt_buzzer: "a voice: chirps, alerts, the community whistle",
+  opt_led: "a heartbeat you can see across the room",
+  opt_battery: "keeps witnessing when the power doesn't",
+  opt_gps: "pins the where to the when",
+  opt_tamper: "knows the moment its lid is lifted",
+  opt_touch: "an invisible button through solid plastic",
+  opt_antenna: "reach for the far corner of the yard",
+  opt_seal: "rain happens — seal it for the outdoors",
+  opt_mount: "give it a permanent post on the wall",
+  opt_batt: "untethered on the nightstand",
+  opt_lux: "knows dark from day",
+  opt_vent: "lets the room's air in to sense",
+};
+const GROUP_INTRO = {
+  "Peripherals": "What's fitted inside",
+  "Weather sealing": "Where it will live",
+  "Mounting": "How it hangs",
+};
+
 const OPT_ABBR = {
   opt_camera: "cam", opt_buzzer: "buz", opt_led: "led", opt_battery: "batt",
   opt_gps: "gps", opt_tamper: "tamp", opt_touch: "touch", opt_antenna: "ant",
@@ -395,6 +461,10 @@ function renderConfigure(root) {
     card.append(el("strong", null, p.label));
     if (p.dims_mm) card.append(el("span", "ws-dims", p.dims_mm));
     card.append(el("span", "ws-contents", p.contents || ""));
+    const fromUsd = packagePrice(p);
+    if (fromUsd != null) {
+      card.append(el("span", "ws-from", `from ~$${fromUsd.toFixed(0)} in parts`));
+    }
     if (p.status === "in-development") card.append(el("span", "chip", "in development"));
     card.addEventListener("click", () => {
       state.pkg = p.id;
@@ -409,7 +479,7 @@ function renderConfigure(root) {
   left.append(pkgRow);
 
   if (hasConfigurator()) {
-    left.append(el("h3", null, "…then tick what your home needs"));
+    left.append(el("h3", null, "…then build yours, option by option"));
     const groups = new Map();
     for (const o of d.options) {
       if (!groups.has(o.group)) groups.set(o.group, []);
@@ -417,7 +487,10 @@ function renderConfigure(root) {
     }
     for (const [g, opts] of groups) {
       const box = el("div", "ws-optgroup");
-      box.append(el("h4", null, g));
+      const groupName = g || "Options";
+      const gh = el("h4", null, GROUP_INTRO[groupName] || groupName);
+      gh.append(el("span", "ws-groupsub", " · " + groupName.toLowerCase()));
+      box.append(gh);
       for (const o of opts) {
         if (o.enum) {
           const row = el("label", "ws-opt ws-opt-enum b-only");
@@ -430,10 +503,11 @@ function renderConfigure(root) {
           box.append(row);
           continue;
         }
-        const row = el("label", "ws-opt");
+        const on = !!state.options[o.id];
+        const row = el("label", "ws-opt" + (on ? " ws-picked" : ""));
         const cb = document.createElement("input");
         cb.type = "checkbox";
-        cb.checked = !!state.options[o.id];
+        cb.checked = on;
         cb.addEventListener("change", () => {
           state.options[o.id] = cb.checked;
           state.pkg = null;
@@ -441,12 +515,18 @@ function renderConfigure(root) {
         });
         const body = el("span", "ws-optbody");
         body.append(el("strong", null, o.label));
-        if (o.consequence) body.append(el("span", "ws-conseq", "→ " + o.consequence));
+        if (BENEFIT[o.id]) body.append(el("span", "ws-benefit", BENEFIT[o.id]));
+        if (o.consequence) {
+          body.append(el("span", "ws-conseq", "the case adds: " + o.consequence));
+        }
         const tags = el("span", "ws-tags b-only");
         for (const ref of o.bom || []) tags.append(el("code", "ws-ref", ref));
         for (const f of o.fw || []) tags.append(el("code", "ws-flag", f));
         if (tags.childNodes.length) body.append(tags);
-        row.append(cb, body);
+        const cost = optionCost(o);
+        const price = el("span", "ws-delta",
+          cost > 0 ? `+ $${cost.toFixed(2)}` : (on ? "included" : ""));
+        row.append(cb, body, price);
         box.append(row);
       }
       left.append(box);
@@ -506,10 +586,16 @@ function renderConfigure(root) {
       if (document.fullscreenElement) document.exitFullscreen();
       else stage3d.requestFullscreen?.();
     });
+    // the dock lives in normal flow under the canvas — overlays fight
+    // each other the moment either wraps (learned the hard way)
     const chips = el("div", "ws-chips");
     const specs = el("div", "ws-specs");
     specs.hidden = true;
-    stage3d.append(cv, ribbon, full, chips, specs, meshNote);
+    const dock = el("div", "ws-dock");
+    const dockRow = el("div", "ws-dockrow");
+    dockRow.append(chips, meshNote);
+    dock.append(dockRow, specs);
+    stage3d.append(cv, ribbon, full, dock);
     state.scene = new DeviceScene(cv, null);
     state.scene.start();
     state.sceneParts = [];
@@ -545,9 +631,36 @@ function renderConfigure(root) {
 function renderChecklist(box) {
   const d = wsDev();
   box.innerHTML = "";
-  box.append(el("h3", null, "Your build so far"));
+  const reg = state.registry.devices.find((x) => x.id === state.dev);
+  const m = matchPackage();
+  box.append(el("h3", null,
+    `Your ${reg?.name || state.dev}` +
+    (m.pkg ? ` — ${m.exact ? m.pkg.label : "custom"}` : "")));
 
   const parts = selectedParts();
+
+  // the running-total ticker: price, prints, plastic — live as you tick
+  const bom = state.build.devices?.[state.dev]?.bom;
+  if (bom || parts.length) {
+    const tick = el("div", "ws-ticker");
+    if (bom) {
+      const total = (requiredBom().usd || 0) + optionBomRows().usd;
+      tick.append(el("strong", "ws-tickbig", `$${total.toFixed(2)}`),
+        el("span", "muted", " in parts"));
+    }
+    if (parts.length) {
+      tick.append(el("span", "ws-ticksep", "·"),
+        el("strong", "ws-tickbig", String(parts.length)),
+        el("span", "muted", parts.length === 1 ? " print" : " prints"));
+      const grams = parts.reduce((s, p) => s + (state.volumes.get(p.file) || 0), 0) * PETG_G_CM3;
+      if (grams > 0) {
+        tick.append(el("span", "ws-ticksep", "·"),
+          el("strong", "ws-tickbig", `≤ ${Math.round(grams)} g`),
+          el("span", "muted", " of plastic"));
+      }
+    }
+    box.append(tick);
+  }
   const ul = el("ul", "ws-partlist");
   for (const p of parts) {
     const li = el("li");

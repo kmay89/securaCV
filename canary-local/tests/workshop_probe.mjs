@@ -103,6 +103,12 @@ const checkText = await page.locator(".ws-check").textContent();
 for (const needle of ["M1", "FEATURE_GNSS", "BT1"]) {
   if (!checkText.includes(needle)) fail(`checklist missing "${needle}"`);
 }
+// …and sells honestly: GPS card wears its real price delta, the ticker runs
+const gpsCard = await page.locator(".ws-opt", { hasText: "GPS" }).textContent();
+if (!/\+ \$15\.90/.test(gpsCard)) fail("GPS option missing its + $15.90 delta");
+if (!/pins the where/.test(gpsCard)) fail("GPS option missing its benefit line");
+const ticker = await page.locator(".ws-ticker").textContent();
+if (!/\$\d+.*in parts.*prints/s.test(ticker)) fail("build ticker missing price/prints");
 // …and the options column tells the geometric truth from the scad
 const optText = await page.locator(".ws-optgroup").allTextContents();
 if (!/battery bay/.test(optText.join(" "))) {
@@ -136,6 +142,18 @@ if (!/canary-wap_battery-full_openscad-params\.json/.test(how)) {
 step("inspect + labeled download ok");
 // ── weather package unlocks the solar/thermal addon ──
 await page.locator(".ws-pkg", { hasText: "battery weather" }).click();
+
+// package card's "from" price must agree with the deduped ticker total
+// when that exact package is selected (shared refs like ADH1 count once)
+const fromTxt = await page.locator(".ws-pkg", { hasText: "battery weather" })
+  .locator(".ws-from").textContent();
+const tickTxt = await page.locator(".ws-ticker .ws-tickbig").first().textContent();
+const fromN = parseInt(fromTxt.replace(/\D+/g, ""), 10);
+const tickN = Math.round(parseFloat(tickTxt.replace(/[^\d.]/g, "")));
+if (Math.abs(fromN - tickN) > 1) {
+  fail(`package from-price $${fromN} disagrees with ticker $${tickN} (double-counted shared refs?)`);
+}
+
 const addon = page.locator(".ws-addon input");
 if (await addon.isDisabled()) fail("weather package should unlock the solar kit addon");
 await addon.check();
