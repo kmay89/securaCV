@@ -176,7 +176,8 @@ sacred.
 
 Default is **Quiet Glass**, and it is byte-for-byte today's look — a user who
 never opens the picker sees zero change, and an old settings blob that predates
-the field loads straight into it (§8).
+the field migrates in place: every saved preference kept, only the new field
+defaulted (§8).
 
 ## 7. The picker (choosing without anxiety)
 
@@ -226,8 +227,14 @@ the glass wakes up already wearing it.
   two load-bearing lines from §2, enforced by the type system (they are not
   Character-driven functions).
 - `glass_settings.h` / `.cpp` — one `uint8_t character` field; `BLOB_VERSION`
-  bumps `1 → 2`, so a pre-Character blob degrades to defaults (= Quiet Glass)
-  exactly as designed. `sanitize()` clamps out-of-range to the default.
+  bumps `1 → 2` **with an explicit v1 → v2 migration**: a v1 blob is
+  recognized by its own frozen layout and copied field-for-field, so the
+  upgrade keeps every preference a person already tuned (night hours, glow,
+  peek) and defaults *only* the new field to Quiet Glass, then rewrites the
+  blob as v2 through the normal debounced commit. Reject-to-defaults remains
+  the fallback for genuinely unrecognized/corrupt blobs only (review catch:
+  a version bump alone would have silently reset every saved preference).
+  `sanitize()` clamps out-of-range to the default.
 - `canary_mark.*` — `canary_mark_temperament()` stashes the three clamped
   scalars; breath/flourish/hop read them. The mood engine (`bird_mood.h`)
   stays **pure and untouched** — temperament is a rendering concern, not a
