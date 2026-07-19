@@ -26,6 +26,9 @@ on:
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
+      - "firmware/flavors.json"
+      - "firmware/envs/**"
+      - "canary-local/tools/gen_flash.py"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
       - "docs/homeassistant_setup.md"
@@ -50,6 +53,9 @@ on:
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
+      - "firmware/flavors.json"
+      - "firmware/envs/**"
+      - "canary-local/tools/gen_flash.py"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
       - "docs/homeassistant_setup.md"
@@ -84,6 +90,7 @@ jobs:
           node --test canary-local/tests/vault.test.js
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
+          node --test canary-local/tests/flash.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -117,6 +124,14 @@ jobs:
           python3 canary-local/tools/gen_vault.py
           if ! git diff --exit-code -- canary-local/devices/vault.json; then
             echo "::error::generated Vault data stale — run canary-local/tools/gen_vault.py and commit (the code moved)"
+            exit 1
+          fi
+
+      - name: Flash catalog drift (chip guard derived from the firmware tree)
+        run: |
+          python3 canary-local/tools/gen_flash.py
+          if ! git diff --exit-code -- canary-local/devices/flash.json; then
+            echo "::error::generated flash catalog stale — a board's chip changed. Run canary-local/tools/gen_flash.py and commit."
             exit 1
           fi
 

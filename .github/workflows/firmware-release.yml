@@ -60,6 +60,9 @@ jobs:
           # esptool 4.11 (official espressif32 7.x platform) imports
           # intelhex without declaring it — same workaround as firmware.yml.
           pip install intelhex
+          # esptool for the browser-flasher factory images (make_factory.py).
+          # Pinned <5 so the `merge_bin` subcommand name stays stable.
+          pip install "esptool>=4,<5"
 
       - name: Verify the signing key matches the committed public key
         # Fail BEFORE building: artifacts signed with a drifted key would
@@ -347,6 +350,74 @@ jobs:
             } > /tmp/release_notes.md
           fi
 
+      - name: Build browser-flasher factory images + manifest
+        # Additive and non-blocking: the browser flasher (canary-local/flash.html)
+        # writes a *blank* board over USB, so it needs a single image containing
+        # the bootloader + partition table + app (the OTA channel ships app-only
+        # binaries). We merge those here and publish a manifest-flash.json the
+        # page fetches. A per-variant hiccup only drops that product from the
+        # flasher (it shows "not in this release") — it never fails the signed
+        # OTA release above. make_factory.py reads the app offset from each
+        # variant's own partition table, so layouts can't drift out of sync.
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, hashlib, json, pathlib
+          VERSION = os.environ["VERSION"]; REPO = os.environ["REPO"]; TAG = os.environ["TAG"]
+          DL = f"https://github.com/{REPO}/releases/download/{TAG}"
+          RELURL = f"https://github.com/{REPO}/releases/tag/{TAG}"
+          notes_path = pathlib.Path("/tmp/release_notes.md")
+          NOTES = (notes_path.read_text()[:400].strip() if notes_path.exists() else f"SecuraCV Canary firmware {VERSION}.")
+          rel = pathlib.Path("/tmp/release")
+          CHIP = {"esp32s3": "ESP32-S3", "esp32c3": "ESP32-C3", "esp32c6": "ESP32-C6"}
+          # (product id, esptool chip, version string, toolchain, build location, asset stem)
+          VARIANTS = [
+            ("securacv-canary",                "esp32s3", VERSION,           "pio",     "firmware/canary/.pio/build/release_ha",                       "canary"),
+            ("securacv-canary-wap",            "esp32s3", f"{VERSION}-wap",  "arduino", "/tmp/wap-build",                                              "canary-wap"),
+            ("securacv-canary-vision",         "esp32c3", VERSION,           "pio",     "firmware/projects/canary-vision/.pio/build/canary-vision-default",   "canary-vision"),
+            ("securacv-canary-vision-xiao-c3", "esp32c3", VERSION,           "pio",     "firmware/projects/canary-vision/.pio/build/canary-vision-xiao-c3",  "canary-vision-xiao-c3"),
+            ("securacv-canary-vision-xiao-s3", "esp32s3", VERSION,           "pio",     "firmware/projects/canary-vision/.pio/build/canary-vision-xiao-s3",  "canary-vision-xiao-s3"),
+            ("securacv-canary-sense",          "esp32c6", VERSION,           "pio",     "firmware/projects/canary-sense/.pio/build/canary-sense-default",    "canary-sense"),
+            ("securacv-canary-sense-wellbeing","esp32c6", VERSION,           "pio",     "firmware/projects/canary-sense/.pio/build/canary-sense-wellbeing",  "canary-sense-wellbeing"),
+          ]
+          products = {}
+          for pid, chip, ver, kind, build, stem in VARIANTS:
+              out = rel / f"{stem}-{VERSION}-factory.bin"
+              cmd = ["python", "firmware/scripts/make_factory.py", "--chip", chip, "--out", str(out)]
+              if kind == "pio":
+                  cmd += ["--build-dir", build]
+              else:  # arduino-cli names its parts <sketch>.ino.*
+                  b = pathlib.Path(build)
+                  cmd += ["--bootloader", str(b / "canary_wap.ino.bootloader.bin"),
+                          "--partitions", str(b / "canary_wap.ino.partitions.bin"),
+                          "--app",        str(b / "canary_wap.ino.bin")]
+              try:
+                  subprocess.run(cmd, check=True)
+                  data = out.read_bytes()
+                  products[pid] = {
+                      "version": ver, "chipFamily": CHIP[chip],
+                      "factory": f"{DL}/{out.name}",
+                      "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+                      "release_notes": NOTES,
+                  }
+              except Exception as e:
+                  print(f"::warning::browser-flasher factory image for {pid} not built ({e}); "
+                        f"it will show as unavailable in the in-browser flasher.")
+          manifest = {"schema": "securacv-flash-1", "fw_train": VERSION, "repo": REPO,
+                      "release_url": RELURL, "products": products}
+          (rel / "manifest-flash.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(f"browser flasher: {len(products)}/{len(VARIANTS)} factory images, manifest-flash.json written")
+          PY
+          # sha256sums.txt was written by the assemble step BEFORE these assets
+          # existed; regenerate it so the advertised checksum set covers the
+          # factory images and manifest-flash.json too (nothing published here
+          # is left out of the integrity file).
+          (cd /tmp/release && sha256sum ./*.bin ./*.json > sha256sums.txt)
+          ls -la /tmp/release/*-factory.bin /tmp/release/manifest-flash.json || true
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -354,6 +425,8 @@ jobs:
           body_path: /tmp/release_notes.md
           files: |
             /tmp/release/canary-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/manifest-flash.json
+            /tmp/release/*-factory.bin
             /tmp/release/canary-wap-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-vision-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-vision-xiao-c3-${{ steps.ver.outputs.version }}.bin

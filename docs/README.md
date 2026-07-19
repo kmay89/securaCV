@@ -72,6 +72,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Getting started with Canaries](getting_started_canary.md) — first device, end to end
 - [Hardware guides & BOMs](hardware/README.md) — build plans, bring-up benches, enclosures, per-device guides
 - [Firmware OTA](firmware_ota.md) — signed pull-updates with rollback
+- [Browser flasher](browser_flasher.md) — flash a blank board from Chrome over USB, no toolchain
 - [Secure provisioning](secure_provisioning.md) — how a device earns its keys
 - [Device settings access](canary_settings_access_validation.md) — who may change what, verified
 - [SD-card health](sd_card_health.md) · [thermal guide](thermal_guide.md)

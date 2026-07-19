@@ -1,0 +1,6 @@
+esptool-js vendored for the canary.local browser flasher
+package:  esptool-js@0.5.4 (npm)
+file:     bundle.js (upstream single-file ESM build, unmodified)
+sha256:   2a896d5e520ea9b6ea9900223c2460df797c3b2287f441daa4e50168a50b17e6
+license:  Apache-2.0 (see LICENSE)
+fetched:  npm pack esptool-js@0.5.4
