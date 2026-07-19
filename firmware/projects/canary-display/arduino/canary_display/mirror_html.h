@@ -26,7 +26,7 @@ touch-action:none}
 .dev{position:relative;transform-style:preserve-3d;
 transform:rotateX(-8deg) rotateY(14deg);transition:transform .08s linear}
 .face{position:absolute;inset:0;backface-visibility:hidden;border-radius:inherit}
-.glass{background:#000;border:10px solid #1b1b1d;overflow:hidden;
+.glass{background:var(--bg);border:10px solid #1b1b1d;overflow:hidden;
 box-shadow:0 22px 44px rgba(0,0,0,.55)}
 .backp{background:#151517;border:10px solid #1b1b1d;transform:rotateY(180deg);
 display:flex;align-items:center;justify-content:center;color:#3a3a3e;
