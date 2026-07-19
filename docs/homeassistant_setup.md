@@ -2,6 +2,13 @@
 
 Install the SecuraCV Home Assistant integration via HACS, then connect it to your SecuraCV Canary devices via MQTT or the Privacy Witness Kernel via HTTP API.
 
+> **Prefer the guided version?** [`canary-local/homeassistant.html`](../canary-local/homeassistant.html)
+> ("The Hub") walks this same setup interactively — a 3D Raspberry Pi build you
+> can scrub apart, a bench terminal that replays every command below, and a
+> working sketch of the dashboard you end up with. Its entity names, topics,
+> and versions are generated from this doc and drift-checked in CI, so the two
+> can't disagree.
+
 ## What you need
 
 | Item | Notes |

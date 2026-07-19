@@ -9,6 +9,7 @@ flows stage the device into the exact state they're describing.
 canary-local/
   index.html            the page (vanilla JS, no frameworks, no build step)
   choose.html           "Find your Canary" — the four-question front door
+  homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   assets/
     app.js              card gallery + device sheets + guide player
     scene3d.js          zero-dependency WebGL: procedural device bodies
@@ -299,6 +300,51 @@ screws badge can't drift from the BOM's four). The ribbon says so to your face:
 
 Today: the Canary WAP weather + battery build. Vision and the Watch follow —
 the engine is device-agnostic; they need only their `assembly.json` entry.
+
+## 4f. The Hub: Home Assistant on a Raspberry Pi, the same way
+
+`homeassistant.html` extends the teaching bench past the Canaries to the
+place they converge: **why** a hub at all (N independent witnesses → one
+wall, one verified timeline, automations with teeth), the **hardware**
+(the assembly engine from §4e staging a Raspberry Pi 4 at its published
+dimensions into a deliberately generic vented case), the **software** (a
+bench terminal — the emulator idea translated for the CLI: you can't
+`dd` a card from a web page, so it replays the real commands with
+recorded transcripts, versions substituted live), and the **payoff** (a
+faithful *sketch* of Home Assistant — labeled as such, unlike the wasm
+emulator which is the real firmware — where MQTT discovery lands entity
+by entity, the mic-mute switch signs into the chain, and a smoke-alarm
+drill fires the alert blueprint into a phone notification).
+
+Anti-rot, same rules as everything here — nothing written twice:
+
+| Fact on the page | Source of truth |
+|---|---|
+| Entity names, MQTT topics | `docs/homeassistant_setup.md` (parsed) |
+| Integration version, min HA | `custom_components/securacv/manifest.json`, `hacs.json` |
+| Firmware train | `devices/registry.json` |
+| HA OS / Core versions | weekly snapshot from `version.home-assistant.io` |
+
+`tools/gen_homeassistant.py` regenerates `devices/homeassistant.json`
+(drift-gated in `canary-local.yml`); the scheduled
+`homeassistant-freshness.yml` workflow refreshes the upstream snapshot
+weekly and opens a PR when it moved. Self-healing posture: a dead feed
+keeps the previous snapshot verbatim (no diff, no PR, never a broken
+page), and the page computes its snapshot's age out loud — past 120 days
+it turns amber and names the workflow to go check.
+`tests/homeassistant.test.js` is the honesty gate: demo entities must be
+ones the doc promises, terminal templates must expand clean, every 3D
+part must resolve, every step must stage something.
+
+| Piece | File |
+|---|---|
+| The page | `canary-local/homeassistant.html` + `assets/hub.js` |
+| Raspberry Pi + case, procedurally | `canary-local/assets/hub-parts.js` |
+| Bench terminal (core is DOM-free, tested) | `canary-local/assets/hub-term.js` |
+| The Home Assistant sketch | `canary-local/assets/hub-ha-ui.js` |
+| Generated data | `canary-local/devices/homeassistant.json` |
+| Generator | `canary-local/tools/gen_homeassistant.py` |
+| Honesty gate | `canary-local/tests/homeassistant.test.js` |
 
 ## 5. Where this lives (repo → Pages → securacv.com)
 
