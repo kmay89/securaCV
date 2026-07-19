@@ -26,6 +26,9 @@
 #define FEATURE_MQTT                1   // Enable MQTT publishing
 #define FEATURE_HA_DISCOVERY        1   // Enable Home Assistant Discovery
 #define FEATURE_WATCHDOG            1   // Enable hardware watchdog
+// Wider than wap's 8 s because the loop's worst bounded block is one MQTT
+// connect attempt against a dead broker (canary-sense parity).
+#define CV_WATCHDOG_TIMEOUT_SEC     30
 
 // Features NOT available on C3
 #define FEATURE_SD_STORAGE          0

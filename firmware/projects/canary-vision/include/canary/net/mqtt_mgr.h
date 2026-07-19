@@ -8,7 +8,12 @@ namespace canary::net {
   void mqtt_init(const Topics& topics);
   void mqtt_loop();
   bool mqtt_connected();
-  void mqtt_reconnect_blocking();
+
+  // ONE bounded connect attempt (TCP connect + MQTT CONNECT). On success it
+  // republishes retained surfaces and re-subscribes command topics; on
+  // failure it returns so the caller's backoff owns the retry cadence.
+  // Never loops: a dead broker must not pin the witness (canary-sense parity).
+  bool mqtt_connect_attempt();
 
   // Publishing
   void publish_status_retained(const Topics& topics, const char* status);   // online/offline
