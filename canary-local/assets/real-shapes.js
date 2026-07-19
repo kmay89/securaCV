@@ -18,8 +18,11 @@ import { M4, screenPlane } from "./scene3d.js";
 
 const PREVIEW = "enclosures/preview/";
 const ENC = "../docs/hardware/enclosure/";   // print-validated library (same base the enclosure lab uses)
-const SHELL = [0.16, 0.17, 0.19];
-const SHELL_LIGHT = [0.90, 0.87, 0.80];
+// One finish family across ALL five cards (the gallery used to split dark
+// graphite displays vs bone witnesses — same product line, same filament):
+const SHELL = [0.90, 0.87, 0.80];   // bone PETG — primary printed shells
+const SHELL2 = [0.74, 0.71, 0.64];  // darker bone — stands & rear covers (depth cue)
+const GLASS_EDGE = [0.05, 0.05, 0.06];
 
 // Caches the PROMISE, not the mesh: the card grid and an open sheet load
 // the same files concurrently, and one request should serve both. A
@@ -52,44 +55,82 @@ function place(scene, parsed, { pre = M4.ident(), at = M4.ident(), color = SHELL
 }
 
 const rotXpi = M4.rotX(Math.PI);          // face-down print → face forward
+const rotZpi = M4.mul(M4.rotY(Math.PI), M4.rotX(Math.PI)); // spin about the part's own axis
 const standUp = M4.rotX(-Math.PI / 2);    // flat print → upright (z → y)
 
-// canary_watch_station.scad: drum Ø52 × 14.8 back-down; bezel Ø52 × ~7
-// face-down; stand upright with the 25° pocket. Device envelope matches
-// the procedural card (back −10.9 … front +10.9, lean 25°).
+// ── seated placement, derived instead of eyeballed ──────────────────────
+// Both display products are posed in the STAND's print frame (z up, +y =
+// stand rear), then the whole group is turned upright once:
+//   world = G · T(devicePos − standCenter) · R_device · T(−meshCenter)
+// so every part's seat comes from the SCAD's own cradle geometry, not from
+// per-part hand offsets. G = standUp (print z → screen y) + a vertical trim.
+function seatPart(scene, parsed, { G, D, R = M4.ident(), color = SHELL, gloss = 0.22 }) {
+  const c = parsed.bbox.center;
+  const model = M4.mul(G, M4.mul(M4.translate(D[0], D[1], D[2]),
+    M4.mul(R, M4.translate(-c[0], -c[1], -c[2]))));
+  scene.addMesh(parsed.mesh, { color, gloss, model });
+}
+
+// canary_watch_station.scad — the drum rests in the stand's tilted pocket.
+// Pocket axis (stand frame): starts p0 = (0, 6, sh−4), sh = 43.98, and the
+// INTENT is rotate([90−tilt]) → axis a = (0, −cos25°, sin25°): glass faces
+// front, reclined 25°. (The committed SCAD says rotate([tilt+90]) — that
+// carves the cradle trough tipping the drum face-down 65°, a design bug
+// flagged in the scad; the seat below is the intended pose.) The drum's
+// back cap rests at p0; drum spans 0…14.8 along a, bezel 14.8…21.8.
 async function realWatch(scene) {
   const [drum, bezel, stand] = await Promise.all([
     load("canary_watch_station_drum.stl"),
     load("canary_watch_station_bezel.stl"),
     load("canary_watch_station_stand.stl"),
   ]);
-  const lean = M4.rotX((-25 * Math.PI) / 180);
-  const at = (dz) => M4.mul(lean, M4.translate(0, 0, dz));
   scene.clearParts();
-  place(scene, drum, { at: at(-3.5), gloss: 0.22 });
-  place(scene, bezel, { pre: rotXpi, at: at(7.4), gloss: 0.3 });
-  scene.addMesh(screenPlane(34, 34, true), { screen: true, model: at(10.2) });
-  place(scene, stand, { pre: standUp, at: M4.translate(0, -26, -2), gloss: 0.18 });
-  scene.dist = 165;
+  const G = M4.mul(M4.translate(0, -12, 0), standUp);   // upright + vertical trim
+  const cS = stand.bbox.center;                          // (0, 0, 21.99)
+  const A = 65 * Math.PI / 180;                          // pocket axis = Rx(65°)·ẑ
+  const Ra = M4.rotX(A);
+  const spin = M4.mul(Ra, rotZpi);                       // spin 180° on-axis: USB slot to the rear channel
+  const p0 = [0, 6 - cS[1], 43.98 - 4 - cS[2]];          // pocket start, stand-centred
+  const a = [0, -Math.cos(25 * Math.PI / 180), Math.sin(25 * Math.PI / 180)];
+  const along = (s) => [p0[0], p0[1] + a[1] * s, p0[2] + a[2] * s];
+  seatPart(scene, stand, { G, D: [0, 0, 0], color: SHELL2, gloss: 0.18 });
+  seatPart(scene, drum, { G, D: along(7.4), R: spin, gloss: 0.22 });          // drum centre at s=7.4
+  seatPart(scene, bezel, { G, D: along(18.3), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out
+  scene.addMesh(screenPlane(34, 34, true), {                                  // glass 5.2 behind the bezel face
+    screen: true,
+    model: M4.mul(G, M4.mul(M4.translate(...along(16.8)), Ra)),
+  });
+  scene.dist = 175;
 }
 
-// canary_dash_display.scad: frame 113.7 × 73.6 × 13.6 face-down; back
-// × 2.4 outer-face-down (already outward after centering); stand flat.
+// canary_dash_display.scad — the panel sits in the stand's channel, back
+// against the 25° fin. Bottom-rear edge at (y −5.19, z 4) with the back
+// plane on the fin face (the SCAD's own derivation); module centre works
+// out to (0, 4.04, 42.73) in the stand frame for the 118.1 × 78 × 16 body.
+// (As committed, the 6 mm rear rail's top corner pokes ~2.4 mm into that
+// plane — flagged in the scad; the overlap is buried inside the channel.)
 async function realDash(scene) {
   const [frame, back, stand] = await Promise.all([
     load("canary_dash_display_frame.stl"),
     load("canary_dash_display_back.stl"),
     load("canary_dash_display_stand.stl"),
   ]);
-  const tilt = M4.rotX((-25 * Math.PI) / 180);
-  const at = (dz) => M4.mul(tilt, M4.translate(0, 0, dz));
   scene.clearParts();
-  place(scene, frame, { pre: rotXpi, at: at(1.2), gloss: 0.22 });
-  place(scene, back, { at: at(-6.8), gloss: 0.22 });
-  // Glass sits behind the frame's 2.5 mm lip — recessed, like the part.
-  scene.addMesh(screenPlane(101.3, 61.2, false), { screen: true, model: at(6.6) });
-  place(scene, stand, { pre: standUp, at: M4.translate(0, -44, -6), gloss: 0.18 });
-  scene.dist = 260;
+  const G = M4.mul(M4.translate(0, -16, 0), standUp);
+  const cS = stand.bbox.center;                          // (0, 0, 21.87)
+  const A = 65 * Math.PI / 180;                          // recline: module ẑ = Rx(65°)·ẑ
+  const Ra = M4.rotX(A);
+  const C = [0, 4.04 - cS[1], 42.73 - cS[2]];            // module centre (derivation above)
+  const w = [0, -Math.cos(25 * Math.PI / 180), Math.sin(25 * Math.PI / 180)]; // face normal
+  const off = (s) => [C[0], C[1] + w[1] * s, C[2] + w[2] * s];
+  seatPart(scene, stand, { G, D: [0, 0, 0], color: SHELL2, gloss: 0.18 });
+  seatPart(scene, frame, { G, D: off(1.2), R: M4.mul(Ra, rotXpi), gloss: 0.22 });  // face-down print → face out
+  seatPart(scene, back, { G, D: off(-6.8), R: Ra, color: SHELL2, gloss: 0.22 });
+  scene.addMesh(screenPlane(101.3, 61.2, false), {       // glass behind the 2.5 mm bezel lip
+    screen: true,
+    model: M4.mul(G, M4.mul(M4.translate(...off(5.55)), Ra)),
+  });
+  scene.dist = 270;
 }
 
 // The witnesses: their PRINT-VALIDATED shells (the exact STLs a builder
@@ -97,12 +138,14 @@ async function realDash(scene) {
 // the library: fronts/lids print A-face-down (flip to face the viewer),
 // backs/bases print outer-face-down (already facing away after centering).
 // Depths stack from the parts' own bounding boxes — no invented numbers.
-async function realTwoPart(scene, frontFile, backFile, { color = SHELL_LIGHT, dist = 130, extras = null } = {}) {
+async function realTwoPart(scene, frontFile, backFile, { color = SHELL, dist = 130, nest = 1.6, extras = null } = {}) {
   const [front, back] = await Promise.all([load(frontFile, ENC), load(backFile, ENC)]);
   scene.clearParts();
   const fz = front.bbox.size[2], bz = back.bbox.size[2];
-  place(scene, back, { at: M4.translate(0, 0, -fz / 2), color, gloss: 0.25 });
-  place(scene, front, { pre: rotXpi, at: M4.translate(0, 0, bz / 2), color, gloss: 0.25 });
+  // the front's lip nests INTO the back by ~nest mm — flush-stacking the
+  // two bboxes showed a phantom seam gap no real build has
+  place(scene, back, { at: M4.translate(0, 0, -fz / 2 + nest / 2), color: SHELL2, gloss: 0.25 });
+  place(scene, front, { pre: rotXpi, at: M4.translate(0, 0, bz / 2 - nest / 2), color, gloss: 0.25 });
   if (extras) await extras();
   scene.dist = dist;
 }

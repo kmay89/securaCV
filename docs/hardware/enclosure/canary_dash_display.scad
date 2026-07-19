@@ -158,7 +158,9 @@ module stand() {
     chan_back = -stand_d/2 + 16 + chan_w;      // back-rail front face
     // fin position DERIVED so its tilted front face contains the plane the
     // display's back face lies in when its bottom rear edge sits at the rail
-    fin_y = chan_back + 4*cos(stand_ang) + 0.6;
+    // (0.8 lands the face on that plane within 0.01 mm; the old 0.6 left the
+    // fin 0.17 mm proud of it — a real, if tiny, interference fit)
+    fin_y = chan_back + 4*cos(stand_ang) + 0.8;
     linear_extrude(stand_t) rrect2d(stand_w, stand_d, 6);          // base
     // back rest fin, leaning stand_ang from vertical (corner embeds in base)
     translate([0, fin_y, stand_t - 0.01])
@@ -168,7 +170,12 @@ module stand() {
     // subtractive tilted groove cut the base into two shells)
     translate([-stand_w/2 + 15, -stand_d/2 + 16 - 3, stand_t - 0.01])
         cube([stand_w - 30, 3, 8]);
-    translate([-stand_w/2 + 15, chan_back, stand_t - 0.01])
+    // back rail: a reclined panel's back plane retreats tan(ang) per mm of
+    // height, so a rail flush at the panel's bottom edge digs its top corner
+    // ~h·tan(ang) into the glass-back. Set the rail back by exactly that
+    // (+0.4 clearance) so it backstops the edge without touching the panel.
+    // ⚠️ regenerate enclosures/preview/canary_dash_display_stand.stl.
+    translate([-stand_w/2 + 15, chan_back + 6*tan(stand_ang) + 0.4, stand_t - 0.01])
         cube([stand_w - 30, 3, 6]);
 }
 

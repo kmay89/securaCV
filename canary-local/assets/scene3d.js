@@ -570,7 +570,7 @@ const SHELL_LIGHT = [0.90, 0.87, 0.80]; // bone/eggshell variant
 const CANARY = [1.0, 0.83, 0.31];       // #FFD44F feather yellow
 const GLASS_EDGE = [0.05, 0.05, 0.06];
 
-export function buildWatchStation(scene, { light = false } = {}) {
+export function buildWatchStation(scene, { light = true } = {}) {
   // canary_watch_station.scad: drum Ø52, drum_h≈14.8, bezel 7 (Σ≈21.8),
   // aperture Ø34, stand tilt 25°.
   scene.clearParts();
@@ -596,7 +596,7 @@ export function buildWatchStation(scene, { light = false } = {}) {
   scene.dist = 165;
 }
 
-export function buildDash(scene, { light = false } = {}) {
+export function buildDash(scene, { light = true } = {}) {
   // canary_dash_display.scad: shell 113.7 × 73.6 × 16.0 (frame 13.6 +
   // back 2.4), view window 101.3 × 61.2, r_out 5, stand 25°.
   scene.clearParts();
