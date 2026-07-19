@@ -138,6 +138,8 @@ jobs:
         run: node canary-local/tests/boardroom_probe.mjs
       - name: Bench probe — the physical test bench drives the live firmware
         run: node canary-local/tests/bench_probe.mjs
+      - name: Render probe — studio shaders compile and every device shades on a real GPU
+        run: node canary-local/tests/render_probe.mjs
       - name: WAP probe — first-boot, captive portal, serial + MQTT
         run: node canary-local/tests/wap_probe.mjs
       - name: Build both flavors from THIS tree
