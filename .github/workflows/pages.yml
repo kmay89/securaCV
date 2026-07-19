@@ -9,8 +9,8 @@
 #                     built site folder onto any static host — the pages
 #                     are self-contained and fetch nothing external.
 #
-# First run requires enabling Pages once: Settings → Pages → Source →
-# "GitHub Actions".
+# First run self-enables Pages (configure-pages `enablement` uses the
+# workflow's `pages: write` token to create the site, source = Actions).
 name: pages
 
 on:
@@ -36,6 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Enable Pages on first run (build_type=workflow)
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Regenerate enclosure catalog (drift-checked in canary-local CI)
         run: python3 canary-local/tools/gen_enclosures.py
       - name: Assemble site
