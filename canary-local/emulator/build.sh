@@ -20,6 +20,12 @@
 #   ArduinoJson v7 single-header (same major as common.ini)
 set -euo pipefail
 
+# Deterministic inputs = deterministic bytes: glob expansion and find
+# traversal must not depend on locale or filesystem directory order —
+# link order shapes the wasm type section, and CI's drift gate compares
+# bytes.
+export LC_ALL=C
+
 cd "$(dirname "$0")"
 EMU_DIR="$PWD"
 REPO_ROOT="$(cd "$EMU_DIR/../.." && pwd)"
@@ -155,7 +161,7 @@ EMU_C_SRCS=(
 
 LVGL_SRCS=()
 while IFS= read -r -d '' f; do LVGL_SRCS+=("$f"); done \
-  < <(find "$TP/lvgl/src" -name '*.c' -print0)
+  < <(find "$TP/lvgl/src" -name '*.c' -print0 | sort -z)
 
 # ── Compile ─────────────────────────────────────────────────────────────
 OBJS=()
