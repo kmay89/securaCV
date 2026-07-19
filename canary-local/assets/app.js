@@ -883,7 +883,7 @@ function specsView(dev) {
   wrap.append(dl);
   const links = el("p", "muted");
   links.append("Deeper: ");
-  const all = [dev.enclosure, ...(dev.docs || [])];
+  const all = [dev.enclosure, ...(dev.docs || [])].filter(Boolean);
   all.forEach((d, i) => {
     const a = el("a", null, d);
     a.href = `https://github.com/kmay89/securaCV/blob/main/${d}`;
