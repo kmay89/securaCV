@@ -103,6 +103,12 @@ const checkText = await page.locator(".ws-check").textContent();
 for (const needle of ["M1", "FEATURE_GNSS", "BT1"]) {
   if (!checkText.includes(needle)) fail(`checklist missing "${needle}"`);
 }
+// …and sells honestly: GPS card wears its real price delta, the ticker runs
+const gpsCard = await page.locator(".ws-opt", { hasText: "GPS" }).textContent();
+if (!/\+ \$15\.90/.test(gpsCard)) fail("GPS option missing its + $15.90 delta");
+if (!/pins the where/.test(gpsCard)) fail("GPS option missing its benefit line");
+const ticker = await page.locator(".ws-ticker").textContent();
+if (!/\$\d+.*in parts.*prints/s.test(ticker)) fail("build ticker missing price/prints");
 // …and the options column tells the geometric truth from the scad
 const optText = await page.locator(".ws-optgroup").allTextContents();
 if (!/battery bay/.test(optText.join(" "))) {
