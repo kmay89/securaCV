@@ -23,17 +23,20 @@ namespace {
 constexpr uint32_t BURST_MS  = 4000;   // scan window
 constexpr uint32_t PERIOD_MS = 20000;  // burst cadence while broker down
 
-// Minimum *internal* SRAM headroom required before standing the BT controller
-// up. The controller (plus the NimBLE host) draw tens of KB of internal,
-// DMA-capable RAM that PSRAM cannot back; with WiFi already associated the two
-// contend for it, and starting the controller when that pool is thin is what
-// logged "BLE_INIT: Malloc failed" and then tripped the interrupt watchdog (an
-// emi.c assert on the controller task) into a reboot loop. Gate the one-time
-// bring-up on a generous margin — the off-grid chirp is explicitly the
-// expendable radio decision (chirp_scan.h); a live glass beats a boot-looping
-// one, so under memory pressure we simply skip the burst.
-constexpr size_t BLE_MIN_FREE_INTERNAL  = 56 * 1024;
-constexpr size_t BLE_MIN_BLOCK_INTERNAL = 20 * 1024;
+// Minimum internal, DMA-capable SRAM headroom before standing the BT controller
+// up. With WiFi already associated the two contend for the internal heap the
+// controller draws from (PSRAM cannot back it), and starting it when that pool
+// is thin is what logged "BLE_INIT: Malloc failed" and tripped the interrupt
+// watchdog (the emi.c assert on the controller task) into a reboot loop. These
+// mirror the WAP's host-tested guard (bt_defaults.h; firmware/LESSONS_LEARNED):
+// the controller's largest single init allocation is ~30 KB contiguous — 0x7800,
+// the very size in the "BLE assert emi.c 164 ... 00007800" panic — and the whole
+// stack costs ~55-65 KB, so require a 48 KB contiguous block AND 96 KB total
+// free, both measured on the INTERNAL|DMA pool. Below this we skip the burst:
+// the off-grid chirp is the expendable radio decision (chirp_scan.h); a live
+// glass beats a boot-looping one.
+constexpr size_t BLE_MIN_FREE_BLOCK = 48 * 1024;
+constexpr size_t BLE_MIN_TOTAL_FREE = 96 * 1024;
 
 struct ChirpMsg {
   char fp4[5];
@@ -116,23 +119,28 @@ bool ble_up() {
   if (s_ble_failed) return false;
 
   // Preventive heap gate: never call into the BT controller without a
-  // comfortable internal-RAM margin (see BLE_MIN_* above). A thin pool here is
-  // the normal state mid-WiFi-reconnect, so this is a skip-and-retry, not a
-  // failure — re-check next window, when memory may have recovered.
-  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < BLE_MIN_FREE_INTERNAL ||
-      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) <
-          BLE_MIN_BLOCK_INTERNAL) {
+  // comfortable internal DMA-capable margin (see BLE_MIN_* above). A thin pool
+  // here is the normal state mid-WiFi-reconnect, so this is a skip-and-retry,
+  // not a failure — re-check next window, when memory may have recovered.
+  if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) <
+          BLE_MIN_FREE_BLOCK ||
+      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) <
+          BLE_MIN_TOTAL_FREE) {
     return false;
   }
 
   NimBLEDevice::init("");
-  // If the stack did not actually come up, stand down for the rest of this boot
-  // rather than hammer a failing radio every window.
+  // Verify the stack came up before using it; if it didn't, stand down for the
+  // rest of this boot rather than hammer a failing radio every window. NimBLE
+  // 2.x (core 3) exposes isInitialized(); 1.4.x (core 2) does not, so there we
+  // rely on the scan handle alone (the original signal).
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
   if (!NimBLEDevice::isInitialized()) {
     s_ble_failed = true;
     log_line("CHIRP", "BLE stack init failed - off-grid listener off this boot.");
     return false;
   }
+#endif
   NimBLEScan* scan = NimBLEDevice::getScan();
   if (!scan) {
     s_ble_failed = true;
