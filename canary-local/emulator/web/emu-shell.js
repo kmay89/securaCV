@@ -372,7 +372,7 @@ export class CanaryEmulator {
       const id = await this.c.chAtRing(i);
       const namePtr = await this.c.chName(id);
       const capPtr = await this.c.chCaption(id);
-      const hex6 = (v) => "#" + (v >>> 0).toString(16).padStart(6, "0");
+      const hex6 = (v) => "#" + (v & 0xffffff).toString(16).padStart(6, "0");
       out.push({
         id,
         name: namePtr ? this.module.UTF8ToString(namePtr) : "",
