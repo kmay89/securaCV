@@ -56,6 +56,7 @@ jobs:
         run: |
           node --test canary-local/tests/canary_local.test.js
           node --test canary-local/tests/chooser.test.js
+          node --test canary-local/tests/house.test.js
           node --test canary-local/tests/workshop.test.js
           node --test canary-local/tests/boards.test.js
           node --test canary-local/tests/assembly.test.js

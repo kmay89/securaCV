@@ -122,6 +122,17 @@ export const DISPLAY_TOUR = [
       ctx.emu.setBroker(false);
     },
   },
+  {
+    title: "Now make it yours",
+    body:
+      "That's the whole promise: glance, know, go back to your life. " +
+      "Head to Try it — flip all seven Characters (the glass remembers " +
+      "through power cycles), meet the bird for the very first time, and " +
+      "break the household on purpose to watch it refuse to lie. " +
+      "Everything you just used is the real firmware; the one on your " +
+      "desk will feel exactly like this.",
+    stage: allQuiet,
+  },
 ];
 
 export const DISPLAY_FIXES = [

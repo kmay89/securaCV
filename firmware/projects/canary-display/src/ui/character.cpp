@@ -252,6 +252,8 @@ bool character_night() { return s_night; }
 
 const char* character_name(Character c) { return k_defs[clamp_idx(c)].name; }
 
+const CharacterDef& character_def(Character c) { return k_defs[clamp_idx(c)]; }
+
 const char* character_caption(Character c) {
   return k_defs[clamp_idx(c)].caption;
 }

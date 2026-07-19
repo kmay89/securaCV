@@ -112,6 +112,10 @@ bool character_night();
 
 const char* character_name(Character c);
 const char* character_caption(Character c);
+// Whole-def read (clamped like every table access). Exists for surfaces
+// that present the ring without applying it — the picker's live preview
+// stays character_apply; benches/pages read swatches from here.
+const CharacterDef& character_def(Character c);
 uint8_t character_count();                    // (uint8_t)Character::Count
 
 // The ring (the picker's flip-through) runs in display order, not enum

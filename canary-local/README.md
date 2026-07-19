@@ -9,9 +9,12 @@ flows stage the device into the exact state they're describing.
 canary-local/
   index.html            the page (vanilla JS, no frameworks, no build step)
   choose.html           "Find your Canary" — the four-question front door
+  house.html            "The Canary House" — isometric home, whole flock in place
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   assets/
     app.js              card gallery + device sheets + guide player
+    house.js            iso renderer + sensing animations + visitor walk
+    house-data.js       rooms + perches + walk (DOM-free, tested)
     scene3d.js          zero-dependency WebGL: procedural device bodies
     stl.js              STL → the same viewer (real printed parts)
     enclosure-lab.js    the parametric catalog, browsable (per-device tab)
@@ -166,7 +169,20 @@ every camera device unconditionally; outdoor placement only ever
 recommends sealed sets; every recommendation carries its true status —
 released (print-validated, shipping) vs in-development, said to your
 face. Matches link onward: the device's live card, the printable STLs,
-the configurator, the BOM.
+the configurator, the BOM. The chooser also accepts deep-link pre-fills
+(`choose.html#place=door&want=see,prove…`) so other pages can hand it a
+half-answered quiz.
+
+**`house.html` — The Canary House.** An isometric cutaway home with the
+whole flock perched where it belongs, each device animating the way it
+actually senses (camera cone, WiFi-field ripples, radar arcs, breathing
+wave, display glow) and a "walk a visitor through" mode whose witness
+feed shows the ONLY thing the flock ever emits: small signed claims.
+Perches toggle on/off to size a real flock; every perch is a chooser
+candidate (`assets/house-data.js` imports `chooser-data.js`, so titles
+and statuses cannot drift), and every perch deep-links back into the
+chooser with its answers pre-filled. Promises pinned by
+`tests/house.test.js`.
 
 **The Enclosure tab** (every device sheet). The enclosure library *is* a
 set of parametric OpenSCAD configurators; the lab is their showroom:

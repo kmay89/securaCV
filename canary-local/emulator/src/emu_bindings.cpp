@@ -52,6 +52,20 @@ EMSCRIPTEN_KEEPALIVE const char* emu_character_caption(int n) {
   if (!ch_valid(n)) return "";
   return canary::ui::character_caption((canary::ui::Character)n);
 }
+// Swatch colors for the style rail, 0xRRGGBB — the page paints each chip
+// in its Character's own ground/ink/accent, from the same table the glass
+// wears. which: 0 = bg, 1 = text, 2 = accent.
+EMSCRIPTEN_KEEPALIVE int emu_character_color(int n, int which) {
+  if (!ch_valid(n)) return 0;
+  const auto& pal =
+      canary::ui::character_def((canary::ui::Character)n).pal;
+  switch (which) {
+    case 0: return (int)pal.bg;
+    case 1: return (int)pal.text;
+    case 2: return (int)pal.accent;
+  }
+  return 0;
+}
 
 EMSCRIPTEN_KEEPALIVE void emu_time_scale(double scale) {
   emu_clock_set_scale(scale);
