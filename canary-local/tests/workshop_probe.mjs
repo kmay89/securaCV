@@ -110,7 +110,30 @@ if (!/battery bay/.test(optText.join(" "))) {
 }
 if (SHOTS) await page.screenshot({ path: `${SHOTS}/workshop_configure.png`, fullPage: true });
 
-step("checklist ok");
+// ── inspect mode: chips solo a part; the spec strip tells real truths ──
+if (!(await page.locator(".ws-fullbtn").count())) fail("fullscreen button missing");
+await page.locator(".ws-chip", { hasText: "lid" }).first().click();
+await page.waitForFunction(() => {
+  const cv = document.querySelector(".ws-canvas");
+  return cv && cv.__scene && cv.__scene.parts.length === 1;
+}, { timeout: 15000 });
+const specs = await page.locator(".ws-specs").textContent();
+for (const needle of ["triangles", "cm³", "mm", "print-validated"]) {
+  if (!specs.includes(needle)) fail(`spec strip missing "${needle}"`);
+}
+await page.locator(".ws-chip", { hasText: "all" }).click();
+await page.waitForFunction(() => {
+  const cv = document.querySelector(".ws-canvas");
+  return cv && cv.__scene && cv.__scene.parts.length >= 2;
+}, { timeout: 15000 });
+
+// ── the parameter-set download says exactly what it is ──
+const how = await page.locator(".ws-check").textContent();
+if (!/canary-wap_battery-full_openscad-params\.json/.test(how)) {
+  fail("download hint missing the labeled filename");
+}
+
+step("inspect + labeled download ok");
 // ── weather package unlocks the solar/thermal addon ──
 await page.locator(".ws-pkg", { hasText: "battery weather" }).click();
 const addon = page.locator(".ws-addon input");
@@ -163,6 +186,22 @@ await page.waitForSelector(".ws-pkg");
 const senseCheck = await page.locator(".ws-check").textContent();
 if (!/FEATURE_STATUS_LED|radome|part/i.test(senseCheck)) {
   fail("sense configurator did not render");
+}
+
+step("sense ok");
+// ── dash: in-dev preview meshes render; empty panes carry request doors ──
+await page.locator(".ws-device", { hasText: "Canary Dash" }).click();
+await page.waitForFunction(() => {
+  const cv = document.querySelector(".ws-canvas");
+  return cv && cv.__scene && cv.__scene.parts.length >= 1;
+}, { timeout: 15000 });
+if (!(await page.locator(".ws-soon").count())) {
+  fail("dash configure should carry a coming-soon card (no tick-box options)");
+}
+await page.locator(".ws-stagebtn", { hasText: "Assemble" }).click();
+const dashAsm = page.locator(".ws-soon .ws-request").first();
+if (!/issues\/new/.test(await dashAsm.getAttribute("href"))) {
+  fail("assemble soon-card missing a request-issue link");
 }
 
 const benign = errors.filter((e) => !/favicon/.test(e));

@@ -100,6 +100,21 @@ test("recipes quote the BOM's own summary rows, prices included", () => {
   assert.ok(weather.usd > 0, "indicative price rides along");
 });
 
+test("parameter-set names read at a glance in a crowded Downloads folder", async () => {
+  const { specName } = await import("../assets/workshop.js");
+  const pkg = { id: "battery_weather" };
+  assert.strictEqual(
+    specName("canary-wap", { exact: true, pkg }, {}),
+    "canary-wap_battery-weather_openscad-params");
+  assert.strictEqual(
+    specName("canary-wap", { exact: false, pkg },
+      { opt_gps: true, opt_battery: true, opt_seal: true, opt_camera: false }),
+    "canary-wap_custom-gps-batt-seal_openscad-params");
+  assert.strictEqual(
+    specName("canary-wap", { exact: false, pkg: null }, {}),
+    "canary-wap_custom-bare_openscad-params");
+});
+
 test("mesh volume: a closed 10 mm cube measures exactly 1 cm³", async () => {
   const { meshVolumeCm3 } = await import("../assets/workshop.js");
   const pos = [];

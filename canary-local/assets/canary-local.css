@@ -464,3 +464,28 @@ footer p { max-width: 720px; margin: 0 auto; }
 .style-chip span { display: block; font-size: 11px; color: #9a9a9a; margin-top: 2px; }
 .style-chip:hover { border-color: #3a3a3a; }
 .style-chip.on { border-color: var(--canary); box-shadow: 0 0 0 1px var(--canary) inset; }
+
+/* ── Workshop polish: inspect mode, fullscreen, honest empty states ──── */
+.ws-fullbtn { position: absolute; right: 10px; top: 10px; background: #000a;
+  border: 1px solid var(--edge); border-radius: 10px; color: var(--text);
+  font: inherit; font-size: 16px; padding: 4px 10px; cursor: pointer;
+  backdrop-filter: blur(4px); }
+.ws-fullbtn:hover { border-color: var(--canary); }
+.ws-chips { position: absolute; left: 12px; bottom: 34px; display: flex;
+  gap: 6px; flex-wrap: wrap; max-width: 75%; }
+.ws-chip { background: #000a; border: 1px solid var(--edge); border-radius: 999px;
+  color: var(--muted); font: inherit; font-size: 12px; padding: 3px 11px;
+  cursor: pointer; backdrop-filter: blur(4px); }
+.ws-chip.on { color: #141414; background: var(--canary); border-color: var(--canary); }
+.ws-specs { display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  font-size: 12px; color: var(--muted); padding: 8px 12px;
+  border-top: 1px solid var(--edge); background: #0c0c0c; }
+.ws-spec { background: var(--surface-2); border-radius: 8px; padding: 2px 8px; }
+.ws-viewhint { margin: 6px 2px 0; }
+.ws-stage:fullscreen { border-radius: 0; display: flex; flex-direction: column; }
+.ws-stage:fullscreen .ws-canvas { flex: 1; height: auto; }
+.ws-soon { border: 1px dashed var(--canary-deep); border-radius: 12px;
+  padding: 12px 16px; margin: 14px 0; background: #17140a; }
+.ws-soon p { margin: 0 0 8px; }
+.ws-request { color: var(--canary); text-decoration: none; font-size: 13.5px; }
+.ws-request:hover { text-decoration: underline; }

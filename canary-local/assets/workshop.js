@@ -167,43 +167,65 @@ function impliedFlags() {
 }
 
 // ── OpenSCAD parameter-set download (native customizer preset) ──────────
-function parameterSetJson() {
+// A Downloads folder full of these must still read at a glance, so the
+// name says everything: device, package-or-options, what the file IS.
+//   canary-wap_battery-weather_openscad-params.json
+//   canary-wap_custom-gps-batt-seal_openscad-params.json
+const OPT_ABBR = {
+  opt_camera: "cam", opt_buzzer: "buz", opt_led: "led", opt_battery: "batt",
+  opt_gps: "gps", opt_tamper: "tamp", opt_touch: "touch", opt_antenna: "ant",
+  opt_seal: "seal", opt_mount: "mount", opt_batt: "batt", opt_lux: "lux",
+  opt_vent: "vent",
+};
+export function specName(devId, match, vector) {
+  const what = match?.exact && match.pkg
+    ? match.pkg.id.replace(/_/g, "-")
+    : "custom-" + (Object.entries(vector).filter(([, v]) => v)
+        .map(([k]) => OPT_ABBR[k] || k.replace(/^opt_/, "")).join("-") || "bare");
+  return `${devId}_${what}_openscad-params`;
+}
+
+function parameterSetJson(name) {
   const params = { preset: "custom" };
   for (const [k, v] of Object.entries(optionVector())) params[k] = String(v);
   if ((wsDev().options || []).some((o) => o.id === "mount_style")) {
     params.mount_style = state.mountStyle;
   }
   return {
-    parameterSets: { "my-canary": params },
+    parameterSets: { [name]: params },
     fileFormatVersion: "1",
   };
 }
 
 function downloadParameterSet() {
-  const scad = wsDev().scad;
-  const blob = new Blob([JSON.stringify(parameterSetJson(), null, 2) + "\n"],
+  const name = specName(state.dev, matchPackage(), optionVector());
+  const blob = new Blob([JSON.stringify(parameterSetJson(name), null, 2) + "\n"],
     { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  // named after the scad: dropped beside it, OpenSCAD's customizer
-  // offers "my-canary" in its preset dropdown automatically
-  a.download = scad.replace(/\.scad$/, ".json");
+  a.download = `${name}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
 
-// ── 3D viewport ─────────────────────────────────────────────────────────
-async function loadMesh(file) {
-  const url = ENC_BASE + file;
-  if (state.meshCache.has(url)) return state.meshCache.get(url);
-  const buf = await (await fetch(url)).arrayBuffer();
-  const parsed = parseSTL(buf);
-  parsed.volume = meshVolumeCm3(parsed.mesh);
-  state.meshCache.set(url, parsed);
-  state.volumes.set(file, parsed.volume);
-  return parsed;
+// ── coming-soon honesty: never an empty pane, always a door ─────────────
+function issueUrl(title, body) {
+  return "https://github.com/kmay89/securaCV/issues/new?title=" +
+    encodeURIComponent(title) + "&body=" + encodeURIComponent(body);
 }
 
+function soonCard(text, reqTitle, reqBody) {
+  const card = el("div", "ws-soon");
+  card.append(el("p", "body", text));
+  const a = el("a", "ws-request", "→ request it (opens a GitHub issue)");
+  a.href = issueUrl(reqTitle, reqBody);
+  a.target = "_blank";
+  a.rel = "noopener";
+  card.append(a);
+  return card;
+}
+
+// ── 3D viewport ─────────────────────────────────────────────────────────
 // signed tetrahedron sum — exact for the closed manifolds OpenSCAD emits
 export function meshVolumeCm3(mesh) {
   const { pos, idx } = mesh;
@@ -219,34 +241,111 @@ export function meshVolumeCm3(mesh) {
 }
 
 const FIL_COLORS = [[0.93, 0.83, 0.31], [0.62, 0.66, 0.7], [0.85, 0.4, 0.32], [0.42, 0.62, 0.5]];
+const PREVIEW_BASE = "enclosures/preview/";
 
-async function showSelectionIn3D(viewport, note) {
+// the standardized hero pose: classic isometric (35.26° elevation, 45°
+// azimuth) — every part, every package, the same flattering angle
+const ISO = { x: -0.615, y: 0.785 };
+
+function partUrl(part) {
+  return part.preview_mesh
+    ? PREVIEW_BASE + part.file.replace(/^preview\//, "")
+    : ENC_BASE + part.file;
+}
+
+async function loadPartMesh(part) {
+  const url = partUrl(part);
+  if (state.meshCache.has(url)) return state.meshCache.get(url);
+  const buf = await (await fetch(url)).arrayBuffer();
+  const parsed = parseSTL(buf);
+  parsed.volume = meshVolumeCm3(parsed.mesh);
+  parsed.bytes = buf.byteLength;
+  state.meshCache.set(url, parsed);
+  state.volumes.set(part.file, parsed.volume);
+  return parsed;
+}
+
+// solo = index into the selection to inspect alone; null = the ensemble
+async function showSelectionIn3D(note, solo = null) {
   const scene = state.scene;
   for (const p of state.sceneParts) scene.removePart(p);
   state.sceneParts = [];
   const parts = selectedParts();
   const metas = [];
   for (const part of parts) {
-    try { metas.push({ part, ...(await loadMesh(part.file)) }); }
+    try { metas.push({ part, ...(await loadPartMesh(part)) }); }
     catch { /* a missing mesh shows in the parts list; the scene stays honest */ }
   }
-  if (!metas.length) { note.textContent = "no committed meshes for this selection yet"; return; }
+  state.viewMetas = metas;
+  renderInspectChips(metas, solo);
+  if (!metas.length) {
+    note.textContent = "no committed meshes for this selection yet";
+    renderSpecStrip(null);
+    return;
+  }
+  scene.home.x = ISO.x;
+  scene.home.y = ISO.y;
+  const shown = solo != null && metas[solo] ? [metas[solo]] : metas;
   const gap = 8;
-  const totalW = metas.reduce((s, m) => s + m.bbox.size[0], 0) + gap * (metas.length - 1);
-  let cursor = 0, maxR = 40;
-  metas.forEach((m, i) => {
+  const totalW = shown.reduce((s, m) => s + m.bbox.size[0], 0) + gap * (shown.length - 1);
+  let cursor = 0, maxR = 30;
+  shown.forEach((m, i) => {
     const cx = cursor - totalW / 2 + m.bbox.size[0] / 2;
     const model = placeFloat(cx, -(m.bbox.size[2] / 2), m.bbox.center);
+    const colorIdx = solo != null ? solo : i;
     state.sceneParts.push(scene.addMesh(m.mesh, {
-      color: FIL_COLORS[i % FIL_COLORS.length], gloss: 0.18, model,
+      color: FIL_COLORS[colorIdx % FIL_COLORS.length], gloss: 0.18, model,
     }));
     cursor += m.bbox.size[0] + gap;
     maxR = Math.max(maxR, Math.hypot(totalW / 2, m.bbox.size[1], m.bbox.size[2]));
   });
   scene.viewY = 0;
-  scene.dist = Math.max(60, maxR * 3.0);
-  const grams = metas.reduce((s, m) => s + m.volume, 0) * PETG_G_CM3;
-  note.textContent = `${metas.length} part${metas.length > 1 ? "s" : ""} · solid-PETG ceiling ≈ ${Math.round(grams)} g`;
+  scene.dist = Math.max(60, maxR * (shown.length === 1 ? 2.6 : 3.0));
+  if (solo != null && metas[solo]) {
+    renderSpecStrip(metas[solo]);
+    note.textContent = "";
+  } else {
+    renderSpecStrip(null);
+    const grams = metas.reduce((s, m) => s + m.volume, 0) * PETG_G_CM3;
+    note.textContent = `${metas.length} part${metas.length > 1 ? "s" : ""} · solid-PETG ceiling ≈ ${Math.round(grams)} g`;
+  }
+}
+
+// part chips under the viewport — tap to inspect one part alone
+function renderInspectChips(metas, solo) {
+  const box = state.viewport?.chips;
+  if (!box) return;
+  box.innerHTML = "";
+  if (metas.length < 2 && solo == null) return;
+  const all = el("button", "ws-chip" + (solo == null ? " on" : ""), "all");
+  all.addEventListener("click", () => showSelectionIn3D(state.viewport.meshNote, null));
+  box.append(all);
+  metas.forEach((m, i) => {
+    const c = el("button", "ws-chip" + (solo === i ? " on" : ""), m.part.name);
+    c.addEventListener("click", () => showSelectionIn3D(state.viewport.meshNote, i));
+    box.append(c);
+  });
+}
+
+// the trust strip: real numbers from the actual mesh, Printables-style
+function renderSpecStrip(meta) {
+  const box = state.viewport?.specs;
+  if (!box) return;
+  box.innerHTML = "";
+  if (!meta) { box.hidden = true; return; }
+  box.hidden = false;
+  const { bbox, triangles, volume, bytes, part } = meta;
+  const dims = bbox.size.map((v) => Math.round(v * 10) / 10).join(" × ") + " mm";
+  box.append(
+    el("span", "ws-spec", dims),
+    el("span", "ws-spec", `${volume.toFixed(1)} cm³ solid`),
+    el("span", "ws-spec", `≈ ${Math.round(volume * PETG_G_CM3)} g ceiling`),
+    el("span", "ws-spec", `${triangles.toLocaleString()} triangles`),
+    el("span", "ws-spec", `${(bytes / 1024).toFixed(0)} KB STL`),
+    part.preview_mesh
+      ? el("span", "chip", "preview mesh — not yet print-validated")
+      : el("span", "chip chip-live", "print-validated STL"),
+  );
 }
 
 // scad Z-up → viewer Y-up (same math the enclosure lab uses)
@@ -372,6 +471,16 @@ function renderConfigure(root) {
       left.append(row);
     }
   }
+  if (!hasConfigurator()) {
+    const reg = state.registry.devices.find((x) => x.id === state.dev);
+    left.append(soonCard(
+      "This case doesn't expose tick-box options yet — its .scad ships " +
+      "fixed variants (each package above is one). Options land here the " +
+      "moment the scad grows them; nothing to rewrite, the page reads the file.",
+      `workshop: printed-case option request for ${reg?.name || state.dev}`,
+      "Which option would you print if the case offered it? (e.g. solar hood, " +
+      "PoE cutout, VESA boss)\n\nDevice: " + state.dev));
+  }
 
   // right column: 3D + live checklist. The viewport node (and its WebGL
   // context) persists across re-renders — a context per option toggle
@@ -384,15 +493,27 @@ function renderConfigure(root) {
     cv.width = 640; cv.height = 420;
     const ribbon = el("div", "ws-ribbon");
     const meshNote = el("div", "ws-meshnote muted");
-    stage3d.append(cv, ribbon, meshNote);
+    const full = el("button", "ws-fullbtn", "⛶");
+    full.title = "inspect fullscreen (Esc to leave)";
+    full.addEventListener("click", () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else stage3d.requestFullscreen?.();
+    });
+    const chips = el("div", "ws-chips");
+    const specs = el("div", "ws-specs");
+    specs.hidden = true;
+    stage3d.append(cv, ribbon, full, chips, specs, meshNote);
     state.scene = new DeviceScene(cv, null);
     state.scene.start();
     state.sceneParts = [];
     cv.__scene = state.scene;
-    state.viewport = { stage3d, cv, ribbon, meshNote };
+    state.viewport = { stage3d, cv, ribbon, meshNote, chips, specs };
   }
   const { stage3d, ribbon, meshNote } = state.viewport;
   right.append(stage3d);
+  const hint = el("p", "muted fineprint ws-viewhint",
+    "drag to orbit · scroll or pinch to zoom · tap a part chip to inspect it alone · ⛶ fullscreen");
+  right.append(hint);
 
   const check = el("div", "ws-check");
   right.append(check);
@@ -410,7 +531,7 @@ function renderConfigure(root) {
   } else {
     ribbon.textContent = "no package yet";
   }
-  showSelectionIn3D(stage3d, meshNote);
+  showSelectionIn3D(meshNote);
   renderChecklist(check);
 }
 
@@ -468,11 +589,17 @@ function renderChecklist(box) {
     box.append(el("h4", "b-only", "Firmware this implies"), ul3);
   }
 
-  const dl = el("button", "ws-dl");
-  dl.textContent = "⤓ Download your OpenSCAD parameter set";
-  dl.title = "drop it next to " + d.scad + " — the customizer picks it up as a preset";
-  dl.addEventListener("click", downloadParameterSet);
-  if (hasConfigurator()) box.append(dl);
+  if (hasConfigurator()) {
+    const dl = el("button", "ws-dl");
+    dl.textContent = "⤓ Download your OpenSCAD parameter set";
+    dl.addEventListener("click", downloadParameterSet);
+    box.append(dl);
+    const how = el("p", "muted fineprint",
+      `Saves as ${specName(state.dev, matchPackage(), optionVector())}.json — ` +
+      `in OpenSCAD open ${d.scad}, Window ▸ Customizer ▸ import that file, ` +
+      "and your exact spec appears as a preset.");
+    box.append(how);
+  }
   const explorer = el("p", "muted fineprint");
   const a = el("a", null, "every dimension, in the parameter explorer →");
   a.href = `index.html#${state.dev}`;
@@ -505,7 +632,7 @@ function renderPrint(root) {
   // fetch what's missing and repaint once
   const missing = parts.filter((p) => !state.volumes.has(p.file));
   if (missing.length) {
-    Promise.all(missing.map((p) => loadMesh(p.file).catch(() => null)))
+    Promise.all(missing.map((p) => loadPartMesh(p).catch(() => null)))
       .then((r) => { if (r.some(Boolean) && state.stage === "print") update(); });
   }
 
@@ -515,10 +642,13 @@ function renderPrint(root) {
     const head = el("div", "ws-printhead");
     head.append(el("strong", null, p.name),
       el("span", "chip chip-dim", p.material || "PETG / ASA"));
+    head.append(p.preview_mesh
+      ? el("span", "chip", "preview — not yet print-validated")
+      : el("span", "chip chip-live", "print-validated"));
     const vol = state.volumes.get(p.file);
     if (vol) head.append(el("span", "muted", `solid ≈ ${Math.round(vol * PETG_G_CM3)} g`));
     const a = el("a", "ws-stl", "STL ⤓");
-    a.href = ENC_BASE + p.file; a.download = p.file;
+    a.href = partUrl(p); a.download = p.file.replace(/^preview\//, "");
     head.append(a);
     row.append(head, el("p", "muted", p.print_note || ""));
     list.append(row);
@@ -556,7 +686,12 @@ function renderGather(root) {
 
   if (!bom) {
     const n = state.build.devices?.[state.dev]?.bom_note;
-    root.append(el("p", "ondevice", n || "BOM pending for this device."));
+    root.append(soonCard(
+      n || "BOM pending for this device — it lands here automatically the "
+        + "moment a bom_*.csv exists.",
+      `hardware: BOM request for ${state.dev}`,
+      "The workshop's Gather stage is waiting on a docs/hardware BOM CSV "
+      + "for this device.\n\nDevice: " + state.dev));
     return;
   }
 
@@ -623,11 +758,25 @@ function renderAssemble(root) {
     for (const s of asm.steps) ol.append(el("li", null, s));
     root.append(ol);
   } else {
-    root.append(el("p", "muted",
-      "Assembly for this device lives in its docs — the enclosure catalog carries per-case steps for WAP and Vision today."));
+    root.append(soonCard(
+      "No written assembly walk-through for this device yet — the enclosure "
+      + "catalog carries per-case steps for WAP and Vision today, and any "
+      + "§Assembly section added to its README appears here automatically.",
+      `docs: assembly steps request for ${state.dev}`,
+      "The workshop's Assemble stage is waiting on a '## Assembly' section "
+      + "in docs/hardware/enclosure/README.md for this device.\n\nDevice: "
+      + state.dev));
   }
 
   const tpls = (wsDev().templates || []).map((t) => [t, state.data.templates[t]]);
+  if (!tpls.length) {
+    root.append(soonCard(
+      "No 1:1 drill template for this device yet — templates render from "
+      + "canary_templates_2d.scad and appear here the moment one exists.",
+      `hardware: drill template request for ${state.dev}`,
+      "The workshop's Assemble stage would love a paper install template "
+      + "(canary_templates_2d.scad mode) for this device.\n\nDevice: " + state.dev));
+  }
   if (tpls.length) {
     root.append(el("h4", null, "Drill templates — print on paper, 100% scale"));
     root.append(el("p", "ondevice", state.data.calibration_note));

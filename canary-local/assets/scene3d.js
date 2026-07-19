@@ -389,13 +389,30 @@ export class DeviceScene {
 
   _wireOrbit() {
     const cv = this.canvas;
-    let dragging = false, lx = 0, ly = 0;
+    // multi-pointer: one finger orbits, two fingers pinch-zoom
+    const active = new Map(); // pointerId → {x, y}
+    let lx = 0, ly = 0, pinchD = 0;
+    const pinchDist = () => {
+      const [a, b] = [...active.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
     cv.addEventListener("pointerdown", (e) => {
-      dragging = true; lx = e.clientX; ly = e.clientY;
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       cv.setPointerCapture(e.pointerId);
+      if (active.size === 1) { lx = e.clientX; ly = e.clientY; }
+      if (active.size === 2) pinchD = pinchDist();
     });
     cv.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
+      if (!active.has(e.pointerId)) return;
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (active.size === 2) {
+        const d = pinchDist();
+        if (pinchD > 0 && d > 0) {
+          this.dist = Math.min(2000, Math.max(30, this.dist * (pinchD / d)));
+        }
+        pinchD = d;
+        return;
+      }
       const dx = e.clientX - lx, dy = e.clientY - ly;
       lx = e.clientX; ly = e.clientY;
       this.rot.y += dx * 0.008;
@@ -403,7 +420,15 @@ export class DeviceScene {
       this.rot.x = Math.max(-1.2, Math.min(0.7, this.rot.x));
       this.vel = { x: 0, y: dx * 0.0009 }; // fling inertia
     });
-    const end = () => { dragging = false; };
+    const end = (e) => {
+      active.delete(e.pointerId);
+      // returning from pinch to one finger: re-anchor the orbit
+      if (active.size === 1) {
+        const p = [...active.values()][0];
+        lx = p.x; ly = p.y;
+      }
+      pinchD = 0;
+    };
     cv.addEventListener("pointerup", end);
     cv.addEventListener("pointercancel", end);
     cv.addEventListener("wheel", (e) => {
