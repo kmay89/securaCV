@@ -538,9 +538,13 @@ export function buildPlugIn(data, bus) {
   function buildRig() {
     const add = (builder, opts, local) =>
       rig.parts.push({ part: scene.addMesh(builder, opts), local });
-    // USB-C metal tip (enters the slot), strain-relief boot, the lead itself
-    add(roundedBox(9.0, 3.4, 6.5, 1.5), { color: [0.80, 0.81, 0.84], gloss: 0.85 }, M4.translate(0, 0, 3.1));
-    add(roundedBox(11.4, 6.6, 14, 2.6), { color: [0.13, 0.13, 0.15], gloss: 0.5 }, M4.translate(0, 0, -7.2));
+    // USB-C metal tip (enters the slot), strain-relief boot, the lead itself.
+    // The slot's 10.5 mm width runs along scene Y; after the rig's rotY(90°),
+    // local Y maps to world Y — so the connector's WIDE flat is built on
+    // local Y (9.0) and its thin side on local X (3.4), or the tip presents
+    // to the port turned 90° from anything that could ever plug in.
+    add(roundedBox(3.4, 9.0, 6.5, 1.5), { color: [0.80, 0.81, 0.84], gloss: 0.85 }, M4.translate(0, 0, 3.1));
+    add(roundedBox(6.6, 11.4, 14, 2.6), { color: [0.13, 0.13, 0.15], gloss: 0.5 }, M4.translate(0, 0, -7.2));
     add(tubeBuilder(), { color: [0.16, 0.16, 0.18], gloss: 0.45 }, M4.ident());
     // power pulses: unlit canary beads that ride the spine once power flows
     for (let i = 0; i < 5; i++) {
