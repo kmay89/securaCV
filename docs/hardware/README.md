@@ -16,6 +16,7 @@ optional.
 | [`acoustic_alarm_bench_test.md`](./acoustic_alarm_bench_test.md) | Bench test for the audible chirp — does the alarm actually alarm. |
 | [`canary_qr_onboarding.md`](./canary_qr_onboarding.md) | QR onboarding — a new Canary joins by looking at the display's screen. |
 | [`csi_sensing_guide.md`](./csi_sensing_guide.md) | WiFi CSI sensing on the bench — hardware-side setup and validation. |
+| [`canary_fence_guard_research.md`](./canary_fence_guard_research.md) | **Fence Guard research dossier (concept)** — the Seeed XIAO ESP32S3 + Wio-SX1262 Meshtastic kit, verified: specs, pin map, power measurements, solar guidance, free pins for the vibration sensor. Feeds the coming-soon concept card and `firmware/projects/canary-fence-guard/`. |
 | [`bom_canary_wap.csv`](./bom_canary_wap.csv) | Machine-readable BOM — Canary WAP (XIAO ESP32-S3 Sense). |
 | [`bom_canary_vision.csv`](./bom_canary_vision.csv) | Machine-readable BOM — Canary Vision (ESP32 host + Grove Vision AI V2). |
 | [`bom_canary_display.csv`](./bom_canary_display.csv) | Machine-readable BOM — Canary Display (watch & dash variants). |
