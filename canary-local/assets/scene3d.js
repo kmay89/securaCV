@@ -652,10 +652,31 @@ export function buildSense(scene) {
   scene.dist = 120;
 }
 
+export function buildFenceGuard(scene) {
+  scene.clearParts();
+  // concept body: sealed slab (XIAO ESP32S3 + Wio-SX1262 stack inside),
+  // fence-clamp lip on the back, stub antenna up top, solar sliver lid
+  const body = roundedBox(46, 62, 22, 5);
+  scene.addMesh(body, { color: SHELL_LIGHT, gloss: 0.25 });
+  const solar = roundedBox(38, 40, 2.2, 2);
+  scene.addMesh(solar, { color: [0.16, 0.2, 0.26], gloss: 0.6, model: M4.translate(0, 8, 11.2) });
+  const antenna = cylinder(2.2, 26, 24);
+  scene.addMesh(antenna, {
+    color: [0.2, 0.21, 0.23], gloss: 0.3,
+    model: M4.mul(M4.translate(0, 38, 0), M4.rotX(Math.PI / 2)),
+  });
+  const clamp = roundedBox(12, 46, 6, 2);
+  scene.addMesh(clamp, { color: [0.3, 0.31, 0.33], gloss: 0.2, model: M4.translate(0, 0, -13) });
+  const led = cylinder(1.4, 1.4, 24);
+  scene.addMesh(led, { color: [0.44, 0.84, 0.76], gloss: 0.9, model: M4.translate(16, -24, 11.2) });
+  scene.dist = 150;
+}
+
 export const BUILDERS = {
   "canary-display-watch": buildWatchStation,
   "canary-display-dash": buildDash,
   "canary-vision": buildVision,
   "canary-wap": buildWap,
   "canary-sense": buildSense,
+  "canary-fence-guard": buildFenceGuard,
 };
