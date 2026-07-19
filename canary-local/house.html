@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Canary House — canary.local</title>
+  <meta name="description" content="An isometric home with the whole Canary flock in place. Watch each witness sense in its own way — camera cones that keep their pixels, WiFi-field ripples, radar arcs, a breathing wave — walk a visitor through, and count what your rooms actually need." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+</head>
+<body class="house-page">
+  <header id="hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+      </svg>
+    </div>
+    <h1>The Canary House</h1>
+    <p class="lede">
+      A whole home, witnessed. Every marker is a real device from the catalog,
+      sensing the way it actually senses — <em>and saying only what a witness
+      says</em>: small signed claims, never pictures, never identities.
+      Tap a perch to meet it; switch perches off to size your own flock.
+    </p>
+    <p class="fineprint">
+      <a href="index.html">← the family</a> ·
+      <a href="choose.html">the chooser</a> ·
+      <a href="workshop.html">the workshop</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main class="house-main">
+    <div class="house-stagecol">
+      <div class="house-controls">
+        <button id="walk-btn" class="walk-btn">▶ walk a visitor through</button>
+        <div class="legend" aria-hidden="true">
+          <span><i class="perch-dot dot-camera"></i> camera (on-device)</span>
+          <span><i class="perch-dot dot-wifi"></i> WiFi field</span>
+          <span><i class="perch-dot dot-radar"></i> radar</span>
+          <span><i class="perch-dot dot-breath"></i> breathing</span>
+          <span><i class="perch-dot dot-display"></i> display</span>
+          <span><i class="perch-dot dot-lora"></i> LoRa relay</span>
+        </div>
+      </div>
+      <div id="stage" class="house-stage"></div>
+      <div class="house-feed">
+        <h3>The witness feed <span class="feed-sub">— everything the flock ever says</span></h3>
+        <ul id="feed-list" aria-live="polite"></ul>
+      </div>
+    </div>
+    <aside id="panel" class="house-panel" aria-live="polite"></aside>
+  </main>
+
+  <footer>
+    <p>
+      A SecuraCV page. Statuses and pitches come straight from the
+      <a href="https://github.com/kmay89/securaCV/blob/main/canary-local/assets/chooser-data.js">chooser catalog</a>
+      — released means print-validated and shipping; in-development says so
+      to your face. Architecture:
+      <a href="https://github.com/kmay89/securaCV/blob/main/canary-local/README.md">canary-local/README.md</a>
+    </p>
+  </footer>
+
+  <script type="module" src="assets/house.js"></script>
+</body>
+</html>
