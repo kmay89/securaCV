@@ -12,6 +12,7 @@ canary-local/
   boards.html           "The Board Room" — every board + pin flags + wiring (§4g)
   house.html            "The Canary House" — isometric home, whole flock in place
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
+  wap.html              "The WAP — first boot" — captive-portal setup, serial + MQTT (§4i)
   assets/
     app.js              card gallery + device sheets + guide player
     house.js            iso renderer + sensing animations + visitor walk
@@ -448,6 +449,60 @@ a `planned` wire); every step wires something. `tests/boardroom_probe.mjs`
 the flags and table speak, the every-pad toggle works, the harness renders
 one line per connection, and the step player walks.
 
+## 4i. The WAP: first boot, from scratch (`wap.html`)
+
+The Hub teaches the place the flock converges; **The WAP teaches the first
+five minutes of a single device.** The Canary WAP is the WiFi-CSI witness on
+the XIAO ESP32-S3 Sense — and it is, literally, a **W**ireless **A**ccess
+**P**oint: unprovisioned, it brings up a `SecuraCV-XXXX` network with a
+device-unique WPA2 password and a captive portal, and you set it up from a
+phone. `wap.html` stages that whole experience from the firmware's own bytes:
+
+- **The board** — the same vendor CAD the Board Room shows
+  (`seeed_xiao_esp32s3_sense.glb`), reused wholesale (`board-lab.js`).
+- **The serial console** — the real boot banner and the ordered `setup()` log,
+  streamed on *power on*; the `[WIFI] AP started:` line is the cue the phone
+  waits for.
+- **The phone** — a staged handset that catches the SoftAP live, then renders
+  the firmware's **actual** `CAPTIVE_PORTAL_HTML` (verbatim, in a sandboxed
+  iframe) and walks the five-step setup wizard to *online*.
+- **The dashboard + MQTT** — once it joins, a labeled *sketch* of the
+  on-device dashboard (pills/gauges from the getting-started guide) beside an
+  MQTT-explorer view whose retained topics, payloads and all 24 Home Assistant
+  discovery entities are the exact strings `csi_mqtt.cpp` publishes.
+- **The sandbox** — wave, sit, leave, fire a T3 smoke / T4 CO cadence, hold the
+  panic pad, mute the mic; each drives the pill, writes a witness record on the
+  serial console, and publishes the MQTT the firmware would — all four surfaces
+  moving together through one small bus.
+
+Anti-rot, same rule as everything here — nothing written twice:
+
+| Fact on the page | Source of truth |
+|---|---|
+| SSID `SecuraCV-XXXX`, `cv-…` password, `192.168.4.1`, NVS keys, timeouts | `arduino/canary_wap/{wap_server.h,setup_wizard.h,canary_wap.ino}` |
+| The captive landing page (rendered verbatim) | `arduino/canary_wap/setup_page_html.h` |
+| Setup routes + the five wizard steps | `canary_wap.ino` + `companion_pwa.h` |
+| Boot banner + `setup()` log lines | `boot_banner.cpp` + `canary_wap.ino` |
+| MQTT prefix/topics/payloads + 24 HA entities | `csi_mqtt.cpp` |
+| Sensing pills + dashboard cards | `docs/getting_started_canary.md` |
+| Firmware train · board · name | `devices/registry.json`, `devices/boards.json` |
+
+`tools/gen_wap.py` regenerates `devices/wap.json` and **`sys.exit`s if any of
+those literals moved** (the same posture as `gen_homeassistant.py`); the drift
+gate in `canary-local.yml` re-runs it and `git diff --exit-code`s. The captive
+page is the firmware's own HTML rendered verbatim; the dashboard is a *sketch*,
+labeled as one to your face (the wasm display emulator is the real firmware —
+this is not).
+
+| Piece | File |
+|---|---|
+| The page | `canary-local/wap.html` + `assets/wap.js` |
+| Phone/captive/wizard · dashboard sketch · MQTT explorer | `canary-local/assets/wap-ui.js` |
+| The board + 3D reuse | `assets/board-lab.js`, `assets/scene3d.js`, `assets/glb.js` |
+| Generated data | `canary-local/devices/wap.json` |
+| Generator | `canary-local/tools/gen_wap.py` |
+| Honesty gates | `tests/wap.test.js` + `tests/wap_probe.mjs` |
+
 ## 5. Where this lives (repo → Pages → securacv.com)
 
 Three tiers, no lock-in, one source of truth:
@@ -528,3 +583,9 @@ without a toolchain; CI rebuilds them and fails on drift.
   notices), switch-off rail death (honest-dark glass + serial), power
   restore (ROM banner, then a true re-boot), BOOT+RESET into download
   mode and back.
+- `tests/wap.test.js` + `tests/wap_probe.mjs` — the WAP bench (§4i): the
+  honesty test pins every SSID, route, MQTT topic, HA entity, boot line and
+  wizard label to its firmware source and exercises the DOM-free serial/MQTT
+  cores; the probe walks first boot in headless Chromium (power on → the phone
+  catches the SoftAP → the firmware's captive HTML → the wizard reaches online
+  → retained MQTT + all 24 discovery entities land → a smoke cadence alarms).

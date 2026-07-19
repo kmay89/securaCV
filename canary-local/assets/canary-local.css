@@ -825,6 +825,163 @@ button.ghost.small.bench-ff { font-size: 12px; }
   .bench-led-dot.flicker { animation: none; background: var(--canary); opacity: 0.55; }
 }
 
+/* ======================================================================== *
+ *  The WAP bench (wap.html) — first-boot, captive portal, serial, MQTT.
+ *  Reuses .hub-term-*, .hub-ha-chrome, .card, .chip, .tab, .ondevice.
+ * ======================================================================== */
+
+.wap-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.wap-two-col { min-width: 0; }
+.wap-col-h { font-size: 13px; color: var(--muted); font-weight: 600; margin: 0 0 10px;
+  text-transform: uppercase; letter-spacing: 0.06em; }
+.wap-note { margin-top: 12px; min-height: 1.5em; }
+
+/* ── serial console ── */
+.wap-term { border: 1px solid #2c2c2e; border-radius: 14px; overflow: hidden;
+  background: #08080a; box-shadow: 0 14px 50px rgba(0, 0, 0, 0.5); }
+.wap-term-scroll { height: 340px; overflow-y: auto; padding: 12px 14px; white-space: pre;
+  font: 12px/1.5 "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.wap-line { white-space: pre-wrap; word-break: break-word; color: #c9d1cb; }
+.wap-b { color: #8a94a6; }                    /* banner / box art */
+.wap-ok { color: var(--ok); }
+.wap-warn { color: var(--warn); }
+.wap-faint { color: var(--faint); }
+.wap-net { color: var(--signed); }            /* [WIFI] / [MQTT] */
+.wap-prov { color: var(--canary-deep); }      /* [PROV] */
+.wap-tbl { color: #93a7b6; }
+
+/* ── the phone ── */
+.wap-phone-wrap { display: flex; flex-direction: column; align-items: center; }
+.wap-phone { width: 300px; max-width: 100%; border-radius: 34px; padding: 10px;
+  background: linear-gradient(160deg, #1c1c1f, #0c0c0e); border: 1px solid #2c2c2e;
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8), inset 0 0 0 2px #000; }
+.wap-phone-status { display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 14px 8px; font-size: 11px; color: #cfcfcf; }
+.wap-phone-net { color: var(--canary); }
+.wap-phone-screen { height: 500px; border-radius: 26px; overflow: hidden; background: #0b0d10;
+  border: 1px solid #000; display: flex; flex-direction: column; }
+.wap-screen { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.wap-screen-wait { align-items: center; justify-content: center; text-align: center; gap: 14px; }
+.wap-big { font-size: 44px; opacity: 0.5; }
+.wap-ios-title { font-size: 22px; font-weight: 700; color: #f0f2f5; margin: 2px 0 6px; }
+.wap-wifi-list { display: flex; flex-direction: column; border-radius: 12px; overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09); }
+.wap-wifi-row { display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 14px; background: rgba(255, 255, 255, 0.04); border: none; color: #eef1f5;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-size: 14px; text-align: left; cursor: pointer; }
+.wap-wifi-row:last-child { border-bottom: none; }
+.wap-wifi-own { background: rgba(124, 220, 255, 0.14); color: #cfefff; font-weight: 600; }
+.wap-wifi-own:hover { background: rgba(124, 220, 255, 0.22); }
+.wap-wifi-dim { color: #8a919c; cursor: default; }
+.wap-wifi-meta { font-size: 12px; opacity: 0.8; }
+
+.wap-screen-browser { padding: 0; }
+.wap-browser-chrome { display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  background: #17191d; border-bottom: 1px solid #000; font: 12px ui-monospace, Menlo, monospace; }
+.wap-browser-lock { color: var(--ok); font-size: 11px; }
+.wap-browser-url { color: #c7ccd3; }
+.wap-captive-head { padding: 10px 14px; font-size: 12px; color: #9aa2ad;
+  background: #101216; border-bottom: 1px solid #000; }
+.wap-captive-frame { width: 100%; height: 330px; border: 0; background: #0b0d10; }
+.wap-captive-go { margin: 12px 14px; }
+
+/* wizard */
+.wap-wiz { padding: 18px 16px; display: flex; flex-direction: column; gap: 12px; }
+.wap-wiz-prog { display: flex; gap: 6px; margin-bottom: 4px; }
+.wap-wiz-dot { flex: 1; height: 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); }
+.wap-wiz-dot.on { background: var(--canary); }
+.wap-wiz-h { margin: 0; font-size: 17px; color: #f2f4f7; }
+.wap-wiz-sub { margin: 0; font-size: 13px; }
+.wap-wiz-go { align-self: stretch; }
+.wap-wiz-nets { display: flex; flex-direction: column; gap: 6px; }
+.wap-wiz-net { display: flex; justify-content: space-between; align-items: center; padding: 11px 13px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px;
+  color: #eef1f5; font-size: 14px; cursor: pointer; }
+.wap-wiz-net:hover { background: rgba(255, 255, 255, 0.09); }
+.wap-wiz-btns { display: flex; gap: 8px; }
+.wap-wiz-btns .primary, .wap-wiz-btns .ghost { flex: 1; }
+.wap-input { width: 100%; padding: 11px 13px; border-radius: 10px; background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.14); color: #f0f2f5; font-size: 14px; }
+.wap-chip { align-self: flex-start; }
+.wap-spinner { width: 26px; height: 26px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--canary); animation: wap-spin 0.8s linear infinite; }
+@keyframes wap-spin { to { transform: rotate(360deg); } }
+.wap-wiz-done { align-items: flex-start; }
+.wap-check { width: 40px; height: 40px; border-radius: 50%; background: rgba(67, 160, 71, 0.18);
+  color: var(--ok); font-size: 22px; display: flex; align-items: center; justify-content: center; }
+.wap-ha-block { margin-top: 6px; padding: 12px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03); display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.wap-ha-block h5 { margin: 0; font-size: 13px; color: #dfe3e8; }
+
+/* ── facts strip ── */
+.wap-facts { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
+.wap-fact { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--edge); font-size: 13px; }
+.wap-fact-k { flex: none; width: 76px; color: var(--canary); font-weight: 600; }
+.wap-fact-v { color: var(--text); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+
+/* ── dashboard sketch ── */
+.wap-dash { border: 1px solid #2c2c2e; border-radius: 14px; overflow: hidden; background: #0c0e12; }
+.wap-dash-app { padding: 0; }
+.wap-dash-tabs { padding: 10px 12px 0; }
+.wap-dash-body { padding: 16px; min-height: 260px; }
+.wap-pill { display: inline-block; padding: 8px 18px; border-radius: 999px; font-weight: 700; font-size: 18px;
+  border: 1px solid transparent; }
+.wap-pill-off { background: #1a1c20; color: #7c8492; border-color: #2a2d33; }
+.wap-pill-quiet { background: rgba(3, 169, 244, 0.14); color: #67c7f5; border-color: rgba(3, 169, 244, 0.35); }
+.wap-pill-presence { background: rgba(67, 160, 71, 0.16); color: #6bd06f; border-color: rgba(67, 160, 71, 0.4); }
+.wap-pill-motion { background: rgba(251, 140, 0, 0.16); color: #ffb04d; border-color: rgba(251, 140, 0, 0.4); }
+.wap-pill-active { background: rgba(229, 57, 53, 0.16); color: #ff7a76; border-color: rgba(229, 57, 53, 0.4); }
+.wap-gauges { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
+.wap-gauge { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 10px; }
+.wap-gauge-k { font-size: 12px; color: var(--muted); }
+.wap-gauge-bar { height: 8px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.wap-gauge-fill { height: 100%; width: 8%; border-radius: 5px; background: var(--canary);
+  transition: width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.wap-spectrum { display: flex; align-items: flex-end; gap: 4px; height: 60px; margin-top: 6px; }
+.wap-spectrum i { flex: 1; background: linear-gradient(var(--canary), var(--canary-deep)); border-radius: 3px 3px 0 0;
+  height: 8%; transition: height 0.35s ease; }
+.wap-ac-card { padding: 14px; border-radius: 12px; border: 1px solid var(--edge); background: var(--surface-2); }
+.wap-ac-pill { font-weight: 700; margin-bottom: 8px; color: var(--ok); }
+.wap-ac-card.alarm { border-color: var(--alert); background: rgba(229, 57, 53, 0.12); }
+.wap-ac-card.alarm .wap-ac-pill { color: #ff7a76; }
+.wap-ac-card.muted .wap-ac-pill { color: var(--muted); }
+
+/* ── MQTT explorer ── */
+.wap-mqtt { border: 1px solid #2c2c2e; border-radius: 14px; overflow: hidden; background: #08080a; }
+.wap-mqtt-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #1a1a1c; }
+.wap-mqtt-col { background: #0a0a0c; padding: 10px 12px; min-width: 0; }
+.wap-mqtt-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+  margin-bottom: 8px; }
+.wap-mqtt-tree, .wap-mqtt-stream { display: flex; flex-direction: column; gap: 5px; min-height: 150px; }
+.wap-mqtt-row, .wap-mqtt-ev { display: flex; flex-direction: column; gap: 2px; padding: 5px 7px;
+  border-radius: 7px; background: rgba(255, 255, 255, 0.03); }
+.wap-mqtt-ev.live { border-left: 2px solid var(--signed); }
+.wap-mqtt-ev.disc { border-left: 2px solid var(--ok); }
+.wap-mqtt-topic { font: 11px ui-monospace, Menlo, monospace; color: var(--canary); word-break: break-all; }
+.wap-mqtt-payload { font: 11px ui-monospace, Menlo, monospace; color: #9fb2a4; word-break: break-all; }
+.wap-mqtt-disc { margin: 0; border-top: 1px solid #1a1a1c; }
+.wap-mqtt-disc > summary { cursor: pointer; padding: 10px 14px; color: var(--signed); font-size: 12.5px; }
+.wap-mqtt-ents { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 0 12px 12px; }
+.wap-ent { display: flex; flex-direction: column; gap: 1px; padding: 5px 7px; border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03); }
+.wap-ent-comp { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); }
+.wap-ent-name { font-size: 12px; color: var(--text); }
+.wap-ent-topic { font: 9.5px ui-monospace, Menlo, monospace; color: #6f8a99; word-break: break-all; }
+
+/* ── sandbox ── */
+.wap-sandbox { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.wap-sand-card { display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer;
+  align-items: flex-start; transition: transform 0.12s ease, border-color 0.12s ease; }
+.wap-sand-card:hover { transform: translateY(-2px); border-color: var(--canary-deep); }
+.wap-sand-card strong { color: var(--text); }
+.wap-sand-ha { color: var(--signed); }
+.wap-sandbox-read { margin-top: 14px; min-height: 1.4em; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+
+@media (max-width: 720px) {
+  .wap-two, .wap-facts, .wap-mqtt-cols, .wap-mqtt-ents { grid-template-columns: 1fr; }
+  .wap-mqtt-cols { gap: 10px; background: transparent; }
+}
+
 /* Kept at end of file: must win the cascade over every canvas rule above
    (.ws-canvas and .broom-3d re-declare touch-action:none at equal
    specificity later in the file than the sheet rules do). */

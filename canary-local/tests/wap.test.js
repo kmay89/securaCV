@@ -1,0 +1,196 @@
+// canary-local/tests/wap.test.js — the WAP page's honesty gate.
+//
+// Two jobs, mirroring tests/homeassistant.test.js:
+//  1. Cross-check devices/wap.json against its sources of truth (the
+//     canary-wap firmware, the registry, boards.json) so a hand-edit that
+//     bypasses the generator — or firmware drift — is caught here, not just
+//     by the generator's own asserts. Every SSID, route, MQTT topic, HA
+//     entity, boot line and wizard label the page shows must still exist in
+//     the source it claims to come from.
+//  2. Exercise the DOM-free cores the page ships (wap-ui.js: withId,
+//     bootLines, mqttApply, pillForEvent) so their contracts can't rot.
+
+const { test } = require("node:test");
+const assert = require("node:assert");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
+
+const ROOT = join(__dirname, "..");
+const REPO = join(ROOT, "..");
+const FW = join(REPO, "firmware/projects/canary-wap/arduino/canary_wap");
+
+const read = (p) => readFileSync(p, "utf8");
+const data = JSON.parse(read(join(ROOT, "devices/wap.json")));
+const registry = JSON.parse(read(join(ROOT, "devices/registry.json")));
+const boards = JSON.parse(read(join(ROOT, "devices/boards.json")));
+
+const ino = read(join(FW, "canary_wap.ino"));
+const wapServerH = read(join(FW, "wap_server.h"));
+const setupWizardH = read(join(FW, "setup_wizard.h"));
+const setupPageH = read(join(FW, "setup_page_html.h"));
+const bootBannerCpp = read(join(FW, "boot_banner.cpp"));
+const csiMqttCpp = read(join(FW, "csi_mqtt.cpp"));
+const companionH = read(join(FW, "companion_pwa.h"));
+const doc = read(join(REPO, "docs/getting_started_canary.md"));
+
+// ── 1. shape + sanity floors ───────────────────────────────────────────────
+test("wap.json has every section the page requires", () => {
+  for (const k of ["device", "ap", "captive", "routes", "wizard", "serial", "mqtt", "sensing", "sandbox", "docs"])
+    assert.ok(data[k], "missing section: " + k);
+});
+
+test("counts are not thin (a broken parse would fail here)", () => {
+  assert.strictEqual(data.wizard.steps.length, 5);
+  assert.strictEqual(data.mqtt.discovery.entities.length, 24);
+  assert.ok(data.serial.boot.length >= 15, "boot log too short");
+  assert.ok(data.mqtt.topics.length >= 10, "too few MQTT topics");
+  assert.ok(data.sandbox.length >= 5, "too few sandbox scenarios");
+  assert.strictEqual(data.sensing.pills.length, 5);
+});
+
+// ── 2. version + identity cross-checks ─────────────────────────────────────
+test("firmware version matches the .ino constant and rides the registry train", () => {
+  const m = ino.match(/FIRMWARE_VERSION\s*=\s*"([^"]+)"/);
+  assert.ok(m, "FIRMWARE_VERSION not found in canary_wap.ino");
+  assert.strictEqual(data.device.fw_version, m[1]);
+  assert.strictEqual(data.device.fw_train, registry.fw_train);
+  assert.ok(data.device.fw_version.startsWith(data.device.fw_train));
+});
+
+test("device_type matches the .ino and the board mapping matches boards.json", () => {
+  assert.match(ino, new RegExp('DEVICE_TYPE\\s*=\\s*"' + data.device.device_type + '"'));
+  assert.strictEqual(data.device.board_id, boards.device_board["canary-wap"]);
+  assert.ok(boards.boards[data.device.board_id], "board id not in boards.json");
+});
+
+// ── 3. the SoftAP / captive facts trace to the firmware ────────────────────
+test("AP + setup constants are the firmware's own", () => {
+  assert.ok(wapServerH.includes('AP_SSID_PREFIX    = "' + data.ap.ssid_prefix + '"'));
+  assert.ok(data.ap.ssid_example.startsWith(data.ap.ssid_prefix));
+  assert.strictEqual(data.ap.ip, "192.168.4.1");
+  assert.ok(ino.includes('"SecuraCV-%s", suffix'), "AP ssid format drifted");
+  assert.ok(ino.includes('"cv-%s", encoded'), "AP password format drifted");
+  assert.ok(setupWizardH.includes('prefs.begin("' + data.ap.nvs_namespace + '"'));
+  assert.ok(setupWizardH.includes('getBool("' + data.ap.nvs_key + '"'));
+});
+
+test("captive.html is the firmware's CAPTIVE_PORTAL_HTML, verbatim", () => {
+  const m = setupPageH.match(/R"HTML\(([\s\S]*)\)HTML"/);
+  assert.ok(m, "CAPTIVE_PORTAL_HTML not found");
+  assert.strictEqual(data.captive.html, m[1], "captive html drifted from firmware");
+  assert.match(data.captive.html, /Set up your Canary/);
+  // the OS-probe success tokens are the host-tested contract
+  const probe = read(join(FW, "captive_probe.h"));
+  assert.ok(probe.includes("Microsoft NCSI") && probe.includes("Microsoft Connect Test"));
+});
+
+// ── 4. every setup route still exists in the firmware ──────────────────────
+test("setup routes are real string literals in the firmware", () => {
+  for (const r of ["/companion", "/api/wifi/scan", "/api/wifi/connect", "/api/wifi/ap-only", "/api/wifi/pair-token"]) {
+    assert.ok(data.routes.some((x) => x.path === r), "route missing from wap.json: " + r);
+    assert.ok(ino.includes(r), "route not in firmware: " + r);
+  }
+});
+
+// ── 5. MQTT topics + HA discovery trace to csi_mqtt.cpp ────────────────────
+test("MQTT prefix + topic pattern are the firmware's", () => {
+  assert.ok(csiMqttCpp.includes('DEFAULT_PREFIX = "' + data.mqtt.prefix + '"'));
+  assert.ok(csiMqttCpp.includes('"%s/%s/%s"'), "build_topic format drifted");
+  assert.ok(csiMqttCpp.includes('DISCOVERY_PREFIX = "' + data.mqtt.discovery.prefix + '"'));
+});
+
+test("only events is non-retained (the retention rule the page relies on)", () => {
+  const events = data.mqtt.topics.find((t) => t.suffix === "events");
+  assert.ok(events && events.retained === false, "events must be non-retained");
+  for (const t of data.mqtt.topics)
+    if (t.suffix !== "events" && !String(t.payload).startsWith('"'))
+      assert.strictEqual(t.retained, true, t.suffix + " should be retained");
+});
+
+test("every MQTT topic suffix appears in csi_mqtt.cpp", () => {
+  for (const t of data.mqtt.topics.concat(data.mqtt.subscribed)) {
+    const leaf = t.suffix.split("/").pop();
+    assert.ok(csiMqttCpp.includes('"' + t.suffix + '"') || csiMqttCpp.includes('"' + leaf + '"'),
+      "topic not in firmware: " + t.suffix);
+  }
+});
+
+test("every HA discovery entity object_id is a real one", () => {
+  assert.strictEqual(data.mqtt.discovery.entities.length, 24);
+  for (const e of data.mqtt.discovery.entities)
+    assert.ok(csiMqttCpp.includes('"' + e.object_id + '"'), "entity not in firmware: " + e.object_id);
+  assert.strictEqual(data.mqtt.discovery.counts.entities, "24/24");
+});
+
+// ── 6. serial boot lines trace to a firmware source ────────────────────────
+test("tagged boot lines exist in the firmware's serial output", () => {
+  const sources = ino + csiMqttCpp + bootBannerCpp;
+  const anchors = [
+    "Camera ready for peek", "SD card ready for witness records",
+    "Starting WiFi Access Point", "AP started:", "Pull-OTA engine ready",
+  ];
+  for (const a of anchors) assert.ok(sources.includes(a), "boot anchor drifted: " + a);
+  assert.ok(bootBannerCpp.includes("The canary is singing. Everything is working."));
+  assert.ok(data.serial.banner.some((l) => l.includes("SecuraCV Canary WAP")));
+  assert.ok(data.serial.ready.some((l) => l.includes("The canary is singing")));
+});
+
+// ── 7. wizard labels + sensing pills trace to their sources ────────────────
+test("every wizard step title is in companion_pwa.h", () => {
+  for (const s of data.wizard.steps) assert.ok(companionH.includes(s.title), "wizard title drifted: " + s.title);
+});
+
+test("sensing pills are the getting-started guide's own", () => {
+  for (const p of data.sensing.pills) assert.ok(doc.includes("**" + p.name + "**"), "pill drifted: " + p.name);
+});
+
+test("sandbox scenarios only publish to real topics", () => {
+  const suffixes = new Set(data.mqtt.topics.map((t) => t.suffix));
+  for (const sc of data.sandbox)
+    for (const pub of sc.mqtt || [])
+      assert.ok(suffixes.has(pub.suffix), "sandbox publishes unknown topic: " + pub.suffix);
+});
+
+// ── 8. DOM-free cores (wap-ui.js) ──────────────────────────────────────────
+test("withId substitutes the device id into templates", async () => {
+  const { withId } = await import("../assets/wap-ui.js");
+  assert.strictEqual(withId("securacv/<id>/status", "canary-x"), "securacv/canary-x/status");
+  assert.strictEqual(withId("a/<device_id>/b", "z"), "a/z/b");
+  assert.strictEqual(withId("no-vars", "z"), "no-vars");
+});
+
+test("bootLines flattens banner+boot+ready in order with mapped classes", async () => {
+  const { bootLines } = await import("../assets/wap-ui.js");
+  const lines = bootLines(data.serial);
+  assert.strictEqual(lines.length,
+    data.serial.banner.length + data.serial.boot.length + data.serial.ready.length);
+  for (const l of lines) { assert.ok(typeof l.text === "string"); assert.ok(/^wap-/.test(l.cls)); }
+  // an [OK] line becomes wap-ok; a [WIFI]/[MQTT] line becomes wap-net
+  const okIdx = data.serial.boot.findIndex((s) => s.tag === "[OK]");
+  assert.strictEqual(lines[data.serial.banner.length + okIdx].cls, "wap-ok");
+});
+
+test("mqttApply obeys retention (retained stored, events not, clear removes)", async () => {
+  const { mqttApply } = await import("../assets/wap-ui.js");
+  const store = {};
+  mqttApply(store, { topic: "a/status", payload: "{on}", retain: true });
+  assert.strictEqual(store["a/status"], "{on}");
+  mqttApply(store, { topic: "a/events", payload: "{ev}", retain: false });
+  assert.ok(!("a/events" in store), "non-retained event must not be stored");
+  mqttApply(store, { topic: "a/status", clear: true });
+  assert.ok(!("a/status" in store), "clear must remove");
+});
+
+test("pillForEvent maps CSI events to the right presence pill", async () => {
+  const { pillForEvent } = await import("../assets/wap-ui.js");
+  assert.strictEqual(pillForEvent("motion"), "Motion");
+  assert.strictEqual(pillForEvent("empty"), "Quiet");
+  assert.strictEqual(pillForEvent("subtle"), "Presence");
+  assert.strictEqual(pillForEvent("mic_mute"), null);
+  // every pill it can return is one the page knows how to render
+  const known = new Set(data.sensing.pills.map((p) => p.name));
+  for (const ev of ["motion", "subtle", "empty", "active", "present"]) {
+    const p = pillForEvent(ev);
+    if (p) assert.ok(known.has(p), "pillForEvent returned unknown pill: " + p);
+  }
+});
