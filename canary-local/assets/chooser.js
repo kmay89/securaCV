@@ -96,6 +96,9 @@ function render() {
     const meet = el("a", "primary small door", "meet it live →");
     meet.href = `index.html#${c.device}`;
     doors.append(meet);
+    const spec = el("a", "door", "spec it in the Workshop →");
+    spec.href = `workshop.html#${c.device}`;
+    doors.append(spec);
     if (encSet) {
       for (const p of encSet.parts.filter((p) => !p.preview_mesh).slice(0, 4)) {
         const a = el("a", null, `${p.name}.stl`);

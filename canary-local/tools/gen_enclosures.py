@@ -426,3 +426,379 @@ def build_main():
 
 
 build_main()
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Workshop data (the production-workshop journey) → devices/workshop.json
+#
+# The Tesla-configurator promise, kept honest: every option, package,
+# consequence, BOM link and firmware flag below is PARSED from — or
+# VERIFIED against — the sources maintainers already edit:
+#
+#   · .scad customizer groups        → the options and their consequences
+#     (the `// LiPo -> battery bay (enlarges the case)` comments ARE the
+#      checklist copy — written by the enclosure's own author)
+#   · README "example presets" table → packages, with rendered outer dims
+#   · README variant tables (sets)   → each package's committed STL parts
+#   · docs/hardware/bom_*.csv        → option ↔ RefDes links + build recipes
+#     (the CSV's own `# ... build (REF+REF+…)` comment rows)
+#   · firmware/configs/*/config.h    → FEATURE_* flags per flavor
+#   · template_*.svg                 → 1:1 paper drill templates
+#
+# OPTION_LINKS is the one curated mapping (which RefDes serves which
+# checkbox) — and every ref/flag it names is verified to exist in the
+# parsed BOM/configs, so a renamed part or flag fails the drift gate
+# instead of silently lying on the page.
+# ═════════════════════════════════════════════════════════════════════════
+
+WORKSHOP_JSON = REPO / "canary-local/devices/workshop.json"
+FWCONF = REPO / "firmware/configs"
+
+# device id → (configs project dir, flavors to publish)
+FW_FLAVORS = {
+    "canary-wap": ("canary-wap", ["default", "mobile"]),
+    "canary-vision": ("canary-vision", ["default"]),
+    "canary-sense": ("canary-sense", ["default", "wellbeing"]),
+    "canary-display-watch": ("canary-display", ["watch"]),
+    "canary-display-dash": ("canary-display", ["dash"]),
+}
+
+# (scad, option) → BOM RefDes + firmware flags. Refs justified by the CSV
+# descriptions (e.g. M1 = "L76K GNSS receiver module" ↔ opt_gps = "L76K
+# GPS module"); alternates ride along so the page can show them.
+OPTION_LINKS = {
+    ("canary_wap_enclosure.scad", "opt_camera"): {
+        "bom": ["CW1", "ADH1"], "fw": ["FEATURE_CAMERA_PEEK"]},
+    ("canary_wap_enclosure.scad", "opt_buzzer"): {
+        "bom": ["BZ1", "R1", "Q1", "Dfb1"], "fw": ["FEATURE_CHIRP"]},
+    ("canary_wap_enclosure.scad", "opt_led"): {
+        "bom": ["DLED1", "R2", "C1", "LP1"], "fw": []},
+    ("canary_wap_enclosure.scad", "opt_battery"): {
+        "bom": ["BT1", "BT1-ALT1", "BT1-ALT2"], "fw": []},
+    ("canary_wap_enclosure.scad", "opt_gps"): {
+        "bom": ["M1"], "fw": ["FEATURE_GNSS"]},
+    ("canary_wap_enclosure.scad", "opt_tamper"): {
+        "bom": ["SW2", "SW2-ALT", "MAG1"], "fw": ["FEATURE_TAMPER_GPIO"]},
+    ("canary_wap_enclosure.scad", "opt_touch"): {
+        "bom": ["TP1", "R6"], "fw": []},
+    ("canary_wap_enclosure.scad", "opt_antenna"): {
+        "bom": ["ANT1"], "fw": []},
+    ("canary_wap_enclosure.scad", "opt_seal"): {
+        "bom": ["FIL1", "PLUG1", "VENT1", "ADH1"], "fw": []},
+    ("canary_wap_enclosure.scad", "opt_mount"): {
+        "bom": ["SCR4"], "fw": []},
+    ("canary_watch_station.scad", "opt_batt"): {
+        "bom": ["W-BT1"], "fw": []},
+    # Sense options: BOM pending (honest gap carried from build.json);
+    # firmware flags still link where the config names them.
+    ("canary_sense_enclosure.scad", "opt_led"): {
+        "bom": [], "fw": ["FEATURE_STATUS_LED"]},
+    ("canary_sense_enclosure.scad", "opt_lux"): {
+        "bom": [], "fw": ["FEATURE_AMBIENT_LIGHT"]},
+    ("canary_sense_enclosure.scad", "opt_vent"): {"bom": [], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_tamper"): {"bom": [], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_seal"): {"bom": [], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_mount"): {"bom": [], "fw": []},
+}
+
+# README preset-table name → variant-set id (both must exist; verified).
+WAP_PRESET_SETS = {
+    "battery_full": "wap-battery",
+    "compact_plain": "wap-compact",
+    "battery_weather": "wap-weather",
+}
+
+# "What's on it" keyword → option (parsing the README's own words).
+PRESET_KEYWORDS = [
+    ("camera", "opt_camera", True), ("no camera", "opt_camera", False),
+    ("buzzer", "opt_buzzer", True), ("led", "opt_led", True),
+    ("lipo", "opt_battery", True), ("gps", "opt_gps", True),
+    ("tamper", "opt_tamper", True), ("seal", "opt_seal", True),
+    ("mount", "opt_mount", True),
+]
+
+# 1:1 paper drill templates (rendered by render.sh from
+# canary_templates_2d.scad; print at 100% — the 20 mm calibration square
+# in the corner must measure exactly 20 mm).
+TEMPLATES = {
+    "template_studs.svg": {
+        "label": "Keyhole / T-stud pair",
+        "devices": ["canary-wap", "canary-sense"],
+        "note": "generic two-stud pattern — set the stud gap per case",
+    },
+    "template_bracket.svg": {
+        "label": "Wall-bracket screw + keyhole pattern",
+        "devices": ["canary-vision", "canary-sense"],
+        "note": "mirrors the Vision/Sense wall bracket defaults",
+    },
+    "template_doorbell.svg": {
+        "label": "Doorbell plate: screws + cable oval + outline",
+        "devices": ["canary-vision"],
+        "note": "mirrors the doorbell plate defaults",
+    },
+}
+
+
+def parse_features(project: str, flavor: str):
+    path = FWCONF / project / flavor / "config.h"
+    feats = {}
+    for ln in path.read_text(errors="replace").splitlines():
+        m = re.match(r"^#define\s+(FEATURE_\w+)\s+(\d)\s*(?://\s*(.*))?$", ln)
+        if m:
+            feats[m.group(1)] = {
+                "on": m.group(2) == "1",
+                **({"note": m.group(3).strip()} if m.group(3) else {}),
+            }
+    if not feats:
+        raise SystemExit(f"workshop: no FEATURE_* flags parsed from {path}")
+    return feats
+
+
+def parse_recipes(csv_name: str):
+    """The BOM CSV's own `# <name> (REF+REF+…)` summary rows — named build
+    recipes with their indicative subtotal and note, maintained in the CSV."""
+    recipes = []
+    with open(HW / csv_name, newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if not row or not row[0].startswith("#"):
+                continue
+            m = re.match(r"^#\s*(.+?)\s*\(([^)]+)\)\s*$", row[0])
+            if not m or "+" not in m.group(2):
+                continue
+            usd = next((c for c in row[1:] if re.fullmatch(r"\d+\.\d\d", c)), None)
+            note = next((c for c in reversed(row[1:]) if c and c != usd), "")
+            recipes.append({
+                "label": m.group(1), "formula": m.group(2),
+                **({"usd": float(usd)} if usd else {}),
+                **({"note": note} if note else {}),
+            })
+    return recipes
+
+
+def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
+                 features_all: dict):
+    """opt_* booleans + their enum companions from the parsed customizer
+    groups, enriched with verified BOM/firmware links."""
+    out = []
+    parsed = scads.get(scad)
+    if not parsed:
+        return out
+    refs = {r["ref"] for r in bom_rows_by_dev.get(dev, [])}
+    flags = set()
+    for fl in features_all.get(dev, {}).values():
+        flags |= set(fl)
+    for g in parsed["groups"]:
+        has_opt = any(p["name"].startswith("opt_") for p in g["params"])
+        if not has_opt:
+            continue
+        for p in g["params"]:
+            is_opt = p["name"].startswith("opt_")
+            is_enum_companion = "enum" in p and p["name"] in ("mount_style",)
+            if not (is_opt or is_enum_companion):
+                continue
+            comment = p.get("comment", "")
+            label, _, consequence = comment.partition("->")
+            link = OPTION_LINKS.get((scad, p["name"]), {"bom": [], "fw": []})
+            for ref in link["bom"]:
+                if ref not in refs:
+                    raise SystemExit(
+                        f"workshop: {scad}:{p['name']} names BOM ref {ref} "
+                        f"absent from {dev}'s parsed BOM — fix OPTION_LINKS "
+                        f"or the CSV")
+            for f in link["fw"]:
+                if f not in flags:
+                    raise SystemExit(
+                        f"workshop: {scad}:{p['name']} names {f} absent "
+                        f"from {dev}'s parsed config.h flags")
+            out.append({
+                "id": p["name"],
+                "group": g["name"].split("—")[0].split(" you have")[0].strip(),
+                "label": label.strip() or p["name"],
+                "consequence": consequence.strip(),
+                "default": p["default"] == "true",
+                **({"enum": p["enum"]} if "enum" in p else {}),
+                **({"bom": link["bom"]} if link["bom"] else {}),
+                **({"fw": link["fw"]} if link["fw"] else {}),
+            })
+    return out
+
+
+def wap_packages(md: str, sets_by_id: dict):
+    """README 'The three committed example presets' table → packages with
+    real rendered dims, option vectors parsed from its own words, and the
+    variant set's committed STL parts."""
+    m = re.search(r"^The three committed example presets:\s*$(.*?)(?=^## |\Z)",
+                  md, re.M | re.S)
+    if not m:
+        raise SystemExit("workshop: README preset table not found")
+    pkgs = []
+    for row in re.findall(r"^\|(.+)\|$", m.group(1), re.M):
+        c = [x.strip() for x in row.split("|")]
+        if len(c) < 3 or c[0].startswith("-") or c[0] in ("Preset",):
+            continue
+        name = re.sub(r"\*+", "", c[0]).strip()
+        if name not in WAP_PRESET_SETS:
+            continue
+        set_id = WAP_PRESET_SETS[name]
+        st = sets_by_id.get(set_id)
+        if not st:
+            raise SystemExit(f"workshop: preset {name} maps to missing set {set_id}")
+        contents = re.sub(r"\*+", "", c[2]).strip()
+        low = contents.lower()
+        opts = {}
+        base = low.split("+")[0]
+        if name == "battery_weather" and "battery_full" in low:
+            # "battery_full + gasket seal + …" — inherit, then add
+            opts = dict(pkgs[[p["id"] for p in pkgs].index("battery_full")]["options"])
+        for kw, opt, val in PRESET_KEYWORDS:
+            if kw in low:
+                # a mention always wins (battery_weather inherits camera=True
+                # from battery_full, then "+ gasket seal" flips seal on);
+                # "no camera" is listed after "camera" so negation lands last
+                opts[opt] = val
+        for o in ("opt_camera", "opt_buzzer", "opt_led", "opt_battery",
+                  "opt_gps", "opt_tamper", "opt_seal", "opt_mount",
+                  "opt_touch", "opt_antenna"):
+            opts.setdefault(o, False)
+        pkgs.append({
+            "id": name,
+            "label": name.replace("_", " "),
+            "set": set_id,
+            "dims_mm": re.sub(r"\*+", "", c[1]).strip(),
+            "contents": contents,
+            "options": opts,
+            "parts": st["parts"],
+            **({"preview": st["preview"]} if st.get("preview") else {}),
+        })
+    if len(pkgs) != 3:
+        raise SystemExit(f"workshop: expected 3 wap presets, parsed {len(pkgs)}")
+    return pkgs
+
+
+def sets_as_packages(sets, dev, exclude=()):
+    """Devices without a preset table: each released variant set IS a
+    package (committed, print-validated); in-dev sets ride along marked."""
+    out = []
+    for s in sets:
+        if s["device"] != dev or s["id"] in exclude or not s["parts"]:
+            continue
+        out.append({
+            "id": s["id"],
+            "label": s["name"],
+            "set": s["id"],
+            "contents": s.get("for") or s.get("note", ""),
+            "status": s["status"],
+            "parts": s["parts"],
+            **({"preview": s["preview"]} if s.get("preview") else {}),
+        })
+    return out
+
+
+def workshop_main():
+    md = (ENC / "README.md").read_text(errors="replace")
+    sets = parse_tables(md)
+    sets_by_id = {s["id"]: s for s in sets}
+    scads = {}
+    for s in sets:
+        if s["scad"] and s["scad"] not in scads:
+            scads[s["scad"]] = parse_scad(ENC / s["scad"])
+
+    bom_rows = {}
+    for name, dev_id, prefix in BOM_MAP:
+        bom_rows[dev_id] = parse_bom(name, prefix)["rows"]
+
+    features = {}
+    for dev, (project, flavors) in FW_FLAVORS.items():
+        features[dev] = {fl: parse_features(project, fl) for fl in flavors}
+
+    for f, t in TEMPLATES.items():
+        if not (ENC / f).exists():
+            raise SystemExit(f"workshop: template {f} missing from {ENC}")
+
+    fasteners = re.search(r"\*\*Fasteners\*\*\s*\|\s*([^|]+)\|", md)
+
+    devices = {
+        "canary-wap": {
+            "scad": "canary_wap_enclosure.scad",
+            "options": scad_options(scads, "canary_wap_enclosure.scad",
+                                    bom_rows, "canary-wap", features),
+            "packages": wap_packages(md, sets_by_id),
+            "default_package": "battery_full",
+            "addons": [{
+                "id": "solar_thermal_kit",
+                "label": "Solar / thermal outdoor kit",
+                "set": "thermal-outdoor-kit",
+                "when": "opt_seal",
+                "blurb": "solar radiation shield + desiccant tray — for a "
+                         "case that lives in the sun",
+                "parts": sets_by_id["thermal-outdoor-kit"]["parts"],
+            }],
+            "coupon": sets_by_id["wap-clip-coupon"]["parts"][0],
+            "always": ([{"label": "Fasteners",
+                         "note": re.sub(r"\*+", "", fasteners.group(1)).strip()}]
+                       if fasteners else []),
+            "recipes": parse_recipes("bom_canary_wap.csv"),
+            "templates": ["template_studs.svg"],
+        },
+        "canary-vision": {
+            "scad": "canary_vision_enclosure.scad",
+            "options": [],
+            "packages": sets_as_packages(sets, "canary-vision",
+                                         exclude=("vision-mount-kit",)),
+            "addons": [{
+                "id": "vision_mount_kit",
+                "label": "Wall bracket + GoPro knob",
+                "set": "vision-mount-kit",
+                "blurb": "bracket mount kit for any Vision case",
+                "parts": sets_by_id["vision-mount-kit"]["parts"],
+            }],
+            "recipes": parse_recipes("bom_canary_vision.csv"),
+            "templates": ["template_bracket.svg", "template_doorbell.svg"],
+        },
+        "canary-sense": {
+            "scad": "canary_sense_enclosure.scad",
+            "options": scad_options(scads, "canary_sense_enclosure.scad",
+                                    bom_rows, "canary-sense", features),
+            "packages": sets_as_packages(sets, "canary-sense"),
+            "templates": ["template_bracket.svg"],
+        },
+        "canary-display-watch": {
+            "scad": "canary_watch_station.scad",
+            "options": scad_options(scads, "canary_watch_station.scad",
+                                    bom_rows, "canary-display-watch", features),
+            "packages": sets_as_packages(sets, "canary-display-watch"),
+        },
+        "canary-display-dash": {
+            "scad": "canary_dash_display.scad",
+            "options": [],
+            "packages": sets_as_packages(sets, "canary-display-dash"),
+        },
+    }
+    for dev in devices:
+        devices[dev]["firmware"] = {
+            "project": FW_FLAVORS[dev][0],
+            "source": f"firmware/configs/{FW_FLAVORS[dev][0]}",
+            "flavors": features[dev],
+        }
+
+    data = {
+        "generated_by": "canary-local/tools/gen_enclosures.py",
+        "sources": [
+            "docs/hardware/enclosure/README.md",
+            "docs/hardware/enclosure/*.scad (customizer annotations)",
+            "docs/hardware/bom_*.csv (rows + build-recipe comments)",
+            "firmware/configs/*/config.h (FEATURE_* flags)",
+        ],
+        "calibration_note": "print templates at 100% / \"actual size\" — the "
+                            "20 mm calibration square must measure exactly 20 mm",
+        "devices": devices,
+        "templates": TEMPLATES,
+    }
+    WORKSHOP_JSON.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
+    n_opts = sum(len(d["options"]) for d in devices.values())
+    n_pkgs = sum(len(d["packages"]) for d in devices.values())
+    print(f"OK workshop.json: {len(devices)} devices, {n_pkgs} packages, "
+          f"{n_opts} linked options")
+
+
+workshop_main()

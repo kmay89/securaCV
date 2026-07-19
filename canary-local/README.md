@@ -201,6 +201,39 @@ hook: the lab's data model already carries everything it needs (the full
 parameter schema per configurator); what's missing is only the ~15 MB
 evaluator, deliberately not shipped by default.
 
+## 4c. The Workshop: spec it like a car, build it like a kit
+
+`workshop.html` is the production journey — Configure → Print → Gather →
+Assemble → Flash → Your build — and its rule is that every pane is
+someone else's maintained file, re-emitted as `devices/workshop.json` by
+the same generator and drift-gated in CI:
+
+| The page shows | Parsed from |
+|---|---|
+| option checkboxes + consequences ("LiPo → battery bay, enlarges the case") | the `.scad`'s own customizer comments |
+| packages with real outer dimensions | the enclosure README's preset table |
+| each package's case parts | the variant tables (committed, print-validated STLs) |
+| option → parts links (`opt_gps` → `M1 L76K`) | `docs/hardware/bom_*.csv` rows — **verified at generation**: a renamed RefDes fails the build |
+| option → firmware links (`opt_gps` → `FEATURE_GNSS`) | `firmware/configs/*/config.h` — same verification |
+| reference builds with prices | the BOM's own `# … (REF+REF)` summary rows |
+| drill templates (print at 100%, 20 mm calibration square) | `template_*.svg`, rendered from `canary_templates_2d.scad` |
+
+The honesty ribbon on the 3D viewport is the design's heart: tick a
+combination that matches a curated preset and you're looking at exactly
+your case (with its rendered dimensions); deviate and the ribbon says
+"custom combo — showing nearest preset", while the **OpenSCAD parameter
+set** download always encodes your exact choices (named after the scad,
+so OpenSCAD's customizer picks it up as a preset automatically). Two
+audiences, one page: "Just dreaming" hides RefDes/flag chips and
+formulas; "I'm building it" shows the whole sheet. Chooser results and
+device sheets deep-link in (`workshop.html#<device-id>`).
+
+`tests/workshop.test.js` pins the promises (every package resolves to a
+real set, every ref/flag link is live, the wap presets carry the
+README's own option story, mesh volume math is exact on a reference
+cube); `tests/workshop_probe.mjs` drives the real page in CI — packages
+render, the ribbon flips, the checklist speaks BOM, every stage walks.
+
 ## 5. Where this lives (repo → Pages → securacv.com)
 
 Three tiers, no lock-in, one source of truth:

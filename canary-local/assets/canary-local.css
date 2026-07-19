@@ -310,3 +310,125 @@ footer p { max-width: 720px; margin: 0 auto; }
 .bom-note { border-top: 1px solid #1e1e1e; margin-top: 8px; padding-top: 7px; font-size: 12.5px; color: #b9b09a; }
 .asm-steps { padding-left: 20px; color: #cfcfcf; }
 .asm-steps li { margin: 7px 0; }
+
+/* ── The Workshop (workshop.html) — Tesla-configurator journey ───────── */
+#workshop { max-width: 1180px; margin: 0 auto; padding: 0 22px 60px; }
+.ws-hero .lede { max-width: 760px; }
+
+.ws-devices { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 14px; }
+.ws-device { display: flex; flex-direction: column; gap: 2px; text-align: left;
+  background: var(--surface); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 14px; padding: 10px 14px; cursor: pointer; font: inherit; }
+.ws-device .muted { font-size: 12px; }
+.ws-device.on { border-color: var(--canary); box-shadow: 0 0 0 1px var(--canary); }
+
+.ws-mode { display: flex; gap: 8px; margin: 0 0 16px; }
+
+.ws-rail { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 18px;
+  border-bottom: 1px solid var(--edge); padding-bottom: 12px; }
+.ws-stagebtn { display: inline-flex; align-items: center; gap: 8px;
+  background: none; border: 1px solid var(--edge); border-radius: 999px;
+  color: var(--muted); padding: 7px 14px; cursor: pointer; font: inherit; }
+.ws-stagebtn.on { color: var(--text); border-color: var(--canary); }
+.ws-stageno { display: inline-grid; place-items: center; width: 20px; height: 20px;
+  border-radius: 50%; background: var(--surface-2); font-size: 12px; }
+.ws-stagebtn.on .ws-stageno { background: var(--canary); color: #141414; }
+
+.ws-configure { display: grid; grid-template-columns: minmax(320px, 5fr) minmax(360px, 6fr);
+  gap: 26px; }
+@media (max-width: 900px) { .ws-configure { grid-template-columns: 1fr; } }
+
+.ws-pkgs { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px; margin: 8px 0 4px; }
+.ws-pkg { display: flex; flex-direction: column; gap: 4px; text-align: left;
+  background: var(--surface); border: 1px solid var(--edge); border-radius: 14px;
+  color: var(--text); padding: 10px; cursor: pointer; font: inherit; }
+.ws-pkg img { width: 100%; border-radius: 8px; background: #0a0a0a; }
+.ws-pkg:hover { border-color: var(--canary-deep); }
+.ws-dims { color: var(--canary); font-size: 12.5px; }
+.ws-contents { color: var(--muted); font-size: 12.5px; }
+
+.ws-optgroup { margin: 14px 0 4px; }
+.ws-optgroup h4, .ws-check h4 { margin: 10px 0 6px; color: var(--canary-deep);
+  font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+.ws-opt { display: flex; gap: 10px; align-items: flex-start; padding: 7px 8px;
+  border-radius: 10px; cursor: pointer; }
+.ws-opt:hover { background: var(--surface); }
+.ws-opt input { margin-top: 3px; accent-color: var(--canary); }
+.ws-optbody { display: flex; flex-direction: column; gap: 2px; }
+.ws-conseq { color: var(--muted); font-size: 12.5px; }
+.ws-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.ws-ref, .ws-flag { font-size: 11px; background: var(--surface-2); color: #b9b09a;
+  border: 1px solid var(--edge); border-radius: 6px; padding: 1px 6px; }
+.ws-flag { color: #7fb7d9; }
+.ws-addon { border: 1px dashed var(--edge); border-radius: 12px; margin-top: 10px; }
+.ws-gated { opacity: 0.45; }
+.ws-opt-enum select { background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 8px; padding: 4px 8px; font: inherit; }
+.ws-optlabel { color: var(--muted); font-size: 12.5px; margin-top: 5px; }
+
+.ws-stage { position: relative; background: var(--surface); border: 1px solid var(--edge);
+  border-radius: var(--radius); overflow: hidden; }
+.ws-canvas { width: 100%; height: 400px; display: block; touch-action: none; }
+.ws-ribbon { position: absolute; left: 12px; top: 12px; font-size: 12.5px;
+  background: #000a; border: 1px solid var(--edge); border-radius: 999px;
+  padding: 4px 12px; color: var(--muted); backdrop-filter: blur(4px); }
+.ws-ribbon.ws-exact { color: #9ccc9c; border-color: #2e4d2e; }
+.ws-ribbon.ws-custom { color: var(--canary); border-color: #4d431f; }
+.ws-meshnote { position: absolute; right: 12px; bottom: 10px; font-size: 12px; }
+
+.ws-check { background: var(--surface); border: 1px solid var(--edge);
+  border-radius: var(--radius); padding: 14px 18px; margin-top: 14px; }
+.ws-partlist, .ws-bomlist, .ws-flaglist { list-style: none; margin: 4px 0; padding: 0; }
+.ws-partlist li, .ws-bomlist li, .ws-flaglist li { margin: 5px 0; font-size: 13.5px; }
+.ws-because { color: var(--canary-deep); font-size: 12px; }
+.ws-alt { opacity: 0.6; }
+.ws-warn { color: var(--warn); }
+.ws-on .ws-flag { color: #9ccc9c; }
+.ws-off .ws-flag { color: var(--warn); }
+.ws-dl { background: var(--canary); color: #141414; border: none; border-radius: 999px;
+  padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; margin-top: 10px; }
+.ws-dl:hover { background: #ffdf7a; }
+
+.ws-stagebody { animation: wsfade 0.25s ease; }
+@keyframes wsfade { from { opacity: 0; transform: translateY(4px); } }
+
+.ws-printlist { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.ws-printrow { background: var(--surface); border: 1px solid var(--edge);
+  border-radius: 12px; padding: 10px 14px; }
+.ws-printhead { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.ws-printrow p { margin: 5px 0 0; font-size: 13px; }
+.ws-stl { margin-left: auto; color: var(--canary); text-decoration: none; }
+.ws-settings { background: var(--surface); border: 1px solid var(--edge);
+  border-radius: 12px; padding: 10px 16px; margin: 12px 0; }
+.ws-settings ul { margin: 6px 0; padding-left: 18px; color: #cfcfcf; font-size: 13.5px; }
+
+.ws-gathertotal { font-size: 17px; margin: 6px 0 10px; }
+.ws-recipes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px; margin: 8px 0; }
+.ws-recipe { display: flex; flex-direction: column; gap: 3px; background: var(--surface);
+  border: 1px solid var(--edge); border-radius: 12px; padding: 10px 14px; font-size: 13px; }
+
+.ws-templates { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px; margin: 10px 0; }
+.ws-template { display: flex; flex-direction: column; gap: 5px; background: var(--surface);
+  border: 1px solid var(--edge); border-radius: 12px; padding: 10px; font-size: 13px; }
+.ws-template img { width: 100%; border-radius: 8px; background: #fff; }
+
+.ws-flavors { display: flex; gap: 8px; margin: 6px 0 10px; }
+.ws-allflags { columns: 2; }
+@media (max-width: 700px) { .ws-allflags { columns: 1; } }
+
+.ws-card { background: var(--surface); border: 1px solid var(--canary-deep);
+  border-radius: var(--radius); padding: 18px 22px; }
+.ws-cardacts { display: flex; gap: 10px; }
+
+/* audience: dreaming hides the deep sheet (refs, flags, formulas) */
+.ws-dreaming .b-only { display: none !important; }
+
+@media print {
+  body { background: #fff; color: #000; }
+  #hero, .ws-devices, .ws-mode, .ws-rail, .ws-cardacts, #foot { display: none !important; }
+  .ws-card { border-color: #000; color: #000; background: #fff; }
+  .ws-card .muted, .ws-card .body { color: #222; }
+}
