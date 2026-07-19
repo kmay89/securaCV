@@ -22,6 +22,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 EMU_DIR="$PWD"
+REPO_ROOT="$(cd "$EMU_DIR/../.." && pwd)"
 FW="$EMU_DIR/../../firmware"
 PROJ="$FW/projects/canary-display"
 TP="$EMU_DIR/third_party"
@@ -101,6 +102,11 @@ DEFINES=(
   -Wno-builtin-macro-redefined
   '-D__DATE__="emu"'
   '-D__TIME__="build"'
+  # ...and __FILE__/asserts embed absolute source paths, which differ
+  # between a laptop and a CI runner. Map both roots to stable names so
+  # the same sources produce the same bytes anywhere.
+  -ffile-prefix-map="$REPO_ROOT"=/securacv
+  -ffile-prefix-map="$EMU_DIR"=/securacv/canary-local/emulator
   # ArduinoJson in plain-C++ mode: the shim String is not the real one,
   # and the display parses from byte buffers only (no Stream/Print/Flash).
   -DARDUINOJSON_ENABLE_ARDUINO_STRING=0
