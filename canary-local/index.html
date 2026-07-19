@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>canary.local — meet your Canary</title>
+  <meta name="description" content="The Canary family's local guide: live firmware emulators, 3D device cards, and fix-it flows. Works offline; nothing phones anywhere." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+</head>
+<body>
+  <header id="hero">
+    <div class="mark" aria-hidden="true">
+      <!-- the canary mark, in the firmware's own palette -->
+      <svg viewBox="0 0 64 64" width="52" height="52">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+      </svg>
+    </div>
+    <h1>canary<span class="dot">.</span>local</h1>
+    <p class="lede">
+      Meet your Canary before you meet your Canary. Every card below is the real
+      device — the displays run their <em>actual firmware</em>, compiled for this
+      page, verifying real signatures. Learn it, break it, fix it here; then set
+      up the one on your desk right the first time.
+    </p>
+    <p class="fineprint">
+      <span id="fw-train">firmware train</span> · works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main>
+    <div id="cards" class="cards" role="list"></div>
+  </main>
+
+  <div id="sheet-root" aria-live="polite"></div>
+
+  <footer>
+    <p>
+      A SecuraCV page. The emulator is the firmware:
+      <code>firmware/projects/canary-display</code> compiled to WebAssembly —
+      same faces, same mood engine, same Ed25519 verify, shimmed only where
+      silicon meets the world. Architecture:
+      <a href="https://github.com/kmay89/securaCV/blob/main/canary-local/README.md">canary-local/README.md</a>
+    </p>
+  </footer>
+
+  <script src="emulator/dist/canary-display-watch.js"></script>
+  <script src="emulator/dist/canary-display-dash.js"></script>
+  <script type="module" src="assets/app.js"></script>
+</body>
+</html>

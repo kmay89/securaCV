@@ -1,0 +1,3 @@
+# build intermediates + fetched third-party (pinned in build.sh)
+.build/
+third_party/

@@ -1,0 +1,169 @@
+{
+  "$schema_note": "canary.local device registry — one entry per device flavor. The page renders a pairing card per entry; entries with an `emulator` block get the live wasm firmware on their glass. `fw_train` names the release train this registry snapshot teaches; per-version emulator artifacts are named dist/<id>@<version>.js when built from a release tag (see canary-local/README.md §Versioning).",
+  "fw_train": "2.2.0",
+  "devices": [
+    {
+      "id": "canary-display-watch",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Watch Station",
+      "tagline": "The bedside glance — a fleet on one calm ring.",
+      "board": "XIAO ESP32-S3 + Seeed Round Display",
+      "glass": {
+        "w": 240,
+        "h": 240,
+        "round": true,
+        "panel": "GC9A01 1.28\" IPS",
+        "touch": "CST816S"
+      },
+      "body_mm": {
+        "d": 52,
+        "depth": 21.8,
+        "stand_tilt_deg": 25
+      },
+      "senses": [],
+      "shows": [
+        "witness halo",
+        "living canary",
+        "proof QR",
+        "night floor"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-watch.js",
+        "factory": "createCanaryEmuWatch"
+      },
+      "enclosure": "docs/hardware/enclosure/canary_watch_station.scad",
+      "docs": [
+        "docs/hardware/display_ux_design.md",
+        "docs/hardware/display_living_canary.md",
+        "docs/hardware/display_bench_bringup.md"
+      ],
+      "status": "in development — render/CI-verified, bench pending"
+    },
+    {
+      "id": "canary-display-dash",
+      "family": "canary-display",
+      "kind": "display",
+      "name": "Canary Dash",
+      "tagline": "The household poster — every witness, one wall.",
+      "board": "Waveshare ESP32-S3-Touch-LCD-4.3",
+      "glass": {
+        "w": 800,
+        "h": 480,
+        "round": false,
+        "panel": "4.3\" 800×480 IPS (parallel RGB)",
+        "touch": "GT911"
+      },
+      "body_mm": {
+        "w": 113.7,
+        "h": 73.6,
+        "depth": 16.0,
+        "stand_tilt_deg": 25
+      },
+      "senses": [],
+      "shows": [
+        "witness cards",
+        "event timeline",
+        "proof sheets",
+        "roll call"
+      ],
+      "network": {
+        "mdns": "<device-id>-<pseudonym>.local (advertise-only)",
+        "web": "first-boot portal only",
+        "mqtt": "fleet subscriber + own heartbeat"
+      },
+      "emulator": {
+        "module": "emulator/dist/canary-display-dash.js",
+        "factory": "createCanaryEmuDash"
+      },
+      "enclosure": "docs/hardware/enclosure/canary_dash_display.scad",
+      "docs": [
+        "docs/hardware/display_ux_design.md",
+        "docs/hardware/display_trailblazer_spec.md"
+      ],
+      "status": "in development — render/CI-verified, bench pending"
+    },
+    {
+      "id": "canary-vision",
+      "family": "canary-vision",
+      "kind": "witness",
+      "name": "Canary Vision",
+      "tagline": "Person detection on the camera's own chip — no pixels leave.",
+      "board": "XIAO ESP32-C3 / C3-DevKitM / XIAO ESP32-S3 + Grove Vision AI V2",
+      "senses": [
+        "camera (on-module inference)"
+      ],
+      "shows": [],
+      "modality": "camera",
+      "network": {
+        "mdns": "canary-<fp>.local (advertise-only)",
+        "web": "SPA on device (LittleFS)",
+        "mqtt": "presence/dwelling/confidence + signed chain"
+      },
+      "led_grammar": "docs/hardware/canary_qr_onboarding.md",
+      "enclosure": "docs/hardware/enclosure/canary_vision_enclosure.scad",
+      "docs": [
+        "docs/hardware/canary_vision_getting_started.md",
+        "docs/hardware/grove_vision_ai_v2_guide.md"
+      ],
+      "status": "released — print-validated enclosure, fw 2.2.0"
+    },
+    {
+      "id": "canary-wap",
+      "family": "canary-wap",
+      "kind": "witness",
+      "name": "Canary WAP",
+      "tagline": "Feels presence through the WiFi field itself — no camera needed.",
+      "board": "XIAO ESP32-S3 Sense",
+      "senses": [
+        "WiFi CSI (radio field)",
+        "camera peek (optional)",
+        "acoustic patterns (T3/T4)"
+      ],
+      "shows": [],
+      "modality": "wifi-csi",
+      "network": {
+        "mdns": "canary.local + canary-<name>.local",
+        "web": "full dashboard on device (:80)",
+        "mqtt": "sensing + witness chain + mesh"
+      },
+      "led_grammar": "docs/hardware/canary_qr_onboarding.md",
+      "enclosure": "docs/hardware/enclosure/canary_wap_enclosure.scad",
+      "docs": [
+        "docs/getting_started_canary.md"
+      ],
+      "status": "released — the canary.local hostname lives here today"
+    },
+    {
+      "id": "canary-sense",
+      "family": "canary-sense",
+      "kind": "witness",
+      "name": "Canary Sense",
+      "tagline": "60 GHz radar presence — knows someone's there, never who.",
+      "board": "XIAO ESP32-C6 + Seeed MR60BHA2 mmWave",
+      "senses": [
+        "mmWave radar",
+        "lux (BH1750)",
+        "breathing (wellbeing build)"
+      ],
+      "shows": [],
+      "modality": "radar",
+      "network": {
+        "mdns": "canary-<fp>.local (advertise-only)",
+        "web": "none",
+        "mqtt": "presence/occupants/range + signed chain"
+      },
+      "led_grammar": "docs/hardware/canary_qr_onboarding.md",
+      "enclosure": "docs/hardware/enclosure/canary_sense_enclosure.scad",
+      "docs": [
+        "firmware/projects/canary-sense/README.md"
+      ],
+      "status": "phase 2 complete — signing witness, bench items open"
+    }
+  ]
+}
