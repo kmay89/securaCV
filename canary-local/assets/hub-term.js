@@ -34,6 +34,48 @@ export const PROMPTS = {
   "ha-ssh": "[core-ssh ~]$",
 };
 
+// Every command of a chapter, fully expanded — what "copy the chapter"
+// puts on the clipboard, one command per line. Tested DOM-free alongside
+// expandVars: a surviving "{{" here is the same build-breaking bug.
+export function chapterCommands(chapter, vars) {
+  return chapter.steps.map((s) => expandVars(s.cmd, vars));
+}
+
+// The chapter-copy payload. Leads with a bash-safe comment because a
+// multi-line paste RUNS in most terminals — and bench commands carry
+// example device names (/dev/sdb) that must be reviewed, not replayed.
+export function chapterClipboard(chapter, vars) {
+  return [
+    "# " + chapter.title + " — from the SecuraCV bench terminal.",
+    "# Review each line before running; device names and paths are examples.",
+    ...chapterCommands(chapter, vars),
+  ].join("\n");
+}
+
+// Clipboard writer with a fallback for contexts without the async API
+// (older mobile browsers, non-secure origins). Returns a promise that
+// resolves true on success — callers only use it to flash feedback.
+export function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true, () => legacyCopy(text));
+  }
+  return Promise.resolve(legacyCopy(text));
+}
+
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
 // Ordered replay session for one chapter: commands only run in sequence
 // (the guide's order IS the contract — flashing after booting is not a
 // thing this bench will demonstrate).
@@ -86,9 +128,11 @@ export function buildTerminal(terminalData, vars) {
   const controls = el("div", "hub-term-controls");
   const btnNext = el("button", "primary small", "▶ type next command");
   const btnAll = el("button", "ghost small", "run the chapter");
+  const btnCopyAll = el("button", "ghost small", "⧉ copy the chapter");
+  btnCopyAll.title = "Copy every command in this chapter, ready to paste in your real terminal";
   const btnReset = el("button", "ghost small", "clear");
   const hint = el("span", "muted fineprint", "or press Enter in the terminal");
-  controls.append(btnNext, btnAll, btnReset, hint);
+  controls.append(btnNext, btnAll, btnCopyAll, btnReset, hint);
   win.append(bar, scroll, controls);
 
   const noteCard = el("p", "ondevice hub-term-note");
@@ -106,6 +150,23 @@ export function buildTerminal(terminalData, vars) {
     scroll.append(line);
     scroll.scrollTop = scroll.scrollHeight;
     return line;
+  }
+
+  // one-tap copy for a real command — the bench is simulated, the
+  // commands are not. Always visible (mobile has no hover), flashes ✓.
+  function copyBtn(cmdText) {
+    const b = el("button", "hub-copy", "⧉");
+    b.title = "Copy this command";
+    b.setAttribute("aria-label", "Copy command: " + cmdText);
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      copyText(cmdText).then((ok) => {
+        b.textContent = ok ? "✓" : "⧉";
+        b.classList.toggle("copied", ok);
+        setTimeout(() => { b.textContent = "⧉"; b.classList.remove("copied"); }, 1200);
+      });
+    });
+    return b;
   }
 
   function printPromptLine() {
@@ -141,6 +202,7 @@ export function buildTerminal(terminalData, vars) {
       await sleep(160);
     }
     caret.remove();
+    c.parentElement.append(copyBtn(step.cmd));
     for (const lineText of step.out) {
       if (!instant) await sleep(70);
       print("hub-out", lineText);
@@ -187,7 +249,8 @@ export function buildTerminal(terminalData, vars) {
     sess.reset();
     for (let i = 0; i < doneCount; i++) {
       const s = sess.run();
-      print("hub-replay", promptOf(ch) + " " + s.cmd);
+      const line = print("hub-replay", promptOf(ch) + " " + s.cmd);
+      line.append(copyBtn(s.cmd));
       for (const l of s.out) print("hub-out", l);
     }
     noteCard.textContent = doneCount
@@ -203,6 +266,14 @@ export function buildTerminal(terminalData, vars) {
   }
 
   btnNext.addEventListener("click", () => runNext());
+  btnCopyAll.addEventListener("click", () => {
+    if (!chapter) return;
+    copyText(chapterClipboard(chapter, vars)).then((ok) => {
+      const orig = "⧉ copy the chapter";
+      btnCopyAll.textContent = ok ? "✓ copied — paste in your terminal" : orig;
+      setTimeout(() => { btnCopyAll.textContent = orig; }, 1600);
+    });
+  });
   btnAll.addEventListener("click", async () => {
     while (await runNext()) { /* sequential, animated */ }
   });

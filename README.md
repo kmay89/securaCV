@@ -205,6 +205,10 @@ instead of trusting a central box:
 
 ## Project docs
 
+- **[docs/README.md](docs/README.md)** — **the documentation map**: every guide, organized by
+  what you're trying to do, CI-enforced so it can't rot. The same getting-started paths run
+  interactively (pick your OS, copy commands with one tap, watch your progress fill) in the
+  [Lab's Get Started guide](https://kmay89.github.io/securaCV/canary-local/start.html).
 - **[docs/strategy/](docs/strategy/)** — codebase map, product strategy, market & cost analysis.
 - Contribution rules: [`CONTRIBUTING.md`](CONTRIBUTING.md) · Security policy: [`SECURITY.md`](SECURITY.md)
   · Detection sandbox & engineering invariants: [`AGENTS.md`](AGENTS.md)

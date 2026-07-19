@@ -86,9 +86,15 @@ try {
   await page.click(".wap-wiz-net");                    // step 2 → 3
   await page.waitForSelector(".wap-wiz-btns .primary", { timeout: 6000 });
   await page.click(".wap-wiz-btns .primary");          // connect
-  const finishBtn = await page.waitForSelector(".wap-ha-block .primary", { timeout: 12000 }).catch(() => null);
-  if (!finishBtn) fail("wizard never reached the online card");
-  await finishBtn.click();                             // finish + HA → mqtt
+  // step 5 must actually render — pre-flight checks (/api/selftest) + recovery kit
+  const pf = await page.waitForSelector(".wap-preflight", { timeout: 12000 }).catch(() => null);
+  if (!pf) fail("wizard never reached step 5 (pre-flight checks)");
+  const checkCount = await page.$$eval(".wap-checks .wap-check-row", (e) => e.length);
+  if (checkCount < 6) fail("expected 6 pre-flight checks, got " + checkCount);
+  const hasRecovery = await page.$$eval(".wap-ha-block h5", (hs) => hs.some((h) => /recovery kit/i.test(h.textContent)));
+  if (!hasRecovery) fail("recovery-kit block missing from step 5");
+  // finish via the Home Assistant "Test & save" (brings up MQTT)
+  await page.locator("button.primary", { hasText: "Test & save" }).click();
 
   // MQTT retained snapshot + full discovery set land
   await page.waitForFunction(() => document.querySelectorAll(".wap-mqtt-row").length >= 6, null, { timeout: 8000 })
