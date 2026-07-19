@@ -53,6 +53,44 @@ export function createProgress(missionId, store) {
 
 export const OS_KEY = "securacv.start.os";
 
+// What copying may do to a step's gate — the safety policy, in one place:
+//   "auto"   — every actionable item is a paste-string (URLs for a UI);
+//              nothing executes, so copying the last one IS completing the
+//              step, and the gate checks itself (with a visible undo).
+//   "nudge"  — the step runs commands; we cannot know they ran, so copying
+//              only pulses the checkbox. Honesty over convenience.
+//   "manual" — the step carries a danger callout (dd); copying moves
+//              nothing. The human owns that gate entirely.
+export function autoCheckPolicy(step, osId) {
+  const v = variantToRender(step, osId);
+  if (!v) return "nudge";
+  if (v.danger) return "manual";
+  const pastes = [...(v.copies || []), ...(step.copies_all || [])];
+  if ((v.cmds || []).length === 0 && pastes.length > 0) return "auto";
+  return "nudge";
+}
+
+// The paste-strings a step must see copied before an "auto" gate closes.
+export function pasteTexts(step, osId) {
+  const v = variantToRender(step, osId);
+  if (!v) return [];
+  return [...(v.copies || []), ...(step.copies_all || [])].map((c) => c.text);
+}
+
+// Deep links: "#hub/mac" ⇄ {missionId, osId}. Junk degrades to nulls —
+// a bad link lands on the picker, never on a wrong path.
+export function parseHash(hash, data) {
+  const parts = String(hash || "").replace(/^#/, "").split("/");
+  const mission = data.missions.find((m) => m.id === parts[0]) || null;
+  const os = data.oses.some((o) => o.id === parts[1]) ? parts[1] : null;
+  return { missionId: mission ? mission.id : null, osId: os };
+}
+
+export function buildHash(missionId, osId) {
+  if (!missionId) return "";
+  return "#" + missionId + (osId ? "/" + osId : "");
+}
+
 // ── renderer ────────────────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -96,8 +134,22 @@ async function main() {
 
   renderVersionStrip(data);
 
-  let os = storage.get(OS_KEY);
+  // deep link (#mission/os) wins; then the remembered OS; then the picker
+  const fromHash = parseHash(location.hash, data);
+  let os = fromHash.osId || storage.get(OS_KEY);
   if (!data.oses.some((o) => o.id === os)) os = null;
+
+  // polite screen-reader announcements + a small visual toast
+  const live = el("div", "start-live");
+  live.setAttribute("aria-live", "polite");
+  mount.append(live);
+  let toastTimer = null;
+  function toast(msg) {
+    live.textContent = msg;
+    live.classList.add("show");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => live.classList.remove("show"), 2600);
+  }
 
   const picker = el("section", "hub-section start-picker");
   picker.append(el("div", "hub-kicker", "step zero"), el("h2", null, "Where are you starting from?"));
@@ -121,11 +173,26 @@ async function main() {
 
   let mission = null;
 
+  function syncHash() {
+    // replaceState: path changes shouldn't pollute the back button
+    history.replaceState(null, "", buildHash(mission && mission.id, os) || location.pathname);
+  }
+
   function setOs(id) {
     os = id;
     storage.set(OS_KEY, id);
     for (const [k, b] of osBtns) b.classList.toggle("on", k === id);
+    syncHash();
     if (mission) openMission(mission); // re-render steps under the new OS
+  }
+
+  function selectMission(m, { scroll = true } = {}) {
+    mission = m;
+    [...missionGrid.children].forEach((x, i) =>
+      x.classList.toggle("on", data.missions[i] === m));
+    syncHash();
+    openMission(m);
+    if (scroll) missionMount.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function missionCard(m) {
@@ -137,16 +204,31 @@ async function main() {
     meta.append(el("span", "chip", m.time), el("span", "chip chip-dim", m.difficulty));
     body.append(meta);
     c.append(body);
-    c.addEventListener("click", () => {
-      mission = m;
-      [...missionGrid.children].forEach((x, i) =>
-        x.classList.toggle("on", data.missions[i] === m));
-      openMission(m);
-      missionMount.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    c.addEventListener("click", () => selectMission(m));
     return c;
   }
   for (const m of data.missions) missionGrid.append(missionCard(m));
+
+  // welcome back — the resume card, shown only when no deep link chose first
+  if (!fromHash.missionId) {
+    for (const m of data.missions) {
+      const p = createProgress(m.id, storage);
+      const total = stepKeys(m).length;
+      if (p.count() > 0 && p.count() < total) {
+        const card = el("div", "start-resume");
+        card.append(el("span", "start-bird", "🐤"));
+        const body = el("span", "start-mission-body");
+        body.append(
+          el("strong", null, "Welcome back"),
+          el("span", "muted", `You're ${p.count()} of ${total} steps into “${m.title}”.`));
+        const go = el("button", "primary small", "continue →");
+        go.addEventListener("click", () => selectMission(m));
+        card.append(body, go);
+        picker.insertBefore(card, missionGrid);
+        break;
+      }
+    }
+  }
 
   function openMission(m) {
     missionMount.innerHTML = "";
@@ -173,6 +255,7 @@ async function main() {
       bird.textContent = n === 0 ? "🥚" : n < t ? "🐤" : "🎉";
       bird.title = n === 0 ? "an egg — let's hatch this"
         : n < t ? "hatched and working on it" : "fully fledged!";
+      renderCelebration(n === t && t > 0);
     };
 
     m.chapters.forEach((ch, ci) => {
@@ -183,9 +266,42 @@ async function main() {
       missionMount.append(s);
     });
 
+    // the finish line — filled by refresh() the moment the last gate closes
+    const celebration = el("section", "hub-section start-complete");
+    celebration.hidden = true;
+    missionMount.append(celebration);
+    function renderCelebration(done) {
+      if (!done) { celebration.hidden = true; celebration.innerHTML = ""; return; }
+      if (!celebration.hidden) return; // already showing — don't re-animate
+      celebration.hidden = false;
+      celebration.innerHTML = "";
+      celebration.append(
+        el("div", "start-complete-bird", "🎉"),
+        el("h3", null, "Path complete — every step ✓"),
+        el("p", "muted", "Your witness is standing. The record it keeps now is one nobody — including you — can silently edit."));
+      const next = data.missions[(data.missions.indexOf(m) + 1) % data.missions.length];
+      const row = el("div", "start-complete-row");
+      const b = el("button", "primary small", "next path: " + next.glyph + " " + next.title + " →");
+      b.addEventListener("click", () => selectMission(next));
+      const docsLink = el("a", "start-link", "or browse everything in the docs map →");
+      docsLink.href = GH + (data.docs.index || "docs/README.md");
+      docsLink.target = "_blank"; docsLink.rel = "noopener noreferrer";
+      row.append(b, docsLink);
+      celebration.append(row);
+    }
+
     const reset = el("button", "ghost small", "start this path over");
     reset.addEventListener("click", () => { progress.reset(); openMission(m); });
     missionMount.append(reset);
+
+    // scroll the next open gate into view after a step closes — gentle,
+    // and only forward (unchecking never yanks the page around)
+    function revealNextAfter(card) {
+      const steps = [...missionMount.querySelectorAll(".start-step")];
+      const from = steps.indexOf(card);
+      const next = steps.slice(from + 1).find((s) => !s.classList.contains("done"));
+      if (next) next.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
 
     function stepCard(step, key) {
       const card = el("div", "start-step");
@@ -198,8 +314,35 @@ async function main() {
         check.classList.toggle("on", on);
         card.classList.toggle("done", on);
       };
-      check.addEventListener("click", () => { progress.toggle(key); setCheck(); refresh(); });
+      check.addEventListener("click", () => {
+        const nowOn = progress.toggle(key);
+        setCheck(); refresh();
+        if (nowOn) revealNextAfter(card);
+      });
       row.append(check, el("h4", null, step.title));
+
+      // what a successful copy is allowed to do to this step's gate
+      const policy = autoCheckPolicy(step, os);
+      const wanted = new Set(pasteTexts(step, os));
+      const copied = new Set(); // session-only — a copy is not evidence across visits
+      function onCopied(text) {
+        if (progress.has(key)) return;
+        if (policy === "manual") return; // the human owns dangerous gates
+        if (policy === "auto") {
+          copied.add(text);
+          if ([...wanted].every((t) => copied.has(t))) {
+            progress.toggle(key);
+            setCheck(); refresh();
+            toast("Step checked off ✓ — everything's on your clipboard trail. Tap the box to undo.");
+            revealNextAfter(card);
+          }
+          return;
+        }
+        // "nudge": we can't know the command actually ran — pulse, don't presume
+        check.classList.remove("pulse");
+        void check.offsetWidth; // restart the animation
+        check.classList.add("pulse");
+      }
       if (step.doc) {
         const a = el("a", "fineprint start-doc", "the written version →");
         a.href = GH + step.doc; a.target = "_blank"; a.rel = "noopener noreferrer";
@@ -218,8 +361,8 @@ async function main() {
           const d = el("p", "start-danger", "⚠ " + v.danger);
           card.append(d);
         }
-        for (const c of v.cmds || []) card.append(cmdBlock(c));
-        for (const c of [...(v.copies || []), ...(step.copies_all || [])]) card.append(copyRow(c));
+        for (const c of v.cmds || []) card.append(cmdBlock(c, onCopied));
+        for (const c of [...(v.copies || []), ...(step.copies_all || [])]) card.append(copyRow(c, onCopied));
         for (const l of v.links || []) {
           const a = el("a", "start-link", l.label + " →");
           a.href = l.href;
@@ -232,13 +375,7 @@ async function main() {
         const nm = data.missions.find((x) => x.id === step.next_mission);
         if (nm) {
           const b = el("button", "primary small", "continue: " + nm.title + " →");
-          b.addEventListener("click", () => {
-            mission = nm;
-            [...missionGrid.children].forEach((x, i) =>
-              x.classList.toggle("on", data.missions[i] === nm));
-            openMission(nm);
-            missionMount.scrollIntoView({ behavior: "smooth", block: "start" });
-          });
+          b.addEventListener("click", () => selectMission(nm));
           card.append(b);
         }
       }
@@ -248,7 +385,7 @@ async function main() {
 
     // a real command in the bench's clothes: prompt, one-tap copy,
     // expected output behind a disclosure so phones aren't walled in text
-    function cmdBlock(c) {
+    function cmdBlock(c, onCopied) {
       const cmd = expandVars(c.cmd, vars);
       const win = el("div", "start-cmd");
       const line = el("div", "hub-line");
@@ -261,6 +398,7 @@ async function main() {
           copy.textContent = ok ? "✓" : "⧉";
           copy.classList.toggle("copied", ok);
           setTimeout(() => { copy.textContent = "⧉"; copy.classList.remove("copied"); }, 1200);
+          if (ok) onCopied(cmd);
         });
       });
       line.append(copy);
@@ -280,7 +418,7 @@ async function main() {
     }
 
     // a copyable non-command string (URLs to paste into UIs)
-    function copyRow(c) {
+    function copyRow(c, onCopied) {
       const row = el("div", "start-cmd start-copyrow");
       const line = el("div", "hub-line");
       line.append(el("span", "hub-out", c.label + ": "), el("span", "hub-cmd", c.text));
@@ -292,6 +430,7 @@ async function main() {
           copy.textContent = ok ? "✓" : "⧉";
           copy.classList.toggle("copied", ok);
           setTimeout(() => { copy.textContent = "⧉"; copy.classList.remove("copied"); }, 1200);
+          if (ok) onCopied(c.text);
         });
       });
       line.append(copy);
@@ -303,6 +442,11 @@ async function main() {
   }
 
   if (os) setOs(os);
+  // a deep link (#mission or #mission/os) opens its path straight away
+  if (fromHash.missionId) {
+    const m = data.missions.find((x) => x.id === fromHash.missionId);
+    if (m) selectMission(m, { scroll: false });
+  }
 }
 
 function renderVersionStrip(d) {

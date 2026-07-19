@@ -8,6 +8,7 @@ flows stage the device into the exact state they're describing.
 ```
 canary-local/
   index.html            the page (vanilla JS, no frameworks, no build step)
+  start.html            "Get started" — mission picker, 3-OS paths, one-tap-copy gates
   choose.html           "Find your Canary" — the four-question front door
   boards.html           "The Board Room" — every board + pin flags + wiring (§4g)
   house.html            "The Canary House" — isometric home, whole flock in place
@@ -15,6 +16,7 @@ canary-local/
   wap.html              "The WAP — first boot" — captive-portal setup, serial + MQTT (§4i)
   assets/
     app.js              card gallery + device sheets + guide player
+    start.js            the Get Started driver (copy-gate policy + deep links, DOM-free core tested)
     house.js            iso renderer + sensing animations + visitor walk
     house-data.js       rooms + perches + walk (DOM-free, tested)
     scene3d.js          zero-dependency WebGL: procedural device bodies
