@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### canary.local polish — the rail is the ring
+
+- **Style chips wear their Characters.** Each chip in the lab's style
+  rail now paints itself in its Character's own ground, ink, and accent
+  — read from the firmware table via a new `emu_character_color`
+  binding (backed by a clamped `character_def()` accessor in the
+  display firmware). The selection ring glows in the chip's accent.
+  The rail stopped describing the ring and started being it.
+- **The tour lands on the invitation.** A closing step points the
+  visitor at Try it: flip all seven looks, meet the bird for the first
+  time, break the household on purpose.
+
 ### canary.local — the lab wears the Character, meets the bird, shows the real parts
 
 - **The Character ring is on the page.** The display sheets' Try-it view
