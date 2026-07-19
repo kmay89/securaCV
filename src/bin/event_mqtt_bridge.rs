@@ -329,6 +329,15 @@ impl MqttRuntime {
                             std::thread::sleep(slice);
                             slept += slice;
                         }
+                        // Break here on shutdown rather than looping back to
+                        // connection.iter().next(), which would block trying
+                        // to reconnect to a dead broker and hang disconnect()'s
+                        // join. The top-of-loop check only guards the path
+                        // where the disconnect nudge unblocks next(); a
+                        // shutdown that lands mid-backoff has no such nudge.
+                        if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
                         backoff = std::cmp::min(backoff * 2, BACKOFF_CAP);
                     }
                 }

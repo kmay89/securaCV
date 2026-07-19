@@ -139,7 +139,9 @@ impl Shared {
         // rotation keeps everything fresh, evict the stalest bucket.
         const MAX_TRACKED_PATHS: usize = 1024;
         if !map.contains_key(path) && map.len() >= MAX_TRACKED_PATHS {
-            map.retain(|_, (_, last)| now.duration_since(*last) < Duration::from_secs(60));
+            map.retain(|_, (_, last)| {
+                now.saturating_duration_since(*last) < Duration::from_secs(60)
+            });
             while map.len() >= MAX_TRACKED_PATHS {
                 let stalest = map
                     .iter()
@@ -152,7 +154,7 @@ impl Shared {
             }
         }
         let entry = map.entry(path.to_string()).or_insert((rl.capacity, now));
-        let elapsed = now.duration_since(entry.1).as_secs_f64();
+        let elapsed = now.saturating_duration_since(entry.1).as_secs_f64();
         entry.1 = now;
         entry.0 = (entry.0 + elapsed * rl.refill_per_sec).min(rl.capacity);
         if entry.0 >= 1.0 {
