@@ -151,10 +151,17 @@ function optionBomRows() {
 
 // what ticking this option adds to the cart (primary parts; ALTs are
 // either/or choices and don't stack)
+// ref → row lookup, built once per BOM (this runs for every option card
+// on every re-render — no need to rebuild a Map each time)
+function bomByRef(bom) {
+  if (!bom._byRef) bom._byRef = new Map(bom.rows.map((r) => [r.ref, r]));
+  return bom._byRef;
+}
+
 function optionCost(o) {
   const bom = state.build.devices?.[state.dev]?.bom;
   if (!bom || !o.bom) return 0;
-  const byRef = new Map(bom.rows.map((r) => [r.ref, r]));
+  const byRef = bomByRef(bom);
   return o.bom.filter((ref) => !/-ALT/.test(ref))
     .reduce((s, ref) => s + (byRef.get(ref)?.usd || 0), 0);
 }
@@ -166,7 +173,7 @@ function optionCost(o) {
 function packagePrice(p) {
   const bom = state.build.devices?.[state.dev]?.bom;
   if (!bom || !p.options) return null;
-  const byRef = new Map(bom.rows.map((r) => [r.ref, r]));
+  const byRef = bomByRef(bom);
   const opts = wsDev().options || [];
   const refs = new Set();
   for (const [id, on] of Object.entries(p.options)) {
@@ -175,7 +182,7 @@ function packagePrice(p) {
       if (!/-ALT/.test(ref)) refs.add(ref);
     }
   }
-  let sum = bom.required_usd;
+  let sum = bom.required_usd || 0;
   for (const ref of refs) sum += byRef.get(ref)?.usd || 0;
   return sum;
 }
@@ -480,8 +487,9 @@ function renderConfigure(root) {
     }
     for (const [g, opts] of groups) {
       const box = el("div", "ws-optgroup");
-      const gh = el("h4", null, GROUP_INTRO[g] || g);
-      gh.append(el("span", "ws-groupsub", " · " + g.toLowerCase()));
+      const groupName = g || "Options";
+      const gh = el("h4", null, GROUP_INTRO[groupName] || groupName);
+      gh.append(el("span", "ws-groupsub", " · " + groupName.toLowerCase()));
       box.append(gh);
       for (const o of opts) {
         if (o.enum) {
@@ -636,7 +644,7 @@ function renderChecklist(box) {
   if (bom || parts.length) {
     const tick = el("div", "ws-ticker");
     if (bom) {
-      const total = requiredBom().usd + optionBomRows().usd;
+      const total = (requiredBom().usd || 0) + optionBomRows().usd;
       tick.append(el("strong", "ws-tickbig", `$${total.toFixed(2)}`),
         el("span", "muted", " in parts"));
     }
