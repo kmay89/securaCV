@@ -446,10 +446,14 @@ export class DeviceScene {
     this.vel.y *= 0.97;
     if (Math.abs(this.vel.y) < 0.0004) {
       this.vel.y = 0;
-      const sway = this.home.y + Math.sin(this.t * 0.5) * 0.22;
-      const bob = this.home.x + Math.sin(this.t * 0.35 + 1.3) * 0.05;
-      this.rot.y += (sway - this.rot.y) * 0.02;
-      this.rot.x += (bob - this.rot.x) * 0.02;
+      // Idle "breathing" sway for the floating pairing cards. The assembly
+      // stage sets autoSway = false so it can hold an exact per-step pose.
+      if (this.autoSway !== false) {
+        const sway = this.home.y + Math.sin(this.t * 0.5) * 0.22;
+        const bob = this.home.x + Math.sin(this.t * 0.35 + 1.3) * 0.05;
+        this.rot.y += (sway - this.rot.y) * 0.02;
+        this.rot.x += (bob - this.rot.x) * 0.02;
+      }
     }
 
     // live screen texture

@@ -267,6 +267,39 @@ Display for XIAO (Watch). Boards without vendor CAD — e.g. the Waveshare
 4.3B-BOX — will land as dimensional models reverse-engineered from the datasheet
 + photographs, clearly labelled as such.
 
+## 4e. The Assemble tab: the build, from the real parts
+
+Every device with a choreographed build gets an **Assemble** tab — a LEGO-style
+guide that reads the device two ways:
+
+- **Exploded** — scrub a slider from *together* to *exploded* and the whole
+  device fans apart along its assembly axis, dashed leader lines tracing each
+  part back to where it seats.
+- **Step by step** — a player where each part flies into place along its
+  insertion axis with a little ease-out "click", the camera follows the action,
+  a progress rail tracks where you are, and the caption is the enclosure
+  catalog's own §Assembly sentence. Autoplay, prev/next, keyboard arrows.
+
+Every part on the stage is the real thing: the printed enclosure STLs
+(`stl.js`), the vendor board GLB (`glb.js`), and the fasteners/battery/magnet
+built procedurally to the BOM's sizes (`assembly.js`). Only the *choreography* —
+seated transforms, explode/insert vectors, camera, which part appears when — is
+authored, in `devices/assembly.json`. `tests/assembly.test.js` gates the honesty:
+every part resolves to a file that exists, every quoted step maps to a real
+build.json README step, and every claimed quantity matches the BOM (a `×4`
+screws badge can't drift from the BOM's four). The ribbon says so to your face:
+*"every part is the real thing… the choreography is staged."*
+
+| Piece | File |
+|---|---|
+| Engine — explode, step player, camera tween, procedural fasteners | `canary-local/assets/assembly.js` |
+| The tab — exploded slider, step player, callouts, progress rail | `canary-local/assets/assembly-lab.js` |
+| Choreography (authored, validated) | `canary-local/devices/assembly.json` |
+| Honesty gate | `canary-local/tests/assembly.test.js` |
+
+Today: the Canary WAP weather + battery build. Vision and the Watch follow —
+the engine is device-agnostic; they need only their `assembly.json` entry.
+
 ## 5. Where this lives (repo → Pages → securacv.com)
 
 Three tiers, no lock-in, one source of truth:

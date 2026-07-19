@@ -12,6 +12,7 @@ import { upgradeRealShape } from "./real-shapes.js";
 import { buildEnclosureLab } from "./enclosure-lab.js";
 import { buildBuildIt } from "./build-it.js";
 import { buildBoardLab } from "./board-lab.js";
+import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
 import {
   DISPLAY_TOUR,
@@ -47,6 +48,9 @@ async function main() {
     .then((r) => r.json())
     .catch(() => null);
   state.boards = await fetch("devices/boards.json")
+    .then((r) => r.json())
+    .catch(() => null);
+  state.assembly = await fetch("devices/assembly.json")
     .then((r) => r.json())
     .catch(() => null);
   $("#fw-train").textContent = `firmware train ${state.registry.fw_train}`;
@@ -285,6 +289,8 @@ async function buildDisplaySheet(ctx, side, stage) {
     Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
     ...(state.boards?.device_board?.[dev.id]
       ? { Board: () => buildBoardLab(state.boards, dev.id) } : {}),
+    ...(state.assembly?.devices?.[dev.id]
+      ? { Assemble: () => buildAssemblyLab(state.assembly, state.build, dev.id) } : {}),
     "Build it": () => buildBuildIt(state.build, dev),
     Specs: () => specsView(dev),
   };
@@ -542,6 +548,8 @@ function buildWitnessSheet(ctx, side) {
     Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
     ...(state.boards?.device_board?.[dev.id]
       ? { Board: () => buildBoardLab(state.boards, dev.id) } : {}),
+    ...(state.assembly?.devices?.[dev.id]
+      ? { Assemble: () => buildAssemblyLab(state.assembly, state.build, dev.id) } : {}),
     "Build it": () => buildBuildIt(state.build, dev),
     "Joining": () => {
       const w = el("div", "joining");
