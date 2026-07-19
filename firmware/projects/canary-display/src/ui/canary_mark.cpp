@@ -32,6 +32,16 @@ int s_base_x = 0;
 bool s_eye_shut = false;
 uint16_t s_trust_days = 0;
 
+// Temperament (Character wave): bounded scalars layered UNDER the mood
+// engine — they rescale timings the mood already chose, never the pose.
+// The raw breath request is remembered so a live re-apply rescales the
+// CURRENT mood's rate instead of guessing.
+float s_temp_breath = 1.0f;
+float s_temp_flourish = 1.0f;
+float s_temp_hop = 1.0f;
+uint32_t s_breath_raw_ms = 1400;
+int s_breath_amp = 2;
+
 // Rest-pose geometry the poses offset from (fractions of s_size).
 int s_eye_x = 0, s_eye_y = 0, s_eye_d = 0;
 int s_wing_x = 0, s_wing_y = 0;
@@ -81,14 +91,20 @@ void bob_cb(void* var, int32_t v) {
 }
 
 // Breath: the one always-on motion. Rate is the arousal baseline —
-// alert 1.4 s, calm 1.4 s, asleep 2.8 s half-period.
+// alert 1.4 s, calm 1.4 s, asleep 2.8 s half-period. The Character's
+// breath temperament rescales the request (clamped to a sane band).
 void start_bob(uint32_t half_ms, int amp) {
+  s_breath_raw_ms = half_ms;
+  s_breath_amp = amp;
+  uint32_t p = (uint32_t)((float)half_ms * s_temp_breath);
+  if (p < 500) p = 500;
+  if (p > 6000) p = 6000;
   lv_anim_init(&s_bob);
   lv_anim_set_var(&s_bob, s_bird);
   lv_anim_set_exec_cb(&s_bob, bob_cb);
   lv_anim_set_values(&s_bob, -amp, amp);
-  lv_anim_set_time(&s_bob, half_ms);
-  lv_anim_set_playback_time(&s_bob, half_ms);
+  lv_anim_set_time(&s_bob, p);
+  lv_anim_set_playback_time(&s_bob, p);
   lv_anim_set_repeat_count(&s_bob, LV_ANIM_REPEAT_INFINITE);
   lv_anim_set_path_cb(&s_bob, lv_anim_path_ease_in_out);
   lv_anim_start(&s_bob);
@@ -101,10 +117,15 @@ void hop_cb(void* var, int32_t v) {
 void hop_done(lv_anim_t*) { start_bob(1400, 2); }
 
 void start_hop() {
+  // Hop apex rides the Character's hop energy, clamped — even the
+  // springiest look stays inside the calm-tech ration.
+  int apex = (int)(12.0f * s_temp_hop);
+  if (apex < 8) apex = 8;
+  if (apex > 18) apex = 18;
   lv_anim_init(&s_bob);
   lv_anim_set_var(&s_bob, s_bird);
   lv_anim_set_exec_cb(&s_bob, hop_cb);
-  lv_anim_set_values(&s_bob, 0, 12);
+  lv_anim_set_values(&s_bob, 0, apex);
   lv_anim_set_time(&s_bob, 240);
   lv_anim_set_playback_time(&s_bob, 320);
   lv_anim_set_path_cb(&s_bob, lv_anim_path_overshoot);
@@ -258,8 +279,10 @@ void flourish_search_scan() {
 
 void flourish_cb(lv_timer_t* t) {
   if (!s_bird || lv_obj_has_flag(s_bird, LV_OBJ_FLAG_HIDDEN)) return;
-  // Re-jitter the cadence every fire so the bird never feels metronomic.
-  lv_timer_set_period(t, 25000 + (esp_random() % 35000));
+  // Re-jitter the cadence every fire so the bird never feels metronomic;
+  // the Character's flourish temperament widens or tightens the window.
+  const uint32_t base = 25000 + (esp_random() % 35000);
+  lv_timer_set_period(t, (uint32_t)((float)base * s_temp_flourish));
 
   const uint32_t roll = esp_random() % 100;
   switch (s_mood) {
@@ -491,6 +514,27 @@ void canary_mark_mood(CanaryMood m) {
 }
 
 void canary_mark_trust(uint16_t days) { s_trust_days = days; }
+
+void canary_mark_temperament(float breath, float flourish, float hop) {
+  // Bounds are clamped in code (display_character.md §5): even the
+  // liveliest Character stays inside the calm-tech ration, and the mood
+  // engine still owns truth — these only rescale timings it already chose.
+  if (breath < 0.85f) breath = 0.85f;
+  if (breath > 1.25f) breath = 1.25f;
+  if (flourish < 0.7f) flourish = 0.7f;
+  if (flourish > 1.4f) flourish = 1.4f;
+  if (hop < 0.85f) hop = 0.85f;
+  if (hop > 1.25f) hop = 1.25f;
+  s_temp_breath = breath;
+  s_temp_flourish = flourish;
+  s_temp_hop = hop;
+  // Re-apply the breath live so the new rate lands immediately: the
+  // picker persists to the hidden face's bird, and the raw request keeps
+  // the CURRENT mood's pace — the new scalar just rescales it. No bird
+  // (or an off-stage one) means no timers to touch.
+  if (s_bird && s_mood != CanaryMood::Hidden)
+    start_bob(s_breath_raw_ms, s_breath_amp);
+}
 
 void canary_mark_react(CanaryReact r) {
   // Never while off stage, and never startle a sleeping bird (night is

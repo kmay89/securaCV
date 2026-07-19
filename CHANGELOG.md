@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Display Character wave — choose how the glass feels, without choosing wrong
+
+- **Four curated era looks, one honest system**
+  ([`docs/hardware/display_character.md`](docs/hardware/display_character.md)).
+  A Character bundles ground/chrome palette, type feel, and the bird's
+  temperament into one named, pre-validated look: **Heirloom** (warm
+  charcoal + brass, one type size up per role, slow sparing bird — the
+  large-print hallway edition, AAA contrast), **Quiet Glass** (the default —
+  byte-for-byte today's look), **Aqua** (millennium blue-black gloss), and
+  **Neon** (vivid, quick, springy). Curated flip-through, not a color
+  picker: every stop is a decision already made correctly, so there is no
+  wrong answer to reach (the Apple-watch-face model; anti-choice-anxiety
+  by design).
+- **Two lines no Character may cross.** Semantic hues stay at
+  timeline-card parity (a state is the same color on the wall and in the
+  app — a Character restyles the room, never the alarms), and night stays
+  sacred: the red-shifted, melatonin-band-free night palette belongs to
+  the night engine and outranks every look. Enforced at the `theme.h`
+  choke point — semantics and `ncol_*` remain compile-time constants.
+- **The bird has a temperament** (`canary_mark_temperament()`): three
+  clamped scalars — breath rate, flourish cadence, hop energy — layered
+  UNDER the mood engine, Kismet-style. A worried bird is worried in every
+  Character; Neon just gets there a beat quicker. The mood engine
+  (`bird_mood.h`, pure/host-tested) is untouched.
+- **The picker** is one more One-Screen-One-Decision editor
+  (settings › style): name, era caption, ring dots, flip ‹ ›. The screen
+  is the preview taken literally — each flip restyles the open settings
+  surface live, applies + persists immediately (landing IS choosing), and
+  reset comes home to Quiet Glass.
+- **Settings blob v1 → v2 with a real migration** (Codex review catch on
+  #904): the loader recognizes the frozen v1 layout and copies it
+  field-for-field — night hours, glow, peek, and brightness all survive
+  the upgrade; only the new `character` field defaults. The blob rewrites
+  as v2 through the existing debounced commit; reject-to-defaults stays
+  reserved for genuinely corrupt blobs.
+- **CI: the review-threads gate absorbs the reply→resolve race.** GitHub
+  Actions has no thread-resolution trigger (App-webhook only — verified
+  against the docs; the header's original claim was right), so the gate
+  now holds its verdict through a grace window on reply/review events
+  instead of instantly grading the stale in-between state; silent
+  resolves keep the documented manual re-run.
+
 ### Seal / unseal / vault UX pass — checked, plain-spoken, and rewarding
 
 - **Evidence Viewer now reveals its verification check-by-check.** After a

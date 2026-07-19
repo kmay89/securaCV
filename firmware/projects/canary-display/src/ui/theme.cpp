@@ -1,4 +1,5 @@
 #include "canary/ui/theme.h"
+#include "canary/ui/character.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -8,6 +9,32 @@ namespace canary::ui {
 using canary::fleet::Badge;
 using canary::fleet::Link;
 using canary::fleet::Sev;
+
+// ── Ground & type: the single Character choke point ──────────────────────
+// Every ground/text tier and every font role reads the ACTIVE Character
+// here — no caller ever sees the table. col_ok/warn/alert/signed and the
+// ncol_* set stay inline constants in theme.h ON PURPOSE: semantics and
+// night are not Character-driven (display_character.md §2).
+
+namespace {
+const Palette& pal() { return active_character_def().pal; }
+const TypeLadder& ladder() { return active_character_def().type; }
+}  // namespace
+
+lv_color_t col_bg()      { return lv_color_hex(pal().bg); }
+lv_color_t col_surface() { return lv_color_hex(pal().surface); }
+lv_color_t col_edge()    { return lv_color_hex(pal().edge); }
+lv_color_t col_text()    { return lv_color_hex(pal().text); }
+lv_color_t col_muted()   { return lv_color_hex(pal().muted); }
+lv_color_t col_faint()   { return lv_color_hex(pal().faint); }
+lv_color_t col_accent()  { return lv_color_hex(pal().accent); }
+
+const lv_font_t* font_hero()    { return ladder().hero; }
+const lv_font_t* font_title()   { return ladder().title; }
+const lv_font_t* font_body()    { return ladder().body; }
+const lv_font_t* font_label()   { return ladder().label; }
+const lv_font_t* font_caption() { return ladder().caption; }
+const lv_font_t* font_clock()   { return ladder().clock; }
 
 lv_color_t sev_color(Sev s, bool night) {
   if (night) return (s >= Sev::Alert) ? ncol_alert() : ncol_muted();

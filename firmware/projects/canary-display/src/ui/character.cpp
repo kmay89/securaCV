@@ -4,10 +4,10 @@
 // Pure data and a few lookups. Palettes carry computed contrast ratios in
 // comments (WCAG 1.4.3: body text >= 4.5:1; Heirloom targets AAA) so a
 // future edit can't quietly regress one.
-#include "flavor_config.h"
+#include <config.h>
 
-#include "character.h"
-#include "canary_mark.h"
+#include "canary/ui/character.h"
+#include "canary/ui/canary_mark.h"
 
 namespace canary::ui {
 
