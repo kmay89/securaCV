@@ -136,6 +136,36 @@ function drawYard() {
   // porch slab
   const porch = roomOf("porch");
   box(g, porch.x0, porch.y0, porch.x1, porch.y1, -0.15, 0.18, ["#232529", "#151619", "#191a1e"]);
+  // chain-link fence along the property line (the Fence Guard's perch)
+  const FX = 12.15, FY0 = 1.6, FY1 = 8.6, FH = 1.25;
+  for (let fy = FY0; fy <= FY1 + 0.01; fy += (FY1 - FY0) / 4) {
+    wall(g, FX, fy, FX + 0.05, fy + 0.05, 0, FH + 0.1, "#3a3e46", "fence-post");
+  }
+  for (const fz of [0.18, FH]) {
+    const [ax, ay] = px(FX, FY0, fz), [bx2, by2] = px(FX, FY1, fz);
+    g.append(el("line", { x1: ax, y1: ay, x2: bx2, y2: by2, stroke: "#34383f", "stroke-width": 1.2 }));
+  }
+  for (let fy = FY0; fy < FY1 - 0.4; fy += 0.45) {
+    const [ax, ay] = px(FX, fy, 0.18), [bx2, by2] = px(FX, Math.min(fy + 0.9, FY1), FH);
+    const [cx2, cy2] = px(FX, Math.min(fy + 0.9, FY1), 0.18), [dx2, dy2] = px(FX, fy, FH);
+    g.append(
+      el("line", { x1: ax, y1: ay, x2: bx2, y2: by2, stroke: "rgba(150,160,172,0.13)", "stroke-width": 0.8 }),
+      el("line", { x1: cx2, y1: cy2, x2: dx2, y2: dy2, stroke: "rgba(150,160,172,0.13)", "stroke-width": 0.8 }),
+    );
+  }
+  // the shade tree the Fence Guard hides under (solar likes cool cells)
+  {
+    const [sx, sy] = px(12.35, 6.9, 0.16);
+    const t = el("g", { transform: `translate(${sx},${sy})` });
+    t.append(
+      el("ellipse", { cx: -14, cy: 4, rx: 34, ry: 12, fill: "rgba(0,0,0,0.32)" }), // cast shade
+      el("rect", { x: -1.6, y: -26, width: 3.2, height: 28, fill: "#241d15" }),
+      el("ellipse", { cx: 0, cy: -34, rx: 24, ry: 15, fill: "#152015" }),
+      el("ellipse", { cx: -10, cy: -26, rx: 16, ry: 10, fill: "#1a2519" }),
+      el("ellipse", { cx: 11, cy: -27, rx: 14, ry: 9, fill: "#111c12" }),
+    );
+    g.append(t);
+  }
   // bushes
   for (const [bx, by, r] of [[-1.1, 7.6, 0.8], [11.6, 8.2, 0.65], [-1.3, 1.2, 0.7]]) {
     const [sx, sy] = px(bx, by, 0.16);
@@ -217,6 +247,16 @@ function drawFurniture() {
     box(layers.yard, x - 0.32, y - 0.32, x + 0.38, y + 0.38, 2.6, 0.12,
       ["#3a3f4a", "#20232a", "#282c34"]); // solar roof
   }
+  // the Fence Guard concept: a small sealed box on the chain-link,
+  // wearing a tilted solar sliver — drawn ghost-quiet, it's a teaser
+  const guard = PLACEMENTS.find((p) => p.id === "fence-guard");
+  if (guard) {
+    const { x, y, z } = guard.at;
+    box(layers.yard, x - 0.14, y - 0.16, x + 0.14, y + 0.16, z - 0.24, 0.42,
+      ["#252b2c", "#151a1b", "#1b2122"], "guard-body");
+    box(layers.yard, x - 0.2, y - 0.24, x + 0.24, y + 0.28, z + 0.28, 0.07,
+      ["#2c3a44", "#181f26", "#20282f"], "guard-solar");
+  }
 }
 
 // ── sensing fields ─────────────────────────────────────────────────────
@@ -241,16 +281,32 @@ function fieldFor(p) {
       a.style.animationDelay = `${i * 0.5}s`;
       g.append(a);
     }
-  } else if (p.sense === "wifi" || p.sense === "lora") {
-    const n = p.sense === "lora" ? 2 : 3;
+  } else if (p.sense === "wifi" || p.sense === "lora" || p.sense === "mesh") {
+    const n = p.sense === "wifi" ? 3 : 2;
+    const stroke = p.sense === "lora" ? "#7fb7d8" : p.sense === "mesh" ? "#6fd6c3" : "#ffd44f";
     for (let i = 0; i < n; i++) {
       const ring = planRing(w.x, w.y, w.z - p.at.z, p.range,
-        p.sense === "lora"
-          ? { fill: "none", stroke: "#7fb7d8", "stroke-width": 1, "stroke-dasharray": "5 7", "stroke-opacity": 0.55 }
-          : { fill: "none", stroke: "#ffd44f", "stroke-width": 1.2 },
+        p.sense === "wifi"
+          ? { fill: "none", stroke, "stroke-width": 1.2 }
+          : { fill: "none", stroke, "stroke-width": 1, "stroke-dasharray": "5 7", "stroke-opacity": 0.55 },
         "ripple");
-      ring.style.animationDelay = `${(i * (p.sense === "lora" ? 2.4 : 1.3)).toFixed(1)}s`;
+      ring.style.animationDelay = `${(i * (p.sense === "wifi" ? 1.3 : 2.4)).toFixed(1)}s`;
       g.append(ring);
+    }
+    if (p.sense === "mesh") {
+      // the mesh handshake: a marching dashed arc to the relay's pole —
+      // "to their field", literally
+      const relay = PLACEMENTS.find((q) => q.id === "relay");
+      if (relay) {
+        const [ax, ay] = px(w.x, w.y, w.z + 0.35);
+        const [bx, by] = px(relay.at.x, relay.at.y, 2.7);
+        const [mx, my] = [(ax + bx) / 2, Math.min(ay, by) - 34];
+        g.append(el("path", {
+          d: `M ${ax.toFixed(1)} ${ay.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${bx.toFixed(1)} ${by.toFixed(1)}`,
+          fill: "none", stroke: "#6fd6c3", "stroke-width": 1.1,
+          "stroke-dasharray": "4 7", "stroke-opacity": 0.6,
+        }, "mesh-link"));
+      }
     }
   } else if (p.sense === "radar" || p.sense === "breath") {
     const zf = w.z - p.at.z;
@@ -285,6 +341,7 @@ const GLYPHS = {
   breath: "M-4.5 0.8 q1.5 -5 3 0 q1.5 5 3 0 q1.5 -5 3 0",
   display: "M-4 -2.8 h8 v5 h-8 z",
   lora: "M0 3 v-5 M-3 -2 q3 -3.4 6 0",
+  mesh: "M-3.5 2.5 l3.5 -5.5 l3.5 5.5 z M0 -3 v-2", // mast + uplink
 };
 
 function markerFor(p, info) {
@@ -298,15 +355,19 @@ function markerFor(p, info) {
   }, "marker");
   // presentation attrs are inline so the marker reads even with no CSS;
   // house.css repeats these values and adds hover/selection states.
+  // Teaser concepts wear teal and a dashed ring — visibly not-yet-real.
+  const tone = info.teaser ? "#6fd6c3" : "#ffd44f";
+  if (info.teaser) g.classList.add("teaser");
   g.append(
     el("ellipse", { cx: 0, cy: 12, rx: 10, ry: 4.5, fill: "rgba(0,0,0,0.5)" }, "marker-shadow"),
-    el("circle", { cx: 0, cy: 0, r: 12.5, fill: "none", stroke: "rgba(255,212,79,0.55)", "stroke-width": 1.2 }, "marker-pulse"),
-    el("circle", { cx: 0, cy: 0, r: 9, fill: "#141414", stroke: "#ffd44f", "stroke-width": 1.6, filter: "url(#glow)" }, "marker-body"),
+    el("circle", { cx: 0, cy: 0, r: 12.5, fill: "none", stroke: info.teaser ? "rgba(111,214,195,0.45)" : "rgba(255,212,79,0.55)", "stroke-width": 1.2 }, "marker-pulse"),
+    el("circle", { cx: 0, cy: 0, r: 9, fill: "#141414", stroke: tone, "stroke-width": 1.6,
+      ...(info.teaser ? { "stroke-dasharray": "3 2.5" } : {}), filter: "url(#glow)" }, "marker-body"),
     el("path", { d: GLYPHS[p.sense] || GLYPHS.display, transform: "scale(0.95)",
-      fill: "none", stroke: "#ffd44f", "stroke-width": 1.5,
+      fill: "none", stroke: tone, "stroke-width": 1.5,
       "stroke-linecap": "round", "stroke-linejoin": "round" }, "marker-glyph"),
   );
-  if (info.status !== "released") {
+  if (!info.teaser && info.status !== "released") {
     g.append(el("circle", { cx: 7.5, cy: -7.5, r: 3, fill: "#fb8c00", stroke: "#000", "stroke-width": 0.8 }, "marker-dev"));
   }
   return g;
@@ -376,7 +437,8 @@ for (const p of PLACEMENTS) {
   const f = fieldFor(p);
   const m = markerFor(p, info);
   // a soft pool of light under every sensing witness — the Hue trick
-  if (p.sense !== "display" && p.sense !== "lora") {
+  // (real witnesses only; concepts don't get to light the floor yet)
+  if (!p.teaser && p.sense !== "display" && p.sense !== "lora") {
     const w = worldOf(p);
     f.prepend(planRing(w.x, w.y, w.z - p.at.z, 1.7, { fill: "url(#poolWarm)" }, "pool"));
   }
@@ -416,6 +478,7 @@ const feedList = document.getElementById("feed-list");
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 
 function statusChip(status) {
+  if (status === "coming-soon") return html("span", "chip chip-soon", "coming soon · concept");
   const released = status === "released";
   return html("span", `chip ${released ? "chip-live" : "chip-dev"}`,
     released ? "released · print-validated" : "in development");
@@ -430,7 +493,8 @@ function renderPanel() {
   head.append(html("h2", null, "Your flock"));
   head.append(html("p", "flock-count",
     `${s.witnesses} witness${s.witnesses === 1 ? "" : "es"} · ${s.displays} display${s.displays === 1 ? "" : "s"}` +
-    (s.infra ? ` · ${s.infra} relay` : "")));
+    (s.infra ? ` · ${s.infra} relay` : "") +
+    (s.soon ? ` · +${s.soon} coming soon` : "")));
   head.append(html("p", "flock-honest",
     s.total === 0 ? "Nothing perched yet — tap a marker or switch one on below." :
     `${s.released} released today, ${s.indev} in development — statuses never hidden.`));
@@ -453,7 +517,8 @@ function renderPanel() {
       body.append(html("span", "perch-name", info.title));
       body.append(html("span", "perch-where", `${roomOf(p.room).label} · ${p.spot}`));
       row.append(dot, body);
-      if (info.status !== "released") row.append(html("span", "perch-dev", "in dev"));
+      if (info.teaser) row.append(html("span", "perch-soon", "coming soon"));
+      else if (info.status !== "released") row.append(html("span", "perch-dev", "in dev"));
       row.addEventListener("click", () => toggle(p.id));
       row.addEventListener("mouseenter", () => markerEls[p.id]?.classList.add("hint"));
       row.addEventListener("mouseleave", () => markerEls[p.id]?.classList.remove("hint"));
@@ -499,6 +564,20 @@ function renderDetails(p) {
   }
 
   const doors = html("div", "flock-doors");
+  if (info.teaser) {
+    const req = html("a", "primary small door", "→ request it (opens a GitHub issue)");
+    req.href = "https://github.com/kmay89/securaCV/issues/new?title=" +
+      encodeURIComponent(`Concept request: ${info.title} (Meshtastic fence guard)`) +
+      "&body=" + encodeURIComponent(
+        "Seen in the Canary House teaser. What I'd want from a chain-link-mounted, " +
+        "solar-fed Meshtastic perimeter witness:\n\n- fence length / terrain:\n- mesh distance to the nearest node:\n- shade situation:\n");
+    req.target = "_blank"; req.rel = "noopener";
+    const rel = html("button", "door door-btn", "the relay it would mesh with →");
+    rel.addEventListener("click", () => select("relay"));
+    doors.append(req, rel);
+    panel.append(doors);
+    return;
+  }
   const a1 = html("a", "primary small door", "find this one in the chooser →");
   a1.href = "choose.html" + chooserHash(p.answers);
   const a2 = html("a", "door", "meet it live →");
@@ -600,6 +679,7 @@ function startWalk() {
 
     for (const p of PLACEMENTS) {
       if (tripped.has(p.id) || !state.on.has(p.id)) continue;
+      if (p.teaser) continue; // concepts don't witness — that would be theater
       const room = roomOf(p.room);
       if (!room.outside && room.floor !== "ground") continue; // visitor stays downstairs
       if (Math.hypot(p.at.x - cx, p.at.y - cy) <= p.range) {
