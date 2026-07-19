@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Display Character wave 2 — the Voice
+
+- **Each Character now speaks its register** — in the ambient copy only
+  ([`docs/hardware/display_character.md`](docs/hardware/display_character.md)
+  §9). Three slots per Character: the calm-fleet hero word ("All quiet" /
+  "All is well" / "All clear" / "All good"), its inline form under the
+  time hero, and the returning-boot greeting ("hello again" /
+  "welcome home" / "welcome back" / "hey again"). The honesty line is
+  structural: severity words, badge text, link labels, event copy, and
+  every degraded-state instruction never come from the Voice table — a
+  Character may rephrase contentment, never trouble. The first-meeting
+  splash script stays canonical; only the *returning* greeting takes the
+  register.
+- **The phone mirror speaks in the wall's voice.** The active calm words
+  ride the `/api/glass` snapshot (`aq`/`aql`), so mirror and glass can
+  never disagree on register; trouble words the mirror still derives from
+  the invariant severity vocabulary.
+
 ### Display Character wave — choose how the glass feels, without choosing wrong
 
 - **Four curated era looks, one honest system**

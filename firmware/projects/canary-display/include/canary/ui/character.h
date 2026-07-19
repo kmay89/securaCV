@@ -1,10 +1,11 @@
 // include/canary/ui/character.h — the curated Character ring
 // (docs/hardware/display_character.md).
 //
-// A Character bundles three coordinated dimensions into one named,
+// A Character bundles four coordinated dimensions into one named,
 // pre-validated look: ground & chrome palette, type feel (which enabled
-// Montserrat size fills each role), and the bird's temperament (voice is
-// wave 2). It is NOT a license to change what anything means: the
+// Montserrat size fills each role), the bird's temperament, and the
+// voice (ambient copy only). It is NOT a license to change what anything
+// means: the
 // semantic set (col_ok/warn/alert/signed) stays at timeline-card parity
 // and every ncol_* stays with the night engine — a Character restyles
 // the room, never the alarms, and night outranks it.
@@ -48,12 +49,26 @@ struct Temperament {
   float hop;       // hop amplitude scale
 };
 
+// Wave 2 — the Voice: per-Character register for AMBIENT copy only
+// (display_character.md §6). A Character may rephrase contentment, never
+// trouble: severity words, badge text, link labels, event copy, and every
+// degraded-state instruction ("waiting for wifi", "no canaries yet") are
+// invariant — they are diagnosis and guidance, not mood. Plain ASCII by
+// rule: the built-in Montserrat tables carry no emoji, and the glance
+// contract wants words that read at 3 m, not glyphs.
+struct Voice {
+  const char* all_quiet;      // calm-fleet hero word ("All quiet")
+  const char* all_quiet_low;  // its inline register, under a time hero
+  const char* hello_again;    // returning-boot splash tagline
+};
+
 struct CharacterDef {
   const char* name;
   const char* caption;
   Palette pal;
   TypeLadder type;
   Temperament temp;
+  Voice voice;
 };
 
 // Applies a Character: clamps, sets it active (theme.h reads it from
@@ -62,6 +77,7 @@ void character_apply(Character c);
 
 Character active_character();
 const CharacterDef& active_character_def();   // theme.cpp's choke point
+const Voice& active_voice();                  // ambient copy, never alarms
 
 const char* character_name(Character c);
 const char* character_caption(Character c);

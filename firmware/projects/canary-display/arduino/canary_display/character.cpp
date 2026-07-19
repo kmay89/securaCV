@@ -71,7 +71,9 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
          0x03A9F4,  // accent — signal blue (= the signed hue, by design)
      },
      k_ladder_default,
-     {1.0f, 1.0f, 1.0f}},      // measured
+     {1.0f, 1.0f, 1.0f},       // measured
+     // Voice: today's words, byte-for-byte — the default never drifts.
+     {"All quiet", "all quiet", "hello again"}},
     // [Heirloom] — warm machines (mid-century): big, warm, unhurried.
     {"Heirloom", "warm & roomy • easy reading",
      {
@@ -84,7 +86,9 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
          0xC9A24B,  // accent — brass
      },
      k_ladder_heirloom,
-     {1.15f, 1.30f, 0.90f}},   // slow & sparing
+     {1.15f, 1.30f, 0.90f},    // slow & sparing
+     // Voice: mid-century courtesy — unhurried, complete sentences.
+     {"All is well", "all is well", "welcome home"}},
     // [Aqua] — the millennium (early-2000s gloss): bright, still calm.
     {"Aqua", "bright & glossy • turn-of-century",
      {
@@ -97,7 +101,9 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
          0x38C6FF,  // accent — glossy cyan (day-only; night outranks it)
      },
      k_ladder_default,
-     {0.95f, 1.0f, 1.05f}},    // friendly
+     {0.95f, 1.0f, 1.05f},     // friendly
+     // Voice: millennium optimism — crisp and bright.
+     {"All clear", "all clear", "welcome back"}},
     // [Neon] — now (Gen-Alpha energy): vivid and alive, still honest.
     {"Neon", "vivid & lively • high energy",
      {
@@ -110,7 +116,9 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
          0x22E0C8,  // accent — electric teal (day-only; night outranks it)
      },
      k_ladder_default,
-     {0.90f, 0.75f, 1.20f}},   // quick & springy
+     {0.90f, 0.75f, 1.20f},    // quick & springy
+     // Voice: quick and casual — short words, no ceremony.
+     {"All good", "all good", "hey again"}},
 };
 
 // Ring (flip-through) order — display order, not enum order: the warm
@@ -144,6 +152,8 @@ Character active_character() { return s_active; }
 const CharacterDef& active_character_def() {
   return k_defs[clamp_idx(s_active)];
 }
+
+const Voice& active_voice() { return k_defs[clamp_idx(s_active)].voice; }
 
 const char* character_name(Character c) { return k_defs[clamp_idx(c)].name; }
 

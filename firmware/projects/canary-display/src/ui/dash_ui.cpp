@@ -20,6 +20,7 @@
 #include "canary/ui/settings_ui.h"
 #include "canary/ui/commission_ui.h"
 #include "canary/ui/theme.h"
+#include "canary/ui/character.h"
 #include "canary/ui/canary_mark.h"
 #include "canary/trust.h"
 #include "canary/version.h"
@@ -659,7 +660,10 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
                       st.mqtt_ok ? "Listening for canaries"
                                  : (st.wifi_ok ? "Can't reach your hub" : "No WiFi"));
   } else if (worst <= Sev::Notice) {
-    lv_label_set_text_fmt(s_headline, "All quiet  •  %d %s%s", n,
+    // The calm sentence speaks in the Character's voice; the trouble
+    // branch below never does (sev_name is invariant by rule).
+    lv_label_set_text_fmt(s_headline, "%s  •  %d %s%s",
+                          active_voice().all_quiet, n,
                           n == 1 ? "canary" : "canaries",
                           fleet.all_verified() ? "  •  verified" : "");
   } else {
