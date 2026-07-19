@@ -60,11 +60,20 @@ discount below 1.8× COGS or the channel fees eat the line.
 
 ### Channel sequence
 
-1. **Now — Tindie store** (maker-native, ~5% fees, zero setup friction) for R1/R2 of
-   the two released devices. Doubles as demand measurement.
-2. **Next — own storefront** (Shopify) once monthly volume >~30 kits; keeps margin,
-   enables the waitlist→launch email loop, and print-on-demand apps integrate directly
-   (§2). The compare page on securacv.com links whichever exists.
+1. **Now — the static store on securacv.com** (decided; built as `store.html` +
+   `store.json` in the website repo — see its `store-README.md`). No SaaS storefront:
+   Stripe Payment Links do checkout ($0/month, ~2.9% + 30¢/sale), PirateShip does
+   labels, and the entire catalog is one JSON file. Founder-time protections are
+   structural: fixed SKUs only (indoor/outdoor per device, two bundles, two parts
+   packs — customization is what the free STL path is for), per-batch stock caps so
+   demand can never outrun one weekly build session, and price as the demand valve.
+   A "$0/month forever" brand running its own store with zero subscriptions is also
+   the right story. Tindie remains a good parallel listing for marketplace discovery
+   and as overflow if a launch spike ever outruns payment links.
+2. **Only if operational pain demands it — a SaaS storefront** (Shopify Starter $5/mo
+   or Basic $39/mo): the triggers are multi-item carts, multi-state tax automation, or
+   wanting a print-on-demand dropship app wired directly into checkout. Not revenue —
+   pain.
 3. **Later — Crowd Supply campaign** for the R3 "Canary, boxed" productization; their
    audience is the target tribe and Mouser handles logistics. This is also the moment
    for CE/FCC conversations (kits of listed dev-boards ≈ fine; a boxed product with our
@@ -190,6 +199,9 @@ the eventual margin).
 - [ ] `flash_batch.sh` + merged-image + `manifest.json` CI artifacts (unblocks web flasher AND jig).
 - [ ] `canary-local/flash.html` with ESP Web Tools (vendored, no CDN — Invariant IV).
 - [ ] JLC3DP MJF quote for WAP + Vision sets (Phase-2 trigger).
-- [ ] Tindie store listing for WAP + Vision R1/R2; waitlist for Watch/Dash on the compare page.
+- [ ] Store go-live: create the Stripe products + payment links (adjustable qty,
+      US shipping, flat rate) and paste them into the website repo's `store.json` —
+      the buy buttons switch on per-product; empty link = waitlist state.
+- [ ] Optional Tindie listing for WAP + Vision R1/R2 (marketplace discovery + overflow).
 - [ ] Improv Wi-Fi Serial in canary firmware (nice-to-have, post-launch).
 - [ ] FCC/CE diligence memo before any R3/Crowd Supply boxed product.
