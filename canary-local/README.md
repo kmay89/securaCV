@@ -9,11 +9,13 @@ flows stage the device into the exact state they're describing.
 canary-local/
   index.html            the page (vanilla JS, no frameworks, no build step)
   choose.html           "Find your Canary" — the four-question front door
+  boards.html           "The Board Room" — every board + pin flags + wiring
   assets/
     app.js              card gallery + device sheets + guide player
     scene3d.js          zero-dependency WebGL: procedural device bodies
     stl.js              STL → the same viewer (real printed parts)
     enclosure-lab.js    the parametric catalog, browsable (per-device tab)
+    board-room.js       the Board Room: pin-flag overlay + wiring bench
     chooser.js          the needs-matcher UI
     chooser-data.js     questions + candidates + scorer (DOM-free, tested)
     guides.js           tours, fix-it flows, LED/chirp grammars (data)
@@ -21,6 +23,8 @@ canary-local/
   devices/
     registry.json       the device registry (one card per entry)
     enclosures.json     generated enclosure catalog (variants + .scad params)
+    wiring.json         wiring harnesses (builds = permutations; signals
+                        named for future live pin emulation — see §4f)
   enclosures/preview/   coarse preview meshes for in-dev designs (rendered
                         by tools/gen_enclosures.py --render; the library's
                         own "committed STLs are print-validated" policy
@@ -300,6 +304,68 @@ screws badge can't drift from the BOM's four). The ribbon says so to your face:
 Today: the Canary WAP weather + battery build. Vision and the Watch follow —
 the engine is device-agnostic; they need only their `assembly.json` entry.
 
+## 4f. The Board Room: ECAD viewer + wiring bench (`boards.html`)
+
+The Enclosure Lab's electronic sibling — a standalone page where **every**
+board in the catalog is browsable, not just per-device tabs, and the pins
+speak for themselves. Two modes:
+
+- **the board** — the vendor GLB with 3D **pin flags** hung off the real pad
+  geometry, synced both ways with the firmware pin-map table (hover a row,
+  the flag lights; hover a flag, the row lights). An *every pad* toggle shows
+  the full castellation map, not just the Canary-used pins. `planned` pins
+  wear dashed flags.
+- **wire it** — a LEGO-instruction harness: schematic peripherals (piezo,
+  reed, GNSS, WS2812, divider, LiPo) arranged around the board on a virtual
+  bench, every wire a colored curve that **lands on the exact castellated pad
+  the firmware config names**, walked step by step with the classic mistakes
+  called out (UART crossover, DIN vs DOUT, power connects last, polarity).
+
+The load-bearing honesty rule: **pin anchors are measured on the committed
+mesh, never eyeballed.** `tools/pin_anchors.mjs` clusters each GLB's
+pad-colour islands (union-find on a 0.5 mm vertex grid) and prints their
+centres; the anchors committed into `boards.config.json` → `boards.json` come
+from those islands, and `tests/boardroom.test.js` gates that every anchor sits
+inside the mesh's own bbox. Rows whose feature couldn't be confidently located
+on the vendor mesh (e.g. the Vision board's Grove socket) carry **no** anchor
+and render table-only — a flag is a claim.
+
+| Piece | File |
+|---|---|
+| The page | `canary-local/boards.html` |
+| The room — pills, flags overlay, wire bench, step player | `canary-local/assets/board-room.js` |
+| 3D→CSS projection for the flag overlay | `assets/scene3d.js` (`DeviceScene.project`) |
+| Pin anchors + full pad maps (authored from mesh islands) | `boards/boards.config.json` → `devices/boards.json` |
+| Anchor authoring aid | `canary-local/tools/pin_anchors.mjs` |
+| Wiring harnesses (schema v1) | `canary-local/devices/wiring.json` |
+| Honesty gates | `tests/boardroom.test.js` + `tests/boardroom_probe.mjs` |
+
+`wiring.json` is deliberately data-shaped for what comes next:
+
+- **Assembly permutations** — `builds` is an array per device, not a single
+  harness: field vs bedside vs battery-less loadouts are new entries, no new
+  code, and the Workshop's option flags (`FEATURE_GNSS`, battery bay…) map
+  1:1 onto which peripherals a build carries. A future Workshop hook can
+  select the matching build the way it already selects the matching STL.
+- **Live pin emulation** — every firmware-facing connection carries
+  `signal`/`dir` (`chirp`, `tamper`, `gnss_uart`, `vbat`…) matching the
+  feature names in `firmware/configs`. That is the binding point for the
+  emulator: the same scenario bus that feeds the display emulator's serial
+  and MQTT (`emulator/src/emu_bus.h`) can publish GPIO state per signal, and
+  the Board Room subscribes — pin flags glow when the firmware drives them,
+  the buzzer wire pulses while a chirp plays. Pads first, signals named now,
+  wasm bridge later; nothing in the schema needs to change.
+
+## 4g. Testing the Board Room
+
+`tests/boardroom.test.js` (node, CI): every anchor inside its mesh bbox;
+every wiring build references a real board/peripheral/pin/color/step; wires
+may not promise more than the firmware config (a `planned` pinout row forces
+a `planned` wire); every step wires something. `tests/boardroom_probe.mjs`
+(headless Chromium, CI): loads the page, checks the mesh lands in the scene,
+the flags and table speak, the every-pad toggle works, the harness renders
+one line per connection, and the step player walks.
+
 ## 5. Where this lives (repo → Pages → securacv.com)
 
 Three tiers, no lock-in, one source of truth:
@@ -332,6 +398,15 @@ Three tiers, no lock-in, one source of truth:
 - **Settings/commissioning deep-links**: guide steps that open the
   settings surface or mint a commissioning QR directly (the firmware
   entry points exist; the tour currently narrates the gestures).
+- **Board Room — build permutations**: more `wiring.json` builds per
+  device (bedside/no-battery/mobile loadouts), Vision + Watch harnesses
+  (the Watch's is a seating, not a wiring — the XIAO drops into the
+  socket bars the mesh already locates), and a Workshop hook that picks
+  the build matching the ticked options.
+- **Board Room — live pins**: bridge the emulator scenario bus to the
+  wiring `signal` names so flags glow and wires pulse when the firmware
+  actually drives them (see §4f); the schema already carries
+  `signal`/`dir` so this is an emulator-side export plus a subscriber.
 
 ## 7. Building
 

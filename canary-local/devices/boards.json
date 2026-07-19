@@ -102,50 +102,194 @@
     "ry": 0.7,
     "dist_factor": 2.7
    },
+   "pads": {
+    "_comment": "All 14 castellated pads, from the committed GLB's gold-pad islands (tools/pin_anchors.mjs, #e7c863): two rows of 7 at 2.54 mm pitch, USB-C at -X, +Y component side \u2014 so z=+1.76 is the D0\u2013D6 edge and z=-13.98 the power/D10\u2013D7 edge.",
+    "D0": [
+     -5.88,
+     0.4,
+     1.76
+    ],
+    "D1": [
+     -3.34,
+     0.4,
+     1.76
+    ],
+    "D2": [
+     -0.8,
+     0.4,
+     1.76
+    ],
+    "D3": [
+     1.74,
+     0.4,
+     1.76
+    ],
+    "D4": [
+     4.28,
+     0.4,
+     1.76
+    ],
+    "D5": [
+     6.82,
+     0.4,
+     1.76
+    ],
+    "D6": [
+     9.36,
+     0.4,
+     1.76
+    ],
+    "5V": [
+     -5.88,
+     0.4,
+     -13.98
+    ],
+    "GND": [
+     -3.34,
+     0.4,
+     -13.98
+    ],
+    "3V3": [
+     -0.8,
+     0.4,
+     -13.98
+    ],
+    "D10": [
+     1.74,
+     0.4,
+     -13.98
+    ],
+    "D9": [
+     4.28,
+     0.4,
+     -13.98
+    ],
+    "D8": [
+     6.82,
+     0.4,
+     -13.98
+    ],
+    "D7": [
+     9.36,
+     0.4,
+     -13.98
+    ],
+    "BAT+": [
+     2.12,
+     -0.3,
+     -10.56
+    ],
+    "BAT-": [
+     4.03,
+     -0.3,
+     -10.56
+    ]
+   },
    "pinout": [
     {
      "label": "Chirp / buzzer",
      "pin": "D1",
      "gpio": "GPIO2",
-     "use": "Passive piezo (LEDC PWM 2 kHz)"
+     "use": "Passive piezo (LEDC PWM 2 kHz)",
+     "anchor": [
+      -3.34,
+      0.4,
+      1.76
+     ]
     },
     {
      "label": "Status RGB LED",
      "pin": "D2",
      "gpio": "GPIO3",
      "status": "planned",
-     "use": "External WS2812 \u2014 pin defined but not driven by canary-wap firmware yet; the live indicator is the onboard LED (GPIO21)."
+     "use": "External WS2812 \u2014 pin defined but not driven by canary-wap firmware yet; the live indicator is the onboard LED (GPIO21).",
+     "anchor": [
+      -0.8,
+      0.4,
+      1.76
+     ]
     },
     {
      "label": "Tamper",
      "pin": "D3",
      "gpio": "GPIO4",
      "status": "planned",
-     "use": "Reed / hall switch (INPUT_PULLUP, active-low) \u2014 FEATURE_TAMPER_GPIO defined but not yet consumed by canary-wap firmware."
+     "use": "Reed / hall switch (INPUT_PULLUP, active-low) \u2014 FEATURE_TAMPER_GPIO defined but not yet consumed by canary-wap firmware.",
+     "anchor": [
+      1.74,
+      0.4,
+      1.76
+     ]
     },
     {
      "label": "VBAT sense",
      "pin": "A0",
      "gpio": "GPIO1",
-     "use": "2:1 divider, VBAT_DIVIDER_RATIO=2.0"
+     "use": "2:1 divider, VBAT_DIVIDER_RATIO=2.0",
+     "anchor": [
+      -5.88,
+      0.4,
+      1.76
+     ]
     },
     {
      "label": "GNSS UART",
      "pin": "D6 / D7",
      "gpio": "GPIO43 / GPIO44",
-     "use": "L76K TX/RX @ 9600 (FEATURE_GNSS)"
+     "use": "L76K TX/RX @ 9600 (FEATURE_GNSS)",
+     "anchors": [
+      [
+       9.36,
+       0.4,
+       1.76
+      ],
+      [
+       9.36,
+       0.4,
+       -13.98
+      ]
+     ]
     },
     {
      "label": "Battery",
      "pin": "BAT+ / BAT-",
      "gpio": "\u2014",
-     "use": "JST-PH LiPo, charged by the onboard charger"
+     "use": "JST-PH LiPo, charged by the onboard charger",
+     "anchors": [
+      [
+       2.12,
+       -0.3,
+       -10.56
+      ],
+      [
+       4.03,
+       -0.3,
+       -10.56
+      ]
+     ]
     },
     {
      "label": "Power",
      "pin": "5V / 3V3 / GND",
      "gpio": "\u2014",
-     "use": "USB-C 5 V in; 3V3 rail out"
+     "use": "USB-C 5 V in; 3V3 rail out",
+     "anchors": [
+      [
+       -5.88,
+       0.4,
+       -13.98
+      ],
+      [
+       -0.8,
+       0.4,
+       -13.98
+      ],
+      [
+       -3.34,
+       0.4,
+       -13.98
+      ]
+     ]
     }
    ],
    "blurb": "21 x 17.8 mm. ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger; the Sense expansion adds the OV camera + PDM mic on a stacked B2B board. The WAP build uses the plain-facing pins for chirp, tamper, LED and GNSS.",
@@ -250,7 +394,12 @@
      "label": "Camera",
      "pin": "CSI FPC",
      "gpio": "\u2014",
-     "use": "OV5647 / OV-series over the flex"
+     "use": "OV5647 / OV-series over the flex",
+     "anchor": [
+      -17.8,
+      6.3,
+      4.0
+     ]
     },
     {
      "label": "USB-C",
@@ -309,13 +458,23 @@
      "label": "Display",
      "pin": "SPI",
      "gpio": "GC9A01",
-     "use": "240x240 round panel"
+     "use": "240x240 round panel",
+     "anchor": [
+      0.3,
+      -1.2,
+      15.44
+     ]
     },
     {
      "label": "Backlight",
      "pin": "D6",
      "gpio": "GPIO43",
-     "use": "PWM-dimmable (night floor)"
+     "use": "PWM-dimmable (night floor)",
+     "anchor": [
+      9.72,
+      -4.3,
+      0
+     ]
     },
     {
      "label": "Touch",
@@ -333,13 +492,23 @@
      "label": "Storage",
      "pin": "microSD",
      "gpio": "\u2014",
-     "use": "Journal / assets"
+     "use": "Journal / assets",
+     "anchor": [
+      -6.2,
+      -4.2,
+      -11.0
+     ]
     },
     {
      "label": "Battery",
      "pin": "JST 1.25",
      "gpio": "\u2014",
-     "use": "LiPo, onboard charger; verify polarity"
+     "use": "LiPo, onboard charger; verify polarity",
+     "anchor": [
+      -1.7,
+      -3.7,
+      0
+     ]
     }
    ],
    "blurb": "\u00d8 39 mm 1.28-in GC9A01 (240x240) with CST816S touch, PCF8563 RTC, microSD and a LiPo charger; it seats a XIAO on its back socket. The backlight on D6/GPIO43 is PWM-dimmable \u2014 that is the bedside night floor.",

@@ -1,0 +1,487 @@
+{
+ "schema": 1,
+ "note": "Wiring harnesses for the Board Room's Wire-it view. HONESTY CONTRACT: `to` pin names must exist in the board's pads/pinout in devices/boards.json (drift-gated there against firmware configs + BOM); per-connection `status` mirrors the pinout row's status \u2014 a `planned` wire is defined in firmware config but not yet driven/read by the current build. Peripheral shapes are procedural stand-ins sized from their datasheets (schematic, not vendor CAD); wire ROUTING is staged for legibility \u2014 only the endpoints are claims. `signal`/`dir` name the firmware-facing signal each wire carries: that is the future binding point for live pin emulation (the wasm emulator's GPIO bus lighting these same pins), so they must match the feature names the firmware configs use. Builds are data, not code: a device may carry any number of builds (permutations \u2014 field vs bedside vs battery-less), and tests/wiring.test.js validates every reference.",
+ "colors": {
+  "5v": [
+   0.85,
+   0.2,
+   0.16
+  ],
+  "bat": [
+   0.85,
+   0.2,
+   0.16
+  ],
+  "3v3": [
+   0.95,
+   0.55,
+   0.2
+  ],
+  "gnd": [
+   0.12,
+   0.12,
+   0.14
+  ],
+  "signal": [
+   0.98,
+   0.83,
+   0.3
+  ],
+  "tx": [
+   0.35,
+   0.68,
+   0.4
+  ],
+  "rx": [
+   0.32,
+   0.5,
+   0.85
+  ],
+  "data": [
+   0.62,
+   0.45,
+   0.85
+  ],
+  "sense": [
+   0.36,
+   0.62,
+   0.64
+  ]
+ },
+ "peripherals": {
+  "piezo": {
+   "name": "Passive piezo disc",
+   "part": "piezo",
+   "blurb": "Passive element \u2014 it only sounds when the firmware drives it (LEDC PWM); no onboard oscillator.",
+   "pins": {
+    "+": [
+     0,
+     1.2,
+     0
+    ],
+    "-": [
+     5.8,
+     0.7,
+     0
+    ]
+   }
+  },
+  "reed": {
+   "name": "Reed switch",
+   "part": "reed",
+   "blurb": "Glass-tube reed, no polarity. Closes near the enclosure magnet; firmware reads it active-low with the internal pull-up \u2014 no external resistor.",
+   "pins": {
+    "1": [
+     -11,
+     1.3,
+     0
+    ],
+    "2": [
+     11,
+     1.3,
+     0
+    ]
+   }
+  },
+  "ws2812": {
+   "name": "WS2812 status LED",
+   "part": "ws2812",
+   "blurb": "One addressable RGB pixel. Data flows one way \u2014 wire DIN, not DOUT, to the board.",
+   "pins": {
+    "VDD": [
+     -3,
+     1.7,
+     5
+    ],
+    "DIN": [
+     0,
+     1.7,
+     5
+    ],
+    "GND": [
+     3,
+     1.7,
+     5
+    ]
+   }
+  },
+  "gnss_l76k": {
+   "name": "L76K GNSS module",
+   "part": "gnss",
+   "blurb": "UART GNSS with ceramic patch antenna, 9600 baud. TX and RX cross: the module talks out of TX into the board's RX.",
+   "pins": {
+    "TX": [
+     -6,
+     1.9,
+     8
+    ],
+    "RX": [
+     -2,
+     1.9,
+     8
+    ],
+    "VCC": [
+     2,
+     1.9,
+     8
+    ],
+    "GND": [
+     6,
+     1.9,
+     8
+    ]
+   }
+  },
+  "vbat_divider": {
+   "name": "VBAT divider (2:1)",
+   "part": "divider",
+   "blurb": "Two equal resistors halve the battery voltage so the 3.3 V ADC can read a 4.2 V cell \u2014 VBAT_DIVIDER_RATIO=2.0 undoes the halving in firmware.",
+   "pins": {
+    "VBAT": [
+     -4,
+     1.7,
+     4
+    ],
+    "OUT": [
+     0,
+     1.7,
+     4
+    ],
+    "GND": [
+     4,
+     1.7,
+     4
+    ]
+   }
+  },
+  "lipo": {
+   "name": "LiPo cell",
+   "part": "lipo",
+   "blurb": "Single-cell LiPo on the board's battery pads; the XIAO's onboard charger manages it. Polarity is not survivable \u2014 check twice.",
+   "pins": {
+    "+": [
+     16.5,
+     2.8,
+     1.6
+    ],
+    "-": [
+     16.5,
+     2.8,
+     -1.6
+    ]
+   }
+  }
+ },
+ "builds": [
+  {
+   "id": "canary-wap-field",
+   "device": "canary-wap",
+   "board": "seeed_xiao_esp32s3_sense",
+   "title": "WAP field build \u2014 chirp, tamper, GNSS, battery",
+   "note": "The full off-grid loadout from the WAP BOM: every wire below lands on the exact castellated pad the firmware config names. Power (the battery) connects LAST \u2014 build practice the step order enforces.",
+   "frame": {
+    "rx": -0.62,
+    "ry": 0.5,
+    "pad": 1.35
+   },
+   "peripherals": [
+    {
+     "id": "bz1",
+     "ref": "piezo",
+     "pos": [
+      -16,
+      0,
+      26
+     ],
+     "rot": [
+      0,
+      12,
+      0
+     ],
+     "step": 0
+    },
+    {
+     "id": "sw1",
+     "ref": "reed",
+     "pos": [
+      14,
+      0,
+      30
+     ],
+     "rot": [
+      0,
+      -14,
+      0
+     ],
+     "step": 1
+    },
+    {
+     "id": "gps1",
+     "ref": "gnss_l76k",
+     "pos": [
+      34,
+      0,
+      -6
+     ],
+     "rot": [
+      0,
+      -90,
+      0
+     ],
+     "step": 2
+    },
+    {
+     "id": "led1",
+     "ref": "ws2812",
+     "pos": [
+      -30,
+      0,
+      8
+     ],
+     "rot": [
+      0,
+      90,
+      0
+     ],
+     "step": 3
+    },
+    {
+     "id": "div1",
+     "ref": "vbat_divider",
+     "pos": [
+      -26,
+      0,
+      -16
+     ],
+     "rot": [
+      0,
+      55,
+      0
+     ],
+     "step": 4
+    },
+    {
+     "id": "bat1",
+     "ref": "lipo",
+     "pos": [
+      -4,
+      0,
+      -40
+     ],
+     "rot": [
+      0,
+      90,
+      0
+     ],
+     "step": 5
+    }
+   ],
+   "steps": [
+    {
+     "title": "Chirp buzzer",
+     "note": "Two wires. The piezo is passive \u2014 the LEDC PWM on D1 is what makes the sound, so a mixed-up pin stays silent, not broken."
+    },
+    {
+     "title": "Tamper reed",
+     "note": "No polarity: either leg to D3, the other to GND. The internal pull-up holds the pin high; the enclosure magnet closing the reed pulls it low."
+    },
+    {
+     "title": "GNSS module",
+     "note": "The classic crossover: module TX \u2192 board D7 (RX), module RX \u2192 board D6 (TX). Straight-through wiring is the #1 'my GPS is dead' cause."
+    },
+    {
+     "title": "Status LED",
+     "note": "Data in on DIN only \u2014 DOUT is for chaining more pixels away from the board."
+    },
+    {
+     "title": "VBAT sense divider",
+     "note": "The divider's midpoint goes to A0; firmware multiplies by 2.0 to recover the real cell voltage."
+    },
+    {
+     "title": "Battery \u2014 last",
+     "note": "Power connects last, after every signal wire is seated and checked. BAT pads are on the board's underside; polarity is not survivable."
+    }
+   ],
+   "connections": [
+    {
+     "from": [
+      "bz1",
+      "+"
+     ],
+     "to": "D1",
+     "color": "signal",
+     "step": 0,
+     "signal": "chirp",
+     "dir": "out",
+     "status": "live",
+     "note": "LEDC PWM 2 kHz (CHIRP_GPIO)"
+    },
+    {
+     "from": [
+      "bz1",
+      "-"
+     ],
+     "to": "GND",
+     "color": "gnd",
+     "step": 0,
+     "note": "return"
+    },
+    {
+     "from": [
+      "sw1",
+      "1"
+     ],
+     "to": "D3",
+     "color": "sense",
+     "step": 1,
+     "signal": "tamper",
+     "dir": "in",
+     "status": "planned",
+     "note": "INPUT_PULLUP, active-low (FEATURE_TAMPER_GPIO)"
+    },
+    {
+     "from": [
+      "sw1",
+      "2"
+     ],
+     "to": "GND",
+     "color": "gnd",
+     "step": 1,
+     "note": "return"
+    },
+    {
+     "from": [
+      "gps1",
+      "TX"
+     ],
+     "to": "D7",
+     "color": "tx",
+     "step": 2,
+     "signal": "gnss_uart",
+     "dir": "in",
+     "status": "live",
+     "note": "module TX \u2192 board RX (GPIO44) \u2014 crossed, on purpose"
+    },
+    {
+     "from": [
+      "gps1",
+      "RX"
+     ],
+     "to": "D6",
+     "color": "rx",
+     "step": 2,
+     "signal": "gnss_uart",
+     "dir": "out",
+     "status": "live",
+     "note": "module RX \u2190 board TX (GPIO43)"
+    },
+    {
+     "from": [
+      "gps1",
+      "VCC"
+     ],
+     "to": "3V3",
+     "color": "3v3",
+     "step": 2,
+     "note": "3.3 V rail"
+    },
+    {
+     "from": [
+      "gps1",
+      "GND"
+     ],
+     "to": "GND",
+     "color": "gnd",
+     "step": 2,
+     "note": "return"
+    },
+    {
+     "from": [
+      "led1",
+      "DIN"
+     ],
+     "to": "D2",
+     "color": "data",
+     "step": 3,
+     "signal": "ws2812",
+     "dir": "out",
+     "status": "planned",
+     "note": "one-wire pixel data (pin defined, not driven yet)"
+    },
+    {
+     "from": [
+      "led1",
+      "VDD"
+     ],
+     "to": "3V3",
+     "color": "3v3",
+     "step": 3,
+     "note": "3.3 V keeps the data threshold happy without a level shifter"
+    },
+    {
+     "from": [
+      "led1",
+      "GND"
+     ],
+     "to": "GND",
+     "color": "gnd",
+     "step": 3,
+     "note": "return"
+    },
+    {
+     "from": [
+      "div1",
+      "VBAT"
+     ],
+     "to": "BAT+",
+     "color": "bat",
+     "step": 4,
+     "note": "tap the cell side, not the 5 V rail"
+    },
+    {
+     "from": [
+      "div1",
+      "OUT"
+     ],
+     "to": "A0",
+     "color": "sense",
+     "step": 4,
+     "signal": "vbat",
+     "dir": "in",
+     "status": "live",
+     "note": "divider midpoint \u2192 ADC (VBAT_DIVIDER_RATIO=2.0)"
+    },
+    {
+     "from": [
+      "div1",
+      "GND"
+     ],
+     "to": "GND",
+     "color": "gnd",
+     "step": 4,
+     "note": "return"
+    },
+    {
+     "from": [
+      "bat1",
+      "+"
+     ],
+     "to": "BAT+",
+     "color": "bat",
+     "step": 5,
+     "note": "underside pad \u2014 verify polarity before it touches"
+    },
+    {
+     "from": [
+      "bat1",
+      "-"
+     ],
+     "to": "BAT-",
+     "color": "gnd",
+     "step": 5,
+     "note": "underside pad"
+    }
+   ]
+  }
+ ]
+}
