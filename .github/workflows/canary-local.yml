@@ -19,6 +19,9 @@ on:
       - "firmware/common/**"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
+      - "docs/homeassistant_setup.md"
+      - "custom_components/securacv/manifest.json"
+      - "hacs.json"
       - "sbom/README.md"
       - ".github/workflows/canary-local.yml"
   pull_request:
@@ -31,6 +34,9 @@ on:
       - "firmware/common/**"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
+      - "docs/homeassistant_setup.md"
+      - "custom_components/securacv/manifest.json"
+      - "hacs.json"
       - "sbom/README.md"
       - ".github/workflows/canary-local.yml"
 
@@ -54,12 +60,21 @@ jobs:
           node --test canary-local/tests/workshop.test.js
           node --test canary-local/tests/boards.test.js
           node --test canary-local/tests/assembly.test.js
+          node --test canary-local/tests/boardroom.test.js
+          node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/bench.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
           if ! git diff --exit-code -- canary-local/devices/enclosures.json canary-local/devices/build.json canary-local/devices/workshop.json; then
             echo "::error::generated catalog stale — run canary-local/tools/gen_enclosures.py and commit"
+            exit 1
+          fi
+      - name: Hub data drift (deterministic run — upstream snapshot preserved verbatim)
+        run: |
+          python3 canary-local/tools/gen_homeassistant.py
+          if ! git diff --exit-code -- canary-local/devices/homeassistant.json; then
+            echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit"
             exit 1
           fi
 
@@ -95,6 +110,8 @@ jobs:
         run: node canary-local/tests/boot_probe.mjs
       - name: Workshop probe — the configurator drives the real catalog
         run: node canary-local/tests/workshop_probe.mjs
+      - name: Board Room probe — pin flags + wiring on the committed meshes
+        run: node canary-local/tests/boardroom_probe.mjs
       - name: Bench probe — the physical test bench drives the live firmware
         run: node canary-local/tests/bench_probe.mjs
       - name: Build both flavors from THIS tree

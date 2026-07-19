@@ -115,7 +115,11 @@ def main():
             "source_step": "boards/vendor/" + b["source"],
             "dims_mm": facts["dims_mm"], "triangles": facts["triangles"],
             "parts": facts["parts"], "materials": facts["materials"],
-            "pose": b["pose"], "pinout": b["pinout"], "blurb": b["blurb"],
+            "pose": b["pose"],
+            # pads (full castellation map) and per-row anchor/anchors ride along
+            # verbatim — raw GLB mm, authored from tools/pin_anchors.mjs islands
+            **({"pads": b["pads"]} if "pads" in b else {}),
+            "pinout": b["pinout"], "blurb": b["blurb"],
             "doc": b.get("doc"), "provenance": b["provenance"],
         }
         print(f"OK {b['id']}: {facts['dims_mm']} mm · {facts['triangles']:,} tris · "

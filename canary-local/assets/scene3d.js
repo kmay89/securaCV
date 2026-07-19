@@ -532,6 +532,30 @@ export class DeviceScene {
     }
   }
 
+  // World-space point (caller applies any part/model transform first) → CSS
+  // pixel position on this canvas, using the SAME camera as the draw loop
+  // (persp 0.62 / view translate / orbit spin). The Board Room hangs its HTML
+  // pin flags and wire labels on this; depth is camera-space distance so
+  // callers can fade or stack flags front-to-back.
+  project(x, y, z) {
+    const W = this.canvas.clientWidth || 1, H = this.canvas.clientHeight || 1;
+    const proj = M4.persp(0.62, W / H, 5, 2000);
+    const spin = M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y));
+    const wx = spin[0] * x + spin[4] * y + spin[8] * z;
+    const wy = spin[1] * x + spin[5] * y + spin[9] * z;
+    const wz = spin[2] * x + spin[6] * y + spin[10] * z;
+    const vx = wx, vy = wy - this.viewY, vz = wz - this.dist;
+    const cw = -vz; // proj[11] = -1
+    if (cw <= 1e-3) return { x: -1e4, y: -1e4, depth: Infinity, visible: false };
+    const cx = proj[0] * vx, cy = proj[5] * vy;
+    return {
+      x: (cx / cw * 0.5 + 0.5) * W,
+      y: (0.5 - cy / cw * 0.5) * H,
+      depth: cw,
+      visible: true,
+    };
+  }
+
   removePart(part) {
     const i = this.parts.indexOf(part);
     if (i < 0) return;

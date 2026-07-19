@@ -150,7 +150,9 @@ const fromTxt = await page.locator(".ws-pkg", { hasText: "battery weather" })
 const tickTxt = await page.locator(".ws-ticker .ws-tickbig").first().textContent();
 const fromN = parseInt(fromTxt.replace(/\D+/g, ""), 10);
 const tickN = Math.round(parseFloat(tickTxt.replace(/[^\d.]/g, "")));
-if (Math.abs(fromN - tickN) > 1) {
+// NaN compares false against everything — check it explicitly or a
+// parse failure would sail through as a pass
+if (Number.isNaN(fromN) || Number.isNaN(tickN) || Math.abs(fromN - tickN) > 1) {
   fail(`package from-price $${fromN} disagrees with ticker $${tickN} (double-counted shared refs?)`);
 }
 

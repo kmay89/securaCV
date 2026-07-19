@@ -1,5 +1,5 @@
 {
-  "_comment": "Authoring config for canary-local/tools/gen_boards.py. Each entry turns a vendor STEP (boards/vendor/*.step) into a committed, colour-baked GLB (canary-local/boards/<id>.glb) plus a row in canary-local/devices/boards.json. Geometry facts in boards.json are recomputed from the committed GLB by the same loader the browser uses (tools/glb_facts.mjs), so the JSON can never lie about the mesh. Pinouts are the Canary-relevant pins (from firmware/configs + docs/hardware/bom_*.csv), not the full generic map.",
+  "_comment": "Authoring config for canary-local/tools/gen_boards.py. Each entry turns a vendor STEP (boards/vendor/*.step) into a committed, colour-baked GLB (canary-local/boards/<id>.glb) plus a row in canary-local/devices/boards.json. Geometry facts in boards.json are recomputed from the committed GLB by the same loader the browser uses (tools/glb_facts.mjs), so the JSON can never lie about the mesh. Pinouts are the Canary-relevant pins (from firmware/configs + docs/hardware/bom_*.csv), not the full generic map. Pin `anchor`/`anchors` coordinates and the optional board-level `pads` map are raw GLB millimetres (the viewer re-centres by bbox at load), derived from the committed mesh with tools/pin_anchors.mjs — pad-colour islands, never eyeballed; rows without an confidently-identified feature carry no anchor and render table-only.",
   "boards": [
     {
       "id": "seeed_xiao_esp32s3_sense",
@@ -17,14 +17,24 @@
       "materials": "step",
       "pose": { "rx": 0.6, "ry": 0.7, "dist_factor": 2.7 },
       "blurb": "21 x 17.8 mm. ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger; the Sense expansion adds the OV camera + PDM mic on a stacked B2B board. The WAP build uses the plain-facing pins for chirp, tamper, LED and GNSS.",
+      "pads": {
+        "_comment": "All 14 castellated pads, from the committed GLB's gold-pad islands (tools/pin_anchors.mjs, #e7c863): two rows of 7 at 2.54 mm pitch, USB-C at -X, +Y component side — so z=+1.76 is the D0–D6 edge and z=-13.98 the power/D10–D7 edge.",
+        "D0": [-5.88, 0.4, 1.76], "D1": [-3.34, 0.4, 1.76], "D2": [-0.8, 0.4, 1.76],
+        "D3": [1.74, 0.4, 1.76], "D4": [4.28, 0.4, 1.76], "D5": [6.82, 0.4, 1.76],
+        "D6": [9.36, 0.4, 1.76],
+        "5V": [-5.88, 0.4, -13.98], "GND": [-3.34, 0.4, -13.98], "3V3": [-0.8, 0.4, -13.98],
+        "D10": [1.74, 0.4, -13.98], "D9": [4.28, 0.4, -13.98], "D8": [6.82, 0.4, -13.98],
+        "D7": [9.36, 0.4, -13.98],
+        "BAT+": [2.12, -0.3, -10.56], "BAT-": [4.03, -0.3, -10.56]
+      },
       "pinout": [
-        { "label": "Chirp / buzzer", "pin": "D1", "gpio": "GPIO2", "use": "Passive piezo (LEDC PWM 2 kHz)" },
-        { "label": "Status RGB LED", "pin": "D2", "gpio": "GPIO3", "status": "planned", "use": "External WS2812 — pin defined but not driven by canary-wap firmware yet; the live indicator is the onboard LED (GPIO21)." },
-        { "label": "Tamper", "pin": "D3", "gpio": "GPIO4", "status": "planned", "use": "Reed / hall switch (INPUT_PULLUP, active-low) — FEATURE_TAMPER_GPIO defined but not yet consumed by canary-wap firmware." },
-        { "label": "VBAT sense", "pin": "A0", "gpio": "GPIO1", "use": "2:1 divider, VBAT_DIVIDER_RATIO=2.0" },
-        { "label": "GNSS UART", "pin": "D6 / D7", "gpio": "GPIO43 / GPIO44", "use": "L76K TX/RX @ 9600 (FEATURE_GNSS)" },
-        { "label": "Battery", "pin": "BAT+ / BAT-", "gpio": "—", "use": "JST-PH LiPo, charged by the onboard charger" },
-        { "label": "Power", "pin": "5V / 3V3 / GND", "gpio": "—", "use": "USB-C 5 V in; 3V3 rail out" }
+        { "label": "Chirp / buzzer", "pin": "D1", "gpio": "GPIO2", "use": "Passive piezo (LEDC PWM 2 kHz)", "anchor": [-3.34, 0.4, 1.76] },
+        { "label": "Status RGB LED", "pin": "D2", "gpio": "GPIO3", "status": "planned", "use": "External WS2812 — pin defined but not driven by canary-wap firmware yet; the live indicator is the onboard LED (GPIO21).", "anchor": [-0.8, 0.4, 1.76] },
+        { "label": "Tamper", "pin": "D3", "gpio": "GPIO4", "status": "planned", "use": "Reed / hall switch (INPUT_PULLUP, active-low) — FEATURE_TAMPER_GPIO defined but not yet consumed by canary-wap firmware.", "anchor": [1.74, 0.4, 1.76] },
+        { "label": "VBAT sense", "pin": "A0", "gpio": "GPIO1", "use": "2:1 divider, VBAT_DIVIDER_RATIO=2.0", "anchor": [-5.88, 0.4, 1.76] },
+        { "label": "GNSS UART", "pin": "D6 / D7", "gpio": "GPIO43 / GPIO44", "use": "L76K TX/RX @ 9600 (FEATURE_GNSS)", "anchors": [[9.36, 0.4, 1.76], [9.36, 0.4, -13.98]] },
+        { "label": "Battery", "pin": "BAT+ / BAT-", "gpio": "—", "use": "JST-PH LiPo, charged by the onboard charger", "anchors": [[2.12, -0.3, -10.56], [4.03, -0.3, -10.56]] },
+        { "label": "Power", "pin": "5V / 3V3 / GND", "gpio": "—", "use": "USB-C 5 V in; 3V3 rail out", "anchors": [[-5.88, 0.4, -13.98], [-0.8, 0.4, -13.98], [-3.34, 0.4, -13.98]] }
       ]
     },
     {
@@ -45,7 +55,7 @@
       "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU). Talks to the host over I2C on the Grove connector; the OV camera rides on the CSI FPC. Mount parts from the source assembly are filtered out.",
       "pinout": [
         { "label": "Grove I2C", "pin": "SDA / SCL", "gpio": "varies by host", "use": "Sensor bus to the host — the GPIOs depend on the host board: DevKit-C3 4/5, XIAO-C3 6/7 (D4/D5), XIAO-S3 5/6 (D4/D5)." },
-        { "label": "Camera", "pin": "CSI FPC", "gpio": "—", "use": "OV5647 / OV-series over the flex" },
+        { "label": "Camera", "pin": "CSI FPC", "gpio": "—", "use": "OV5647 / OV-series over the flex", "anchor": [-17.8, 6.3, 4.0] },
         { "label": "USB-C", "pin": "—", "gpio": "—", "use": "Model flashing (SenseCraft), power" },
         { "label": "Power", "pin": "VCC / GND", "gpio": "—", "use": "3V3 / 5 V from the Grove cable" }
       ]
@@ -67,12 +77,12 @@
       "pose": { "rx": -0.5, "ry": 0.6, "dist_factor": 2.4 },
       "blurb": "Ø 39 mm 1.28-in GC9A01 (240x240) with CST816S touch, PCF8563 RTC, microSD and a LiPo charger; it seats a XIAO on its back socket. The backlight on D6/GPIO43 is PWM-dimmable — that is the bedside night floor.",
       "pinout": [
-        { "label": "Display", "pin": "SPI", "gpio": "GC9A01", "use": "240x240 round panel" },
-        { "label": "Backlight", "pin": "D6", "gpio": "GPIO43", "use": "PWM-dimmable (night floor)" },
+        { "label": "Display", "pin": "SPI", "gpio": "GC9A01", "use": "240x240 round panel", "anchor": [0.3, -1.2, 15.44] },
+        { "label": "Backlight", "pin": "D6", "gpio": "GPIO43", "use": "PWM-dimmable (night floor)", "anchor": [9.72, -4.3, 0] },
         { "label": "Touch", "pin": "I2C", "gpio": "CST816S", "use": "Single-touch" },
         { "label": "RTC", "pin": "I2C", "gpio": "PCF8563", "use": "Timekeeping across reboots" },
-        { "label": "Storage", "pin": "microSD", "gpio": "—", "use": "Journal / assets" },
-        { "label": "Battery", "pin": "JST 1.25", "gpio": "—", "use": "LiPo, onboard charger; verify polarity" }
+        { "label": "Storage", "pin": "microSD", "gpio": "—", "use": "Journal / assets", "anchor": [-6.2, -4.2, -11.0] },
+        { "label": "Battery", "pin": "JST 1.25", "gpio": "—", "use": "LiPo, onboard charger; verify polarity", "anchor": [-1.7, -3.7, 0] }
       ]
     }
   ]
