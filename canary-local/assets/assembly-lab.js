@@ -197,8 +197,11 @@ export function buildAssemblyLab(asmData, buildData, deviceId) {
     const stop = () => { playing = false; play.textContent = "▶ play"; if (timer) clearTimeout(timer); timer = null; };
     const advance = () => {
       if (!playing) return;
+      if (!document.body.contains(cv)) { stop(); return; } // tab closed mid-play
       if (cur === steps.length - 1) { stop(); return; }
-      go(cur + 1); timer = setTimeout(advance, 1900);
+      go(cur + 1);
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(advance, 1900);
     };
     play.addEventListener("click", () => {
       if (playing) { stop(); return; }
@@ -227,8 +230,8 @@ export function buildAssemblyLab(asmData, buildData, deviceId) {
     cv.tabIndex = 0;
     cv.addEventListener("keydown", (e) => {
       if (stepWrap.hidden) return;
-      if (e.key === "ArrowRight") { stop(); go(cur + 1); }
-      else if (e.key === "ArrowLeft") { stop(); go(cur - 1); }
+      if (e.key === "ArrowRight") { e.preventDefault(); stop(); go(cur + 1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); stop(); go(cur - 1); }
     });
 
     asm.setExplode(1); // land on the full exploded view — the "wow"

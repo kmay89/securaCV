@@ -52,6 +52,9 @@ class MB {
 
 // cylinder along +Z from z0..z1, centered on (cx,cy); optional caps
 function cyl(m, cx, cy, r, z0, z1, seg = 28, capTop = true, capBot = true) {
+  // cap centers made once and reused — not one duplicate per segment
+  const ctrTop = capTop ? m.v([cx, cy, z1], [0, 0, 1]) : -1;
+  const ctrBot = capBot ? m.v([cx, cy, z0], [0, 0, -1]) : -1;
   for (let i = 0; i < seg; i++) {
     const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
     const c0 = [Math.cos(a0), Math.sin(a0)], c1 = [Math.cos(a1), Math.sin(a1)];
@@ -59,9 +62,21 @@ function cyl(m, cx, cy, r, z0, z1, seg = 28, capTop = true, capBot = true) {
     m.quad(
       m.v([p0[0], p0[1], z1], [c0[0], c0[1], 0]), m.v([p0[0], p0[1], z0], [c0[0], c0[1], 0]),
       m.v([p1[0], p1[1], z0], [c1[0], c1[1], 0]), m.v([p1[0], p1[1], z1], [c1[0], c1[1], 0]));
-    if (capTop) { const ctr = m.v([cx, cy, z1], [0, 0, 1]); m.tri(ctr, m.v([p0[0], p0[1], z1], [0, 0, 1]), m.v([p1[0], p1[1], z1], [0, 0, 1])); }
-    if (capBot) { const ctr = m.v([cx, cy, z0], [0, 0, -1]); m.tri(ctr, m.v([p1[0], p1[1], z0], [0, 0, -1]), m.v([p0[0], p0[1], z0], [0, 0, -1])); }
+    if (capTop) m.tri(ctrTop, m.v([p0[0], p0[1], z1], [0, 0, 1]), m.v([p1[0], p1[1], z1], [0, 0, 1]));
+    if (capBot) m.tri(ctrBot, m.v([p1[0], p1[1], z0], [0, 0, -1]), m.v([p0[0], p0[1], z0], [0, 0, -1]));
   }
+}
+
+// a dashed leader line from the origin to `vec` (built once per part; the
+// live length is set by scaling its model matrix, never by rebuilding buffers)
+function leaderBuilder(vec) {
+  const m = new MB();
+  const segs = 9;
+  for (let s = 0; s < segs; s += 2) {
+    const p0 = vec.map((v) => (v * s) / segs), p1 = vec.map((v) => (v * (s + 1)) / segs);
+    m.idx.push(m.v(p0, [0, 0, 1]), m.v(p1, [0, 0, 1]));
+  }
+  return m.out();
 }
 // cone (for countersunk head): r0 at z0 → r1 at z1
 function cone(m, cx, cy, r0, r1, z0, z1, seg = 28) {
@@ -141,7 +156,6 @@ export class Assembly {
     this.scene = scene;
     scene.autoSway = false;
     this.parts = [];
-    this.leaders = [];      // scene meshes for leader lines
     this.explodeT = 0;
     this.mode = "explode";  // "explode" | "step"
     this.step = 0;
@@ -166,6 +180,14 @@ export class Assembly {
       })),
       center: spec.center || [0, 0, 0],
     };
+    // one persistent dashed leader per part (seated centre → its explode
+    // vector); its live length is a model-matrix scale, never a buffer rebuild
+    const scw = M.mul(part.seated, M.t(part.center[0], part.center[1], part.center[2]));
+    part.leaderBase = [scw[12], scw[13], scw[14]];
+    const e = part.explode;
+    part.leader = (e[0] || e[1] || e[2])
+      ? this.scene.addMesh(leaderBuilder(e), { color: [0.45, 0.5, 0.58], lines: true, unlit: true, model: M.s(0, 0, 0) })
+      : null;
     this.parts.push(part);
     return part;
   }
@@ -186,33 +208,26 @@ export class Assembly {
     this.mode = "explode";
     this.explodeT = t;
     for (const p of this.parts) this._apply(p, this._world(p, t));
-    this._rebuildLeaders(t);
+    this._updateLeaders(t);
   }
 
-  _rebuildLeaders(t) {
-    for (const l of this.leaders) this.scene.removePart(l);
-    this.leaders = [];
-    if (t < 0.02) return;
-    const m = new MB();
+  _updateLeaders(t) {
+    // scale each persistent leader from 0..t about its seated centre — no
+    // buffer churn while scrubbing the slider
+    const hidden = t < 0.02;
     for (const p of this.parts) {
-      const from = M.mul(this._world(p, 0), M.t(p.center[0], p.center[1], p.center[2]));
-      const to = M.mul(this._world(p, t), M.t(p.center[0], p.center[1], p.center[2]));
-      const a = [from[12], from[13], from[14]], b = [to[12], to[13], to[14]];
-      // dashed segments
-      const segs = 9;
-      for (let s = 0; s < segs; s += 2) {
-        const p0 = a.map((v, i) => lerp(v, b[i], s / segs)), p1 = a.map((v, i) => lerp(v, b[i], (s + 1) / segs));
-        const i0 = m.v(p0, [0, 0, 1]), i1 = m.v(p1, [0, 0, 1]); m.idx.push(i0, i1);
-      }
+      if (!p.leader) continue;
+      p.leader.model = hidden
+        ? M.s(0, 0, 0)
+        : M.mul(M.t(p.leaderBase[0], p.leaderBase[1], p.leaderBase[2]), M.s(t, t, t));
     }
-    if (m.idx.length) this.leaders.push(this.scene.addMesh(m.out(), { color: [0.45, 0.5, 0.58], lines: true, unlit: true }));
   }
 
   // step player: reveal parts up to k, fly the step-k part(s) in
   showStep(k, { animate = true } = {}) {
     this.mode = "step";
     this.step = k;
-    this._rebuildLeaders(0);
+    this._updateLeaders(0);
     this.anims = [];
     for (const p of this.parts) {
       if (p.step > k) { this._hide(p); continue; }
@@ -233,6 +248,9 @@ export class Assembly {
   }
 
   _frame() {
+    // self-terminate if the canvas left the DOM (tab switch / sheet close),
+    // even if the lab's observer hasn't fired yet — no background RAF
+    if (!document.body.contains(this.scene.canvas)) { this.unmount(); return; }
     const now = performance.now();
     this.anims = this.anims.filter((a) => {
       const t = Math.min(1, (now - a.t0) / a.dur), done = t >= 1;

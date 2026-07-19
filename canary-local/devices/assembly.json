@@ -186,6 +186,36 @@
           "ref": "FIL1"
         },
         {
+          "id": "disc",
+          "source": "proc",
+          "part": "disc",
+          "params": {
+            "d": 12,
+            "t": 1
+          },
+          "seated": {
+            "pos": [
+              16,
+              0,
+              17.5
+            ]
+          },
+          "explode": [
+            0,
+            0,
+            38
+          ],
+          "insert": [
+            0,
+            0,
+            18
+          ],
+          "step": 4,
+          "name": "Clear camera disc",
+          "qty": 1,
+          "ref": "CW1"
+        },
+        {
           "id": "lid",
           "source": "stl",
           "file": "canary_wap_enclosure_weather_lid.stl",
