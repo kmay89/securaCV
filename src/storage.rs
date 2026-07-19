@@ -49,6 +49,30 @@ impl SqliteSealedLogStore {
         Ok(store)
     }
 
+    /// Run `f` inside a `BEGIN IMMEDIATE` transaction. The sealed log is a
+    /// hash chain: every append is a read-modify-write of the chain head, so
+    /// the head read and the insert must be one critical section — otherwise a
+    /// second writer sharing the DB (witnessd plus a bridge is one compose
+    /// edit away) can read the same head and fork the chain. IMMEDIATE takes
+    /// the write lock at BEGIN, so the head read inside `f` already sees
+    /// every committed append.
+    fn in_immediate_write_tx<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        match f(self) {
+            Ok(value) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(value)
+            }
+            Err(err) => {
+                // Best-effort: the caller must see the original failure, and a
+                // transaction left open here is discarded when the connection
+                // closes or the next BEGIN fails loudly.
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
+    }
+
     fn ensure_schema(&mut self) -> Result<()> {
         self.conn.execute_batch(
             r#"
@@ -234,45 +258,47 @@ impl SealedLogStore for SqliteSealedLogStore {
     ) -> Result<()> {
         let created_at = i64::try_from(record.time_bucket().start_epoch_s)
             .map_err(|_| anyhow!("time bucket start exceeds i64 range"))?;
-        let prev_hash = self.last_event_hash_or_checkpoint_head()?;
         let payload_json = serde_json::to_string(record)?;
 
-        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let signature_set = sign_entry(signature_keys, &entry_hash, DOMAIN_SEALED_LOG_ENTRY)?;
-        let pq_signature = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.signature.clone());
-        let pq_scheme = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.scheme_id.clone());
+        self.in_immediate_write_tx(|store| {
+            let prev_hash = store.last_event_hash_or_checkpoint_head()?;
+            let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+            let signature_set = sign_entry(signature_keys, &entry_hash, DOMAIN_SEALED_LOG_ENTRY)?;
+            let pq_signature = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.signature.clone());
+            let pq_scheme = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.scheme_id.clone());
 
-        self.conn.execute(
-            r#"
-            INSERT INTO sealed_events(
-                created_at,
-                payload_json,
-                prev_hash,
-                entry_hash,
-                signature,
-                pq_signature,
-                pq_scheme
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
-            params![
-                created_at,
-                payload_json,
-                prev_hash.to_vec(),
-                entry_hash.to_vec(),
-                signature_set.ed25519_signature,
-                pq_signature,
-                pq_scheme
-            ],
-        )?;
+            store.conn.execute(
+                r#"
+                INSERT INTO sealed_events(
+                    created_at,
+                    payload_json,
+                    prev_hash,
+                    entry_hash,
+                    signature,
+                    pq_signature,
+                    pq_scheme
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+                params![
+                    created_at,
+                    payload_json,
+                    prev_hash.to_vec(),
+                    entry_hash.to_vec(),
+                    signature_set.ed25519_signature,
+                    pq_signature,
+                    pq_scheme
+                ],
+            )?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn enforce_retention_with_checkpoint(
@@ -283,7 +309,11 @@ impl SealedLogStore for SqliteSealedLogStore {
         let now = now_s()? as i64;
         let cutoff = now - retention.as_secs() as i64;
 
-        let mut stmt = self.conn.prepare(
+        // Checkpoint INSERT and event DELETE are one atomic unit: a crash
+        // between them previously left a checkpoint with un-pruned events and
+        // a duplicate checkpoint on the retention re-run after restart.
+        self.in_immediate_write_tx(|store| {
+        let mut stmt = store.conn.prepare(
             "SELECT id, entry_hash FROM sealed_events WHERE created_at < ?1 ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query(params![cutoff])?;
@@ -314,7 +344,7 @@ impl SealedLogStore for SqliteSealedLogStore {
         // key after a signing-key rotation (and can seed the chain when earlier events are pruned).
         let signer_public_key = signature_keys.ed25519.verifying_key().to_bytes().to_vec();
 
-        self.conn.execute(
+        store.conn.execute(
             r#"
             INSERT INTO checkpoints(
                 created_at,
@@ -338,12 +368,13 @@ impl SealedLogStore for SqliteSealedLogStore {
             ],
         )?;
 
-        self.conn.execute(
+        store.conn.execute(
             "DELETE FROM sealed_events WHERE id <= ?1",
             params![cutoff_id],
         )?;
 
         Ok(())
+        })
     }
 
     fn read_events_ruleset_bound(

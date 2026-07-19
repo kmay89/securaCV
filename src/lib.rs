@@ -289,10 +289,18 @@ pub(crate) fn open_db_connection(db_path: &str) -> Result<Connection> {
     open_db_connection_with_key(db_path, None)
 }
 
+/// How long a connection waits for SQLite's write lock before an operation
+/// fails with `SQLITE_BUSY`. rusqlite installs the same 5 s handler at open,
+/// but the sealed log must own its busy policy rather than inherit a library
+/// default silently: an append that exhausts this wait is a failed evidence
+/// seal, so the value is stated here and asserted by a test.
+pub(crate) const DB_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Apply per-connection durability/endurance pragmas. `synchronous` is a
 /// per-connection setting, so it must be applied on every open, not in
 /// `ensure_schema`.
 fn apply_connection_pragmas(conn: &Connection) -> Result<()> {
+    conn.busy_timeout(DB_BUSY_TIMEOUT)?;
     if SQLITE_SYNCHRONOUS.get().copied().unwrap_or_default() == SqliteSynchronous::Normal {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
     }
@@ -5039,6 +5047,102 @@ mod tests {
             "migrated database should be encrypted"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn connection_busy_timeout_policy_is_owned() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("busy.db");
+        let conn = open_db_connection(&db_path.to_string_lossy())?;
+        let ms: i64 = conn.query_row("PRAGMA busy_timeout", [], |row| row.get(0))?;
+        assert_eq!(ms as u128, DB_BUSY_TIMEOUT.as_millis());
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_writers_cannot_fork_the_chain() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("chain.db").to_string_lossy().to_string();
+        let cfg = KernelConfig {
+            db_path: db_path.clone(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(3600),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+
+        // Create the DB (schema, key, any first-open records) before the race.
+        let baseline: i64 = {
+            let kernel = Kernel::open(&cfg)?;
+            kernel
+                .conn
+                .query_row("SELECT COUNT(*) FROM sealed_events", [], |row| row.get(0))?
+        };
+
+        let mut handles = Vec::new();
+        for _writer in 0..2 {
+            let cfg = cfg.clone();
+            handles.push(std::thread::spawn(move || -> Result<()> {
+                let mut kernel = Kernel::open(&cfg)?;
+                let desc = ModuleDescriptor {
+                    id: "test_module",
+                    allowed_event_types: &[EventType::BoundaryCrossingObjectLarge],
+                    requested_capabilities: &[],
+                    supported_backends: &[InferenceBackend::Stub],
+                };
+                for _ in 0..25 {
+                    let cand = CandidateEvent {
+                        event_type: EventType::BoundaryCrossingObjectLarge,
+                        time_bucket: TimeBucket {
+                            start_epoch_s: 0,
+                            size_s: 600,
+                        },
+                        zone_id: "zone:public".to_string(),
+                        confidence: 0.5,
+                        correlation_token: None,
+                        attestation: None,
+                    };
+                    kernel.append_event_checked(
+                        &desc,
+                        cand,
+                        &cfg.kernel_version,
+                        &cfg.ruleset_id,
+                        cfg.ruleset_hash,
+                    )?;
+                }
+                Ok(())
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("writer thread panicked")?;
+        }
+
+        // Every record's prev_hash must equal the previous record's
+        // entry_hash. A stale-head append — the fork `in_immediate_write_tx`
+        // exists to prevent — breaks this walk.
+        let kernel = Kernel::open(&cfg)?;
+        let mut stmt = kernel
+            .conn
+            .prepare("SELECT prev_hash, entry_hash FROM sealed_events ORDER BY id")?;
+        let mut rows = stmt.query([])?;
+        let mut expected_prev: Option<Vec<u8>> = None;
+        let mut count: i64 = 0;
+        while let Some(row) = rows.next()? {
+            let prev: Vec<u8> = row.get(0)?;
+            let entry: Vec<u8> = row.get(1)?;
+            if let Some(expected) = &expected_prev {
+                assert_eq!(
+                    &prev, expected,
+                    "chain fork: record {count} does not extend the previous head"
+                );
+            }
+            expected_prev = Some(entry);
+            count += 1;
+        }
+        assert_eq!(count, baseline + 50);
         Ok(())
     }
 

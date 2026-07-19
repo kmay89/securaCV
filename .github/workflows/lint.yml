@@ -30,5 +30,7 @@ jobs:
         run: bash scripts/lint_no_impersonation.sh
       - name: Feature-flag hygiene
         run: bash scripts/lint_feature_flags.sh
+      - name: Version lockstep (kernel / integration / add-on)
+        run: bash scripts/lint_version_sync.sh
       - name: verify_pipeline.sh false-pass regression tests
         run: bash integrations/ha_frigate_mqtt/tests/test_verify_pipeline.sh
