@@ -355,15 +355,7 @@ footer p { max-width: 720px; margin: 0 auto; }
   .panel { overflow: visible; flex: none; padding-right: 0; }
 }
 
-@media (pointer: coarse) {
-  /* touch-action:none on the interactive canvases makes scrolling
-     impossible when a finger lands on them — and on a phone they are most
-     of the sheet. pan-y hands vertical pans back to the browser (the
-     pointer handlers already recover via pointercancel/lostpointercapture);
-     horizontal drags still orbit, taps and long-presses still land, and
-     two-finger pinch still zooms the 3D scenes. */
-  .card-3d, .stage-3d, .glass, .enclab-3d, .boardlab-3d, .asmlab-3d,
-  .ws-canvas, .broom-3d { touch-action: pan-y; }
+
 }
 
 /* ── build-it tab ── */
@@ -996,3 +988,16 @@ button.ghost.small.bench-ff { font-size: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .bench-led-dot.flicker { animation: none; background: var(--canary); opacity: 0.55; }
 }
+
+/* Kept at end of file: must win the cascade over every canvas rule above
+   (.ws-canvas and .broom-3d re-declare touch-action:none at equal
+   specificity later in the file than the sheet rules do). */
+@media (pointer: coarse) {
+  /* touch-action:none on the interactive canvases makes scrolling
+     impossible when a finger lands on them — and on a phone they are most
+     of the sheet. pan-y hands vertical pans back to the browser (the
+     pointer handlers already recover via pointercancel/lostpointercapture);
+     horizontal drags still orbit, taps and long-presses still land, and
+     two-finger pinch still zooms the 3D scenes. */
+  .card-3d, .stage-3d, .glass, .enclab-3d, .boardlab-3d, .asmlab-3d,
+  .ws-canvas, .broom-3d { touch-action: pan-y; }
