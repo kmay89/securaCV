@@ -113,9 +113,8 @@ async function main() {
   // ── §why ──
   function renderWhy(why) {
     const s = section("why", "why a hub at all", "Witnesses converge somewhere",
-      "Canaries are complete without a hub — each keeps its own signed chain, " +
-      "each is verifiable alone. Home Assistant is what turns N lone witnesses " +
-      "into a household: one wall, one timeline, automations with teeth.");
+      "Every Canary is complete alone. Home Assistant is what turns N lone " +
+      "witnesses into a household.");
     const grid = el("div", "hub-why");
     for (const w of why) {
       const c = el("div", "hub-why-card");
@@ -140,9 +139,8 @@ async function main() {
 
     const ribbon = el("p", "ondevice");
     ribbon.append(el("strong", null, "How to read this: "), document.createTextNode(
-      "the board is drawn at the Raspberry Pi 4B's published dimensions (85 × 56 mm, " +
-      "the real hole grid); the case is deliberately generic — the guide is \"any vented " +
-      "case\", so the model refuses to impersonate a product. The choreography is staged."));
+      "real board dimensions (Pi 4B, 85 × 56 mm), a deliberately generic case, " +
+      "staged choreography."));
     s.append(ribbon);
 
     const stage = el("div", "asmlab-stage hub-stage");
@@ -298,21 +296,16 @@ async function main() {
   // ── §terminal ──
   function renderTerminal(term, v) {
     const s = section("terminal", "the software", "The bench terminal",
-      "Same idea as the firmware emulator, translated for the command line: " +
-      "you can't dd a card from a web page, so the bench replays the real " +
-      "commands with recorded output — versions live from the snapshot above. " +
-      "Click through it here, then do it for real with no surprises.");
-    s.append(el("p", "fineprint muted", term.note));
+      "You can't dd a card from a web page, so the bench replays the real " +
+      "commands with recorded output — versions live from the snapshot above.");
     s.append(buildTerminal(term, v));
   }
 
   // ── §demo ──
   function renderDemo(demo, v) {
     const s = section("payoff", "the payoff", "Thirty seconds after the broker",
-      "This is why the evening was worth it. A Canary joins the network and " +
-      "announces itself — no YAML, no pairing codes. Then try the two set " +
-      "pieces: flip the microphone mute (watch it get signed into the chain), " +
-      "and run the smoke-alarm drill.");
+      "A Canary joins the network and announces itself — no YAML, no pairing " +
+      "codes. Flip the mic mute; run the smoke-alarm drill.");
     s.append(buildHaDemo(demo, v));
   }
 
@@ -321,12 +314,12 @@ async function main() {
     const s = section("more", "keep going", "Where this goes next", null);
     const grid = el("div", "hub-links");
     const items = [
-      ["The full written guide", "every step above, plus kernel mode, Frigate, and troubleshooting", d.docs.setup],
-      ["Alert blueprints", "one-click notification setup — smoke/CO, tamper, chain failure, offline", d.docs.blueprints],
-      ["The Verified Timeline card", "the ✓-timeline Lovelace card from the demo, for your real dashboard", d.docs.timeline_card],
-      ["Device trust & PKI", "what the pinned keys mean, and how to pin stricter than TOFU", d.docs.device_trust],
-      ["Firmware updates from HA", "signed pull-OTA with automatic rollback — updates as witness events", d.docs.firmware_ota],
-      ["Add cameras with Frigate", "the kernel path: sealed evidence from RTSP cameras on the same Pi", d.docs.frigate],
+      ["The full written guide", "every step, plus kernel mode and troubleshooting", d.docs.setup],
+      ["Alert blueprints", "one-click alerts — smoke/CO, tamper, chain failure, offline", d.docs.blueprints],
+      ["The Verified Timeline card", "the ✓-timeline card from the demo, for your real dashboard", d.docs.timeline_card],
+      ["Device trust & PKI", "what pinned keys mean; pinning stricter than TOFU", d.docs.device_trust],
+      ["Firmware updates from HA", "signed pull-OTA with automatic rollback", d.docs.firmware_ota],
+      ["Add cameras with Frigate", "sealed evidence from RTSP cameras on the same Pi", d.docs.frigate],
     ];
     for (const [title, body, path] of items) {
       const a = el("a", "hub-link");

@@ -67,31 +67,26 @@ SEED_UPSTREAM = {
 WHY = [
     {
         "title": "Every witness, one wall",
-        "body": "Each Canary is an independent witness with its own signed "
-                "chain — deliberately. Home Assistant is where N independent "
-                "witnesses converge: one dashboard, one timeline, one place "
-                "the whole household actually looks.",
+        "body": "Each Canary keeps its own signed chain — deliberately. The "
+                "hub is where they converge: one dashboard, one timeline, "
+                "one place the household actually looks.",
     },
     {
         "title": "Local, like everything else here",
-        "body": "Home Assistant runs on a Raspberry Pi on your shelf. No "
-                "cloud account, no subscription, no uplink required — "
-                "witness data never has to leave the house. The no-phoning "
-                "rule extends to the hub.",
+        "body": "A Raspberry Pi on your shelf. No cloud account, no "
+                "subscription — witness data never has to leave the house.",
     },
     {
         "title": "It does things",
-        "body": "Automations turn witnessing into action: a smoke-alarm "
-                "cadence heard → a critical push that bypasses every silent "
-                "phone. A tamper → the lights come on. A chain failure → "
-                "you know in seconds, not at trial.",
+        "body": "A smoke-alarm cadence heard → a push that bypasses every "
+                "silent phone. A tamper → the lights come on. A chain "
+                "failure → you know in seconds.",
     },
     {
         "title": "Verified ✓ means verified",
-        "body": "The integration pins each device's Ed25519 key on first "
-                "contact and verifies every publish against it. The "
-                "checkmark on the timeline is a signature check, not a "
-                "decoration.",
+        "body": "The integration pins each device's Ed25519 key and "
+                "verifies every publish. The timeline's checkmark is a "
+                "signature check, not a decoration.",
     },
 ]
 
@@ -103,16 +98,14 @@ WHY = [
 # procedural (builders in assets/hub-parts.js); positions representative.
 HARDWARE = {
     "title": "One evening on the kitchen table",
-    "intro": "A Raspberry Pi 4 (or 5), a good microSD card, a case with "
-             "airflow, wired ethernet if you can. Scrub it apart, then walk "
-             "the build step by step — the same way the Canary assembly "
-             "guides work.",
+    "intro": "A Raspberry Pi 4 or 5, a good microSD card, a vented case, "
+             "wired ethernet if you can. Scrub it apart, then walk the build.",
     "needs": [
-        {"item": "Raspberry Pi 4 (4 GB+) or Pi 5", "note": "the doc's own words: Pi 5 works great; ~3 cameras at 10 fps if you later add Frigate", "from_doc": True},
-        {"item": "microSD card, 32 GB+ (A2, endurance-rated)", "note": "this card IS the computer's disk — buy the boring name-brand one", "from_doc": False},
-        {"item": "Official USB-C power supply", "note": "15 W for Pi 4, 27 W for Pi 5 — undervoltage is the classic mystery crash", "from_doc": False},
-        {"item": "Case with airflow (+ heatsink)", "note": "any vented case; passive cooling is fine for a hub", "from_doc": False},
-        {"item": "Ethernet cable (recommended)", "note": "a hub wants wire; WiFi works but your witnesses deserve better", "from_doc": False},
+        {"item": "Raspberry Pi 4 (4 GB+) or Pi 5", "note": "Pi 5 works great — ~3 cameras at 10 fps if you later add Frigate", "from_doc": True},
+        {"item": "microSD card, 32 GB+ (A2, endurance-rated)", "note": "this card IS the computer's disk", "from_doc": False},
+        {"item": "Official USB-C power supply", "note": "15 W (Pi 4) / 27 W (Pi 5) — undervoltage is the classic mystery crash", "from_doc": False},
+        {"item": "Case with airflow (+ heatsink)", "note": "any vented case; passive cooling is fine", "from_doc": False},
+        {"item": "Ethernet cable (recommended)", "note": "a hub wants wire", "from_doc": False},
     ],
     "frame": {"rx": -0.5, "ry": 0.7, "pad": 2.3},
     "parts": [
@@ -133,25 +126,19 @@ HARDWARE = {
     ],
     "steps": [
         {"title": "Start with the case",
-         "note": "Any case with vents will do — this one is a plain two-part sketch. "
-                 "A hub runs 24/7; airflow is the whole spec."},
+         "note": "Any vented case will do. A hub runs 24/7 — airflow is the whole spec."},
         {"title": "Seat the board",
-         "note": "The Pi drops onto the case posts, ports facing the openings. "
-                 "No screws on most snap cases — it should sit flat with no rock."},
+         "note": "Onto the posts, ports facing the openings. It should sit flat, no rock."},
         {"title": "Heatsink on the SoC",
-         "note": "Peel, align to the big square chip, press. Home Assistant idles cool, "
-                 "but recorders and add-ons warm it — passive cooling keeps the throttle away silently."},
+         "note": "Peel, align to the big square chip, press. Passive is plenty."},
         {"title": "The card is the computer",
-         "note": "The microSD slides into the underside slot, label facing the board. "
-                 "Flash it first — that's Chapter 1 in the bench terminal below. "
-                 "Until then this Pi is a very nice paperweight."},
+         "note": "Into the underside slot, label facing the board. Flash it first — "
+                 "Chapter 1 in the bench terminal below."},
         {"title": "Close it up",
-         "note": "Lid on until it clicks. Leave the SD slot reachable if your case allows — "
-                 "future-you swaps cards more often than expected."},
+         "note": "Lid on until it clicks. Leave the SD slot reachable if you can."},
         {"title": "Wire it — ethernet first, power last",
-         "note": "Plug ethernet into your router, then USB-C power. There is no power "
-                 "switch: power IS the switch. First boot resizes and installs — give it "
-                 "up to 20 minutes before you go looking for it."},
+         "note": "Ethernet to your router, then USB-C. Power IS the switch; first boot "
+                 "takes up to 20 minutes."},
     ],
 }
 
@@ -167,42 +154,38 @@ TERMINAL = {
             "id": "flash",
             "title": "1 · Flash the card",
             "host": "laptop",
-            "intro": "On your computer, card in a reader. The GUI path — "
-                     "Raspberry Pi Imager → Other specific-purpose OS → Home "
-                     "assistants — does all of this for you, verify included. "
-                     "This is the same ritual with the hood open.",
+            "intro": "On your computer, card in a reader — or let Raspberry "
+                     "Pi Imager (Other specific-purpose OS → Home assistants) "
+                     "do all of this for you, verify included.",
             "steps": [
                 {"cmd": "lsblk -d -o NAME,SIZE,MODEL",
                  "out": ["NAME  SIZE   MODEL",
                          "sda   931.5G Samsung SSD 870",
                          "sdb    59.5G SD Card Reader"],
-                 "note": "Find the card. 59.5G in a reader — that's it. Getting this wrong is the only dangerous step on this page."},
+                 "note": "Find the card — 59.5G in a reader. The only dangerous step on this page is getting this wrong."},
                 {"cmd": "wget -q --show-progress https://github.com/home-assistant/operating-system/releases/download/{{haos}}/haos_rpi4-64-{{haos}}.img.xz",
                  "out": ["haos_rpi4-64-{{haos}}.img.xz   100%[==================>] 380.1M  21.4MB/s  in 18s"],
-                 "note": "Pi 5? Same release, image name haos_rpi5-64-{{haos}}.img.xz. The version here is live from this page's upstream snapshot."},
+                 "note": "Pi 5: same release, image haos_rpi5-64-{{haos}}.img.xz. The version is live from this page's snapshot."},
                 {"cmd": "sha256sum haos_rpi4-64-{{haos}}.img.xz",
                  "out": ["9f2c1a7e30b8…  haos_rpi4-64-{{haos}}.img.xz"],
-                 "note": "Your value will differ — compare it against the SHA-256 the release page prints for this image "
-                         "(github.com/home-assistant/operating-system/releases/tag/{{haos}}). A corrupted download won't "
-                         "be close. Never skip this: a witness system that starts from an unverified image is a joke told slowly."},
+                 "note": "Yours will differ — compare it against the SHA-256 on the release page. Never skip this."},
                 {"cmd": "xz -d haos_rpi4-64-{{haos}}.img.xz",
                  "out": [],
-                 "note": "Decompresses to a raw disk image next to it."},
+                 "note": "Unpacks to a raw disk image."},
                 {"cmd": "sudo dd if=haos_rpi4-64-{{haos}}.img of=/dev/sdb bs=4M conv=fsync status=progress",
                  "out": ["2101346304 bytes (2.1 GB, 2.0 GiB) copied, 128 s, 16.4 MB/s",
                          "512+1 records in",
                          "512+1 records out",
                          "2147483648 bytes (2.1 GB, 2.0 GiB) copied, 131.207 s, 16.4 MB/s"],
-                 "note": "dd erases /dev/sdb completely — triple-check it's the card, not your disk. Then eject, and back to the build: Step 4."},
+                 "note": "dd erases /dev/sdb completely — triple-check. Then eject, and back to the build: Step 4."},
             ],
         },
         {
             "id": "boot",
             "title": "2 · First boot",
             "host": "laptop",
-            "intro": "Card in the Pi, ethernet in, power last. The first boot "
-                     "resizes partitions and installs — up to 20 minutes. "
-                     "You can watch for it from your machine:",
+            "intro": "Card in, ethernet in, power last. First boot installs — "
+                     "up to 20 minutes. Watch for it:",
             "steps": [
                 {"cmd": "ping -c 3 homeassistant.local",
                  "out": ["PING homeassistant.local (192.168.1.87): 56 data bytes",
@@ -211,20 +194,18 @@ TERMINAL = {
                          "64 bytes from 192.168.1.87: icmp_seq=2 ttl=64 time=1.09 ms",
                          "--- homeassistant.local ping statistics ---",
                          "3 packets transmitted, 3 packets received, 0.0% packet loss"],
-                 "note": "It answers by name via mDNS — same trick every Canary uses. Not answering yet? Wait; first boot is genuinely slow once."},
+                 "note": "mDNS, same trick every Canary uses. Silent? Wait — first boot is genuinely slow, once."},
                 {"cmd": "curl -sI http://homeassistant.local:8123 | head -n 1",
                  "out": ["HTTP/1.1 200 OK"],
-                 "note": "The web UI is up. Open http://homeassistant.local:8123 in a browser, create the owner account (it lives only on the Pi), set your location, done — that's onboarding."},
+                 "note": "It's up. Open http://homeassistant.local:8123, create the owner account (it lives only on the Pi) — that's onboarding."},
             ],
         },
         {
             "id": "broker",
             "title": "3 · The broker",
             "host": "ha-ssh",
-            "intro": "Canaries speak MQTT, so the hub needs a broker. Install "
-                     "the Terminal & SSH add-on (Settings → Add-ons) and "
-                     "you get this prompt — or click the same two installs "
-                     "in the Add-on store.",
+            "intro": "Canaries speak MQTT. This prompt is the Terminal & SSH "
+                     "add-on — or click the same installs in the Add-on store.",
             "steps": [
                 {"cmd": "ha core info",
                  "out": ["arch: aarch64",
@@ -233,24 +214,23 @@ TERMINAL = {
                          "update_available: false",
                          "version: {{ha}}",
                          "version_latest: {{ha}}"],
-                 "note": "The hub introduces itself. That version is live from this page's snapshot — if it reads stale, the freshness workflow will already be on it."},
+                 "note": "That version is live from this page's snapshot."},
                 {"cmd": "ha addons install core_mosquitto",
                  "out": ["Processing... Done.",
                          "",
                          "Add-on \"core_mosquitto\" successfully installed"],
-                 "note": "Mosquitto — the recommended broker from the setup guide."},
+                 "note": "Mosquitto — the setup guide's recommended broker."},
                 {"cmd": "ha addons start core_mosquitto",
                  "out": ["Processing... Done."],
-                 "note": "Home Assistant now offers the discovered MQTT integration under Settings → Devices & Services — accept it, defaults are right."},
+                 "note": "HA now offers the discovered MQTT integration under Settings → Devices & Services — accept the defaults."},
             ],
         },
         {
             "id": "integration",
             "title": "4 · The integration",
             "host": "ha-ssh",
-            "intro": "SecuraCV ships through HACS as a custom repository. "
-                     "HACS itself installs with its official one-liner, then "
-                     "everything else is clicks:",
+            "intro": "SecuraCV ships through HACS; HACS installs with its "
+                     "official one-liner. The rest is clicks:",
             "steps": [
                 {"cmd": "wget -O - https://get.hacs.xyz | bash -",
                  "out": ["INFO: Downloading HACS",
@@ -260,24 +240,23 @@ TERMINAL = {
                  "note": "The official HACS installer, verbatim."},
                 {"cmd": "ha core restart",
                  "out": ["Processing... Done."],
-                 "note": "Then: HACS → ⋮ → Custom repositories → add https://github.com/kmay89/securaCV (type: Integration) → install SecuraCV v{{integration}} → restart once more → Settings → Devices & Services → Add Integration → SecuraCV → \"Canary devices via MQTT (Recommended)\". Keep the topic prefix securacv unless you changed it on the device."},
+                 "note": "Then: HACS → ⋮ → Custom repositories → add https://github.com/kmay89/securaCV (Integration) → install SecuraCV v{{integration}} → restart → Add Integration → SecuraCV → \"Canary devices via MQTT (Recommended)\"."},
             ],
         },
         {
             "id": "fleet",
             "title": "5 · Meet the fleet",
             "host": "ha-ssh",
-            "intro": "Point a Canary at the broker (its own web dashboard → "
-                     "Network tab → broker host homeassistant.local, port "
-                     "1883) and within ~30 seconds it announces itself. You "
-                     "can watch the actual wire:",
+            "intro": "Point a Canary at the broker (its dashboard → Network "
+                     "tab → homeassistant.local:1883) and it announces itself "
+                     "within ~30 seconds. Watch the wire:",
             "steps": [
                 {"cmd": "mosquitto_sub -h localhost -t 'securacv/#' -v -C 4",
                  "out": ["securacv/canary_wap_garage/availability online",
                          "securacv/canary_wap_garage/status {\"chain_seq\":1284,\"gps_fix\":true,\"uptime_s\":93412}",
                          "securacv/canary_wap_garage/health {\"free_heap\":168224,\"sd_mounted\":true,\"die_temp_c\":41}",
                          "securacv/canary_wap_garage/chain {\"length\":1284,\"latest_hash\":\"9f2c…\",\"sig\":\"ed25519:…\"}"],
-                 "note": "The real topic contract — every row is in the setup guide's MQTT Topic Reference. That signed chain line is what the integration verifies against the device's pinned key. Now scroll down and see what all of this buys you."},
+                 "note": "The real topic contract. That signed chain line is what the integration verifies against the pinned key. Now scroll down."},
             ],
         },
     ],
@@ -307,10 +286,9 @@ DEMO_ENTITIES = [
 HA_DEMO = {
     "device_name": "SecuraCV Canary canary_wap_garage",
     "device_id": "canary_wap_garage",
-    "note": "This screen is a faithful sketch of Home Assistant, not Home "
-            "Assistant's own frontend — unlike the display emulator, which "
-            "is the real firmware. The entity names, topics, and behaviors "
-            "are the drift-gated real ones from the setup guide.",
+    "note": "A faithful sketch of Home Assistant, not its real frontend — "
+            "but the entity names, topics, and behaviors are the drift-gated "
+            "real ones from the setup guide.",
     "drill": {
         "label": "Play the smoke-alarm drill",
         "trigger_entity": "Smoke Alarm Heard",
