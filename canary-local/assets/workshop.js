@@ -159,17 +159,24 @@ function optionCost(o) {
     .reduce((s, ref) => s + (byRef.get(ref)?.usd || 0), 0);
 }
 
-// a package's indicative all-in parts price (core + its ticked options)
+// a package's indicative all-in parts price (core + its ticked options).
+// Union the refs BEFORE summing — options share parts (camera and seal
+// both want ADH1) and per-option sums would double-count them, making
+// the card disagree with the deduped checklist/gather totals.
 function packagePrice(p) {
   const bom = state.build.devices?.[state.dev]?.bom;
   if (!bom || !p.options) return null;
+  const byRef = new Map(bom.rows.map((r) => [r.ref, r]));
   const opts = wsDev().options || [];
-  let sum = bom.required_usd;
+  const refs = new Set();
   for (const [id, on] of Object.entries(p.options)) {
     if (!on) continue;
-    const o = opts.find((x) => x.id === id);
-    if (o) sum += optionCost(o);
+    for (const ref of opts.find((x) => x.id === id)?.bom || []) {
+      if (!/-ALT/.test(ref)) refs.add(ref);
+    }
   }
+  let sum = bom.required_usd;
+  for (const ref of refs) sum += byRef.get(ref)?.usd || 0;
   return sum;
 }
 

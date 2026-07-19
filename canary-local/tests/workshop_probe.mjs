@@ -142,6 +142,18 @@ if (!/canary-wap_battery-full_openscad-params\.json/.test(how)) {
 step("inspect + labeled download ok");
 // ── weather package unlocks the solar/thermal addon ──
 await page.locator(".ws-pkg", { hasText: "battery weather" }).click();
+
+// package card's "from" price must agree with the deduped ticker total
+// when that exact package is selected (shared refs like ADH1 count once)
+const fromTxt = await page.locator(".ws-pkg", { hasText: "battery weather" })
+  .locator(".ws-from").textContent();
+const tickTxt = await page.locator(".ws-ticker .ws-tickbig").first().textContent();
+const fromN = parseInt(fromTxt.replace(/\D+/g, ""), 10);
+const tickN = Math.round(parseFloat(tickTxt.replace(/[^\d.]/g, "")));
+if (Math.abs(fromN - tickN) > 1) {
+  fail(`package from-price $${fromN} disagrees with ticker $${tickN} (double-counted shared refs?)`);
+}
+
 const addon = page.locator(".ws-addon input");
 if (await addon.isDisabled()) fail("weather package should unlock the solar kit addon");
 await addon.check();
