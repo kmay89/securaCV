@@ -1,0 +1,1135 @@
+{
+ "generated_by": "canary-local/tools/gen_enclosures.py",
+ "sources": [
+  "docs/hardware/enclosure/README.md",
+  "docs/hardware/enclosure/*.scad (customizer annotations)",
+  "docs/hardware/bom_*.csv (rows + build-recipe comments)",
+  "firmware/configs/*/config.h (FEATURE_* flags)"
+ ],
+ "calibration_note": "print templates at 100% / \"actual size\" — the 20 mm calibration square must measure exactly 20 mm",
+ "devices": {
+  "canary-wap": {
+   "scad": "canary_wap_enclosure.scad",
+   "options": [
+    {
+     "id": "opt_camera",
+     "group": "Peripherals",
+     "label": "XIAO *Sense* camera",
+     "consequence": "lid sensor window + taller cavity (off = plain XIAO ESP32-S3)",
+     "default": true,
+     "bom": [
+      "CW1",
+      "ADH1"
+     ],
+     "fw": [
+      "FEATURE_CAMERA_PEEK"
+     ]
+    },
+    {
+     "id": "opt_buzzer",
+     "group": "Peripherals",
+     "label": "piezo buzzer",
+     "consequence": "lid vent + GORE seat",
+     "default": true,
+     "bom": [
+      "BZ1",
+      "R1",
+      "Q1",
+      "Dfb1"
+     ],
+     "fw": [
+      "FEATURE_CHIRP"
+     ]
+    },
+    {
+     "id": "opt_led",
+     "group": "Peripherals",
+     "label": "external status LED",
+     "consequence": "light-pipe port",
+     "default": true,
+     "bom": [
+      "DLED1",
+      "R2",
+      "C1",
+      "LP1"
+     ]
+    },
+    {
+     "id": "opt_battery",
+     "group": "Peripherals",
+     "label": "LiPo",
+     "consequence": "battery bay (enlarges the case)",
+     "default": true,
+     "bom": [
+      "BT1",
+      "BT1-ALT1",
+      "BT1-ALT2"
+     ]
+    },
+    {
+     "id": "opt_gps",
+     "group": "Peripherals",
+     "label": "L76K GPS module",
+     "consequence": "internal module bay",
+     "default": false,
+     "bom": [
+      "M1"
+     ],
+     "fw": [
+      "FEATURE_GNSS"
+     ]
+    },
+    {
+     "id": "opt_tamper",
+     "group": "Peripherals",
+     "label": "reed/Hall + magnet",
+     "consequence": "lid magnet pocket",
+     "default": true,
+     "bom": [
+      "SW2",
+      "SW2-ALT",
+      "MAG1"
+     ],
+     "fw": [
+      "FEATURE_TAMPER_GPIO"
+     ]
+    },
+    {
+     "id": "opt_touch",
+     "group": "Peripherals",
+     "label": "cap-touch pad",
+     "consequence": "thinned \"touch window\" on the lid",
+     "default": false,
+     "bom": [
+      "TP1",
+      "R6"
+     ]
+    },
+    {
+     "id": "opt_antenna",
+     "group": "Peripherals",
+     "label": "external u.FL antenna",
+     "consequence": "side bulkhead hole",
+     "default": false,
+     "bom": [
+      "ANT1"
+     ]
+    },
+    {
+     "id": "opt_seal",
+     "group": "Weather sealing",
+     "label": "perimeter TPU gasket + drip-edge lid + USB plug recess (splash-resistant, NOT immersion)",
+     "consequence": "",
+     "default": false,
+     "bom": [
+      "FIL1",
+      "PLUG1",
+      "VENT1",
+      "ADH1"
+     ]
+    },
+    {
+     "id": "opt_mount",
+     "group": "Mounting",
+     "label": "wall-mount features (keyholes thicken the case back by `kh_extra`)",
+     "consequence": "",
+     "default": false,
+     "bom": [
+      "SCR4"
+     ]
+    },
+    {
+     "id": "mount_style",
+     "group": "Mounting",
+     "label": "mount_style",
+     "consequence": "",
+     "default": false,
+     "enum": [
+      "keyhole",
+      "tabs",
+      "both"
+     ]
+    }
+   ],
+   "packages": [
+    {
+     "id": "battery_full",
+     "label": "battery full",
+     "set": "wap-battery",
+     "dims_mm": "104.7 × 39 × 17.2 mm",
+     "contents": "camera + buzzer + LED + LiPo bay + GPS bay + tamper",
+     "options": {
+      "opt_camera": true,
+      "opt_buzzer": true,
+      "opt_led": true,
+      "opt_battery": true,
+      "opt_gps": true,
+      "opt_tamper": true,
+      "opt_seal": false,
+      "opt_mount": false,
+      "opt_touch": false,
+      "opt_antenna": false
+     },
+     "parts": [
+      {
+       "name": "base",
+       "file": "canary_wap_enclosure_battery_base.stl"
+      },
+      {
+       "name": "lid",
+       "file": "canary_wap_enclosure_battery_lid.stl"
+      }
+     ],
+     "preview": "preview_all.png"
+    },
+    {
+     "id": "compact_plain",
+     "label": "compact plain",
+     "set": "wap-compact",
+     "dims_mm": "33.7 × 37.6 × 13.7 mm",
+     "contents": "plain board (no camera), buzzer + LED, USB-powered",
+     "options": {
+      "opt_camera": false,
+      "opt_buzzer": true,
+      "opt_led": true,
+      "opt_battery": false,
+      "opt_gps": false,
+      "opt_tamper": false,
+      "opt_seal": false,
+      "opt_mount": false,
+      "opt_touch": false,
+      "opt_antenna": false
+     },
+     "parts": [
+      {
+       "name": "base",
+       "file": "canary_wap_enclosure_compact_base.stl"
+      },
+      {
+       "name": "lid",
+       "file": "canary_wap_enclosure_compact_lid.stl"
+      }
+     ],
+     "preview": "preview_compact.png"
+    },
+    {
+     "id": "battery_weather",
+     "label": "battery weather",
+     "set": "wap-weather",
+     "dims_mm": "106.3 × 40.6 × 20.2 mm",
+     "contents": "battery_full + gasket seal + drip-edge lid + keyhole mounts",
+     "options": {
+      "opt_camera": true,
+      "opt_buzzer": true,
+      "opt_led": true,
+      "opt_battery": true,
+      "opt_gps": true,
+      "opt_tamper": true,
+      "opt_seal": true,
+      "opt_mount": true,
+      "opt_touch": false,
+      "opt_antenna": false
+     },
+     "parts": [
+      {
+       "name": "base",
+       "file": "canary_wap_enclosure_weather_base.stl"
+      },
+      {
+       "name": "lid",
+       "file": "canary_wap_enclosure_weather_lid.stl"
+      },
+      {
+       "name": "gasket",
+       "file": "canary_wap_enclosure_weather_gasket.stl"
+      }
+     ],
+     "preview": "preview_weather.png"
+    }
+   ],
+   "default_package": "battery_full",
+   "addons": [
+    {
+     "id": "solar_thermal_kit",
+     "label": "Solar / thermal outdoor kit",
+     "set": "thermal-outdoor-kit",
+     "when": "opt_seal",
+     "blurb": "solar radiation shield + desiccant tray — for a case that lives in the sun",
+     "parts": [
+      {
+       "name": "shield",
+       "file": "canary_wap_enclosure_weather_shield.stl"
+      },
+      {
+       "name": "tray",
+       "file": "canary_wap_enclosure_tray.stl"
+      }
+     ]
+    }
+   ],
+   "coupon": {
+    "name": "coupon",
+    "file": "canary_wap_enclosure_clip_coupon.stl"
+   },
+   "always": [
+    {
+     "label": "Fasteners",
+     "note": "4 × M2 self-tapping screws (8–10 mm) into the corner posts"
+    }
+   ],
+   "recipes": [
+    {
+     "label": "Required-only",
+     "formula": "U1+CBL1+SD1",
+     "usd": 26.9,
+     "note": "Bench bring-up"
+    },
+    {
+     "label": "Indoor full build",
+     "formula": "req + LiPo + reed + indoor button + single LED + GPS",
+     "usd": 54.0,
+     "note": "Approx; single-choice optionals"
+    },
+    {
+     "label": "Outdoor full build",
+     "formula": "PC IP66 + GORE vent + LiFePO4/Li-SOCl2 + sealed input + antenna",
+     "usd": 80.0,
+     "note": "Approx; excludes ALT duplicates"
+    },
+    {
+     "label": "Printed-enclosure weather kit",
+     "formula": "SCR3+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1",
+     "usd": 11.55,
+     "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
+    }
+   ],
+   "templates": [
+    "template_studs.svg"
+   ],
+   "firmware": {
+    "project": "canary-wap",
+    "source": "firmware/configs/canary-wap",
+    "flavors": {
+     "default": {
+      "FEATURE_SD_STORAGE": {
+       "on": true,
+       "note": "Enable SD card storage"
+      },
+      "FEATURE_WIFI_AP": {
+       "on": true,
+       "note": "Enable WiFi Access Point"
+      },
+      "FEATURE_WIFI_STA": {
+       "on": true,
+       "note": "Enable WiFi Station (connect to home)"
+      },
+      "FEATURE_HTTP_SERVER": {
+       "on": true,
+       "note": "Enable HTTP API server"
+      },
+      "FEATURE_CAMERA_PEEK": {
+       "on": true,
+       "note": "Enable camera preview streaming"
+      },
+      "FEATURE_TAMPER_GPIO": {
+       "on": false,
+       "note": "Enable tamper detection pin"
+      },
+      "FEATURE_WATCHDOG": {
+       "on": true,
+       "note": "Enable hardware watchdog"
+      },
+      "FEATURE_STATE_LOG": {
+       "on": true,
+       "note": "Log state transitions"
+      },
+      "FEATURE_MESH_NETWORK": {
+       "on": true,
+       "note": "Enable Opera mesh network"
+      },
+      "FEATURE_BLUETOOTH": {
+       "on": true,
+       "note": "Enable Bluetooth Low Energy"
+      },
+      "FEATURE_RF_PRESENCE": {
+       "on": true,
+       "note": "Enable RF presence detection"
+      },
+      "FEATURE_GNSS": {
+       "on": true,
+       "note": "Enable GPS/GNSS"
+      },
+      "FEATURE_CHIRP": {
+       "on": true,
+       "note": "Enable Chirp community witness network"
+      },
+      "FEATURE_BLE_DEBUG": {
+       "on": false
+      }
+     },
+     "mobile": {
+      "FEATURE_CAMERA_PEEK": {
+       "on": false
+      }
+     }
+    }
+   }
+  },
+  "canary-vision": {
+   "scad": "canary_vision_enclosure.scad",
+   "options": [],
+   "packages": [
+    {
+     "id": "vision-xiao-indoor",
+     "label": "Vision · xiao indoor",
+     "set": "vision-xiao-indoor",
+     "contents": "stacked XIAO host (recommended), hinge mount, desk/shelf",
+     "status": "released",
+     "parts": [
+      {
+       "name": "back",
+       "file": "canary_vision_enclosure_xiao_indoor_back.stl"
+      },
+      {
+       "name": "front",
+       "file": "canary_vision_enclosure_xiao_indoor_front.stl"
+      }
+     ],
+     "preview": "preview_vision_xiao_indoor.png"
+    },
+    {
+     "id": "vision-xiao-weather",
+     "label": "Vision · xiao weather",
+     "set": "vision-xiao-weather",
+     "contents": "stacked XIAO, sealed + rain hood + vent, hinge & keyholes",
+     "status": "released",
+     "parts": [
+      {
+       "name": "back",
+       "file": "canary_vision_enclosure_xiao_weather_back.stl"
+      },
+      {
+       "name": "front",
+       "file": "canary_vision_enclosure_xiao_weather_front.stl"
+      },
+      {
+       "name": "gasket",
+       "file": "canary_vision_enclosure_xiao_weather_gasket.stl"
+      }
+     ],
+     "preview": "preview_vision_xiao_weather.png"
+    },
+    {
+     "id": "vision-devkit-indoor",
+     "label": "Vision · devkit indoor",
+     "set": "vision-devkit-indoor",
+     "contents": "Grove-cabled ESP32-C3-DevKitM-1 host",
+     "status": "released",
+     "parts": [
+      {
+       "name": "back",
+       "file": "canary_vision_enclosure_devkit_indoor_back.stl"
+      },
+      {
+       "name": "front",
+       "file": "canary_vision_enclosure_devkit_indoor_front.stl"
+      }
+     ],
+     "preview": "preview_vision_devkit.png"
+    },
+    {
+     "id": "vision-doorbell",
+     "label": "Vision · DOORBELL",
+     "set": "vision-doorbell",
+     "contents": "Wyze/Ring form factor: camera + button, plate-mounted with a hidden security screw, sealed by default",
+     "status": "released",
+     "parts": [
+      {
+       "name": "body",
+       "file": "canary_vision_doorbell_body.stl"
+      },
+      {
+       "name": "face",
+       "file": "canary_vision_doorbell_face.stl"
+      },
+      {
+       "name": "plate",
+       "file": "canary_vision_doorbell_plate.stl"
+      },
+      {
+       "name": "wedge 15°",
+       "file": "canary_vision_doorbell_plate_wedge15.stl"
+      },
+      {
+       "name": "gasket",
+       "file": "canary_vision_doorbell_gasket.stl"
+      }
+     ],
+     "preview": "preview_doorbell.png"
+    }
+   ],
+   "addons": [
+    {
+     "id": "vision_mount_kit",
+     "label": "Wall bracket + GoPro knob",
+     "set": "vision-mount-kit",
+     "blurb": "bracket mount kit for any Vision case",
+     "parts": [
+      {
+       "name": "bracket",
+       "file": "canary_vision_enclosure_bracket.stl"
+      },
+      {
+       "name": "knob",
+       "file": "canary_vision_enclosure_knob.stl"
+      }
+     ]
+    }
+   ],
+   "recipes": [
+    {
+     "label": "Required-only",
+     "formula": "U1+U2+CBL2+CBL1",
+     "usd": 41.7,
+     "note": "Core Vision device"
+    },
+    {
+     "label": "Full build",
+     "formula": "req + LED + button + battery + PC enclosure",
+     "usd": 71.0,
+     "note": "Approx; buzzer unpopulated"
+    },
+    {
+     "label": "Printed camera unit",
+     "formula": "req + CAM1 + ENC2 + SCR5-7 + NUT1 + CW2",
+     "usd": 54.75,
+     "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
+    }
+   ],
+   "templates": [
+    "template_bracket.svg",
+    "template_doorbell.svg"
+   ],
+   "firmware": {
+    "project": "canary-vision",
+    "source": "firmware/configs/canary-vision",
+    "flavors": {
+     "default": {
+      "FEATURE_VISION_AI": {
+       "on": true,
+       "note": "Enable Vision AI sensor"
+      },
+      "FEATURE_WIFI_STA": {
+       "on": true,
+       "note": "Enable WiFi Station"
+      },
+      "FEATURE_MQTT": {
+       "on": true,
+       "note": "Enable MQTT publishing"
+      },
+      "FEATURE_HA_DISCOVERY": {
+       "on": true,
+       "note": "Enable Home Assistant Discovery"
+      },
+      "FEATURE_WATCHDOG": {
+       "on": true,
+       "note": "Enable hardware watchdog"
+      },
+      "FEATURE_SD_STORAGE": {
+       "on": false
+      },
+      "FEATURE_WIFI_AP": {
+       "on": false
+      },
+      "FEATURE_HTTP_SERVER": {
+       "on": false
+      },
+      "FEATURE_CAMERA_PEEK": {
+       "on": false
+      },
+      "FEATURE_MESH_NETWORK": {
+       "on": false
+      },
+      "FEATURE_BLUETOOTH": {
+       "on": false,
+       "note": "BLE available but not used"
+      },
+      "FEATURE_RF_PRESENCE": {
+       "on": false
+      },
+      "FEATURE_GNSS": {
+       "on": false
+      }
+     }
+    }
+   }
+  },
+  "canary-sense": {
+   "scad": "canary_sense_enclosure.scad",
+   "options": [
+    {
+     "id": "opt_led",
+     "group": "Options",
+     "label": "onboard WS2812",
+     "consequence": "light-pipe port (outside the radome zone)",
+     "default": true,
+     "fw": [
+      "FEATURE_STATUS_LED"
+     ]
+    },
+    {
+     "id": "opt_lux",
+     "group": "Options",
+     "label": "BH1750 lux sensor",
+     "consequence": "small light aperture (outside the radome zone)",
+     "default": true,
+     "fw": [
+      "FEATURE_AMBIENT_LIGHT"
+     ]
+    },
+    {
+     "id": "opt_vent",
+     "group": "Options",
+     "label": "GORE vent cluster (recommended with opt_seal)",
+     "consequence": "",
+     "default": false
+    },
+    {
+     "id": "opt_tamper",
+     "group": "Options",
+     "label": "reed/Hall magnet pocket",
+     "consequence": "",
+     "default": false
+    },
+    {
+     "id": "opt_seal",
+     "group": "Options",
+     "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
+     "consequence": "",
+     "default": false
+    },
+    {
+     "id": "opt_mount",
+     "group": "Options",
+     "label": "opt_mount",
+     "consequence": "",
+     "default": true
+    },
+    {
+     "id": "mount_style",
+     "group": "Options",
+     "label": "mount_style",
+     "consequence": "",
+     "default": false,
+     "enum": [
+      "hinge",
+      "keyhole",
+      "both"
+     ]
+    }
+   ],
+   "packages": [
+    {
+     "id": "sense-radome",
+     "label": "Sense · radome",
+     "set": "sense-radome",
+     "contents": "MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob)",
+     "status": "released",
+     "parts": [
+      {
+       "name": "back",
+       "file": "canary_sense_back.stl"
+      },
+      {
+       "name": "front",
+       "file": "canary_sense_front.stl"
+      }
+     ],
+     "preview": "preview_sense.png"
+    }
+   ],
+   "templates": [
+    "template_bracket.svg"
+   ],
+   "firmware": {
+    "project": "canary-sense",
+    "source": "firmware/configs/canary-sense",
+    "flavors": {
+     "default": {
+      "FEATURE_MMWAVE_RADAR": {
+       "on": true,
+       "note": "MR60BHA2 presence/count over UART"
+      },
+      "FEATURE_AMBIENT_LIGHT": {
+       "on": true,
+       "note": "BH1750 lux (tamper corroboration)"
+      },
+      "FEATURE_STATUS_LED": {
+       "on": true,
+       "note": "WS2812 status/identify"
+      },
+      "FEATURE_WIFI_STA": {
+       "on": true,
+       "note": "Enable WiFi Station"
+      },
+      "FEATURE_MQTT": {
+       "on": true,
+       "note": "Enable MQTT publishing"
+      },
+      "FEATURE_HA_DISCOVERY": {
+       "on": true,
+       "note": "Enable Home Assistant Discovery"
+      },
+      "FEATURE_WATCHDOG": {
+       "on": true,
+       "note": "Enable hardware watchdog"
+      },
+      "FEATURE_VITALS": {
+       "on": false
+      },
+      "FEATURE_VISION_AI": {
+       "on": false
+      },
+      "FEATURE_CAMERA_PEEK": {
+       "on": false
+      },
+      "FEATURE_SD_STORAGE": {
+       "on": false
+      },
+      "FEATURE_WIFI_AP": {
+       "on": false
+      },
+      "FEATURE_HTTP_SERVER": {
+       "on": false
+      },
+      "FEATURE_MESH_NETWORK": {
+       "on": false
+      },
+      "FEATURE_BLUETOOTH": {
+       "on": false,
+       "note": "BLE available but not used"
+      },
+      "FEATURE_GNSS": {
+       "on": false
+      }
+     },
+     "wellbeing": {
+      "FEATURE_MMWAVE_RADAR": {
+       "on": true,
+       "note": "MR60BHA2 presence/count over UART"
+      },
+      "FEATURE_AMBIENT_LIGHT": {
+       "on": true,
+       "note": "BH1750 lux (tamper corroboration)"
+      },
+      "FEATURE_STATUS_LED": {
+       "on": true,
+       "note": "WS2812 status/identify"
+      },
+      "FEATURE_WIFI_STA": {
+       "on": true,
+       "note": "Enable WiFi Station"
+      },
+      "FEATURE_MQTT": {
+       "on": true,
+       "note": "Enable MQTT publishing"
+      },
+      "FEATURE_HA_DISCOVERY": {
+       "on": true,
+       "note": "Enable Home Assistant Discovery"
+      },
+      "FEATURE_WATCHDOG": {
+       "on": true,
+       "note": "Enable hardware watchdog"
+      },
+      "FEATURE_VITALS": {
+       "on": true
+      },
+      "FEATURE_VITALS_BPM_P1": {
+       "on": true
+      },
+      "FEATURE_VISION_AI": {
+       "on": false
+      },
+      "FEATURE_CAMERA_PEEK": {
+       "on": false
+      },
+      "FEATURE_SD_STORAGE": {
+       "on": false
+      },
+      "FEATURE_WIFI_AP": {
+       "on": false
+      },
+      "FEATURE_HTTP_SERVER": {
+       "on": false
+      },
+      "FEATURE_MESH_NETWORK": {
+       "on": false
+      },
+      "FEATURE_BLUETOOTH": {
+       "on": false
+      },
+      "FEATURE_GNSS": {
+       "on": false
+      }
+     }
+    }
+   }
+  },
+  "canary-display-watch": {
+   "scad": "canary_watch_station.scad",
+   "options": [
+    {
+     "id": "opt_batt",
+     "group": "Battery",
+     "label": "opt_batt",
+     "consequence": "",
+     "default": false,
+     "bom": [
+      "W-BT1"
+     ]
+    }
+   ],
+   "packages": [
+    {
+     "id": "watch-station",
+     "label": "Watch station",
+     "set": "watch-station",
+     "contents": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 + Round Display (see [display research](../display_research.md))",
+     "status": "in-development",
+     "parts": [
+      {
+       "name": "drum",
+       "file": "preview/canary_watch_station_drum.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "bezel",
+       "file": "preview/canary_watch_station_bezel.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "stand",
+       "file": "preview/canary_watch_station_stand.stl",
+       "preview_mesh": true
+      }
+     ],
+     "preview": "preview_dev_station.png"
+    }
+   ],
+   "firmware": {
+    "project": "canary-display",
+    "source": "firmware/configs/canary-display",
+    "flavors": {
+     "watch": {
+      "FEATURE_DISPLAY": {
+       "on": true,
+       "note": "GC9A01 glance ring UI"
+      },
+      "FEATURE_TOUCH": {
+       "on": true,
+       "note": "CST816S: tap = wake/page, long-press = ack"
+      },
+      "FEATURE_BACKLIGHT_DIM": {
+       "on": true,
+       "note": "LEDC PWM night dimming (board supports it)"
+      },
+      "FEATURE_WIFI_STA": {
+       "on": true
+      },
+      "FEATURE_MQTT": {
+       "on": true,
+       "note": "subscribe to the fleet, publish own status"
+      },
+      "FEATURE_CHAIN_VERIFY": {
+       "on": true,
+       "note": "on-device Ed25519 verify + TOFU pinning"
+      },
+      "FEATURE_MDNS_DISCOVERY": {
+       "on": true,
+       "note": "fleet discovery: find/gossip the broker"
+      },
+      "FEATURE_PROOF_QR": {
+       "on": true,
+       "note": "tap-for-proof QR (trailblazer spec 1)"
+      },
+      "FEATURE_ACK_SYNC": {
+       "on": true,
+       "note": "household ack-sync    (spec 2)"
+      },
+      "FEATURE_PRESENCE_WAKE": {
+       "on": true,
+       "note": "illumination ladder   (spec 3)"
+      },
+      "FEATURE_CHIME": {
+       "on": false,
+       "note": "piezo unpopulated; engine compiled (spec 5)"
+      },
+      "FEATURE_CHIRP_SCAN": {
+       "on": true,
+       "note": "off-grid BLE chirp fallback (spec 6)"
+      },
+      "FEATURE_TIME_MACHINE": {
+       "on": true,
+       "note": "proof-carrying event journal + history UI (spec 7)"
+      },
+      "FEATURE_TIME_MACHINE_PERSIST": {
+       "on": false,
+       "note": "LittleFS durability; bench-gated (like CHIME)"
+      },
+      "FEATURE_ONBOARDING": {
+       "on": true,
+       "note": "first-boot SoftAP wizard + on-glass guide"
+      },
+      "FEATURE_CARE": {
+       "on": true,
+       "note": "attention policy: night-silent maintenance,"
+      },
+      "FEATURE_RHYTHM": {
+       "on": true,
+       "note": "whole-home morning-rhythm baseline (learned"
+      },
+      "FEATURE_WATCHDOG": {
+       "on": true
+      },
+      "FEATURE_SNTP": {
+       "on": true,
+       "note": "clock + quiet-hours source"
+      },
+      "FEATURE_NIGHT_BLACKOUT": {
+       "on": false,
+       "note": "bench verdict: LCD backlight bleed makes"
+      },
+      "FEATURE_COMFORT_WORDS": {
+       "on": true,
+       "note": "bedroom temp/humidity as sleep-science words"
+      },
+      "FEATURE_HUB_WEATHER": {
+       "on": true,
+       "note": "hub-republished forecast (securacv/env/weather)"
+      },
+      "FEATURE_WAKE_ALARM": {
+       "on": true,
+       "note": "on-device two-phase gentle wake (needs the"
+      },
+      "FEATURE_VISION_AI": {
+       "on": false
+      },
+      "FEATURE_CAMERA_PEEK": {
+       "on": false
+      },
+      "FEATURE_MMWAVE_RADAR": {
+       "on": false
+      },
+      "FEATURE_SD_STORAGE": {
+       "on": false,
+       "note": "slot exists; event cache is a follow-up"
+      },
+      "FEATURE_WIFI_AP": {
+       "on": false
+      },
+      "FEATURE_HTTP_SERVER": {
+       "on": false
+      },
+      "FEATURE_MESH_NETWORK": {
+       "on": false
+      },
+      "FEATURE_BLUETOOTH": {
+       "on": false,
+       "note": "no BLE services/pairing; passive scan rides FEATURE_CHIRP_SCAN"
+      },
+      "FEATURE_HA_DISCOVERY": {
+       "on": false,
+       "note": "the display consumes; HA already sees the fleet"
+      },
+      "FEATURE_GNSS": {
+       "on": false
+      }
+     }
+    }
+   }
+  },
+  "canary-display-dash": {
+   "scad": "canary_dash_display.scad",
+   "options": [],
+   "packages": [
+    {
+     "id": "dashboard-display-case",
+     "label": "Dashboard display case",
+     "set": "dashboard-display-case",
+     "contents": "Waveshare ESP32-S3-Touch-LCD-4.3 (the [display research](../display_research.md) step-up dashboard): face-down bezel frame, vented screw-on back with keyholes + 75 mm M4 pair, free-standing 25° desk cradle. Panel dims are NOMINAL — measure yours",
+     "status": "in-development",
+     "parts": [
+      {
+       "name": "frame",
+       "file": "preview/canary_dash_display_frame.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "back",
+       "file": "preview/canary_dash_display_back.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "stand",
+       "file": "preview/canary_dash_display_stand.stl",
+       "preview_mesh": true
+      }
+     ],
+     "preview": "preview_dev_dash.png"
+    }
+   ],
+   "firmware": {
+    "project": "canary-display",
+    "source": "firmware/configs/canary-display",
+    "flavors": {
+     "dash": {
+      "FEATURE_DISPLAY": {
+       "on": true,
+       "note": "800x480 card grid + event timeline"
+      },
+      "FEATURE_TOUCH": {
+       "on": true,
+       "note": "GT911: tap = wake, long-press = ack"
+      },
+      "FEATURE_BACKLIGHT_DIM": {
+       "on": false,
+       "note": "CH422G backlight is ON/OFF only (no PWM)"
+      },
+      "FEATURE_WIFI_STA": {
+       "on": true
+      },
+      "FEATURE_MQTT": {
+       "on": true,
+       "note": "subscribe to the fleet, publish own status"
+      },
+      "FEATURE_CHAIN_VERIFY": {
+       "on": true,
+       "note": "on-device Ed25519 verify + TOFU pinning"
+      },
+      "FEATURE_MDNS_DISCOVERY": {
+       "on": true,
+       "note": "fleet discovery: find/gossip the broker"
+      },
+      "FEATURE_PROOF_QR": {
+       "on": true,
+       "note": "tap-for-proof QR (trailblazer spec 1)"
+      },
+      "FEATURE_ACK_SYNC": {
+       "on": true,
+       "note": "household ack-sync    (spec 2)"
+      },
+      "FEATURE_PRESENCE_WAKE": {
+       "on": true,
+       "note": "illumination ladder   (spec 3)"
+      },
+      "FEATURE_CHIME": {
+       "on": false,
+       "note": "piezo unpopulated; engine compiled (spec 5)"
+      },
+      "FEATURE_CHIRP_SCAN": {
+       "on": true,
+       "note": "off-grid BLE chirp fallback (spec 6)"
+      },
+      "FEATURE_TIME_MACHINE": {
+       "on": true,
+       "note": "proof-carrying event journal + history UI (spec 7)"
+      },
+      "FEATURE_TIME_MACHINE_PERSIST": {
+       "on": false,
+       "note": "LittleFS durability; bench-gated (like CHIME)"
+      },
+      "FEATURE_ONBOARDING": {
+       "on": true,
+       "note": "first-boot SoftAP wizard + on-glass guide"
+      },
+      "FEATURE_CARE": {
+       "on": true,
+       "note": "attention policy: night-silent maintenance,"
+      },
+      "FEATURE_RHYTHM": {
+       "on": true,
+       "note": "whole-home morning-rhythm baseline (learned"
+      },
+      "FEATURE_WATCHDOG": {
+       "on": true
+      },
+      "FEATURE_SNTP": {
+       "on": true,
+       "note": "clock + quiet-hours source"
+      },
+      "FEATURE_NIGHT_BLACKOUT": {
+       "on": false,
+       "note": "dash night = dark theme + scheduled off"
+      },
+      "FEATURE_COMFORT_WORDS": {
+       "on": true
+      },
+      "FEATURE_HUB_WEATHER": {
+       "on": true
+      },
+      "FEATURE_WAKE_ALARM": {
+       "on": false
+      },
+      "FEATURE_VISION_AI": {
+       "on": false
+      },
+      "FEATURE_CAMERA_PEEK": {
+       "on": false
+      },
+      "FEATURE_MMWAVE_RADAR": {
+       "on": false
+      },
+      "FEATURE_SD_STORAGE": {
+       "on": false
+      },
+      "FEATURE_WIFI_AP": {
+       "on": false
+      },
+      "FEATURE_HTTP_SERVER": {
+       "on": false
+      },
+      "FEATURE_MESH_NETWORK": {
+       "on": false
+      },
+      "FEATURE_BLUETOOTH": {
+       "on": false,
+       "note": "no BLE services/pairing; passive scan rides FEATURE_CHIRP_SCAN"
+      },
+      "FEATURE_HA_DISCOVERY": {
+       "on": false
+      },
+      "FEATURE_GNSS": {
+       "on": false
+      }
+     }
+    }
+   }
+  }
+ },
+ "templates": {
+  "template_studs.svg": {
+   "label": "Keyhole / T-stud pair",
+   "devices": [
+    "canary-wap",
+    "canary-sense"
+   ],
+   "note": "generic two-stud pattern — set the stud gap per case"
+  },
+  "template_bracket.svg": {
+   "label": "Wall-bracket screw + keyhole pattern",
+   "devices": [
+    "canary-vision",
+    "canary-sense"
+   ],
+   "note": "mirrors the Vision/Sense wall bracket defaults"
+  },
+  "template_doorbell.svg": {
+   "label": "Doorbell plate: screws + cable oval + outline",
+   "devices": [
+    "canary-vision"
+   ],
+   "note": "mirrors the doorbell plate defaults"
+  }
+ }
+}

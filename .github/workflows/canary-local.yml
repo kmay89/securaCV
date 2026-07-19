@@ -13,7 +13,7 @@ on:
     paths:
       - "canary-local/**"
       - "firmware/projects/canary-display/**"
-      - "firmware/configs/canary-display/**"
+      - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
@@ -25,7 +25,7 @@ on:
     paths:
       - "canary-local/**"
       - "firmware/projects/canary-display/**"
-      - "firmware/configs/canary-display/**"
+      - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
@@ -50,10 +50,11 @@ jobs:
         run: |
           node --test canary-local/tests/canary_local.test.js
           node --test canary-local/tests/chooser.test.js
+          node --test canary-local/tests/workshop.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
-          if ! git diff --exit-code -- canary-local/devices/enclosures.json canary-local/devices/build.json; then
+          if ! git diff --exit-code -- canary-local/devices/enclosures.json canary-local/devices/build.json canary-local/devices/workshop.json; then
             echo "::error::generated catalog stale — run canary-local/tools/gen_enclosures.py and commit"
             exit 1
           fi
@@ -88,6 +89,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Boot probe — COMMITTED artifacts (what a bare checkout serves)
         run: node canary-local/tests/boot_probe.mjs
+      - name: Workshop probe — the configurator drives the real catalog
+        run: node canary-local/tests/workshop_probe.mjs
       - name: Build both flavors from THIS tree
         run: |
           cd canary-local/emulator
