@@ -9,9 +9,13 @@ flows stage the device into the exact state they're describing.
 canary-local/
   index.html            the page (vanilla JS, no frameworks, no build step)
   choose.html           "Find your Canary" — the four-question front door
-  boards.html           "The Board Room" — every board + pin flags + wiring
+  boards.html           "The Board Room" — every board + pin flags + wiring (§4g)
+  house.html            "The Canary House" — isometric home, whole flock in place
+  homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   assets/
     app.js              card gallery + device sheets + guide player
+    house.js            iso renderer + sensing animations + visitor walk
+    house-data.js       rooms + perches + walk (DOM-free, tested)
     scene3d.js          zero-dependency WebGL: procedural device bodies
     stl.js              STL → the same viewer (real printed parts)
     enclosure-lab.js    the parametric catalog, browsable (per-device tab)
@@ -24,7 +28,7 @@ canary-local/
     registry.json       the device registry (one card per entry)
     enclosures.json     generated enclosure catalog (variants + .scad params)
     wiring.json         wiring harnesses (builds = permutations; signals
-                        named for future live pin emulation — see §4f)
+                        named for future live pin emulation — see §4g)
   enclosures/preview/   coarse preview meshes for in-dev designs (rendered
                         by tools/gen_enclosures.py --render; the library's
                         own "committed STLs are print-validated" policy
@@ -169,7 +173,20 @@ every camera device unconditionally; outdoor placement only ever
 recommends sealed sets; every recommendation carries its true status —
 released (print-validated, shipping) vs in-development, said to your
 face. Matches link onward: the device's live card, the printable STLs,
-the configurator, the BOM.
+the configurator, the BOM. The chooser also accepts deep-link pre-fills
+(`choose.html#place=door&want=see,prove…`) so other pages can hand it a
+half-answered quiz.
+
+**`house.html` — The Canary House.** An isometric cutaway home with the
+whole flock perched where it belongs, each device animating the way it
+actually senses (camera cone, WiFi-field ripples, radar arcs, breathing
+wave, display glow) and a "walk a visitor through" mode whose witness
+feed shows the ONLY thing the flock ever emits: small signed claims.
+Perches toggle on/off to size a real flock; every perch is a chooser
+candidate (`assets/house-data.js` imports `chooser-data.js`, so titles
+and statuses cannot drift), and every perch deep-links back into the
+chooser with its answers pre-filled. Promises pinned by
+`tests/house.test.js`.
 
 **The Enclosure tab** (every device sheet). The enclosure library *is* a
 set of parametric OpenSCAD configurators; the lab is their showroom:
@@ -304,7 +321,52 @@ screws badge can't drift from the BOM's four). The ribbon says so to your face:
 Today: the Canary WAP weather + battery build. Vision and the Watch follow —
 the engine is device-agnostic; they need only their `assembly.json` entry.
 
-## 4f. The Board Room: ECAD viewer + wiring bench (`boards.html`)
+## 4f. The Hub: Home Assistant on a Raspberry Pi, the same way
+
+`homeassistant.html` extends the teaching bench past the Canaries to the
+place they converge: **why** a hub at all (N independent witnesses → one
+wall, one verified timeline, automations with teeth), the **hardware**
+(the assembly engine from §4e staging a Raspberry Pi 4 at its published
+dimensions into a deliberately generic vented case), the **software** (a
+bench terminal — the emulator idea translated for the CLI: you can't
+`dd` a card from a web page, so it replays the real commands with
+recorded transcripts, versions substituted live), and the **payoff** (a
+faithful *sketch* of Home Assistant — labeled as such, unlike the wasm
+emulator which is the real firmware — where MQTT discovery lands entity
+by entity, the mic-mute switch signs into the chain, and a smoke-alarm
+drill fires the alert blueprint into a phone notification).
+
+Anti-rot, same rules as everything here — nothing written twice:
+
+| Fact on the page | Source of truth |
+|---|---|
+| Entity names, MQTT topics | `docs/homeassistant_setup.md` (parsed) |
+| Integration version, min HA | `custom_components/securacv/manifest.json`, `hacs.json` |
+| Firmware train | `devices/registry.json` |
+| HA OS / Core versions | weekly snapshot from `version.home-assistant.io` |
+
+`tools/gen_homeassistant.py` regenerates `devices/homeassistant.json`
+(drift-gated in `canary-local.yml`); the scheduled
+`homeassistant-freshness.yml` workflow refreshes the upstream snapshot
+weekly and opens a PR when it moved. Self-healing posture: a dead feed
+keeps the previous snapshot verbatim (no diff, no PR, never a broken
+page), and the page computes its snapshot's age out loud — past 120 days
+it turns amber and names the workflow to go check.
+`tests/homeassistant.test.js` is the honesty gate: demo entities must be
+ones the doc promises, terminal templates must expand clean, every 3D
+part must resolve, every step must stage something.
+
+| Piece | File |
+|---|---|
+| The page | `canary-local/homeassistant.html` + `assets/hub.js` |
+| Raspberry Pi + case, procedurally | `canary-local/assets/hub-parts.js` |
+| Bench terminal (core is DOM-free, tested) | `canary-local/assets/hub-term.js` |
+| The Home Assistant sketch | `canary-local/assets/hub-ha-ui.js` |
+| Generated data | `canary-local/devices/homeassistant.json` |
+| Generator | `canary-local/tools/gen_homeassistant.py` |
+| Honesty gate | `canary-local/tests/homeassistant.test.js` |
+
+## 4g. The Board Room: ECAD viewer + wiring bench (`boards.html`)
 
 The Enclosure Lab's electronic sibling — a standalone page where **every**
 board in the catalog is browsable, not just per-device tabs, and the pins
@@ -356,7 +418,7 @@ and render table-only — a flag is a claim.
   the buzzer wire pulses while a chirp plays. Pads first, signals named now,
   wasm bridge later; nothing in the schema needs to change.
 
-## 4g. Testing the Board Room
+## 4h. Testing the Board Room
 
 `tests/boardroom.test.js` (node, CI): every anchor inside its mesh bbox;
 every wiring build references a real board/peripheral/pin/color/step; wires
@@ -405,7 +467,7 @@ Three tiers, no lock-in, one source of truth:
   the build matching the ticked options.
 - **Board Room — live pins**: bridge the emulator scenario bus to the
   wiring `signal` names so flags glow and wires pulse when the firmware
-  actually drives them (see §4f); the schema already carries
+  actually drives them (see §4g); the schema already carries
   `signal`/`dir` so this is an emulator-side export plus a subscriber.
 
 ## 7. Building

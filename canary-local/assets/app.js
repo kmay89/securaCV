@@ -391,14 +391,30 @@ function tryView(ctx, noteLine) {
   const rail = el("div", "style-row");
   const paint = async () => {
     const active = await ctx.emu.activeCharacter?.();
-    for (const b of rail.children)
-      b.classList.toggle("on", Number(b.dataset.id) === active);
+    for (const b of rail.children) {
+      const on = Number(b.dataset.id) === active;
+      b.classList.toggle("on", on);
+      // The selection ring glows in the chip's own accent.
+      b.style.boxShadow = on ? `0 0 0 1.5px ${b.dataset.accent} inset` : "";
+      b.style.borderColor = on ? b.dataset.accent : "";
+      b.style.borderLeftColor = b.dataset.accent;
+    }
   };
   (async () => {
     for (const c of (await ctx.emu.characterRing?.()) ?? []) {
       const b = el("button", "style-chip");
       b.dataset.id = c.id;
-      b.append(el("strong", null, c.name), el("span", null, c.caption));
+      // Each chip wears its Character — ground, ink, accent, straight
+      // from the firmware table. The rail IS the ring, not a menu of it.
+      b.style.background = c.bg;
+      b.style.borderLeft = `4px solid ${c.accent}`;
+      const nm = el("strong", null, c.name);
+      nm.style.color = c.text;
+      const cap = el("span", null, c.caption);
+      cap.style.color = c.text;
+      cap.style.opacity = "0.62";
+      b.append(nm, cap);
+      b.dataset.accent = c.accent;
       b.addEventListener("click", () => {
         ctx.emu.applyCharacter(c.id);
         noteLine.textContent = `${c.name} — ${c.caption}`;

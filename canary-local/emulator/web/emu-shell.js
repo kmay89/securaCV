@@ -231,6 +231,7 @@ export class CanaryEmulator {
       // plain number (sync), and the table strings are static forever.
       chName: M.cwrap("emu_character_name", "number", ["number"]),
       chCaption: M.cwrap("emu_character_caption", "number", ["number"]),
+      chColor: M.cwrap("emu_character_color", "number", ["number", "number"]),
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
@@ -371,10 +372,14 @@ export class CanaryEmulator {
       const id = await this.c.chAtRing(i);
       const namePtr = await this.c.chName(id);
       const capPtr = await this.c.chCaption(id);
+      const hex6 = (v) => "#" + (v & 0xffffff).toString(16).padStart(6, "0");
       out.push({
         id,
         name: namePtr ? this.module.UTF8ToString(namePtr) : "",
         caption: capPtr ? this.module.UTF8ToString(capPtr) : "",
+        bg: hex6(await this.c.chColor(id, 0)),
+        text: hex6(await this.c.chColor(id, 1)),
+        accent: hex6(await this.c.chColor(id, 2)),
       });
     }
     return out;
