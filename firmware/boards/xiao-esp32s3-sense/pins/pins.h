@@ -52,7 +52,13 @@
 #define PIN_A5                  6
 
 // ============================================================================
-// CAMERA (OV2640) - Built-in on Sense variant
+// CAMERA (OV2640 / OV3660, kit-dependent) - Built-in on Sense variant
+//
+// Seeed discontinued the OV2640 module; current Sense kits ship the OV3660
+// (2048x1536), and the OV5640 is a supported drop-in. The pin map below is
+// identical for all three (the firmware auto-detects the sensor PID over
+// SCCB at init). See
+// https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/ (camera tip box).
 // ============================================================================
 
 #define CAM_PIN_PWDN            (-1)  // Not connected (always on)
@@ -76,7 +82,9 @@
 #define CAM_PIN_HREF            47    // Horizontal reference
 #define CAM_PIN_PCLK            13    // Pixel clock
 
-// Camera feature flags
+// Camera feature flags. CAM_MAX_* describes the OV2640 floor common to
+// every shipped kit; OV3660 units reach 2048x1536 (QXGA) and OV5640 units
+// 2592x1944 — resolve the real ceiling at runtime from the detected PID.
 #define CAM_SUPPORTS_JPEG       1
 #define CAM_MAX_WIDTH           1600
 #define CAM_MAX_HEIGHT          1200
@@ -138,12 +146,23 @@
 // ONBOARD PERIPHERALS
 // ============================================================================
 
-// Built-in LED (active low on some variants). The Arduino variant header
-// also defines LED_BUILTIN (same pin), so only define it when missing.
+// Built-in user LED — ACTIVE LOW per the Seeed wiki ("it will only turn on
+// when the pin is set to a low level",
+// https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/). The Arduino
+// variant header also defines LED_BUILTIN (same pin), so only define it
+// when missing.
+//
+// ⚠ GPIO21 is SHARED with the Sense expansion board's SD chip-select
+// (SD_PIN_CS below). While the SD card is mounted, GPIO21 belongs to the
+// SD driver: writing the LED asserts/deasserts the card's CS, and doing so
+// mid-transaction corrupts SD I/O. Firmware must route status indication
+// to EXT_LED_PIN_DEFAULT (or gate LED writes on SD idleness) whenever
+// HAS_SD_CARD is in use. Note also that lighting the LED (driving LOW)
+// asserts the card's CS as a side effect.
 #ifndef LED_BUILTIN
 #define LED_BUILTIN             21
 #endif
-#define LED_ACTIVE_LOW          0
+#define LED_ACTIVE_LOW          1
 
 // Boot button (directly connected)
 #define BOOT_BUTTON_PIN         0
@@ -173,15 +192,24 @@
 // PIN VALIDATION
 // ============================================================================
 
-// Pins that should NOT be used (reserved for internal functions)
-#define PIN_RESERVED_FLASH_0    26    // Flash/PSRAM
+// Pins that should NOT be used (reserved for internal functions).
+// GPIO26-32 carry the quad SPI flash/PSRAM bus. This module's ESP32-S3R8
+// has OCTAL PSRAM, which additionally claims GPIO33-37 (SPIIO4-SPIIO7 +
+// SPIDQS) — see the ESP-IDF ESP32-S3 GPIO notes. None of 26-37 are broken
+// out on the XIAO header, but routing a peripheral to them in software
+// (GPIO matrix / LEDC / RMT) can hang or corrupt PSRAM.
+#define PIN_RESERVED_FLASH_0    26    // Flash/PSRAM quad bus
 #define PIN_RESERVED_FLASH_1    27
 #define PIN_RESERVED_FLASH_2    28
 #define PIN_RESERVED_FLASH_3    29
 #define PIN_RESERVED_FLASH_4    30
 #define PIN_RESERVED_FLASH_5    31
 #define PIN_RESERVED_FLASH_6    32
-#define PIN_RESERVED_FLASH_7    33
+#define PIN_RESERVED_PSRAM_0    33    // Octal PSRAM SPIIO4-SPIIO7 + SPIDQS
+#define PIN_RESERVED_PSRAM_1    34
+#define PIN_RESERVED_PSRAM_2    35
+#define PIN_RESERVED_PSRAM_3    36
+#define PIN_RESERVED_PSRAM_4    37
 
 // ============================================================================
 // POWER MANAGEMENT

@@ -121,7 +121,11 @@
 // PIN VALIDATION
 // ============================================================================
 
-// Pins that should NOT be used (reserved for internal flash/PSRAM)
+// Pins that should NOT be used (reserved for internal flash/PSRAM).
+// GPIO26-32 carry the quad SPI flash/PSRAM bus; the ESP32-S3R8's OCTAL
+// PSRAM additionally claims GPIO33-37 (SPIIO4-SPIIO7 + SPIDQS). None are
+// broken out on the XIAO header, but routing a peripheral to them in
+// software can hang or corrupt PSRAM.
 #define PIN_RESERVED_FLASH_0    26
 #define PIN_RESERVED_FLASH_1    27
 #define PIN_RESERVED_FLASH_2    28
@@ -129,7 +133,11 @@
 #define PIN_RESERVED_FLASH_4    30
 #define PIN_RESERVED_FLASH_5    31
 #define PIN_RESERVED_FLASH_6    32
-#define PIN_RESERVED_FLASH_7    33
+#define PIN_RESERVED_PSRAM_0    33
+#define PIN_RESERVED_PSRAM_1    34
+#define PIN_RESERVED_PSRAM_2    35
+#define PIN_RESERVED_PSRAM_3    36
+#define PIN_RESERVED_PSRAM_4    37
 
 // ============================================================================
 // POWER MANAGEMENT

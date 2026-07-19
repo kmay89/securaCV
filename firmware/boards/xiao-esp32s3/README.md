@@ -46,7 +46,8 @@ The firmware talks to the module over I2C at address `0x62` either way.
 ## Constraints
 
 - GPIO0 is the BOOT button strapping pin.
-- GPIO26–33 are bonded to flash/PSRAM — never use.
+- GPIO26–37 are bonded to flash/PSRAM (26–32 quad flash bus; 33–37 octal-PSRAM SPIIO4–7 + SPIDQS on the S3R8) — never use.
+- GPIO21 is both the user LED (active-low) and, with the Sense expansion board, the SD chip-select.
 - GPIO19/20 are the USB data lines — do not repurpose.
 - WiFi range is poor-to-nonexistent without the u.FL antenna attached.
 
