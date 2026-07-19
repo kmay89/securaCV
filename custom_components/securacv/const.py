@@ -308,6 +308,13 @@ EVENT_TYPE_METADATA = {
         "label": "Object removed from zone",
         "icon": "mdi:package-variant-closed-remove",
     },
+    # The kernel emits TamperDetected (EventType) / the adapter tamper route
+    # seals it; without this entry a tamper event rendered with the default
+    # icon. Canonical label/icon live in spec/witness_dictionary.json.
+    "tamper_detected": {
+        "label": "Tamper detected",
+        "icon": "mdi:shield-alert",
+    },
 }
 
 DEFAULT_EVENT_ICON = "mdi:shield-eye"

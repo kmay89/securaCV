@@ -35,6 +35,7 @@
     vehicle_presence_after_hours: { label: "Vehicle presence after hours", icon: "mdi:car-clock" },
     contact_state_change: { label: "Contact state change", icon: "mdi:door" },
     object_removed_from_zone: { label: "Object removed from zone", icon: "mdi:package-variant-closed-remove" },
+    tamper_detected: { label: "Tamper detected", icon: "mdi:shield-alert" },
   };
   const DEFAULT_EVENT_ICON = "mdi:shield-eye";
 

@@ -32,5 +32,7 @@ jobs:
         run: bash scripts/lint_feature_flags.sh
       - name: Version lockstep (kernel / integration / add-on)
         run: bash scripts/lint_version_sync.sh
+      - name: Witness Dictionary sync (Rust / Python / JS / firmware)
+        run: python3 scripts/lint_dictionary_sync.py
       - name: verify_pipeline.sh false-pass regression tests
         run: bash integrations/ha_frigate_mqtt/tests/test_verify_pipeline.sh
