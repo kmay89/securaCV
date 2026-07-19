@@ -233,6 +233,11 @@ function tick(){fetch("/api/glass").then(function(r){return r.json()})
 .then(function(g){
 document.body.className=(g.flavor==="watch"?"watch":"dash")+
 (g.night?" night":"");
+// The wall's Character re-skins the mirror (absent on older firmware).
+if(g.pal){var PM={bg:"bg",cd:"card",ed:"edge",tx:"tx",mu:"mut",
+ok:"ok",wa:"warn",al:"bad",si:"blu"};
+for(var pk in PM)if(g.pal[pk])
+document.documentElement.style.setProperty("--"+PM[pk],"#"+g.pal[pk]);}
 $("ns_off").textContent=g.flavor==="dash"?"off, tap wakes":"off, tap peeks";
 $("live").className="dot"+(g.wifi?" on":"");
 var t=g.time_valid?pad(g.hh)+":"+pad(g.mm):"--:--";

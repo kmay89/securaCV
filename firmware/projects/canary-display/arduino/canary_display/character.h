@@ -23,7 +23,9 @@ enum class Character : uint8_t {
   Aqua       = 2,
   Neon       = 3,
   Almanac    = 4,   // wave 3: the one light (paper) ground
-  Count      = 5,
+  Terminal   = 5,   // wave 4: phosphor green — the CRT age
+  Blueprint  = 6,   // wave 4: white ink on Prussian blue — the drafting room
+  Count      = 7,
 };
 
 // Ground & chrome tiers plus the single decorative accent, raw 0xRRGGBB

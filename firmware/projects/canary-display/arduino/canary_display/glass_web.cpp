@@ -102,7 +102,10 @@ void handle_root() {
 }
 
 void handle_glass() {
-  static char body[2048];
+  // 16 witnesses (~90 B each) + the voiced/palette head (~420 B) peaked
+  // near the old 2048 — headroom so bappend's clamp (safe but truncating)
+  // never has to cut a document the mirror then fails to parse.
+  static char body[2688];
   size_t o = 0;
   const size_t C = sizeof(body);
 #ifdef CD_FLAVOR_WATCH
@@ -116,15 +119,29 @@ void handle_glass() {
   // Trouble words are NOT here: the mirror derives those from `worst`
   // exactly like the wall does, from the same invariant vocabulary.
   const auto& voice = canary::ui::active_voice();
+  // Day-look palette parity (Character wave 4): the mirror re-skins its
+  // page in the wall's chosen Character — ground/tiers from the def, the
+  // Character's own day semantic set (Almanac's paper stops belong with
+  // its paper ground). The wall's night is sent as the `night` flag and
+  // the mirror keeps its own warm-dim night emulation on top, exactly as
+  // it did when the mirror knew only Quiet Glass.
+  const auto& cdef = canary::ui::active_character_def();
   o = bappend(body, C, o,
               "{\"flavor\":\"%s\",\"night\":%d,\"time_valid\":%d,"
               "\"hh\":%d,\"mm\":%d,\"wifi\":%d,\"hub\":%d,\"bird\":%u,"
               "\"worst\":%u,\"acked\":%d,\"aq\":\"%s\",\"aql\":\"%s\","
+              "\"pal\":{\"bg\":\"%06lX\",\"cd\":\"%06lX\",\"ed\":\"%06lX\","
+              "\"tx\":\"%06lX\",\"mu\":\"%06lX\",\"ok\":\"%06lX\","
+              "\"wa\":\"%06lX\",\"al\":\"%06lX\",\"si\":\"%06lX\"},"
               "\"witnesses\":[",
               flavor, s_snap.night, s_snap.time_valid, s_snap.clock_hh,
               s_snap.clock_mm, s_snap.wifi_ok, s_snap.mqtt_ok, s_snap.bird,
               s_snap.worst, s_snap.acked, voice.all_quiet,
-              voice.all_quiet_low);
+              voice.all_quiet_low, (unsigned long)cdef.pal.bg,
+              (unsigned long)cdef.pal.surface, (unsigned long)cdef.pal.edge,
+              (unsigned long)cdef.pal.text, (unsigned long)cdef.pal.muted,
+              (unsigned long)cdef.sem.ok, (unsigned long)cdef.sem.warn,
+              (unsigned long)cdef.sem.alert, (unsigned long)cdef.sem.signed_);
   for (uint8_t i = 0; i < s_snap.n; ++i) {
     const auto& w = s_snap.w[i];
     if (i) o = bappend(body, C, o, ",");

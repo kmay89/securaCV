@@ -167,11 +167,14 @@ This is the whole personality trick: one honest state machine, four
 temperaments layered on top. The bird stays the same *character actor*; the
 Character is its *mood on the day you met it.*
 
-## 6. The ring (five ages, one honest system)
+## 6. The ring (seven ages, one honest system)
 
-Curated small on purpose — five is enough to feel personal, few enough to
-flip through in five seconds. Semantics anchored (§2, with the light-ground
-refinement), night sacred and uniform (§3).
+Curated small on purpose — seven is enough to feel personal, few enough to
+flip through in seconds. Semantics anchored (§2, with the light-ground
+refinement), night sacred and uniform (§3). Both wave-4 ages are dark
+grounds, so they carry the canonical semantic bytes (measured: every
+semantic ≥3:1 on both their tiers); ring completeness is a compile-time
+static_assert, so an age cannot join the enum without taking a seat.
 
 | Character | The age | Ground / accent | Type | Temperament | Who it's for |
 |---|---|---|---|---|---|
@@ -180,6 +183,8 @@ refinement), night sacred and uniform (§3).
 | **Aqua** | the millennium (early-2000s gloss) | blue-black `#050912` / glossy cyan `#38C6FF`, ink `#E8F1F7` | today's ladder | friendly (breath ×0.95) | the optimist — turn-of-the-century shine, still calm |
 | **Neon** | now (Gen-Alpha energy) | near-black `#08060C` / electric `#22E0C8`+`#FF4FD8` chrome | compact | quick & springy (breath ×0.9, flourish ×0.75, hop ×1.2) | the desk, the teenager — vivid and alive, still honest |
 | **Almanac** *(wave 3)* | print (the age of paper) | warm paper `#F2EAD8` / fountain-pen indigo `#2F4A6E`, warm ink `#2B2418` | today's ladder | bookish calm (breath ×1.1, flourish ×1.15, hop ×0.9) | the reader — a sunroom, a kitchen ledge; the one light ground, dark by night |
+| **Terminal** *(wave 4)* | the CRT age | green-black `#030A04` / cursor phosphor `#36E06A`, aged phosphor `#B9F0C5` | today's ladder | machine-steady (flourish ×1.2 — rare events) | the tinkerer's bench — voice speaks console: "All nominal" / "back online" |
+| **Blueprint** *(wave 4)* | the drafting room | Prussian blue `#0D1B33` / chalk cyan `#7FD4FF`, white ink `#EAF2FC` | today's ladder | the careful drafter (breath ×1.05, flourish ×1.1) | the studio wall — voice speaks the plan: "All to plan" / "as you were" |
 
 Almanac's semantic stops (in-family, measured on both paper tiers): ok
 `#276B2B` 5.4:1, warn `#8F5300` 5.2:1, alert `#B71C1C` 5.5:1, signed
@@ -299,8 +304,15 @@ the glass wakes up already wearing it.
     night IS the dark glass; by day it is paper. The bench item that
     remains: eyeballing the paper ground's backlight bleed floor next to a
     dark Character's on real panels.
-- **Wave 4 — More ages, still curated.** Candidates: **Terminal** (phosphor
-  green, mono-feel caps — the age of the CRT) and **Blueprint** (drafting
-  cyan on ink). The ring grows by *invitation*, never by opening a parts bin.
+- **Wave 4 — More ages, still curated** *(shipped)*. **Terminal** (phosphor
+  on green-black — the CRT age, console-register voice, machine-steady
+  temperament) and **Blueprint** (white ink on Prussian blue, chalk-cyan
+  accent — the drafting room). Both validated numerically like every ring
+  seat; the ring grows by *invitation*, never by opening a parts bin.
+  Shipped alongside: **mirror palette parity** — `/api/glass` now carries
+  the active Character's day palette + semantic set (`pal`), and the phone
+  mirror re-skins its whole page in the wall's chosen look (older mirror
+  HTML ignores the field harmlessly; the mirror's own warm-dim night
+  emulation rides on top, unchanged).
 - **Not planned:** a free color picker. The curated ring is the product
   decision, and re-litigating it would re-import the anxiety we designed out.
