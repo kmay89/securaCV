@@ -17,7 +17,7 @@ collects, what it promises, and how it proves the promises are kept**.
 Short answer: recorders are believed not because any one mechanism is
 unbreakable but because **dictionary, format, survivability, ritual, power,
 custody, adversarial readout, disclosure limits, and corroboration form one
-mutually-reinforcing system — and every historical failure was converted into
+mutually reinforcing system — and every historical failure was converted into
 a new mandatory mechanism**. Measured against that system, SecuraCV is in an
 unusual position: we already have the *cryptographic core* that aviation, EDR,
 VDR, and rail recorders lack entirely (signed-at-source, hash-chained,
@@ -85,7 +85,7 @@ separately, compounding together:
    minimal disclosure.
 8. **Corroboration and external anchors.** FDR data is believed because it
    locks onto radar, ADS-B, the QAR copy, and CVR acoustics. Tachograph v2's
-   single best upgrade: GNSS-vs-odometry consistency checks, so a cheat must
+   single best upgrade: GNSS-vs-odometry consistency checks, so an adversary must
    falsify two independent physics coherently — and the *conflict itself* is
    a logged event ("motion-data conflict"). CTBTO stations sign waveforms at
    the sensor with tamper-detecting enclosures so adversary states can trust
@@ -113,7 +113,7 @@ Measured mechanism-by-mechanism against the reference systems:
 | Structure that localizes damage (ARINC 717 sync) | Per-record chain with checkpoints; `log_verify` diagnoses *where* and *what kind* on failure | ✅ partial (no segment/re-sync concept below a checkpoint) |
 | Frame counter / continuity (717 subframe cycle) | Heartbeat records: one per 10-minute bucket, carrying per-bucket counter deltas; timeline audit flags missing buckets and stale tails | ✅ |
 | Power/lifecycle discretes (RIPS, SilkAir lesson) | Lifecycle `start`/`shutdown_clean` records; unclean shutdown seals `PowerLoss`; firmware brownout counters persist immediately; battery units seal a graceful-shutdown record | ✅ partial (see G3) |
-| Fault/conflict events (tachograph "motion-data conflict", "security-breach attempt") | Latched `FailureType` records (StorageFull, WriteFailed, Crypto, ClockSkew, PowerLoss, Gap) + tamper events; `SensorDisagreement` defined but **not emitted** | ✅ partial (G7) |
+| Fault/conflict events (tachograph "motion-data conflict", "security-breach attempt") | Latched `FailureType` records (StorageFull, StorageWriteFailed, CryptoFailure, ClockSkew, PowerLoss, GapMissingData) + tamper events; `SensorDisagreement` defined but **not emitted** | ✅ partial (G7) |
 | External time anchor (RFC 3161, eIDAS) | `log_anchor`: chain head hash to a TSA — content never leaves the device | ✅ (opt-in, operator-initiated) |
 | Offline, tool-validated readout (CDR tool, NTSB lab) | Standalone browser verifier byte-parity-locked to the Rust verifier by shared fixtures; `log_verify` CLI with plain-language diagnosis | ✅ (formalize as tool validation — G9) |
 | Export custody records (Axon audit trail, custody forms) | Every export mints a signed, hash-chained export receipt; bundles are self-verifying with the device public key | ✅ |
@@ -202,7 +202,7 @@ countersignature, making a household of N devices its own witness network
 (the fork must now fool every sibling simultaneously); optional publication
 of heads to a public transparency log (Rekor-style) for maximal-assurance
 users. This turns our existing mesh from a connectivity feature into an
-evidentiary one — our deployable-recorder-and-witness-network in one.
+evidentiary one — our deployable recorder and witness network in one.
 
 **G6 — Publish the custody ceremony and aim it at FRE 902(13)/(14).**
 (Annex 13; ISO 27037; ACPO; SWGDE; Axon's export package.) A short normative
@@ -222,7 +222,7 @@ to weight — so we generate the complete custody record by default.
 upgrade.) We already run multiple physics (camera, radar, CSI, contact).
 Implement `SensorDisagreement` (currently specified but honestly "not
 emitted"): when co-located modalities materially disagree within a bucket,
-seal the conflict as its own signed record. A cheat must now fool every
+seal the conflict as its own signed record. An adversary must now fool every
 physics coherently — and failing to is itself recorded. (Prerequisite
 infrastructure — co-location registry, corroboration windows — makes this a
 v2 item; the dictionary entry lands in G1 now.)
@@ -266,7 +266,7 @@ is what we refuse to overclaim.
 **What it collects (by the Witness Dictionary, G1):**
 semantic claims only — the 8-kind event vocabulary (boundary crossings,
 presence, acoustic impulse, vehicle-after-hours, contact change, object
-removal, tamper) with coarse time buckets (≥5 min, jittered exports), local
+removal, tamper) with coarse time buckets (10-minute default; 5-minute conformance-critical floor that cannot be narrowed without a ruleset change; jittered exports), local
 zone labels, confidence, attestation tier; system-trace records (heartbeats
 with per-bucket deltas, lifecycle, latched failures, key rotations,
 correlation checks); custody records (export + break-glass receipts, holds,
@@ -283,7 +283,7 @@ coordinates, identities, free text.
 | P6 | **Failure-honest** — interruptions, faults, and tampering are themselves sealed records | FailureType ladder, latched; tamper events; lifecycle pairing | look for the sealed record where the silence is | a perfectly clean power cut before first write leaves only the reopen record |
 | P7 | **Un-forkable** — one history, the same for every reader | (roadmap G5) mesh cosigned heads; optional public log | compare heads across witnesses | single-device installs keep P2-P4 but not P7; we say so |
 | P8 | **Stranger-verifiable** — no trust in us or the runtime required | offline viewer + CLI, byte-parity locked; golden corpus (G9) | run the tool; reproduce the fixtures | verifier trust rests on published validation, like any forensic tool |
-| P9 | **Private by construction** — proof without exposure | invariants I–VII in the type system; hash-only anchoring; two-tier split | read the export: nothing identifying is in it | privacy limits evidentiary richness — deliberately (the QAR/FDR trade) |
+| P9 | **Private by construction** — proof without exposure | invariants I–VII enforced in code — I/II at the type level (compile-fail tested), the rest by runtime gates and fail-closed policy; hash-only anchoring; two-tier split | read the export: nothing identifying is in it | privacy limits evidentiary richness — deliberately (the QAR/FDR trade) |
 | P10 | **A known instrument** — you can know what code witnessed | signed firmware/OTA, versioned dictionary hash in checkpoints, (doc 12) release provenance | verify firmware signatures + dictionary hash | plaintext-NVS key on current canaries until flash encryption ships (doc 12 F2) — the honest asterisk |
 
 The card's rule, borrowed from aviation: **capture maximally (within the
