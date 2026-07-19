@@ -99,6 +99,22 @@ test("terminal scripts expand with no surviving {{templates}}", async () => {
   }
 });
 
+test("chapter clipboard: every command expands, and a multi-line paste leads with the review warning", async () => {
+  const { chapterCommands, chapterClipboard } = await import("../assets/hub-term.js");
+  for (const ch of data.terminal.chapters) {
+    const cmds = chapterCommands(ch, vars);
+    assert.strictEqual(cmds.length, ch.steps.length, `${ch.id}: one clipboard line per step`);
+    for (const c of cmds) assert.ok(!c.includes("{{"), `${ch.id}: unresolved template on the clipboard: ${c}`);
+    const clip = chapterClipboard(ch, vars);
+    const lines = clip.split("\n");
+    // pasting multiple lines RUNS in most terminals — the payload must
+    // open with bash-safe comments telling the user to review first
+    assert.ok(lines[0].startsWith("# "), `${ch.id}: clipboard must lead with a comment`);
+    assert.ok(clip.includes("Review each line"), `${ch.id}: clipboard must carry the review warning`);
+    assert.deepStrictEqual(lines.slice(2), cmds, `${ch.id}: commands follow the warning verbatim`);
+  }
+});
+
 test("the version-bearing surfaces actually use the live vars", async () => {
   // the anti-rot property in one assertion: a HA OS/Core release bump
   // (upstream refresh) must re-line the terminal without a script edit

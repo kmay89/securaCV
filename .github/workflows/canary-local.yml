@@ -68,6 +68,7 @@ jobs:
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/bench.test.js
+          node --test canary-local/tests/start.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -80,6 +81,13 @@ jobs:
           python3 canary-local/tools/gen_homeassistant.py
           if ! git diff --exit-code -- canary-local/devices/homeassistant.json; then
             echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit"
+            exit 1
+          fi
+      - name: Get Started data drift (rides the Hub snapshot + README install strings)
+        run: |
+          python3 canary-local/tools/gen_start.py
+          if ! git diff --exit-code -- canary-local/devices/start.json; then
+            echo "::error::generated guide data stale — run canary-local/tools/gen_start.py and commit"
             exit 1
           fi
       - name: WAP data drift (parsed from the canary-wap firmware + docs)
