@@ -122,8 +122,11 @@ is, and the model to copy *deliberately* rather than accidentally:
   [`spec/invariants.md`](../../spec/invariants.md) and
   [`spec/event_contract.md`](../../spec/event_contract.md). The seven invariants are
   our POSIX: the thing that stays true no matter who builds what on top.
-- Our **neutral-ground guarantee** is Apache-2.0 top to bottom plus specs that are
-  *documents*, not just code — implementable by someone who has never read our Rust.
+- Our **neutral-ground guarantee** is permissive licensing throughout — Apache-2.0
+  at the root, with some components under MIT (e.g. `firmware/common/csi/`,
+  `canary-vision/`); nothing copyleft-encumbered, nothing proprietary — plus specs
+  that are *documents*, not just code, implementable by someone who has never read
+  our Rust.
 - Our **distribution** (in the Linux sense) is the HA add-on + Frigate integration:
   the opinionated, polished packaging of the neutral kernel for one audience. The
   boxed Canary kit is a second distribution. Neither *is* the kernel.
@@ -226,7 +229,7 @@ One asymmetry runs in our favor and deserves emphasis: **in 3D printing, opennes
 an ideology; in evidence, openness is a functional requirement.** A tamper-evident log
 proves nothing if the verifier is a black box — *auditability is what makes the product
 work at all*. Bambu could close because convenience doesn't need to be inspectable.
-Evidence does. Our Apache-2.0-everything stance isn't charity; it is load-bearing.
+Evidence does. Our all-permissive licensing isn't charity; it is load-bearing.
 
 ---
 
