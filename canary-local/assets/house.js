@@ -574,7 +574,10 @@ function renderDetails(p) {
     req.target = "_blank"; req.rel = "noopener";
     const rel = html("button", "door door-btn", "the relay it would mesh with →");
     rel.addEventListener("click", () => select("relay"));
-    doors.append(req, rel);
+    const stub = html("a", "door", "the research + firmware stub →");
+    stub.href = GH + "firmware/projects/canary-fence-guard/README.md";
+    stub.target = "_blank"; stub.rel = "noopener";
+    doors.append(req, rel, stub);
     panel.append(doors);
     return;
   }

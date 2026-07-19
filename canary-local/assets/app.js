@@ -74,10 +74,12 @@ function renderCards() {
     const tag = el("div", "card-tag", dev.tagline);
     const chips = el("div", "card-chips");
     chips.append(
-      el("span", "chip", dev.kind === "display" ? "shows" : "senses"),
+      el("span", "chip", dev.kind === "display" ? "shows"
+        : dev.kind === "concept" ? "would sense" : "senses"),
       el("span", "chip chip-dim", dev.board.split("+")[0].trim())
     );
     if (dev.emulator) chips.append(el("span", "chip chip-live", "live firmware"));
+    if (dev.kind === "concept") chips.append(el("span", "chip chip-soon", "coming soon"));
     card.append(cv, name, tag, chips);
     grid.append(card);
 
@@ -134,8 +136,92 @@ async function openSheet(dev) {
   upgradeRealShape(ctx.scene, dev.id);
   ctx.scene.start();
 
-  if (dev.emulator) await buildDisplaySheet(ctx, side, stage);
+  if (dev.kind === "concept") buildConceptSheet(ctx, side);
+  else if (dev.emulator) await buildDisplaySheet(ctx, side, stage);
   else buildWitnessSheet(ctx, side);
+}
+
+// ── concept sheet: a coming-soon teaser gets research, not theater ─────
+// No LED grammar, no joining flow, no enclosure lab — those would imply
+// shipped behavior. A concept shows its idea, the researched radio facts
+// (each with a source), the staged firmware plan, and the request door.
+function buildConceptSheet(ctx, side) {
+  const dev = ctx.dev;
+  const c = dev.concept || {};
+  const tabs = el("nav", "tabs");
+  const panel = el("div", "panel");
+  side.append(tabs, panel);
+
+  const requestDoor = () => {
+    const a = el("a", "primary small door", "→ request it (opens a GitHub issue)");
+    a.href = "https://github.com/kmay89/securaCV/issues/new?title=" +
+      encodeURIComponent(c.request_title || `Concept request: ${dev.name}`) +
+      "&body=" + encodeURIComponent(c.request_body || "");
+    a.target = "_blank";
+    a.rel = "noopener";
+    return a;
+  };
+
+  const views = {
+    "The idea": () => {
+      const w = el("div");
+      w.append(el("p", "body", c.idea || dev.tagline));
+      for (const p of c.points || []) {
+        const line = el("p", "muted");
+        line.append(el("strong", null, p.k + " — "), document.createTextNode(p.v));
+        w.append(line);
+      }
+      w.append(el("p", "muted",
+        "This is a concept card: nothing on it ships today, and it never pretends otherwise."));
+      w.append(requestDoor());
+      return w;
+    },
+    "The radio": () => {
+      const w = el("div", "specs");
+      const dl = el("dl");
+      for (const r of c.radio || []) dl.append(el("dt", null, r.k), el("dd", null, r.v));
+      w.append(dl);
+      if (c.sources?.length) {
+        const links = el("p", "muted");
+        links.append("Researched from: ");
+        c.sources.forEach((s, i) => {
+          const a = el("a", null, s.name);
+          a.href = s.url;
+          a.target = "_blank";
+          a.rel = "noopener";
+          links.append(i ? " · " : "", a);
+        });
+        w.append(links);
+      }
+      return w;
+    },
+    "Firmware plan": () => {
+      const w = el("div");
+      w.append(el("p", "muted",
+        "Staged as a pending stub in the firmware tree — requirements first, code later, honestly labeled."));
+      const ol = el("ol", "concept-plan");
+      for (const step of c.plan || []) ol.append(el("li", null, step));
+      w.append(ol);
+      const a = el("a", null, "read the stub → firmware/projects/canary-fence-guard");
+      a.href = "https://github.com/kmay89/securaCV/blob/main/firmware/projects/canary-fence-guard/README.md";
+      a.target = "_blank";
+      a.rel = "noopener";
+      w.append(el("p", "muted"), a);
+      return w;
+    },
+    Specs: () => specsView(dev),
+  };
+  for (const name of Object.keys(views)) {
+    const b = el("button", "tab", name);
+    b.addEventListener("click", () => {
+      for (const t of tabs.children) t.classList.remove("on");
+      b.classList.add("on");
+      panel.innerHTML = "";
+      panel.append(views[name]());
+    });
+    tabs.append(b);
+  }
+  tabs.children[0].click();
 }
 
 function closeSheet() {
