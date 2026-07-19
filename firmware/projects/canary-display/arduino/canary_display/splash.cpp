@@ -247,9 +247,9 @@ void splash_play(uint32_t hold_ms) {
   s_curtain = lv_obj_create(lv_layer_top());
   lv_obj_set_size(s_curtain, W, H + 4);
   lv_obj_set_pos(s_curtain, 0, 0);
+  // A clean, solid curtain — the yellow scanline below carries the arcade
+  // feel. (A full-screen vertical gradient here banded on the RGB565 panel.)
   lv_obj_set_style_bg_color(s_curtain, col_bg(), 0);
-  lv_obj_set_style_bg_grad_color(s_curtain, lv_color_hex(0x241A00), 0);
-  lv_obj_set_style_bg_grad_dir(s_curtain, LV_GRAD_DIR_VER, 0);
   lv_obj_set_style_bg_opa(s_curtain, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(s_curtain, 0, 0);
   lv_obj_set_style_radius(s_curtain, 0, 0);
