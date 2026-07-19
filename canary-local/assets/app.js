@@ -203,7 +203,12 @@ async function buildDisplaySheet(ctx, side, stage) {
     await ctx.emu.start({ provisioned: true, firstMeeting: false, seed: 20260719 });
     if (opts.preserve) ctx.emu.nvsRestore(ctx.nvsImage);
     ctx.emu.setLocalHour(10);
-    ctx.fleet = demoFleet();
+    // The fleet outlives display reboots: real witnesses keep their keys
+    // when a display power-cycles, so the same SimWitness objects (same
+    // WebCrypto keypairs, same chain state) re-publish after a reboot —
+    // otherwise the preserved TOFU pins would flag every sibling as
+    // FAILED, which is exactly the honesty bug the page teaches against.
+    ctx.fleet ||= demoFleet();
     for (const w of ctx.fleet) await ctx.emu.addWitness(w);
     ctx.emu.startFleetHeartbeat(15000);
   };

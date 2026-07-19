@@ -30,6 +30,9 @@ BUILD="$EMU_DIR/.build"
 
 LVGL_TAG="v8.4.0"
 ARDUINOJSON_VER="7.4.1"
+# rweather/arduinolibs has no release tags; pin the audited commit so the
+# Ed25519 verify path can never drift under the wasm build silently.
+ARDUINOLIBS_COMMIT="37a76b8f7516568e1c575b6dc9268da1ccaac6b6"
 
 FLAVOR="${1:-watch}"
 if [[ "$FLAVOR" == "all" ]]; then
@@ -53,8 +56,9 @@ if [[ ! -d "$TP/lvgl" ]]; then
   git clone --depth 1 --branch "$LVGL_TAG" https://github.com/lvgl/lvgl.git "$TP/lvgl"
 fi
 if [[ ! -d "$TP/arduinolibs" ]]; then
-  git clone --depth 1 https://github.com/rweather/arduinolibs.git "$TP/arduinolibs"
+  git clone https://github.com/rweather/arduinolibs.git "$TP/arduinolibs"
 fi
+git -C "$TP/arduinolibs" -c advice.detachedHead=false checkout -q "$ARDUINOLIBS_COMMIT"
 if [[ ! -d "$TP/ArduinoJson" ]]; then
   git clone --depth 1 --branch "v${ARDUINOJSON_VER}" \
     https://github.com/bblanchon/ArduinoJson.git "$TP/ArduinoJson"

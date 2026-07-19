@@ -23,6 +23,13 @@ canary-local/
     dist/               committed artifacts + build stamps (*.meta.json)
 ```
 
+**Sibling surface:** the display firmware also serves its own tiny
+steady-state page from the device (`src/net/glass_web.cpp` — live
+mirror, 3D model, help, master settings, browser serial monitor; PR
+#903). That page is what answers on your LAN; *this* page is the
+repo-level teaching bench with the full firmware in wasm — learn here,
+then meet the same ideas on the device's own mirror.
+
 Serve the repo root with any static server and open `/canary-local/`:
 
 ```bash

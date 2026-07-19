@@ -25,6 +25,7 @@
 #include "canary/net/chirp_scan.h"
 #include "canary/net/provision.h"
 #include "canary/net/mqtt_mgr.h"
+#include "canary/net/glass_web.h"
 
 #include "emu_bus.h"
 
@@ -185,6 +186,18 @@ bool discovery_find_broker(char* host_out, size_t host_cap,
 // README). Today it reports honestly that no radio is scanning.
 void chirp_scan_loop(uint32_t, bool) {}
 uint32_t chirp_scan_count() { return 0; }
+
+// ── glass_web contract (the on-device phone mirror, PR #903) ────────────
+// On silicon this serves the display's own page (live mirror + 3D model +
+// help + settings). Here, the page you are already looking at IS that
+// idea at full strength — the emulator only notes where the on-device
+// twin would answer.
+void glass_web_init() {
+  js_net_event("glass-web", "phone mirror would serve at http://<hostname>.local/");
+}
+void glass_web_tick(uint32_t) {}
+void glass_web_publish(const canary::fleet::Fleet&, uint32_t, bool, bool,
+                       int, int, bool, bool, canary::ui::CanaryMood) {}
 
 // ── provision contract ──────────────────────────────────────────────────
 // The first-boot SoftAP + captive-portal walk is scenario wave 2 (it

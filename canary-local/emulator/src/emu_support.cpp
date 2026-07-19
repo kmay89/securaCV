@@ -10,6 +10,8 @@
 #include <WiFi.h>
 #include <LittleFS.h>
 
+#include "canary/log.h"
+
 #include <emscripten.h>
 
 #include <map>
@@ -179,6 +181,13 @@ void emu_random_seed(unsigned long seed) { emu_rng_seed((uint32_t)seed); }
 // ── Serial ──────────────────────────────────────────────────────────────
 void EmuSerial::write_str(const char* s) { js_serial_write(s); }
 EmuSerial Serial;
+
+// log.h's optional second sink (defined by glass_web.cpp on silicon —
+// that TU is the real WebServer, replaced here). The page's serial panel
+// already hears every line through Serial, so no second sink is wired.
+namespace canary {
+LogSink g_log_sink = nullptr;
+}
 
 // ── ESP object ──────────────────────────────────────────────────────────
 uint32_t EmuESP::getFreeHeap() { return 220 * 1024; }

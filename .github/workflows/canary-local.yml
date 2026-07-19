@@ -67,15 +67,25 @@ jobs:
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
-      - name: Build both flavors from THIS tree
-        run: |
-          cd canary-local/emulator
-          ./build.sh all
       - name: Install Playwright Chromium
         run: |
           npm i --no-save playwright
           npx playwright install --with-deps chromium
-      - name: Boot probe (headless Chromium)
+      - name: Boot probe — COMMITTED artifacts (what a bare checkout serves)
+        run: node canary-local/tests/boot_probe.mjs
+      - name: Build both flavors from THIS tree
+        run: |
+          cd canary-local/emulator
+          ./build.sh all
+      - name: Dist drift check (committed artifacts match this tree's sources)
+        run: |
+          # meta.json embeds the checkout sha, which legitimately differs on
+          # a PR merge ref — the drift gate is the code bundles themselves.
+          if ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
+            echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result"
+            exit 1
+          fi
+      - name: Boot probe — rebuilt artifacts
         run: node canary-local/tests/boot_probe.mjs
       - name: Artifact stamps
         run: cat canary-local/emulator/dist/*.meta.json
