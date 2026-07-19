@@ -16,6 +16,7 @@ files. The cleanup section *flags* candidates for the maintainer to action separ
 | [08-product-strategy.md](08-product-strategy.md) | **North star** — the canonical one-page strategy that sits above 01–07 |
 | [09-marketing-pitch-tco-and-friction.md](09-marketing-pitch-tco-and-friction.md) | The customer-facing cost pitch: lifetime/recurring/initial cost + setup time vs. competitors (June 2026 pricing), friction-reduction scorecard, ranked next steps |
 | [10-grove-vision-ai-v2-program.md](10-grove-vision-ai-v2-program.md) | Grove Vision AI V2 as a first-class Canary sensor: multi-board support (XIAO C3/S3), workflow-parity phases, dashboard/logging roadmap, SenseCraft-path rejection rationale |
+| [11-home-assistant-platform-architecture.md](11-home-assistant-platform-architecture.md) | Full HA surface audit (integration vs Quality Scale, add-on vs App best practices, the three-entity-universe finding), 10 architecture principles learned from Frigate/ESPHome/UniFi Protect/Music Assistant, and the wow-factor roadmap (evidence packs, repairs-as-integrity-console, witness event entities, privacy-floor LLM tools) |
 | [securacv_product_strategy_whitepaper.md](securacv_product_strategy_whitepaper.md) | Long-form companion: market, competition, personas, friction/satisfaction ledgers, business model, roadmap |
 
 ## TL;DR
