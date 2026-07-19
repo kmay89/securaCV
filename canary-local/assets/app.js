@@ -179,7 +179,20 @@ async function buildDisplaySheet(ctx, side, stage) {
   };
 
   const factory = window[dev.emulator.factory];
+  // One boot at a time: a second click mid-boot would race two async
+  // boots against the shared ctx.emu (the earlier one resuming against a
+  // half-wired replacement — TypeError / duplicate fleet, review catch).
+  let bootBusy = false;
   const boot = async (opts = {}) => {
+    if (bootBusy) return;
+    bootBusy = true;
+    try {
+      await bootInner(opts);
+    } finally {
+      bootBusy = false;
+    }
+  };
+  const bootInner = async (opts = {}) => {
     ctx.emu = new CanaryEmulator(factory, {
       canvas: glass,
       onSerial: (t) => {

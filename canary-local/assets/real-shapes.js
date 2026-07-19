@@ -21,14 +21,25 @@ const ENC = "../docs/hardware/enclosure/";   // print-validated library (same ba
 const SHELL = [0.16, 0.17, 0.19];
 const SHELL_LIGHT = [0.90, 0.87, 0.80];
 
-const cache = new Map(); // url → {mesh, bbox}
-async function load(file, base = PREVIEW) {
+// Caches the PROMISE, not the mesh: the card grid and an open sheet load
+// the same files concurrently, and one request should serve both. A
+// failed load evicts itself so a later card can retry (review catch).
+const cache = new Map(); // url → Promise<{mesh, bbox}>
+function load(file, base = PREVIEW) {
   const url = base + file;
   if (cache.has(url)) return cache.get(url);
-  const buf = await (await fetch(url)).arrayBuffer();
-  const parsed = parseSTL(buf);
-  cache.set(url, parsed);
-  return parsed;
+  const p = (async () => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parseSTL(await res.arrayBuffer());
+    } catch (err) {
+      cache.delete(url);
+      throw err;
+    }
+  })();
+  cache.set(url, p);
+  return p;
 }
 
 // Center a mesh on its bbox, then pre-rotate (print → device orientation),

@@ -350,24 +350,31 @@ export class CanaryEmulator {
   // ── Public: the Character ring, straight from the firmware table ──────
   // Same knob the on-glass picker turns (the setting persists through
   // emulated reboots via the debounced commit, like the real glass).
+  // All three tolerate the boot window: during an emulated reboot the
+  // replacement instance exists before start() finishes wiring this.c,
+  // and a click landing in that gap must be a no-op, not a TypeError.
   applyCharacter(id) {
-    this.c.chApply(id);
+    this.c?.chApply(id);
   }
   // Value-returning calls are awaited: under ASYNCIFY a call that lands
   // while the firmware is suspended in its loop-sleep comes back as a
   // Promise, and a bench must read the dial, not the dial's IOU.
   async activeCharacter() {
+    if (!this.c) return null;
     return await this.c.chActive();
   }
   async characterRing() {
+    if (!this.c) return [];
     const out = [];
     const n = await this.c.chCount();
     for (let i = 0; i < n; i++) {
       const id = await this.c.chAtRing(i);
+      const namePtr = await this.c.chName(id);
+      const capPtr = await this.c.chCaption(id);
       out.push({
         id,
-        name: this.module.UTF8ToString(await this.c.chName(id)),
-        caption: this.module.UTF8ToString(await this.c.chCaption(id)),
+        name: namePtr ? this.module.UTF8ToString(namePtr) : "",
+        caption: capPtr ? this.module.UTF8ToString(capPtr) : "",
       });
     }
     return out;
