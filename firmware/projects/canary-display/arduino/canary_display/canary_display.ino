@@ -57,6 +57,7 @@
 #endif
 #include "wifi_mgr.h"
 #include "tz_auto.h"
+#include "glass_web.h"
 #include "mqtt_mgr.h"
 #include "ota_mgr.h"
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
@@ -555,6 +556,16 @@ static void render(uint32_t now) {
   const canary::ui::CanaryMood bird =
       canary::care::bird_mood_tick(now, night, yday >= 0, yday);
 
+  // Feed the web mirror the same state the glass is about to draw — the
+  // phone view can never disagree with the wall.
+  {
+    int mhh = 0, mmm = 0;
+    const bool mtv = local_time(&mhh, &mmm);
+    canary::net::glass_web_publish(fleet, now, night_look, mtv, mhh, mmm,
+                                   canary::net::wifi_connected(),
+                                   canary::net::mqtt_connected(), bird);
+  }
+
 #ifdef CD_FLAVOR_WATCH
   // Auto-return to the overview page after idle.
   if (g_page != 0 && (int32_t)(now - g_page_touched_ms) >= 20000) g_page = 0;
@@ -720,6 +731,11 @@ void setup() {
   }
 #endif
 
+  // The display's own web page — live mirror, help, master settings.
+  // Started AFTER provisioning (the portal owned :80 during setup) and
+  // independent of the panel: a display with broken glass still mirrors.
+  canary::net::glass_web_init();
+
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
   // Boot the time machine (spec 7): reload recent proof-carrying history (when
   // persistence is enabled) and wire the fleet's event sink so every new event
@@ -823,6 +839,7 @@ void loop() {
 #if defined(FEATURE_SNTP) && FEATURE_SNTP
   canary::net::tz_auto_tick(now);  // learn the wall-clock zone once online
 #endif
+  canary::net::glass_web_tick(now);  // serve the phone mirror
   {
     using canary::fleet::Sev;
     const bool urgent =

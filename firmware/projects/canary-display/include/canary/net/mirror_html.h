@@ -1,0 +1,221 @@
+// include/canary/net/mirror_html.h — the display's own web page, whole and
+// self-contained (no CDN, no fonts, no internet: the LAN promise holds).
+// Served by glass_web.cpp. Browser-rendered, so typography is free here —
+// the LVGL glyph rules do not apply.
+#pragma once
+#include <pgmspace.h>
+
+static const char MIRROR_HTML[] PROGMEM = R"RAW(<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Your Canary Display</title>
+<style>
+:root{--bg:#0b0b0c;--card:#141414;--edge:#262626;--tx:#ededed;--mut:#8a8a8a;
+--yel:#FFD44F;--ok:#43A047;--warn:#FB8C00;--bad:#E53935;--blu:#03A9F4}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif;
+padding:16px;max-width:760px;margin:0 auto}
+h1{font-size:20px;display:flex;align-items:center;gap:10px}
+h2{font-size:15px;color:var(--mut);margin:22px 0 8px;text-transform:uppercase;
+letter-spacing:.08em}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--bad)}
+.dot.on{background:var(--ok)}
+.sub{color:var(--mut);font-size:13px}
+.stage{perspective:900px;display:flex;justify-content:center;padding:22px 0 8px;
+touch-action:none}
+.dev{position:relative;transform-style:preserve-3d;
+transform:rotateX(-8deg) rotateY(14deg);transition:transform .08s linear}
+.face{position:absolute;inset:0;backface-visibility:hidden;border-radius:inherit}
+.glass{background:#000;border:10px solid #1b1b1d;overflow:hidden;
+box-shadow:0 22px 44px rgba(0,0,0,.55)}
+.backp{background:#151517;border:10px solid #1b1b1d;transform:rotateY(180deg);
+display:flex;align-items:center;justify-content:center;color:#3a3a3e;
+font-size:12px;letter-spacing:.1em}
+.dash .dev{width:330px;height:206px;border-radius:14px}
+.watch .dev{width:230px;height:230px;border-radius:50%}
+.mir{position:absolute;inset:0;padding:12px;display:flex;flex-direction:column;
+transition:filter .5s}
+.night .mir{filter:sepia(.7) hue-rotate(-28deg) saturate(2.4) brightness(.55)}
+.mtop{display:flex;justify-content:space-between;font-size:11px;color:var(--mut)}
+.mhero{flex:1;display:flex;flex-direction:column;align-items:center;
+justify-content:center;gap:4px;text-align:center}
+.mword{font-size:26px;font-weight:700}
+.msub{font-size:11px;color:var(--mut)}
+.mrow{display:flex;gap:5px;flex-wrap:wrap;justify-content:center}
+.chip{font-size:9px;padding:2px 7px;border-radius:9px;border:1px solid var(--edge);
+color:var(--mut)}
+.chip.s2{border-color:var(--warn);color:var(--warn)}
+.chip.s3,.chip.s4{border-color:var(--bad);color:var(--bad)}
+.mfoot{font-size:9px;color:#4a4a4a;text-align:center}
+.hint{text-align:center;color:var(--mut);font-size:12px;margin-top:6px}
+/* the bird, in CSS — same silhouette, same brand yellow */
+.bird{position:relative;width:52px;height:46px;margin:0 auto;
+animation:breath 2.8s ease-in-out infinite}
+.b{position:absolute;border-radius:50%}
+.tail{left:0;top:19px;width:9px;height:6px;background:#E3B33C}
+.body{left:5px;top:15px;width:32px;height:28px;background:var(--yel)}
+.wing{left:10px;top:21px;width:16px;height:12px;background:#E3B33C}
+.head{left:24px;top:5px;width:22px;height:22px;background:var(--yel)}
+.beak{left:43px;top:12px;width:8px;height:5px;background:#F08C2E;
+border-radius:2px}
+.eye{left:34px;top:9px;width:6px;height:6px;background:#1a1a1a}
+.shine{left:36px;top:10px;width:2px;height:2px;background:#fff}
+.blush{left:30px;top:16px;width:7px;height:4px;background:#F2A38F;opacity:.8}
+@keyframes breath{50%{transform:translateY(2px)}}
+.bird.worried .eye,.bird.searching .eye,.bird.calling .eye{height:5px;top:10px}
+.bird.worried .wing,.bird.calling .wing{top:19px}
+.bird.asleep .eye{height:2px;top:12px;border-radius:1px}
+.bird.asleep .shine{display:none}
+.bird.asleep{animation-duration:5s}
+.bird.hidden{display:none}
+.bird.searching{transform:translateX(4px)}
+.bird.calling .beak{height:8px}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:12px;
+padding:14px;margin:10px 0}
+label{display:flex;justify-content:space-between;align-items:center;gap:12px;
+padding:7px 0;font-size:14px}
+input[type=range]{flex:1;max-width:46%;accent-color:var(--yel)}
+select,button{background:#1d1d1f;color:var(--tx);border:1px solid var(--edge);
+border-radius:8px;padding:5px 10px;font-size:13px}
+details{border-bottom:1px solid var(--edge);padding:9px 0}
+summary{cursor:pointer;font-weight:600}
+details p,details li{color:var(--mut);font-size:13.5px;margin-top:6px}
+.moods td{padding:3px 10px 3px 0;font-size:13px;color:var(--mut)}
+.moods td:first-child{color:var(--tx)}
+.foot{color:#4a4a4a;font-size:12px;margin:18px 0 6px;text-align:center}
+</style></head><body>
+<h1><span class="dot" id="live"></span>Your Canary Display
+  <span class="sub" id="clock" style="margin-left:auto"></span></h1>
+<p class="sub">A live mirror of the glass on your wall. Spin it. Everything
+here stays inside your home network.</p>
+
+<div class="stage" id="stage"><div class="dev" id="dev">
+  <div class="face glass"><div class="mir" id="mir">
+    <div class="mtop"><span id="mwifi"></span><span id="mclock"></span></div>
+    <div class="mhero">
+      <div class="bird idle" id="bird"><i class="b tail"></i><i class="b body"></i>
+        <i class="b wing"></i><i class="b head"></i><i class="b beak"></i>
+        <i class="b eye"></i><i class="b shine"></i><i class="b blush"></i></div>
+      <div class="mword" id="mword">…</div>
+      <div class="msub" id="msub"></div>
+      <div class="mrow" id="mrow"></div>
+    </div>
+    <div class="mfoot">status display &middot; not a life-safety device</div>
+  </div></div>
+  <div class="face backp">SECURACV &middot; CANARY DISPLAY</div>
+</div></div>
+<p class="hint">drag to turn the display over</p>
+
+<h2>Master settings</h2>
+<div class="card" id="set">
+  <label>Day brightness <input type="range" id="day_pct" min="20" max="100"
+    step="5"><span class="sub" id="day_pctv"></span></label>
+  <label>Night glow (level) <input type="range" id="night_step" min="1"
+    max="10"><span class="sub" id="night_stepv"></span></label>
+  <label>Night screen <select id="night_screen">
+    <option value="0">glow</option><option value="1">off, tap peeks</option>
+    <option value="2">off, tap wakes</option></select></label>
+  <label>Warm night colors <select id="red_shift">
+    <option value="1">on</option><option value="0">off</option></select></label>
+  <label>Night peek length <select id="peek_s"><option>3</option>
+    <option>5</option><option>10</option></select></label>
+  <label>Night starts <select id="night_start_hh"></select></label>
+  <label>Night ends <select id="night_end_hh"></select></label>
+  <p class="sub">Changes apply on the glass right away, exactly as if you
+  had set them there.</p>
+</div>
+
+<h2>Help — reading your display</h2>
+<div class="card">
+<details open><summary>The one big word</summary>
+<p>The center of the glass always shows the one thing that matters: the
+time when all is quiet, or a status word when something needs you. Green
+means proved and calm; orange means something is late; red means act.</p></details>
+<details><summary>The little bird</summary>
+<p>The canary is a gauge, not a decoration — every pose is honest:</p>
+<table class="moods">
+<tr><td>Calm, breathing</td><td>everything answered and proved</td></tr>
+<tr><td>Worried</td><td>a connection is down or trouble is brewing</td></tr>
+<tr><td>Leaning, looking out</td><td>a canary is late — it is looking for it</td></tr>
+<tr><td>Beak open</td><td>a canary is lost — it is calling for it</td></tr>
+<tr><td>Asleep</td><td>night; stillness is the point</td></tr>
+<tr><td>Gone</td><td>a real alert owns the screen — the bird returns
+when it is handled</td></tr></table></details>
+<details><summary>Touch</summary>
+<p>Tap: wake the glass / turn the page. Press and hold: acknowledge an
+alert, or open settings from the settings page. At night a tap gives a
+short dim peek instead of full brightness.</p></details>
+<details><summary>Adding a canary</summary>
+<p>Open "add a canary" on the glass — it shows a code. Point the new
+canary's camera at it from about 15 cm. It joins your WiFi, finds this
+display, and chirps when it is in.</p></details>
+<details><summary>If the display shows "No WiFi"</summary>
+<ul><li>Displays only see 2.4 GHz networks - a 5 GHz-only network is
+invisible to them.</li>
+<li>Moved or new router? Run setup again from the settings page on the
+glass.</li>
+<li>No WiFi is not a failure: any canaries already paired keep talking to
+the display directly.</li></ul></details>
+</div>
+<p class="foot">Served by the display itself &middot; nothing leaves your
+home &middot; SecuraCV</p>
+
+<script>
+var SEVW=["All quiet","Notice","Quiet too long","Alert","Tamper","Alert"];
+var SEVC=["var(--ok)","var(--blu)","var(--warn)","var(--bad)","var(--bad)","var(--bad)"];
+var MOOD=["hidden","idle","idle","worried","worried","asleep","searching","calling"];
+function $(i){return document.getElementById(i)}
+// 3D drag
+var rx=-8,ry=14,drag=null,dev=$("dev");
+function look(){dev.style.transform="rotateX("+rx+"deg) rotateY("+ry+"deg)"}
+var st=$("stage");
+st.addEventListener("pointerdown",function(e){drag=[e.clientX,e.clientY,ry,rx];
+st.setPointerCapture(e.pointerId)});
+st.addEventListener("pointermove",function(e){if(!drag)return;
+ry=drag[2]+(e.clientX-drag[0])*.45;rx=Math.max(-70,Math.min(70,
+drag[3]-(e.clientY-drag[1])*.45));look()});
+st.addEventListener("pointerup",function(){drag=null});
+// hour selects
+["night_start_hh","night_end_hh"].forEach(function(id){var s=$(id);
+for(var h=0;h<24;h++){var o=document.createElement("option");o.value=h;
+o.textContent=(h%12||12)+(h<12?" am":" pm");s.appendChild(o)}});
+// settings wiring: one knob per change, the glass validates
+function send(k,v){fetch("/api/set?k="+k+"&v="+v,{method:"POST"})}
+["day_pct","night_step"].forEach(function(id){var e=$(id);
+e.addEventListener("input",function(){$(id+"v").textContent=e.value});
+e.addEventListener("change",function(){send(id,e.value)})});
+["night_screen","red_shift","peek_s","night_start_hh","night_end_hh"]
+.forEach(function(id){$(id).addEventListener("change",function(){
+send(id,$(id).value)})});
+fetch("/api/settings").then(function(r){return r.json()}).then(function(s){
+["day_pct","night_step","night_screen","red_shift","peek_s",
+"night_start_hh","night_end_hh"].forEach(function(id){
+if(s[id]!==undefined)$(id).value=s[id];
+var v=$(id+"v");if(v)v.textContent=$(id).value})});
+// live mirror
+function pad(n){return(n<10?"0":"")+n}
+function tick(){fetch("/api/glass").then(function(r){return r.json()})
+.then(function(g){
+document.body.className=(g.flavor==="watch"?"watch":"dash")+
+(g.night?" night":"");
+$("live").className="dot"+(g.wifi?" on":"");
+var t=g.time_valid?pad(g.hh)+":"+pad(g.mm):"--:--";
+$("clock").textContent=t;$("mclock").textContent=t;
+$("mwifi").textContent=g.wifi?(g.hub?"":"no hub"):"no wifi";
+var n=g.witnesses.length;
+if(n===0){$("mword").textContent=g.time_valid?t:"Listening";
+$("msub").textContent="no canaries yet";}
+else if(g.worst===0){$("mword").textContent=g.time_valid?t:"All quiet";
+$("msub").textContent="all quiet • "+n+(n===1?" canary":" canaries");}
+else{$("mword").textContent=SEVW[g.worst]||"Alert";
+$("msub").textContent=g.acked?"acknowledged":"press and hold the glass to acknowledge";}
+$("mword").style.color=n&&g.worst?SEVC[g.worst]:"var(--tx)";
+$("bird").className="bird "+(MOOD[g.bird]||"idle");
+var row=$("mrow");row.innerHTML="";
+g.witnesses.forEach(function(w){var c=document.createElement("span");
+c.className="chip s"+w.sev;c.textContent=(w.room?w.room+" ":"")+w.name;
+row.appendChild(c)});
+}).catch(function(){$("live").className="dot"})}
+tick();setInterval(tick,2000);look();
+</script></body></html>
+)RAW";
