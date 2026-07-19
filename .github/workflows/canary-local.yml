@@ -41,7 +41,16 @@ jobs:
         with:
           node-version: "22"
       - name: Node tests (shipped source, repo convention)
-        run: node --test canary-local/tests/canary_local.test.js
+        run: |
+          node --test canary-local/tests/canary_local.test.js
+          node --test canary-local/tests/chooser.test.js
+      - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
+        run: |
+          python3 canary-local/tools/gen_enclosures.py
+          if ! git diff --exit-code -- canary-local/devices/enclosures.json; then
+            echo "::error::enclosures.json is stale — run canary-local/tools/gen_enclosures.py and commit"
+            exit 1
+          fi
 
   wasm-build-and-boot:
     name: firmware → wasm → boots in a browser
@@ -82,6 +91,16 @@ jobs:
           # meta.json embeds the checkout sha, which legitimately differs on
           # a PR merge ref — the drift gate is the code bundles themselves.
           if ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
+            echo "── first differing bytes per artifact (diagnosis) ──"
+            for f in canary-local/emulator/dist/*.js; do
+              git show "HEAD:$f" > /tmp/committed.js || continue
+              off=$(cmp /tmp/committed.js "$f" | awk '{print $5}' | tr -d ',')
+              [ -n "$off" ] || continue
+              start=$(( off > 80 ? off - 80 : 1 ))
+              echo "· $f @ byte $off"
+              echo "  committed: $(tail -c +$start /tmp/committed.js | head -c 160 | tr -d '\n')"
+              echo "  rebuilt:   $(tail -c +$start "$f" | head -c 160 | tr -d '\n')"
+            done
             echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result"
             exit 1
           fi

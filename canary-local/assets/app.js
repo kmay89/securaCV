@@ -8,6 +8,7 @@
 // setup path. Everything works offline; nothing phones anywhere.
 
 import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { buildEnclosureLab } from "./enclosure-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
 import {
   DISPLAY_TOUR,
@@ -27,6 +28,7 @@ const el = (tag, cls, text) => {
 
 const state = {
   registry: null,
+  enclosures: null,
   cards: new Map(), // id → {scene}
   sheet: null,      // open device context
 };
@@ -35,8 +37,15 @@ const state = {
 async function main() {
   const res = await fetch("devices/registry.json");
   state.registry = await res.json();
+  state.enclosures = await fetch("devices/enclosures.json")
+    .then((r) => r.json())
+    .catch(() => null);
   $("#fw-train").textContent = `firmware train ${state.registry.fw_train}`;
   renderCards();
+  // Deep link from the chooser: index.html#<device-id> opens its sheet.
+  const target = decodeURIComponent(location.hash.slice(1));
+  const dev = state.registry.devices.find((d) => d.id === target);
+  if (dev) openSheet(dev);
 }
 
 function renderCards() {
@@ -231,6 +240,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     "Fix it": () => fixView(guideProxy, DISPLAY_FIXES, noteLine),
     "Try it": () => tryView(guideProxy, noteLine),
     Wire: () => wireView(serialLog, wireLog),
+    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
     Specs: () => specsView(dev),
   };
   let active = null;
@@ -449,6 +459,7 @@ function buildWitnessSheet(ctx, side) {
       w.append(list);
       return w;
     },
+    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
     "Joining": () => {
       const w = el("div", "joining");
       w.append(

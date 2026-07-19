@@ -8,12 +8,24 @@ flows stage the device into the exact state they're describing.
 ```
 canary-local/
   index.html            the page (vanilla JS, no frameworks, no build step)
+  choose.html           "Find your Canary" — the four-question front door
   assets/
     app.js              card gallery + device sheets + guide player
     scene3d.js          zero-dependency WebGL: procedural device bodies
+    stl.js              STL → the same viewer (real printed parts)
+    enclosure-lab.js    the parametric catalog, browsable (per-device tab)
+    chooser.js          the needs-matcher UI
+    chooser-data.js     questions + candidates + scorer (DOM-free, tested)
     guides.js           tours, fix-it flows, LED/chirp grammars (data)
     canary-local.css    Quiet Glass, on the web (palette from ui/theme.h)
-  devices/registry.json the device registry (one card per entry)
+  devices/
+    registry.json       the device registry (one card per entry)
+    enclosures.json     generated enclosure catalog (variants + .scad params)
+  enclosures/preview/   coarse preview meshes for in-dev designs (rendered
+                        by tools/gen_enclosures.py --render; the library's
+                        own "committed STLs are print-validated" policy
+                        stays intact in docs/hardware/enclosure)
+  tools/gen_enclosures.py  README tables + .scad customizer → enclosures.json
   emulator/
     build.sh            firmware → WebAssembly (one artifact per flavor)
     shim/               the silicon boundary (see below)
@@ -143,7 +155,52 @@ Plus **Wire** (the same USB-CDC boot log and MQTT traffic a bench
 shows — because it's the same firmware) and **Specs** (registry facts +
 deep links into the repo).
 
-## 5. Roadmap (scenario waves)
+## 4b. Choosing and housing: the front door and the enclosure lab
+
+**`choose.html` — Find your Canary.** Four questions (placement, needs,
+hard privacy lines, power) score a curated candidate list of
+device + enclosure pairs (`assets/chooser-data.js`, DOM-free, tested).
+The scorer's promises are pinned by tests: a "no cameras" answer removes
+every camera device unconditionally; outdoor placement only ever
+recommends sealed sets; every recommendation carries its true status —
+released (print-validated, shipping) vs in-development, said to your
+face. Matches link onward: the device's live card, the printable STLs,
+the configurator, the BOM.
+
+**The Enclosure tab** (every device sheet). The enclosure library *is* a
+set of parametric OpenSCAD configurators; the lab is their showroom:
+variant pills (from the catalog README's own tables), the real printed
+parts spinning in the same WebGL viewer the device cards use (STL parsed
+in ~100 lines, `assets/stl.js`), true dimensions from each mesh's
+bounding box, and the configurator's full parameter map — groups, enums,
+ranges, comments — parsed straight from the `.scad` customizer
+annotations by `tools/gen_enclosures.py`. In-development designs render
+from coarse preview meshes clearly marked as such; the library's
+"committed STLs are print-validated" policy is untouched.
+
+Live parameter re-rendering in the browser (openscad-wasm) is a wave-2
+hook: the lab's data model already carries everything it needs (the full
+parameter schema per configurator); what's missing is only the ~15 MB
+evaluator, deliberately not shipped by default.
+
+## 5. Where this lives (repo → Pages → securacv.com)
+
+Three tiers, no lock-in, one source of truth:
+
+1. **The repo** — everything here works from a checkout over any static
+   server, fully offline. Versioned with the firmware it teaches.
+2. **GitHub Pages** — `.github/workflows/pages.yml` publishes
+   `canary-local/` (+ the enclosure files it references) on every main
+   push. Enable once: Settings → Pages → Source → "GitHub Actions".
+3. **securacv.com** — the marketing site adopts it whenever ready,
+   either by pointing a custom domain/subdomain at Pages
+   (e.g. `local.securacv.com`, one CNAME) or by copying the built site
+   folder onto any host — the pages are self-contained and fetch
+   nothing external, so they inherit the site's privacy posture by
+   construction. The marketing page links "Find your Canary" as its
+   how-to-pick tool; the repo remains where it's built and reviewed.
+
+## 6. Roadmap (scenario waves)
 
 - **Wave 2 — first-boot theater**: shim `WebServer`/`DNSServer` so
   `provision.cpp` compiles too, with a simulated phone sheet for the
@@ -159,7 +216,7 @@ deep links into the repo).
   settings surface or mint a commissioning QR directly (the firmware
   entry points exist; the tour currently narrates the gestures).
 
-## 6. Building
+## 7. Building
 
 ```bash
 cd canary-local/emulator
@@ -171,7 +228,7 @@ LVGL v8.4.0 · rweather/arduinolibs (Crypto) · ArduinoJson v7.4.1.
 Artifacts in `dist/` are committed so the page works from a checkout
 without a toolchain; CI rebuilds them and fails on drift.
 
-## 7. Testing
+## 8. Testing
 
 - `emulator/web/harness.html` — bare boot bench (also the CI probe).
 - `tests/canary_local.test.js` — Node tests for the DOM-free logic:

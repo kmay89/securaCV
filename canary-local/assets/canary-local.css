@@ -187,6 +187,75 @@ button:disabled { opacity: 0.35; cursor: default; }
 .led-mean { color: var(--muted); }
 
 .muted { color: var(--muted); }
+
+/* ── hero CTA ── */
+.cta-row { margin: 18px 0 4px; }
+.cta {
+  display: inline-block; background: var(--canary); color: #151204;
+  font-weight: 650; padding: 11px 22px; border-radius: 999px;
+  box-shadow: 0 8px 30px rgba(255, 212, 79, 0.22);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.cta:hover { transform: translateY(-2px); text-decoration: none;
+  box-shadow: 0 12px 40px rgba(255, 212, 79, 0.3); }
+
+/* ── enclosure lab ── */
+.enclab .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.pill {
+  appearance: none; cursor: pointer; border: 1px solid var(--edge);
+  background: var(--surface); color: var(--muted); font-size: 13px;
+  padding: 6px 13px; border-radius: 999px;
+}
+.pill.on { color: #111; background: var(--canary); border-color: var(--canary); font-weight: 600; }
+.pill-uni { border-style: dashed; }
+.enclab-stage { position: relative; }
+.enclab-3d { width: 100%; height: 260px; touch-action: none; border-radius: 14px;
+  background: radial-gradient(400px 200px at 50% 45%, rgba(255,212,79,0.05), transparent 70%); }
+.enclab-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); padding: 4px 2px 8px; }
+.enclab-legend .leg { display: inline-flex; align-items: center; gap: 6px; }
+.enclab-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.enclab-status { font-size: 12.5px; padding: 6px 12px; border-radius: 9px; margin: 6px 0 8px; }
+.enclab-status.ok { background: rgba(67, 160, 71, 0.12); color: #7fd184; border: 1px solid rgba(67,160,71,0.35); }
+.enclab-status.dev { background: rgba(251, 140, 0, 0.1); color: #ffb45e; border: 1px solid rgba(251,140,0,0.3); }
+.enclab-files a { margin-right: 10px; }
+.params h4 { margin: 16px 0 6px; }
+.pgroup { border: 1px solid var(--edge); border-radius: 10px; margin: 6px 0; background: var(--surface); }
+.pgroup summary { cursor: pointer; padding: 8px 12px; font-size: 14px; }
+.prow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline;
+  padding: 5px 12px 5px 20px; border-top: 1px solid #1d1d1d; font-size: 13px; }
+.prow code { color: var(--canary-deep); background: none; padding: 0; }
+.pdefault { color: var(--text); }
+.penum { color: var(--signed); font-size: 12px; }
+.pcomment { color: var(--muted); flex-basis: 100%; padding-left: 2px; }
+
+/* ── chooser ── */
+.quiz { max-width: 880px; margin: 0 auto 70px; padding: 0 24px; }
+.q { border: 1px solid var(--edge); border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-2), #101012);
+  padding: 18px 20px; margin: 14px 0; }
+.q h3 { margin: 0 0 4px; }
+.q-hint { color: var(--faint); font-size: 12px; margin: 0 0 6px; }
+.q-opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.q-opt {
+  appearance: none; cursor: pointer; border: 1px solid var(--edge);
+  background: var(--surface); color: var(--text); font-size: 14px;
+  padding: 9px 16px; border-radius: 12px; text-align: left;
+}
+.q-opt:hover { border-color: #3a3a3a; }
+.q-opt.on { background: var(--canary); border-color: var(--canary); color: #151204; font-weight: 600; }
+.results h2 { margin: 26px 0 6px; }
+.match { border: 1px solid #2c2c2e; border-radius: var(--radius);
+  background: linear-gradient(180deg, #1a1a1c, #0e0e10); padding: 18px 20px; margin: 12px 0;
+  box-shadow: 0 14px 44px rgba(0,0,0,0.4); }
+.match-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.match-head h3 { margin: 0; }
+.match-preview { max-width: 300px; border-radius: 12px; border: 1px solid var(--edge); margin-top: 8px; background: #f5f5f5; }
+.match-doors { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 12px 0 0; }
+.match-doors .door { text-decoration: none; }
+.match-comp { border-style: dashed; }
+.chip-dev { border-color: rgba(251, 140, 0, 0.5); color: #ffb45e; }
+a.primary.small { display: inline-block; }
+
 footer { border-top: 1px solid #161616; color: var(--faint); font-size: 13px; text-align: center; padding: 26px 20px 40px; }
 footer p { max-width: 720px; margin: 0 auto; }
 
