@@ -144,8 +144,16 @@ test("the visitor's walk stays on the ground and inside the yard", async () => {
   }
 });
 
-test("house.html ships and wires the renderer; the chooser accepts prefill", () => {
+test("house.html ships and wires the renderer; the chooser accepts prefill", async () => {
   const page = readFileSync(join(ROOT, "house.html"), "utf8");
+  // if any teaser is perched, the page copy must own up to concepts —
+  // "every marker is real" would be a lie with a concept on the fence
+  const { PLACEMENTS } = await house();
+  if (PLACEMENTS.some((p) => p.teaser)) {
+    assert.match(page, /concept/i, "hero/footer copy admits concept perches exist");
+    assert.ok(!/Every marker is a real device/.test(page),
+      "the all-markers-are-real claim is gone while a teaser is perched");
+  }
   assert.match(page, /assets\/house\.js/);
   assert.match(page, /assets\/house\.css\?v=/,
     "house styles ship in their own versioned sheet — cached shared CSS must not undress the page");
