@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Vault — sealed evidence & break-glass by quorum · canary.local</title>
+  <meta name="description" content="What a vault, a sealed record, and a quorum actually are in SecuraCV — explained with the docs and the code standing behind every claim. Watch a frame get sealed (ephemeral X25519 → HKDF → ChaCha20-Poly1305, byte-exact SVLT header), then break glass yourself: real N-of-M Ed25519 trustee approvals in your browser, counted exactly like the kernel. Parsed from the code, drift-checked in CI. Works offline." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+</head>
+<body>
+  <header id="hero" class="hub-hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+      </svg>
+    </div>
+    <h1>The Vault</h1>
+    <p class="lede">
+      Sometimes the rare thing matters — a smoke alarm at 3&nbsp;a.m., a frame worth
+      keeping. SecuraCV's answer is a <strong>vault</strong>: evidence <em>sealed</em>
+      so the device can't read it back, that no one can open alone — it takes a
+      <strong>quorum</strong>. Here's what those three words mean, with the code behind them.
+    </p>
+    <p class="fineprint">
+      <a href="index.html">← the family</a> ·
+      <a href="wap.html">The WAP</a> ·
+      <a href="homeassistant.html">The Hub</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main id="vault">
+    <noscript><p class="muted">This explainer needs JavaScript — everything it stages
+    is also written out in <code>docs/sealed_snapshot_vault.md</code> and
+    <code>spec/invariants.md</code>.</p></noscript>
+  </main>
+
+  <footer class="fineprint" id="foot">
+    <p>
+      Honest by construction: the algorithm names, constants, signing domains,
+      the byte-exact <code>.svlt</code> header and the two invariants are parsed
+      from <code>src/vault</code>, <code>src/break_glass</code>, the canary-wap
+      firmware and <code>spec/invariants.md</code> by <code>tools/gen_vault.py</code>,
+      and drift-checked in CI. The break-glass demo runs real Ed25519 in your
+      browser; where a step is illustrated rather than executed, the page says so.
+    </p>
+  </footer>
+
+  <script type="module" src="assets/vault.js"></script>
+</body>
+</html>

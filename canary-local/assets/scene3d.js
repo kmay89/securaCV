@@ -7,9 +7,13 @@
 // glass with the LIVE emulator framebuffer — so the 3D card is not an
 // illustration of the device, it IS the device, running.
 //
-// Lighting is a fixed two-key studio (soft top-left key + cool rim +
-// fresnel) tuned for the Apple-pairing-card look: friendly, floating,
-// slightly glossy, obviously tangible.
+// Lighting is a physically-based studio: GGX softboxes (warm key, cool
+// window fill, rim strip) with area-light lobe widening, hemisphere
+// bounce, a graded environment for reflections, real fresnel, linear
+// light through an ACES-style curve — plus chamfered edges for the
+// highlights to catch on and a view-space contact shadow that grounds
+// the floating product. Tuned for the Apple-product-page look while
+// staying a single zero-dependency file.
 
 // ── tiny mat4 ───────────────────────────────────────────────────────────
 export const M4 = {
@@ -76,62 +80,113 @@ class MeshBuilder {
 }
 
 // Rounded-rectangle prism (the dash shell): outline sampled with rounded
-// corners, extruded ±h/2 in Z, with beveled front edge feel via normals.
-export function roundedBox(w, h, d, r, seg = 6) {
+// corners, extruded ±h/2 in Z — with real 45° chamfers where wall meets
+// cap, because a highlight needs an edge to catch on. bevel: 0 restores
+// the old sharp box (print-exact silhouettes).
+export function roundedBox(w, h, d, r, seg = 6, bevel) {
   const m = new MeshBuilder();
   const hw = w / 2, hh = h / 2, hd = d / 2;
-  const pts = [];
-  const corners = [
-    [hw - r, hh - r, 0], [-(hw - r), hh - r, Math.PI / 2],
-    [-(hw - r), -(hh - r), Math.PI], [hw - r, -(hh - r), (3 * Math.PI) / 2],
-  ];
-  for (const [cx, cy, a0] of corners)
-    for (let i = 0; i <= seg; i++) {
-      const a = a0 + (i / seg) * (Math.PI / 2);
-      pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
-    }
-  const n = pts.length;
+  const b = bevel === undefined ? Math.min(1.1, d * 0.16, Math.max(r * 0.9, 0.3)) : bevel;
+  const outline = (rr) => {
+    const pts = [];
+    const corners = [
+      [hw - r, hh - r, 0], [-(hw - r), hh - r, Math.PI / 2],
+      [-(hw - r), -(hh - r), Math.PI], [hw - r, -(hh - r), (3 * Math.PI) / 2],
+    ];
+    for (const [cx, cy, a0] of corners)
+      for (let i = 0; i <= seg; i++) {
+        const a = a0 + (i / seg) * (Math.PI / 2);
+        pts.push([cx + rr * Math.cos(a), cy + rr * Math.sin(a), Math.cos(a), Math.sin(a)]);
+      }
+    return pts;
+  };
+  const outer = outline(r);                                  // wall outline (+2D normal)
+  const inner = b > 0 ? outline(Math.max(r - b, 0.02)) : outer; // cap outline, inset
+  const n = outer.length;
+  const zWall = b > 0 ? hd - b : hd;
   // side wall
   for (let i = 0; i < n; i++) {
-    const [x, y] = pts[i];
-    const [x2, y2] = pts[(i + 1) % n];
+    const [x, y] = outer[i];
+    const [x2, y2] = outer[(i + 1) % n];
     const nx = (y2 - y), ny = -(x2 - x);
     const len = Math.hypot(nx, ny) || 1;
-    const a = m.vert([x, y, hd], [nx / len, ny / len, 0]);
-    const b = m.vert([x, y, -hd], [nx / len, ny / len, 0]);
-    const c = m.vert([x2, y2, -hd], [nx / len, ny / len, 0]);
-    const dd = m.vert([x2, y2, hd], [nx / len, ny / len, 0]);
-    m.quad(a, b, c, dd);
+    const a = m.vert([x, y, zWall], [nx / len, ny / len, 0]);
+    const bb = m.vert([x, y, -zWall], [nx / len, ny / len, 0]);
+    const c = m.vert([x2, y2, -zWall], [nx / len, ny / len, 0]);
+    const dd = m.vert([x2, y2, zWall], [nx / len, ny / len, 0]);
+    m.quad(a, bb, c, dd);
   }
-  // front + back caps (fan from center)
+  // chamfer rings (45°: outline normal tipped toward the cap)
+  if (b > 0) {
+    for (const s of [1, -1]) {
+      for (let i = 0; i < n; i++) {
+        const [ox, oy, cx, cy] = outer[i];
+        const [ox2, oy2, cx2, cy2] = outer[(i + 1) % n];
+        const [ix, iy] = inner[i];
+        const [ix2, iy2] = inner[(i + 1) % n];
+        const nrm = (cx_, cy_) => {
+          const l = Math.hypot(cx_, cy_, 1) || 1;
+          return [cx_ / l, cy_ / l, s / l];
+        };
+        const a = m.vert([ox, oy, s * zWall], nrm(cx, cy));
+        const bb = m.vert([ix, iy, s * hd], nrm(cx, cy));
+        const c = m.vert([ix2, iy2, s * hd], nrm(cx2, cy2));
+        const dd = m.vert([ox2, oy2, s * zWall], nrm(cx2, cy2));
+        if (s > 0) m.quad(a, bb, c, dd);
+        else m.quad(dd, c, bb, a);
+      }
+    }
+  }
+  // front + back caps (fan from center over the inset outline)
   for (const z of [hd, -hd]) {
     const nz = z > 0 ? 1 : -1;
     const center = m.vert([0, 0, z], [0, 0, nz]);
-    const ring = pts.map(([x, y]) => m.vert([x, y, z], [0, 0, nz]));
+    const ring = inner.map(([x, y]) => m.vert([x, y, z], [0, 0, nz]));
     for (let i = 0; i < n; i++) {
-      const a = ring[i], b = ring[(i + 1) % n];
-      if (nz > 0) m.tri(center, a, b);
-      else m.tri(center, b, a);
+      const a = ring[i], bb = ring[(i + 1) % n];
+      if (nz > 0) m.tri(center, a, bb);
+      else m.tri(center, bb, a);
     }
   }
   return m;
 }
 
 // Cylinder along Z (the watch drum / bezel), optional inner bore → ring.
-export function cylinder(rOut, depth, seg = 64, rIn = 0) {
+// Outer rims carry a 45° chamfer (bevel: 0 restores sharp rims).
+export function cylinder(rOut, depth, seg = 64, rIn = 0, bevel) {
   const m = new MeshBuilder();
   const hd = depth / 2;
+  const b = bevel === undefined
+    ? Math.min(0.9, depth * 0.16, Math.max(rOut - rIn, rOut) * 0.12)
+    : bevel;
+  const zWall = b > 0 ? hd - b : hd;
+  const rCap = b > 0 ? rOut - b : rOut;
   for (let i = 0; i < seg; i++) {
     const a0 = (i / seg) * Math.PI * 2;
     const a1 = ((i + 1) / seg) * Math.PI * 2;
     const c0 = [Math.cos(a0), Math.sin(a0)], c1 = [Math.cos(a1), Math.sin(a1)];
     // outer wall
     {
-      const a = m.vert([rOut * c0[0], rOut * c0[1], hd], [c0[0], c0[1], 0]);
-      const b = m.vert([rOut * c0[0], rOut * c0[1], -hd], [c0[0], c0[1], 0]);
-      const c = m.vert([rOut * c1[0], rOut * c1[1], -hd], [c1[0], c1[1], 0]);
-      const d = m.vert([rOut * c1[0], rOut * c1[1], hd], [c1[0], c1[1], 0]);
-      m.quad(a, b, c, d);
+      const a = m.vert([rOut * c0[0], rOut * c0[1], zWall], [c0[0], c0[1], 0]);
+      const b2 = m.vert([rOut * c0[0], rOut * c0[1], -zWall], [c0[0], c0[1], 0]);
+      const c = m.vert([rOut * c1[0], rOut * c1[1], -zWall], [c1[0], c1[1], 0]);
+      const d = m.vert([rOut * c1[0], rOut * c1[1], zWall], [c1[0], c1[1], 0]);
+      m.quad(a, b2, c, d);
+    }
+    // rim chamfers
+    if (b > 0) {
+      for (const s of [1, -1]) {
+        const nrm = (c) => {
+          const l = Math.SQRT2;
+          return [c[0] / l, c[1] / l, s / l];
+        };
+        const a = m.vert([rOut * c0[0], rOut * c0[1], s * zWall], nrm(c0));
+        const b2 = m.vert([rCap * c0[0], rCap * c0[1], s * hd], nrm(c0));
+        const c = m.vert([rCap * c1[0], rCap * c1[1], s * hd], nrm(c1));
+        const d = m.vert([rOut * c1[0], rOut * c1[1], s * zWall], nrm(c1));
+        if (s > 0) m.quad(a, b2, c, d);
+        else m.quad(d, c, b2, a);
+      }
     }
     if (rIn > 0) {
       // inner wall (bore)
@@ -141,22 +196,22 @@ export function cylinder(rOut, depth, seg = 64, rIn = 0) {
       const d = m.vert([rIn * c0[0], rIn * c0[1], -hd], [-c0[0], -c0[1], 0]);
       m.quad(a, b, c, d);
     }
-    // caps
+    // caps (out to the chamfer's inner edge)
     for (const z of [hd, -hd]) {
       const nz = z > 0 ? 1 : -1;
       if (rIn > 0) {
         const a = m.vert([rIn * c0[0], rIn * c0[1], z], [0, 0, nz]);
-        const b = m.vert([rOut * c0[0], rOut * c0[1], z], [0, 0, nz]);
-        const c = m.vert([rOut * c1[0], rOut * c1[1], z], [0, 0, nz]);
+        const b2 = m.vert([rCap * c0[0], rCap * c0[1], z], [0, 0, nz]);
+        const c = m.vert([rCap * c1[0], rCap * c1[1], z], [0, 0, nz]);
         const d = m.vert([rIn * c1[0], rIn * c1[1], z], [0, 0, nz]);
-        if (nz > 0) m.quad(a, b, c, d);
-        else m.quad(d, c, b, a);
+        if (nz > 0) m.quad(a, b2, c, d);
+        else m.quad(d, c, b2, a);
       } else {
         const ctr = m.vert([0, 0, z], [0, 0, nz]);
-        const a = m.vert([rOut * c0[0], rOut * c0[1], z], [0, 0, nz]);
-        const b = m.vert([rOut * c1[0], rOut * c1[1], z], [0, 0, nz]);
-        if (nz > 0) m.tri(ctr, a, b);
-        else m.tri(ctr, b, a);
+        const a = m.vert([rCap * c0[0], rCap * c0[1], z], [0, 0, nz]);
+        const b2 = m.vert([rCap * c1[0], rCap * c1[1], z], [0, 0, nz]);
+        if (nz > 0) m.tri(ctr, a, b2);
+        else m.tri(ctr, b2, a);
       }
     }
   }
@@ -234,12 +289,27 @@ void main() {
   gl_Position = uProj * uView * wp;
 }`;
 
+// Physically-based studio shading. The rig is a photo studio, not a math
+// demo: a large warm key softbox up-left, a tall cool fill window right,
+// a rim strip behind, hemisphere bounce, and a graded environment for
+// reflections — all analytic, evaluated in linear light and graded
+// through an ACES-style filmic curve. Area lights are approximated by
+// widening GGX roughness with each source's angular radius: the cheap
+// trick that makes highlights read as *softboxes*, not points.
 const FS = `
+#ifdef GL_OES_standard_derivatives
+#extension GL_OES_standard_derivatives : enable
+#endif
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
 varying vec3 vN; varying vec3 vP; varying vec2 vUv;
 varying vec3 vObj; varying vec3 vNl;
 uniform vec3 uColor;
-uniform float uGloss;      // 0 matte shell .. 1 glass
+uniform float uGloss;      // 0 matte shell .. 1 glass (legacy knob → roughness/F0)
+uniform float uMetal;      // 0 dielectric .. 1 metal
 uniform float uUseTex;     // screen face samples the live framebuffer
 uniform float uEmissive;   // screen glow (backlight level)
 uniform float uClipZ;      // print guide: hide everything above this layer
@@ -247,34 +317,129 @@ uniform float uMinZ;       // part's plate level (local z)
 uniform float uOverhangOn; // tint faces steeper than 45° pointing down
 uniform float uUnlit;      // plate grid / layer contours: flat color
 uniform sampler2D uTex;
+
+vec3 srgb2lin(vec3 c) { return pow(c, vec3(2.2)); }
+vec3 aces(vec3 x) {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+float dGGX(float NoH, float a) {
+  float a2 = a * a;
+  float d = NoH * NoH * (a2 - 1.0) + 1.0;
+  return a2 / max(3.14159 * d * d, 1e-4);
+}
+float vSmith(float NoV, float NoL, float a) {
+  float k = a * 0.5 + 1e-3;
+  return 0.25 / max((NoV * (1.0 - k) + k) * (NoL * (1.0 - k) + k), 1e-4);
+}
+vec3 fresnel(float u, vec3 f0) { return f0 + (1.0 - f0) * pow(1.0 - u, 5.0); }
+
+// one softbox: direction, linear color·intensity, angular radius
+vec3 softbox(vec3 N, vec3 V, vec3 L, vec3 tint, float radius, float rough, vec3 f0, vec3 albedo) {
+  vec3 H = normalize(L + V);
+  float NoL = dot(N, L);
+  float wrap = clamp((NoL + radius) / (1.0 + radius), 0.0, 1.0); // area wrap
+  if (wrap <= 0.0) return vec3(0.0);
+  float a = clamp(rough + radius * 0.85, 0.03, 1.0);             // source size widens lobe
+  float NoV = max(dot(N, V), 1e-3);
+  float spec = dGGX(max(dot(N, H), 0.0), a) * vSmith(NoV, max(NoL, 1e-3), a);
+  vec3 F = fresnel(max(dot(H, V), 0.0), f0);
+  vec3 diff = albedo * (1.0 - F) * (1.0 - uMetal);
+  return (diff + spec * F) * tint * wrap;
+}
+
+// graded studio environment for reflections: bright soft ceiling, cool
+// horizon band, falling to a dark floor — what glossy shells "see"
+vec3 envLight(vec3 R) {
+  float h = clamp(R.y * 0.5 + 0.5, 0.0, 1.0);
+  vec3 floorC = vec3(0.030, 0.032, 0.036);
+  vec3 horizon = vec3(0.16, 0.18, 0.21);
+  vec3 ceil = vec3(0.95, 0.97, 1.02);
+  vec3 env = mix(floorC, horizon, smoothstep(0.0, 0.55, h));
+  env = mix(env, ceil, smoothstep(0.55, 1.0, h) * smoothstep(0.55, 1.0, h));
+  // the key softbox itself, visible in sharp reflections
+  float box = smoothstep(0.93, 0.995, dot(R, normalize(vec3(-0.35, 0.85, 0.45))));
+  return env + box * vec3(1.4);
+}
+
 void main() {
   if (vObj.z - uMinZ > uClipZ) discard;
   if (uUnlit > 0.5) { gl_FragColor = vec4(uColor, 1.0); return; }
   vec3 N = normalize(vN);
   vec3 V = normalize(-vP);
-  vec3 key = normalize(vec3(-0.45, 0.75, 0.6));
-  vec3 rim = normalize(vec3(0.6, 0.1, -0.8));
-  float kd = max(dot(N, key), 0.0);
-  float bounce = max(dot(N, normalize(vec3(0.2, -1.0, 0.25))), 0.0) * 0.18;
-  float rimL = pow(1.0 - max(dot(N, V), 0.0), 2.6);
-  vec3 base = uColor;
+  float NoV = max(dot(N, V), 1e-3);
+
+  // legacy gloss knob → PBR params
+  float rough = clamp(1.0 - uGloss, 0.06, 1.0);
+  rough *= rough; // perceptual → alpha-ish
+#ifdef GL_OES_standard_derivatives
+  // specular AA: fine geometry (bevels, STL facets) shimmers unless the
+  // lobe widens with normal variance
+  vec3 dx = dFdx(N), dy = dFdy(N);
+  rough = clamp(rough + (dot(dx, dx) + dot(dy, dy)) * 0.8, 0.06, 1.0);
+#endif
+
   if (uUseTex > 0.5) {
-    vec3 tex = texture2D(uTex, vUv).rgb;
-    base = tex * (0.25 + 0.75 * uEmissive);
-    // panel off-glass reflection so a dark screen still reads as glass
-    float sheen = pow(max(dot(reflect(-key, N), V), 0.0), 24.0);
-    gl_FragColor = vec4(base + sheen * 0.10 + rimL * 0.03, 1.0);
+    // the glass path: live framebuffer under real fresnel + studio streak
+    vec3 tex = srgb2lin(texture2D(uTex, vUv).rgb);
+    vec3 emit = tex * (0.06 + 1.35 * uEmissive);
+    vec3 R = reflect(-V, N);
+    vec3 f0 = vec3(0.045);
+    vec3 F = fresnel(NoV, f0);
+    vec3 refl = envLight(R) * F * 1.1;
+    vec3 col = aces(emit + refl);
+    gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
     return;
   }
-  vec3 lit = base * (0.30 + kd * 0.72 + bounce);
-  float spec = pow(max(dot(reflect(-key, N), V), 0.0), mix(8.0, 64.0, uGloss)) * mix(0.06, 0.5, uGloss);
-  vec3 col = lit + vec3(spec) + rimL * vec3(0.10, 0.11, 0.13);
+
+  vec3 albedo = srgb2lin(uColor);
+  vec3 f0 = mix(vec3(0.04 + 0.03 * uGloss), albedo, uMetal);
+
+  // the rig (linear light)
+  vec3 col = vec3(0.0);
+  col += softbox(N, V, normalize(vec3(-0.38, 0.80, 0.46)), vec3(1.50, 1.45, 1.36), 0.34, rough, f0, albedo); // warm key
+  col += softbox(N, V, normalize(vec3(0.78, 0.22, 0.42)),  vec3(0.34, 0.38, 0.47), 0.22, rough, f0, albedo); // cool window fill
+  col += softbox(N, V, normalize(vec3(0.25, 0.35, -0.90)), vec3(0.36, 0.40, 0.48), 0.16, rough, f0, albedo); // rim strip
+  // hemisphere bounce (sky / warm floor card)
+  float hemi = N.y * 0.5 + 0.5;
+  vec3 irr = mix(vec3(0.10, 0.093, 0.085), vec3(0.235, 0.25, 0.28), hemi);
+  col += albedo * irr * (1.0 - uMetal * 0.85);
+  // environment reflection, fresnel-weighted, stronger when glossy
+  vec3 R = reflect(-V, N);
+  vec3 F = fresnel(NoV, f0);
+  col += envLight(R) * F * mix(0.10, 0.85, uGloss) * (1.0 - rough * 0.6);
+
   // Overhang guide: local faces steeper than 45° pointing at the plate,
   // above the first layers, would need support in this orientation.
   if (uOverhangOn > 0.5 && normalize(vNl).z < -0.707 && vObj.z > uMinZ + 0.45) {
-    col = mix(col, vec3(0.92, 0.28, 0.2), 0.7);
+    col = mix(col, srgb2lin(vec3(0.92, 0.28, 0.2)), 0.7);
   }
-  gl_FragColor = vec4(col, 1.0);
+  col = aces(col);
+  gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
+}`;
+
+// the contact shadow: a soft ellipse on a view-space ground plane — the
+// "floating product photo" grounding. Squared falloff, darker core.
+const SHADOW_VS = `
+attribute vec2 aPos;
+uniform mat4 uProj;
+uniform vec3 uCenter;   // view-space center of the ellipse
+uniform vec2 uRadii;    // x/z radii (view units)
+varying vec2 vQ;
+void main() {
+  vQ = aPos;
+  vec3 p = uCenter + vec3(aPos.x * uRadii.x, 0.0, aPos.y * uRadii.y);
+  gl_Position = uProj * vec4(p, 1.0);
+}`;
+const SHADOW_FS = `
+precision mediump float;
+varying vec2 vQ;
+uniform float uAlpha;
+void main() {
+  float d = length(vQ);
+  float a = uAlpha * pow(clamp(1.0 - d, 0.0, 1.0), 1.8);
+  a += uAlpha * 0.55 * pow(clamp(1.0 - d * 2.6, 0.0, 1.0), 2.0); // dense core
+  // premultiplied output — the canvas composites premultiplied alpha
+  gl_FragColor = vec4(vec3(0.02, 0.025, 0.035) * a, a);
 }`;
 
 // ── scene ───────────────────────────────────────────────────────────────
@@ -292,11 +457,27 @@ export class DeviceScene {
       premultipliedAlpha: true,
     });
     this.gl = gl;
+    // specular anti-aliasing needs screen-space normal derivatives
+    gl.getExtension("OES_standard_derivatives");
     this.prog = this._program(VS, FS);
     this.u = {};
-    for (const n of ["uProj", "uView", "uModel", "uColor", "uGloss", "uUseTex",
+    for (const n of ["uProj", "uView", "uModel", "uColor", "uGloss", "uMetal", "uUseTex",
                      "uEmissive", "uTex", "uClipZ", "uMinZ", "uOverhangOn", "uUnlit"])
       this.u[n] = gl.getUniformLocation(this.prog, n);
+    // contact-shadow pass (own tiny program + unit quad)
+    this.shadow = null; // {y, rx, rz, alpha} in world units, or null
+    this.sprog = this._program(SHADOW_VS, SHADOW_FS);
+    this.su = {
+      proj: gl.getUniformLocation(this.sprog, "uProj"),
+      center: gl.getUniformLocation(this.sprog, "uCenter"),
+      radii: gl.getUniformLocation(this.sprog, "uRadii"),
+      alpha: gl.getUniformLocation(this.sprog, "uAlpha"),
+    };
+    this.sa = gl.getAttribLocation(this.sprog, "aPos");
+    this.squad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.squad);
+    gl.bufferData(gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]), gl.STATIC_DRAW);
     this.overhangOn = false;
     this.clipZ = 1e9;
     this.viewY = 0; // vertical look-at offset (plate scenes sit above y=0)
@@ -323,6 +504,21 @@ export class DeviceScene {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this._wireOrbit();
     this._raf = null;
+    // Adaptive resolution: the studio shading is real work, and software
+    // rasterizers (headless CI, weak iGPUs) pay for every fragment. Track
+    // an EMA of frame time and scale the backing store down until the
+    // scene is fluid again — sharpness costs nothing on a real GPU and
+    // fluidity beats sharpness everywhere else. A software renderer is
+    // known at birth, so it starts cheap instead of discovering it.
+    this.resScale = 1;
+    try {
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "";
+      if (/swiftshader|llvmpipe|software|angle \(google/i.test(renderer)) this.resScale = 0.4;
+    } catch { /* keep 1 */ }
+    this._ft = 16;
+    this._lastT = 0;
+    this._cool = 0;
   }
 
   _program(vs, fs) {
@@ -344,7 +540,14 @@ export class DeviceScene {
     return p;
   }
 
-  addMesh(builder, { color = [0.5, 0.5, 0.5], gloss = 0.2, screen = false,
+  // The floating-product grounding: a soft ellipse below the object, in
+  // view space (the object spins; its shadow shouldn't). Opt-in per scene.
+  setContactShadow({ y = -30, rx = 40, rz = 30, alpha = 0.34 } = {}) {
+    this.shadow = { y, rx, rz, alpha };
+  }
+  clearContactShadow() { this.shadow = null; }
+
+  addMesh(builder, { color = [0.5, 0.5, 0.5], gloss = 0.2, metal = 0, screen = false,
                      model = M4.ident(), lines = false, unlit = false,
                      clippable = false, minZ = 0 } = {}) {
     const gl = this.gl;
@@ -352,6 +555,7 @@ export class DeviceScene {
       model,
       color,
       gloss,
+      metal,
       screen,
       lines,
       unlit,
@@ -448,6 +652,7 @@ export class DeviceScene {
     if (this._raf) return;
     const step = () => {
       this._raf = requestAnimationFrame(step);
+      if (this.onTick) this.onTick(); // per-frame hook: cable rigs, LEDs, prop animation
       this.draw();
     };
     step();
@@ -459,9 +664,23 @@ export class DeviceScene {
 
   draw() {
     const gl = this.gl;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const W = Math.round(this.canvas.clientWidth * dpr);
-    const H = Math.round(this.canvas.clientHeight * dpr);
+    const now = (typeof performance !== "undefined" ? performance.now() : 0);
+    if (this._lastT) {
+      this._ft += (Math.min(now - this._lastT, 100) - this._ft) * 0.1;
+      if (this._cool-- <= 0) {
+        if (this._ft > 30 && this.resScale > 0.3) {
+          this.resScale = Math.max(0.3, this.resScale * 0.75); // shed pixels fast
+          this._cool = 10;
+        } else if (this._ft < 17.5 && this.resScale < 1) {
+          this.resScale = Math.min(1, this.resScale / 0.9);    // recover slowly
+          this._cool = 90;
+        }
+      }
+    }
+    this._lastT = now;
+    const dpr = Math.min(2, window.devicePixelRatio || 1) * this.resScale;
+    const W = Math.max(2, Math.round(this.canvas.clientWidth * dpr));
+    const H = Math.max(2, Math.round(this.canvas.clientHeight * dpr));
     if (this.canvas.width !== W || this.canvas.height !== H) {
       this.canvas.width = W;
       this.canvas.height = H;
@@ -500,6 +719,24 @@ export class DeviceScene {
     const view = M4.translate(0, -this.viewY, -this.dist);
     const spin = M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y));
 
+    // the grounding shadow, under everything, blended, no depth write
+    if (this.shadow) {
+      gl.useProgram(this.sprog);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied
+      gl.depthMask(false);
+      gl.uniformMatrix4fv(this.su.proj, false, proj);
+      gl.uniform3f(this.su.center, 0, this.shadow.y - this.viewY, -this.dist);
+      gl.uniform2f(this.su.radii, this.shadow.rx, this.shadow.rz);
+      gl.uniform1f(this.su.alpha, this.shadow.alpha);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.squad);
+      gl.vertexAttribPointer(this.sa, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(this.sa);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+    }
+
     gl.useProgram(this.prog);
     gl.uniformMatrix4fv(this.u.uProj, false, proj);
     gl.uniformMatrix4fv(this.u.uView, false, view);
@@ -511,6 +748,7 @@ export class DeviceScene {
       gl.uniformMatrix4fv(this.u.uModel, false, M4.mul(spin, p.model));
       gl.uniform3fv(this.u.uColor, p.color);
       gl.uniform1f(this.u.uGloss, p.gloss);
+      gl.uniform1f(this.u.uMetal, p.metal || 0);
       gl.uniform1f(this.u.uUseTex, p.screen ? 1 : 0);
       gl.uniform1f(this.u.uEmissive, this.glow);
       gl.uniform1f(this.u.uClipZ, p.clippable ? this.clipZ : 1e9);
@@ -593,6 +831,7 @@ export function buildWatchStation(scene, { light = true } = {}) {
     color: shell, gloss: 0.18,
     model: M4.mul(M4.translate(0, -30, 2), M4.ident()),
   });
+    scene.setContactShadow({ y: -32, rx: 48, rz: 36, alpha: 0.32 });
   scene.dist = 165;
 }
 
@@ -610,6 +849,7 @@ export function buildDash(scene, { light = true } = {}) {
   scene.addMesh(glass, { screen: true, model: M4.mul(tiltM, M4.translate(0, 0, 8.45)) });
   const st = wedge(120, 78, 40);
   scene.addMesh(st, { color: shell, gloss: 0.18, model: M4.translate(0, -48, -6) });
+    scene.setContactShadow({ y: -50, rx: 80, rz: 56, alpha: 0.32 });
   scene.dist = 260;
 }
 
@@ -625,6 +865,7 @@ export function buildVision(scene) {
   scene.addMesh(lensGlass, { color: [0.02, 0.03, 0.05], gloss: 0.95, model: M4.translate(0, 6, 15.4) });
   const led = cylinder(1.6, 1.2, 24);
   scene.addMesh(led, { color: CANARY, gloss: 0.9, model: M4.translate(12, -12, 11.6) });
+    scene.setContactShadow({ y: -26, rx: 34, rz: 27, alpha: 0.30 });
   scene.dist = 130;
 }
 
@@ -637,6 +878,7 @@ export function buildWap(scene) {
   scene.addMesh(inset, { color: [0.35, 0.36, 0.38], gloss: 0.15, model: M4.translate(0, 0, 10) });
   const led = cylinder(1.6, 1.4, 24);
   scene.addMesh(led, { color: CANARY, gloss: 0.9, model: M4.translate(20, 11, 10.2) });
+    scene.setContactShadow({ y: -22, rx: 40, rz: 27, alpha: 0.30 });
   scene.dist = 135;
 }
 
@@ -649,6 +891,7 @@ export function buildSense(scene) {
   scene.addMesh(dome, { color: [0.82, 0.79, 0.72], gloss: 0.45, model: M4.translate(0, 0, 9) });
   const led = cylinder(1.4, 1.4, 24);
   scene.addMesh(led, { color: CANARY, gloss: 0.9, model: M4.translate(0, -17, 8.4) });
+    scene.setContactShadow({ y: -27, rx: 32, rz: 26, alpha: 0.30 });
   scene.dist = 120;
 }
 
@@ -669,6 +912,7 @@ export function buildFenceGuard(scene) {
   scene.addMesh(clamp, { color: [0.3, 0.31, 0.33], gloss: 0.2, model: M4.translate(0, 0, -13) });
   const led = cylinder(1.4, 1.4, 24);
   scene.addMesh(led, { color: [0.44, 0.84, 0.76], gloss: 0.9, model: M4.translate(16, -24, 11.2) });
+    scene.setContactShadow({ y: -34, rx: 34, rz: 26, alpha: 0.30 });
   scene.dist = 150;
 }
 

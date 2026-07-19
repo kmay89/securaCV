@@ -121,10 +121,10 @@ export const PARTS = {
     if (csk) { cone(m, 0, 0, 2.0, 1.0, -1.4, 0); cyl(m, 0, 0, 2.0, -0.2, 0, 24, true, false); }
     else { cyl(m, 0, 0, 2.0, 0, 1.5, 24); cyl(m, 0, 0, 0.5, 1.3, 1.9, 12); } // pan head + drive nub
     cyl(m, 0, 0, 1.0, -len, csk ? -1.0 : 0, 20, false, true); // shaft
-    return [{ builder: m.out(), color, gloss: 0.55 }];
+    return [{ builder: m.out(), color, gloss: 0.55, metal: 1 }];
   },
-  insert({ len = 4, color = BRASS } = {}) { const m = new MB(); cyl(m, 0, 0, 1.75, -len, 0, 22); return [{ builder: m.out(), color, gloss: 0.5 }]; },
-  magnet({ d = 6, h = 2, color = NICKEL } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, h, 32); return [{ builder: m.out(), color, gloss: 0.7 }]; },
+  insert({ len = 4, color = BRASS } = {}) { const m = new MB(); cyl(m, 0, 0, 1.75, -len, 0, 22); return [{ builder: m.out(), color, gloss: 0.5, metal: 1 }]; },
+  magnet({ d = 6, h = 2, color = NICKEL } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, h, 32); return [{ builder: m.out(), color, gloss: 0.7, metal: 1 }]; },
   lightPipe({ d = 3, len = 8, color = CLEAR } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, len, 20); return [{ builder: m.out(), color, gloss: 0.85 }]; },
   disc({ d = 12, t = 1, color = CLEAR } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, t, 40); return [{ builder: m.out(), color, gloss: 0.9 }]; },
   vent({ d = 8, t = 1.2, color = BLACK } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, t, 32); return [{ builder: m.out(), color, gloss: 0.4 }]; },
@@ -136,8 +136,8 @@ export const PARTS = {
     const usb = new MB(); roundedBox(usb, 4.4, 1.6, 0, 3.2, 0.6);
     return [
       { builder: board.out(), color, gloss: 0.4 },
-      { builder: shield.out(), color: STEEL, gloss: 0.6, local: M.t(0, 0, t) },
-      { builder: usb.out(), color: NICKEL, gloss: 0.55, local: M.t(-w / 2 + 4.6, 0, t) },
+      { builder: shield.out(), color: STEEL, gloss: 0.6, metal: 1, local: M.t(0, 0, t) },
+      { builder: usb.out(), color: NICKEL, gloss: 0.55, metal: 1, local: M.t(-w / 2 + 4.6, 0, t) },
     ];
   },
   // LCD panel module stand-in: glass front at local z=0, PCB stack behind.
@@ -149,7 +149,7 @@ export const PARTS = {
     return [
       { builder: g.out(), color: [0.04, 0.045, 0.06], gloss: 0.9 },
       { builder: board.out(), color: [0.13, 0.16, 0.28], gloss: 0.35 },
-      { builder: usb.out(), color: NICKEL, gloss: 0.55, local: M.t(0, -h / 2 + 5, 0) },
+      { builder: usb.out(), color: NICKEL, gloss: 0.55, metal: 1, local: M.t(0, -h / 2 + 5, 0) },
     ];
   },
   // LiPo pouch + JST-PH connector + two short leads, laid flat (thin in Z)
@@ -199,7 +199,7 @@ export class Assembly {
       insert: spec.insert || [0, 0, 0],
       step: spec.step ?? 0,
       meshes: spec.meshes.map((mm) => ({
-        sp: this.scene.addMesh(mm.builder, { color: mm.color, gloss: mm.gloss ?? 0.3, model: M.id() }),
+        sp: this.scene.addMesh(mm.builder, { color: mm.color, gloss: mm.gloss ?? 0.3, metal: mm.metal ?? 0, model: M.id() }),
         local: mm.local || M.id(),
       })),
       center: spec.center || [0, 0, 0],
