@@ -995,3 +995,8 @@ button.ghost.small.bench-ff { font-size: 12px; }
   .card-3d, .stage-3d, .glass, .enclab-3d, .boardlab-3d, .asmlab-3d,
   .ws-canvas, .broom-3d { touch-action: pan-y; }
 }
+
+/* concept cards: coming-soon wears teal, dashed — never mistakable for shipped */
+.chip-soon { border-color: rgba(111, 214, 195, 0.55); border-style: dashed; color: #6fd6c3; }
+.concept-plan { margin: 8px 0 0 18px; padding: 0; }
+.concept-plan li { font-size: 13.5px; color: var(--muted); margin-bottom: 6px; }
