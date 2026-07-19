@@ -545,6 +545,11 @@ static void render(uint32_t now) {
   if (!g_display_ok) return;
   auto& fleet = canary::fleet::the_fleet();
   const bool night = in_quiet_hours();
+  // Night outranks the Character (wave 3): the MODE — not the red-look
+  // preference — forces the uniform dark ground at the theme choke
+  // point, so the light Almanac can never glow in a bedroom. Set before
+  // anything below reads a col_* accessor.
+  canary::ui::character_set_night(night);
   // "Night look" (settings wave): the red-shifted palette is the default
   // night face, but it's a preference — with it off, night keeps the day
   // palette at the calibrated night glow. Brightness policy runs on the

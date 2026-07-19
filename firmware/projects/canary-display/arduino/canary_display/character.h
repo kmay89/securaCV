@@ -22,7 +22,8 @@ enum class Character : uint8_t {
   Heirloom   = 1,
   Aqua       = 2,
   Neon       = 3,
-  Count      = 4,
+  Almanac    = 4,   // wave 3: the one light (paper) ground
+  Count      = 5,
 };
 
 // Ground & chrome tiers plus the single decorative accent, raw 0xRRGGBB
@@ -62,6 +63,17 @@ struct Voice {
   const char* hello_again;    // returning-boot splash tagline
 };
 
+// Wave 3 — the semantic set, per Character. The RULE is unchanged — a
+// state means the same THING in the same FAMILY everywhere — but bytes
+// may darken within family on a light ground, because #FB8C00 amber is
+// 1.98:1 on paper (unusable, measured) and a semantic color that can't
+// be seen is the dishonest option. Dark Characters all share the
+// canonical timeline-card bytes; only a light ground may darken, never
+// re-hue. Night (ncol_*) still belongs to the night engine.
+struct Semantics {
+  uint32_t ok, warn, alert, signed_;   // signed_ — `signed` is a keyword
+};
+
 struct CharacterDef {
   const char* name;
   const char* caption;
@@ -69,6 +81,7 @@ struct CharacterDef {
   TypeLadder type;
   Temperament temp;
   Voice voice;
+  Semantics sem;
 };
 
 // Applies a Character: clamps, sets it active (theme.h reads it from
@@ -78,6 +91,15 @@ void character_apply(Character c);
 Character active_character();
 const CharacterDef& active_character_def();   // theme.cpp's choke point
 const Voice& active_voice();                  // ambient copy, never alarms
+
+// Night is a MODE and it is uniform: while set, the ground/tier tiers the
+// theme serves are Quiet Glass's dark set for EVERY Character — a cream
+// glass must never glow at 3 a.m., and "at night it is the same calm
+// floor as every other" (display_character.md §2) is now enforced here,
+// not by every Character happening to be dark. The render tick owns this
+// flag (main.cpp, from quiet hours — the mode, not the red-look choice).
+void character_set_night(bool night);
+bool character_night();
 
 const char* character_name(Character c);
 const char* character_caption(Character c);

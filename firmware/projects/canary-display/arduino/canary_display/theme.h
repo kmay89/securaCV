@@ -17,13 +17,22 @@
 //
 // Character wave (display_character.md): Quiet Glass is now the DEFAULT
 // look, not the only one. The ground/text tiers and the type ladder read
-// the active Character through this single choke point; the semantic and
-// night sets stay inline constants below ON PURPOSE — no Character may
-// repaint the alarms or defeat the night engine.
+// the active Character through this single choke point. Wave 3 (the
+// light-ground Almanac) evolved the two hard lines without breaking
+// their meaning:
+//  - Semantics: same FAMILY, same meaning, everywhere. Every dark
+//    Character serves the canonical timeline-card bytes; a light ground
+//    darkens them within family (measured — canonical amber is 1.98:1 on
+//    paper, and an invisible alarm color is the dishonest option). The
+//    table lives in character.cpp; no Character may re-hue an alarm.
+//  - Night: a MODE that outranks every Character. While the render tick
+//    holds character_set_night(true), the ground/tier accessors serve
+//    Quiet Glass's dark set for EVERY look — a cream glass never glows
+//    at 3 a.m. The ncol_* palette below stays with the night engine.
 
 namespace canary::ui {
 
-// ── Ground (the active Character's palette; see character.h) ─────────────
+// ── Ground (the active Character's palette; night forces the dark set) ──
 lv_color_t col_bg();
 lv_color_t col_surface();
 lv_color_t col_edge();
@@ -31,13 +40,14 @@ lv_color_t col_text();
 lv_color_t col_muted();
 lv_color_t col_faint();
 // The Character's one decorative chrome hue (10% budget; never semantic).
+// At night this returns a dim ember — never a blue-band accent.
 lv_color_t col_accent();
 
-// ── Semantics (timeline-card parity — constant in every Character) ───────
-inline lv_color_t col_ok()      { return lv_color_hex(0x43A047); }
-inline lv_color_t col_warn()    { return lv_color_hex(0xFB8C00); }
-inline lv_color_t col_alert()   { return lv_color_hex(0xE53935); }
-inline lv_color_t col_signed()  { return lv_color_hex(0x03A9F4); }
+// ── Semantics (same family everywhere; light grounds darken in-family) ──
+lv_color_t col_ok();
+lv_color_t col_warn();
+lv_color_t col_alert();
+lv_color_t col_signed();
 
 // ── Night (red-shifted, melatonin-band-free; see UX doc §night) ─────────
 // The night engine outranks every Character — these never restyle.

@@ -11,23 +11,47 @@ using canary::fleet::Link;
 using canary::fleet::Sev;
 
 // ── Ground & type: the single Character choke point ──────────────────────
-// Every ground/text tier and every font role reads the ACTIVE Character
-// here — no caller ever sees the table. col_ok/warn/alert/signed and the
-// ncol_* set stay inline constants in theme.h ON PURPOSE: semantics and
-// night are not Character-driven (display_character.md §2).
+// Every ground/text tier, every font role, and (wave 3) every semantic
+// color reads the ACTIVE Character here — no caller ever sees the table.
+// Night outranks the Character at this exact spot: while the render tick
+// holds character_set_night(true), the ground/tier accessors serve Quiet
+// Glass's dark set for every look, so the one light Character (Almanac)
+// can never glow in a bedroom. The ncol_* set stays with the night
+// engine (theme.h) — Characters don't touch it.
 
 namespace {
 const Palette& pal() { return active_character_def().pal; }
 const TypeLadder& ladder() { return active_character_def().type; }
+
+// The uniform night floor = Quiet Glass's ground/tier bytes. Named here
+// (not read from k_defs[0]) so a future re-skin of the default can't
+// silently change what "dark at night" means.
+constexpr uint32_t NIGHT_BG = 0x000000, NIGHT_SURFACE = 0x141414,
+                   NIGHT_EDGE = 0x262626, NIGHT_TEXT = 0xEDEDED,
+                   NIGHT_MUTED = 0x8A8A8A, NIGHT_FAINT = 0x4A4A4A;
+// Night accent: a dim ember (= ncol_muted's hue) — decorative chrome may
+// never reintroduce a blue-band glow after dark.
+constexpr uint32_t NIGHT_ACCENT = 0x32100A;
+
+lv_color_t ground(uint32_t day, uint32_t night_v) {
+  return lv_color_hex(character_night() ? night_v : day);
+}
 }  // namespace
 
-lv_color_t col_bg()      { return lv_color_hex(pal().bg); }
-lv_color_t col_surface() { return lv_color_hex(pal().surface); }
-lv_color_t col_edge()    { return lv_color_hex(pal().edge); }
-lv_color_t col_text()    { return lv_color_hex(pal().text); }
-lv_color_t col_muted()   { return lv_color_hex(pal().muted); }
-lv_color_t col_faint()   { return lv_color_hex(pal().faint); }
-lv_color_t col_accent()  { return lv_color_hex(pal().accent); }
+lv_color_t col_bg()      { return ground(pal().bg, NIGHT_BG); }
+lv_color_t col_surface() { return ground(pal().surface, NIGHT_SURFACE); }
+lv_color_t col_edge()    { return ground(pal().edge, NIGHT_EDGE); }
+lv_color_t col_text()    { return ground(pal().text, NIGHT_TEXT); }
+lv_color_t col_muted()   { return ground(pal().muted, NIGHT_MUTED); }
+lv_color_t col_faint()   { return ground(pal().faint, NIGHT_FAINT); }
+lv_color_t col_accent()  { return ground(pal().accent, NIGHT_ACCENT); }
+
+// Semantics: the active Character's set — canonical bytes on every dark
+// ground, darkened-within-family on the light one (character.cpp table).
+lv_color_t col_ok()      { return lv_color_hex(active_character_def().sem.ok); }
+lv_color_t col_warn()    { return lv_color_hex(active_character_def().sem.warn); }
+lv_color_t col_alert()   { return lv_color_hex(active_character_def().sem.alert); }
+lv_color_t col_signed()  { return lv_color_hex(active_character_def().sem.signed_); }
 
 const lv_font_t* font_hero()    { return ladder().hero; }
 const lv_font_t* font_title()   { return ladder().title; }
