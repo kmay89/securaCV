@@ -45,6 +45,10 @@ jobs:
         with:
           token: ${{ secrets.FRESHNESS_PAT || github.token }}
       - name: Refresh upstream snapshot
+        env:
+          # for the generator's GitHub-releases fallback (the primary
+          # version feed's CDN 403s anonymous/default user agents)
+          GH_TOKEN: ${{ github.token }}
         run: python3 canary-local/tools/gen_homeassistant.py --refresh-upstream
       - name: Verify against the honesty gate before proposing anything
         run: node --test canary-local/tests/homeassistant.test.js
