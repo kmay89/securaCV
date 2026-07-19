@@ -237,6 +237,22 @@ struct EventStatePayload {
 }
 
 /// Zone state for tracking event counts.
+/// Command publishes forwarded to the daemon poll loop as (topic, payload).
+type CommandTx = mpsc::Sender<(String, Vec<u8>)>;
+
+/// Daemon-mode eventloop wiring. Bundled so the reconnect handler can, on
+/// every ConnAck, both re-subscribe the command filter (clean-start drops
+/// subscriptions across reconnects) and re-assert the retained availability
+/// `online` — the broker published the retained LWT `offline` when the link
+/// dropped, and `run_daemon` publishes `online` only once at startup, so
+/// without this HA would show the device permanently unavailable after the
+/// first reconnect.
+struct DaemonWiring {
+    commands: CommandTx,
+    cmd_filter: String,
+    availability_topic: String,
+}
+
 #[derive(Default)]
 struct ZoneState {
     event_count: u64,
@@ -246,6 +262,12 @@ struct ZoneState {
 struct MqttRuntime {
     client: Client,
     connection_handle: Option<std::thread::JoinHandle<()>>,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Set by the eventloop thread: true on ConnAck, false on connection
+    /// error. The daemon poll loop reads this to skip its fetch+publish
+    /// cycle while the broker is down, so a blocking publish into the full
+    /// bounded request queue can't wedge the loop (docs/strategy/12 FR-4).
+    connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MqttRuntime {
@@ -253,29 +275,98 @@ impl MqttRuntime {
     /// set, received publishes (e.g. on the subscribed `<prefix>/cmd/#`
     /// command topics) are forwarded as `(topic, payload)` to the daemon's
     /// poll loop; everything else is drained as before.
-    fn new(
-        client: Client,
-        mut connection: Connection,
-        incoming: Option<mpsc::Sender<(String, Vec<u8>)>>,
-    ) -> Self {
+    ///
+    /// Reconnect supervision (docs/strategy/12, finding K3): rumqttc's
+    /// automatic reconnect lives *inside* this iterator — continuing after
+    /// an `Err` is what retries the connection. The previous `break` ended
+    /// the thread on the first broker hiccup, silencing HA egress until a
+    /// process restart, while its sibling `frigate_bridge` self-healed.
+    /// Outage and recovery are each logged once (log-when-unavailable);
+    /// backoff keeps a dead broker from being hammered. Because the client
+    /// connects with clean-start, subscriptions do not survive a reconnect,
+    /// so `subscribe_filter` is (re)subscribed on every ConnAck — including
+    /// the first.
+    fn new(client: Client, mut connection: Connection, daemon: Option<DaemonWiring>) -> Self {
+        let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let connected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread_shutdown = std::sync::Arc::clone(&shutdown);
+        let thread_connected = std::sync::Arc::clone(&connected);
+        let thread_client = client.clone();
         let handle = std::thread::spawn(move || {
+            const BACKOFF_START: Duration = Duration::from_secs(2);
+            const BACKOFF_CAP: Duration = Duration::from_secs(60);
+            let mut backoff = BACKOFF_START;
+            let mut outage_logged = false;
             for event in connection.iter() {
+                if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
                 match event {
+                    Ok(Event::Incoming(Incoming::ConnAck(_))) => {
+                        if outage_logged {
+                            log::info!("MQTT broker connection restored");
+                            outage_logged = false;
+                        }
+                        backoff = BACKOFF_START;
+                        thread_connected.store(true, std::sync::atomic::Ordering::SeqCst);
+                        if let Some(w) = &daemon {
+                            // Re-assert availability (broker holds the retained
+                            // LWT `offline` from the drop) and re-subscribe the
+                            // command filter, both lost across a clean-start
+                            // reconnect. Retained state topics self-heal on the
+                            // next poll cycle, so only these two need replaying.
+                            if let Err(e) = thread_client.publish(
+                                &w.availability_topic,
+                                QoS::AtLeastOnce,
+                                true,
+                                PAYLOAD_ONLINE.as_bytes().to_vec(),
+                            ) {
+                                log::warn!("MQTT availability re-publish failed: {}", e);
+                            }
+                            if let Err(e) = thread_client.subscribe(&w.cmd_filter, QoS::AtLeastOnce)
+                            {
+                                log::warn!("MQTT command (re)subscribe failed: {}", e);
+                            }
+                        }
+                    }
                     Ok(Event::Incoming(Incoming::Publish(publish))) => {
-                        if let Some(tx) = &incoming {
+                        if let Some(w) = &daemon {
                             let topic = match std::str::from_utf8(&publish.topic) {
                                 Ok(topic) => topic.to_string(),
                                 Err(_) => continue,
                             };
-                            if tx.send((topic, publish.payload.to_vec())).is_err() {
+                            if w.commands.send((topic, publish.payload.to_vec())).is_err() {
                                 break;
                             }
                         }
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        log::warn!("MQTT connection error: {}", e);
-                        break;
+                        thread_connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                        if !outage_logged {
+                            log::warn!("MQTT connection error (retrying with backoff): {}", e);
+                            outage_logged = true;
+                        }
+                        // Sleep in slices so a shutdown request doesn't have
+                        // to wait out a full backoff window.
+                        let mut slept = Duration::ZERO;
+                        while slept < backoff
+                            && !thread_shutdown.load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            let slice = std::cmp::min(Duration::from_millis(250), backoff - slept);
+                            std::thread::sleep(slice);
+                            slept += slice;
+                        }
+                        // Break here on shutdown rather than looping back to
+                        // connection.iter().next(), which would block trying
+                        // to reconnect to a dead broker and hang disconnect()'s
+                        // join. The top-of-loop check only guards the path
+                        // where the disconnect nudge unblocks next(); a
+                        // shutdown that lands mid-backoff has no such nudge.
+                        if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        backoff = std::cmp::min(backoff * 2, BACKOFF_CAP);
                     }
                 }
             }
@@ -284,14 +375,30 @@ impl MqttRuntime {
         Self {
             client,
             connection_handle: Some(handle),
+            shutdown,
+            connected,
         }
     }
 
+    /// True while the eventloop holds a live broker connection (last saw a
+    /// ConnAck, no error since). The daemon loop gates publishing on this.
+    fn is_connected(&self) -> bool {
+        self.connected.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn disconnect(mut self) -> Result<()> {
-        self.client.disconnect()?;
+        // Raise the flag before disconnecting: the eventloop thread no
+        // longer exits on connection errors, so this is what lets join()
+        // return when the broker is already gone. The disconnect itself is
+        // best-effort for the same reason — it can fail against a dead
+        // broker, and the thread must still be joined.
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let disconnect_result = self.client.disconnect();
         if let Some(handle) = self.connection_handle.take() {
             let _ = handle.join();
         }
+        disconnect_result?;
         Ok(())
     }
 }
@@ -449,6 +556,10 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     );
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<(String, Vec<u8>)>();
+    // Scoped to the command subtree only — this daemon must never consume
+    // event or sensor traffic. Subscribed from the eventloop thread on every
+    // ConnAck so it survives broker reconnects.
+    let cmd_filter = format!("{}/cmd/#", ctx.args.mqtt_topic_prefix);
     let conn = {
         let _stage = ctx.ui.stage("Connect to MQTT broker");
         connect_mqtt(
@@ -458,14 +569,14 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
             ctx.args.mqtt_username.as_deref(),
             ctx.args.mqtt_password.as_deref(),
             ctx.availability_topic,
-            Some(cmd_tx),
+            Some(DaemonWiring {
+                commands: cmd_tx,
+                cmd_filter,
+                availability_topic: ctx.availability_topic.to_string(),
+            }),
         )?
     };
 
-    // Listen for HA button presses. Scoped to the command subtree only —
-    // this daemon must never consume event or sensor traffic.
-    let cmd_filter = format!("{}/cmd/#", ctx.args.mqtt_topic_prefix);
-    conn.client.subscribe(&cmd_filter, QoS::AtLeastOnce)?;
     let verify_cmd_topic = format!("{}/cmd/verify", ctx.args.mqtt_topic_prefix);
 
     // Publish availability online (retained)
@@ -504,126 +615,137 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
     let mut last_bucket_seen: Option<TimeBucket> = None;
 
     loop {
-        match ctx
-            .tokens
-            .current()
-            .and_then(|token| fetch_export_artifact(ctx.api_addr, &token))
-        {
-            Ok(artifact) => {
-                let events = flatten_export_events(&artifact);
+        // Only fetch+publish while the broker is reachable. During an outage
+        // the eventloop thread is reconnecting with backoff and cannot drain
+        // the bounded request queue, so a blocking publish would wedge this
+        // loop after ~10 queued messages (docs/strategy/12 FR-4). Skipping the
+        // cycle is safe: retained state topics self-heal on the next poll, and
+        // events accumulated during the outage publish as a catch-up once the
+        // link (and, via ConnAck, availability) is restored. Command handling
+        // and shutdown stay responsive through the wait loop below.
+        if conn.is_connected() {
+            match ctx
+                .tokens
+                .current()
+                .and_then(|token| fetch_export_artifact(ctx.api_addr, &token))
+            {
+                Ok(artifact) => {
+                    let events = flatten_export_events(&artifact);
 
-                // Filter to only new events
-                let new_events: Vec<_> = events
-                    .iter()
-                    .filter(|e| {
-                        last_bucket_seen
-                            .as_ref()
-                            .map(|lb| {
-                                e.time_bucket.start_epoch_s > lb.start_epoch_s
-                                    || (e.time_bucket.start_epoch_s == lb.start_epoch_s
-                                        && e.time_bucket.size_s >= lb.size_s)
-                            })
-                            .unwrap_or(true)
-                    })
-                    .collect();
+                    // Filter to only new events
+                    let new_events: Vec<_> = events
+                        .iter()
+                        .filter(|e| {
+                            last_bucket_seen
+                                .as_ref()
+                                .map(|lb| {
+                                    e.time_bucket.start_epoch_s > lb.start_epoch_s
+                                        || (e.time_bucket.start_epoch_s == lb.start_epoch_s
+                                            && e.time_bucket.size_s >= lb.size_s)
+                                })
+                                .unwrap_or(true)
+                        })
+                        .collect();
 
-                if !new_events.is_empty() {
-                    // Discover new zones
-                    if !ctx.args.no_discovery {
-                        for event in &new_events {
-                            let zone = extract_zone_name(&event.zone_id);
-                            if !discovered_zones.contains(&zone) {
-                                publish_zone_discovery(
-                                    &conn.client,
-                                    &ctx.args.ha_discovery_prefix,
-                                    &ctx.args.mqtt_topic_prefix,
-                                    ctx.availability_topic,
-                                    ctx.device_id,
-                                    ctx.device_info,
-                                    &zone,
-                                )?;
-                                discovered_zones.insert(zone);
+                    if !new_events.is_empty() {
+                        // Discover new zones
+                        if !ctx.args.no_discovery {
+                            for event in &new_events {
+                                let zone = extract_zone_name(&event.zone_id);
+                                if !discovered_zones.contains(&zone) {
+                                    publish_zone_discovery(
+                                        &conn.client,
+                                        &ctx.args.ha_discovery_prefix,
+                                        &ctx.args.mqtt_topic_prefix,
+                                        ctx.availability_topic,
+                                        ctx.device_id,
+                                        ctx.device_info,
+                                        &zone,
+                                    )?;
+                                    discovered_zones.insert(zone);
+                                }
                             }
                         }
+
+                        // Publish events and update zone states
+                        for event in &new_events {
+                            let zone = extract_zone_name(&event.zone_id);
+
+                            // Update zone state
+                            let state = zone_states.entry(zone.clone()).or_default();
+                            state.event_count += 1;
+                            state.last_event_time = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+
+                            // Publish event
+                            publish_single_event(
+                                &conn.client,
+                                &ctx.args.mqtt_topic_prefix,
+                                event,
+                                &zone,
+                            )?;
+
+                            // Publish zone count
+                            let count_topic =
+                                format!("{}/zone/{}/count", ctx.args.mqtt_topic_prefix, zone);
+                            mqtt_publish_qos1(
+                                &conn.client,
+                                &count_topic,
+                                state.event_count.to_string().as_bytes(),
+                                true,
+                            )?;
+
+                            // Trigger motion sensor
+                            let motion_topic =
+                                format!("{}/zone/{}/motion", ctx.args.mqtt_topic_prefix, zone);
+                            mqtt_publish_qos1(&conn.client, &motion_topic, b"ON", false)?;
+                        }
+
+                        // Update last event state
+                        if let Some(last) = new_events.last() {
+                            let state_topic = format!("{}/last_event", ctx.args.mqtt_topic_prefix);
+                            let payload = build_event_state_payload(last)?;
+                            let json = serde_json::to_vec(&payload)?;
+                            mqtt_publish_qos1(&conn.client, &state_topic, &json, true)?;
+
+                            last_bucket_seen = Some(last.time_bucket);
+                        }
+
+                        log::info!("Published {} new events", new_events.len());
                     }
-
-                    // Publish events and update zone states
-                    for event in &new_events {
-                        let zone = extract_zone_name(&event.zone_id);
-
-                        // Update zone state
-                        let state = zone_states.entry(zone.clone()).or_default();
-                        state.event_count += 1;
-                        state.last_event_time = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-
-                        // Publish event
-                        publish_single_event(
-                            &conn.client,
-                            &ctx.args.mqtt_topic_prefix,
-                            event,
-                            &zone,
-                        )?;
-
-                        // Publish zone count
-                        let count_topic =
-                            format!("{}/zone/{}/count", ctx.args.mqtt_topic_prefix, zone);
-                        mqtt_publish_qos1(
-                            &conn.client,
-                            &count_topic,
-                            state.event_count.to_string().as_bytes(),
-                            true,
-                        )?;
-
-                        // Trigger motion sensor
-                        let motion_topic =
-                            format!("{}/zone/{}/motion", ctx.args.mqtt_topic_prefix, zone);
-                        mqtt_publish_qos1(&conn.client, &motion_topic, b"ON", false)?;
-                    }
-
-                    // Update last event state
-                    if let Some(last) = new_events.last() {
-                        let state_topic = format!("{}/last_event", ctx.args.mqtt_topic_prefix);
-                        let payload = build_event_state_payload(last)?;
-                        let json = serde_json::to_vec(&payload)?;
-                        mqtt_publish_qos1(&conn.client, &state_topic, &json, true)?;
-
-                        last_bucket_seen = Some(last.time_bucket);
-                    }
-
-                    log::info!("Published {} new events", new_events.len());
+                }
+                Err(e) => {
+                    log::warn!("Failed to fetch events: {}", e);
                 }
             }
-            Err(e) => {
-                log::warn!("Failed to fetch events: {}", e);
-            }
-        }
 
-        // Refresh the retained 24h digest each cycle.
-        match ctx
-            .tokens
-            .current()
-            .and_then(|token| fetch_digest(ctx.api_addr, &token))
-        {
-            Ok(digest) => {
-                let digest_topic = format!("{}/digest", ctx.args.mqtt_topic_prefix);
-                mqtt_publish_qos1(&conn.client, &digest_topic, &digest, true)?;
+            // Refresh the retained 24h digest each cycle.
+            match ctx
+                .tokens
+                .current()
+                .and_then(|token| fetch_digest(ctx.api_addr, &token))
+            {
+                Ok(digest) => {
+                    let digest_topic = format!("{}/digest", ctx.args.mqtt_topic_prefix);
+                    mqtt_publish_qos1(&conn.client, &digest_topic, &digest, true)?;
+                }
+                Err(e) => {
+                    log::warn!("Failed to fetch digest: {}", e);
+                }
             }
-            Err(e) => {
-                log::warn!("Failed to fetch digest: {}", e);
-            }
-        }
 
-        // Scheduled re-verification keeps the integrity sensor fresh.
-        if verify_interval > 0 && last_auto_verify.elapsed() >= Duration::from_secs(verify_interval)
-        {
-            last_auto_verify = Instant::now();
-            if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
-                log::warn!("Scheduled verification failed to run: {}", e);
+            // Scheduled re-verification keeps the integrity sensor fresh.
+            if verify_interval > 0
+                && last_auto_verify.elapsed() >= Duration::from_secs(verify_interval)
+            {
+                last_auto_verify = Instant::now();
+                if let Err(e) = run_verify_and_publish(ctx, &conn.client) {
+                    log::warn!("Scheduled verification failed to run: {}", e);
+                }
             }
-        }
+        } // end `if conn.is_connected()`
 
         // Sleep until the next poll, waking early for button presses.
         let deadline = Instant::now() + Duration::from_secs(ctx.args.poll_interval);
@@ -645,8 +767,9 @@ fn run_daemon(ctx: &RunContext<'_>) -> Result<()> {
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    // MQTT event-loop thread is gone; keep polling on a
-                    // plain sleep so event publishing still works.
+                    // The eventloop thread has exited (only on shutdown now
+                    // that it survives broker outages). Finish the wait on a
+                    // plain sleep; the next is_connected() check gates work.
                     std::thread::sleep(remaining);
                     break;
                 }
@@ -1108,7 +1231,7 @@ fn connect_mqtt(
     username: Option<&str>,
     password: Option<&str>,
     will_topic: &str,
-    incoming: Option<mpsc::Sender<(String, Vec<u8>)>>,
+    daemon: Option<DaemonWiring>,
 ) -> Result<MqttRuntime> {
     let mut options = MqttOptions::new(client_id, (endpoint.host.as_str(), endpoint.port));
     options.set_keep_alive(60);
@@ -1135,7 +1258,7 @@ fn connect_mqtt(
         tls_config.backend,
         username.is_some()
     );
-    Ok(MqttRuntime::new(client, connection, incoming))
+    Ok(MqttRuntime::new(client, connection, daemon))
 }
 
 fn mqtt_publish_qos1(client: &Client, topic: &str, payload: &[u8], retain: bool) -> Result<()> {
