@@ -197,8 +197,8 @@ Small, localized, and mostly additive to files that already exist:
 
 | File | Change |
 |---|---|
-| `firmware/.../vision/vision_mgr.cpp` | After `AI.invoke(...)`, also read pose keypoints (SSCMA points API) into a **stack-local** buffer; pass to a new deriver; do not store |
-| `firmware/.../include/canary/types.h` | Add a `PoseClaim` struct of **predicates only** (e.g. `bool horizontal; bool hands_raised; uint8_t orientation_ord;`) — no coordinates. Extend `VisionSample` with it |
+| `firmware/.../vision/vision_mgr.cpp` | After `AI.invoke(...)`, also read pose keypoints (SSCMA points API) into a **stack-local** buffer; pass to a new deriver; do not store. Any USB-serial echo of those keypoints for the bench viewer is wrapped in `#if POSE_BENCH_STREAM` (see §7) and is absent from shipped builds |
+| `firmware/.../include/canary/types.h` | Add a `PoseClaim` struct of **predicates only** (e.g. `bool horizontal; bool hands_raised; uint8_t orientation_ord;`) — no coordinates. Give it a **default `inactive` state and a `valid()` predicate, mirroring the existing `Voxel::Invalid()` / `valid()` pattern** in this same header, so the person-detection model (which produces no keypoints) leaves `PoseClaim` inactive when it fills `VisionSample` — no code path is ever forced to fabricate a pose, and consumers gate on `claim.valid()` exactly as they already do for `Voxel`. Extend `VisionSample` with a default-inactive `PoseClaim` |
 | `firmware/.../state/pose_deriver.*` (new) | Pure function: keypoints → `PoseClaim`. The **only** place keypoints exist; must zeroize its input before return. Unit-testable host-side (`firmware/tests_host`) |
 | `firmware/.../state/presence_fsm.cpp` | Consume `PoseClaim` to gate new events (`pose_horizontal_sustained` needs a dwell-style timer, mirroring `dwell_start_ms`) — reuse the existing latch/timeout machinery |
 | `firmware/.../detect_config.*` | NVS-backed thresholds (horizontal-angle tolerance, sustain-ms, hands-raised-ms) as HA `number` entities — same pattern as the person-detect knobs shipped in #788 |
@@ -217,19 +217,39 @@ chains, coarsens, and surfaces claims.
 The 3D-stickman renderer is genuinely useful — *as a bench tool*, never as a product
 data path. We already have a precedent for exactly this move: doc 10 §5 keeps
 SenseCraft "for exactly one job" (loading models over USB) while rejecting its cloud
-telemetry path. Apply the same discipline to Processing:
+telemetry path. Apply the same discipline to Processing — and make it a **compile-time
+guarantee, not a documentation promise.**
 
-- **Allowed:** an **offline, human-attended, USB-only** calibration/demo harness. Aim
-  the sensor, watch the live skeleton on a laptop, tune the horizontal-angle and
-  sustain thresholds by eye, confirm a fake fall trips `pose_horizontal_sustained`.
-  Analogous to `docs/hardware/bench_bringup.md` bring-up rituals.
-- **Forbidden:** any build that ships the skeleton to MQTT, the SPA, HA, the witness
-  chain, or the network. The viewer talks to a dev's USB port on a bench, full stop.
-  It is a debug scope, not a sensor output.
+Any code path that echoes keypoints over USB serial for the viewer is gated behind a
+single build flag, **`POSE_BENCH_STREAM`**, with **explicit per-build values** (never
+one ambiguous default):
+
+| Build env | `POSE_BENCH_STREAM` | Keypoint serial stream |
+|---|---|---|
+| every shipped env — `canary-vision-xiao-c3`, `canary-vision-xiao-s3`, `canary-vision-default` | **`0`** | `#if`-compiled **out** — the streaming code is not in the binary |
+| a dedicated, never-released bench env (e.g. `canary-vision-bench`) | **`1`** | present, USB-only, feeds the Processing harness |
+
+The flag **defaults to `0`**, every production env pins `0` explicitly, and only the
+bench env sets `1` — and that env is **excluded from `firmware-release.yml`** so it
+can never ship. Because the stream is `#if POSE_BENCH_STREAM` *compiled out* of shipped
+builds, there is no runtime toggle and no accidental-enable path: the boundary is
+enforced by the preprocessor, not by config. The feature-flag hygiene lint
+(`scripts/lint_feature_flags.sh`) is the natural gate to assert `POSE_BENCH_STREAM`
+stays default-off, matching doc 10's "no new compile-time features enabled by default."
+
+- **Allowed:** with `POSE_BENCH_STREAM=1` on the bench env only — an **offline,
+  human-attended, USB-only** calibration/demo harness. Aim the sensor, watch the live
+  skeleton on a laptop, tune the horizontal-angle and sustain thresholds by eye,
+  confirm a fake fall trips `pose_horizontal_sustained`. Analogous to
+  `docs/hardware/bench_bringup.md` bring-up rituals.
+- **Forbidden:** shipping any env with `POSE_BENCH_STREAM=1`, or emitting the skeleton
+  to MQTT, the SPA, HA, the witness chain, or the network under *any* flag value. The
+  viewer talks to a dev's USB port on a bench, full stop. It is a debug scope, not a
+  sensor output.
 
 If we adopt the Processing sketch, it lives under `tools/` or `firmware/examples/`
-with a README that says, in the repo's own voice: *this renders raw biometric data
-and therefore must never touch a witness path.*
+(built only by the bench env) with a README that says, in the repo's own voice: *this
+renders raw biometric data and therefore must never touch a witness path.*
 
 ---
 
