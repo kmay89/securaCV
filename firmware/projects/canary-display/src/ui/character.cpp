@@ -56,6 +56,12 @@ constexpr TypeLadder k_ladder_heirloom = {
 };
 #endif
 
+// The canonical timeline-card semantic set — every dark Character shares
+// these exact bytes (a state is the same color on the wall and in the
+// app). Only a light ground may darken them within family (Almanac).
+constexpr Semantics k_sem_canonical = {0x43A047, 0xFB8C00, 0xE53935,
+                                       0x03A9F4};
+
 // Indexed by (uint8_t)Character — QuietGlass first because it is enum 0,
 // the default, and the safe fallback.
 constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
@@ -73,7 +79,8 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
      k_ladder_default,
      {1.0f, 1.0f, 1.0f},       // measured
      // Voice: today's words, byte-for-byte — the default never drifts.
-     {"All quiet", "all quiet", "hello again"}},
+     {"All quiet", "all quiet", "hello again"},
+     k_sem_canonical},
     // [Heirloom] — warm machines (mid-century): big, warm, unhurried.
     {"Heirloom", "warm & roomy • easy reading",
      {
@@ -88,7 +95,8 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
      k_ladder_heirloom,
      {1.15f, 1.30f, 0.90f},    // slow & sparing
      // Voice: mid-century courtesy — unhurried, complete sentences.
-     {"All is well", "all is well", "welcome home"}},
+     {"All is well", "all is well", "welcome home"},
+     k_sem_canonical},
     // [Aqua] — the millennium (early-2000s gloss): bright, still calm.
     {"Aqua", "bright & glossy • turn-of-century",
      {
@@ -103,7 +111,8 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
      k_ladder_default,
      {0.95f, 1.0f, 1.05f},     // friendly
      // Voice: millennium optimism — crisp and bright.
-     {"All clear", "all clear", "welcome back"}},
+     {"All clear", "all clear", "welcome back"},
+     k_sem_canonical},
     // [Neon] — now (Gen-Alpha energy): vivid and alive, still honest.
     {"Neon", "vivid & lively • high energy",
      {
@@ -118,18 +127,57 @@ constexpr CharacterDef k_defs[(uint8_t)Character::Count] = {
      k_ladder_default,
      {0.90f, 0.75f, 1.20f},    // quick & springy
      // Voice: quick and casual — short words, no ceremony.
-     {"All good", "all good", "hey again"}},
+     {"All good", "all good", "hey again"},
+     k_sem_canonical},
+    // [Almanac] — paper (the age of print): the one light ground (wave 3).
+    // Ratios measured against BOTH paper tiers (WCAG 1.4.3); night
+    // outranks it entirely — at night every glass shares the dark floor.
+    {"Almanac", "paper & ink • the age of print",
+     {
+         0xF2EAD8,  // bg — warm paper
+         0xE9DFC8,  // surface — deeper paper card
+         0xC9BC9E,  // edge — ruled-line hairline
+         0x2B2418,  // text — warm ink (~12.8:1 on bg — AAA)
+         0x6A5F49,  // muted — faded ink (~5.2:1)
+         0x9C9077,  // faint — pencil (tertiary, decorative)
+         0x2F4A6E,  // accent — fountain-pen indigo (~7.5:1)
+     },
+     k_ladder_default,
+     {1.10f, 1.15f, 0.90f},    // bookish calm
+     // Voice: almanac weather-speak — fair skies, plain courtesy.
+     {"All calm", "all calm", "good day"},
+     // Semantics darkened WITHIN FAMILY for paper — same hue stories,
+     // deeper stops (ok 5.4/4.9, warn 5.2/4.7, alert 5.5/5.0,
+     // signed 6.2/5.6 : 1 on bg/surface; canonical amber is 1.98:1 on
+     // paper — invisible, which is the dishonest option).
+     {0x276B2B, 0x8F5300, 0xB71C1C, 0x01579B}},
 };
 
 // Ring (flip-through) order — display order, not enum order: the warm
 // age first, then the default, then the brighter ones. QuietGlass stays
 // enum 0 (the fallback) wherever it sits on the ring.
 constexpr Character k_ring[] = {Character::Heirloom, Character::QuietGlass,
-                                Character::Aqua, Character::Neon};
+                                Character::Almanac, Character::Aqua,
+                                Character::Neon};
+// Every Character appears on the ring exactly once, enforced at compile
+// time: a future wave that grows the enum but forgets the ring would
+// otherwise index past the array (character_at_ring wraps by Count, not
+// by the array's real length). An explicit [Count] bound would miss the
+// too-few case — missing entries zero-fill into duplicate QuietGlass —
+// so the assert checks the element count instead (review catch).
+static_assert(sizeof(k_ring) / sizeof(k_ring[0]) ==
+                  (size_t)(uint8_t)Character::Count,
+              "every Character must appear on the ring exactly once");
 
 // Valid before settings load, so the splash and any early draw wear the
 // default.
 Character s_active = Character::QuietGlass;
+// Written by the render tick, read by the theme accessors — all on the
+// loop task by construction (the faces, LVGL timers, settings, splash,
+// and even the glass web server's handleClient run there; glass_web.cpp
+// documents the same single-task property). No atomics until something
+// off-loop reads the theme — and nothing does, by rule.
+bool s_night = false;   // see character_set_night()
 
 uint8_t clamp_idx(Character c) {
   const uint8_t i = (uint8_t)c;
@@ -154,6 +202,16 @@ const CharacterDef& active_character_def() {
 }
 
 const Voice& active_voice() { return k_defs[clamp_idx(s_active)].voice; }
+
+const Semantics& active_semantics() {
+  // Night forces the dark floor (theme.cpp), so it forces the dark-ground
+  // semantic bytes with it: Almanac's paper stops are ~3:1 on black —
+  // right on paper, wrong in the dark. One policy, one place.
+  return s_night ? k_sem_canonical : k_defs[clamp_idx(s_active)].sem;
+}
+
+void character_set_night(bool night) { s_night = night; }
+bool character_night() { return s_night; }
 
 const char* character_name(Character c) { return k_defs[clamp_idx(c)].name; }
 
