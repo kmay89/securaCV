@@ -134,6 +134,14 @@ day-2 operations: same dashboards, same verification CLI, same alerting.
 **Exit:** at least one non-person model shipped end-to-end with spec,
 firmware constants, HA entities, and bench numbers.
 
+> **Worked example:**
+> [`14-pose-estimation-v2-ai.md`](14-pose-estimation-v2-ai.md) takes the
+> "Live Pose→3D" Grove Vision AI project and designs how a YOLOv8-Pose model
+> would satisfy this exit criterion — the pose *model* runs on the HX6538 we
+> already drive, while the skeleton *stream* is refused (Invariant I: it is
+> approximately-reversible raw media). It ships one coarse physical claim
+> (`pose_horizontal_sustained` — fall/collapse), spec-first.
+
 ## 5. SenseCraft path — considered and rejected
 
 Seeed's own Home Assistant route (SenseCraft adapter firmware on the XIAO +
