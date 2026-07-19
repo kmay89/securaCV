@@ -7,10 +7,10 @@
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, dirname } from "node:path";
+import { extname, join, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
 const MIME = {
   ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
   ".css": "text/css", ".wasm": "application/wasm",
@@ -26,7 +26,11 @@ const SHOTS = shotsIdx > 0 ? process.argv[shotsIdx + 1] : null;
 
 const server = createServer(async (req, res) => {
   try {
-    const p = join(ROOT, decodeURIComponent(req.url.split("?")[0]));
+    // Containment: resolve the requested path and refuse anything that
+    // escapes the repo root (loopback-only harness, but still — CodeQL
+    // js/path-injection, and cheap to be correct).
+    const p = resolve(join(ROOT, decodeURIComponent(req.url.split("?")[0])));
+    if (p !== ROOT && !p.startsWith(ROOT + sep)) { res.writeHead(403); res.end(); return; }
     const data = await readFile(p);
     res.writeHead(200, { "content-type": MIME[extname(p)] || "application/octet-stream" });
     res.end(data);
