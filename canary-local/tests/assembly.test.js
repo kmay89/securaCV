@@ -107,3 +107,13 @@ test("canary-wap: the assembly is physically true to the scad", () => {
   assert.ok(idx("battery") < idx("board"), "battery before board (per the catalog)");
   assert.ok(idx("close the lid") < idx("screws"), "lid closes before screws drive");
 });
+
+test("canary-wap: the sun shield stands on its posts above the lid", () => {
+  const a = asm.devices["canary-wap"];
+  const shield = a.parts.find((p) => p.id === "shield");
+  // printed installed-top-down (scad: "bed face = the installed top"),
+  // so assembly flips it; posts are 7.6 (sh_t 1.6 + sh_gap 6) — installed
+  // top at lid top 17.2 + 7.6 = 24.8, post tips resting on the lid
+  assert.deepStrictEqual(shield.seated.rot, [180, 0, 0], "shield flips like the lid");
+  assert.ok(Math.abs(shield.seated.pos[2] - 24.8) < 0.05, "posts stand on the lid top");
+});
