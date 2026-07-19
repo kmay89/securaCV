@@ -95,6 +95,12 @@ DEFINES=(
   -DLV_CONF_INCLUDE_SIMPLE
   -DCONFIG_CANARY_DISPLAY
   -DEMU_BUILD_FLAVOR="\"$FLAVOR\""
+  # Reproducible bytes: the boot banner prints __DATE__/__TIME__, which
+  # would make every rebuild differ and trip CI's dist drift gate. The
+  # honest wall-clock stamp lives in dist/*.meta.json instead.
+  -Wno-builtin-macro-redefined
+  '-D__DATE__="emu"'
+  '-D__TIME__="build"'
   # ArduinoJson in plain-C++ mode: the shim String is not the real one,
   # and the display parses from byte buffers only (no Stream/Print/Flash).
   -DARDUINOJSON_ENABLE_ARDUINO_STRING=0
