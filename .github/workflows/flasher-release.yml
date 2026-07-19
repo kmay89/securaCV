@@ -5,7 +5,9 @@ name: Flasher Factory Images
 # (workflow_dispatch) on purpose — this is the out-of-band path:
 #
 #   • Rebuild button — regenerate the flasher assets for a tag without cutting
-#     a new version (e.g. after tweaking make_factory.py or a board setting).
+#     a new version (e.g. after a make_factory.py / packaging fix). The firmware
+#     built is still the tag's; only the packaging tooling is today's (overlay
+#     below), so a builder fix reaches already-cut tags.
 #   • Pre-key / no-key publishing — the browser flasher's integrity rests on
 #     SHA-256 + same-origin (docs/browser_flasher.md § Trust model), NOT the
 #     Ed25519 OTA release key. So these assets can go out before the OTA key
@@ -48,6 +50,26 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Overlay current flasher tooling onto the tagged firmware
+        # `ref: <tag>` above gives us the firmware source AS TAGGED — correct,
+        # the flasher must ship the tagged firmware. But the *packaging* tooling
+        # (make_factory.py, build_flash_manifest.py, and the flash.json catalog)
+        # should be today's, so a factory-builder fix reaches older tags and a
+        # tag cut before build_flash_manifest.py existed still builds. The
+        # firmware compiled below is still the tag's; only how it's packaged for
+        # the flasher comes from the dispatch ref.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          path: _tooling
+      - name: Apply the tooling overlay
+        run: |
+          cp _tooling/firmware/scripts/make_factory.py firmware/scripts/make_factory.py
+          cp _tooling/firmware/scripts/build_flash_manifest.py firmware/scripts/build_flash_manifest.py
+          mkdir -p canary-local/devices
+          cp _tooling/canary-local/devices/flash.json canary-local/devices/flash.json
+          rm -rf _tooling
 
       - name: Set up Python
         uses: actions/setup-python@v6

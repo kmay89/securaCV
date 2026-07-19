@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -61,6 +62,20 @@ def resolve_dir(d: str) -> pathlib.Path:
     return p if p.is_absolute() else (REPO_ROOT / p)
 
 
+def image_has_version(path: pathlib.Path, expected: str) -> bool:
+    """Does the built image actually carry the version we're about to advertise?
+
+    Mirrors firmware-release.yml's guard: it greps the binary for the compiled
+    version literal (`strings | grep -Fx`). We do the same by extracting
+    NUL/whitespace-delimited printable runs and requiring a whole-run match, so
+    the manual pre-key path can't publish a manifest whose version disagrees
+    with the firmware a board would actually boot as.
+    """
+    data = path.read_bytes()
+    target = expected.encode()
+    return any(run == target for run in re.split(rb"[^\x20-\x7e]+", data))
+
+
 def make_factory_cmd(product: dict, build: dict, out: pathlib.Path) -> list[str]:
     cmd = ["python", str(MAKE_FACTORY), "--chip", esptool_chip(product["chip"]), "--out", str(out)]
     d = resolve_dir(build["dir"])
@@ -90,6 +105,7 @@ def main() -> None:
     notes = args.notes.strip() or f"SecuraCV Canary firmware {args.version}."
 
     products: dict[str, dict] = {}
+    version_errors: list[str] = []
     for p in catalog["products"]:
         pid = p["id"]
         build = BUILD.get(pid)
@@ -97,20 +113,40 @@ def main() -> None:
             print(f"::warning::no build mapping for {pid} in build_flash_manifest.py; skipping")
             continue
         out = out_dir / f"{p['asset_stem']}-{args.version}-factory.bin"
+        expected_version = args.version + build["vsuffix"]
+        # A missing/incomplete build is a per-variant hiccup (skip it); a
+        # version mismatch is a release-hygiene error affecting the whole tag
+        # (abort — see the guard below).
         try:
             subprocess.run(make_factory_cmd(p, build, out), check=True)
-            data = out.read_bytes()
-            products[pid] = {
-                "version": args.version + build["vsuffix"],
-                "chipFamily": p["chip"],
-                "factory": f"{dl}/{out.name}",
-                "sha256": hashlib.sha256(data).hexdigest(),
-                "size": len(data),
-                "release_notes": notes,
-            }
         except Exception as e:  # noqa: BLE001 — a bad variant must not sink the rest
             print(f"::warning::browser-flasher factory image for {pid} not built ({e}); "
                   f"it will show as unavailable in the in-browser flasher.")
+            continue
+        if not image_has_version(out, expected_version):
+            version_errors.append(
+                f"{pid}: factory image does not contain the compiled version string "
+                f"'{expected_version}'. Bump the variant's FIRMWARE_VERSION / "
+                f"CANARY_FW_VERSION to match before tagging {args.tag}.")
+            continue
+        data = out.read_bytes()
+        products[pid] = {
+            "version": expected_version,
+            "chipFamily": p["chip"],
+            "factory": f"{dl}/{out.name}",
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+            "release_notes": notes,
+        }
+
+    # Refuse to publish a manifest that would advertise a version the firmware
+    # doesn't report — the check firmware-release.yml runs before its OTA
+    # artifacts, now shared so the manual pre-key path can't skip it.
+    if version_errors:
+        for e in version_errors:
+            print("::error::" + e)
+        sys.exit("build_flash_manifest: version mismatch — refusing to publish "
+                 "flasher assets that misstate the firmware version.")
 
     manifest = {
         "schema": "securacv-flash-1",

@@ -134,9 +134,13 @@ and CI fails if a product exists without a build recipe.
 The flasher assets have a second, manual workflow — **Actions → Flasher Factory
 Images → Run workflow**, with a `fw-v*` tag — for two cases:
 
-- **Rebuild without a new version.** Tweaked `make_factory.py` or a board
-  setting and want to regenerate the factory images for an existing tag? Run it
-  with that tag; it rebuilds and re-attaches them to the release in place.
+- **Rebuild without a new version.** Fixed `make_factory.py` or the packaging
+  and want to regenerate the factory images for an existing tag? Run it with
+  that tag — it compiles the *tagged* firmware but with **today's** packaging
+  tooling (it overlays `make_factory.py`, `build_flash_manifest.py`, and the
+  `flash.json` catalog from the dispatch ref), so the fix reaches already-cut
+  tags, and re-attaches the images in place. (A firmware *source* change still
+  needs a new tag — the overlay is packaging only.)
 - **Publish before the OTA key ceremony.** The browser channel's integrity is
   SHA-256 + same-origin, **not** the Ed25519 OTA key (see Trust model above), so
   it doesn't need `OTA_SIGNING_KEY_PEM`. If you want the one-click flow live
