@@ -355,9 +355,6 @@ footer p { max-width: 720px; margin: 0 auto; }
   .panel { overflow: visible; flex: none; padding-right: 0; }
 }
 
-
-}
-
 /* ── build-it tab ── */
 .buildit h4 { margin: 18px 0 8px; }
 .bom-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
@@ -929,3 +926,4 @@ footer p { max-width: 720px; margin: 0 auto; }
      two-finger pinch still zooms the 3D scenes. */
   .card-3d, .stage-3d, .glass, .enclab-3d, .boardlab-3d, .asmlab-3d,
   .ws-canvas, .broom-3d { touch-action: pan-y; }
+}
