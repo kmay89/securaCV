@@ -127,7 +127,7 @@ export function buildHaDemo(demo, vars) {
     const icon = el("span", "hub-ha-icon", ent.icon || "•");
     const nameWrap = el("div", "hub-ha-name");
     nameWrap.append(el("span", null, ent.name));
-    if (ent.desc) nameWrap.append(el("span", "hub-ha-desc", ent.desc));
+    if (ent.note) nameWrap.append(el("span", "hub-ha-desc", ent.note));
     const value = el("span", "hub-ha-value");
 
     if (ent.kind === "switch") {
