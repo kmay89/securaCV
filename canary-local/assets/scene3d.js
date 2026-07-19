@@ -504,6 +504,21 @@ export class DeviceScene {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this._wireOrbit();
     this._raf = null;
+    // Adaptive resolution: the studio shading is real work, and software
+    // rasterizers (headless CI, weak iGPUs) pay for every fragment. Track
+    // an EMA of frame time and scale the backing store down until the
+    // scene is fluid again — sharpness costs nothing on a real GPU and
+    // fluidity beats sharpness everywhere else. A software renderer is
+    // known at birth, so it starts cheap instead of discovering it.
+    this.resScale = 1;
+    try {
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "";
+      if (/swiftshader|llvmpipe|software|angle \(google/i.test(renderer)) this.resScale = 0.4;
+    } catch { /* keep 1 */ }
+    this._ft = 16;
+    this._lastT = 0;
+    this._cool = 0;
   }
 
   _program(vs, fs) {
@@ -648,9 +663,23 @@ export class DeviceScene {
 
   draw() {
     const gl = this.gl;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const W = Math.round(this.canvas.clientWidth * dpr);
-    const H = Math.round(this.canvas.clientHeight * dpr);
+    const now = (typeof performance !== "undefined" ? performance.now() : 0);
+    if (this._lastT) {
+      this._ft += (Math.min(now - this._lastT, 100) - this._ft) * 0.1;
+      if (this._cool-- <= 0) {
+        if (this._ft > 30 && this.resScale > 0.3) {
+          this.resScale = Math.max(0.3, this.resScale * 0.75); // shed pixels fast
+          this._cool = 10;
+        } else if (this._ft < 17.5 && this.resScale < 1) {
+          this.resScale = Math.min(1, this.resScale / 0.9);    // recover slowly
+          this._cool = 90;
+        }
+      }
+    }
+    this._lastT = now;
+    const dpr = Math.min(2, window.devicePixelRatio || 1) * this.resScale;
+    const W = Math.max(2, Math.round(this.canvas.clientWidth * dpr));
+    const H = Math.max(2, Math.round(this.canvas.clientHeight * dpr));
     if (this.canvas.width !== W || this.canvas.height !== H) {
       this.canvas.width = W;
       this.canvas.height = H;
