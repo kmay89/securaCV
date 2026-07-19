@@ -1077,6 +1077,31 @@ button.ghost.small.bench-ff { font-size: 12px; }
   .start-doc { margin-left: 0; }
   .start-step-row { flex-wrap: wrap; }
 }
+/* copy → gate feedback */
+.start-check.pulse { animation: start-pulse 0.9s ease 2; }
+@keyframes start-pulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 5px rgba(255, 212, 79, 0.35); border-color: var(--canary); }
+}
+.start-live { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 8px);
+  background: #141416; border: 1px solid var(--canary); border-radius: 999px;
+  color: #f0f0f0; font-size: 13px; padding: 8px 18px; opacity: 0; pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s; z-index: 40; max-width: min(92vw, 480px); text-align: center; }
+.start-live.show { opacity: 1; transform: translate(-50%, 0); }
+.start-resume { display: flex; align-items: center; gap: 12px; margin-top: 14px;
+  background: rgba(255, 212, 79, 0.06); border: 1px solid rgba(255, 212, 79, 0.35);
+  border-radius: 14px; padding: 12px 16px; flex-wrap: wrap; }
+.start-resume .start-mission-body { flex: 1; min-width: 180px; }
+.start-complete { text-align: center; border: 1px solid rgba(74, 222, 128, 0.35);
+  border-radius: 14px; background: rgba(74, 222, 128, 0.05); padding: 22px 18px; }
+.start-complete-bird { font-size: 34px; animation: start-hatch 0.7s ease; }
+@keyframes start-hatch { 0% { transform: scale(0.4) rotate(-14deg); opacity: 0; } 100% { transform: none; opacity: 1; } }
+.start-complete-row { display: flex; gap: 14px; align-items: center; justify-content: center;
+  flex-wrap: wrap; margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .start-check.pulse, .start-complete-bird { animation: none; }
+  .start-bar-fill { transition: none; }
+}
 
 /* Kept at end of file: must win the cascade over every canvas rule above
    (.ws-canvas and .broom-3d re-declare touch-action:none at equal

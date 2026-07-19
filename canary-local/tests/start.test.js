@@ -124,6 +124,52 @@ test("every referenced doc path exists in the repo", () => {
     assert.ok(existsSync(join(REPO, p)), `doc path does not exist: ${p}`);
 });
 
+test("copy-gate policy: paste-only auto-closes, commands nudge, danger stays manual", async () => {
+  const { autoCheckPolicy, pasteTexts } = await import("../assets/start.js");
+
+  // the add-on-repositories step is pure paste-strings → auto
+  const ha = data.missions.find((m) => m.id === "ha");
+  const repoStep = ha.chapters.find((c) => c.id === "addons")
+    .steps.find((s) => (s.variants.all || {}).copies);
+  assert.strictEqual(autoCheckPolicy(repoStep, "mac"), "auto");
+  assert.strictEqual(pasteTexts(repoStep, "mac").length, repoStep.variants.all.copies.length);
+
+  // the Linux flash step carries dd and its danger flag → manual, always
+  const hub = data.missions.find((m) => m.id === "hub");
+  const flashStep = hub.chapters.find((c) => c.id === "flash").steps[0];
+  assert.strictEqual(autoCheckPolicy(flashStep, "linux"), "manual");
+
+  // the same step on macOS is imager bullets — nothing pasteable → nudge
+  assert.strictEqual(autoCheckPolicy(flashStep, "mac"), "nudge");
+
+  // any step with commands can never auto-close: copying is not running
+  const docker = data.missions.find((m) => m.id === "docker");
+  for (const ch of docker.chapters)
+    for (const s of ch.steps)
+      for (const osId of ["mac", "win", "linux"]) {
+        const v = s.variants[osId] || s.variants.all;
+        if (v && (v.cmds || []).length)
+          assert.notStrictEqual(autoCheckPolicy(s, osId), "auto",
+            `${docker.id}: a command step must not auto-close (${s.title}/${osId})`);
+      }
+
+  // no OS chosen + OS-specific step → nothing rendered → nudge, never auto
+  assert.strictEqual(autoCheckPolicy(flashStep, null), "nudge");
+});
+
+test("deep links: #mission/os round-trips, junk degrades to the picker", async () => {
+  const { parseHash, buildHash } = await import("../assets/start.js");
+  for (const m of data.missions)
+    for (const o of data.oses) {
+      const h = buildHash(m.id, o.id);
+      assert.deepStrictEqual(parseHash(h, data), { missionId: m.id, osId: o.id }, h);
+    }
+  assert.deepStrictEqual(parseHash("#hub", data), { missionId: "hub", osId: null });
+  assert.deepStrictEqual(parseHash("#nope/xyz", data), { missionId: null, osId: null });
+  assert.deepStrictEqual(parseHash("", data), { missionId: null, osId: null });
+  assert.strictEqual(buildHash(null, "mac"), "", "no mission → no hash");
+});
+
 test("progress model: toggle, persist, reset — on a plain store", async () => {
   const { createProgress, stepKeys, variantFor } = await import("../assets/start.js");
   const mem = new Map();
