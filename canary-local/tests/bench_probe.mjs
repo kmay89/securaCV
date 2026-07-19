@@ -161,6 +161,41 @@ await waitSerial("power restored");
 await waitSings(boots1);
 if (await shade()) await fail("glass still shaded after power restore");
 
+// ── A committed setting survives a bench power-cycle ────────────────────
+// (Pins the NVS-preseeds-before-power-on ordering: the restored flash
+// must be in place before setup() reads it, or the Character resets.)
+await openTab("Try it");
+await page.waitForSelector(".style-chip.on", { timeout: 15000 });
+const target = page.locator(".style-chip:not(.on)").first();
+const targetId = await target.getAttribute("data-id");
+await target.click();
+await page.waitForTimeout(3500); // COMMIT_DEBOUNCE_MS (2000) + margin
+await openTab("Wire");
+const boots3 = await sings();
+await openTab("Bench");
+await chip("USB-C cable").click(); // switch is OFF from earlier: rail dies
+await page
+  .waitForFunction(
+    () => document.querySelector(".glass-shade")?.classList.contains("on"),
+    null,
+    { timeout: 5000 }
+  )
+  .catch(() => fail("USB pull with switch OFF should kill the rail"));
+await chip("USB-C cable").click(); // power restored → true re-boot
+await openTab("Wire");
+await waitSings(boots3);
+await openTab("Try it");
+await page
+  .waitForFunction(
+    (id) =>
+      document
+        .querySelector(`.style-chip[data-id="${id}"]`)
+        ?.classList.contains("on"),
+    targetId,
+    { timeout: 15000 }
+  )
+  .catch(() => fail("Character choice did not survive the bench power-cycle"));
+
 // ── BOOT held + RESET: the ROM parks in download mode ───────────────────
 await openTab("Bench");
 await chip("BOOT").click();

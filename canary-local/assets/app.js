@@ -271,19 +271,22 @@ async function buildDisplaySheet(ctx, side, stage) {
       },
     });
     ctx.scene.src = glass; // 3D screen textures from the live panel
+    // A preserved image (reboot / bench power event) is preseeded before
+    // power-on, so setup() always reads the surviving flash — never a
+    // race against the firmware's resume. A "meet again" reboot must not
+    // restore the remembered hello — that memory is exactly what the
+    // button un-remembers.
+    const img = !opts.preserve
+      ? null
+      : opts.firstMeeting
+        ? new Map([...ctx.nvsImage].filter(([k]) => !k.startsWith("scv-hello/")))
+        : ctx.nvsImage;
     await ctx.emu.start({
       provisioned: true,
       firstMeeting: !!opts.firstMeeting,
       seed: 20260719,
+      nvsImage: img,
     });
-    if (opts.preserve) {
-      // A "meet again" reboot must not restore the remembered hello —
-      // that memory is exactly what the button un-remembers.
-      const img = opts.firstMeeting
-        ? new Map([...ctx.nvsImage].filter(([k]) => !k.startsWith("scv-hello/")))
-        : ctx.nvsImage;
-      ctx.emu.nvsRestore(img);
-    }
     ctx.emu.setLocalHour(10);
     // The fleet outlives display reboots: real witnesses keep their keys
     // when a display power-cycles, so the same SimWitness objects (same

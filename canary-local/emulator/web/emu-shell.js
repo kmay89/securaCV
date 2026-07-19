@@ -171,7 +171,8 @@ export class CanaryEmulator {
     this.booted = false;
   }
 
-  async start({ provisioned = true, firstMeeting = false, seed = null } = {}) {
+  async start({ provisioned = true, firstMeeting = false, seed = null,
+                nvsImage = null } = {}) {
     const shell = this;
     this.module = await this.factory({
       onSerial: (t) => shell.opts.onSerial?.(t),
@@ -248,6 +249,10 @@ export class CanaryEmulator {
     if (!firstMeeting) {
       this._nvsPut("scv-hello", "met", "\x01");
     }
+    // A preserved image (reboot / bench power-cycle) lands BEFORE power-on,
+    // over the defaults above — setup() must read the restored flash no
+    // matter how the event loop schedules the firmware's resume.
+    if (nvsImage) this.nvsRestore(nvsImage);
 
     this._wireInput();
     this.c.power();
