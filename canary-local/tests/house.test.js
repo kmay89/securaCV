@@ -127,6 +127,8 @@ test("the visitor's walk stays on the ground and inside the yard", async () => {
 test("house.html ships and wires the renderer; the chooser accepts prefill", () => {
   const page = readFileSync(join(ROOT, "house.html"), "utf8");
   assert.match(page, /assets\/house\.js/);
+  assert.match(page, /assets\/house\.css\?v=/,
+    "house styles ship in their own versioned sheet — cached shared CSS must not undress the page");
   assert.match(page, /id="stage"/);
   assert.match(page, /id="panel"/);
   const chooserJs = readFileSync(join(ROOT, "assets", "chooser.js"), "utf8");
