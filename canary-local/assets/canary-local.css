@@ -230,6 +230,27 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 /* ── enclosure lab: filament + print guide ── */
 .enclab-tools { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin: 2px 0 8px; }
+
+/* ── board viewer (vendor CAD) ─────────────────────────────────────────── */
+.board-ribbon { display: flex; align-items: baseline; gap: 6px; margin: 4px 0 2px; font-size: 16px; }
+.board-prov { margin: 6px 0 10px; }
+.boardlab-stage { position: relative; }
+.boardlab-3d { width: 100%; height: 320px; touch-action: none; border-radius: 14px;
+  background: radial-gradient(120% 90% at 50% 20%, #2a2f39 0%, #1b1f27 48%, #0e1116 100%); }
+.boardlab-legend { display: flex; justify-content: flex-end; font-size: 12px; color: var(--muted); padding: 4px 4px 8px; }
+.boardlab-facts { font-size: 12.5px; margin: 2px 0 10px; }
+.pin-table { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 10px; }
+.pin-row { display: grid; grid-template-columns: 1.1fr 0.9fr 1.1fr 2fr; gap: 8px; align-items: baseline;
+  font-size: 13px; padding: 5px 8px; border-radius: 8px; background: #17151055; }
+.pin-label { font-weight: 600; color: #e8ddb8; }
+.pin-pin, .pin-gpio { font-size: 12px; color: var(--canary); }
+.pin-gpio { color: #9fb0c4; }
+.pin-use { font-size: 12px; }
+.pin-planned { opacity: 0.72; }
+.pin-tag { margin-left: 6px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: #ffb45e; background: rgba(251,140,0,0.12); border: 1px solid rgba(251,140,0,0.3); border-radius: 6px; padding: 1px 5px; }
+.boardlab-links a { margin-right: 4px; }
+@media (max-width: 520px) { .pin-row { grid-template-columns: 1fr 1fr; } .pin-use { grid-column: 1 / -1; } }
 .filaments { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .fil-label { font-size: 12px; }
 button.fil {

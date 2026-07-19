@@ -70,3 +70,9 @@ docs/hardware/enclosure/dev_*.stl
 
 # Local scratch
 /.tmp/
+
+# Vendor board CAD is gzipped in-repo (boards/vendor/*.step.gz); ignore raw
+# uncompressed drops and gen_boards.py scratch files.
+boards/vendor/*.step
+canary-local/boards/*.tmp.glb
+canary-local/boards/*.src.step
