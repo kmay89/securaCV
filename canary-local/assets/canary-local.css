@@ -930,6 +930,78 @@ footer p { max-width: 720px; margin: 0 auto; }
   .event-chip { animation: none; }
 }
 
+/* ── the Bench: power plane, straps, hardwired lights ── */
+.glass-holder { position: relative; display: inline-block; max-width: 100%; }
+.glass-shade {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  background: rgba(4, 4, 4, 0.88); border: 1px solid #222; color: var(--faint);
+  font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase;
+  pointer-events: none;
+}
+.glass-shade.round { border-radius: 50%; }
+.glass-shade.on { display: flex; }
+
+.bench-ribbon {
+  border: 1px solid var(--edge); border-left: 3px solid var(--canary);
+  background: var(--surface); border-radius: 10px; padding: 9px 12px;
+  color: var(--muted); font-size: 13px;
+}
+
+.bench-leds { display: flex; gap: 22px; align-items: flex-end; padding: 14px 4px 4px; }
+.bench-led { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.bench-led-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #241414; border: 1px solid #333;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.bench-led-dot.led-red.on { background: var(--alert); box-shadow: 0 0 14px 3px rgba(229, 57, 53, 0.6); }
+.bench-led-dot.led-amber { background: #262014; }
+.bench-led-dot.led-amber.on { background: var(--canary); box-shadow: 0 0 14px 3px rgba(255, 212, 79, 0.55); }
+.bench-led-dot.flicker { animation: bench-flicker 0.9s steps(2, jump-none) infinite; }
+@keyframes bench-flicker {
+  0% { background: var(--canary); box-shadow: 0 0 12px 2px rgba(255, 212, 79, 0.5); }
+  50% { background: #262014; box-shadow: none; }
+  100% { background: var(--canary); box-shadow: 0 0 12px 2px rgba(255, 212, 79, 0.5); }
+}
+.bench-led-label { font-size: 10.5px; letter-spacing: 0.12em; color: var(--muted); }
+.bench-cap { color: var(--faint); font-size: 12px; margin: 4px 0 0; }
+
+.bench-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; align-items: stretch; }
+.bench-chip {
+  appearance: none; cursor: pointer; text-align: left;
+  border: 1px solid var(--edge); border-radius: 10px;
+  background: var(--surface); color: var(--text); padding: 8px 12px; min-width: 110px;
+}
+.bench-chip strong { display: block; font-size: 12.5px; }
+.bench-chip .bench-chip-state { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.bench-chip.on { border-color: var(--canary-deep); }
+.bench-chip.on .bench-chip-state { color: var(--canary); }
+.bench-chip:hover { border-color: #3a3a3a; }
+.bench-chip.on:hover { border-color: var(--canary); }
+.bench-momentary:active, .bench-momentary.pressed { transform: translateY(1px); border-color: var(--canary); }
+.bench-switch.on { box-shadow: inset 0 0 0 1px var(--canary-deep); }
+.bench-soc { height: 4px; border-radius: 2px; background: #262626; margin-top: 6px; overflow: hidden; }
+.bench-soc-fill { height: 100%; background: var(--ok); transition: width 0.3s; }
+.bench-soc-fill.low { background: var(--alert); }
+.bench-ff { align-self: center; }
+.bench-ff.on { color: var(--canary); border-color: var(--canary-deep); }
+button.ghost.small.bench-ff { font-size: 12px; }
+
+.bench-diag {
+  display: grid; grid-template-columns: auto 1fr; gap: 4px 16px;
+  border: 1px solid var(--edge); border-radius: 12px; background: var(--surface);
+  padding: 12px 14px; margin: 16px 0 0; font-size: 13px;
+}
+.bench-diag dt { color: var(--muted); }
+.bench-diag dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+.bench-trouble { margin-top: 16px; }
+.bench-trouble > summary { cursor: pointer; color: var(--canary); font-size: 14px; padding: 6px 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bench-led-dot.flicker { animation: none; background: var(--canary); opacity: 0.55; }
+}
+
 /* Kept at end of file: must win the cascade over every canvas rule above
    (.ws-canvas and .broom-3d re-declare touch-action:none at equal
    specificity later in the file than the sheet rules do). */

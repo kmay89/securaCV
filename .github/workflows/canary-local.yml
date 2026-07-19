@@ -62,6 +62,7 @@ jobs:
           node --test canary-local/tests/assembly.test.js
           node --test canary-local/tests/boardroom.test.js
           node --test canary-local/tests/homeassistant.test.js
+          node --test canary-local/tests/bench.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -111,6 +112,8 @@ jobs:
         run: node canary-local/tests/workshop_probe.mjs
       - name: Board Room probe — pin flags + wiring on the committed meshes
         run: node canary-local/tests/boardroom_probe.mjs
+      - name: Bench probe — the physical test bench drives the live firmware
+        run: node canary-local/tests/bench_probe.mjs
       - name: Build both flavors from THIS tree
         run: |
           cd canary-local/emulator
