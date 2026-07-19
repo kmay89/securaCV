@@ -54,4 +54,10 @@ void canary_mark_react(CanaryReact r);
 // a day-one system.
 void canary_mark_trust(uint16_t days);
 
+// Temperament scalars from the active Character (display_character.md §5):
+// breath rate, idle-flourish cadence, hop energy. Clamped here; layered
+// UNDER the mood engine — temperament changes cadence, never what a pose
+// means.
+void canary_mark_temperament(float breath, float flourish, float hop);
+
 }  // namespace canary::ui

@@ -5,12 +5,19 @@ name: Review Threads
 # review threads and lists them (file, author, first line) in the job log
 # and run summary.
 #
-# Re-evaluation triggers: a review being submitted/dismissed, a reply
-# landing on a review thread, or a new push. Note that resolving a thread
-# WITHOUT replying emits no Actions event (GitHub doesn't expose
-# pull_request_review_thread to workflows) — but a reply is exactly what
-# this gate exists to encourage, and a reply re-runs it. If you resolve
-# silently, use "Re-run" on the failed check to refresh it.
+# Re-evaluation triggers cover every way the answer can change: a review
+# submitted/dismissed, a reply landing, a new push — and, crucially, a
+# thread being RESOLVED or unresolved (pull_request_review_thread; an
+# earlier revision believed Actions didn't expose it and told people to
+# re-run the check by hand — that was the whole reason this gate sat
+# permanently red). Resolving a thread now flips the check green on its
+# own within seconds, no reply or manual re-run required.
+#
+# The reply-then-resolve race is also absorbed: a human replies first and
+# clicks resolve a beat later, so a run triggered by the reply would see
+# stale state and flash red. On reply/review triggers the run holds the
+# verdict through a short grace window, re-polling; the resolve event
+# then cancels it (concurrency below) and the fresh run reports truth.
 #
 # This mirrors GitHub's native "Require conversation resolution before
 # merging" branch-protection rule; enable that rule too if you want GitHub
@@ -22,6 +29,8 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
 
 permissions:
   contents: read
@@ -62,14 +71,35 @@ jobs:
                 }
               }`;
 
-            const unresolved = [];
-            let cursor = null;
-            do {
-              const res = await github.graphql(query, { owner, repo, number, cursor });
-              const threads = res.repository.pullRequest.reviewThreads;
-              unresolved.push(...threads.nodes.filter(t => !t.isResolved));
-              cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
-            } while (cursor);
+            async function fetchUnresolved() {
+              const unresolved = [];
+              let cursor = null;
+              do {
+                const res = await github.graphql(query, { owner, repo, number, cursor });
+                const threads = res.repository.pullRequest.reviewThreads;
+                unresolved.push(...threads.nodes.filter(t => !t.isResolved));
+                cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
+              } while (cursor);
+              return unresolved;
+            }
+
+            let unresolved = await fetchUnresolved();
+
+            // Reply-then-resolve grace: a reply/review event fires one beat
+            // BEFORE the human clicks "resolve", so failing instantly would
+            // flash red on threads that are being addressed right now. Hold
+            // the verdict and re-poll briefly; if the resolve lands, its own
+            // event cancels this run (concurrency) and reports fresh truth
+            // anyway, so this loop is purely to avoid the false-red flash.
+            // Push/thread events skip it — their state is already final.
+            const graced = ['pull_request_review', 'pull_request_review_comment'];
+            if (unresolved.length > 0 && graced.includes(context.eventName)) {
+              for (let i = 0; i < 4 && unresolved.length > 0; i++) {
+                core.info(`${unresolved.length} unresolved; grace poll ${i + 1}/4 in 20 s...`);
+                await new Promise(r => setTimeout(r, 20000));
+                unresolved = await fetchUnresolved();
+              }
+            }
 
             if (unresolved.length === 0) {
               core.info('All review threads are resolved.');
@@ -94,6 +124,6 @@ jobs:
             await core.summary.write();
             core.setFailed(
               `${unresolved.length} review thread(s) still unresolved. ` +
-              'Reply in each thread and mark it resolved — replies re-run this check automatically; ' +
-              'if you resolved a thread without replying, re-run this check manually.'
+              'Reply in each thread and mark it resolved — resolving (or replying) ' +
+              're-runs this check automatically.'
             );

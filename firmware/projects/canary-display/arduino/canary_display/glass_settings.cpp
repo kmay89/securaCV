@@ -22,7 +22,26 @@ struct Blob {
   Settings s;
 };
 constexpr uint16_t BLOB_MAGIC   = 0x5347;
-constexpr uint8_t  BLOB_VERSION = 1;
+constexpr uint8_t  BLOB_VERSION = 2;  // v2: +character (v1 migrates below)
+
+// Frozen v1 layout (pre-Character). Kept verbatim so a v1 blob migrates
+// field-for-field instead of being rejected — an upgrade must never cost
+// a user their night hours or the glow they tuned (review catch).
+struct SettingsV1 {
+  uint8_t  day_pct;
+  uint8_t  night_screen;
+  uint8_t  red_shift;
+  uint8_t  peek_s;
+  uint8_t  night_start_hh;
+  uint8_t  night_end_hh;
+  uint16_t night_duty;
+};
+struct BlobV1 {
+  uint16_t magic;
+  uint8_t  version;
+  uint8_t  size;
+  SettingsV1 s;
+};
 
 struct CalBlob {
   uint16_t magic;    // 'N'<<8|'C'
@@ -51,6 +70,7 @@ Settings defaults() {
   // Uncalibrated default glow: level 4 of 10 above the fallback floor lands
   // near the bench-tuned CD_BRIGHT_NIGHT (3/255 == 96/8191) territory.
   d.night_duty = night_step_duty(NIGHT_FLOOR_DFLT, 4);
+  d.character = 0;  // Character::QuietGlass
   return d;
 }
 
@@ -62,6 +82,10 @@ void sanitize(Settings& s) {
   if (s.night_start_hh > 23) s.night_start_hh = CD_QUIET_START_HOUR;
   if (s.night_end_hh > 23) s.night_end_hh = CD_QUIET_END_HOUR;
   if (s.night_duty > NIGHT_DUTY_MAX) s.night_duty = NIGHT_DUTY_MAX;
+  // >= Character::Count -> default. The 4 is kept in sync by hand with
+  // canary::ui::Character: glass sits BELOW ui, so no ui include here
+  // (character_apply re-clamps defensively at the ui layer anyway).
+  if (s.character >= 4) s.character = 0;
 }
 
 // Returns true when the blob actually landed in flash. On failure the
@@ -90,12 +114,31 @@ void settings_init() {
   Preferences p;
   if (!p.begin(STORE_NS, /*readOnly=*/true)) return;
   Blob b = {};
+  BlobV1 b1 = {};
   if (p.getBytesLength("cfg") == sizeof(Blob) &&
       p.getBytes("cfg", &b, sizeof(b)) == sizeof(Blob) &&
       b.magic == BLOB_MAGIC && b.version == BLOB_VERSION &&
       b.size == sizeof(Blob)) {
     s_settings = b.s;
     sanitize(s_settings);
+  } else if (p.getBytesLength("cfg") == sizeof(BlobV1) &&
+             p.getBytes("cfg", &b1, sizeof(b1)) == sizeof(BlobV1) &&
+             b1.magic == BLOB_MAGIC && b1.version == 1 &&
+             b1.size == sizeof(BlobV1)) {
+    // v1 -> v2: field-for-field; character stays the default (Quiet
+    // Glass). Marked dirty so the debounced committer rewrites the blob
+    // as v2 — one upgrade write, through the same retry-safe path.
+    s_settings.day_pct        = b1.s.day_pct;
+    s_settings.night_screen   = b1.s.night_screen;
+    s_settings.red_shift      = b1.s.red_shift;
+    s_settings.peek_s         = b1.s.peek_s;
+    s_settings.night_start_hh = b1.s.night_start_hh;
+    s_settings.night_end_hh   = b1.s.night_end_hh;
+    s_settings.night_duty     = b1.s.night_duty;
+    sanitize(s_settings);
+    settings_mark_dirty();
+    canary::log_line("GLASS",
+                     "Settings upgraded from v1 - your preferences kept.");
   }
   CalBlob c = {};
   if (p.getBytesLength("ncal") == sizeof(CalBlob) &&

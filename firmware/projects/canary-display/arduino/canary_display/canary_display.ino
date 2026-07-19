@@ -83,6 +83,7 @@
 
 #include <lvgl.h>
 #include "lvgl_port.h"
+#include "character.h"
 #include "splash.h"
 #include "settings_ui.h"
 #include "commission_ui.h"
@@ -644,6 +645,12 @@ void setup() {
   // quiet hours or brightness. Compile-time CD_* values are first-boot
   // seeds; the on-glass settings surface owns them from here.
   canary::glass::settings_init();
+  // Character wave: the glass wakes up already wearing the saved look —
+  // theme.h reads the active Character, and nothing has drawn yet (a
+  // stale or corrupt blob degraded to Quiet Glass just above; the picker
+  // re-applies on change).
+  canary::ui::character_apply(
+      (canary::ui::Character)canary::glass::settings().character);
   boot_kvf("Quiet",  "%02d:00-%02d:00 local (%s)",
            canary::glass::settings().night_start_hh,
            canary::glass::settings().night_end_hh, CD_TZ);
