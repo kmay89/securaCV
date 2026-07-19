@@ -35,7 +35,12 @@ export function sliceSegments(mesh, sliceZ) {
       const denom = da - db;
       if (Math.abs(denom) < 1e-9) continue; // edge lies in plane; skip (neighbors supply it)
       const s = da / denom;
-      hits.push([a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s, sliceZ]);
+      const pnt = [a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s, sliceZ];
+      // A vertex exactly on the plane is hit by both of its edges —
+      // dedupe or the duplicate eats the real segment (contour gaps).
+      if (!hits.some((h) => Math.hypot(h[0] - pnt[0], h[1] - pnt[1]) < 1e-5)) {
+        hits.push(pnt);
+      }
     }
     if (hits.length >= 2) {
       out.push(...hits[0], ...hits[1]);

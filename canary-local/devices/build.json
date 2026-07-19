@@ -732,6 +732,37 @@
       "notes": "Reserved: display_ux_design.md sound spec (IEC 60601-1-8-informed tiers, falling all-clear tone). No firmware support yet"
      },
      {
+      "ref": "CBL1",
+      "qty": "1",
+      "required": true,
+      "category": "Cable",
+      "desc": "USB-C cable, data-capable (not charge-only), 1m",
+      "mpn": "USB-C-DATA-1M",
+      "mfr": "Generic",
+      "usd": 1.5,
+      "notes": "Power + flashing. Both builds. 10-packs ~$1.30-1.60/cable"
+     },
+     {
+      "ref": "PSU1",
+      "qty": "1",
+      "required": true,
+      "category": "Power",
+      "desc": "USB-C PSU 5V/2A wall adapter (UL/ETL listed)",
+      "mpn": "5V2A-USBC-UL",
+      "mfr": "Generic",
+      "usd": 8.0,
+      "notes": "Both builds; always-on appliance — use a listed adapter. Bulk 100+: $0.60-1.50 landed (certified, Alibaba)"
+     }
+    ],
+    "required_usd": 34.99,
+    "full_usd": 42.04
+   }
+  },
+  "canary-display-dash": {
+   "bom": {
+    "source": "docs/hardware/bom_canary_display.csv",
+    "rows": [
+     {
       "ref": "D-U1",
       "qty": "1",
       "required": true,
@@ -809,12 +840,9 @@
       "notes": "Both builds; always-on appliance — use a listed adapter. Bulk 100+: $0.60-1.50 landed (certified, Alibaba)"
      }
     ],
-    "required_usd": 67.99,
-    "full_usd": 78.04
+    "required_usd": 42.5,
+    "full_usd": 45.5
    }
-  },
-  "canary-display-dash": {
-   "bom_note": "Dash BOM pending — the watch BOM (bom_canary_display.csv) carries the family pattern; the Waveshare panel is the one big line item."
   },
   "canary-sense": {
    "bom_note": "Sense BOM pending — parts list lives in firmware/projects/canary-sense/README.md."

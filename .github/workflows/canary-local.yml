@@ -17,6 +17,9 @@ on:
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
+      - "docs/hardware/enclosure/**"
+      - "docs/hardware/bom_*.csv"
+      - "sbom/README.md"
       - ".github/workflows/canary-local.yml"
   pull_request:
     paths:
@@ -26,6 +29,9 @@ on:
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
+      - "docs/hardware/enclosure/**"
+      - "docs/hardware/bom_*.csv"
+      - "sbom/README.md"
       - ".github/workflows/canary-local.yml"
 
 permissions:

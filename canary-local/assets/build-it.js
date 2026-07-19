@@ -20,7 +20,7 @@ export function buildBuildIt(buildData, dev) {
     wrap.append(el("p", "muted", "Build data unavailable."));
     return wrap;
   }
-  const d = buildData.devices[dev.id] || {};
+  const d = buildData.devices?.[dev.id] || {};
 
   // ── BOM ──
   if (d.bom) {
@@ -44,7 +44,7 @@ export function buildBuildIt(buildData, dev) {
     const table = el("div", "bom-table");
     const render = () => {
       table.innerHTML = "";
-      for (const r of d.bom.rows) {
+      for (const r of d.bom.rows || []) {
         if (!r.required && !cb.checked) continue;
         const row = el("div", "bom-row" + (r.required ? "" : " bom-opt"));
         const top = el("div", "bom-row-top");
@@ -93,7 +93,7 @@ export function buildBuildIt(buildData, dev) {
   if (d.assembly) {
     wrap.append(el("h4", null, "Assembly"));
     const ol = el("ol", "asm-steps");
-    for (const s of d.assembly.steps) ol.append(el("li", null, s));
+    for (const s of d.assembly.steps || []) ol.append(el("li", null, s));
     wrap.append(ol);
     const src2 = el("p", "muted fineprint");
     src2.append("From ");
@@ -111,11 +111,11 @@ export function buildBuildIt(buildData, dev) {
 
   // ── SBOM ──
   wrap.append(el("h4", null, "Software bill of materials"));
-  const sp = el("p", "body", buildData.sbom.note);
+  const sp = el("p", "body", buildData.sbom?.note || "");
   wrap.append(sp);
   const sl = el("p", "muted fineprint");
   const a3 = el("a", null, "SBOM Generation workflow →");
-  a3.href = buildData.sbom.link;
+  a3.href = buildData.sbom?.link || "#";
   a3.target = "_blank";
   a3.rel = "noopener";
   sl.append(a3);

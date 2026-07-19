@@ -316,14 +316,17 @@ BUILD_JSON = REPO / "canary-local/devices/build.json"
 HW = REPO / "docs/hardware"
 
 BOM_MAP = [
-    # (csv, device_ids, refdes_prefix_filter or None)
-    ("bom_canary_wap.csv", ["canary-wap"], None),
-    ("bom_canary_vision.csv", ["canary-vision"], None),
-    ("bom_canary_display.csv", ["canary-display-watch"], None),  # W-* + shared rows today
+    # (csv, device_id, refdes_prefix or None). A prefix keeps rows whose
+    # RefDes starts with it PLUS unprefixed shared rows (e.g. PSU1) — the
+    # display CSV interleaves W-* (watch) and D-* (dash) lines.
+    ("bom_canary_wap.csv", "canary-wap", None),
+    ("bom_canary_vision.csv", "canary-vision", None),
+    ("bom_canary_display.csv", "canary-display-watch", "W-"),
+    ("bom_canary_display.csv", "canary-display-dash", "D-"),
 ]
 
 
-def parse_bom(name):
+def parse_bom(name, prefix=None):
     rows = []
     req_total = 0.0
     full_total = 0.0
@@ -331,6 +334,12 @@ def parse_bom(name):
         for r in csv.DictReader(f):
             if not r.get("RefDes"):
                 continue
+            if prefix is not None:
+                ref = r["RefDes"]
+                mine = ref.startswith(prefix)
+                shared = "-" not in ref  # unprefixed rows (PSU1…) serve both
+                if not (mine or shared):
+                    continue
             try:
                 ext = float(r.get("ExtUSD") or 0)
             except ValueError:
@@ -362,7 +371,7 @@ def parse_assembly(md):
     """Every '## Assembly' block → numbered steps; device inferred from the
     block's own vocabulary (deterministic keywords, tested)."""
     out = {}
-    for m in re.finditer(r"^## Assembly\s*$(.*?)(?=^## )", md, re.M | re.S):
+    for m in re.finditer(r"^## Assembly\s*$(.*?)(?=^## |\Z)", md, re.M | re.S):
         body = m.group(1)
         steps = [re.sub(r"\s+", " ", s).strip()
                  for s in re.findall(r"^\d+\.\s+(.*?)(?=^\d+\.|\Z)", body, re.M | re.S)]
@@ -399,16 +408,11 @@ def build_main():
     md = (ENC / "README.md").read_text(errors="replace")
     assembly = parse_assembly(md)
     devices = {}
-    for name, dev_ids, _flt in BOM_MAP:
-        bom = parse_bom(name)
-        for d in dev_ids:
-            devices.setdefault(d, {})["bom"] = bom
+    for name, dev_id, prefix in BOM_MAP:
+        devices.setdefault(dev_id, {})["bom"] = parse_bom(name, prefix)
     for d, a in assembly.items():
         devices.setdefault(d, {})["assembly"] = a
     # honest gaps, stated
-    devices.setdefault("canary-display-dash", {})["bom_note"] = (
-        "Dash BOM pending — the watch BOM (bom_canary_display.csv) carries the "
-        "family pattern; the Waveshare panel is the one big line item.")
     devices.setdefault("canary-sense", {})["bom_note"] = (
         "Sense BOM pending — parts list lives in firmware/projects/canary-sense/README.md.")
     data = {

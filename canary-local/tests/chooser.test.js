@@ -112,6 +112,31 @@ test("mesh slicing: a unit cube's cross-section is its square perimeter", async 
   }
 });
 
+test("mesh slicing: a vertex exactly on the plane yields one clean segment", async () => {
+  const { sliceSegments } = await import("../assets/print-guide.js");
+  // Triangle with vertex C exactly at the slice height — both of C's
+  // edges intersect AT C; without dedup the duplicate ate the real
+  // segment and left contour gaps (review catch).
+  const pos = [0, 0, 0, 10, 0, 10, 0, 0, 5];
+  const idx = [0, 1, 2];
+  const segs = sliceSegments({ pos, idx }, 5);
+  assert.strictEqual(segs.length / 6, 1, "exactly one segment");
+  const [x1, y1, , x2, y2] = [segs[0], segs[1], segs[2], segs[3], segs[4]];
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  assert.ok(len > 1, `segment is non-degenerate (len=${len})`);
+});
+
+test("display BOMs split by flavor: watch never carries the dash panel", () => {
+  const b = JSON.parse(readFileSync(join(ROOT, "devices/build.json"), "utf8"));
+  const watch = b.devices["canary-display-watch"].bom;
+  const dash = b.devices["canary-display-dash"].bom;
+  assert.ok(watch.rows.every((r) => !r.ref.startsWith("D-")), "no D-* rows in watch");
+  assert.ok(dash.rows.every((r) => !r.ref.startsWith("W-")), "no W-* rows in dash");
+  assert.ok(dash.rows.some((r) => /Waveshare/.test(r.desc) && r.required), "dash owns its panel");
+  assert.ok(watch.rows.some((r) => r.ref === "PSU1"), "shared rows serve watch");
+  assert.ok(dash.rows.some((r) => r.ref === "PSU1"), "shared rows serve dash");
+});
+
 test("print guidance rides the catalog: notes + materials per part", () => {
   const enc = JSON.parse(readFileSync(join(ROOT, "devices/enclosures.json"), "utf8"));
   assert.ok(enc.print_settings.layer_height_mm === 0.2);
