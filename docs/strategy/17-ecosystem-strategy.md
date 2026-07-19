@@ -15,11 +15,12 @@
 
 ---
 
-## 1. Three case studies, three different moats
+## 1. Four case studies, four different moats
 
-The three companies everyone cites — BlackBerry, Apple, Linux (a project, but it
-out-competed companies) — stood out for *different structural reasons*, and each maps to
-a specific temptation or opportunity in front of SecuraCV.
+The names everyone cites — BlackBerry, Apple, Linux (a project, but it out-competed
+companies), and Signal (a nonprofit, but its protocol conquered the industry) — stood
+out for *different structural reasons*, and each maps to a specific temptation or
+opportunity in front of SecuraCV.
 
 ### 1.1 BlackBerry — the trust moat that wasn't enough
 
@@ -134,14 +135,66 @@ is, and the model to copy *deliberately* rather than accidentally:
   purity without doc 15/16's productization is how you become brilliant and
   irrelevant.
 
-### 1.4 The moat scorecard
+### 1.4 Signal — trust as architecture, and the protocol that won even where the app didn't
 
-| | BlackBerry | Apple | Linux | **SecuraCV (today)** |
-|---|---|---|---|---|
-| Core moat | Trust/security | Integrated experience | Neutral stable commons | Trust *enforced in architecture* |
-| Network effect | BBM (closed → died) | App Store (closed, taxed) | Compounding contributions | **Corroborating witness mesh (nascent — §5.3)** |
-| Developer surface | Hostile | Rich but tolled | Wide open | Specs exist; adapter surface young |
-| Reached non-experts via | Carriers/CIOs | Its own retail & design | Distros (Red Hat, Android) | HA add-on today; kits next |
+Signal deserves its own study because it is the closest *spiritual* match to
+SecuraCV: a product whose entire value is trust, kept honest by architecture
+rather than policy — and it validates our kernel thesis more directly than any
+company on this page.
+
+**What makes it stand out.**
+
+1. **"We have nothing to hand over."** Signal's privacy is structural: sealed
+   sender, no message logs, metadata minimized to almost nothing. When subpoenaed,
+   Signal publishes the subpoena *and* its response — a handful of timestamps,
+   because that is all that exists. That is our own posture, one generation
+   earlier: SecuraCV's "no faces, no plates, coarse time" means the honest answer
+   to a data demand is architecturally small. **Lesson: make the legal story a
+   designed artifact, not an improvised one** — publish what a subpoena *could*
+   yield (the Promise Card of doc 13 is the seed) before anyone serves one.
+2. **The protocol won even where the product didn't.** The Signal *app* has
+   ~420M monthly users; the Signal *Protocol* encrypts WhatsApp, Google Messages,
+   and Messenger — billions of users who will never install Signal. The protocol
+   became the category's standard because it was open, formally verified, and
+   unambiguously best. This is the strongest existing proof of our §5 verdict:
+   **a trust protocol can win the whole market even when the reference product
+   stays niche.** The witness event contract should be built to be "the Signal
+   Protocol of tamper-evident perception" — adopted, eventually, even by vendors
+   who compete with our hardware.
+3. **Radical verifiability as marketing.** Reproducible builds — anyone can
+   verify the shipped binary matches the published source — turn "trust us" into
+   "check us." For a product whose evidence must survive a hostile courtroom,
+   this is not optional hygiene; **reproducible firmware and kernel builds belong
+   on our §4 build list**, because "the binary running on the witness is provably
+   this audited source" is an evidentiary claim, not just a supply-chain one.
+4. **Leading the frontier as a moat.** PQXDH in 2023, the Triple Ratchet
+   (SPQR) in 2025 — Signal repeatedly sets the industry's cryptographic bar
+   before anyone demands it. Our `pqc_mode` work is the same instinct; keep it.
+5. **Centralized velocity, open contract.** Moxie's famous position — "the
+   ecosystem is moving" — rejected federation to keep shipping speed. The nuance
+   for us: Signal keeps the *service* centralized but the *protocol* open. We
+   keep the *stack* opinionated (one blessed HA path) while the *contract* stays
+   implementable by anyone. Don't confuse federating the spec (yes) with
+   design-by-committee on the product (no).
+
+**The warning in the model.** Signal sells nothing, so it survives on ~$40M/yr
+of donations and an endowment — a permanent sustainability cliff and a
+governance bet that goodwill keeps flowing. A nonprofit *foundation* is a
+powerful neutrality guarantee (worth considering someday for the *spec and
+verifier*, exactly as Linux got the Linux Foundation), but the operating company
+should never depend on it: our Prusa-style hardware revenue (doc 16) is the
+deliberate answer to Signal's structural fragility. **Adopt Signal's
+verifiability and protocol posture; do not adopt its business model.**
+
+### 1.5 The moat scorecard
+
+| | BlackBerry | Apple | Linux | Signal | **SecuraCV (today)** |
+|---|---|---|---|---|---|
+| Core moat | Trust/security | Integrated experience | Neutral stable commons | Trust *by architecture* + the standard protocol | Trust *enforced in architecture* |
+| Network effect | BBM (closed → died) | App Store (closed, taxed) | Compounding contributions | Protocol embedded in rivals' products | **Corroborating witness mesh (nascent — §5.3)** |
+| Developer surface | Hostile | Rich but tolled | Wide open | Open protocol, closed service | Specs exist; adapter surface young |
+| Reached non-experts via | Carriers/CIOs | Its own retail & design | Distros (Red Hat, Android) | Crisis-driven word of mouth | HA add-on today; kits next |
+| Sustainability | Devices (until it wasn't) | Hardware + toll | Corporate symbiosis | Donations — permanent cliff | **Hardware kits (doc 16) — deliberate** |
 | Fatal risk | Ecosystem shift it ignored | Regulatory siege of the toll | No one funds polish | Staying a spec nobody loves **or** a gadget nobody builds on |
 
 ---
@@ -292,6 +345,13 @@ add-on, and the CI-verified end-to-end pipeline are the credibility engine. The 
 tag (doc 08 §5) matters more for *ecosystem* trust than for users: nobody targets a
 moving contract.
 
+Add Signal's bar (§1.4): **reproducible builds** for the kernel and firmware, so
+"the binary on the witness is provably this audited source" becomes a checkable
+claim — for us that is *evidentiary* strength, not just supply-chain hygiene. And
+a **published transparency posture**: state, before anyone asks, exactly what a
+legal demand against a SecuraCV deployment could and could not yield (doc 13's
+Promise Card, promoted to a public page).
+
 ### 4.3 Network effects with the valve open — *the BBM lesson* (nascent, decisive)
 
 BlackBerry had the century's best messaging network and kept it closed until it was
@@ -399,7 +459,10 @@ BlackBerry proves a trust moat without developer gravity and delight dies to an
 ecosystem shift. Apple proves integration wins non-experts — and that the toll booth
 is a choice, not a requirement of integration. Linux proves a neutral, stable,
 boring contract plus opinionated distributions compounds into the layer everyone
-builds on. The 3D-printing wars run the full experiment: the Marlin/RepRap commons
+builds on. Signal proves the pattern's endgame: an open, verifiably-best trust
+protocol gets adopted even by competitors — billions run the Signal Protocol who
+never installed Signal — while its donation-only business model stays the cautionary
+half of the lesson (take the verifiability, keep the hardware revenue). The 3D-printing wars run the full experiment: the Marlin/RepRap commons
 beat closed Stratasys and created the category; closed-but-delightful Bambu then
 took the consumer from the commons; and Bambu's 2025 lock-in turn is now burning the
 trust it can't buy back — proving you can close *convenience* but you cannot close

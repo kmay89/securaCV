@@ -667,6 +667,14 @@ footer p { max-width: 720px; margin: 0 auto; }
   padding: 10px 12px; border-top: 1px solid #232325; background: #101012; }
 .hub-term-controls .primary { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; }
 .hub-term-note { margin-top: 10px; min-height: 2.4em; }
+/* one-tap copy — always visible (mobile has no hover), comfortable tap target */
+.hub-copy { margin-left: 8px; padding: 2px 9px; min-width: 34px; min-height: 24px;
+  border: 1px solid #2c2c2e; border-radius: 7px; background: #17171a; color: #9a9aa2;
+  font: 12px/1.4 "SF Mono", ui-monospace, Menlo, monospace; cursor: pointer;
+  vertical-align: baseline; transition: color 0.15s, border-color 0.15s; }
+.hub-copy:hover, .hub-copy:focus-visible { color: var(--canary); border-color: rgba(255, 212, 79, 0.5); }
+.hub-copy.copied { color: var(--ok); border-color: var(--ok); }
+@media (pointer: coarse) { .hub-copy { min-width: 44px; min-height: 32px; font-size: 13px; } }
 
 /* the Home Assistant sketch */
 .hub-ha { position: relative; margin-top: 6px; }
@@ -986,6 +994,50 @@ button.ghost.small.bench-ff { font-size: 12px; }
 @media (max-width: 720px) {
   .wap-two, .wap-facts, .wap-mqtt-cols, .wap-mqtt-ents { grid-template-columns: 1fr; }
   .wap-mqtt-cols { gap: 10px; background: transparent; }
+}
+
+/* the Get Started guide (start.html) */
+.start-picker { margin-top: 6px; }
+.start-missions { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-top: 12px; }
+.start-mission { display: flex; align-items: flex-start; gap: 12px; text-align: left;
+  background: #141416; border: 1px solid #2c2c2e; border-radius: 14px; padding: 14px 16px;
+  color: inherit; cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
+.start-mission:hover, .start-mission:focus-visible { border-color: rgba(255, 212, 79, 0.5); transform: translateY(-2px); }
+.start-mission.on { border-color: var(--canary); }
+.start-glyph { font-size: 24px; line-height: 1.2; }
+.start-mission-body { display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.start-mission-body strong { font-size: 14.5px; }
+.start-meta { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.start-osrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.start-osrow .tab { min-height: 36px; }
+@media (pointer: coarse) { .start-osrow .tab { min-height: 44px; } }
+.start-bar { height: 8px; border-radius: 999px; background: #232325; overflow: hidden; margin-top: 12px; }
+.start-bar-fill { height: 100%; width: 0; border-radius: 999px; background: var(--canary); transition: width 0.4s; }
+.start-score { margin: 6px 0 0; font-size: 13px; display: inline-block; }
+.start-bird { font-size: 20px; margin-left: 8px; vertical-align: middle; }
+.start-chapter h3 { margin-bottom: 4px; }
+.start-step { background: #101012; border: 1px solid #232325; border-radius: 12px; padding: 12px 14px; margin-top: 10px; }
+.start-step.done { border-color: rgba(74, 222, 128, 0.35); }
+.start-step.done > .start-step-row h4 { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(74, 222, 128, 0.5); }
+.start-step-row { display: flex; align-items: center; gap: 10px; }
+.start-step-row h4 { margin: 0; font-size: 14.5px; flex: 1; }
+.start-check { width: 26px; height: 26px; min-width: 26px; border-radius: 8px; border: 1px solid #2c2c2e;
+  background: #17171a; color: var(--ok); font-size: 14px; cursor: pointer; }
+.start-check.on { border-color: var(--ok); background: rgba(74, 222, 128, 0.12); }
+@media (pointer: coarse) { .start-check { width: 34px; height: 34px; min-width: 34px; } }
+.start-bullet { margin: 8px 0 0; font-size: 13.5px; }
+.start-danger { margin: 8px 0 0; font-size: 13px; color: #f0b429; }
+.start-cmd { background: #0a0a0c; border: 1px solid #232325; border-radius: 10px; padding: 8px 12px; margin-top: 8px;
+  font: 13px/1.55 "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-x: auto; }
+.start-cmd-note { margin: 4px 0 0; }
+.start-expect { margin-top: 4px; }
+.start-expect summary { cursor: pointer; color: var(--faint); font-size: 12px; }
+.start-doc { margin-left: auto; white-space: nowrap; }
+.start-link { display: inline-block; margin: 8px 12px 0 0; font-size: 13.5px; }
+.start-note { margin-top: 10px; }
+@media (max-width: 560px) {
+  .start-doc { margin-left: 0; }
+  .start-step-row { flex-wrap: wrap; }
 }
 
 /* Kept at end of file: must win the cascade over every canvas rule above
