@@ -285,6 +285,7 @@ GLASS_SOURCES=(
   "$GLASS_ROOT/src/ui/splash.cpp"
   "$GLASS_ROOT/src/ui/settings_ui.cpp"
   "$GLASS_ROOT/src/ui/commission_ui.cpp"
+  "$GLASS_ROOT/include/canary/net/mirror_html.h"
 )
 GLASS_BANNED='broker|dBm|RSSI|payload|MQTT|mDNS|NVS|TOFU|endpoint'
 
@@ -325,7 +326,7 @@ fi
 GLYPH_HITS=""
 for f in "${GLASS_SOURCES[@]}"; do
   [ -f "$f" ] || continue
-  case "$f" in */provision.cpp) continue ;; esac
+  case "$f" in */provision.cpp|*/mirror_html.h) continue ;; esac
   # Allow ° (C2 B0) and • (E2 80 A2); flag every other non-ASCII byte.
   HITS=$(grep -vE '^[[:space:]]*(#include|//)' "$f" \
            | grep -oE '"[^"]*"' \
