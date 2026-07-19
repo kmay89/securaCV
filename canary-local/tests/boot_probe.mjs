@@ -7,7 +7,7 @@
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, dirname, resolve, sep } from "node:path";
+import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
@@ -24,15 +24,27 @@ const pw = await (async () => {
 const shotsIdx = process.argv.indexOf("--shots");
 const SHOTS = shotsIdx > 0 ? process.argv[shotsIdx + 1] : null;
 
+// Allowlist, not sanitization: the probe serves exactly the files the
+// harness needs, enumerated up front. Request paths are only ever used
+// as lookup KEYS into this map — no user-influenced value reaches the
+// filesystem (loopback-only harness, but taint-free beats taint-checked).
+const SERVABLE = new Map();
+for (const rel of [
+  "canary-local/emulator/web/harness.html",
+  "canary-local/emulator/web/emu-shell.js",
+  "canary-local/emulator/dist/canary-display-watch.js",
+  "canary-local/emulator/dist/canary-display-dash.js",
+]) {
+  SERVABLE.set("/" + rel, join(ROOT, rel));
+}
+
 const server = createServer(async (req, res) => {
+  const key = decodeURIComponent(req.url.split("?")[0]);
+  const path = SERVABLE.get(key);
+  if (!path) { res.writeHead(404); res.end(); return; }
   try {
-    // Containment: resolve the requested path and refuse anything that
-    // escapes the repo root (loopback-only harness, but still — CodeQL
-    // js/path-injection, and cheap to be correct).
-    const p = resolve(join(ROOT, decodeURIComponent(req.url.split("?")[0])));
-    if (p !== ROOT && !p.startsWith(ROOT + sep)) { res.writeHead(403); res.end(); return; }
-    const data = await readFile(p);
-    res.writeHead(200, { "content-type": MIME[extname(p)] || "application/octet-stream" });
+    const data = await readFile(path);
+    res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(data);
   } catch { res.writeHead(404); res.end(); }
 }).listen(0);
