@@ -56,6 +56,7 @@
 #include "canary/fleet/journal_instance.h"
 #endif
 #include "canary/net/wifi_mgr.h"
+#include "canary/net/tz_auto.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
@@ -707,7 +708,16 @@ void setup() {
 #endif
 
 #if defined(FEATURE_SNTP) && FEATURE_SNTP
-  configTzTime(CD_TZ, "pool.ntp.org", "time.nist.gov");
+  // Wall time = UTC (SNTP, two independent sources) + a timezone rule.
+  // The rule comes from NVS if a previous boot learned it from the web
+  // (tz_auto — DST included), else the CD_TZ seed (UTC0 unless secrets.h
+  // set a real one). The clock read "00:00" at 8 PM on the bench because
+  // the seed was honest UTC — right instant, wrong wall.
+  {
+    char tz[48];
+    canary::net::tz_boot_string(CD_TZ, tz, sizeof(tz));
+    configTzTime(tz, "pool.ntp.org", "time.nist.gov");
+  }
 #endif
 
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
@@ -810,6 +820,9 @@ void loop() {
   // (idle close, live wizard clock, commissioning countdown/celebration,
   // instant close on a real alarm).
   canary::glass::settings_loop(now);
+#if defined(FEATURE_SNTP) && FEATURE_SNTP
+  canary::net::tz_auto_tick(now);  // learn the wall-clock zone once online
+#endif
   {
     using canary::fleet::Sev;
     const bool urgent =
