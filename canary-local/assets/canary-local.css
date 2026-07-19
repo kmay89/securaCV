@@ -504,7 +504,8 @@ footer p { max-width: 720px; margin: 0 auto; }
 .style-chip strong { display: block; font-size: 13.5px; }
 .style-chip span { display: block; font-size: 11px; color: #9a9a9a; margin-top: 2px; }
 .style-chip:hover { border-color: #3a3a3a; }
-.style-chip.on { border-color: var(--canary); box-shadow: 0 0 0 1px var(--canary) inset; }
+/* .on carries no styles: the selection glow is painted inline in the
+   chip's own accent (app.js paint()); the class remains as state. */
 
 /* ── Workshop polish: inspect mode, fullscreen, honest empty states ──── */
 .ws-fullbtn { position: absolute; right: 10px; top: 10px; background: #000a;
@@ -530,3 +531,180 @@ footer p { max-width: 720px; margin: 0 auto; }
 .ws-soon p { margin: 0 0 8px; }
 .ws-request { color: var(--canary); text-decoration: none; font-size: 13.5px; }
 .ws-request:hover { text-decoration: underline; }
+
+/* ── the Canary House (house.html) ─────────────────────────────────── */
+.house-main { display: grid; grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 22px; max-width: 1280px; margin: 26px auto 70px; padding: 0 24px;
+  align-items: start; }
+@media (max-width: 940px) { .house-main { grid-template-columns: 1fr; } }
+
+.house-stagecol { min-width: 0; }
+.house-stage { position: relative; border: 1px solid var(--edge);
+  border-radius: var(--radius); overflow: hidden;
+  background:
+    radial-gradient(900px 480px at 62% 18%, rgba(255, 212, 79, 0.06), transparent 62%),
+    radial-gradient(700px 500px at 20% 80%, rgba(3, 169, 244, 0.04), transparent 60%),
+    linear-gradient(180deg, #0b0c10 0%, #060708 100%); }
+#house-svg { display: block; width: 100%; height: auto; }
+
+.house-controls { display: flex; align-items: center; gap: 14px;
+  flex-wrap: wrap; margin: 0 2px 10px; }
+.walk-btn { appearance: none; border: 1px solid var(--canary);
+  background: var(--canary); color: #151204; font: inherit; font-size: 13.5px;
+  font-weight: 650; border-radius: 999px; padding: 7px 16px; cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s; }
+.walk-btn:hover:not(:disabled) { transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(255, 212, 79, 0.25); }
+.walk-btn:disabled { background: var(--surface-2); border-color: var(--edge);
+  color: var(--muted); cursor: default; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted);
+  font-size: 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+
+/* modality dots — shared by legend and flock list */
+.perch-dot { width: 9px; height: 9px; border-radius: 50%; flex: none;
+  display: inline-block; background: var(--canary); }
+.dot-camera { background: var(--canary); }
+.dot-wifi { background: #ffe28a; box-shadow: 0 0 6px rgba(255, 212, 79, 0.5); }
+.dot-radar { background: #c9a4f0; }
+.dot-breath { background: #8fd3a8; }
+.dot-display { background: #f0f0f0; }
+.dot-lora { background: #7fb7d8; }
+
+/* scene */
+.room-label { fill: #878a94; font-size: 10.5px; letter-spacing: 0.14em;
+  text-transform: uppercase; pointer-events: none; }
+.window { fill: #3b3214; stroke: #55491f; stroke-width: 0.8; }
+.doorlight { opacity: 0.9; }
+.wall, .slab, .divider { stroke: #07080a; stroke-width: 0.5; }
+
+/* sensing fields */
+.field { pointer-events: none; transition: opacity 0.35s; }
+.field.off { opacity: 0; }
+.field .cone { animation: coneBreathe 3.6s ease-in-out infinite; }
+.field .scan { opacity: 0; animation: scanOut 1.8s linear infinite; }
+.field .ripple { animation: rippleOut 4s ease-out infinite; }
+.field-lora .ripple { animation-duration: 5.2s; }
+.field .sweep { opacity: 0; animation: sweepOut 1.6s ease-out infinite; }
+.field-breath .sweep { animation-duration: 4.8s; }
+.field .breathline { stroke-dasharray: 90; stroke-dashoffset: 90;
+  animation: breathe 4.6s ease-in-out infinite; opacity: 0.8; }
+.field .halo circle { animation: haloPulse 3.4s ease-in-out infinite;
+  transform-origin: center; transform-box: fill-box; }
+.field.sel { filter: brightness(1.45); }
+
+@keyframes coneBreathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes scanOut { 0% { opacity: 0; } 12% { opacity: 0.85; } 70% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes rippleOut { 0% { transform: scale(0.12); opacity: 0.9; }
+  75% { opacity: 0.12; } 100% { transform: scale(1); opacity: 0; } }
+@keyframes sweepOut { 0% { opacity: 0; } 15% { opacity: 0.9; } 65% { opacity: 0; } 100% { opacity: 0; } }
+@keyframes breathe { 0%, 100% { stroke-dashoffset: 90; opacity: 0.25; }
+  50% { stroke-dashoffset: 0; opacity: 0.9; } }
+@keyframes haloPulse { 0%, 100% { transform: scale(0.8); opacity: 0.7; }
+  50% { transform: scale(1.25); opacity: 1; } }
+.field .ripple { transform-origin: center; transform-box: fill-box; }
+
+/* markers */
+.marker { cursor: pointer; transition: opacity 0.35s; outline: none; }
+.marker.off { opacity: 0.18; }
+.marker.off .marker-pulse { display: none; }
+.marker-shadow { fill: rgba(0, 0, 0, 0.5); }
+.marker-body { fill: #141414; stroke: var(--canary); stroke-width: 1.6;
+  transition: fill 0.2s; }
+.marker-glyph { fill: none; stroke: var(--canary); stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round; }
+.marker:hover .marker-body, .marker:focus-visible .marker-body,
+.marker.hint .marker-body, .marker.sel .marker-body { fill: var(--canary); }
+.marker:hover .marker-glyph, .marker:focus-visible .marker-glyph,
+.marker.hint .marker-glyph, .marker.sel .marker-glyph { stroke: #141414; }
+.marker-pulse { fill: none; stroke: rgba(255, 212, 79, 0.55); stroke-width: 1.2;
+  animation: markerPulse 2.6s ease-out infinite;
+  transform-origin: center; transform-box: fill-box; }
+.marker-dev { fill: var(--warn); stroke: #000; stroke-width: 0.8; }
+.marker.tripped .marker-body { fill: var(--canary); }
+.marker.tripped .marker-pulse { animation: markerTrip 0.7s ease-out 2; }
+@keyframes markerPulse { 0% { transform: scale(0.75); opacity: 0.9; }
+  100% { transform: scale(1.7); opacity: 0; } }
+@keyframes markerTrip { 0% { transform: scale(0.7); opacity: 1; }
+  100% { transform: scale(2.2); opacity: 0; } }
+
+/* the visitor */
+.visitor.hidden { display: none; }
+.visitor-body { fill: #e8e8ec; }
+.visitor-head { fill: #e8e8ec; }
+.visitor-shadow { fill: rgba(0, 0, 0, 0.55); }
+
+/* floating event chips */
+.event-chip { position: absolute; transform: translate(-50%, -110%);
+  background: rgba(10, 10, 12, 0.92); border: 1px solid rgba(255, 212, 79, 0.55);
+  color: var(--text); font-size: 11.5px; border-radius: 999px;
+  padding: 4px 11px; pointer-events: none; white-space: nowrap;
+  animation: chipRise 2.6s ease-out forwards; z-index: 5; max-width: 90%;
+  overflow: hidden; text-overflow: ellipsis; }
+@keyframes chipRise { 0% { opacity: 0; margin-top: 6px; }
+  12% { opacity: 1; margin-top: 0; } 80% { opacity: 1; }
+  100% { opacity: 0; margin-top: -10px; } }
+
+/* witness feed */
+.house-feed { margin-top: 14px; }
+.house-feed h3 { margin: 0 0 8px; font-size: 15px; }
+.feed-sub { color: var(--faint); font-weight: 400; font-size: 12.5px; }
+#feed-list { list-style: none; margin: 0; padding: 0; display: flex;
+  flex-direction: column; gap: 6px; }
+.feed-item { border: 1px solid var(--edge); border-radius: 10px;
+  background: var(--surface); color: var(--muted); font-size: 12.5px;
+  padding: 6px 12px; animation: feedIn 0.4s ease-out; }
+.feed-witness { border-color: rgba(255, 212, 79, 0.4); color: var(--text); }
+.feed-sys { border-style: dashed; color: var(--faint); }
+@keyframes feedIn { from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; } }
+
+/* the flock panel */
+.house-panel { border: 1px solid var(--edge); border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-2) 0%, #101012 100%);
+  padding: 16px 16px 18px; position: sticky; top: 16px; }
+.flock-head h2 { margin: 0; font-size: 20px; }
+.flock-count { color: var(--canary); font-weight: 600; margin: 4px 0 0;
+  font-size: 14px; }
+.flock-honest { color: var(--faint); font-size: 12.5px; margin: 4px 0 0; }
+.flock-floor { color: var(--muted); font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: 0.12em; margin: 16px 0 6px; }
+.perch { display: flex; align-items: center; gap: 10px; width: 100%;
+  appearance: none; text-align: left; font: inherit; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--edge);
+  border-radius: 10px; padding: 7px 10px; margin: 0 0 6px; color: var(--muted);
+  transition: border-color 0.2s, color 0.2s, opacity 0.2s; }
+.perch:hover { border-color: #3a3a3a; }
+.perch.on { color: var(--text); border-color: rgba(255, 212, 79, 0.45); }
+.perch:not(.on) { opacity: 0.55; }
+.perch:not(.on) .perch-dot { background: var(--faint); box-shadow: none; }
+.perch-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.perch-name { font-size: 13px; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.perch-where { font-size: 11.5px; color: var(--faint); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.perch-dev { font-size: 10px; color: var(--warn); border: 1px solid
+  rgba(251, 140, 0, 0.45); border-radius: 999px; padding: 1px 7px; flex: none; }
+.flock-doors { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.flock-doors .door { font-size: 13.5px; }
+.house-panel .back { appearance: none; background: none; border: none;
+  color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+  padding: 0; margin: 0 0 10px; }
+.house-panel .back:hover { color: var(--text); }
+.det-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.det-head h2 { margin: 0; font-size: 19px; }
+.det-where { color: var(--faint); font-size: 12.5px; margin: 4px 0 0; }
+.det-headline { color: var(--text); margin: 10px 0 0; font-size: 14px; }
+.det-sense { border: 1px solid var(--edge); border-radius: 12px;
+  background: var(--surface); padding: 10px 12px; margin-top: 12px; }
+.det-sense h4 { margin: 0 0 3px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--muted); }
+.det-sense h4 + p { margin: 0 0 10px; font-size: 13px; color: var(--text); }
+.det-sense .det-emits { margin-bottom: 0; color: var(--canary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .field .cone, .field .scan, .field .ripple, .field .sweep,
+  .field .breathline, .field .halo circle, .marker-pulse { animation: none; }
+  .field .scan, .field .sweep { opacity: 0.5; }
+  .event-chip { animation: none; }
+}
