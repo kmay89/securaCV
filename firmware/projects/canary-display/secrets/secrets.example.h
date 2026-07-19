@@ -30,6 +30,13 @@
 //   Central EU:  "CET-1CEST,M3.5.0,M10.5.0/3"
 // #define CD_TZ "EST5EDT,M3.2.0,M11.1.0"
 // #define CD_TZ_EXPLICIT 1
+//
+// Optional: let the display learn its timezone from the internet instead.
+// PRIVACY NOTE — this sends ONE request to a geolocation service, which
+// necessarily reveals your public IP (that's how it knows your zone). The
+// project's default is that nothing leaves the home unasked, so this is
+// OFF unless you opt in here:
+// #define CD_TZ_WEB_LOOKUP 1
 
 
 // Optional: where this home is (nightstand wave). Enables on-device

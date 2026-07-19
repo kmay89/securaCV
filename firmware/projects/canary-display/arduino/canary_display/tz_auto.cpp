@@ -1,5 +1,16 @@
 // src/net/tz_auto.cpp — learn the house's timezone from the web. See
 // tz_auto.h for the contract.
+//
+// Secrets are included FIRST (same __has_include chain as
+// runtime_config.cpp), before the flavor config's #ifndef CD_TZ default —
+// so a hand-set CD_TZ / CD_TZ_EXPLICIT / CD_TZ_WEB_LOOKUP is visible in
+// THIS translation unit (review catch: documented overrides that only
+// secrets.h defines must be included where they're honored).
+#if __has_include("secrets.h")
+  #include "secrets.h"
+#elif __has_include("secrets/secrets.h")
+  #include "secrets.h"
+#endif
 #include "flavor_config.h"
 #include <Arduino.h>
 #include <HTTPClient.h>
@@ -114,18 +125,23 @@ void offset_to_posix(long sec_east, char* out, size_t cap) {
     snprintf(out, cap, "LT%c%ld", sign, hh);
 }
 
-void apply_and_persist(const char* posix, const char* iana) {
-  // Re-arm SNTP with the learned rule; the servers stay the cross-checking
-  // pair from boot.
+// final_rule=false marks a fixed-offset fallback: applied and persisted
+// (right today), but NOT treated as learned — the learner keeps retrying
+// on a long cadence so a zone that observes DST self-corrects after a
+// later successful table match (review catch: marking the fallback as
+// learned froze those devices an hour wrong after the next transition).
+void apply_and_persist(const char* posix, const char* iana, bool final_rule) {
   configTzTime(posix, "pool.ntp.org", "time.nist.gov");
   Preferences p;
   if (p.begin("scv-tz", false)) {
     p.putString("posix", posix);
     if (iana) p.putString("iana", iana);
+    p.putUChar("fixed", final_rule ? 0 : 1);
     p.end();
   }
-  s_learned = true;
-  canary::log_line("TZ", "Timezone learned and applied.");
+  s_learned = final_rule;
+  canary::log_line("TZ", final_rule ? "Timezone learned and applied."
+                                    : "Timezone offset applied (fixed).");
 }
 
 }  // namespace
@@ -133,20 +149,37 @@ void apply_and_persist(const char* posix, const char* iana) {
 void tz_boot_string(const char* seed, char* out, unsigned cap) {
   Preferences p;
   out[0] = '\0';
+  uint8_t fixed = 0;
   if (p.begin("scv-tz", true)) {
     p.getString("posix", out, cap);
+    fixed = p.getUChar("fixed", 0);
     p.end();
   }
   if (out[0]) {
-    s_learned = true;
+    // A fixed-offset fallback boots with the stored value but leaves the
+    // learner armed; only a full rule ends the search.
+    s_learned = fixed == 0;
     return;
   }
-  strlcpy(out, seed, cap);
+  // No NVS value yet: the seed as THIS unit sees it. The secrets-first
+  // include above means a hand-set CD_TZ wins over the flavor's UTC0
+  // even though the caller's copy of CD_TZ may be the flavor default.
+  (void)seed;
+  strlcpy(out, CD_TZ, cap);
 }
 
 bool tz_learned() { return s_learned; }
 
 void tz_auto_tick(uint32_t now_ms) {
+#if !defined(CD_TZ_WEB_LOOKUP) || !CD_TZ_WEB_LOOKUP
+  // PRIVACY DEFAULT (review catch): the lookup sends the household's
+  // public IP to a third-party geolocation service, and this project's
+  // invariant is that nothing leaves the home unasked. The learner is
+  // therefore compiled OUT unless secrets.h explicitly opts in with
+  // CD_TZ_WEB_LOOKUP 1 — until then, wall time comes from CD_TZ.
+  (void)now_ms;
+  return;
+#else
 #ifdef CD_TZ_EXPLICIT
   // A hand-set secrets.h timezone always wins; never auto-learn over it.
   return;
@@ -181,18 +214,22 @@ void tz_auto_tick(uint32_t now_ms) {
   if (json_str(body, "timezone", iana, sizeof(iana))) {
     const char* rule = zone_to_posix(iana);
     if (rule) {
-      apply_and_persist(rule, iana);
+      apply_and_persist(rule, iana, /*final_rule=*/true);
       return;
     }
   }
   long off = 0;
   if (json_int(body, "offset", &off) && off >= -14L * 3600 &&
       off <= 14L * 3600) {
-    // Unknown zone: fixed offset — right today; DST flips will be a two-
-    // day wait for the next successful lookup after the change.
+    // Unknown zone: fixed offset — right today, not final. Re-arm the
+    // learner on a slow cadence (and stop charging the give-up budget)
+    // so a DST-observing zone self-corrects after a later lookup.
     offset_to_posix(off, posix, sizeof(posix));
-    apply_and_persist(posix, iana[0] ? iana : nullptr);
+    apply_and_persist(posix, iana[0] ? iana : nullptr, /*final_rule=*/false);
+    s_attempts = 0;
+    s_next_try_ms = now_ms + 6UL * 3600UL * 1000UL;
   }
+#endif  // CD_TZ_WEB_LOOKUP
 }
 
 }  // namespace canary::net
