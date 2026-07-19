@@ -26,12 +26,16 @@ const qwrap = el("div", "questions");
 const results = el("div", "results");
 quiz.append(qwrap, results);
 
+// option buttons by question/option id, so a deep link can press them
+const optButtons = {};
+
 for (const q of QUESTIONS) {
   const card = el("section", "q");
   card.append(el("h3", null, q.title));
   const opts = el("div", "q-opts");
   for (const o of q.options) {
     const b = el("button", "q-opt", o.label);
+    (optButtons[q.id] ||= {})[o.id] = b;
     b.addEventListener("click", () => {
       if (q.multi) {
         const cur = new Set(answers[q.id] || []);
@@ -143,6 +147,24 @@ function render() {
   results.append(el("p", "muted fineprint",
     "Recommendations favor released hardware on ties, never hide status, and hard-respect your privacy lines — a \"no cameras\" answer removes every camera device, full stop."));
 }
+
+// Deep link pre-fill, e.g. from the Canary House:
+//   choose.html#place=door&want=see,prove&privacy=ok&power=outlet
+// Unknown questions/options are ignored; answers still never leave the page.
+(function prefill() {
+  const frag = location.hash.slice(1);
+  if (!frag) return;
+  for (const pair of frag.split("&")) {
+    const [qid, raw] = pair.split("=");
+    const q = QUESTIONS.find((x) => x.id === qid);
+    if (!q || !raw) continue;
+    const ids = decodeURIComponent(raw).split(",")
+      .filter((id) => q.options.some((o) => o.id === id));
+    if (!ids.length) continue;
+    answers[qid] = q.multi ? ids : ids[0];
+    for (const id of ids) optButtons[qid]?.[id]?.classList.add("on");
+  }
+})();
 
 fetch("devices/enclosures.json")
   .then((r) => r.json())
