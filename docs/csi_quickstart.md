@@ -91,7 +91,7 @@ value. That's WiFi sensing on a $15 board, no camera, no cloud.
 | ESP32-S3 | ✅ Primary | XIAO ESP32-S3 Sense is the reference board. |
 | ESP32 | ✅ | HT20 only. |
 | ESP32-C3 | ✅ | HT20 only. |
-| ESP32-C6 | ✅ | Same CSI path as every ESP32 here (HT-LTF, ~52 usable subcarriers on HT20 / ~108 on HT40; HAL caps ingest at 128). Its Wi-Fi-6 HE-LTF CSI is richer in principle but is not exposed by ESP-IDF's C6 CSI path today and is not ingested here. No ESP32 exposes IEEE 802.11bf sounding in ESP-IDF. |
+| ESP32-C6 | ✅ | Same CSI path as every ESP32 here (HT-LTF, ~52 usable subcarriers on HT20 / ~108 on HT40; HAL caps ingest at 128). ESP-IDF v5.5+ exposes C6 HE-LTF CSI acquisition, but this firmware configures the legacy CSI fields and does not acquire or ingest it — the limitation is this repo's HAL, not ESP-IDF. No ESP32 exposes IEEE 802.11bf sounding in ESP-IDF. |
 | ESP32-S2 | ⚠️ | No CSI in stock IDF builds. |
 | ESP8266 | ❌ | No CSI support. |
 

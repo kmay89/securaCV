@@ -61,7 +61,7 @@ common belief (or a repo claim) is wrong.
 | 2 | S3 does **not** support BLE 5.1 Direction Finding (AoA/AoD / CTE) | **CONFIRMED** | No bearing/angle to a BLE item is possible on the S3 — RSSI proximity only. Espressif's SoC header has no `SOC_BLE_CTE_SUPPORTED`; the ESP-FAQ says plainly the S3/C3/C6 don't do AoA/AoD. |
 | 3 | S3 has no 802.15.4 (no Thread/Zigbee) and no UWB | **CONFIRMED** | Sub-meter tag ranging needs external hardware (Qorvo DW3000 UWB) or dense multi-node RSSI (still ~1–3 m). Thread/Zigbee would need a C6/H2 co-processor. |
 | 4 | Single 2.4 GHz radio shared by WiFi+BLE; heavy STA+SoftAP+BLE+CSI can't all run at full duty | **CONFIRMED** | The design must budget airtime. CSI is not a separate consumer — it *is* WiFi RX, so CSI frame rate degrades exactly when BLE/AP steal slices. |
-| 5 | 802.11bf sounding is exposed on the C6 but not the S3 (repo `CSI_CAP_SOUNDING_11BF` C6-only) | **REFUTED** | **No ESP32, C6 included, exposes IEEE 802.11bf in ESP-IDF.** The C6's *potential* edge is 802.11ax HE-LTF CSI (richer than HT-LTF), but ESP-IDF's C6 CSI path exposes HT-LTF (~52/108 usable subcarriers), not HE-LTF, and this firmware's HAL caps ingest at `CSI_MAX_SUBCARRIERS`=128 — so the ~242-tone path is not available here regardless. The repo bit is never set by `get_caps()` on any target. *(README corrected.)* |
+| 5 | 802.11bf sounding is exposed on the C6 but not the S3 (repo `CSI_CAP_SOUNDING_11BF` C6-only) | **REFUTED** | **No ESP32, C6 included, exposes IEEE 802.11bf in ESP-IDF.** The C6's *potential* edge is 802.11ax HE-LTF CSI (richer than HT-LTF). ESP-IDF v5.5+ *does* expose C6 HE-LTF CSI acquisition (`acquire_csi_su`/`mu`/`dcm`/`beamformed`), but **this firmware** configures the legacy CSI fields and caps ingest at `CSI_MAX_SUBCARRIERS`=128, so the ~242-tone path is not available here — the gap is this repo's HAL, not ESP-IDF. The repo bit is never set by `get_caps()` on any target. *(README corrected.)* |
 | 6 | S3 can be an Apple Find My *tag* but not a *finder*, and gets no UWB precision | **CONFIRMED** | OpenHaystack-style firmware makes it findable; it can never locate arbitrary AirTags (rotating keys + Apple-only finder role + private-key-encrypted reports). It *can* passively detect nearby trackers (anti-stalking). |
 | 7 | ESP-NOW requires all peers on the same WiFi channel; the home AP dictates that channel | **CONFIRMED** | The mesh doesn't pick its own channel when joined to home WiFi. If the router auto-hops channels, links break until re-sync. The repo already handles this correctly with `channel=0` peers + `mesh_channel_policy`. |
 
@@ -460,9 +460,10 @@ The hard single-antenna limits (physics, not code):
 - **Gesture recognition (Widar-class), multi-person separation, trilateration, AoA** — all need
   antenna diversity or dense geometry the single 1-antenna S3 lacks. Don't market them.
 - **802.11bf sounding** — no ESP32 exposes it (§2 claim #5, REFUTED). The C6's *potential* edge is
-  802.11ax HE-LTF CSI, richer than HT-LTF — but note ESP-IDF's C6 CSI path exposes HT-LTF (~52/108
-  subcarriers), not HE-LTF, and this firmware's HAL caps ingest at 128 subcarriers, so the ~242-tone
-  path isn't available here today. A C6 is a reasonable *future board* to evaluate, but the CSI path
+  802.11ax HE-LTF CSI, richer than HT-LTF. ESP-IDF v5.5+ exposes C6 HE-LTF CSI acquisition
+  (`acquire_csi_su`/`mu`/`dcm`/`beamformed`), but **this firmware** configures the legacy CSI fields
+  and caps ingest at 128 subcarriers, so the ~242-tone path isn't available here today — the gap is
+  this repo's HAL, not ESP-IDF. A C6 is a reasonable *future board* to evaluate, but the CSI path
   and HAL work to actually exploit HE-LTF would have to be built and verified first; unrelated to 11bf.
 
 What IS cutting-edge **and** feasible here:

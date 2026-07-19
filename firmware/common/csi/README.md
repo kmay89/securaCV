@@ -71,7 +71,7 @@ A complete example lives in `firmware/examples/csi_minimal/csi_minimal.ino`.
 | ESP32-S3 | ✅ Primary | XIAO ESP32-S3 Sense is the SecuraCV reference board. |
 | ESP32 (original) | ✅ | HT20 only on most variants. |
 | ESP32-C3 | ✅ | HT20 only. |
-| ESP32-C6 | ✅ | Uses the same single CSI path as every ESP32 here (HT-LTF; ~52 usable subcarriers on HT20 / ~108 on HT40; this HAL caps ingest at `CSI_MAX_SUBCARRIERS`=128). The C6's Wi-Fi-6 HE-LTF CSI is richer in principle, but that is not what ESP-IDF's C6 CSI path exposes today and this firmware does not ingest it — do not pick a C6 expecting the ~242-tone HE path here. No ESP32, C6 included, exposes IEEE 802.11bf sounding in ESP-IDF; the `CSI_CAP_SOUNDING_11BF` bit is reserved and is not set by `get_caps()` on any target. |
+| ESP32-C6 | ✅ | Uses the same single CSI path as every ESP32 here (HT-LTF; ~52 usable subcarriers on HT20 / ~108 on HT40; this HAL caps ingest at `CSI_MAX_SUBCARRIERS`=128). The C6's Wi-Fi-6 HE-LTF CSI is richer in principle, and ESP-IDF v5.5+ does expose C6 HE-LTF CSI acquisition (`acquire_csi_su`/`mu`/`dcm`/`beamformed` in `esp_wifi_he_types.h`) — but **this firmware** configures the legacy CSI fields and caps ingest at 128, so it does not acquire or ingest the HE-LTF path. The gap is this repo's HAL, not ESP-IDF; enabling the ~242-tone HE path is firmware work, not just picking a C6. No ESP32, C6 included, exposes IEEE 802.11bf sounding in ESP-IDF; the `CSI_CAP_SOUNDING_11BF` bit is reserved and is not set by `get_caps()` on any target. |
 | ESP32-S2 | ⚠️ | No CSI in stock IDF builds. |
 | ESP8266 | ❌ | No CSI support. |
 
