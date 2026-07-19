@@ -1103,6 +1103,129 @@ button.ghost.small.bench-ff { font-size: 12px; }
   .start-bar-fill { transition: none; }
 }
 
+/* ======================================================================== *
+ *  The Vault explainer (vault.html) — vault · sealed · quorum.
+ *  Reuses .hub-section, .hub-chips, .chip, .ondevice, .hub-term-*, .hub-links.
+ * ======================================================================== */
+
+.vault-concepts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.vault-concept { padding: 18px; border-radius: var(--radius); border: 1px solid var(--edge);
+  background: var(--surface); border-top: 3px solid var(--canary-deep); }
+.vault-concept h3 { margin: 0 0 8px; color: var(--canary); }
+
+.vault-two { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; margin-top: 16px; }
+.vault-two-col { min-width: 0; }
+.vault-col-h { font-size: 13px; color: var(--muted); font-weight: 600; margin: 0 0 10px;
+  text-transform: uppercase; letter-spacing: 0.06em; }
+.vault-note { margin-top: 12px; }
+.vault-off { margin-bottom: 8px; }
+
+/* fail-closed decision table */
+.vault-decisions { display: flex; flex-direction: column; border: 1px solid var(--edge); border-radius: 12px; overflow: hidden; }
+.vault-decision { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 8px 12px; border-bottom: 1px solid var(--edge); font-size: 13px; }
+.vault-decision:last-child { border-bottom: none; }
+.vault-decision.cap { background: rgba(67, 160, 71, 0.08); }
+.vault-cond { color: var(--text); }
+.vault-dec { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; }
+.vault-decision.cap .vault-dec { color: var(--ok); }
+
+.vault-facts { margin-top: 18px; display: flex; flex-direction: column; gap: 6px; }
+.vault-fact { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--edge); font-size: 13px; }
+.vault-fact-k { flex: none; width: 84px; color: var(--canary); font-weight: 600; }
+.vault-fact-v { color: var(--muted); }
+
+/* seal walkthrough */
+.vault-seal { margin-top: 8px; }
+.vault-steps { display: flex; flex-direction: column; gap: 8px; }
+.vault-step { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--edge); background: var(--surface); opacity: 0.5; transition: opacity 0.3s, border-color 0.3s; }
+.vault-step.on { opacity: 1; border-color: var(--canary-deep); background: var(--surface-2); }
+.vault-step-n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--canary);
+  color: #000; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+.vault-step-b { display: flex; flex-direction: column; gap: 2px; }
+.vault-step-b strong { color: var(--text); }
+.vault-derived { font: 11px ui-monospace, Menlo, monospace; color: var(--signed); }
+
+.vault-hdr { margin-top: 16px; padding: 14px; border-radius: 12px; border: 1px solid var(--edge); background: var(--surface); }
+.vault-hdr-h { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.vault-hdr-table { display: flex; flex-direction: column; gap: 3px; }
+.vault-hdr-cell { display: grid; grid-template-columns: 44px 34px 1fr; gap: 8px; align-items: center;
+  padding: 5px 8px; border-radius: 7px; background: rgba(255, 255, 255, 0.03); font-size: 12px; }
+.vault-hdr-off { color: var(--canary); font: 11px ui-monospace, Menlo, monospace; }
+.vault-hdr-size { color: var(--muted); font: 11px ui-monospace, Menlo, monospace; }
+.vault-hdr-field { color: var(--text); }
+.vault-tamper { margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.vault-tamper-out { font-size: 12px; }
+.vault-tamper.bad .vault-hdr-cell { }
+.vault-tamper-out.bad { color: var(--alert); }
+
+.vault-kernel { margin-top: 20px; padding: 16px; border-radius: var(--radius); border: 1px solid var(--edge);
+  background: var(--surface); }
+.vault-kernel .hub-chips { margin: 12px 0; }
+
+/* quorum demo */
+.vault-quorum { margin-top: 8px; }
+.vault-evidence { display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-radius: 14px;
+  border: 1px solid var(--edge); background: var(--surface); transition: all 0.4s; }
+.vault-evidence.sealed { border-color: var(--signed); background: rgba(3, 169, 244, 0.06); }
+.vault-evidence.open { border-color: var(--ok); background: rgba(67, 160, 71, 0.1); }
+.vault-evidence-icon { font-size: 34px; }
+.vault-evidence-label { font: 13px ui-monospace, Menlo, monospace; color: var(--text); }
+.vault-q-status { margin: 14px 0 6px; }
+.vault-q-bar { height: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.vault-q-fill { height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, var(--signed), var(--ok));
+  transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.vault-q-count { display: inline-block; margin-top: 6px; font: 13px ui-monospace, Menlo, monospace; color: var(--muted); }
+.vault-trustees { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.vault-trustee { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid var(--edge); background: var(--surface); }
+.vault-trustee-name { font-weight: 600; color: var(--text); min-width: 110px; }
+.vault-trustee-key { font: 11px ui-monospace, Menlo, monospace; flex: 1; }
+.vault-approve { background: var(--canary); color: #000; border: none; border-radius: 8px; padding: 6px 14px;
+  font-weight: 600; cursor: pointer; }
+.vault-approve:disabled { opacity: 0.4; cursor: default; }
+.vault-approve.done { background: transparent; color: var(--ok); border: 1px solid var(--ok); }
+.vault-q-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.vault-unseal { }
+.vault-unseal:disabled { opacity: 0.45; cursor: default; }
+.vault-receipts { border: 1px solid var(--edge); border-radius: 12px; overflow: hidden; }
+.vault-receipts-h { padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); background: var(--surface-2); border-bottom: 1px solid var(--edge); }
+.vault-receipts-rows { display: flex; flex-direction: column; min-height: 40px; }
+.vault-receipt { display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: 12px;
+  border-bottom: 1px solid var(--edge); }
+.vault-receipt:last-child { border-bottom: none; }
+.vault-receipt-o { font-weight: 700; font-size: 11px; padding: 1px 7px; border-radius: 5px; }
+.vault-receipt.ok .vault-receipt-o { color: var(--ok); background: rgba(67, 160, 71, 0.14); }
+.vault-receipt.deny .vault-receipt-o { color: var(--alert); background: rgba(229, 57, 53, 0.14); }
+.vault-receipt-d { flex: 1; color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.vault-receipt-sig { color: var(--signed); font-size: 11px; }
+
+.vault-guards { margin-top: 20px; }
+.vault-guard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.vault-guard { padding: 14px; border-radius: 12px; border: 1px solid var(--edge); background: var(--surface);
+  display: flex; flex-direction: column; gap: 5px; }
+.vault-guard strong { color: var(--text); }
+
+/* operator routes */
+.vault-routes { display: flex; flex-direction: column; gap: 4px; }
+.vault-route { display: flex; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03); }
+.vault-m { font: 10.5px ui-monospace, Menlo, monospace; color: var(--canary); min-width: 82px; text-transform: uppercase; }
+.vault-p { font: 11.5px ui-monospace, Menlo, monospace; color: var(--text); word-break: break-all; }
+
+/* invariants */
+.vault-invariants { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.vault-invariant { padding: 18px; border-radius: var(--radius); border: 1px solid var(--edge);
+  background: var(--surface); border-left: 3px solid var(--canary); }
+.vault-inv-id { font: 11px ui-monospace, Menlo, monospace; color: var(--canary); text-transform: uppercase; letter-spacing: 0.06em; }
+.vault-invariant h4 { margin: 6px 0 8px; color: var(--text); }
+
+@media (max-width: 760px) {
+  .vault-concepts, .vault-two, .vault-invariants { grid-template-columns: 1fr; }
+}
+
 /* Kept at end of file: must win the cascade over every canvas rule above
    (.ws-canvas and .broom-3d re-declare touch-action:none at equal
    specificity later in the file than the sheet rules do). */
