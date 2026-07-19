@@ -194,3 +194,52 @@ test("pillForEvent maps CSI events to the right presence pill", async () => {
     if (p) assert.ok(known.has(p), "pillForEvent returned unknown pill: " + p);
   }
 });
+
+// ── 5. the flash section — the bench skills can't go stale ─────────────────
+const fwReadme = read(join(REPO, "firmware/projects/canary-wap/README.md"));
+const makefile = read(join(REPO, "firmware/projects/canary-wap/Makefile"));
+const pioIni = read(join(REPO, "firmware/projects/canary-wap/platformio.ini"));
+const benchJs = read(join(ROOT, "emulator/web/bench.js"));
+
+test("flash: both toolchains present, commands still real build machinery", () => {
+  const f = data.flash;
+  assert.ok(f, "wap.json has no flash section");
+  assert.strictEqual(f.toolchains.length, 2);
+  const pio = f.toolchains.find((t) => t.id === "platformio");
+  const ard = f.toolchains.find((t) => t.id === "arduino");
+  assert.ok(pio && ard);
+  // every make command the page teaches is a real Makefile target
+  for (const c of pio.commands) {
+    if (c.cmd.startsWith("make ")) assert.ok(makefile.includes(c.cmd.split(" ")[1] + ":"), c.cmd);
+  }
+  assert.ok(pio.commands.some((c) => c.cmd === "make upload"), "make upload missing");
+  assert.match(pioIni, /src_dir\s*=\s*arduino\/canary_wap/);
+  // the Arduino path teaches exactly what the README says
+  assert.ok(fwReadme.includes(ard.boards_url), "boards URL drifted from README");
+  for (const [k, v] of ard.board_config) assert.ok(fwReadme.includes(`${k}: **${v}**`), `${k} drifted`);
+  for (const lib of ard.libraries) assert.ok(fwReadme.includes(lib.split(" by ")[0]), lib);
+  assert.ok(fwReadme.includes(ard.sketch));
+});
+
+test("flash: BOOT/RESET facts match the .ino constants and the ROM's own strings", () => {
+  const f = data.flash;
+  const boot = f.buttons.find((b) => b.id === "boot");
+  const gpio = ino.match(/BOOT_BUTTON_GPIO\s*=\s*(\d+)/);
+  assert.strictEqual(boot.gpio, Number(gpio[1]));
+  const longMs = Number(ino.match(/BOOT_LONG_PRESS_MS\s*=\s*(\d+)/)[1]);
+  assert.ok(boot.gestures.some((g) => g.includes(`>${longMs / 1000} s`)), "factory-reset hold drifted");
+  // the download ritual ends in the mask ROM's real strap line (bench.js prints it)
+  assert.ok(benchJs.includes("DOWNLOAD(USB/UART0)"));
+  assert.ok(f.download_mode.rom_line.includes("DOWNLOAD(USB/UART0)"));
+  const steps = f.download_mode.steps.join(" ").toLowerCase();
+  assert.ok(steps.indexOf("hold boot") < steps.indexOf("reset"), "BOOT is held before RESET is tapped");
+});
+
+test("flash: troubleshooting is the README's own, none invented", () => {
+  for (const t of data.flash.troubleshooting) {
+    assert.ok(fwReadme.includes(t.symptom), "symptom not in README: " + t.symptom);
+    assert.ok(t.fixes.length >= 1, t.symptom + " has no fixes");
+  }
+  assert.ok(data.flash.troubleshooting.some((t) => t.symptom.includes("not detected")),
+    "the port-not-found flow (the frustrating one) must be taught");
+});
