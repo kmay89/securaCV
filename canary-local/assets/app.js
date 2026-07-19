@@ -8,6 +8,7 @@
 // setup path. Everything works offline; nothing phones anywhere.
 
 import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { upgradeRealShape } from "./real-shapes.js";
 import { buildEnclosureLab } from "./enclosure-lab.js";
 import { buildBuildIt } from "./build-it.js";
 import { buildBoardLab } from "./board-lab.js";
@@ -80,6 +81,7 @@ function renderCards() {
 
     const scene = new DeviceScene(cv, null);
     (BUILDERS[dev.id] || BUILDERS["canary-wap"])(scene);
+    upgradeRealShape(scene, dev.id);
     scene.start();
     state.cards.set(dev.id, { scene });
 
@@ -127,6 +129,7 @@ async function openSheet(dev) {
   };
   state.sheet = ctx;
   (BUILDERS[dev.id] || BUILDERS["canary-wap"])(ctx.scene);
+  upgradeRealShape(ctx.scene, dev.id);
   ctx.scene.start();
 
   if (dev.emulator) await buildDisplaySheet(ctx, side, stage);
@@ -184,7 +187,20 @@ async function buildDisplaySheet(ctx, side, stage) {
   };
 
   const factory = window[dev.emulator.factory];
+  // One boot at a time: a second click mid-boot would race two async
+  // boots against the shared ctx.emu (the earlier one resuming against a
+  // half-wired replacement — TypeError / duplicate fleet, review catch).
+  let bootBusy = false;
   const boot = async (opts = {}) => {
+    if (bootBusy) return;
+    bootBusy = true;
+    try {
+      await bootInner(opts);
+    } finally {
+      bootBusy = false;
+    }
+  };
+  const bootInner = async (opts = {}) => {
     ctx.emu = new CanaryEmulator(factory, {
       canvas: glass,
       onSerial: (t) => {
@@ -217,12 +233,24 @@ async function buildDisplaySheet(ctx, side, stage) {
       onReboot: async () => {
         note("device rebooted — booting again with its memory intact");
         serialLog.textContent += "\n\n※ ── power cycle ── ※\n\n";
+        ctx.emu.retire();
         await boot({ preserve: true });
       },
     });
     ctx.scene.src = glass; // 3D screen textures from the live panel
-    await ctx.emu.start({ provisioned: true, firstMeeting: false, seed: 20260719 });
-    if (opts.preserve) ctx.emu.nvsRestore(ctx.nvsImage);
+    await ctx.emu.start({
+      provisioned: true,
+      firstMeeting: !!opts.firstMeeting,
+      seed: 20260719,
+    });
+    if (opts.preserve) {
+      // A "meet again" reboot must not restore the remembered hello —
+      // that memory is exactly what the button un-remembers.
+      const img = opts.firstMeeting
+        ? new Map([...ctx.nvsImage].filter(([k]) => !k.startsWith("scv-hello/")))
+        : ctx.nvsImage;
+      ctx.emu.nvsRestore(img);
+    }
     ctx.emu.setLocalHour(10);
     // The fleet outlives display reboots: real witnesses keep their keys
     // when a display power-cycles, so the same SimWitness objects (same
@@ -241,6 +269,12 @@ async function buildDisplaySheet(ctx, side, stage) {
     fleet: ctx.fleet,
     setHour: (h) => ctx.emu.setLocalHour(h),
     note,
+    meetAgain: async () => {
+      note("rebooting for a first meeting — the bird will introduce itself");
+      serialLog.textContent += "\n\n※ ── power cycle (first meeting) ── ※\n\n";
+      ctx.emu.retire();
+      await boot({ preserve: true, firstMeeting: true });
+    },
   };
   // keep guideCtx live across reboots
   const guideProxy = new Proxy(guideCtx, {
@@ -344,6 +378,40 @@ function tryView(ctx, noteLine) {
     b.addEventListener("click", () => fn());
     return b;
   };
+
+  // ── The style rail: the firmware's own Character ring, in ring order ──
+  // Names and captions read back from the wasm (never hardcoded), so the
+  // page can only ever demo what the firmware can actually do.
+  const styleWrap = el("div", "style-rail");
+  styleWrap.append(el("p", "muted",
+    "Its Character — seven curated ages of technology. The look, the type, " +
+    "the bird's temperament, the words it uses when all is calm. Alarms " +
+    "never restyle; night outranks every look. The choice persists through " +
+    "reboots, exactly like the real glass."));
+  const rail = el("div", "style-row");
+  const paint = async () => {
+    const active = await ctx.emu.activeCharacter?.();
+    for (const b of rail.children)
+      b.classList.toggle("on", Number(b.dataset.id) === active);
+  };
+  (async () => {
+    for (const c of (await ctx.emu.characterRing?.()) ?? []) {
+      const b = el("button", "style-chip");
+      b.dataset.id = c.id;
+      b.append(el("strong", null, c.name), el("span", null, c.caption));
+      b.addEventListener("click", () => {
+        ctx.emu.applyCharacter(c.id);
+        noteLine.textContent = `${c.name} — ${c.caption}`;
+        paint();
+      });
+      rail.append(b);
+    }
+    paint();
+  })();
+  styleWrap.append(rail);
+  styleWrap.append(mk("meet the bird again (first boot)",
+    () => ctx.meetAgain?.(), "primary"));
+
   const grid = el("div", "try-grid");
   grid.append(
     mk("Wi-Fi down", () => ctx.emu.setWifi(false)),
@@ -365,6 +433,7 @@ function tryView(ctx, noteLine) {
     el("p", "muted",
       "Drag the device. Touch its glass: tap pages, hold to acknowledge. " +
       "Then break the household on purpose — the glass must never lie about it."),
+    styleWrap,
     grid,
     noteLine
   );

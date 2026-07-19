@@ -38,6 +38,20 @@ export const DISPLAY_TOUR = [
     stage: allQuiet,
   },
   {
+    title: "Make it yours",
+    body:
+      "Seven Characters — ages of technology, from a grandparent's warm " +
+      "Heirloom to phosphor Terminal — each a pre-validated look: type, " +
+      "palette, the bird's temperament, even how it phrases \"all quiet\". " +
+      "We just dressed this one in Heirloom, live. The alarms never restyle " +
+      "(a fire is red for everyone) and night outranks every look. Flip " +
+      "through the rest under Try it.",
+    stage: async (ctx) => {
+      await allQuiet(ctx);
+      ctx.emu.applyCharacter?.(1); // Heirloom — the wave the tour wears
+    },
+  },
+  {
     title: "When a witness goes quiet…",
     body:
       "We just silenced the Garage canary and ran time at ×60. Watch its arc " +

@@ -12,7 +12,7 @@
 // slightly glossy, obviously tangible.
 
 // ── tiny mat4 ───────────────────────────────────────────────────────────
-const M4 = {
+export const M4 = {
   ident: () => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
   mul(a, b) {
     const o = new Float32Array(16);

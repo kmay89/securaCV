@@ -479,3 +479,14 @@ footer p { max-width: 720px; margin: 0 auto; }
   .ws-card { border-color: #000; color: #000; background: #fff; }
   .ws-card .muted, .ws-card .body { color: #222; }
 }
+
+/* ── the style rail: the firmware's Character ring, on the page ── */
+.style-rail { margin: 14px 0 4px; }
+.style-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 8px; margin: 10px 0; }
+.style-chip { text-align: left; padding: 9px 11px; border-radius: 10px;
+  border: 1px solid #2a2a2a; background: #161616; color: inherit; cursor: pointer; }
+.style-chip strong { display: block; font-size: 13.5px; }
+.style-chip span { display: block; font-size: 11px; color: #9a9a9a; margin-top: 2px; }
+.style-chip:hover { border-color: #3a3a3a; }
+.style-chip.on { border-color: var(--canary); box-shadow: 0 0 0 1px var(--canary) inset; }
