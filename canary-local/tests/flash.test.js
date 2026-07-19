@@ -165,6 +165,42 @@ test("manifestEntry refuses a chip-mismatched image (defence in depth)", async (
   assert.strictEqual(manifestEntry(m, { id: "not-in-manifest" }, "ESP32-S3"), null);
 });
 
+// ── ?manifest= override (self-hosted / air-gapped, phishing-guarded) ────────
+test("manifestOverrideUrl: same-origin and private/LAN allowed, public refused", async () => {
+  const { manifestOverrideUrl } = await core();
+  const origin = "https://kmay89.github.io";
+  // No override → null.
+  assert.strictEqual(manifestOverrideUrl("", origin), null);
+  assert.strictEqual(manifestOverrideUrl("?foo=bar", origin), null);
+  // Same-origin (absolute or relative) → allowed.
+  assert.strictEqual(
+    manifestOverrideUrl("?manifest=https://kmay89.github.io/m.json", origin),
+    "https://kmay89.github.io/m.json");
+  assert.strictEqual(
+    manifestOverrideUrl("?manifest=custom/m.json", origin),
+    "https://kmay89.github.io/custom/m.json");
+  // Private / LAN / localhost hosts → allowed (air-gapped self-host).
+  for (const u of [
+    "http://192.168.1.50:8443/manifest-flash.json",
+    "http://10.0.0.2/m.json",
+    "http://canary.local/m.json",
+    "http://nas.lan/m.json",
+    "http://localhost:8000/m.json",
+    "http://172.16.9.9/m.json",
+  ]) assert.ok(manifestOverrideUrl("?manifest=" + encodeURIComponent(u), origin), "should allow " + u);
+  // Public third-party origin → refused (firmware-phishing guard).
+  assert.strictEqual(
+    manifestOverrideUrl("?manifest=https://evil.example.com/m.json", origin), null);
+  // 172.32 is outside the private 172.16/12 block → refused.
+  assert.strictEqual(
+    manifestOverrideUrl("?manifest=http://172.32.0.1/m.json", origin), null);
+  // A bare relative ref stays same-origin (harmless — it just 404s).
+  assert.strictEqual(manifestOverrideUrl("?manifest=%%%", origin), origin + "/%%%");
+  // A malformed absolute URL → null, never throws.
+  assert.strictEqual(
+    manifestOverrideUrl("?manifest=" + encodeURIComponent("http://"), origin), null);
+});
+
 // ── byte glue for esptool-js (must survive high bytes) ──────────────────────
 test("bytes <-> binary string round-trips including 0x00/0x80/0xFF", async () => {
   const { bytesToBinaryString, binaryStringToBytes, hex } = await core();

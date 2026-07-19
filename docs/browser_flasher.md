@@ -125,9 +125,14 @@ Everything is built; the official images light up when a release is cut:
    confirm it detects, reads, backs up, flashes, verifies, and boots.
 
 Air-gapped / self-hosted: the page accepts `?manifest=<url>` to point at a
-manifest you host yourself, and **Advanced → flash a local file** flashes any
-factory `.bin` with no manifest at all — the same air-gapped posture the OTA
-engine offers.
+manifest you host yourself. To keep a crafted link from turning the public Lab
+into a firmware-phishing vector, the override is honored **only** for a
+same-origin manifest or one on a private/LAN/localhost host — the same hosts
+the OTA engine trusts for plain-HTTP local update servers
+([`firmware_ota.md` § transport policy](firmware_ota.md)); any other origin is
+ignored and the flasher falls back to the signed release. **Advanced → flash a
+local file** flashes any factory `.bin` with no manifest at all — the fully
+offline posture the OTA engine also offers.
 
 ## Files
 

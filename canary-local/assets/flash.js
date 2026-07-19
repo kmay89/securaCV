@@ -459,9 +459,18 @@ function productRow(p) {
 }
 
 // ── release manifest (lazy) ─────────────────────────────────────────────────
+function activeManifestUrl() {
+  // `?manifest=<url>` lets a self-hosted / air-gapped user point at their own
+  // manifest — but only if it's same-origin or a private/LAN host (see
+  // manifestOverrideUrl). Otherwise fall back to the signed release.
+  const override = core.manifestOverrideUrl(location.search, location.origin);
+  state.manifestOverride = !!override;
+  return override || state.catalog.manifest_url;
+}
+
 function ensureManifest() {
   if (state.manifest) { refreshManifestState(); return; }
-  fetch(state.catalog.manifest_url, { cache: "no-store" })
+  fetch(activeManifestUrl(), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no release manifest (HTTP " + r.status + ")"))))
     .then((m) => {
       const errs = core.validateManifest(m);
@@ -489,7 +498,13 @@ function refreshManifestState() {
     banner.append(note);
     return;
   }
-  // Manifest present: fill versions + enable buttons for available products.
+  // Manifest present. Note when it's a self-hosted override, not the release.
+  if (state.manifestOverride) {
+    const note = el("p", "flash-note flash-note-soft");
+    note.textContent = "Using a self-hosted firmware manifest from this page’s address bar, not the official signed release.";
+    banner.append(note);
+  }
+  // Fill versions + enable buttons for available products.
   document.querySelectorAll(".flash-product").forEach((row) => {
     const id = row.dataset.id;
     const product = state.catalog.products.find((p) => p.id === id);

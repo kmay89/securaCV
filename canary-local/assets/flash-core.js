@@ -171,6 +171,29 @@ export function manifestEntry(manifest, product, detected) {
     size: e.size, chipFamily: e.chipFamily, releaseNotes: e.release_notes, product };
 }
 
+// Resolve the `?manifest=<url>` override for self-hosted / air-gapped use.
+// Security: an unrestricted override on the public Lab would be a
+// firmware-phishing vector (a crafted link pointing the flasher at a hostile
+// manifest+image). So we accept only a **same-origin** manifest, or one on a
+// **private/LAN/localhost** host — exactly the hosts the OTA engine trusts for
+// plain-HTTP local update servers (docs/firmware_ota.md § transport policy).
+// Anything else returns null and the flasher falls back to the signed release.
+export function manifestOverrideUrl(search, pageOrigin) {
+  let raw;
+  try { raw = new URLSearchParams(search || "").get("manifest"); } catch { return null; }
+  if (!raw) return null;
+  let u;
+  try { u = new URL(raw, pageOrigin); } catch { return null; }
+  if (pageOrigin && u.origin === pageOrigin) return u.href; // same-origin: always fine
+  const host = u.hostname.toLowerCase();
+  const localName = host === "localhost" ||
+    /\.(local|lan|internal|home\.arpa)$/.test(host);
+  const privateIp =
+    /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  return (localName || privateIp) ? u.href : null;
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.

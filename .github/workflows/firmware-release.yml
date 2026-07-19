@@ -411,6 +411,11 @@ jobs:
           (rel / "manifest-flash.json").write_text(json.dumps(manifest, indent=2) + "\n")
           print(f"browser flasher: {len(products)}/{len(VARIANTS)} factory images, manifest-flash.json written")
           PY
+          # sha256sums.txt was written by the assemble step BEFORE these assets
+          # existed; regenerate it so the advertised checksum set covers the
+          # factory images and manifest-flash.json too (nothing published here
+          # is left out of the integrity file).
+          (cd /tmp/release && sha256sum ./*.bin ./*.json > sha256sums.txt)
           ls -la /tmp/release/*-factory.bin /tmp/release/manifest-flash.json || true
 
       - name: Publish GitHub Release
