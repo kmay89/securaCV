@@ -37,6 +37,7 @@ CI:   regenerates and diffs (drift gate); a weekly scheduled workflow
       runs --refresh-upstream and opens a PR when upstream moved.
 """
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -357,28 +358,59 @@ def parse_topics(doc_text):
     return rows
 
 
+# Some CDNs (version.home-assistant.io included) 403 the default
+# Python-urllib user agent — identify honestly instead.
+USER_AGENT = "securaCV-freshness/1.0 (+https://github.com/kmay89/securaCV)"
+
+
+def _get_json(url, headers=None):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def _warn(msg):
+    print(f"gen_homeassistant: {msg}", file=sys.stderr)
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::warning::gen_homeassistant: {msg}")
+
+
+def _snapshot(haos, ha, source):
+    if not re.match(r"^\d", str(ha)) or not re.match(r"^\d", str(haos)):
+        raise ValueError(f"unexpected shapes: ha={ha!r} haos={haos!r}")
+    return {
+        "haos_version": str(haos),
+        "ha_version": str(ha),
+        "source": source,
+        "fetched_at": date.today().isoformat(),
+    }
+
+
 def refresh_upstream(prev):
-    """Fetch the live HA OS + Core versions. Any failure — network, HTTP,
-    shape — returns the previous snapshot untouched (self-healing: values
-    only move forward on a verified read)."""
+    """Fetch the live HA OS + Core versions: the version feed first, the
+    GitHub releases API as fallback (authenticated with GH_TOKEN/GITHUB_TOKEN
+    when present, as in the freshness workflow). Any failure of both —
+    network, HTTP, shape — returns the previous snapshot untouched
+    (self-healing: values only move forward on a verified read)."""
     try:
-        with urllib.request.urlopen(UPSTREAM_FEED, timeout=30) as r:
-            feed = json.load(r)
+        feed = _get_json(UPSTREAM_FEED)
         ha = feed["homeassistant"]["default"]
         # hassos key maps board → version; rpi boards share one OS version
         hassos = feed.get("hassos") or {}
         haos = hassos.get("rpi4-64") or hassos.get("ota") or next(iter(hassos.values()))
-        if not re.match(r"^\d", str(ha)) or not re.match(r"^\d", str(haos)):
-            raise ValueError(f"unexpected shapes: ha={ha!r} haos={haos!r}")
-        return {
-            "haos_version": str(haos),
-            "ha_version": str(ha),
-            "source": UPSTREAM_FEED,
-            "fetched_at": date.today().isoformat(),
-        }
+        return _snapshot(haos, ha, UPSTREAM_FEED)
+    except Exception as e:  # noqa: BLE001 — fall through to the releases API
+        _warn(f"version feed failed ({e}); trying the GitHub releases API")
+    try:
+        tok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        auth = {"Authorization": f"Bearer {tok}"} if tok else {}
+        gh = "https://api.github.com/repos/home-assistant/{}/releases/latest"
+        haos = _get_json(gh.format("operating-system"), auth)["tag_name"].lstrip("v")
+        ha = _get_json(gh.format("core"), auth)["tag_name"].lstrip("v")
+        return _snapshot(haos, ha, "https://api.github.com/repos/home-assistant (releases)")
     except Exception as e:  # noqa: BLE001 — the whole point is to survive
-        print(f"gen_homeassistant: upstream refresh failed ({e}); keeping "
-              f"previous snapshot from {prev.get('fetched_at')}", file=sys.stderr)
+        _warn(f"upstream refresh failed on both sources ({e}); keeping "
+              f"previous snapshot from {prev.get('fetched_at')}")
         return prev
 
 
