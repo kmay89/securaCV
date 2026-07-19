@@ -51,6 +51,51 @@ RENDER_PRESETS = {
     "canary_dash_display.scad": ["frame", "back", "stand"],
 }
 
+# ── Print guidance (the lab's "how to print it" cards) ───────────────────
+# Global settings quoted from README.md §Suggested print settings; per-part
+# orientation notes curated from the .scad sources' own comments (each part
+# is MODELED in its print orientation — z=0 is the build plate, which is
+# what makes the lab's plate view honest).
+PRINT_SETTINGS = {
+    "source": "docs/hardware/enclosure/README.md §Suggested print settings",
+    "material": "PETG or ASA for heat/UV exposure; PLA only for indoor/bench",
+    "gasket_material": "TPU 90–95A · 2 perimeters · 100% infill · slow",
+    "layer_height_mm": 0.2,
+    "walls": 3,
+    "infill_pct": "20–30",
+    "orientation": "parts print flat as modeled — no supports by design; lids/faces print face-down so chamfers, seats and debossed labels land on the first layers",
+}
+
+# filename-substring → note (first match wins). Sources: scad comments.
+PART_NOTES = [
+    ("gasket", "TPU 90–95A, 100% infill, slow — the seal is the print"),
+    ("lid", "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)"),
+    ("base", "prints flat, open side up — no supports"),
+    ("_drum", "prints open-face-up; keyhole pockets in the back (canary_watch_station.scad)"),
+    ("_bezel", "flat ring, prints face-down; seats the display disc"),
+    ("station_stand", "tilted cradle prints upright — no supports"),
+    ("display_frame", "prints face-down: the A-surface is your textured build plate"),
+    ("display_back", "prints outer-face-down; vents + keyholes need no support"),
+    ("display_stand", "prints flat; fin + rails are additive — no supports"),
+    ("doorbell_face", "prints face-down without support (edge rounds off the bed)"),
+    ("front", "prints face-down without support"),
+    ("back", "prints flat — no supports"),
+    ("bracket", "prints flat; GoPro prongs vertical for in-plane strength"),
+    ("knob", "prints flat on its face"),
+    ("coupon", "print FIRST — 15-minute fit tuner for your printer's tolerances"),
+    ("shield", "prints as oriented; louvers are self-supporting at 45°"),
+    ("tray", "prints flat — no supports"),
+    ("plate", "prints flat on the wall face"),
+]
+
+
+def part_note(filename: str) -> str:
+    low = filename.lower()
+    for pat, note in PART_NOTES:
+        if pat in low:
+            return note
+    return "prints flat as modeled — no supports by design"
+
 
 def device_for(name: str) -> str | None:
     for pat, dev in DEVICE_OF:
@@ -233,9 +278,15 @@ def main():
     for s in sets:
         if s["scad"] and s["scad"] not in scads:
             scads[s["scad"]] = parse_scad(ENC / s["scad"])
+    for s in sets:
+        for p in s["parts"]:
+            p["print_note"] = part_note(p["file"])
+            p["material"] = ("TPU 90–95A" if "gasket" in p["file"].lower()
+                             else "PETG / ASA (PLA indoors)")
     data = {
         "generated_by": "canary-local/tools/gen_enclosures.py",
         "source": "docs/hardware/enclosure",
+        "print_settings": PRINT_SETTINGS,
         "sets": sets,
         "scads": scads,
     }
@@ -249,3 +300,129 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Build-it data (BOM / assembly / SBOM) → devices/build.json
+#
+# Same philosophy as the enclosure catalog: parse the sources maintainers
+# already edit (docs/hardware/bom_*.csv, the enclosure README's Assembly
+# sections, sbom/README.md), emit JSON, drift-gate in CI. The page can
+# then say "how to build it" without a second copy that rots.
+# ═════════════════════════════════════════════════════════════════════════
+import csv
+
+BUILD_JSON = REPO / "canary-local/devices/build.json"
+HW = REPO / "docs/hardware"
+
+BOM_MAP = [
+    # (csv, device_id, refdes_prefix or None). A prefix keeps rows whose
+    # RefDes starts with it PLUS unprefixed shared rows (e.g. PSU1) — the
+    # display CSV interleaves W-* (watch) and D-* (dash) lines.
+    ("bom_canary_wap.csv", "canary-wap", None),
+    ("bom_canary_vision.csv", "canary-vision", None),
+    ("bom_canary_display.csv", "canary-display-watch", "W-"),
+    ("bom_canary_display.csv", "canary-display-dash", "D-"),
+]
+
+
+def parse_bom(name, prefix=None):
+    rows = []
+    req_total = 0.0
+    full_total = 0.0
+    with open(HW / name, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            if not r.get("RefDes"):
+                continue
+            if prefix is not None:
+                ref = r["RefDes"]
+                mine = ref.startswith(prefix)
+                shared = "-" not in ref  # unprefixed rows (PSU1…) serve both
+                if not (mine or shared):
+                    continue
+            try:
+                ext = float(r.get("ExtUSD") or 0)
+            except ValueError:
+                ext = 0.0
+            required = (r.get("Required") or "").strip().lower() == "required"
+            if required:
+                req_total += ext
+            full_total += ext
+            rows.append({
+                "ref": r["RefDes"],
+                "qty": r.get("Qty", "1"),
+                "required": required,
+                "category": r.get("Category", ""),
+                "desc": r.get("Description", ""),
+                "mpn": r.get("MPN", ""),
+                "mfr": r.get("Manufacturer", ""),
+                "usd": ext,
+                "notes": r.get("Notes", ""),
+            })
+    return {
+        "source": f"docs/hardware/{name}",
+        "rows": rows,
+        "required_usd": round(req_total, 2),
+        "full_usd": round(full_total, 2),
+    }
+
+
+def parse_assembly(md):
+    """Every '## Assembly' block → numbered steps; device inferred from the
+    block's own vocabulary (deterministic keywords, tested)."""
+    out = {}
+    for m in re.finditer(r"^## Assembly\s*$(.*?)(?=^## |\Z)", md, re.M | re.S):
+        body = m.group(1)
+        steps = [re.sub(r"\s+", " ", s).strip()
+                 for s in re.findall(r"^\d+\.\s+(.*?)(?=^\d+\.|\Z)", body, re.M | re.S)]
+        steps = [re.sub(r"\*+", "", s) for s in steps if s]
+        if not steps:
+            continue
+        text = body.lower()
+        if "ov5647" in text or "grove" in text or "lens" in text:
+            dev = "canary-vision"
+        elif "lipo" in text or "wire channel" in text or "magnet" in text:
+            dev = "canary-wap"
+        elif "radar" in text or "mr60" in text:
+            dev = "canary-sense"
+        else:
+            continue
+        out[dev] = {
+            "source": "docs/hardware/enclosure/README.md §Assembly",
+            "steps": steps,
+        }
+    return out
+
+
+SBOM_INFO = {
+    "note": "Software Bill of Materials: CycloneDX 1.5 JSON, generated in CI "
+            "on every main push (sbom.yml) — Rust kernel, Node tools, and the "
+            "ESP32 firmware stack (esp-idf, FreeRTOS, mbedtls, lwip, cJSON…). "
+            "Download from the SBOM Generation workflow's artifacts.",
+    "source": "sbom/README.md",
+    "link": "https://github.com/kmay89/securaCV/actions/workflows/sbom.yml",
+}
+
+
+def build_main():
+    md = (ENC / "README.md").read_text(errors="replace")
+    assembly = parse_assembly(md)
+    devices = {}
+    for name, dev_id, prefix in BOM_MAP:
+        devices.setdefault(dev_id, {})["bom"] = parse_bom(name, prefix)
+    for d, a in assembly.items():
+        devices.setdefault(d, {})["assembly"] = a
+    # honest gaps, stated
+    devices.setdefault("canary-sense", {})["bom_note"] = (
+        "Sense BOM pending — parts list lives in firmware/projects/canary-sense/README.md.")
+    data = {
+        "generated_by": "canary-local/tools/gen_enclosures.py",
+        "sbom": SBOM_INFO,
+        "devices": devices,
+    }
+    BUILD_JSON.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
+    print(f"OK build.json: {len(devices)} devices, "
+          f"assembly for {sorted(assembly)}")
+
+
+build_main()

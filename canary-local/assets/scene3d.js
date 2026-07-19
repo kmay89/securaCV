@@ -223,10 +223,13 @@ const VS = `
 attribute vec3 aPos; attribute vec3 aNrm; attribute vec2 aUv;
 uniform mat4 uProj, uView, uModel;
 varying vec3 vN; varying vec3 vP; varying vec2 vUv;
+varying vec3 vObj; varying vec3 vNl;
 void main() {
   vec4 wp = uModel * vec4(aPos, 1.0);
   vP = wp.xyz;
   vN = mat3(uModel) * aNrm;
+  vObj = aPos;   // part-local (print) space: z rises off the build plate
+  vNl = aNrm;    // local normal — overhang math is view-independent
   vUv = aUv;
   gl_Position = uProj * uView * wp;
 }`;
@@ -234,12 +237,19 @@ void main() {
 const FS = `
 precision mediump float;
 varying vec3 vN; varying vec3 vP; varying vec2 vUv;
+varying vec3 vObj; varying vec3 vNl;
 uniform vec3 uColor;
 uniform float uGloss;      // 0 matte shell .. 1 glass
 uniform float uUseTex;     // screen face samples the live framebuffer
 uniform float uEmissive;   // screen glow (backlight level)
+uniform float uClipZ;      // print guide: hide everything above this layer
+uniform float uMinZ;       // part's plate level (local z)
+uniform float uOverhangOn; // tint faces steeper than 45° pointing down
+uniform float uUnlit;      // plate grid / layer contours: flat color
 uniform sampler2D uTex;
 void main() {
+  if (vObj.z - uMinZ > uClipZ) discard;
+  if (uUnlit > 0.5) { gl_FragColor = vec4(uColor, 1.0); return; }
   vec3 N = normalize(vN);
   vec3 V = normalize(-vP);
   vec3 key = normalize(vec3(-0.45, 0.75, 0.6));
@@ -259,6 +269,11 @@ void main() {
   vec3 lit = base * (0.30 + kd * 0.72 + bounce);
   float spec = pow(max(dot(reflect(-key, N), V), 0.0), mix(8.0, 64.0, uGloss)) * mix(0.06, 0.5, uGloss);
   vec3 col = lit + vec3(spec) + rimL * vec3(0.10, 0.11, 0.13);
+  // Overhang guide: local faces steeper than 45° pointing at the plate,
+  // above the first layers, would need support in this orientation.
+  if (uOverhangOn > 0.5 && normalize(vNl).z < -0.707 && vObj.z > uMinZ + 0.45) {
+    col = mix(col, vec3(0.92, 0.28, 0.2), 0.7);
+  }
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -279,8 +294,12 @@ export class DeviceScene {
     this.gl = gl;
     this.prog = this._program(VS, FS);
     this.u = {};
-    for (const n of ["uProj", "uView", "uModel", "uColor", "uGloss", "uUseTex", "uEmissive", "uTex"])
+    for (const n of ["uProj", "uView", "uModel", "uColor", "uGloss", "uUseTex",
+                     "uEmissive", "uTex", "uClipZ", "uMinZ", "uOverhangOn", "uUnlit"])
       this.u[n] = gl.getUniformLocation(this.prog, n);
+    this.overhangOn = false;
+    this.clipZ = 1e9;
+    this.viewY = 0; // vertical look-at offset (plate scenes sit above y=0)
     this.a = {
       pos: gl.getAttribLocation(this.prog, "aPos"),
       nrm: gl.getAttribLocation(this.prog, "aNrm"),
@@ -326,13 +345,18 @@ export class DeviceScene {
   }
 
   addMesh(builder, { color = [0.5, 0.5, 0.5], gloss = 0.2, screen = false,
-                     model = M4.ident() } = {}) {
+                     model = M4.ident(), lines = false, unlit = false,
+                     clippable = false, minZ = 0 } = {}) {
     const gl = this.gl;
     const part = {
       model,
       color,
       gloss,
       screen,
+      lines,
+      unlit,
+      clippable,
+      minZ,
       count: builder.idx.length,
       vbo: gl.createBuffer(),
       nbo: gl.createBuffer(),
@@ -382,6 +406,10 @@ export class DeviceScene {
     const end = () => { dragging = false; };
     cv.addEventListener("pointerup", end);
     cv.addEventListener("pointercancel", end);
+    cv.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      this.dist = Math.min(2000, Math.max(30, this.dist * Math.exp(e.deltaY * 0.0011)));
+    }, { passive: false });
   }
 
   start() {
@@ -433,7 +461,7 @@ export class DeviceScene {
     }
 
     const proj = M4.persp(0.62, W / H, 5, 2000);
-    const view = M4.translate(0, 0, -this.dist);
+    const view = M4.translate(0, -this.viewY, -this.dist);
     const spin = M4.mul(M4.rotX(this.rot.x), M4.rotY(this.rot.y));
 
     gl.useProgram(this.prog);
@@ -449,6 +477,10 @@ export class DeviceScene {
       gl.uniform1f(this.u.uGloss, p.gloss);
       gl.uniform1f(this.u.uUseTex, p.screen ? 1 : 0);
       gl.uniform1f(this.u.uEmissive, this.glow);
+      gl.uniform1f(this.u.uClipZ, p.clippable ? this.clipZ : 1e9);
+      gl.uniform1f(this.u.uMinZ, p.minZ || 0);
+      gl.uniform1f(this.u.uOverhangOn, this.overhangOn && p.clippable ? 1 : 0);
+      gl.uniform1f(this.u.uUnlit, p.unlit ? 1 : 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, p.vbo);
       gl.vertexAttribPointer(this.a.pos, 3, gl.FLOAT, false, 0, 0);
       gl.enableVertexAttribArray(this.a.pos);
@@ -459,8 +491,16 @@ export class DeviceScene {
       gl.vertexAttribPointer(this.a.uv, 2, gl.FLOAT, false, 0, 0);
       gl.enableVertexAttribArray(this.a.uv);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, p.ibo);
-      gl.drawElements(gl.TRIANGLES, p.count, gl.UNSIGNED_SHORT, 0);
+      gl.drawElements(p.lines ? gl.LINES : gl.TRIANGLES, p.count,
+                      gl.UNSIGNED_SHORT, 0);
     }
+  }
+
+  removePart(part) {
+    const i = this.parts.indexOf(part);
+    if (i < 0) return;
+    for (const b of ["vbo", "nbo", "ubo", "ibo"]) this.gl.deleteBuffer(part[b]);
+    this.parts.splice(i, 1);
   }
 }
 
