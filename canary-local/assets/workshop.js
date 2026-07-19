@@ -70,6 +70,7 @@ const state = {
   mode: "building",  // "building" | "dreaming"
   scene: null,
   sceneParts: [],
+  viewGen: 0,
   meshCache: new Map(),   // url → {mesh,bbox,triangles,volume}
   volumes: new Map(),     // file → cm³ (filled as meshes load)
 };
@@ -256,7 +257,9 @@ function partUrl(part) {
 async function loadPartMesh(part) {
   const url = partUrl(part);
   if (state.meshCache.has(url)) return state.meshCache.get(url);
-  const buf = await (await fetch(url)).arrayBuffer();
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  const buf = await r.arrayBuffer();
   const parsed = parseSTL(buf);
   parsed.volume = meshVolumeCm3(parsed.mesh);
   parsed.bytes = buf.byteLength;
@@ -268,14 +271,18 @@ async function loadPartMesh(part) {
 // solo = index into the selection to inspect alone; null = the ensemble
 async function showSelectionIn3D(note, solo = null) {
   const scene = state.scene;
-  for (const p of state.sceneParts) scene.removePart(p);
-  state.sceneParts = [];
+  // rapid toggles overlap these async runs — only the newest may touch
+  // the scene, or a slow earlier load repaints over the current choice
+  const gen = ++state.viewGen;
   const parts = selectedParts();
   const metas = [];
   for (const part of parts) {
     try { metas.push({ part, ...(await loadPartMesh(part)) }); }
     catch { /* a missing mesh shows in the parts list; the scene stays honest */ }
   }
+  if (gen !== state.viewGen || scene !== state.scene) return;
+  for (const p of state.sceneParts) scene.removePart(p);
+  state.sceneParts = [];
   state.viewMetas = metas;
   renderInspectChips(metas, solo);
   if (!metas.length) {

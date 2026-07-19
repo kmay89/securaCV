@@ -405,12 +405,15 @@ export class DeviceScene {
     cv.addEventListener("pointermove", (e) => {
       if (!active.has(e.pointerId)) return;
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (active.size === 2) {
-        const d = pinchDist();
-        if (pinchD > 0 && d > 0) {
-          this.dist = Math.min(2000, Math.max(30, this.dist * (pinchD / d)));
+      if (active.size >= 2) {
+        // exactly two pinch; a third finger parks the gesture (no jitter)
+        if (active.size === 2) {
+          const d = pinchDist();
+          if (pinchD > 0 && d > 0) {
+            this.dist = Math.min(2000, Math.max(30, this.dist * (pinchD / d)));
+          }
+          pinchD = d;
         }
-        pinchD = d;
         return;
       }
       const dx = e.clientX - lx, dy = e.clientY - ly;
@@ -431,6 +434,10 @@ export class DeviceScene {
     };
     cv.addEventListener("pointerup", end);
     cv.addEventListener("pointercancel", end);
+    // mobile browsers can seize a captured pointer (scroll/gesture
+    // takeover) without firing pointerup — drop it or a later single
+    // finger reads as a phantom pinch
+    cv.addEventListener("lostpointercapture", end);
     cv.addEventListener("wheel", (e) => {
       e.preventDefault();
       this.dist = Math.min(2000, Math.max(30, this.dist * Math.exp(e.deltaY * 0.0011)));
