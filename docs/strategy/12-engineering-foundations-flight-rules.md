@@ -23,10 +23,11 @@ the bytes actually written to flash before switching boot partitions, latched
 failure records with hysteresis, textbook monotonic-time discipline, and a
 45 KB LESSONS_LEARNED.md that reads like a mishap-report archive. A review
 board would recognize the culture immediately. It would then point at five
-things: (1) under completely normal Home Assistant polling, **an evidence
-append can spuriously fail** because the API writes receipts on every read and
-no database connection sets a busy timeout; (2) nothing prevents **two writers
-from forking the hash chain**; (3) one shipped firmware variant has **no
+things: (1) the API **writes a signed receipt on every read**, so routine Home
+Assistant polling costs ~2,880 database writes a day of SD wear and standing
+lock contention on the evidence store — and any lock held past the (implicit,
+library-default) 5-second busy handler still fails a real evidence append with
+no retry; (2) nothing prevents **two writers from forking the hash chain**; (3) one shipped firmware variant has **no
 watchdog and an unbounded reconnect loop** — a dead broker freezes the witness
 forever; (4) the **primary untrusted-input surface (adapters) compiles in CI
 but its tests never execute**; and (5) the repo currently **ships two different
@@ -121,18 +122,24 @@ hardening/hygiene. Every finding was verified in code at the cited location.
 
 ### 3.1 Kernel (Rust)
 
-**K1 · P0 — Normal HA polling can make a real evidence append fail.**
-`export_events_for_api` (`src/lib.rs:2347`) appends a signed export receipt —
-a *database write* — and it runs on **every** `GET /events`, `/digest`,
-`/events/latest` (`src/api/mod.rs:621`). A Home Assistant coordinator polling
-every 30 s makes the API thread write ~2,880×/day from its own connection,
-concurrent with witnessd's appends. **No connection anywhere sets
-`busy_timeout`** (verified: zero matches in `src/`), so in WAL mode the loser
-of the write-lock race gets `SQLITE_BUSY` immediately. If the loser is a real
-event append, the seal fails; the failure-record fallback needs the same lock
-and can fail too. Fix (small): set `busy_timeout` (seconds) in every
-`open_db_connection*`; make read endpoints read-only and batch receipt writes,
-or route all writes through witnessd.
+**K1 · P1 — Read endpoints write, and the busy policy is inherited, not
+owned.** *(Corrected during review: originally filed as "P0 — appends fail
+immediately on contention." rusqlite 0.31 installs a default 5-second busy
+handler at connection open — verified in the pinned version's
+`inner_connection.rs` — so short contention waits rather than fails; credit
+to automated review on the PR for the catch.)* What remains true and worth
+fixing: `export_events_for_api` (`src/lib.rs:2347`) appends a signed export
+receipt — a *database write* — on **every** `GET /events`, `/digest`,
+`/events/latest` (`src/api/mod.rs:621`), so a Home Assistant coordinator
+polling every 30 s produces ~2,880 writes/day of SD wear and a standing
+contention window on the evidence store. Any writer that holds the lock
+longer than 5 s (large retention prune, WAL checkpoint on a big log, slow SD
+storage) still fails a live evidence append with `SQLITE_BUSY`, and neither
+the append nor its failure-record fallback retries. And the 5 s policy is an
+implicit library default that no code states and no test asserts. Fix: own
+the policy (explicit `busy_timeout` in the shared pragma helper), make the
+append a single bounded critical section (the K2 transaction), and batch
+receipts periodically instead of per-read.
 
 **K2 · P0 — Nothing prevents a forked chain.** `append_record`
 (`src/storage.rs:230-275`) is SELECT-head-then-INSERT with **no enclosing
@@ -314,7 +321,7 @@ detection/response exists today (with the mechanism); **gap** = finding above.
 | Adapter claim (Track B) | malformed input | ✓ parsers total, fuzz-lite exists | ✓ | **gap A1: none of it runs in CI** |
 | | dropped/rejected claim | **gap K7: logged, not witnessed** | — | add adapter-path `GapMissingData` |
 | | adapter host wedge | **gap K7: poison cascade** | ✗ | none — permanent ingest outage |
-| Append/seal | write-lock race | **gap K1: SQLITE_BUSY, no retry** | partial | failure-record fallback can also BUSY |
+| Append/seal | write lock held > 5 s | **gap K1: append fails, no retry** | partial | rusqlite's default 5 s handler absorbs short contention; fallback can also fail |
 | | second writer | **gap K2: chain fork possible** | ✗ | none |
 | | storage full/write fail | ✓ DiskMonitor preflight, latched | ✓ | sealed failure record → alarm → stderr |
 | | power loss mid-append | ✓ WAL + FULL sync; lifecycle records | ✓ | PowerLoss sealed on reopen; **gap: no torn-write test** |
@@ -416,11 +423,12 @@ Beyond point fixes — the four artifacts that make rigor self-sustaining:
 
 ## 8. Roadmap
 
-**Phase 0 — Stop the bleeding (P0s; days, all small):**
-K1 `busy_timeout` + read-only read endpoints · K2 transactional append +
-single-writer lock · F1 vision watchdog + bounded reconnect (port from sense)
-· A1 adapter-features test job · A2 version-sync gate + `bump_version.sh` in
-the release checklist · K5 `[profile.release]`.
+**Phase 0 — Stop the bleeding (P0s plus the K1 hardening; days, all small):**
+K2 transactional append + single-writer discipline · K1 explicit busy policy
+(own the pragma) with receipt batching to follow · F1 vision watchdog +
+bounded reconnect (port from sense) · A1 adapter-features test job · A2
+version-sync gate + `bump_version.sh` in the release checklist · K5
+`[profile.release]`.
 
 **Phase 1 — Uniform application (P1s; weeks):**
 K3 egress reconnect · K4 boot tail-verify + witnessd watchdog + systemd
