@@ -600,6 +600,177 @@ SANDBOX = [
 ]
 
 # --------------------------------------------------------------------------- #
+# 8.5 flashing — the bench skills (parsed from the firmware README + build
+#     files + docs, so the teaching can never go stale against the toolchain)
+# --------------------------------------------------------------------------- #
+
+FW_README = REPO / "firmware/projects/canary-wap/README.md"
+PIO_INI = REPO / "firmware/projects/canary-wap/platformio.ini"
+MAKEFILE = REPO / "firmware/projects/canary-wap/Makefile"
+SETUP_SH = REPO / "firmware/projects/canary-wap/setup.sh"
+BENCH_JS = REPO / "canary-local/emulator/web/bench.js"
+
+readme = read(FW_README)
+
+
+def between(text: str, start: str, end: str, label: str) -> str:
+    i = text.find(start)
+    if i < 0:
+        die(f"{label}: anchor {start!r} not found in {FW_README.relative_to(REPO)}")
+    j = text.find(end, i)
+    return text[i:j] if j >= 0 else text[i:]
+
+
+def links(text: str):
+    return [{"name": n, "url": u} for n, u in re.findall(r"\[([^\]]+)\]\(([^)]+)\)", text)]
+
+
+# ---- Option A: PlatformIO -------------------------------------------------
+opt_a = between(readme, "Option A: PlatformIO", "</details>", "PlatformIO option")
+pio_prereqs = links(between(opt_a, "**Prerequisites:**", "\n\n", "PlatformIO prereqs"))
+fence = re.search(r"```bash\n(.*?)```", opt_a, re.S)
+if not fence:
+    die("PlatformIO option has no bash fence")
+PIO_COMMANDS = []
+note = None
+for ln in fence.group(1).splitlines():
+    ln = ln.rstrip()
+    if not ln:
+        continue
+    if ln.lstrip().startswith("#"):
+        note = ln.lstrip("# ").strip()
+    else:
+        PIO_COMMANDS.append({"cmd": ln.strip(), "note": note})
+        note = None
+# the commands must still exist as real build machinery
+SRC_DIR = grab(PIO_INI, r"src_dir\s*=\s*(\S+)", "platformio src_dir")
+if SRC_DIR != "arduino/canary_wap":
+    die(f"platformio src_dir moved: {SRC_DIR!r}")
+for target in ("setup:", "upload:", "monitor:"):
+    must(MAKEFILE, target, f"Makefile target {target}")
+if not SETUP_SH.exists():
+    die("setup.sh missing next to the Makefile")
+for c in PIO_COMMANDS:
+    if c["cmd"].startswith("make "):
+        must(MAKEFILE, c["cmd"].split()[1] + ":", f"README command {c['cmd']!r}")
+
+# ---- Option B: Arduino IDE ------------------------------------------------
+opt_b = between(readme, "Option B: Arduino IDE", "</details>", "Arduino option")
+ard_prereqs = links(between(opt_b, "**Prerequisites:**", "\n\n", "Arduino prereqs"))
+boards_url_m = re.search(r"(https://raw\.githubusercontent\.com/\S+)", opt_b)
+if not boards_url_m:
+    die("Arduino boards-manager URL not found in README Option B")
+BOARDS_URL = boards_url_m.group(1)
+must(FW_README, "esp32 by Espressif Systems", "Arduino board package name")
+
+lib_block = between(opt_b, "**Install Libraries**", "3. **Configure Board**", "Arduino libraries")
+ARD_LIBS = []
+for ln in lib_block.splitlines():
+    if re.match(r"\s+- ", ln):
+        ARD_LIBS.append(re.sub(r"\s+", " ", ln.strip()[2:]))
+    elif ARD_LIBS and re.match(r"\s{4,}\S", ln) and not re.match(r"\s+-", ln):
+        ARD_LIBS[-1] += " " + ln.strip()
+ARD_LIBS = [l.replace("**", "") for l in ARD_LIBS]
+if len(ARD_LIBS) < 3:
+    die(f"Arduino library list too short: {ARD_LIBS}")
+
+BOARD_CONFIG = [[k.strip(), v.strip()] for k, v in
+                re.findall(r"- ([A-Za-z ]+): \*\*([^*]+)\*\*", opt_b)]
+for want in ("Board", "USB CDC On Boot", "Flash Size", "PSRAM"):
+    if not any(k == want for k, _ in BOARD_CONFIG):
+        die(f"Arduino board-config row {want!r} not found in README")
+SKETCH = "arduino/canary_wap/canary_wap.ino"
+must(FW_README, SKETCH, "sketch path")
+if not (REPO / "firmware/projects/canary-wap" / SKETCH).exists():
+    die(f"sketch path {SKETCH!r} does not exist on disk")
+
+note_m = re.search(r"> \*\*One firmware, two toolchains\.\*\*(.*?)\n\n", readme, re.S)
+if not note_m:
+    die("'One firmware, two toolchains' note not found in README")
+ONE_FIRMWARE = re.sub(r"\s+", " ", ("One firmware, two toolchains." + note_m.group(1))
+                      .replace(">", " ").replace("**", "").replace("*", "")).strip()
+
+# ---- Troubleshooting (the frustrating part, verbatim from the README) -----
+ts = readme[readme.find("## Troubleshooting"):]
+if "## Troubleshooting" not in readme:
+    die("README has no Troubleshooting section")
+TROUBLE = []
+for symptom, body in re.findall(r"<summary><strong>(.+?)</strong></summary>(.*?)</details>", ts, re.S):
+    fixes = [re.sub(r"\s+", " ", b.strip("- ").strip())
+             for b in re.findall(r"^- .+", body, re.M)]
+    for code in re.findall(r"```bash\n(.*?)```", body, re.S):
+        fixes.extend(l.strip() for l in code.splitlines() if l.strip() and not l.strip().startswith("#"))
+    TROUBLE.append({"symptom": symptom.strip(), "fixes": fixes})
+if len(TROUBLE) < 3:
+    die(f"only {len(TROUBLE)} troubleshooting entries parsed")
+must(FW_README, "Hold BOOT button while connecting", "download-mode troubleshooting line")
+
+# ---- the two little buttons (constants from the .ino; rituals validated) --
+BOOT_GPIO = int(grab(INO, r"BOOT_BUTTON_GPIO\s*=\s*(\d+)", "BOOT_BUTTON_GPIO"))
+BOOT_LONG_MS = int(grab(INO, r"BOOT_LONG_PRESS_MS\s*=\s*(\d+)", "BOOT_LONG_PRESS_MS"))
+must(INO, "Press the BOOT button on the device to reveal the provisioning receipt.", "BOOT receipt hint")
+must(DOC, "Press the **BOOT** button on the device for ~1 second", "docs password recovery")
+must(DOC, "press and hold for **5 seconds** during power-up", "docs factory recovery")
+# the ROM's own download-mode strings, exactly as the bench emulator prints them
+must(BENCH_JS, "DOWNLOAD(USB/UART0)", "ROM download strap line")
+must(BENCH_JS, "waiting for download", "ROM waiting line")
+
+FLASH = {
+    "kit_note": "Kits arrive already flashed — you flash when you build from parts, or to update over USB. "
+                "Updates never touch the ROM's USB recovery, so a Canary can always be re-flashed.",
+    "cable": "a data-capable USB-C cable (not charge-only) — the #1 'device not detected' cause",
+    "port_hint": "the board shows up as a USB-CDC serial port · 115200 8N1",
+    "buttons": [
+        {"id": "boot", "label": "BOOT", "gpio": BOOT_GPIO,
+         "what": f"GPIO{BOOT_GPIO}, a strapping pin — the ROM samples it only at reset. While the app runs, the firmware reads it for its own gestures:",
+         "gestures": [
+             "short press (~1 s): prints the provisioning receipt — AP SSID + password — on serial",
+             f"hold >{BOOT_LONG_MS // 1000} s: factory reset (docs: hold 5 s during power-up if the device is unresponsive — new keypair, fresh credentials)",
+             "held LOW through a reset: the mask ROM parks in download mode and waits for a flasher",
+         ]},
+        {"id": "reset", "label": "RESET",
+         "what": "chip reset — RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every reset)",
+         "gestures": ["tap: reboot the app", "tap while BOOT is held: enter download mode"]},
+    ],
+    "download_mode": {
+        "title": "Download mode by hand (when the upload can't find the port)",
+        "steps": [
+            "Hold BOOT down and keep it held",
+            "Tap RESET once (or plug the USB cable in) while BOOT is still held",
+            "Release BOOT — the serial port re-enumerates and the ROM prints 'waiting for download'",
+            "Click Upload in your IDE now; when it finishes, tap RESET to boot the app",
+        ],
+        "rom_line": "rst:0x1 (POWERON),boot:0x0 (DOWNLOAD(USB/UART0))",
+        "note": "if the upload still fails: try again (esptool retries often just work), close every serial monitor "
+                "holding the port, or restart the IDE — then redo the ritual.",
+    },
+    "toolchains": [
+        {"id": "platformio", "name": "PlatformIO (recommended)",
+         "prereqs": pio_prereqs, "commands": PIO_COMMANDS, "src_dir": SRC_DIR},
+        {"id": "arduino", "name": "Arduino IDE",
+         "prereqs": ard_prereqs, "boards_url": BOARDS_URL,
+         "board_pkg": "esp32 by Espressif Systems",
+         "libraries": ARD_LIBS, "board_config": BOARD_CONFIG, "sketch": SKETCH},
+    ],
+    "one_firmware_note": ONE_FIRMWARE,
+    "troubleshooting": TROUBLE,
+    "recovery": {
+        "password": [
+            "Plug the Canary into a computer with a USB-C cable",
+            "Open a serial terminal at 115 200 baud on the new USB-CDC port",
+            "Press BOOT for ~1 second — the terminal prints the AP SSID and password",
+        ],
+        "factory": f"Hold BOOT >{BOOT_LONG_MS // 1000} s while running — or 5 s during power-up — for a factory reset: "
+                   "fresh keypair, new credentials printed on serial",
+    },
+    "sources": {
+        "build_paths": "firmware/projects/canary-wap/README.md §Choose Your Build Path + §Troubleshooting",
+        "buttons": "canary_wap.ino BOOT_BUTTON_* constants",
+        "recovery": "docs/getting_started_canary.md §Recovering the password",
+    },
+}
+
+# --------------------------------------------------------------------------- #
 # 9. assemble + write
 # --------------------------------------------------------------------------- #
 
@@ -632,6 +803,7 @@ out = {
     "mqtt": MQTT,
     "sensing": SENSING,
     "sandbox": SANDBOX,
+    "flash": FLASH,
     "docs": {
         "getting_started": "docs/getting_started_canary.md",
         "firmware_readme": "firmware/projects/canary-wap/README.md",
@@ -646,6 +818,10 @@ if len(WIZARD["steps"]) != 5:
     die("expected exactly 5 wizard steps")
 if len(BOOT) < 15:
     die("boot log too short — parse likely broke")
+if len(FLASH["toolchains"]) != 2:
+    die("expected exactly 2 flashing toolchains")
+if len(FLASH["troubleshooting"]) < 3 or len(PIO_COMMANDS) < 3:
+    die("flash section parsed thin — README moved?")
 
 OUT_JSON.write_text(json.dumps(out, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 print(f"wrote {OUT_JSON.relative_to(REPO)}  "
