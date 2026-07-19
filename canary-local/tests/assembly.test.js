@@ -23,7 +23,8 @@ for (const [dev, d] of Object.entries(asm.devices)) {
     const { PARTS } = await import("../assets/assembly.js");
     for (const p of d.parts) {
       if (p.source === "stl") {
-        assert.ok(existsSync(join(REPO, "docs/hardware/enclosure", p.file)), `missing STL: ${p.file}`);
+        const dir = p.base === "preview" ? join(ROOT, "enclosures/preview") : join(REPO, "docs/hardware/enclosure");
+        assert.ok(existsSync(join(dir, p.file)), `missing STL: ${p.file}`);
       } else if (p.source === "board") {
         assert.ok(boards.boards[p.board], `unknown board: ${p.board}`);
         assert.ok(existsSync(join(ROOT, boards.boards[p.board].glb)), `missing board GLB: ${p.board}`);
@@ -106,6 +107,57 @@ test("canary-wap: the assembly is physically true to the scad", () => {
   const idx = (t) => titles.findIndex((x) => x.includes(t));
   assert.ok(idx("battery") < idx("board"), "battery before board (per the catalog)");
   assert.ok(idx("close the lid") < idx("screws"), "lid closes before screws drive");
+});
+
+// ── the drafting gate: every device obeys the assembly-order rules ───────
+// (assets/assembly-rules.js — supports open/close the build, internals
+// before shells, seals before lids, fasteners last AND outermost, external
+// accessories after the hardware). The Assemble tab shows this same check.
+for (const [dev, d] of Object.entries(asm.devices)) {
+  test(`${dev}: assembly order passes the drafting rules`, async () => {
+    const { validateDevice } = await import("../assets/assembly-rules.js");
+    const { ok, violations } = validateDevice(d);
+    assert.ok(ok, `ordering violations:\n  ${violations.join("\n  ")}`);
+  });
+}
+
+// ── dual-unit caliper formatting (the parts-list readout) ────────────────
+test("caliper readout: mm · decimal inch · nearest-1/64 fraction", async () => {
+  const { fmtLen, fracInch } = await import("../assets/assembly-rules.js");
+  assert.strictEqual(fracInch(25.4), "1");
+  assert.strictEqual(fracInch(12.7), "1/2");
+  assert.strictEqual(fracInch(52.0), "2 3/64");     // watch drum Ø
+  assert.strictEqual(fmtLen(25.4, "mm"), "25.4 mm");
+  assert.strictEqual(fmtLen(25.4, "in"), "1.000″ · 1″");
+  assert.strictEqual(fmtLen(52, "all"), "52.0 mm · 2.047″ · 2 3/64″");
+});
+
+// ── physical sanity for the two display builds (same spirit as the WAP
+// pins): geometry from canary_watch_station.scad / canary_dash_display.scad
+test("canary-display-watch: seated on the stand's 25° pocket axis", () => {
+  const a = asm.devices["canary-display-watch"];
+  const by = Object.fromEntries(a.parts.map((p) => [p.id, p]));
+  // drum back cap at the scad's pocket start (0, 6, sh−4 = 39.98)
+  assert.deepStrictEqual(by.drum.seated.pos, [0, 6, 39.98]);
+  assert.strictEqual(by.drum.seated.rot[0], 65, "drum axis reclined 25° from vertical");
+  // bezel flips from its face-down print (65 + 180)
+  assert.strictEqual(by.bezel.seated.rot[0], 245);
+  // screws: the very last step, outermost explode, at the scad's post radius
+  const maxOther = Math.max(...a.parts.filter((p) => p.id !== "screws").map((p) => p.step));
+  assert.ok(by.screws.step > maxOther, "screws drive last");
+  for (const [x] of by.screws.instances) assert.ok(Math.abs(Math.abs(x) - 22.5) < 0.05, "screws on the post circle");
+});
+
+test("canary-display-dash: panel seats against the frame lip, screws from the back", () => {
+  const a = asm.devices["canary-display-dash"];
+  const by = Object.fromEntries(a.parts.map((p) => [p.id, p]));
+  // module centre derived from the stand's channel + fin geometry
+  assert.ok(Math.abs(by.panel.seated.pos[1] - (-1.04)) < 0.05, "panel glass 5.6 in front of module centre");
+  assert.strictEqual(by.frame.seated.rot[0], 245, "frame flips from its face-down print");
+  assert.strictEqual(by.back.seated.rot[0], 65, "back keeps its outer-face-out print orientation");
+  assert.strictEqual(by.screws.instances.length, 4, "four corner-lobe screws");
+  const maxOther = Math.max(...a.parts.filter((p) => p.id !== "screws").map((p) => p.step));
+  assert.ok(by.screws.step > maxOther, "screws drive last");
 });
 
 test("canary-wap: the sun shield stands on its posts above the lid", () => {

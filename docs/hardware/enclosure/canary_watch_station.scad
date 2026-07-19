@@ -166,8 +166,13 @@ module stand() {
             translate([-sw/2, -sd/2, 0]) cube([sw, sd, 4]);
             translate([-sw/2, sd/2 - 10, 0]) cube([sw, 10, sh]);
         }
-        // tilted drum pocket (leans back against the tall rear wall)
-        translate([0, 6, sh - 4]) rotate([tilt + 90, 0, 0])
+        // tilted drum pocket (leans back against the tall rear wall).
+        // rotate([90 - tilt]) points the pocket axis (0, -cos(tilt), sin(tilt)):
+        // trough open up-front, glass reclined `tilt` from vertical. The
+        // previous rotate([tilt + 90]) mirrored the axis in Z and carved the
+        // cradle tipping the drum face-down 65° — the drum could never seat.
+        // ⚠️ regenerate enclosures/preview/canary_watch_station_stand.stl.
+        translate([0, 6, sh - 4]) rotate([90 - tilt, 0, 0])
             cylinder(d = drum_d + 2*tol_slide + 0.2, h = drum_d);
         // rear cable channel down the back face
         translate([0, sd/2 - 3, -0.1]) rotate([-tilt, 0, 0])
