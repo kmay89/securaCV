@@ -504,7 +504,8 @@ footer p { max-width: 720px; margin: 0 auto; }
 .style-chip strong { display: block; font-size: 13.5px; }
 .style-chip span { display: block; font-size: 11px; color: #9a9a9a; margin-top: 2px; }
 .style-chip:hover { border-color: #3a3a3a; }
-.style-chip.on { border-color: var(--canary); box-shadow: 0 0 0 1px var(--canary) inset; }
+/* .on carries no styles: the selection glow is painted inline in the
+   chip's own accent (app.js paint()); the class remains as state. */
 
 /* ── Workshop polish: inspect mode, fullscreen, honest empty states ──── */
 .ws-fullbtn { position: absolute; right: 10px; top: 10px; background: #000a;
