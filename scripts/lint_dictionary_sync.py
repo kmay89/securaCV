@@ -71,7 +71,11 @@ def rust_enum_variants(text: str, name: str, rel: str) -> list[str]:
         s = line.strip()
         if not s or s.startswith(("//", "#", "/*", "*")):
             continue
-        m = re.match(r"^([A-Z][A-Za-z0-9_]*)\s*,?$", s)
+        # Match the variant *name* at line start regardless of what follows —
+        # a trailing `// comment`, a discriminant (`= 1`), or fields
+        # (`(Type)` / `{ ... }`). The strict `\s*,?$` form silently skipped
+        # such variants and reported false drift.
+        m = re.match(r"^([A-Z][A-Za-z0-9_]*)\b", s)
         if m:
             variants.append(m.group(1))
     return variants
@@ -89,7 +93,7 @@ def rust_enum_serde_renames(text: str, name: str, rel: str) -> dict[str, str]:
         if rm:
             pending = rm.group(1)
             continue
-        vm = re.match(r"^([A-Z][A-Za-z0-9_]*)\s*,?$", s)
+        vm = re.match(r"^([A-Z][A-Za-z0-9_]*)\b", s)
         if vm and pending is not None:
             renames[vm.group(1)] = pending
             pending = None
@@ -167,8 +171,17 @@ def main() -> int:
     compare("FailureType (src/lib.rs) vs dictionary",
             fail_variants, rust_enum_variants(lib, "FailureType", "src/lib.rs"))
 
-    # Attestation: dictionary items that carry a Rust variant must match the
-    # enum's serde renames exactly (the `device` tier is the absent case).
+    # Attestation, two checks:
+    #  (a) the full variant set must match — otherwise a NEW variant added
+    #      without a serde rename would serialize as its PascalCase name,
+    #      reach HA as an unrecognized value, and `normalize_attestation`
+    #      would silently render it device-attested (a provenance downgrade
+    #      FR-13 must catch), while (b) alone stays green.
+    #  (b) each variant that carries a rename must map to the wire string the
+    #      dictionary expects (the `device` tier is the absent case, no variant).
+    dict_att_variants = [a["rust_variant"] for a in att if a["rust_variant"]]
+    compare("Attestation variants (src/lib.rs) vs dictionary",
+            dict_att_variants, rust_enum_variants(lib, "Attestation", "src/lib.rs"))
     rust_att = rust_enum_serde_renames(lib, "Attestation", "src/lib.rs")
     dict_att = {a["rust_variant"]: a["wire"] for a in att if a["rust_variant"]}
     if rust_att != dict_att:
@@ -242,10 +255,12 @@ def _check_sig(rel: str, text: str, sig: dict) -> None:
         err(f"[drift] {rel}: SIG_PREFIX {pm.group(1)!r} vs dictionary {sig['sig_prefix']!r}")
     if sm and int(sm.group(1)) != sig["schema_v"]:
         err(f"[drift] {rel}: SCHEMA_V {sm.group(1)} vs dictionary {sig['schema_v']}")
-    if rel.endswith("signature.py"):
-        am = re.search(r'ALG_NAME\s*=\s*"([^"]+)"', text)
-        if am and am.group(1) != sig["alg_name"]:
-            err(f"[drift] {rel}: ALG_NAME {am.group(1)!r} vs dictionary {sig['alg_name']!r}")
+    # ALG_NAME wherever it is defined (signature.py AND every firmware copy that
+    # declares it): firmware emits `alg` in signature metadata and the HA
+    # verifier rejects any value that differs from the dictionary's alg_name.
+    am = re.search(r'ALG_NAME\s*=\s*"([^"]+)"', text)
+    if am and am.group(1) != sig["alg_name"]:
+        err(f"[drift] {rel}: ALG_NAME {am.group(1)!r} vs dictionary {sig['alg_name']!r}")
 
 
 if __name__ == "__main__":
