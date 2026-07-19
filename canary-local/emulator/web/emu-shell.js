@@ -221,6 +221,16 @@ export class CanaryEmulator {
         "string",
       ]),
       nvsReset: M.cwrap("emu_nvs_reset", null, []),
+      chApply: M.cwrap("emu_apply_character", null, ["number"]),
+      chCount: M.cwrap("emu_character_count", "number", []),
+      chActive: M.cwrap("emu_character_active", "number", []),
+      chAtRing: M.cwrap("emu_character_at_ring", "number", ["number"]),
+      // Pointer-returns decoded page-side: under ASYNCIFY, cwrap's own
+      // "string" return path can hand back a promise that never settles
+      // while the firmware loop keeps re-suspending; a raw pointer is a
+      // plain number (sync), and the table strings are static forever.
+      chName: M.cwrap("emu_character_name", "number", ["number"]),
+      chCaption: M.cwrap("emu_character_caption", "number", ["number"]),
     };
 
     if (seed != null) this.c.seed(seed >>> 0);
@@ -266,7 +276,18 @@ export class CanaryEmulator {
     this.opts.onDisplayReady?.(w, h, this.round);
   }
 
+  /** Take this instance off the bench: a replacement module owns the
+   *  canvas now. The wasm keeps ticking harmlessly off-stage (a clean
+   *  ASYNCIFY teardown isn't worth the ceremony for a demo bench), but
+   *  it may no longer draw, glow, log, or speak. */
+  retire() {
+    this.dead = true;
+    this.stopFleetHeartbeat();
+    this.opts = {};
+  }
+
   _blit() {
+    if (this.dead) return;
     if (!this.imageData) return;
     const ptr = this.c.fbPtr();
     if (!ptr) return;
@@ -279,6 +300,7 @@ export class CanaryEmulator {
   }
 
   _backlight(level, duty13) {
+    if (this.dead) return;
     let glow;
     let night = false;
     if (duty13 >= 0) {
@@ -323,6 +345,32 @@ export class CanaryEmulator {
   }
   stepTime(ms) {
     this.c.timeStep(ms);
+  }
+
+  // ── Public: the Character ring, straight from the firmware table ──────
+  // Same knob the on-glass picker turns (the setting persists through
+  // emulated reboots via the debounced commit, like the real glass).
+  applyCharacter(id) {
+    this.c.chApply(id);
+  }
+  // Value-returning calls are awaited: under ASYNCIFY a call that lands
+  // while the firmware is suspended in its loop-sleep comes back as a
+  // Promise, and a bench must read the dial, not the dial's IOU.
+  async activeCharacter() {
+    return await this.c.chActive();
+  }
+  async characterRing() {
+    const out = [];
+    const n = await this.c.chCount();
+    for (let i = 0; i < n; i++) {
+      const id = await this.c.chAtRing(i);
+      out.push({
+        id,
+        name: this.module.UTF8ToString(await this.c.chName(id)),
+        caption: this.module.UTF8ToString(await this.c.chCaption(id)),
+      });
+    }
+    return out;
   }
 
   /** Stage the emulated wall clock at a given local hour (e.g. 10 to see

@@ -9,8 +9,39 @@
 #include <stdint.h>
 
 #include "emu_bus.h"
+#include "canary/ui/character.h"
+#include "canary/glass_settings.h"
 
 extern "C" {
+
+// ── Character knobs (the lab's style rail) ──────────────────────────────
+// Same three moves the on-glass picker makes (settings_ui.cpp): mutate the
+// setting, mark it dirty (the debounced committer persists it, so an
+// emulated reboot keeps the choice), apply the look. The render tick's
+// ground-flip rebuild then repaints the live face — the page never touches
+// pixels, it turns the same knob a finger would. Names/captions/ring order
+// are read back from the firmware table so the page can never drift from
+// the truth it demos.
+EMSCRIPTEN_KEEPALIVE void emu_apply_character(int n) {
+  canary::glass::settings_mut().character = (uint8_t)n;
+  canary::glass::settings_mark_dirty();
+  canary::ui::character_apply((canary::ui::Character)n);
+}
+EMSCRIPTEN_KEEPALIVE int emu_character_count(void) {
+  return (int)canary::ui::character_count();
+}
+EMSCRIPTEN_KEEPALIVE int emu_character_active(void) {
+  return (int)canary::ui::active_character();
+}
+EMSCRIPTEN_KEEPALIVE int emu_character_at_ring(int pos) {
+  return (int)canary::ui::character_at_ring((uint8_t)pos);
+}
+EMSCRIPTEN_KEEPALIVE const char* emu_character_name(int n) {
+  return canary::ui::character_name((canary::ui::Character)n);
+}
+EMSCRIPTEN_KEEPALIVE const char* emu_character_caption(int n) {
+  return canary::ui::character_caption((canary::ui::Character)n);
+}
 
 EMSCRIPTEN_KEEPALIVE void emu_time_scale(double scale) {
   emu_clock_set_scale(scale);

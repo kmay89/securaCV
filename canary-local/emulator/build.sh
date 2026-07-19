@@ -214,7 +214,7 @@ em++ "${OBJS[@]}" \
   -sEXPORT_NAME="$EXPORT_NAME" \
   -sENVIRONMENT=web \
   -sSINGLE_FILE=1 \
-  -sEXPORTED_RUNTIME_METHODS=ccall,cwrap \
+  -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString \
   -Wl,--wrap=time \
   -o "$DIST/$OUT_BASE.js"
 

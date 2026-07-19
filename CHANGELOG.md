@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### canary.local — the lab wears the Character, meets the bird, shows the real parts
+
+- **The Character ring is on the page.** The display sheets' Try-it view
+  gains a style rail: all seven ages, names/captions/ring order read back
+  from the wasm firmware itself (never hardcoded), applied through the
+  same knob the on-glass picker turns — the choice even persists through
+  emulated reboots via the real debounced settings commit. A tour step
+  dresses the glass in Heirloom mid-walkthrough.
+- **"Meet the bird again."** One button reboots the emulated display as a
+  true first boot: the hop in, the head-tilt, the typed introduction and
+  the privacy promise — the first-meeting splash, previously unreachable
+  on the page, now the demo's opening act. (Emulator shells learned
+  `retire()` so a replaced module can never draw over its successor.)
+- **Every 3D card is the real part.** Device cards upgrade from
+  procedural approximations to the actual geometry: the displays load the
+  OpenSCAD-rendered preview meshes (drum/bezel/stand, frame/back/stand)
+  and the witnesses load their print-validated shells from
+  `docs/hardware/enclosure/` — assembled from their own bounding boxes,
+  with the live firmware still texturing the glass. Approximations remain
+  only as an offline fallback.
+- Emulator bindings: `emu_apply_character` + ring/name/caption reads
+  (pointer-return strings decoded page-side — cwrap's own string path can
+  return a never-settling promise under ASYNCIFY); `UTF8ToString` joins
+  the exported runtime methods.
+
 ### Display Character wave 4 — Terminal, Blueprint, and a mirror that dresses to match
 
 - **Two more ages on the ring**
