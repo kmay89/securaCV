@@ -652,6 +652,7 @@ export class DeviceScene {
     if (this._raf) return;
     const step = () => {
       this._raf = requestAnimationFrame(step);
+      if (this.onTick) this.onTick(); // per-frame hook: cable rigs, LEDs, prop animation
       this.draw();
     };
     step();

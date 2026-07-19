@@ -243,3 +243,21 @@ test("flash: troubleshooting is the README's own, none invented", () => {
   assert.ok(data.flash.troubleshooting.some((t) => t.symptom.includes("not detected")),
     "the port-not-found flow (the frustrating one) must be taught");
 });
+
+// ── 6. the cable rig's DOM-free spine ──────────────────────────────────────
+test("cable spine: trails away from the port and stays behind the connector", async () => {
+  const { cablePoint, CABLE_BEZIER, WAP_PORT, WAP_LED } = await import("../assets/wap-ui.js");
+  // t0 sits just behind the strain relief; t1 is the far, drooping end
+  const p0 = cablePoint(0), p1 = cablePoint(1);
+  assert.deepStrictEqual(p0, CABLE_BEZIER[0]);
+  assert.ok(p1[2] < p0[2], "the lead trails backward (−Z, away from the port)");
+  assert.ok(p1[1] < p0[1], "the lead droops downward");
+  for (let i = 1; i <= 10; i++) { // the spine never doubles back toward the port
+    assert.ok(cablePoint(i / 10)[2] <= cablePoint((i - 1) / 10)[2] + 1e-6);
+  }
+  // the port is on the base's −X wall; the light pipe is on the lid face —
+  // both measured from the committed compact STLs (33.7 × 37.6 base)
+  assert.ok(WAP_PORT[0] < -16 && WAP_PORT[0] > -17.5, "port off the −X wall");
+  assert.ok(Math.abs(WAP_PORT[1]) < 0.01, "USB slot is y-centred (usb_w 10.5 notch)");
+  assert.ok(WAP_LED[2] > 7, "light pipe sits on the lid face, toward the viewer");
+});

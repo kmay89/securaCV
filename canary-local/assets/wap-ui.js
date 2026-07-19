@@ -19,7 +19,7 @@
 // all four at once, the way it would on a real bench. Nothing is faked past
 // what the firmware strings say; where this is a sketch, it says so to your face.
 
-import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { DeviceScene, BUILDERS, M4, roundedBox, cylinder } from "./scene3d.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { romBanner } from "../emulator/web/bench.js";
 
@@ -74,6 +74,26 @@ export function pillForEvent(ev) {
     smoke_alarm_t3: "Motion", co_alarm_t4: "Motion", silent_panic: "Presence",
   }[ev] || null;
 }
+
+// ── the cable's spine (DOM-free; pinned in tests/wap.test.js) ─────────────
+// The plug-in scene's USB-C cable, in the CONNECTOR's local frame: +Z points
+// into the port, the lead trails out behind (−Z) and droops off-stage. A
+// cubic bezier — t 0 is just behind the strain-relief boot, t 1 the far end.
+export const CABLE_BEZIER = [[0, 0, -14], [0, 0, -70], [0, -55, -105], [16, -150, -150]];
+export function cablePoint(t, bz = CABLE_BEZIER) {
+  const u = 1 - t, [a, b, c, d] = bz;
+  const w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+  return [0, 1, 2].map((i) => w[0] * a[i] + w[1] * b[i] + w[2] * c[i] + w[3] * d[i]);
+}
+
+// Where the cable seats and where the light answers — measured from the
+// committed compact STLs, mapped through realTwoPart's placement (base at
+// z −fz/2+nest/2, lid flipped at +bz/2−nest/2):
+//   USB slot: base −X wall (x −16.85), the y ±5.25 notch (usb_w 10.5),
+//             connector centre z ≈ 6.6 raw → scene (−16.85, 0, −1.45)
+//   light pipe: lid Ø3.2 at raw (5.44, −1.68) → scene (5.44, 1.68, 8.05)
+export const WAP_PORT = [-16.85, 0, -1.45];
+export const WAP_LED = [5.44, 1.68, 8.05];
 
 // ── the serial console ────────────────────────────────────────────────────
 export function buildSerial(data, bus) {
@@ -452,34 +472,196 @@ export function buildPlugIn(data, bus) {
   stage.append(cv, el("div", "asmlab-hint", "drag to orbit · pinch or scroll to zoom"));
   const scene = new DeviceScene(cv, null);
   BUILDERS["canary-wap"](scene);
-  upgradeRealShape(scene, "canary-wap");   // the committed printed shells
-  scene.start();
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const side = el("div", "wap-plug-side");
   side.append(el("h3", "wap-col-h", "1 · plug it in"));
   side.append(el("p", "muted",
-    "This is the device — the repo's own printed shells. Any USB-C source powers it; " +
-    "what changes is what YOU get to see. Pick where the other end of the cable goes:"));
+    "This is the device — the repo's own printed shells, its USB-C slot on the left wall, " +
+    "its light pipe on the face. Any USB-C source powers it; what changes is what YOU get " +
+    "to see. Pick where the other end of the cable goes:"));
   const choices = el("div", "wap-plug-choices");
   const verdict = el("p", "muted fineprint wap-plug-verdict");
+
+  // ── the cable rig ──────────────────────────────────────────────────────
+  // Built AFTER the real STLs land (the upgrade clears the part list). The
+  // connector's local frame has +Z into the port; the port is on the −X
+  // wall, so the whole rig wears R = rotY(90°) and slides along −X.
+  const rig = {
+    parts: [],        // [{part, local}]
+    beads: [],        // power pulses riding the cable spine
+    led: null,
+    gap: 26,          // mm the tip floats outside the port (0 = seated)
+    state: "idle",    // idle → plugging → seated (reseat wobbles gap)
+    anim: null,       // {from, to, t0, dur, then}
+    ledPhase: "dark", // dark → hello (double-blink) → dim → boot (burst) → breathe
+    ledT0: 0,
+  };
+  const R_PORT = M4.rotY(Math.PI / 2);
+  const easeOutBack = (t) => { const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+
+  // a round tube swept along the cable spine, in connector-local coords
+  function tubeBuilder(r = 2.3, segs = 34, ring = 10) {
+    const b = { pos: [], nrm: [], uv: [], idx: [] };
+    const rings = [];
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const p = cablePoint(t);
+      const q = cablePoint(Math.min(1, t + 0.01));
+      let T = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+      const tl = Math.hypot(...T) || 1; T = T.map((v) => v / tl);
+      // frame: N ⊥ T, biased to world-x so the tube doesn't twist
+      let N = [1, 0, 0];
+      const d = N[0] * T[0] + N[1] * T[1] + N[2] * T[2];
+      N = [N[0] - d * T[0], N[1] - d * T[1], N[2] - d * T[2]];
+      const nl = Math.hypot(...N) || 1; N = N.map((v) => v / nl);
+      const B = [T[1] * N[2] - T[2] * N[1], T[2] * N[0] - T[0] * N[2], T[0] * N[1] - T[1] * N[0]];
+      const row = [];
+      for (let j = 0; j < ring; j++) {
+        const a = (j / ring) * Math.PI * 2;
+        const n = [0, 1, 2].map((k) => N[k] * Math.cos(a) + B[k] * Math.sin(a));
+        b.pos.push(p[0] + n[0] * r, p[1] + n[1] * r, p[2] + n[2] * r);
+        b.nrm.push(...n); b.uv.push(0, 0);
+        row.push(b.pos.length / 3 - 1);
+      }
+      rings.push(row);
+    }
+    for (let i = 0; i < segs; i++)
+      for (let j = 0; j < ring; j++) {
+        const a = rings[i][j], b2 = rings[i][(j + 1) % ring];
+        const c2 = rings[i + 1][(j + 1) % ring], d2 = rings[i + 1][j];
+        b.idx.push(a, b2, c2, a, c2, d2);
+      }
+    return b;
+  }
+
+  function buildRig() {
+    const add = (builder, opts, local) =>
+      rig.parts.push({ part: scene.addMesh(builder, opts), local });
+    // USB-C metal tip (enters the slot), strain-relief boot, the lead itself.
+    // The slot's 10.5 mm width runs along scene Y; after the rig's rotY(90°),
+    // local Y maps to world Y — so the connector's WIDE flat is built on
+    // local Y (9.0) and its thin side on local X (3.4), or the tip presents
+    // to the port turned 90° from anything that could ever plug in.
+    add(roundedBox(3.4, 9.0, 6.5, 1.5), { color: [0.80, 0.81, 0.84], gloss: 0.85 }, M4.translate(0, 0, 3.1));
+    add(roundedBox(6.6, 11.4, 14, 2.6), { color: [0.13, 0.13, 0.15], gloss: 0.5 }, M4.translate(0, 0, -7.2));
+    add(tubeBuilder(), { color: [0.16, 0.16, 0.18], gloss: 0.45 }, M4.ident());
+    // power pulses: unlit canary beads that ride the spine once power flows
+    for (let i = 0; i < 5; i++) {
+      const p = scene.addMesh(cylinder(1.6, 6.0, 12), { color: [1.0, 0.83, 0.31], unlit: true });
+      p.model = M4.scale(0, 0, 0);
+      rig.beads.push(p);
+    }
+    // the light pipe answers on the lid face — plus a soft halo so the
+    // blink reads from across the room (the whole point of a light pipe)
+    rig.led = scene.addMesh(cylinder(1.5, 1.8, 20), {
+      color: [0.12, 0.11, 0.10], gloss: 0.9,
+      model: M4.translate(...WAP_LED),
+    });
+    rig.halo = scene.addMesh(cylinder(3.6, 0.25, 24), {
+      color: [0, 0, 0], unlit: true,
+      model: M4.translate(WAP_LED[0], WAP_LED[1], WAP_LED[2] + 1.1),
+    });
+  }
+
+  function ledColor(now) {
+    const el2 = now - rig.ledT0;
+    const DIM = [0.30, 0.25, 0.08], ON = [1.0, 0.83, 0.31], DARK = [0.12, 0.11, 0.10];
+    switch (rig.ledPhase) {
+      case "dark": return DARK;
+      case "hello": { // power present: two quick blinks, then settle dim
+        if (el2 > 900) { rig.ledPhase = "dim"; return DIM; }
+        const k = Math.floor(el2 / 150);
+        return k % 2 === 0 && k < 4 ? ON : DARK;
+      }
+      case "dim": return DIM;
+      case "boot": { // the app is booting: a fast burst, then breathe
+        if (el2 > 1100) { rig.ledPhase = "breathe"; return ON; }
+        return Math.floor(el2 / 90) % 2 === 0 ? ON : DIM;
+      }
+      case "breathe": {
+        const k = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(el2 / 350));
+        return [ON[0] * k, ON[1] * k, ON[2] * k];
+      }
+    }
+    return DARK;
+  }
+
+  scene.onTick = () => {
+    if (!rig.parts.length) return;
+    const now = performance.now();
+    if (rig.anim) {
+      const k = Math.min(1, (now - rig.anim.t0) / rig.anim.dur);
+      rig.gap = rig.anim.from + (rig.anim.to - rig.anim.from) * easeOutBack(k);
+      if (k >= 1) { const then = rig.anim.then; rig.anim = null; if (then) then(); }
+    } else if (rig.state === "idle" && !reduced) {
+      rig.gap = 26 + Math.sin(now / 900) * 2.2; // hover by the port, inviting
+    }
+    const W = M4.mul(M4.translate(WAP_PORT[0] - rig.gap, WAP_PORT[1], WAP_PORT[2]), R_PORT);
+    for (const { part, local } of rig.parts) part.model = M4.mul(W, local);
+    // power pulses flow the moment the cable seats — wall or laptop alike
+    const flowing = rig.state === "seated";
+    rig.beads.forEach((b, i) => {
+      if (!flowing) { b.model = M4.scale(0, 0, 0); return; }
+      const s = 1 - (((now / 1400) + i / rig.beads.length) % 1); // far end → port
+      const p = cablePoint(s);
+      b.model = M4.mul(W, M4.mul(M4.translate(p[0], p[1], p[2]), M4.rotX(Math.PI / 2)));
+    });
+    if (rig.led) {
+      const c = ledColor(now);
+      rig.led.color = c;
+      // halo carries ~45% of the pipe's light; near-black when the LED is dark
+      if (rig.halo) rig.halo.color = c.map((v) => Math.max(0, (v - 0.12) * 0.45));
+    }
+  };
+
+  function seatCable(source, said) {
+    const finish = () => {
+      rig.state = "seated";
+      rig.ledPhase = "hello"; rig.ledT0 = performance.now();
+      verdict.textContent = said;
+      bus.emit("plug", { source });
+    };
+    if (reduced || !rig.parts.length) { rig.gap = 0; rig.state = "seated"; // no theater, same truth
+      rig.ledPhase = "dim"; verdict.textContent = said; bus.emit("plug", { source }); return; }
+    if (rig.state === "seated") { // swapping the far end: quick unplug, replug
+      rig.state = "plugging";
+      rig.anim = { from: rig.gap, to: 14, t0: performance.now(), dur: 300,
+        then: () => { rig.anim = { from: 14, to: 0, t0: performance.now(), dur: 450, then: finish }; } };
+    } else {
+      rig.state = "plugging";
+      verdict.textContent = "▶ plugging in…";
+      rig.anim = { from: rig.gap, to: 0, t0: performance.now(), dur: 750, then: finish };
+    }
+  }
+
+  // the app booting (serial side) wakes the light for real
+  bus.on("power", () => { if (rig.led) { rig.ledPhase = "boot"; rig.ledT0 = performance.now(); } });
+
+  // the real STLs land first (the upgrade clears the scene), THEN the rig
+  upgradeRealShape(scene, "canary-wap").then(() => {
+    if (!document.body.contains(cv)) return;
+    buildRig();
+  });
+  scene.start();
+
   const mk = (source, icon, title, sub, said) => {
     const b = el("button", "wap-plug-card");
     b.append(el("span", "wap-plug-icon", icon), el("strong", null, title), el("span", "muted", sub));
     b.addEventListener("click", () => {
       for (const c of choices.children) c.classList.remove("on");
       b.classList.add("on");
-      verdict.textContent = said;
-      bus.emit("plug", { source });
+      seatCable(source, said);
     });
     return b;
   };
   choices.append(
     mk("laptop", "💻", "Into a laptop",
       "USB data + power — the serial console becomes your window into the boot.",
-      "▶ USB-CDC port appears on the laptop. Press ⏻ power on in the console below and read everything it says."),
+      "▶ Seated with a click. Power is flowing — the light pipe blinks hello. Press ⏻ power on in the console below and read everything it says."),
     mk("wall", "🔌", "Into a wall adapter",
       "Power only. It boots exactly the same — you just don't see it.",
-      "▶ No console anywhere — the same boot happens unseen. Your phone is the only window; the password comes off the box card."));
+      "▶ Seated with a click. Power is flowing and the light blinks — but no console anywhere. Your phone is the only window; the password comes off the box card."));
   side.append(choices, verdict);
   wrap.append(stage, side);
   return wrap;

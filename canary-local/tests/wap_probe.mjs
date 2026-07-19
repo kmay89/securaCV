@@ -74,8 +74,10 @@ try {
     .catch(() => fail("choosing the laptop did not enable the serial console"));
 
   // power on the serial console → the phone must catch the SoftAP live
+  // (the boot log streams ~40 lines before the AP line; give a loaded CI
+  // runner headroom — this wait flaked at 8 s under CPU contention)
   await page.click(".wap-term .primary");
-  const own = await page.waitForSelector(".wap-wifi-own", { timeout: 8000 }).catch(() => null);
+  const own = await page.waitForSelector(".wap-wifi-own", { timeout: 15000 }).catch(() => null);
   if (!own) fail("phone did not surface the SoftAP after power-on");
   const ssid = (await own.textContent()) || "";
   if (!/SecuraCV-/.test(ssid)) fail("SoftAP SSID not SecuraCV-*: " + ssid);
