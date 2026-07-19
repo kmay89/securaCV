@@ -85,6 +85,28 @@ test("LED cadences: every documented grammar row translates", async () => {
   assert.strictEqual(ledSequence("groups of 2").filter(([on]) => on).length, 2);
 });
 
+test("concept entries are honesty-fenced: no emulator, real docs, sourced facts", () => {
+  const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
+  const concepts = reg.devices.filter((d) => d.kind === "concept");
+  assert.ok(concepts.length >= 1, "the fence guard concept is in the registry");
+  for (const dev of concepts) {
+    assert.match(dev.status, /coming soon/i, `${dev.id} says coming-soon to your face`);
+    assert.ok(!dev.emulator, `${dev.id} claims no live firmware`);
+    assert.ok(!dev.enclosure, `${dev.id} claims no printable enclosure`);
+    for (const doc of dev.docs || [])
+      assert.ok(existsSync(join(ROOT, "..", doc)), `${dev.id} doc exists: ${doc}`);
+    const c = dev.concept;
+    assert.ok(c?.idea && c.points?.length && c.plan?.length, `${dev.id} explains itself`);
+    assert.ok(c.radio?.length >= 3, `${dev.id} carries researched radio facts`);
+    assert.ok(c.sources?.length >= 2, `${dev.id} cites its research sources`);
+    for (const s of c.sources)
+      assert.match(s.url, /^https:\/\//, `${dev.id} source '${s.name}' is a real link`);
+    assert.ok(
+      dev.senses.every((x) => /concept/i.test(x)),
+      `${dev.id}'s senses all admit they are concepts`);
+  }
+});
+
 test("registry entries with emulators point at real artifacts", () => {
   const reg = JSON.parse(readFileSync(join(ROOT, "devices/registry.json"), "utf8"));
   assert.ok(reg.devices.length >= 5);
