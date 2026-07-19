@@ -5,11 +5,20 @@
 #include <ESPmDNS.h>
 #include <string.h>
 
+#include <WiFi.h>
+
 #include "canary/net/glass_web.h"
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mirror_html.h"
 #include "canary/glass_settings.h"
+#include "canary/runtime_config.h"
+#include "canary/version.h"
 #include "canary/log.h"
+
+namespace canary {
+// The browser serial monitor's hook (declared in log.h).
+LogSink g_log_sink = nullptr;
+}  // namespace canary
 
 namespace canary::net {
 
@@ -17,6 +26,22 @@ namespace {
 
 WebServer* s_server = nullptr;
 bool s_mdns_added = false;
+
+// ── Log ring: the last N lines log_line() spoke, timestamped. RAM-only,
+// loop-task-only (every log_line caller and the server share the loop).
+constexpr int LOG_LINES = 48;
+constexpr int LOG_W = 104;
+char s_log[LOG_LINES][LOG_W];
+uint8_t s_log_head = 0, s_log_n = 0;
+
+void log_capture(const char* tag, const char* msg) {
+  const uint32_t ds = millis() / 100;  // uptime in deciseconds
+  snprintf(s_log[s_log_head], LOG_W, "%6lu.%lus [%s] %s",
+           (unsigned long)(ds / 10), (unsigned long)(ds % 10),
+           tag ? tag : "", msg ? msg : "");
+  s_log_head = (uint8_t)((s_log_head + 1) % LOG_LINES);
+  if (s_log_n < LOG_LINES) s_log_n++;
+}
 
 // The live snapshot: written by the loop task in glass_web_publish, read
 // by the same task inside handleClient() — WebServer runs on the caller's
@@ -155,11 +180,85 @@ void handle_settings_set() {
 
 }  // namespace
 
+// The receipt: what this unit IS — chip, memory, radio, firmware, and the
+// capabilities this build carries. Everything the boot banner knows, on
+// the phone.
+void handle_device() {
+  static char body[1024];
+  size_t o = 0;
+  const size_t C = sizeof(body);
+#ifdef CD_FLAVOR_WATCH
+  const char* flavor = "watch";
+#else
+  const char* flavor = "dash";
+#endif
+  o = bappend(body, C, o,
+              "{\"fw\":\"%s\",\"flavor\":\"%s\",\"chip\":\"%s r%d\","
+              "\"cores\":%d,\"mhz\":%lu,\"flash_mb\":%lu,\"psram_kb\":%lu,"
+              "\"heap_kb\":%lu,\"heap_min_kb\":%lu,\"up_s\":%lu,",
+              CANARY_FW_VERSION, flavor, ESP.getChipModel(),
+              ESP.getChipRevision(), ESP.getChipCores(),
+              (unsigned long)ESP.getCpuFreqMHz(),
+              (unsigned long)(ESP.getFlashChipSize() >> 20),
+              (unsigned long)(ESP.getPsramSize() >> 10),
+              (unsigned long)(ESP.getFreeHeap() >> 10),
+              (unsigned long)(ESP.getMinFreeHeap() >> 10),
+              (unsigned long)(millis() / 1000));
+  o = bappend(body, C, o, "\"id\":");
+  o = bappend_jstr(body, C, o, canary::cfg::get().device_id);
+  o = bappend(body, C, o, ",\"ssid\":");
+  o = bappend_jstr(body, C, o, wifi_connected() ? WiFi.SSID().c_str() : "");
+  o = bappend(body, C, o, ",\"ip\":\"%s\",\"signal\":%d,\"caps\":[",
+              wifi_connected() ? WiFi.localIP().toString().c_str() : "",
+              wifi_connected() ? (int)WiFi.RSSI() : 0);
+  // Capabilities as compiled into THIS build — the honest feature list.
+  const char* caps[] = {
+    "live glass mirror",
+#if defined(FEATURE_CARE) && FEATURE_CARE
+    "care + wellbeing",
+#endif
+#if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+    "proof-carrying history",
+#endif
+#if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+    "finds its flock by itself",
+#endif
+#if defined(FEATURE_QR_COMMISSION) && FEATURE_QR_COMMISSION
+    "QR canary onboarding",
+#endif
+#if defined(FEATURE_SNTP) && FEATURE_SNTP
+    "atomic-clock time (two sources)",
+#endif
+    "living canary mood engine",
+  };
+  for (size_t i = 0; i < sizeof(caps) / sizeof(caps[0]); ++i) {
+    if (i) o = bappend(body, C, o, ",");
+    o = bappend_jstr(body, C, o, caps[i]);
+  }
+  o = bappend(body, C, o, "]}");
+  s_server->send(200, "application/json", body);
+}
+
+// The browser serial monitor: the same lines the USB cable would show.
+void handle_log() {
+  static char body[LOG_LINES * LOG_W];
+  size_t o = 0;
+  for (uint8_t i = 0; i < s_log_n; ++i) {
+    const uint8_t idx =
+        (uint8_t)((s_log_head + LOG_LINES - s_log_n + i) % LOG_LINES);
+    o = bappend(body, sizeof(body), o, "%s\n", s_log[idx]);
+  }
+  s_server->send(200, "text/plain", body);
+}
+
 void glass_web_init() {
   if (s_server) return;
+  canary::g_log_sink = log_capture;  // browser serial monitor from here on
   s_server = new WebServer(80);
   s_server->on("/", HTTP_GET, handle_root);
   s_server->on("/api/glass", HTTP_GET, handle_glass);
+  s_server->on("/api/device", HTTP_GET, handle_device);
+  s_server->on("/api/log", HTTP_GET, handle_log);
   s_server->on("/api/settings", HTTP_GET, handle_settings_get);
   s_server->on("/api/set", HTTP_POST, handle_settings_set);
   s_server->onNotFound([]() { s_server->send(404, "text/plain", "not here"); });

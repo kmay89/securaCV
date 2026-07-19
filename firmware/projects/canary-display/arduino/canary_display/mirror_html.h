@@ -125,6 +125,41 @@ here stays inside your home network.</p>
   had set them there.</p>
 </div>
 
+<h2>About this device</h2>
+<div class="card">
+  <div id="receipt" style="display:grid;grid-template-columns:auto 1fr;
+    gap:3px 16px;font-size:13.5px"></div>
+  <p class="sub" style="margin-top:8px">It can: <span id="caps"></span></p>
+</div>
+
+<h2>Serial monitor</h2>
+<div class="card">
+  <label style="justify-content:flex-start"><input type="checkbox"
+    id="logpause"> pause</label>
+  <pre id="log" style="background:#000;border:1px solid var(--edge);
+    border-radius:8px;padding:10px;font-size:11.5px;line-height:1.45;
+    max-height:260px;overflow:auto;color:#9fdf9f"></pre>
+  <p class="sub">The same lines the USB cable would show — no cable needed.</p>
+</div>
+
+<h2>The road ahead</h2>
+<div class="card">
+<p class="sub" style="margin-bottom:8px">Every canary you add teaches this
+display something new. Open like a 3D printer, not walled like a garden —
+anything that speaks the flock's language can join.</p>
+<ul style="color:var(--mut);font-size:13.5px;margin-left:18px">
+<li><b style="color:var(--tx)">Find my things</b> — canaries already hear
+Bluetooth tags and phones; soon this page will say "your keys are near the
+Kitchen canary."</li>
+<li><b style="color:var(--tx)">Room rhythms</b> — quiet trends per room,
+so an unusual day is visible before it is a problem.</li>
+<li><b style="color:var(--tx)">Time from the sky</b> — a canary with GPS
+becomes the house's own atomic clock, no internet needed.</li>
+<li><b style="color:var(--tx)">More senses</b> — radar, air, sound-shape:
+new witnesses appear here the moment they join.</li>
+</ul>
+</div>
+
 <h2>Help — reading your display</h2>
 <div class="card">
 <details open><summary>The one big word</summary>
@@ -218,5 +253,30 @@ c.className="chip s"+w.sev;c.textContent=(w.room?w.room+" ":"")+w.name;
 row.appendChild(c)});
 }).catch(function(){$("live").className="dot"})}
 tick();setInterval(tick,2000);look();
+// the receipt
+function fmtUp(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),
+m=Math.floor(s%3600/60);return(d?d+"d ":"")+h+"h "+m+"m"}
+function device(){fetch("/api/device").then(function(r){return r.json()})
+.then(function(d){
+var rows=[["Firmware",d.fw],["Kind",d.flavor==="watch"?
+"round watch glass":"wall panel"],["Brain",d.chip+" • "+d.cores+
+" cores @ "+d.mhz+" MHz"],["Storage",d.flash_mb+" MB flash • "+
+Math.round(d.psram_kb/1024)+" MB extra memory"],["Memory free",
+d.heap_kb+" KB now (low point "+d.heap_min_kb+" KB)"],["Awake for",
+fmtUp(d.up_s)],["Name",d.id],["Network",d.ssid?d.ssid+" • "+d.ip+
+" • signal "+d.signal+" dB":"not connected"]];
+var g=$("receipt");g.innerHTML="";
+rows.forEach(function(r){var k=document.createElement("span");
+k.style.color="var(--mut)";k.textContent=r[0];
+var v=document.createElement("span");v.textContent=r[1];
+g.appendChild(k);g.appendChild(v)});
+$("caps").textContent=d.caps.join(" • ")})}
+device();setInterval(device,10000);
+// serial monitor
+function logs(){if($("logpause").checked)return;
+fetch("/api/log").then(function(r){return r.text()}).then(function(t){
+var p=$("log");var stick=p.scrollTop+p.clientHeight>=p.scrollHeight-8;
+p.textContent=t;if(stick)p.scrollTop=p.scrollHeight})}
+logs();setInterval(logs,2000);
 </script></body></html>
 )RAW";
