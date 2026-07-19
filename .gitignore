@@ -25,6 +25,10 @@ Thumbs.db
 demo_out/
 demo_witness.db
 
+# Node — CI installs playwright fresh for the canary-local boot probe;
+# a vendored node_modules shadows the runner's browser-matched install
+node_modules/
+
 # Secrets (never commit these)
 *.pem
 *.key
