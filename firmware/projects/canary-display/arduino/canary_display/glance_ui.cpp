@@ -768,6 +768,12 @@ int glance_page_count() { return page_map(the_fleet().count()).count; }
 int glance_settings_page() { return page_map(the_fleet().count()).settings; }
 
 void glance_ui_create() {
+  // Re-entrant (ground-change rebuild): the caller cleaned the screen, so
+  // every widget pointer is rebuilt below — but motion state that POINTS
+  // at old widgets must not survive into the new face (use-after-free in
+  // breathe()/ack otherwise).
+  s_breathing = nullptr;
+  s_ack_holding = false;
   s_scr = lv_scr_act();
   lv_obj_set_style_bg_color(s_scr, col_bg(), 0);
   lv_obj_set_style_bg_opa(s_scr, LV_OPA_COVER, 0);

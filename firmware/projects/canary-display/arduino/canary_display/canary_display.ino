@@ -545,6 +545,39 @@ static void render(uint32_t now) {
   if (!g_display_ok) return;
   auto& fleet = canary::fleet::the_fleet();
   const bool night = in_quiet_hours();
+  // Night outranks the Character (wave 3): the MODE — not the red-look
+  // preference — forces the uniform dark ground at the theme choke
+  // point, so the light Almanac can never glow in a bedroom. Set before
+  // anything below reads a col_* accessor.
+  canary::ui::character_set_night(night);
+  // A live screen wears the ground that was true when it was BUILT; when
+  // the effective ground flips — quiet hours begin/end, or a new
+  // Character was picked — rebuild the face in place so the floor
+  // actually changes (review catch: without this, a cream Almanac stayed
+  // cream after dark until reboot). Guarded to when the face owns the
+  // glass; while settings/commissioning are up the flip waits and lands
+  // right after they close. Onboarding needs no guard: a flip requires a
+  // valid clock or the picker, and neither exists before provisioning.
+  // Open face modals close with the rebuild — a ground change is a scene
+  // change.
+  {
+    static bool s_ground_night = canary::ui::character_night();
+    static canary::ui::Character s_ground_char = canary::ui::active_character();
+    if ((canary::ui::character_night() != s_ground_night ||
+         canary::ui::active_character() != s_ground_char) &&
+        !canary::ui::settings_ui_active() &&
+        !canary::ui::commission_ui_active()) {
+      s_ground_night = canary::ui::character_night();
+      s_ground_char = canary::ui::active_character();
+      lv_obj_clean(lv_scr_act());
+#ifdef CD_FLAVOR_WATCH
+      canary::ui::glance_ui_create();
+#endif
+#ifdef CD_FLAVOR_DASH
+      canary::ui::dash_ui_create();
+#endif
+    }
+  }
   // "Night look" (settings wave): the red-shifted palette is the default
   // night face, but it's a preference — with it off, night keeps the day
   // palette at the calibrated night glow. Brightness policy runs on the
@@ -662,6 +695,10 @@ void setup() {
   // re-applies on change).
   canary::ui::character_apply(
       (canary::ui::Character)canary::glass::settings().character);
+  // Seed the night flag before anything paints (splash reads col_bg):
+  // usually "day" this early — the clock is rarely valid before SNTP —
+  // and the render tick re-evaluates every pass from here on.
+  canary::ui::character_set_night(in_quiet_hours());
   boot_kvf("Quiet",  "%02d:00-%02d:00 local (%s)",
            canary::glass::settings().night_start_hh,
            canary::glass::settings().night_end_hh, CD_TZ);

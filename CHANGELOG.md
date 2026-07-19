@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Display Character wave 3 — Almanac, the paper Character
+
+- **The ring's first light ground**
+  ([`docs/hardware/display_character.md`](docs/hardware/display_character.md)
+  §6): **Almanac** — warm paper `#F2EAD8`, warm ink (12.8:1, AAA),
+  fountain-pen indigo accent, bookish-calm temperament, almanac
+  weather-speak voice ("All calm" / "good day"). The age of print.
+- **Semantics hold their meaning on paper.** The canonical timeline hues
+  fail measured contrast on a light field (amber is 1.98:1 — an invisible
+  alarm color is the dishonest option), so the semantic accessors became
+  Character-served at the theme choke point: canonical bytes on every
+  dark ground, darkened-**within-family** stops on Almanac (ok `#276B2B`,
+  warn `#8F5300`, alert `#B71C1C`, signed `#01579B` — each ≥4.5:1 on both
+  paper tiers). Re-hueing stays impossible by construction.
+- **Night is now uniform, not assumed.** `character_set_night()` (set by
+  the render tick from the quiet-hours mode) makes the ground/tier
+  accessors serve the dark Quiet Glass set for *every* Character — a
+  cream glass structurally cannot glow in a bedroom, and decorative
+  accents go ember-dim after dark (never blue).
+
 ### Display Character wave 2 — the Voice
 
 - **Each Character now speaks its register** — in the ambient copy only

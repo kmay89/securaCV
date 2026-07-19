@@ -49,10 +49,14 @@ are load-bearing and no Character may cross them:
 
 - **Semantics stay at timeline-card parity.** Green `#43A047` ok/verified,
   amber `#FB8C00` attention, red `#E53935` alert/tamper, blue `#03A9F4`
-  signed — these are *signal* colors, identical in every Character, because
-  "a state means the same color on the wall as in the app" (G7) and because a
-  fire is red for everyone. A Character restyles the *room*; it never repaints
-  the *alarms*.
+  signed — these are *signal* colors, identical in every dark Character,
+  because "a state means the same color on the wall as in the app" (G7) and
+  because a fire is red for everyone. A Character restyles the *room*; it
+  never repaints the *alarms*. *(Wave 3 refinement: on the one light ground,
+  the same hues darken **within family** — canonical amber is 1.98:1 on
+  paper, and an invisible alarm color is the dishonest option. Same family,
+  same meaning, everywhere; darkening is permitted only where the canonical
+  byte fails its measured contrast, and re-hueing is never permitted.)*
 - **Night is sacred, and it belongs to the night engine, not the Character.**
   The red-shifted, melatonin-band-free (446–477 nm) night palette and the
   "soft red / plain" choice live in Settings and outrank every Character.
@@ -88,14 +92,16 @@ Each Character is built from the same four rules, so none of them can clash:
    nothing. Character accents are *decorative only* and never the sole carrier
    of any state, so a livelier palette costs no accessibility.
 
-Two hard constraints from the platform fold in here: every ground stays dark
-enough that the bezel disappears and the night floor can go low (the
-"Quiet Glass" ground rule), and blue-forward accents (Aqua, Neon) are
-**day-only** by construction because the night path swaps them out. A true
-light/paper Character — cream ground, ink text — is genuinely different (it
-needs the semantic set *darkened within the same hue family* to hold 3:1 on a
-light field, plus its own light-safe night story) and is deferred to wave 3
-rather than faked now.
+Two hard constraints from the platform fold in here: blue-forward accents
+(Aqua, Neon) are **day-only** by construction because the night path swaps
+them out, and — since wave 3 shipped the light-ground **Almanac** — the
+dark-ground rule is now enforced *at night* rather than assumed *always*:
+the theme choke point serves the uniform dark floor (Quiet Glass's
+ground/tier bytes) for every Character while the render tick holds
+`character_set_night(true)`, so a cream glass structurally cannot glow in a
+bedroom. By day, Almanac's semantic set is darkened within family to hold
+its measured contrast on paper (§6), which is exactly the shape §2's
+refinement permits — and nothing else.
 
 ## 4. The lessons we took from Apple's watch-face research
 
@@ -161,11 +167,11 @@ This is the whole personality trick: one honest state machine, four
 temperaments layered on top. The bird stays the same *character actor*; the
 Character is its *mood on the day you met it.*
 
-## 6. The wave-1 ring (four ages, one honest system)
+## 6. The ring (five ages, one honest system)
 
-Curated small on purpose — four is enough to feel personal, few enough to flip
-through in five seconds. All are dark-ground (§3), semantics anchored, night
-sacred.
+Curated small on purpose — five is enough to feel personal, few enough to
+flip through in five seconds. Semantics anchored (§2, with the light-ground
+refinement), night sacred and uniform (§3).
 
 | Character | The age | Ground / accent | Type | Temperament | Who it's for |
 |---|---|---|---|---|---|
@@ -173,6 +179,13 @@ sacred.
 | **Quiet Glass** *(default)* | glass (2010s minimal) | true black `#000000` / signal blue `#03A9F4`, ink `#EDEDED` | today's ladder | measured (×1.0) | the studio, the default — calm, neutral, invisible |
 | **Aqua** | the millennium (early-2000s gloss) | blue-black `#050912` / glossy cyan `#38C6FF`, ink `#E8F1F7` | today's ladder | friendly (breath ×0.95) | the optimist — turn-of-the-century shine, still calm |
 | **Neon** | now (Gen-Alpha energy) | near-black `#08060C` / electric `#22E0C8`+`#FF4FD8` chrome | compact | quick & springy (breath ×0.9, flourish ×0.75, hop ×1.2) | the desk, the teenager — vivid and alive, still honest |
+| **Almanac** *(wave 3)* | print (the age of paper) | warm paper `#F2EAD8` / fountain-pen indigo `#2F4A6E`, warm ink `#2B2418` | today's ladder | bookish calm (breath ×1.1, flourish ×1.15, hop ×0.9) | the reader — a sunroom, a kitchen ledge; the one light ground, dark by night |
+
+Almanac's semantic stops (in-family, measured on both paper tiers): ok
+`#276B2B` 5.4:1, warn `#8F5300` 5.2:1, alert `#B71C1C` 5.5:1, signed
+`#01579B` 6.2:1 against `bg` — all ≥4.5:1 against `surface` too, so
+severity words stay AA as *text*, not just as marks. Its voice speaks
+almanac weather: "All calm" / "good day".
 
 Default is **Quiet Glass**, and it is byte-for-byte today's look — a user who
 never opens the picker sees zero change, and an old settings blob that predates
@@ -269,9 +282,23 @@ the glass wakes up already wearing it.
     vocabulary. Older mirror HTML falls back to "All quiet" harmlessly.
   - **Plain ASCII by rule.** The built-in Montserrat tables carry no
     emoji, and the glance contract wants words that read at 3 m.
-- **Wave 3 — Light / paper Characters.** A true cream-ground "Almanac" look,
-  which requires the semantic set darkened within-family for 3:1 on light and
-  a light-safe night story. Deferred, not faked.
+- **Wave 3 — Light / paper Characters** *(shipped)*. **Almanac** (§6): warm
+  paper, warm ink, fountain-pen indigo. The two pieces of design work it
+  waited on, done properly rather than faked:
+  - *Semantics on paper*: the canonical bytes fail measured contrast on a
+    light field (amber 1.98:1), so `theme.h`'s `col_ok/warn/alert/signed`
+    became choke-point functions serving a per-Character `Semantics` set —
+    the canonical bytes on every dark ground, darkened-within-family stops
+    on Almanac (each ≥4.5:1 on both paper tiers, ratios in the table).
+    Re-hueing remains impossible by construction; there is no per-Character
+    hue field, only deeper stops of the same four families.
+  - *The light-safe night story*: night became uniform instead of assumed —
+    `character_set_night()` (owned by the render tick, keyed on the quiet-
+    hours MODE, not the red-look preference) makes the ground/tier
+    accessors serve Quiet Glass's dark set for every Character. Almanac by
+    night IS the dark glass; by day it is paper. The bench item that
+    remains: eyeballing the paper ground's backlight bleed floor next to a
+    dark Character's on real panels.
 - **Wave 4 — More ages, still curated.** Candidates: **Terminal** (phosphor
   green, mono-feel caps — the age of the CRT) and **Blueprint** (drafting
   cyan on ink). The ring grows by *invitation*, never by opening a parts bin.

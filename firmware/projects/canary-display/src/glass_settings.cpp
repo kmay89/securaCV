@@ -85,7 +85,7 @@ void sanitize(Settings& s) {
   // >= Character::Count -> default. The 4 is kept in sync by hand with
   // canary::ui::Character: glass sits BELOW ui, so no ui include here
   // (character_apply re-clamps defensively at the ui layer anyway).
-  if (s.character >= 4) s.character = 0;
+  if (s.character >= 5) s.character = 0;  // = Character::Count (wave 3: +Almanac)
 }
 
 // Returns true when the blob actually landed in flash. On failure the
