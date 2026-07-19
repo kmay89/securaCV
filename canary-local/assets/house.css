@@ -183,3 +183,24 @@
   .field .scan, .field .sweep { opacity: 0.5; }
   .event-chip { animation: none; }
 }
+
+/* ── teaser perches: concepts wear teal, dashed, and say "soon" ─────── */
+.dot-mesh { background: #6fd6c3; }
+.legend-soon { font-style: normal; color: var(--faint); font-size: 10.5px;
+  border: 1px dashed #3d5c55; border-radius: 999px; padding: 0 5px; }
+.chip-soon { border-color: rgba(111, 214, 195, 0.5); color: #6fd6c3; }
+.perch-soon { font-size: 10px; color: #6fd6c3; border: 1px dashed
+  rgba(111, 214, 195, 0.5); border-radius: 999px; padding: 1px 7px; flex: none; }
+.marker.teaser:hover .marker-body, .marker.teaser:focus-visible .marker-body,
+.marker.teaser.hint .marker-body, .marker.teaser.sel .marker-body { fill: #6fd6c3; }
+.marker.teaser:hover .marker-glyph, .marker.teaser:focus-visible .marker-glyph,
+.marker.teaser.hint .marker-glyph, .marker.teaser.sel .marker-glyph { stroke: #141414; }
+.field .mesh-link { animation: meshMarch 1.4s linear infinite; }
+@keyframes meshMarch { to { stroke-dashoffset: -22; } }
+.door-btn { appearance: none; background: none; border: none; padding: 0;
+  font: inherit; font-size: 13.5px; color: var(--canary); cursor: pointer;
+  text-align: left; }
+.door-btn:hover { text-decoration: underline; }
+@media (prefers-reduced-motion: reduce) {
+  .field .mesh-link { animation: none; }
+}

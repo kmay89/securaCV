@@ -77,6 +77,11 @@ export const SENSE_COPY = {
     how: "Solar-fed relay that carries witness claims over LoRa where WiFi ends — the flock's voice, off-grid.",
     emits: "relayed signed claims only — it moves proofs, it doesn't make them.",
   },
+  mesh: {
+    label: "Meshtastic perimeter node (concept)",
+    how: "A fence-guard concept: clamps to the chain-link, feels the fence's own vibration signature — climb, cut, rattle — and speaks Meshtastic, so signed claims hop the LoRa mesh home with no WiFi at all. Solar over battery, sealed against weather; it prefers a shaded run of fence to keep the cell happy.",
+    emits: "concept — it would emit fence-event claims, Ed25519-signed, over the mesh. Nothing else, same as every witness.",
+  },
 };
 
 // One entry per perch. `candidate` MUST be a chooser CANDIDATES id —
@@ -84,6 +89,11 @@ export const SENSE_COPY = {
 // `answers` is a valid pre-fill for the chooser (choose.html#…).
 // `aim` is the facing direction in plan degrees (0° = +x, CCW),
 // `range` the visual sensing reach in units.
+//
+// A perch may instead carry `teaser: { title, pitch }` — a concept that
+// exists in no catalog yet. Teasers are honesty-fenced by tests: no
+// candidate, no chooser answers, excluded from the flock tally's real
+// counts, and (in house.js) they never file witness-feed events.
 export const PLACEMENTS = [
   {
     id: "doorbell",
@@ -217,6 +227,20 @@ export const PLACEMENTS = [
     headline: "Solar LoRa relay — the flock keeps its voice where the WiFi ends.",
     answers: { place: "outdoor", power: "offgrid" },
   },
+  {
+    id: "fence-guard",
+    teaser: {
+      title: "Canary Fence Guard",
+      pitch: "Meshtastic on the property line — the fence becomes a witness.",
+    },
+    room: "yard",
+    at: { x: 12.15, y: 5.4, z: 1.05 },
+    sense: "mesh",
+    aim: 180,
+    range: 2.4,
+    spot: "clamped to the chain-link, in the fence line's shade",
+    headline: "Coming soon: a solar-fed, weather-sealed Meshtastic fence guard — shade preferred, chain-link mounted, meshed to the relay's field.",
+  },
 ];
 
 // The visitor's walk: plan waypoints (ground floor). Each placement
@@ -232,8 +256,21 @@ export const WALK = [
   { x: 8.2, y: 1.7, pause: 0.9, note: "in the kitchen" },
 ];
 
-// Look up the honest catalog facts behind a placement.
+// Look up the honest catalog facts behind a placement. Teaser perches
+// answer from their own concept card — status is always "coming-soon".
 export function placementInfo(p) {
+  if (p.teaser) {
+    return {
+      title: p.teaser.title,
+      device: null,
+      status: "coming-soon",
+      pitch: p.teaser.pitch,
+      enclosure: null,
+      notes: ["A concept, not a catalog entry — no firmware, no enclosure, no BOM yet. The request door below is how concepts become candidates."],
+      sense: SENSE_COPY[p.sense],
+      teaser: true,
+    };
+  }
   const c = CANDIDATES.find((x) => x.id === p.candidate);
   if (!c) return null;
   return {
@@ -258,11 +295,14 @@ export function chooserHash(answers) {
 
 // The flock, tallied honestly: witnesses vs displays vs infrastructure,
 // and how many of the chosen perches are released vs in development.
+// Teaser concepts never inflate the real counts — they get their own
+// `soon` number and stay out of `total`.
 export function flockSummary(activeIds) {
   const on = new Set(activeIds);
-  let witnesses = 0, displays = 0, infra = 0, released = 0, indev = 0;
+  let witnesses = 0, displays = 0, infra = 0, released = 0, indev = 0, soon = 0;
   for (const p of PLACEMENTS) {
     if (!on.has(p.id)) continue;
+    if (p.teaser) { soon += 1; continue; }
     const info = placementInfo(p);
     if (!info) continue;
     if (p.sense === "display") displays += 1;
@@ -271,5 +311,5 @@ export function flockSummary(activeIds) {
     if (info.status === "released") released += 1;
     else indev += 1;
   }
-  return { witnesses, displays, infra, released, indev, total: witnesses + displays + infra };
+  return { witnesses, displays, infra, released, indev, soon, total: witnesses + displays + infra };
 }

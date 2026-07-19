@@ -16,11 +16,11 @@ async function chooser() {
   return import("../assets/chooser-data.js");
 }
 
-test("every perch resolves to a real chooser candidate with honest status", async () => {
+test("every real perch resolves to a real chooser candidate with honest status", async () => {
   const { PLACEMENTS, placementInfo } = await house();
   const { CANDIDATES } = await chooser();
-  assert.ok(PLACEMENTS.length >= 8, "the house shows a real flock");
-  for (const p of PLACEMENTS) {
+  assert.ok(PLACEMENTS.filter((p) => !p.teaser).length >= 8, "the house shows a real flock");
+  for (const p of PLACEMENTS.filter((p) => !p.teaser)) {
     const c = CANDIDATES.find((x) => x.id === p.candidate);
     assert.ok(c, `${p.id} references chooser candidate ${p.candidate}`);
     const info = placementInfo(p);
@@ -28,6 +28,22 @@ test("every perch resolves to a real chooser candidate with honest status", asyn
     assert.ok(["released", "in-development"].includes(info.status),
       `${p.id} carries a status it can say to your face`);
     assert.ok(info.sense, `${p.id} sense '${p.sense}' has modality copy`);
+  }
+});
+
+test("teaser perches are honesty-fenced: no catalog claims, no chooser doors", async () => {
+  const { PLACEMENTS, placementInfo } = await house();
+  const teasers = PLACEMENTS.filter((p) => p.teaser);
+  assert.ok(teasers.length >= 1, "the fence guard teaser is perched");
+  for (const p of teasers) {
+    assert.ok(!p.candidate, `${p.id} claims no catalog candidate`);
+    assert.ok(!p.answers, `${p.id} offers no chooser pre-fill — you can't shop a concept`);
+    const info = placementInfo(p);
+    assert.strictEqual(info.status, "coming-soon", `${p.id} says coming-soon to your face`);
+    assert.strictEqual(info.teaser, true);
+    assert.ok(info.sense?.how && info.sense?.emits, `${p.id} still explains itself honestly`);
+    assert.match(info.sense.emits, /concept/i,
+      `${p.id}'s emits line admits it is a concept`);
   }
 });
 
@@ -71,7 +87,7 @@ test("interior rooms never overlap within a floor", async () => {
 test("chooser deep links only use real question and option ids", async () => {
   const { PLACEMENTS, chooserHash } = await house();
   const { QUESTIONS } = await chooser();
-  for (const p of PLACEMENTS) {
+  for (const p of PLACEMENTS.filter((p) => !p.teaser)) {
     for (const [qid, v] of Object.entries(p.answers || {})) {
       const q = QUESTIONS.find((x) => x.id === qid);
       assert.ok(q, `${p.id} answer question '${qid}' exists`);
@@ -92,7 +108,7 @@ test("chooser deep links only use real question and option ids", async () => {
 test("a house deep link actually scores in the chooser", async () => {
   const { PLACEMENTS } = await house();
   const { score } = await chooser();
-  for (const p of PLACEMENTS) {
+  for (const p of PLACEMENTS.filter((p) => !p.teaser)) {
     const ranked = score(p.answers);
     assert.ok(ranked.length > 0, `${p.id} prefill finds at least one match`);
     assert.ok(ranked.some((c) => c.id === p.candidate),
@@ -100,16 +116,20 @@ test("a house deep link actually scores in the chooser", async () => {
   }
 });
 
-test("the flock tally adds up and reacts to toggles", async () => {
+test("the flock tally adds up, reacts to toggles, and never counts concepts", async () => {
   const { PLACEMENTS, flockSummary } = await house();
+  const real = PLACEMENTS.filter((p) => !p.teaser);
+  const teasers = PLACEMENTS.filter((p) => p.teaser);
   const all = flockSummary(PLACEMENTS.map((p) => p.id));
-  assert.strictEqual(all.total, PLACEMENTS.length);
+  assert.strictEqual(all.total, real.length, "teasers never inflate the real total");
+  assert.strictEqual(all.soon, teasers.length, "…but they are counted as coming-soon");
   assert.strictEqual(all.witnesses + all.displays + all.infra, all.total);
   assert.strictEqual(all.released + all.indev, all.total);
   assert.ok(all.witnesses >= 5, "the house is mostly witnesses");
   const none = flockSummary([]);
   assert.strictEqual(none.total, 0);
-  const one = flockSummary([PLACEMENTS[0].id]);
+  assert.strictEqual(none.soon, 0);
+  const one = flockSummary([real[0].id]);
   assert.strictEqual(one.total, 1);
 });
 
@@ -124,8 +144,16 @@ test("the visitor's walk stays on the ground and inside the yard", async () => {
   }
 });
 
-test("house.html ships and wires the renderer; the chooser accepts prefill", () => {
+test("house.html ships and wires the renderer; the chooser accepts prefill", async () => {
   const page = readFileSync(join(ROOT, "house.html"), "utf8");
+  // if any teaser is perched, the page copy must own up to concepts —
+  // "every marker is real" would be a lie with a concept on the fence
+  const { PLACEMENTS } = await house();
+  if (PLACEMENTS.some((p) => p.teaser)) {
+    assert.match(page, /concept/i, "hero/footer copy admits concept perches exist");
+    assert.ok(!/Every marker is a real device/.test(page),
+      "the all-markers-are-real claim is gone while a teaser is perched");
+  }
   assert.match(page, /assets\/house\.js/);
   assert.match(page, /assets\/house\.css\?v=/,
     "house styles ship in their own versioned sheet — cached shared CSS must not undress the page");
