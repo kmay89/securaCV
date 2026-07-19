@@ -34,14 +34,23 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
+      # FRESHNESS_PAT (optional repo secret: fine-grained PAT, contents +
+      # pull-requests write): pushes/PRs made with the default GITHUB_TOKEN
+      # do not trigger other workflows (GitHub's recursion guard), so
+      # without it the freshness PR won't get canary-local.yml's checks.
+      # The honesty gate below runs HERE either way — the PR is validated
+      # before it exists — but set the secret if branch protection requires
+      # the checks to report on the PR itself.
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.FRESHNESS_PAT || github.token }}
       - name: Refresh upstream snapshot
         run: python3 canary-local/tools/gen_homeassistant.py --refresh-upstream
       - name: Verify against the honesty gate before proposing anything
         run: node --test canary-local/tests/homeassistant.test.js
       - name: Open a PR if upstream moved
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.FRESHNESS_PAT || github.token }}
         run: |
           if git diff --quiet -- canary-local/devices/homeassistant.json; then
             echo "upstream unchanged — nothing to do"

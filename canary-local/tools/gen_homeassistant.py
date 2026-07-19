@@ -180,9 +180,11 @@ TERMINAL = {
                 {"cmd": "wget -q --show-progress https://github.com/home-assistant/operating-system/releases/download/{{haos}}/haos_rpi4-64-{{haos}}.img.xz",
                  "out": ["haos_rpi4-64-{{haos}}.img.xz   100%[==================>] 380.1M  21.4MB/s  in 18s"],
                  "note": "Pi 5? Same release, image name haos_rpi5-64-{{haos}}.img.xz. The version here is live from this page's upstream snapshot."},
-                {"cmd": "wget -q https://github.com/home-assistant/operating-system/releases/download/{{haos}}/haos_rpi4-64-{{haos}}.img.xz.sha256 && sha256sum -c haos_rpi4-64-{{haos}}.img.xz.sha256",
-                 "out": ["haos_rpi4-64-{{haos}}.img.xz: OK"],
-                 "note": "Never skip the checksum. A witness system that starts from an unverified image is a joke told slowly."},
+                {"cmd": "sha256sum haos_rpi4-64-{{haos}}.img.xz",
+                 "out": ["9f2c1a7e30b8…  haos_rpi4-64-{{haos}}.img.xz"],
+                 "note": "Your value will differ — compare it against the SHA-256 the release page prints for this image "
+                         "(github.com/home-assistant/operating-system/releases/tag/{{haos}}). A corrupted download won't "
+                         "be close. Never skip this: a witness system that starts from an unverified image is a joke told slowly."},
                 {"cmd": "xz -d haos_rpi4-64-{{haos}}.img.xz",
                  "out": [],
                  "note": "Decompresses to a raw disk image next to it."},
