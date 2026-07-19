@@ -164,9 +164,11 @@ const REAL = {
                 { dist: 140 }),
 };
 
-/** Fire-and-forget: swap a card to its real printed geometry. */
+/** Swap a card to its real printed geometry. Fire-and-forget for most
+ * callers; resolves true/false (real/approximation kept) for callers that
+ * add props afterwards — clearParts() would wipe anything added earlier. */
 export function upgradeRealShape(scene, devId) {
   const fn = REAL[devId];
-  if (!fn) return;
-  fn(scene).catch(() => {}); // keep the approximation on any failure
+  if (!fn) return Promise.resolve(false);
+  return fn(scene).then(() => true).catch(() => false);
 }
