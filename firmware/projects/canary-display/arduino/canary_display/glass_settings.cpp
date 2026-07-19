@@ -82,8 +82,8 @@ void sanitize(Settings& s) {
   if (s.night_start_hh > 23) s.night_start_hh = CD_QUIET_START_HOUR;
   if (s.night_end_hh > 23) s.night_end_hh = CD_QUIET_END_HOUR;
   if (s.night_duty > NIGHT_DUTY_MAX) s.night_duty = NIGHT_DUTY_MAX;
-  // >= Character::Count -> default. The 4 is kept in sync by hand with
-  // canary::ui::Character: glass sits BELOW ui, so no ui include here
+  // >= Character::Count -> default. The literal is kept in sync by hand
+  // with canary::ui::Character: glass sits BELOW ui, so no ui include here
   // (character_apply re-clamps defensively at the ui layer anyway).
   if (s.character >= 7) s.character = 0;  // = Character::Count (wave 4: 7 ages)
 }
