@@ -322,16 +322,23 @@ function partUrl(part) {
 
 async function loadPartMesh(part) {
   const url = partUrl(part);
-  if (state.meshCache.has(url)) return state.meshCache.get(url);
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-  const buf = await r.arrayBuffer();
-  const parsed = parseSTL(buf);
-  parsed.volume = meshVolumeCm3(parsed.mesh);
-  parsed.bytes = buf.byteLength;
-  state.meshCache.set(url, parsed);
-  state.volumes.set(part.file, parsed.volume);
-  return parsed;
+  // cache the PROMISE so concurrent callers (viewport + checklist) share
+  // one fetch; a failure evicts itself so a later attempt can retry
+  if (!state.meshCache.has(url)) {
+    const p = (async () => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+      const buf = await r.arrayBuffer();
+      const parsed = parseSTL(buf);
+      parsed.volume = meshVolumeCm3(parsed.mesh);
+      parsed.bytes = buf.byteLength;
+      state.volumes.set(part.file, parsed.volume);
+      return parsed;
+    })();
+    p.catch(() => state.meshCache.delete(url));
+    state.meshCache.set(url, p);
+  }
+  return state.meshCache.get(url);
 }
 
 // solo = index into the selection to inspect alone; null = the ensemble
@@ -638,6 +645,18 @@ function renderChecklist(box) {
     (m.pkg ? ` — ${m.exact ? m.pkg.label : "custom"}` : "")));
 
   const parts = selectedParts();
+
+  // volumes stream in after the first paint — refresh just this panel
+  // when they land (a full update() would flicker the 3D viewport)
+  const missing = parts.filter((p) => !state.volumes.has(p.file));
+  if (missing.length) {
+    Promise.all(missing.map((p) => loadPartMesh(p).catch(() => null)))
+      .then((r) => {
+        if (r.some(Boolean) && box.isConnected && state.stage === "configure") {
+          renderChecklist(box);
+        }
+      });
+  }
 
   // the running-total ticker: price, prints, plastic — live as you tick
   const bom = state.build.devices?.[state.dev]?.bom;
