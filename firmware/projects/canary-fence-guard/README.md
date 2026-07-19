@@ -41,9 +41,13 @@ A vibration sense (accelerometer on the spare I²C, or a piezo/knock
 sensor on an ADC pin) is the open hardware question below.
 
 The full research dossier (verified specs, bands, TX power, power
-budget, solar behavior, free pins, Meshtastic firmware support) lands
-in `docs/hardware/canary_fence_guard_research.md` on this branch —
-numbers live there, not here, so they exist in exactly one place.
+budget, solar behavior, free pins, Meshtastic firmware support) lives in
+[`docs/hardware/canary_fence_guard_research.md`](../../../docs/hardware/canary_fence_guard_research.md)
+— numbers live there, not here, so they exist in exactly one place.
+Its headline findings for the open questions below: a **zero-custom-code
+Phase 0 exists** (stock Meshtastic + LIS3DH + Detection Sensor module),
+and the S3-vs-nRF52 power gap is real and quantified (~11× idle) — the
+field mule's data decides the platform.
 
 ## Requirements (draft v0)
 

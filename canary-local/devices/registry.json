@@ -250,6 +250,112 @@
         "firmware/projects/canary-sense/README.md"
       ],
       "status": "phase 2 complete — signing witness, bench items open"
+    },
+    {
+      "id": "canary-fence-guard",
+      "family": "canary-fence-guard",
+      "kind": "concept",
+      "name": "Canary Fence Guard",
+      "tagline": "Meshtastic on the property line — the fence becomes a witness. Coming soon.",
+      "board": "XIAO ESP32S3 + Wio-SX1262 (Meshtastic)",
+      "senses": [
+        "fence vibration (concept)",
+        "mesh + cell health (concept)"
+      ],
+      "shows": [],
+      "modality": "mesh",
+      "network": {
+        "mdns": "none — the fence line is past the WiFi by definition",
+        "web": "none",
+        "mqtt": "via mesh gateway (concept): fence-event claims + signed chain"
+      },
+      "docs": [
+        "firmware/projects/canary-fence-guard/README.md",
+        "docs/hardware/canary_fence_guard_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A perimeter witness clamped to the chain-link at the property's edge — past the WiFi, past mains power. It would feel the fence's own vibration signature (climb, cut, rattle), debounce it into the same small signed claims every Canary speaks, and carry them home over the Meshtastic LoRa mesh, solar-fed, with the relay pod as its first hop.",
+        "points": [
+          {
+            "k": "Where it perches",
+            "v": "clamped to chain-link in a shaded run — panel in the sun, cell in the shade; lithium ages in heat and must not charge below freezing."
+          },
+          {
+            "k": "What would leave it",
+            "v": "Ed25519-signed fence-event claims over the mesh, hash-chained — and Meshtastic's position broadcast stays off: a perimeter node must not map the perimeter."
+          },
+          {
+            "k": "Power plane",
+            "v": "solar over battery via an external charge controller (the kit's onboard charger is a slow ~50-100 mA and has no solar input); target is multi-day overcast survival."
+          },
+          {
+            "k": "Weather",
+            "v": "the kit ships with no IP rating — the sealed clamp enclosure, with the antenna stood off the fence's metal plane, is ours to design and print-validate."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Kit",
+            "v": "Seeed XIAO ESP32S3 + Wio-SX1262 (SKU 102010611, $9.90) — same XIAO family as every Canary host; Meshtastic pre-flashed since Oct 2024"
+          },
+          {
+            "k": "Transceiver",
+            "v": "Semtech SX1262 · 862-930 MHz, one hardware for EU868/US915 (region set in firmware) · up to +22 dBm · U.FL antenna"
+          },
+          {
+            "k": "Host MCU",
+            "v": "ESP32-S3R8 dual-core 240 MHz · 8 MB flash + 8 MB PSRAM · WiFi b/g/n + BLE 5.0 · 21 x 17.8 mm"
+          },
+          {
+            "k": "Meshtastic",
+            "v": "mainline target seeed-xiao-s3 (HW_MODEL 81), community-supported tier, web-flasher entry 'Seeed XIAO S3'"
+          },
+          {
+            "k": "Sensing path",
+            "v": "LIS3DH accelerometer natively supported on the free I2C bus; the Detection Sensor module reads a vibration switch on a free GPIO - a zero-custom-code Phase 0 exists"
+          },
+          {
+            "k": "Power reality",
+            "v": "~130 mA measured as an always-on node (community, single-source) vs ~11.7 mA idle on the nRF52840 sibling kit - an ~11x gap the field mule must adjudicate"
+          },
+          {
+            "k": "Range",
+            "v": "2-5 km typical; >2.5 km measured by Seeed on the 2 dBi antenna (open-terrain 20 km+ claims are marketing)"
+          }
+        ],
+        "sources": [
+          {
+            "name": "Seeed kit wiki",
+            "url": "https://wiki.seeedstudio.com/wio_sx1262_with_xiao_esp32s3_kit/"
+          },
+          {
+            "name": "Meshtastic device docs",
+            "url": "https://meshtastic.org/docs/hardware/devices/community-supported/seeed-studio/wio-series/wio-sx1262s/"
+          },
+          {
+            "name": "power measurements (tutoduino)",
+            "url": "https://tutoduino.fr/en/power-consumption-meshtastic/"
+          },
+          {
+            "name": "solar node field test",
+            "url": "https://www.lorameshdevices.com/blog/meshtastic/exploring-the-esp32-s3-solar-node-a-25-hour-battery-test.html"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_fence_guard_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0, zero custom firmware: stock Meshtastic + LIS3DH on I2C + a vibration switch on a free GPIO (Detection Sensor module) — a field mule on a real fence, measuring false alarms and the solar budget through weather.",
+          "Let the mule's power data adjudicate ESP32-S3 vs the nRF52840 sibling kit (~11x idle gap; the S3 buys WiFi and price, the nRF52 buys the battery).",
+          "Close the platform question: Meshtastic module on stock firmware vs the native witness stack with a mesh transport.",
+          "Then the witness surface: v1 fence canonical, Ed25519 chain, health claims — the same trust rules as the rest of the flock, position broadcast off forever.",
+          "Enclosure last, informed by the mule: chain-link clamp, antenna stood off the metal plane, IP-rated, printed and validated like every other Canary shell."
+        ],
+        "request_title": "Concept request: Canary Fence Guard (Meshtastic perimeter witness)",
+        "request_body": "Seen the Fence Guard concept card. What I'd want from a chain-link-mounted, solar-fed Meshtastic perimeter witness:\n\n- fence length / terrain:\n- mesh distance to the nearest node:\n- shade situation:\n- what should count as an alarm (climb / cut / lean / gate):\n"
+      }
     }
   ]
 }
