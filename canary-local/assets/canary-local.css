@@ -251,6 +251,32 @@ button:disabled { opacity: 0.35; cursor: default; }
   color: #ffb45e; background: rgba(251,140,0,0.12); border: 1px solid rgba(251,140,0,0.3); border-radius: 6px; padding: 1px 5px; }
 .boardlab-links a { margin-right: 4px; }
 @media (max-width: 520px) { .pin-row { grid-template-columns: 1fr 1fr; } .pin-use { grid-column: 1 / -1; } }
+
+/* ── assemble tab (guided build) ───────────────────────────────────────── */
+.asm-prov { margin: 4px 0 10px; }
+.asmlab-stage { position: relative; }
+.asmlab-3d { width: 100%; height: 400px; touch-action: none; border-radius: 14px; outline: none;
+  background: radial-gradient(120% 95% at 50% 16%, #2b303a 0%, #1b1f27 46%, #0e1116 100%); }
+.asmlab-hint { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: var(--muted); pointer-events: none; }
+.asm-controls { margin: 10px 0 6px; display: flex; flex-direction: column; gap: 10px; }
+.asm-mode { align-self: flex-start; }
+.asm-explode { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.asm-slider { flex: 1; accent-color: var(--canary); }
+.asm-step { display: flex; flex-direction: column; gap: 10px; }
+.asm-rail { display: flex; gap: 7px; align-items: center; }
+.asm-dot { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #4a4f59; background: transparent; padding: 0; cursor: pointer; transition: transform .15s, background .15s; }
+.asm-dot.on { background: var(--canary); border-color: var(--canary); }
+.asm-dot.active { transform: scale(1.5); box-shadow: 0 0 0 3px rgba(255,212,79,0.18); }
+.asm-nav { display: flex; align-items: center; gap: 10px; }
+.asm-counter { margin: 0 2px; }
+.asm-card { background: #16151055; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px 14px; margin-top: 4px; }
+.asm-step-n { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.asm-title { margin: 3px 0 6px; }
+.asm-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.asm-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 4px 9px; border-radius: 999px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: #e8ddb8; }
+.asm-qty { font-weight: 700; color: var(--canary); }
+.asm-ref { font-size: 11px; color: var(--muted); }
 .filaments { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .fil-label { font-size: 12px; }
 button.fil {
