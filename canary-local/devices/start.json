@@ -373,12 +373,16 @@
         "all": {
          "cmds": [
           {
-           "cmd": "docker compose up -d",
+           "cmd": "curl -fsSLO https://raw.githubusercontent.com/kmay89/securaCV/main/docker/sidecar/quickstart.compose.yml",
            "out": [],
-           "note": "Run next to the quickstart compose file from the guide."
+           "note": "Grabs the quickstart compose file — these lines are the guide's own, extracted at build time."
           },
           {
-           "cmd": "docker compose exec witnessd doctor",
+           "cmd": "docker compose -f quickstart.compose.yml up -d",
+           "out": []
+          },
+          {
+           "cmd": "docker compose -f quickstart.compose.yml run --rm securacv doctor",
            "out": [],
            "note": "The end-to-end check: broker, Frigate events, chain, signatures."
           }

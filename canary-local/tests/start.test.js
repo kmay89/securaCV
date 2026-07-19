@@ -91,6 +91,30 @@ test("the Linux flash path IS the Hub bench's chapter, not a copy", () => {
   assert.ok(linux.danger, "the dd path must carry its warning");
 });
 
+test("no OS chosen → no OS-specific commands (a Mac visitor must never see dd)", async () => {
+  const { variantToRender } = await import("../assets/start.js");
+  const flashStep = data.missions.find((m) => m.id === "hub")
+    .chapters.find((c) => c.id === "flash").steps[0];
+  assert.strictEqual(variantToRender(flashStep, null), null,
+    "an OS-specific step renders nothing before the visitor picks a computer");
+  const allStep = { variants: { all: { bullets: ["x"] } } };
+  assert.strictEqual(variantToRender(allStep, null), allStep.variants.all,
+    "OS-agnostic steps still render before the pick");
+});
+
+test("docker commands are the frigate guide's own lines", () => {
+  const guide = readFileSync(join(REPO, "docs/frigate_integration.md"), "utf8");
+  const docker = data.missions.find((m) => m.id === "docker");
+  const cmds = docker.chapters.flatMap((c) => c.steps)
+    .flatMap((s) => Object.values(s.variants))
+    .flatMap((v) => v.cmds || [])
+    .map((c) => c.cmd)
+    .filter((c) => c.includes("compose"));
+  assert.ok(cmds.length >= 2, "the docker mission teaches compose commands");
+  for (const c of cmds)
+    assert.ok(guide.includes(c), `command not found verbatim in the guide: ${c}`);
+});
+
 test("every referenced doc path exists in the repo", () => {
   const paths = new Set(Object.values(data.docs));
   for (const m of data.missions)

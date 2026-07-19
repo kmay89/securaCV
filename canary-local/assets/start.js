@@ -20,6 +20,13 @@ export function variantFor(step, osId) {
   return step.variants[osId] || step.variants.all || null;
 }
 
+// What to render when the OS may not be chosen yet. Before a choice we
+// show only OS-agnostic content — never a guessed platform's commands
+// (a Mac visitor must not see, or copy, a Linux dd invocation).
+export function variantToRender(step, osId) {
+  return osId ? variantFor(step, osId) : (step.variants.all || null);
+}
+
 // Flat list of [chapterIdx, stepIdx] pairs — the progress denominator.
 export function stepKeys(mission) {
   const keys = [];
@@ -200,11 +207,10 @@ async function main() {
       }
       card.append(row);
 
-      const v = variantFor(step, os || "linux");
-      if (!os) {
-        const nudge = el("p", "muted fineprint", "Pick your computer above — commands differ per system.");
-        if (step.variants.all) nudge.hidden = true;
-        card.append(nudge);
+      const v = variantToRender(step, os);
+      if (!os && !step.variants.all) {
+        card.append(el("p", "muted fineprint start-nudge",
+          "⬆ Pick your computer above — the exact steps differ per system."));
       }
       if (v) {
         for (const b of v.bullets || []) card.append(el("p", "body start-bullet", "· " + expandVars(b, vars)));

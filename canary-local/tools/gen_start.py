@@ -18,6 +18,9 @@ Sources of truth (never re-stated here):
      and this guide re-lines; delete them and this generator fails loudly
      rather than teach a dead path.
   3. canary-local/devices/registry.json — the firmware train.
+  4. docs/frigate_integration.md — the Docker quickstart's real command
+     lines (compose filename and service name), extracted so the
+     interactive path can never teach a compose file that doesn't exist.
 
 Authored-in-generator content (mission copy, macOS/Windows imager paths,
 Docker steps) lives HERE as constants — the repo's pattern for curated
@@ -67,10 +70,34 @@ def extract_readme_facts(text):
     return facts
 
 
+def extract_docker_cmds(text):
+    """The Docker quickstart's real command lines, from the guide itself.
+
+    The guide (docs/frigate_integration.md) is the source of truth for the
+    compose filename and service name — hand-restating them here is how the
+    interactive path once taught a compose file that didn't exist.
+    """
+    cmds = []
+    for pattern, why in [
+        (r"^curl -fsSLO \S+quickstart\.compose\.yml$", "fetch the quickstart compose file"),
+        (r"^docker compose -f quickstart\.compose\.yml up -d$", "bring the sidecar up"),
+        (r"^docker compose -f quickstart\.compose\.yml run --rm \S+ doctor$", "run the doctor check"),
+    ]:
+        m = re.search(pattern, text, re.MULTILINE)
+        if not m:
+            fail(f"docs/frigate_integration.md no longer carries the command to {why}")
+        cmds.append(m.group(0))
+    return cmds
+
+
+FRIGATE_DOC = REPO / "docs/frigate_integration.md"
+
+
 def main():
     hub = json.loads(HUB_JSON.read_text())
     registry = json.loads(REGISTRY.read_text())
     readme = extract_readme_facts(README.read_text())
+    docker_cmds = extract_docker_cmds(FRIGATE_DOC.read_text())
 
     # The Hub's flash + boot chapters, verbatim — the Linux path of the
     # "spare Pi" mission. Imported, not copied: if gen_homeassistant.py
@@ -284,8 +311,9 @@ def main():
                             "title": "Fetch the quickstart and bring it up",
                             "doc": "docs/frigate_integration.md",
                             "variants": {"all": {"cmds": [
-                                {"cmd": "docker compose up -d", "out": [], "note": "Run next to the quickstart compose file from the guide."},
-                                {"cmd": "docker compose exec witnessd doctor", "out": [], "note": "The end-to-end check: broker, Frigate events, chain, signatures."},
+                                {"cmd": docker_cmds[0], "out": [], "note": "Grabs the quickstart compose file — these lines are the guide's own, extracted at build time."},
+                                {"cmd": docker_cmds[1], "out": []},
+                                {"cmd": docker_cmds[2], "out": [], "note": "The end-to-end check: broker, Frigate events, chain, signatures."},
                             ]}},
                         },
                     ],
