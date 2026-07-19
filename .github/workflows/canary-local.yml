@@ -12,6 +12,8 @@ on:
     branches: [main]
     paths:
       - "canary-local/**"
+      - "firmware/projects/canary-wap/**"
+      - "docs/getting_started_canary.md"
       - "firmware/projects/canary-display/**"
       - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
@@ -27,6 +29,8 @@ on:
   pull_request:
     paths:
       - "canary-local/**"
+      - "firmware/projects/canary-wap/**"
+      - "docs/getting_started_canary.md"
       - "firmware/projects/canary-display/**"
       - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
@@ -62,6 +66,7 @@ jobs:
           node --test canary-local/tests/assembly.test.js
           node --test canary-local/tests/boardroom.test.js
           node --test canary-local/tests/homeassistant.test.js
+          node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/bench.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
@@ -75,6 +80,13 @@ jobs:
           python3 canary-local/tools/gen_homeassistant.py
           if ! git diff --exit-code -- canary-local/devices/homeassistant.json; then
             echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit"
+            exit 1
+          fi
+      - name: WAP data drift (parsed from the canary-wap firmware + docs)
+        run: |
+          python3 canary-local/tools/gen_wap.py
+          if ! git diff --exit-code -- canary-local/devices/wap.json; then
+            echo "::error::generated WAP data stale — run canary-local/tools/gen_wap.py and commit (the firmware moved)"
             exit 1
           fi
 
@@ -114,6 +126,8 @@ jobs:
         run: node canary-local/tests/boardroom_probe.mjs
       - name: Bench probe — the physical test bench drives the live firmware
         run: node canary-local/tests/bench_probe.mjs
+      - name: WAP probe — first-boot, captive portal, serial + MQTT
+        run: node canary-local/tests/wap_probe.mjs
       - name: Build both flavors from THIS tree
         run: |
           cd canary-local/emulator
