@@ -1,0 +1,150 @@
+/* canary-local/assets/flash.css — the browser flasher.
+   Rides the canary-local design tokens (--canary, --surface, --edge, …);
+   only .flash-* classes live here. Dark, like the rest of the Lab. */
+
+.flash-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  margin-top: 20px;
+}
+@media (max-width: 820px) {
+  .flash-layout { grid-template-columns: 1fr; }
+  .flash-rail { order: -1; } /* the promise leads on small screens */
+}
+
+.flash-card {
+  border: 1px solid var(--edge);
+  background: linear-gradient(180deg, var(--surface-2, #17171a) 0%, #101012 100%);
+  border-radius: var(--radius);
+  padding: 22px 22px 24px;
+  margin: 0 0 16px;
+}
+.flash-card h2 { font-size: 25px; margin: 4px 0 8px; font-weight: 660; letter-spacing: -0.01em; }
+.flash-card h3 { font-size: 17px; margin: 0 0 6px; font-weight: 640; }
+.flash-flow { min-width: 0; }
+
+.flash-big-emoji { font-size: 46px; line-height: 1; margin-bottom: 6px; }
+.flash-chip-emoji { font-size: 40px; }
+.flash-plug { display: inline-block; animation: flash-nudge 2.4s ease-in-out infinite; }
+@keyframes flash-nudge { 0%,88%,100% { transform: translateX(0); } 92% { transform: translateX(-6px); } 96% { transform: translateX(0); } }
+
+.flash-connect-btn { font-size: 16px; padding: 13px 24px; margin: 14px 0 8px; }
+.flash-connect-hint { margin: 4px 0 0; }
+.flash-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; align-items: center; }
+
+/* ── connect / working spinner ─────────────────────────────────────────── */
+.flash-spinner {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 3px solid var(--edge); border-top-color: var(--canary);
+  animation: flash-spin 0.9s linear infinite; margin: 6px 0 14px;
+}
+@keyframes flash-spin { to { transform: rotate(360deg); } }
+.flash-hidden { display: none !important; }
+
+/* ── chip hello ────────────────────────────────────────────────────────── */
+.flash-facts { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 10px; }
+.flash-fact {
+  border: 1px solid var(--edge); border-radius: 12px; padding: 8px 12px;
+  background: rgba(255,255,255,0.02); min-width: 120px;
+}
+.flash-fact-label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+.flash-fact-val { display: block; font-size: 14px; margin-top: 2px; word-break: break-word; }
+.flash-current { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0; color: #cfcfcf; }
+.flash-current-dot { font-size: 11px; }
+.flash-dot-ok { color: var(--ok); }
+.flash-dot-new { color: var(--signed); }
+
+/* ── backup ────────────────────────────────────────────────────────────── */
+.flash-backup-head { display: flex; gap: 12px; align-items: flex-start; }
+.flash-backup-emoji { font-size: 26px; }
+.flash-backup-done { display: flex; align-items: baseline; gap: 8px; color: var(--ok); margin: 6px 0 10px; }
+.flash-check { color: var(--ok); font-weight: 700; }
+
+/* ── firmware picker ───────────────────────────────────────────────────── */
+.flash-products { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.flash-product {
+  display: flex; align-items: center; gap: 14px; justify-content: space-between;
+  border: 1px solid var(--edge); border-radius: 14px; padding: 12px 14px;
+  background: rgba(255,255,255,0.015);
+}
+.flash-product-main { min-width: 0; }
+.flash-product-name { font-weight: 620; }
+.flash-product-tag { font-size: 13px; margin-top: 2px; }
+.flash-product-ver { font-size: 12px; color: var(--canary-deep); margin-top: 4px; min-height: 1em; }
+.flash-pick { white-space: nowrap; }
+.flash-manifest-state { margin: 6px 0 2px; }
+.flash-note { border-radius: 12px; padding: 10px 12px; font-size: 13.5px; margin: 8px 0; }
+.flash-note-soft { border: 1px solid var(--edge); background: rgba(3,169,244,0.06); color: #bfe6fb; }
+
+.flash-advanced { margin-top: 14px; border-top: 1px solid var(--edge); padding-top: 10px; }
+.flash-advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.flash-local { margin: 10px 0; }
+.flash-file { display: block; margin-top: 8px; font-size: 13px; color: var(--muted); }
+.flash-erase { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: #cfcfcf; margin-top: 10px; cursor: pointer; }
+.flash-disconnect { margin-top: 4px; }
+
+/* ── confirm ───────────────────────────────────────────────────────────── */
+.flash-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.flash-reassure { display: flex; gap: 8px; align-items: baseline; background: rgba(67,160,71,0.08);
+  border: 1px solid rgba(67,160,71,0.3); border-radius: 12px; padding: 10px 12px; color: #bfe3c1; }
+.flash-shield { font-size: 18px; }
+
+/* ── progress ──────────────────────────────────────────────────────────── */
+.flash-stage { font-size: 15px; color: #e7e7e7; margin: 2px 0 12px; }
+.flash-bar { height: 12px; border-radius: 999px; background: #0c0c0d; border: 1px solid var(--edge); overflow: hidden; }
+.flash-bar-fill {
+  height: 100%; width: 0%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--canary-deep), var(--canary));
+  transition: width 0.25s ease; box-shadow: 0 0 14px rgba(255,212,79,0.4);
+}
+.flash-progress-meta { margin: 8px 0 2px; }
+.flash-reassure-lite { color: var(--muted); }
+.flash-log, .flash-rawerr { margin-top: 12px; }
+.flash-log summary, .flash-rawerr summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.flash-log pre, .flash-rawerr pre, .flash-console {
+  background: #08080a; border: 1px solid var(--edge); border-radius: 10px; padding: 10px;
+  font: 12px/1.5 "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: #b9c7b9;
+  max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin-top: 8px;
+}
+
+/* ── done ──────────────────────────────────────────────────────────────── */
+.flash-done-bird { font-size: 52px; animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both; }
+@keyframes flash-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.flash-console-wrap { margin-top: 16px; }
+.flash-console-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+.flash-console-ok { display: flex; gap: 8px; align-items: baseline; color: var(--ok); margin-top: 8px; }
+
+/* ── error ─────────────────────────────────────────────────────────────── */
+.flash-error { border-color: rgba(251,140,0,0.4); }
+.flash-steps { margin: 10px 0 4px; padding-left: 20px; color: #d7d7d7; }
+.flash-steps li { margin: 5px 0; }
+
+/* ── the persistent rail ───────────────────────────────────────────────── */
+.flash-rail { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 14px; }
+@media (max-width: 820px) { .flash-rail { position: static; } }
+.flash-promise { border-color: rgba(255,212,79,0.32); background:
+  linear-gradient(180deg, rgba(255,212,79,0.06), rgba(16,16,18,1) 70%); }
+.flash-promise-badge { font-size: 30px; }
+.flash-promise h3 { font-size: 18px; }
+.flash-checklist { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.flash-checklist li { display: flex; gap: 9px; align-items: baseline; font-size: 13.5px; color: #d7d7d7; }
+.flash-recovery summary { cursor: pointer; font-weight: 560; }
+.flash-recovery-row { margin: 10px 0; }
+.flash-recovery-when { font-size: 13px; font-weight: 560; margin: 0 0 2px; color: #e7e7e7; }
+.flash-privacy { opacity: 0.75; }
+
+/* ── confetti ──────────────────────────────────────────────────────────── */
+.flash-confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 50; }
+.flash-confetti-bit {
+  position: absolute; top: -6%; font-size: 20px;
+  animation: flash-fall 2.4s ease-in forwards;
+}
+@keyframes flash-fall {
+  to { transform: translate(var(--drift, 0), 108vh) rotate(320deg); opacity: 0.15; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash-plug, .flash-spinner, .flash-done-bird, .flash-confetti-bit, .flash-bar-fill { animation: none; }
+  .flash-confetti { display: none; }
+}
