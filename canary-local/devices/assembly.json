@@ -1,346 +1,370 @@
 {
-  "note": "Assembly choreography for the canary.local Assemble tab. The PARTS and the STEP TEXT are real and drift-gated (enclosure STLs + the board GLB + the README \u00a7Assembly steps carried in build.json); the choreography here \u2014 seated transforms, explode/insert vectors, camera, and which part appears in which step \u2014 is authored and staged, and tests/assembly.test.js validates that every part file exists, every readmeStep maps to a real build.json step, and every fastener qty matches the BOM. Positions are representative, not a CAD assembly constraint solve.",
-  "palette": {
-    "shell": [
-      0.17,
-      0.18,
-      0.2
-    ],
-    "shell2": [
-      0.22,
-      0.23,
-      0.26
-    ],
-    "gasket": [
-      0.09,
-      0.09,
-      0.1
-    ]
-  },
-  "devices": {
-    "canary-wap": {
-      "title": "Canary WAP \u2014 weather + battery build",
-      "board": "seeed_xiao_esp32s3_sense",
-      "frame": {
-        "rx": -0.42,
-        "ry": 0.62,
-        "pad": 2.0
-      },
-      "assembly_source": "docs/hardware/enclosure/README.md \u00a7Assembly (via devices/build.json)",
-      "parts": [
-        {
-          "id": "base",
-          "source": "stl",
-          "file": "canary_wap_enclosure_weather_base.stl",
-          "color": "shell",
-          "seated": {
-            "pos": [
-              0,
-              0,
-              0
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            -30
-          ],
-          "step": 0,
-          "name": "Weather base"
-        },
-        {
-          "id": "batt",
-          "source": "proc",
-          "part": "lipo",
-          "params": {
-            "w": 50,
-            "h": 34,
-            "t": 5
-          },
-          "seated": {
-            "pos": [
-              -26,
-              0,
-              4
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            -12
-          ],
-          "insert": [
-            0,
-            0,
-            26
-          ],
-          "step": 1,
-          "name": "LiPo cell",
-          "qty": 1,
-          "ref": "BT1"
-        },
-        {
-          "id": "board",
-          "source": "board",
-          "board": "seeed_xiao_esp32s3_sense",
-          "seated": {
-            "pos": [
-              16,
-              0,
-              10
-            ],
-            "rot": [
-              -90,
-              0,
-              0
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            0
-          ],
-          "insert": [
-            0,
-            0,
-            26
-          ],
-          "step": 2,
-          "name": "XIAO ESP32-S3 Sense",
-          "ref": "U1"
-        },
-        {
-          "id": "magnet",
-          "source": "proc",
-          "part": "magnet",
-          "params": {
-            "d": 6,
-            "h": 2
-          },
-          "seated": {
-            "pos": [
-              34,
-              0,
-              16
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            22
-          ],
-          "step": 3,
-          "name": "Tamper magnet",
-          "qty": 1,
-          "ref": "MAG1"
-        },
-        {
-          "id": "lp",
-          "source": "proc",
-          "part": "lightPipe",
-          "params": {
-            "d": 3,
-            "len": 7
-          },
-          "seated": {
-            "pos": [
-              42,
-              0,
-              15
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            26
-          ],
-          "step": 3,
-          "name": "Light pipe",
-          "qty": 1,
-          "ref": "LP1"
-        },
-        {
-          "id": "gasket",
-          "source": "stl",
-          "file": "canary_wap_enclosure_weather_gasket.stl",
-          "color": "gasket",
-          "seated": {
-            "pos": [
-              0,
-              0,
-              15.4
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            34
-          ],
-          "insert": [
-            0,
-            0,
-            20
-          ],
-          "step": 4,
-          "name": "TPU gasket",
-          "ref": "FIL1"
-        },
-        {
-          "id": "disc",
-          "source": "proc",
-          "part": "disc",
-          "params": {
-            "d": 12,
-            "t": 1
-          },
-          "seated": {
-            "pos": [
-              16,
-              0,
-              17.5
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            38
-          ],
-          "insert": [
-            0,
-            0,
-            18
-          ],
-          "step": 4,
-          "name": "Clear camera disc",
-          "qty": 1,
-          "ref": "CW1"
-        },
-        {
-          "id": "lid",
-          "source": "stl",
-          "file": "canary_wap_enclosure_weather_lid.stl",
-          "color": "shell2",
-          "seated": {
-            "pos": [
-              0,
-              0,
-              15.6
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            48
-          ],
-          "insert": [
-            0,
-            0,
-            34
-          ],
-          "step": 5,
-          "name": "Weather lid"
-        },
-        {
-          "id": "screws",
-          "source": "proc",
-          "part": "screw",
-          "params": {
-            "len": 9,
-            "csk": true
-          },
-          "instances": [
-            [
-              47,
-              15
-            ],
-            [
-              47,
-              -15
-            ],
-            [
-              -47,
-              15
-            ],
-            [
-              -47,
-              -15
-            ]
-          ],
-          "iz": 22,
-          "explode": [
-            0,
-            0,
-            60
-          ],
-          "insert": [
-            0,
-            0,
-            16
-          ],
-          "step": 5,
-          "name": "M2 screw",
-          "qty": 4,
-          "ref": "SCR3"
-        },
-        {
-          "id": "shield",
-          "source": "stl",
-          "file": "canary_wap_enclosure_weather_shield.stl",
-          "color": "shell",
-          "seated": {
-            "pos": [
-              0,
-              0,
-              22.2
-            ]
-          },
-          "explode": [
-            0,
-            0,
-            72
-          ],
-          "insert": [
-            0,
-            0,
-            40
-          ],
-          "step": 6,
-          "name": "Sun shield",
-          "ref": "weather_shield"
-        }
-      ],
-      "steps": [
-        {
-          "title": "Start with the base",
-          "readmeStep": null,
-          "note": "The printed weather base \u2014 every part nests into it. Print it face-down, no supports (catalog settings)."
-        },
-        {
-          "title": "Drop in the battery",
-          "readmeStep": 0
-        },
-        {
-          "title": "Press the board home",
-          "readmeStep": 1
-        },
-        {
-          "title": "Prep the lid: magnet + light pipe",
-          "readmeStep": 2
-        },
-        {
-          "title": "Seat the gasket",
-          "readmeStep": 3
-        },
-        {
-          "title": "Close the lid & drive the screws",
-          "readmeStep": 4
-        },
-        {
-          "title": "Add the sun shield (optional)",
-          "readmeStep": null,
-          "note": "The vented sun shield clips over the lid for direct-sun installs \u2014 keeps the case cooler and shades the camera window."
-        }
+ "note": "Assembly choreography for the canary.local Assemble tab. The PARTS and the STEP TEXT are real and drift-gated (enclosure STLs + the board GLB + the README §Assembly steps carried in build.json); the choreography here — seated transforms, explode/insert vectors, camera, and which part appears in which step — is authored and staged, and tests/assembly.test.js validates that every part file exists, every readmeStep maps to a real build.json step, and every fastener qty matches the BOM. Positions are representative, not a CAD assembly constraint solve.",
+ "palette": {
+  "shell": [
+   0.17,
+   0.18,
+   0.2
+  ],
+  "shell2": [
+   0.22,
+   0.23,
+   0.26
+  ],
+  "gasket": [
+   0.09,
+   0.09,
+   0.1
+  ]
+ },
+ "devices": {
+  "canary-wap": {
+   "title": "Canary WAP — weather + battery build",
+   "board": "seeed_xiao_esp32s3_sense",
+   "frame": {
+    "rx": -0.42,
+    "ry": 0.62,
+    "pad": 2.0
+   },
+   "assembly_source": "docs/hardware/enclosure/README.md §Assembly (via devices/build.json)",
+   "parts": [
+    {
+     "id": "base",
+     "source": "stl",
+     "file": "canary_wap_enclosure_weather_base.stl",
+     "color": "shell",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       0
       ]
+     },
+     "explode": [
+      0,
+      0,
+      -30
+     ],
+     "step": 0,
+     "name": "Weather base"
+    },
+    {
+     "id": "batt",
+     "source": "proc",
+     "part": "lipo",
+     "params": {
+      "w": 50,
+      "h": 34,
+      "t": 5
+     },
+     "seated": {
+      "pos": [
+       -0.15,
+       0,
+       2
+      ],
+      "rot": [
+       0,
+       0,
+       180
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      -12
+     ],
+     "insert": [
+      0,
+      0,
+      24
+     ],
+     "step": 1,
+     "name": "LiPo cell",
+     "qty": 1,
+     "ref": "BT1"
+    },
+    {
+     "id": "board",
+     "source": "board",
+     "board": "seeed_xiao_esp32s3_sense",
+     "seated": {
+      "pos": [
+       -40.2,
+       0,
+       12
+      ],
+      "rot": [
+       90,
+       180,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      0
+     ],
+     "insert": [
+      0,
+      0,
+      20
+     ],
+     "step": 2,
+     "name": "XIAO ESP32-S3 Sense",
+     "ref": "U1"
+    },
+    {
+     "id": "magnet",
+     "source": "proc",
+     "part": "magnet",
+     "params": {
+      "d": 6,
+      "h": 2
+     },
+     "seated": {
+      "pos": [
+       -44.75,
+       5,
+       15.05
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      22
+     ],
+     "step": 3,
+     "name": "Tamper magnet",
+     "qty": 1,
+     "ref": "MAG1",
+     "insert": [
+      0,
+      0,
+      10
+     ]
+    },
+    {
+     "id": "lp",
+     "source": "proc",
+     "part": "lightPipe",
+     "params": {
+      "d": 3,
+      "len": 7
+     },
+     "seated": {
+      "pos": [
+       -33.75,
+       5,
+       8.6
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      26
+     ],
+     "step": 3,
+     "name": "Light pipe",
+     "qty": 1,
+     "ref": "LP1",
+     "insert": [
+      0,
+      0,
+      10
+     ]
+    },
+    {
+     "id": "gasket",
+     "source": "stl",
+     "file": "canary_wap_enclosure_weather_gasket.stl",
+     "color": "gasket",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       14.2
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      34
+     ],
+     "insert": [
+      0,
+      0,
+      10
+     ],
+     "step": 4,
+     "name": "TPU gasket",
+     "ref": "FIL1"
+    },
+    {
+     "id": "disc",
+     "source": "proc",
+     "part": "disc",
+     "params": {
+      "d": 12,
+      "t": 1
+     },
+     "seated": {
+      "pos": [
+       -38.75,
+       0,
+       15.05
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      38
+     ],
+     "insert": [
+      0,
+      0,
+      10
+     ],
+     "step": 4,
+     "name": "Clear camera disc",
+     "qty": 1,
+     "ref": "CW1"
+    },
+    {
+     "id": "lid",
+     "source": "stl",
+     "file": "canary_wap_enclosure_weather_lid.stl",
+     "color": "shell2",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       17.2
+      ],
+      "rot": [
+       180,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      48
+     ],
+     "insert": [
+      0,
+      0,
+      22
+     ],
+     "step": 5,
+     "name": "Weather lid"
+    },
+    {
+     "id": "screws",
+     "source": "proc",
+     "part": "screw",
+     "params": {
+      "len": 9,
+      "csk": true
+     },
+     "instances": [
+      [
+       47.65,
+       14.8
+      ],
+      [
+       47.65,
+       -14.8
+      ],
+      [
+       -47.65,
+       14.8
+      ],
+      [
+       -47.65,
+       -14.8
+      ]
+     ],
+     "iz": 17.2,
+     "explode": [
+      0,
+      0,
+      60
+     ],
+     "insert": [
+      0,
+      0,
+      16
+     ],
+     "step": 6,
+     "name": "M2 screw",
+     "qty": 4,
+     "ref": "SCR3"
+    },
+    {
+     "id": "shield",
+     "source": "stl",
+     "file": "canary_wap_enclosure_weather_shield.stl",
+     "color": "shell",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       15.4
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      72
+     ],
+     "insert": [
+      0,
+      0,
+      26
+     ],
+     "step": 7,
+     "name": "Sun shield",
+     "ref": "weather_shield"
     }
+   ],
+   "steps": [
+    {
+     "title": "Start with the base",
+     "readmeStep": null,
+     "note": "The printed weather base — every part nests into it. Prints flat, open side up, no supports (catalog settings)."
+    },
+    {
+     "title": "Drop in the battery",
+     "readmeStep": 0
+    },
+    {
+     "title": "Press the board home",
+     "readmeStep": 1
+    },
+    {
+     "title": "Prep the lid: magnet + light pipe",
+     "readmeStep": 2
+    },
+    {
+     "title": "Seat the gasket & camera disc",
+     "readmeStep": 3
+    },
+    {
+     "title": "Close the lid",
+     "readmeStep": 4
+    },
+    {
+     "title": "Drive the screws — snug, diagonal, don't crank",
+     "readmeStep": 4
+    },
+    {
+     "title": "Add the sun shield (optional)",
+     "readmeStep": null,
+     "note": "The vented sun shield clips over the lid for direct-sun installs — keeps the case cooler and shades the camera window."
+    }
+   ]
   }
+ }
 }

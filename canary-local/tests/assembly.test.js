@@ -61,3 +61,49 @@ for (const [dev, d] of Object.entries(asm.devices)) {
     }
   });
 }
+
+// ── physical sanity, pinned after the field reports (the four bugs) ──────
+// Ground truth: canary_wap_enclosure.scad (battery_weather) — board parks
+// at the −X USB wall (board_cx −38.75), battery bay is central (batt_cx
+// −0.15), the lid STL is the design flipped 180° for printing (assembled
+// seat = z 17.2 with rot [180,0,0]), lid features cluster over the board
+// (mag −44.75, lp −33.75), and the screws drive LAST into posts at
+// ±47.65/±14.8 with heads flush at the lid top.
+test("canary-wap: the assembly is physically true to the scad", () => {
+  const a = asm.devices["canary-wap"];
+  const by = Object.fromEntries(a.parts.map((p) => [p.id, p]));
+
+  // board: USB end at the −X wall, camera stack up, USB yawed to the wall
+  assert.ok(by.board.seated.pos[0] < -30, "board parks at the USB (−X) wall");
+  assert.strictEqual(by.board.seated.rot[0], 90, "camera stack points up");
+  assert.strictEqual(by.board.seated.rot[1], 180, "USB yawed toward the wall");
+
+  // battery: central bay, flat on the floor (floor_t = 2)
+  assert.ok(Math.abs(by.batt.seated.pos[0]) < 5, "battery bay is central");
+  assert.strictEqual(by.batt.seated.pos[2], 2, "battery sits on the bay floor");
+  assert.ok(by.batt.seated.pos[0] > by.board.seated.pos[0],
+    "battery bay sits inboard of the board");
+
+  // lid: flipped from print orientation, seated at base_h + lid_t
+  assert.deepStrictEqual(by.lid.seated.rot, [180, 0, 0],
+    "the printable lid is face-down; assembly flips it");
+  assert.ok(Math.abs(by.lid.seated.pos[2] - 17.2) < 0.05, "lid top at 15.2 + 2");
+
+  // lid features live over the BOARD end, not the GPS bay
+  assert.ok(by.magnet.seated.pos[0] < -30, "magnet pocket is over the board end");
+  assert.ok(by.lp.seated.pos[0] < -30, "light pipe is over the board end");
+
+  // screws: their own beat AFTER the lid, heads flush at the lid top
+  assert.ok(by.screws.step > by.lid.step, "screws drive after the lid closes");
+  assert.ok(Math.abs(by.screws.iz - 17.2) < 0.05, "screw heads land at the lid top");
+  for (const [x, y] of by.screws.instances) {
+    assert.ok(Math.abs(Math.abs(x) - 47.65) < 0.05 && Math.abs(Math.abs(y) - 14.8) < 0.05,
+      "screws at the scad's corner posts");
+  }
+
+  // the step rail reads in build order
+  const titles = a.steps.map((s) => s.title.toLowerCase());
+  const idx = (t) => titles.findIndex((x) => x.includes(t));
+  assert.ok(idx("battery") < idx("board"), "battery before board (per the catalog)");
+  assert.ok(idx("close the lid") < idx("screws"), "lid closes before screws drive");
+});
