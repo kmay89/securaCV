@@ -553,15 +553,19 @@ export function buildBoardRoom(mount, boardsData, wiring) {
     bBoard.classList.toggle("on", m === "board");
     bWire.classList.toggle("on", m === "wire");
     padsToggle.hidden = m !== "board";
+    // mid-fetch the stage holds no (or the PREVIOUS board's) mesh — remember
+    // the chosen mode and let showBoard() render it when the parse lands
+    if (!room.parsed) return;
     if (m === "board") showBoardMode(); else showWireMode();
   }
   bBoard.addEventListener("click", () => setMode("board"));
   bWire.addEventListener("click", () => setMode("wire"));
-  padsCb.addEventListener("change", () => { if (room.mode === "board") showBoardMode(); });
+  padsCb.addEventListener("change", () => { if (room.mode === "board" && room.parsed) showBoardMode(); });
 
   async function showBoard(bid) {
     room.bid = bid;
     room.board = boardsData.boards[bid];
+    room.parsed = null; // guards setMode/toggle from rendering a stale mesh
     room.step = -1;
     const builds = buildsFor(wiring, bid);
     room.build = builds[0] || null;
