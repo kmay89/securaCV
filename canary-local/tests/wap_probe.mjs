@@ -103,6 +103,21 @@ try {
   if (checkCount < 6) fail("expected 6 pre-flight checks, got " + checkCount);
   const hasRecovery = await page.$$eval(".wap-ha-block h5", (hs) => hs.some((h) => /recovery kit/i.test(h.textContent)));
   if (!hasRecovery) fail("recovery-kit block missing from step 5");
+  // Home Assistant is gated behind saving the recovery kit (mirrors the firmware,
+  // where /api/mqtt/config 401s without the receipt's cv_session cookie).
+  const haVisible = () => page.evaluate(() => {
+    const ha = [...document.querySelectorAll(".wap-ha-block")]
+      .find((b) => /home assistant/i.test(b.querySelector("h5")?.textContent || ""));
+    return !!ha && getComputedStyle(ha).display !== "none";
+  });
+  if (await haVisible()) fail("Home Assistant block shown before the recovery kit was saved");
+  await page.locator("button.primary", { hasText: "Save my recovery kit" }).click();
+  const revealed = await page.waitForFunction(() => {
+    const ha = [...document.querySelectorAll(".wap-ha-block")]
+      .find((b) => /home assistant/i.test(b.querySelector("h5")?.textContent || ""));
+    return !!ha && getComputedStyle(ha).display !== "none";
+  }, null, { timeout: 4000 }).catch(() => null);
+  if (!revealed) fail("Home Assistant block was not revealed after saving the recovery kit");
   // finish via the Home Assistant "Test & save" (brings up MQTT)
   await page.locator("button.primary", { hasText: "Test & save" }).click();
 

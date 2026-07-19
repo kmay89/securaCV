@@ -369,6 +369,35 @@ export function buildPhone(data, bus) {
     pf.append(checks);
     body.append(pf);
 
+    // --- step 5 close-out: recovery kit, then the optional Home Assistant
+    // hookup. The HA block is GATED behind saving the recovery kit — on device,
+    // companion_pwa.h reveals #wiz-ha-block only after /api/provisioning-receipt
+    // succeeds, because that download issues the cv_session cookie that
+    // /api/mqtt/config requires (otherwise it 401s). Showing HA first would
+    // demonstrate an onboarding order that cannot succeed on hardware.
+    const haBlock = (step5.blocks || []).find((b) => /home assistant/i.test(b.title || ""));
+    const haField = haBlock && haBlock.fields && haBlock.fields[0];
+    const ha = el("div", "wap-ha-block");
+    ha.style.display = "none";  // revealed only after the recovery kit is saved
+    ha.append(el("h5", null, (haBlock && haBlock.title) || "Use Home Assistant? (optional)"));
+    const host = el("input", "wap-input");
+    host.placeholder = (haField && haField.placeholder) || "Broker address (like 192.168.1.10)";
+    ha.append(host);
+    const haRow = el("div", "wap-wiz-btns");
+    const skip = el("button", "ghost", "Skip");
+    const save = el("button", "primary", "Test & save");
+    haRow.append(skip, save);
+    ha.append(haRow);
+
+    const done = (withHa, msg) => {
+      finish(withHa);
+      ha.style.display = "";  // ensure the outcome message is visible
+      ha.innerHTML = "";
+      ha.append(el("p", "ok", msg));
+    };
+    skip.addEventListener("click", () => done(false, "✓ Finished. Name it by its room from the dashboard's Settings."));
+    save.addEventListener("click", () => done(true, "✓ Broker saved — entities announcing on Home Assistant."));
+
     const rk = (step5.blocks || []).find((b) => /recovery kit/i.test(b.title || ""));
     if (rk) {
       const rkEl = el("div", "wap-ha-block");
@@ -377,28 +406,20 @@ export function buildPhone(data, bus) {
       const rkRow = el("div", "wap-wiz-btns");
       const later = el("button", "ghost", "Do this later");
       const saveKit = el("button", "primary", "Save my recovery kit");
-      saveKit.addEventListener("click", () =>
-        rkRow.replaceWith(el("p", "ok fineprint", "✓ canary-recovery-kit.json saved")));
-      later.addEventListener("click", () =>
-        rkRow.replaceWith(el("p", "muted fineprint", "grab it later from Settings → Export")));
+      saveKit.addEventListener("click", () => {
+        rkRow.replaceWith(el("p", "ok fineprint",
+          "✓ canary-recovery-kit.json saved — this unlocks the Home Assistant step below."));
+        ha.style.display = "";  // the receipt 'issued the cv_session cookie' → HA is now reachable
+        host.focus();
+      });
+      later.addEventListener("click", () => done(false,
+        "Recovery kit skipped — grab it later from Settings → Export. (Home Assistant needs the receipt's session, so it stays off for now.)"));
       rkRow.append(later, saveKit);
       rkEl.append(rkRow);
       body.append(rkEl);
+    } else {
+      ha.style.display = "";  // no recovery step in the data → nothing to gate on
     }
-
-    // optional Home Assistant hookup (step 5 HA block)
-    const haBlock = (step5.blocks || []).find((b) => /home assistant/i.test(b.title || ""));
-    const haField = haBlock && haBlock.fields && haBlock.fields[0];
-    const ha = el("div", "wap-ha-block");
-    ha.append(el("h5", null, (haBlock && haBlock.title) || "Use Home Assistant? (optional)"));
-    const host = el("input", "wap-input");
-    host.placeholder = (haField && haField.placeholder) || "Broker address (like 192.168.1.10)";
-    ha.append(host);
-    const row = el("div", "wap-wiz-btns");
-    const skip = el("button", "ghost", "Skip"); skip.addEventListener("click", () => finish(false));
-    const save = el("button", "primary", "Test & save"); save.addEventListener("click", () => finish(true));
-    row.append(skip, save);
-    ha.append(row);
     body.append(ha);
 
     s.append(body); screen.append(s);
@@ -411,12 +432,9 @@ export function buildPhone(data, bus) {
   function connect(ssid) { setPhase("connecting"); screenConnecting(ssid); bus.emit("connect", { ssid }); }
   function standalone() { setPhase("online"); screenOnline(null, true); bus.emit("connect", { standalone: true }); }
   function finish(withHa) {
+    // emit-only: the DOM outcome message is handled by the caller's done()
     bus.emit("online", { ha: withHa });
     if (withHa) bus.emit("mqtt");
-    // the Home Assistant block is the last .wap-ha-block (after the recovery kit)
-    const blocks = screen.querySelectorAll(".wap-ha-block");
-    const done = blocks[blocks.length - 1];
-    if (done) { done.innerHTML = ""; done.append(el("p", "ok", withHa ? "✓ Broker saved — entities announcing on Home Assistant." : "✓ Finished. Name it by its room from the dashboard.")); }
   }
 
   bus.on("plug", ({ source }) => { power = source; if (phase === "off") screenLocked(); });
