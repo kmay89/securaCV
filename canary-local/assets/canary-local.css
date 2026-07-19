@@ -335,8 +335,27 @@ footer { border-top: 1px solid #161616; color: var(--faint); font-size: 13px; te
 footer p { max-width: 720px; margin: 0 auto; }
 
 @media (max-width: 900px) {
-  .sheet { grid-template: "grab" auto "head" auto "stage" auto "side" 1fr / 1fr; height: 94vh; }
-  .stage-3d { min-height: 180px; }
+  /* One scroll surface: the sheet itself scrolls; rows take their natural
+     height and the inner .panel stops being a (tiny, easily-missed) nested
+     scroller. Without this, the 3D stage + glass fill the screen and the
+     only scrollable region is a sliver at the bottom. */
+  .sheet {
+    /* block flow, not grid: grid track sizing under-measured the stage row
+       (the emulator glass canvas gets its intrinsic size after first
+       layout), which let the glass paint over — and steal touches from —
+       the tabs and panel below it */
+    display: block;
+    height: 94vh; height: 94dvh;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .stage { margin-bottom: 14px; }
+  .stage-3d { min-height: 180px; height: 200px; flex: none; }
+  .side { min-height: auto; }
+  .panel { overflow: visible; flex: none; padding-right: 0; }
+}
+
+
 }
 
 /* ── build-it tab ── */
@@ -897,3 +916,16 @@ footer p { max-width: 720px; margin: 0 auto; }
   .field .scan, .field .sweep { opacity: 0.5; }
   .event-chip { animation: none; }
 }
+
+/* Kept at end of file: must win the cascade over every canvas rule above
+   (.ws-canvas and .broom-3d re-declare touch-action:none at equal
+   specificity later in the file than the sheet rules do). */
+@media (pointer: coarse) {
+  /* touch-action:none on the interactive canvases makes scrolling
+     impossible when a finger lands on them — and on a phone they are most
+     of the sheet. pan-y hands vertical pans back to the browser (the
+     pointer handlers already recover via pointercancel/lostpointercapture);
+     horizontal drags still orbit, taps and long-presses still land, and
+     two-finger pinch still zooms the 3D scenes. */
+  .card-3d, .stage-3d, .glass, .enclab-3d, .boardlab-3d, .asmlab-3d,
+  .ws-canvas, .broom-3d { touch-action: pan-y; }
