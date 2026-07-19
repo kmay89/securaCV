@@ -47,8 +47,8 @@ jobs:
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
-          if ! git diff --exit-code -- canary-local/devices/enclosures.json; then
-            echo "::error::enclosures.json is stale — run canary-local/tools/gen_enclosures.py and commit"
+          if ! git diff --exit-code -- canary-local/devices/enclosures.json canary-local/devices/build.json; then
+            echo "::error::generated catalog stale — run canary-local/tools/gen_enclosures.py and commit"
             exit 1
           fi
 

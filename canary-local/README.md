@@ -178,6 +178,24 @@ annotations by `tools/gen_enclosures.py`. In-development designs render
 from coarse preview meshes clearly marked as such; the library's
 "committed STLs are print-validated" policy is untouched.
 
+**Print guide (in the Enclosure tab).** Pick your filament color and the
+parts wear it; flip to the print guide and they sit on a gridded build
+plate exactly as modeled (the .scad sources put z=0 on the plate in the
+documented orientation — "prints face-down", "open-face-up"). A layer
+slider scrubs a TRUE cross-section of the mesh at 0.2 mm (plane-triangle
+slicing, `assets/print-guide.js`, Node-tested); an overhang toggle tints
+faces steeper than 45° that would need support (these parts are designed
+not to); the settings card quotes the catalog's own guidance per part
+(TPU for gaskets, face-down lids, the fit coupon first). A guide, not a
+slicer — nothing is an invented toolpath.
+
+**Build it (every device sheet).** BOM with required/optional totals and
+per-part sourcing straight from `docs/hardware/bom_*.csv`, assembly steps
+from the enclosure catalog's own §Assembly, and the CI-generated
+CycloneDX SBOM explained and linked — all emitted into
+`devices/build.json` by the same generator, drift-gated, so "how to
+build it" can never silently rot.
+
 Live parameter re-rendering in the browser (openscad-wasm) is a wave-2
 hook: the lab's data model already carries everything it needs (the full
 parameter schema per configurator); what's missing is only the ~15 MB
