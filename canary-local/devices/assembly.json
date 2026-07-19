@@ -2,14 +2,14 @@
  "note": "Assembly choreography for the canary.local Assemble tab. The PARTS and the STEP TEXT are real and drift-gated (enclosure STLs + the board GLB + the README §Assembly steps carried in build.json); the choreography here — seated transforms, explode/insert vectors, camera, and which part appears in which step — is authored and staged, and tests/assembly.test.js validates that every part file exists, every readmeStep maps to a real build.json step, and every fastener qty matches the BOM. Positions are representative, not a CAD assembly constraint solve.",
  "palette": {
   "shell": [
-   0.17,
-   0.18,
-   0.2
+   0.88,
+   0.85,
+   0.78
   ],
   "shell2": [
-   0.22,
-   0.23,
-   0.26
+   0.72,
+   0.69,
+   0.62
   ],
   "gasket": [
    0.09,
@@ -368,6 +368,484 @@
      "title": "Add the sun shield (optional)",
      "readmeStep": null,
      "note": "The vented sun shield clips over the lid for direct-sun installs — keeps the case cooler and shades the camera window."
+    }
+   ]
+  },
+  "canary-display-watch": {
+   "title": "Canary Watch Station — drum, stack, bezel, stand",
+   "board": "seeed_round_display_xiao",
+   "frame": {
+    "rx": -0.36,
+    "ry": 0.58,
+    "pad": 2.0
+   },
+   "assembly_source": "docs/hardware/enclosure/canary_watch_station.scad (v0.1-dev — steps authored here, not yet in the catalog README)",
+   "parts": [
+    {
+     "id": "stand",
+     "source": "stl",
+     "base": "preview",
+     "file": "canary_watch_station_stand.stl",
+     "color": "shell2",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      -16
+     ],
+     "step": 0,
+     "name": "Tilted stand",
+     "class": "support"
+    },
+    {
+     "id": "drum",
+     "source": "stl",
+     "base": "preview",
+     "file": "canary_watch_station_drum.stl",
+     "color": "shell",
+     "seated": {
+      "pos": [
+       0,
+       6,
+       39.98
+      ],
+      "rot": [
+       65,
+       0,
+       180
+      ]
+     },
+     "explode": [
+      0,
+      -9.1,
+      4.2
+     ],
+     "insert": [
+      0,
+      -19.9,
+      9.3
+     ],
+     "step": 1,
+     "name": "Display drum"
+    },
+    {
+     "id": "batt",
+     "source": "proc",
+     "part": "lipo",
+     "params": {
+      "w": 30,
+      "h": 20,
+      "t": 3.4
+     },
+     "seated": {
+      "pos": [
+       0,
+       -0.07,
+       42.81
+      ],
+      "rot": [
+       65,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      -23.6,
+      11.0
+     ],
+     "insert": [
+      0,
+      -18.1,
+      8.5
+     ],
+     "step": 2,
+     "name": "LiPo 302030 cell (optional)",
+     "qty": 1,
+     "ref": "W-BT1"
+    },
+    {
+     "id": "xiao",
+     "source": "proc",
+     "part": "pcb",
+     "params": {
+      "w": 21,
+      "h": 17.8,
+      "t": 1.2
+     },
+     "seated": {
+      "pos": [
+       0,
+       -2.07,
+       43.74
+      ],
+      "rot": [
+       65,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      12.7,
+      -5.9
+     ],
+     "insert": [
+      0,
+      16.3,
+      -7.6
+     ],
+     "step": 3,
+     "name": "XIAO ESP32-S3 (stand-in — vendor CAD not committed)",
+     "qty": 1,
+     "ref": "W-U1"
+    },
+    {
+     "id": "display",
+     "source": "board",
+     "board": "seeed_round_display_xiao",
+     "seated": {
+      "pos": [
+       0,
+       -6.24,
+       45.69
+      ],
+      "rot": [
+       155,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      -36.3,
+      16.9
+     ],
+     "insert": [
+      0,
+      -21.8,
+      10.1
+     ],
+     "step": 3,
+     "name": "Seeed Round Display for XIAO",
+     "qty": 1,
+     "ref": "W-U2"
+    },
+    {
+     "id": "bezel",
+     "source": "stl",
+     "base": "preview",
+     "file": "canary_watch_station_bezel.stl",
+     "color": "shell",
+     "seated": {
+      "pos": [
+       0,
+       -13.76,
+       49.19
+      ],
+      "rot": [
+       245,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      -52.6,
+      24.5
+     ],
+     "insert": [
+      0,
+      -23.6,
+      11.0
+     ],
+     "step": 4,
+     "name": "Screwed bezel"
+    },
+    {
+     "id": "screws",
+     "source": "proc",
+     "part": "screw",
+     "params": {
+      "len": 8
+     },
+     "instances": [
+      [
+       22.5,
+       -13.76,
+       49.19
+      ],
+      [
+       -22.5,
+       -13.76,
+       49.19
+      ]
+     ],
+     "irot": [
+      65,
+      0,
+      0
+     ],
+     "explode": [
+      0,
+      -67.1,
+      31.3
+     ],
+     "insert": [
+      0,
+      -18.1,
+      8.5
+     ],
+     "step": 5,
+     "name": "M2 x 8 self-tap screw",
+     "qty": 2,
+     "ref": "W-SCR1"
+    }
+   ],
+   "steps": [
+    {
+     "title": "Start with the stand",
+     "readmeStep": null,
+     "note": "The 25-degree cradle prints upright, no supports. The whole build is shown seated in it so the assembly axis reads true — on the bench you assemble the puck flat on the desk, then rest it here."
+    },
+    {
+     "title": "Rest the drum in the cradle",
+     "readmeStep": null,
+     "note": "The drum is the back shell — every part nests into its bore. Its blind keyholes wall-mount the puck without the stand."
+    },
+    {
+     "title": "Lay in the optional battery",
+     "readmeStep": null,
+     "note": "A protected 302030 cell drops between the fence rails on the drum floor, lead to the display’s JST 1.25. VERIFY polarity against the board — vendor pigtails vary."
+    },
+    {
+     "title": "Seat the XIAO, then the display stack",
+     "readmeStep": null,
+     "note": "The XIAO clicks into the Round Display’s back socket (zero wiring), and the whole stack slides into the drum, USB aligned to the wall slot."
+    },
+    {
+     "title": "Cap it with the bezel",
+     "readmeStep": null,
+     "note": "The bezel’s seat receives the display disc; the aperture lands on the display’s own bezel ring. Face chamfer out."
+    },
+    {
+     "title": "Drive the two M2s — snug, not cranked",
+     "readmeStep": null,
+     "note": "Last and outermost, like every proper fastener: through the bezel counterbores into the drum posts. Max ~0.3 N·m into printed posts."
+    }
+   ]
+  },
+  "canary-display-dash": {
+   "title": "Canary Dash — frame, panel, back, stand",
+   "frame": {
+    "rx": -0.38,
+    "ry": 0.6,
+    "pad": 1.9
+   },
+   "assembly_source": "docs/hardware/enclosure/canary_dash_display.scad (v0.1-dev — steps authored here, not yet in the catalog README)",
+   "parts": [
+    {
+     "id": "stand",
+     "source": "stl",
+     "base": "preview",
+     "file": "canary_dash_display_stand.stl",
+     "color": "shell2",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      -16
+     ],
+     "step": 0,
+     "name": "Desk cradle",
+     "class": "support"
+    },
+    {
+     "id": "frame",
+     "source": "stl",
+     "base": "preview",
+     "file": "canary_dash_display_frame.stl",
+     "color": "shell",
+     "seated": {
+      "pos": [
+       0,
+       -3.21,
+       46.11
+      ],
+      "rot": [
+       245,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      -27.2,
+      12.7
+     ],
+     "insert": [
+      0,
+      -19.9,
+      9.3
+     ],
+     "step": 1,
+     "name": "Bezel frame"
+    },
+    {
+     "id": "panel",
+     "source": "proc",
+     "part": "lcdPanel",
+     "params": {
+      "w": 106.3,
+      "h": 66.2,
+      "glass": 3.2,
+      "stack": 8
+     },
+     "seated": {
+      "pos": [
+       0,
+       -1.04,
+       45.1
+      ],
+      "rot": [
+       65,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      23.6,
+      -11.0
+     ],
+     "insert": [
+      0,
+      18.1,
+      -8.5
+     ],
+     "step": 2,
+     "name": "Waveshare 4.3″ panel (stand-in — vendor CAD not committed)",
+     "qty": 1,
+     "ref": "D-U1"
+    },
+    {
+     "id": "back",
+     "source": "stl",
+     "base": "preview",
+     "file": "canary_dash_display_back.stl",
+     "color": "shell2",
+     "seated": {
+      "pos": [
+       0,
+       11.29,
+       39.35
+      ],
+      "rot": [
+       65,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      43.5,
+      -20.3
+     ],
+     "insert": [
+      0,
+      21.8,
+      -10.1
+     ],
+     "step": 3,
+     "name": "Vented back"
+    },
+    {
+     "id": "screws",
+     "source": "proc",
+     "part": "screw",
+     "params": {
+      "len": 8
+     },
+     "instances": [
+      [
+       55.55,
+       26.29,
+       71.52
+      ],
+      [
+       -55.55,
+       26.29,
+       71.52
+      ],
+      [
+       55.55,
+       -3.71,
+       7.18
+      ],
+      [
+       -55.55,
+       -3.71,
+       7.18
+      ]
+     ],
+     "irot": [
+      245,
+      0,
+      0
+     ],
+     "explode": [
+      0,
+      65.3,
+      -30.4
+     ],
+     "insert": [
+      0,
+      18.1,
+      -8.5
+     ],
+     "step": 4,
+     "name": "M2 x 8 self-tap screw",
+     "qty": 4,
+     "ref": "D-SCR1"
+    }
+   ],
+   "steps": [
+    {
+     "title": "Start with the desk cradle",
+     "readmeStep": null,
+     "note": "Prints flat, no hardware: front lip and back rail form the bottom channel, the fin takes the 25-degree lean. Shown seated so the assembly axis reads true."
+    },
+    {
+     "title": "The bezel frame",
+     "readmeStep": null,
+     "note": "Face shell with the 2.5 mm glass lip, USB-C slot in the bottom wall, chimney vents up top. Prints face-down — the A-surface is your build plate."
+    },
+    {
+     "title": "Drop the panel in face-first",
+     "readmeStep": null,
+     "note": "Glass lands against the bezel lip; the rear stack faces you. Waveshare publishes no full mechanical drawing — MEASURE your panel; the render is a stand-in built to the BOM’s nominals."
+    },
+    {
+     "title": "Close the vented back",
+     "readmeStep": null,
+     "note": "Carries two keyholes and the 75 mm horizontal M4 pair (a true VESA-75 square can’t fit this panel height)."
+    },
+    {
+     "title": "Drive the four M2s — snug, diagonal",
+     "readmeStep": null,
+     "note": "Last and outermost: from the back, through the counterbores, into the corner lobes outside the panel cavity. Diagonal order, then a final quarter-turn."
     }
    ]
   }

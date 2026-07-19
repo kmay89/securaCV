@@ -293,6 +293,44 @@ button:disabled { opacity: 0.35; cursor: default; }
   background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: #e8ddb8; }
 .asm-qty { font-weight: 700; color: var(--canary); }
 .asm-ref { font-size: 11px; color: var(--muted); }
+
+/* the drafting gate — the CI ordering rules, surfaced */
+.asm-gate { font-size: 12.5px; margin: 2px 0 10px; padding: 7px 11px; border-radius: 10px; border: 1px solid; }
+.asm-gate.ok { color: #9ad8a9; border-color: rgba(120, 220, 150, 0.25); background: rgba(60, 160, 90, 0.08); }
+.asm-gate.bad { color: #f0b9a0; border-color: rgba(240, 150, 100, 0.3); background: rgba(200, 100, 50, 0.1); }
+.asm-gate strong { margin-right: 5px; }
+
+/* item balloons over the exploded drawing (numbers match the parts list) */
+.asm-balloons { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.asm-balloons[hidden] { display: none; }
+.asm-balloon { position: absolute; display: none; align-items: center; justify-content: center;
+  width: 23px; height: 23px; margin: -30px 0 0 10px; border-radius: 50%;
+  border: 1.5px solid #8b90a0; background: rgba(12, 12, 10, 0.82); color: #e8e6df;
+  font: 700 11.5px/1 system-ui, sans-serif; cursor: pointer; pointer-events: auto;
+  transition: border-color .15s, color .15s, transform .15s; }
+.asm-balloon::after { content: ""; position: absolute; left: -9px; top: 26px; width: 10px; height: 1px;
+  background: #8b90a0; transform: rotate(38deg); opacity: 0.7; }
+.asm-balloon:hover { border-color: var(--canary); color: var(--canary); transform: scale(1.18); }
+
+/* the parts list — item · part · ref · qty · caliper size */
+.asm-bomhead { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+.asm-units { font-variant-numeric: tabular-nums; }
+.asm-envelope { font-size: 12.5px; color: var(--muted); margin: 6px 0 8px; font-variant-numeric: tabular-nums; }
+.asm-bom { overflow-x: auto; }
+.asm-bomtab { width: 100%; border-collapse: collapse; font-size: 12.5px; min-width: 480px; }
+.asm-bomtab th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); padding: 5px 10px 5px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.asm-bomtab td { padding: 6px 10px 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: top; }
+.asm-bomtab tr { cursor: pointer; }
+.asm-bomtab tr.flash td { background: rgba(255, 212, 79, 0.1); }
+.asm-bom-n { font-weight: 700; color: var(--canary); }
+.asm-bom-size { font-variant-numeric: tabular-nums; white-space: nowrap; color: #cfcdc5; }
+.asm-cls { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 999px; padding: 1px 6px; margin-left: 4px; }
+
+/* caliper rows elsewhere (Specs) — tap to cycle mm / in / all */
+.unit-cycle { cursor: pointer; font-variant-numeric: tabular-nums; text-decoration: underline dotted rgba(255,255,255,0.25); text-underline-offset: 3px; }
+.unit-cycle:hover { color: var(--canary); }
 .filaments { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .fil-label { font-size: 12px; }
 button.fil {

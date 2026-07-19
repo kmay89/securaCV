@@ -128,6 +128,30 @@ export const PARTS = {
   lightPipe({ d = 3, len = 8, color = CLEAR } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, len, 20); return [{ builder: m.out(), color, gloss: 0.85 }]; },
   disc({ d = 12, t = 1, color = CLEAR } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, t, 40); return [{ builder: m.out(), color, gloss: 0.9 }]; },
   vent({ d = 8, t = 1.2, color = BLACK } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, t, 32); return [{ builder: m.out(), color, gloss: 0.4 }]; },
+  // Bare dev-board stand-in (XIAO-class): PCB slab + RF shield + USB nub.
+  // Used ONLY where no vendor CAD is committed — the parts list says so.
+  pcb({ w = 21, h = 17.8, t = 1.2, color = [0.12, 0.30, 0.20] } = {}) {
+    const board = new MB(); roundedBox(board, w / 2, h / 2, 0, t, 1.6);
+    const shield = new MB(); roundedBox(shield, w * 0.26, h * 0.30, 0, 2.2, 0.8);
+    const usb = new MB(); roundedBox(usb, 4.4, 1.6, 0, 3.2, 0.6);
+    return [
+      { builder: board.out(), color, gloss: 0.4 },
+      { builder: shield.out(), color: STEEL, gloss: 0.6, local: M.t(0, 0, t) },
+      { builder: usb.out(), color: NICKEL, gloss: 0.55, local: M.t(-w / 2 + 4.6, 0, t) },
+    ];
+  },
+  // LCD panel module stand-in: glass front at local z=0, PCB stack behind.
+  // Same honesty rule — it stands in for vendor CAD that isn't committed.
+  lcdPanel({ w = 106.3, h = 66.2, glass = 3.2, stack = 8 } = {}) {
+    const g = new MB(); roundedBox(g, w / 2, h / 2, -glass, 0, 1.2);
+    const board = new MB(); roundedBox(board, w / 2 - 4, h / 2 - 3, -glass - stack, -glass, 1.6);
+    const usb = new MB(); roundedBox(usb, 6, 3.2, -glass - stack, -glass - stack + 6.4, 0.8);
+    return [
+      { builder: g.out(), color: [0.04, 0.045, 0.06], gloss: 0.9 },
+      { builder: board.out(), color: [0.13, 0.16, 0.28], gloss: 0.35 },
+      { builder: usb.out(), color: NICKEL, gloss: 0.55, local: M.t(0, -h / 2 + 5, 0) },
+    ];
+  },
   // LiPo pouch + JST-PH connector + two short leads, laid flat (thin in Z)
   lipo({ w = 50, h = 34, t = 5, color = LIPO } = {}) {
     const body = new MB(); roundedBox(body, w / 2, h / 2, 0, t, 2);
@@ -267,7 +291,15 @@ export class Assembly {
       return !done;
     });
     this.scene.draw();
+    if (this.onFrame) this.onFrame(); // balloons & other HTML overlays track the camera
     this._raf = requestAnimationFrame(() => this._frame());
+  }
+
+  // world anchor of a part at the current explode — where a balloon points
+  partAnchor(part) {
+    const w = this._world(part, this.mode === "explode" ? this.explodeT : 0);
+    const m = M.mul(w, M.t(part.center[0], part.center[1], part.center[2]));
+    return [m[12], m[13], m[14]];
   }
 
   mount() { if (!this._raf) this._frame(); }

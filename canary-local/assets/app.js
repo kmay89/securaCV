@@ -8,6 +8,7 @@
 // setup path. Everything works offline; nothing phones anywhere.
 
 import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { fmtLen, UNIT_MODES } from "./assembly-rules.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { buildEnclosureLab } from "./enclosure-lab.js";
 import { buildBuildIt } from "./build-it.js";
@@ -767,9 +768,25 @@ function specsView(dev) {
   row("Board", dev.board);
   if (dev.glass) row("Glass", `${dev.glass.panel} · touch ${dev.glass.touch}`);
   if (dev.body_mm) {
+    // the caliper row: mm · decimal inch · fractional inch, tap to cycle
+    // (same persisted setting the Assemble tab's parts list uses)
     const b = dev.body_mm;
-    row("Body", b.d ? `Ø${b.d} × ${b.depth} mm · stand ${b.stand_tilt_deg}°`
-                    : `${b.w} × ${b.h} × ${b.depth} mm · stand ${b.stand_tilt_deg}°`);
+    const dd = el("dd", "unit-cycle");
+    dd.title = "tap to cycle mm / inches / all";
+    const paint = () => {
+      const mode = localStorage.getItem("scv-units") || "all";
+      const f = (mm) => fmtLen(mm, mode);
+      dd.textContent = b.d
+        ? `Ø ${f(b.d)}  ×  ${f(b.depth)} deep · stand ${b.stand_tilt_deg}°`
+        : `${f(b.w)}  ×  ${f(b.h)}  ×  ${f(b.depth)} · stand ${b.stand_tilt_deg}°`;
+    };
+    dd.addEventListener("click", () => {
+      const cur = localStorage.getItem("scv-units") || "all";
+      localStorage.setItem("scv-units", UNIT_MODES[(UNIT_MODES.indexOf(cur) + 1) % UNIT_MODES.length]);
+      paint();
+    });
+    paint();
+    dl.append(el("dt", null, "Body"), dd);
   }
   if (dev.senses?.length) row("Senses", dev.senses.join(" · "));
   if (dev.shows?.length) row("Shows", dev.shows.join(" · "));
