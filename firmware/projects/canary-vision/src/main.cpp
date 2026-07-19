@@ -447,7 +447,11 @@ void setup() {
   // nothing ever armed it (docs/strategy/12, finding F1): a hung loop was
   // a permanent freeze. Timeout must exceed loop()'s worst bounded block
   // (one MQTT connect attempt against a dead broker).
+  // Same dual-API guard as firmware/canary: this project's PlatformIO env
+  // pins an IDF 4.x-era core where the struct API doesn't exist yet.
   {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    // ESP-IDF 5.x: struct-based API
     esp_task_wdt_config_t wdt_config = {
       .timeout_ms = CV_WATCHDOG_TIMEOUT_SEC * 1000,
 #if CONFIG_FREERTOS_UNICORE
@@ -461,6 +465,10 @@ void setup() {
     if (wdt_err == ESP_ERR_INVALID_STATE) {
       esp_task_wdt_init(&wdt_config);
     }
+#else
+    // ESP-IDF 4.x: simple parameters (panics on timeout)
+    esp_task_wdt_init(CV_WATCHDOG_TIMEOUT_SEC, true);
+#endif
     esp_task_wdt_add(NULL);
     boot_kvf("Watchdog", "%lu s timeout", (unsigned long)CV_WATCHDOG_TIMEOUT_SEC);
   }
