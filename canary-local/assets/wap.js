@@ -16,7 +16,7 @@
 // blank screen.
 
 import { buildBoardLab } from "./board-lab.js";
-import { buildSerial, buildPhone, buildDashboard, buildMqtt } from "./wap-ui.js";
+import { buildSerial, buildPhone, buildDashboard, buildMqtt, buildPlugIn, buildFlash } from "./wap-ui.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -74,6 +74,7 @@ async function main() {
   renderVersionStrip(data);
   renderBoard(data, boards);
   renderSetup(data, bus);
+  if (data.flash) renderFlash(data);
   renderNetwork(data, bus);
   renderSandbox(data, bus);
   renderKeepGoing(data);
@@ -125,12 +126,13 @@ async function main() {
     const s = section("setup", "bring it up", "Power on, then set it up from your phone",
       "It is a W.A.P. — literally a WiFi Access Point. First boot it brings up a " +
       d.ap.ssid_prefix + "XXXX network with a device-unique password; you join it, and a " +
-      "captive page walks you to canary.local. Power it on, then watch the phone catch the network live.");
+      "captive page walks you to canary.local. Plug it in, power it on, then watch the phone catch the network live.");
+    s.append(buildPlugIn(d, b));
     const two = el("div", "wap-two");
     const left = el("div", "wap-two-col");
-    left.append(el("h3", "wap-col-h", "USB-CDC serial console"), buildSerial(d, b));
+    left.append(el("h3", "wap-col-h", "2 · the serial console (laptop path)"), buildSerial(d, b));
     const right = el("div", "wap-two-col");
-    right.append(el("h3", "wap-col-h", "Your phone"), buildPhone(d, b));
+    right.append(el("h3", "wap-col-h", "3 · your phone (every path)"), buildPhone(d, b));
     two.append(left, right);
     s.append(two);
 
@@ -148,6 +150,16 @@ async function main() {
       facts.append(row);
     }
     s.append(facts);
+  }
+
+  // ── §flash: the bench skills — toolchains, BOOT/RESET, download mode ──
+  function renderFlash(d) {
+    const s = section("flash", "bench skills", "Flashing — and the two little buttons",
+      "Kits arrive flashed, but every builder meets esptool eventually — and the most " +
+      "frustrating five minutes in ESP32 land is a port that won't answer. The commands, board " +
+      "settings and library pins below are parsed from the firmware's own README; the BOOT/RESET " +
+      "ritual is the ESP32-S3 mask ROM's real strap logic, the same one the bench emulator stages.");
+    s.append(buildFlash(d));
   }
 
   // ── §network: dashboard + MQTT (once online) ──

@@ -19,6 +19,10 @@
 // all four at once, the way it would on a real bench. Nothing is faked past
 // what the firmware strings say; where this is a sketch, it says so to your face.
 
+import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { upgradeRealShape } from "./real-shapes.js";
+import { romBanner } from "../emulator/web/bench.js";
+
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -83,12 +87,13 @@ export function buildSerial(data, bus) {
   const controls = el("div", "hub-term-controls");
   const btnPwr = el("button", "primary small", "⏻ power on");
   const btnSkip = el("button", "ghost small", "skip to ready");
-  const hint = el("span", "muted fineprint", "boots from devices/wap.json — the firmware's own boot log");
+  const hint = el("span", "muted fineprint", "plug it in above — the console needs a laptop on the other end of the cable");
+  btnPwr.disabled = btnSkip.disabled = true;
   controls.append(btnPwr, btnSkip, hint);
   wrap.append(bar, scroll, controls);
 
   const lines = bootLines(data.serial);
-  let booting = false, booted = false;
+  let booting = false, booted = false, plugged = null;
 
   const put = (cls, text) => {
     const l = el("div", "wap-line " + cls);
@@ -117,12 +122,40 @@ export function buildSerial(data, bus) {
     bus.emit("ready");
   }
 
+  // choosing the power source is the lesson: a laptop gives you this console;
+  // a wall adapter powers the same boot but nobody is on the other end
+  bus.on("plug", ({ source }) => {
+    plugged = source;
+    if (source === "laptop") {
+      wrap.classList.remove("wap-term-ghost");
+      if (booted || booting) {
+        put("wap-net", "— laptop attached: the USB-CDC console picks up live —");
+      } else {
+        btnPwr.disabled = btnSkip.disabled = false;
+        hint.textContent = "boots from devices/wap.json — the firmware's own boot log";
+      }
+    } else {
+      wrap.classList.add("wap-term-ghost");
+      btnPwr.disabled = btnSkip.disabled = true;
+      hint.textContent = "wall power — no USB data; these lines are printed to nobody";
+      if (!booted && !booting) {
+        put("wap-faint", "— wall adapter: power only. The device still prints all of this; without a laptop, nobody sees it —");
+        setTimeout(() => { if (alive(scroll) && !booted && !booting) boot(false); }, 700);
+      }
+    }
+  });
+
   // once the device is on the network, stream the join line + start the table
   let tableStarted = false;
   function startTable() {
     if (tableStarted) return;
     tableStarted = true;
     put("wap-net", data.serial.join_line);
+    put("wap-b", "");
+    // the wizard's success is a real reboot — show it, ROM banner and all
+    put("wap-b", "※ ── the Canary reboots itself — provisioning done ── ※");
+    for (const l of romBanner("swreset").split("\n")) if (l.trim()) put("wap-faint", l);
+    put("wap-faint", "(the boot banner scrolls by again; this time it joins your WiFi as a client)");
     put("wap-faint", "");
     put("wap-tbl", data.serial.runtime_header);
     for (const r of data.serial.runtime_rows) put("wap-tbl", r);
@@ -162,13 +195,19 @@ export function buildPhone(data, bus) {
   wrap.append(phone, ribbon);
 
   let phase = "off"; // off → ap → wifi → captive → portal → connecting → online
+  let power = null;  // 'laptop' | 'wall' — changes where you read the password from
 
   // ---- screens -----------------------------------------------------------
   function screenLocked() {
     screen.innerHTML = "";
     const s = el("div", "wap-screen wap-screen-wait");
+    const copy = power === "wall"
+      ? "Plugged into the wall — the Canary boots on its own. Within ten seconds it brings up its setup network. Your password is on the box card (there's no console to read it from)."
+      : power === "laptop"
+        ? "Power the Canary on (in the serial console) — within ten seconds it brings up its setup network."
+        : "Plug the Canary in above — laptop or wall adapter, either powers it. Then watch this phone catch its network.";
     s.append(el("div", "wap-big", "⏻"),
-      el("p", "muted", "Power the Canary on (in the serial console) — within ten seconds it brings up its setup network."),
+      el("p", "muted", copy),
       el("p", "fineprint muted", "the SoftAP SSID is derived from the device's key: " + ap.ssid_prefix + "····"));
     screen.append(s);
   }
@@ -191,7 +230,9 @@ export function buildPhone(data, bus) {
       list.append(r);
     }
     s.append(list, el("p", "fineprint muted",
-      "WPA2, one client at a time. Password " + ap.password_example + " (yours is unique — the box card / first-boot serial line)."));
+      "WPA2, one client at a time. Password " + ap.password_example + " (yours is unique — " +
+      (power === "wall" ? "read it off the box card; with no laptop attached the serial line goes unseen"
+                        : "the box card / the first-boot serial line above") + ")."));
     screen.append(s);
   }
 
@@ -378,8 +419,258 @@ export function buildPhone(data, bus) {
     if (done) { done.innerHTML = ""; done.append(el("p", "ok", withHa ? "✓ Broker saved — entities announcing on Home Assistant." : "✓ Finished. Name it by its room from the dashboard.")); }
   }
 
+  bus.on("plug", ({ source }) => { power = source; if (phase === "off") screenLocked(); });
   bus.on("ap", () => { if (phase === "off") { setPhase("ap"); screenWifi(); } });
   screenLocked();
+  return wrap;
+}
+
+// ── plug it in: the device in 3D + the choice that teaches the console ────
+export function buildPlugIn(data, bus) {
+  const wrap = el("div", "wap-plug");
+  const stage = el("div", "wap-plug-stage");
+  const cv = el("canvas", "wap-plug-3d");
+  cv.setAttribute("aria-label", "Interactive 3D render of the Canary WAP");
+  stage.append(cv, el("div", "asmlab-hint", "drag to orbit · pinch or scroll to zoom"));
+  const scene = new DeviceScene(cv, null);
+  BUILDERS["canary-wap"](scene);
+  upgradeRealShape(scene, "canary-wap");   // the committed printed shells
+  scene.start();
+
+  const side = el("div", "wap-plug-side");
+  side.append(el("h3", "wap-col-h", "1 · plug it in"));
+  side.append(el("p", "muted",
+    "This is the device — the repo's own printed shells. Any USB-C source powers it; " +
+    "what changes is what YOU get to see. Pick where the other end of the cable goes:"));
+  const choices = el("div", "wap-plug-choices");
+  const verdict = el("p", "muted fineprint wap-plug-verdict");
+  const mk = (source, icon, title, sub, said) => {
+    const b = el("button", "wap-plug-card");
+    b.append(el("span", "wap-plug-icon", icon), el("strong", null, title), el("span", "muted", sub));
+    b.addEventListener("click", () => {
+      for (const c of choices.children) c.classList.remove("on");
+      b.classList.add("on");
+      verdict.textContent = said;
+      bus.emit("plug", { source });
+    });
+    return b;
+  };
+  choices.append(
+    mk("laptop", "💻", "Into a laptop",
+      "USB data + power — the serial console becomes your window into the boot.",
+      "▶ USB-CDC port appears on the laptop. Press ⏻ power on in the console below and read everything it says."),
+    mk("wall", "🔌", "Into a wall adapter",
+      "Power only. It boots exactly the same — you just don't see it.",
+      "▶ No console anywhere — the same boot happens unseen. Your phone is the only window; the password comes off the box card."));
+  side.append(choices, verdict);
+  wrap.append(stage, side);
+  return wrap;
+}
+
+// ── flashing: toolchains, the two buttons, and the download-mode ritual ───
+export function buildFlash(data) {
+  const f = data.flash;
+  const wrap = el("div", "wap-flash");
+
+  // the durable bench facts
+  const facts = el("div", "wap-facts");
+  for (const [k, v] of [["Kits", f.kit_note], ["Cable", f.cable], ["Port", f.port_hint]]) {
+    const row = el("div", "wap-fact");
+    row.append(el("span", "wap-fact-k", k), el("span", "wap-fact-v", v));
+    facts.append(row);
+  }
+  wrap.append(facts);
+
+  // BOOT + RESET, as cards
+  const btns = el("div", "wap-btn-cards");
+  for (const b of f.buttons) {
+    const card = el("div", "wap-btn-card");
+    card.append(el("span", "wap-btn-chip", b.label), el("p", "muted", b.what));
+    const ul = el("ul", "wap-btn-gestures");
+    for (const g of b.gestures || []) ul.append(el("li", null, g));
+    card.append(ul);
+    btns.append(card);
+  }
+  wrap.append(el("h3", "wap-col-h", "The two little buttons"), btns);
+
+  // the ritual + the hands-on trainer
+  const two = el("div", "wap-two");
+  const left = el("div", "wap-two-col");
+  left.append(el("h4", "wap-flash-h", f.download_mode.title));
+  const ol = el("ol", "wap-ritual");
+  for (const s of f.download_mode.steps) ol.append(el("li", null, s));
+  left.append(ol, el("p", "fineprint muted", f.download_mode.note));
+  const right = el("div", "wap-two-col");
+  right.append(el("h4", "wap-flash-h", "Try the ritual — this bench is the real strap logic"));
+  right.append(buildStrapTrainer());
+  two.append(left, right);
+  wrap.append(two);
+
+  // toolchains
+  wrap.append(el("h3", "wap-col-h", "Get the firmware on it"));
+  const tabs = el("nav", "subtabs");
+  const panel = el("div", "wap-tool-panel");
+  const panels = {};
+  for (const t of f.toolchains) {
+    const b = el("button", "tab" + (t.id === "platformio" ? " on" : ""), t.name);
+    b.addEventListener("click", () => {
+      for (const x of tabs.children) x.classList.remove("on");
+      b.classList.add("on");
+      panel.innerHTML = "";
+      panel.append(panels[t.id]);
+    });
+    tabs.append(b);
+    panels[t.id] = t.id === "platformio" ? pioPanel(t) : arduinoPanel(t);
+  }
+  wrap.append(tabs, panel);
+  panel.append(panels.platformio);
+
+  const ribbon = el("p", "ondevice wap-note");
+  ribbon.append(el("strong", null, "One firmware, two toolchains: "),
+    document.createTextNode(f.one_firmware_note.replace(/^One firmware, two toolchains\.\s*/, "")));
+  wrap.append(ribbon);
+
+  // troubleshooting — the frustrating part, verbatim from the README
+  const ts = el("div", "wap-trouble");
+  ts.append(el("h3", "wap-col-h", "When it fights back"));
+  for (const t of f.troubleshooting) {
+    const d = el("details", "fix");
+    d.append(el("summary", null, t.symptom));
+    const ul = el("ul", "wap-btn-gestures");
+    for (const fix of t.fixes) ul.append(el("li", null, fix));
+    d.append(ul);
+    ts.append(d);
+  }
+  // recovery
+  const rec = el("details", "fix");
+  rec.append(el("summary", null, "Lost the AP password / need a factory reset"));
+  const rol = el("ol", "wap-ritual");
+  for (const s of f.recovery.password) rol.append(el("li", null, s));
+  rec.append(rol, el("p", "muted fineprint", f.recovery.factory));
+  ts.append(rec);
+  wrap.append(ts);
+
+  wrap.append(el("p", "fineprint muted",
+    "parsed from " + f.sources.build_paths + " · buttons from " + f.sources.buttons +
+    " · recovery from " + f.sources.recovery + " — drift-gated in CI, nothing here can go stale."));
+  return wrap;
+}
+
+function prereqLine(prereqs) {
+  const p = el("p", "muted wap-prereqs");
+  p.append(document.createTextNode("Prerequisites: "));
+  prereqs.forEach((pr, i) => {
+    const a = el("a", null, pr.name);
+    a.href = pr.url; a.target = "_blank"; a.rel = "noopener noreferrer";
+    p.append(a);
+    if (i < prereqs.length - 1) p.append(document.createTextNode(" + "));
+  });
+  return p;
+}
+
+function pioPanel(t) {
+  const w = el("div", "wap-tool");
+  w.append(prereqLine(t.prereqs));
+  const term = el("div", "wap-cmds");
+  for (const c of t.commands) {
+    if (c.note) term.append(el("div", "wap-cmd-note", "# " + c.note));
+    term.append(el("div", "wap-cmd", "$ " + c.cmd));
+  }
+  w.append(term, el("p", "fineprint muted",
+    "platformio.ini points src_dir at " + t.src_dir + " — the same sketch tree the Arduino IDE opens."));
+  return w;
+}
+
+function arduinoPanel(t) {
+  const w = el("div", "wap-tool");
+  w.append(prereqLine(t.prereqs));
+  const ol = el("ol", "wap-ritual");
+  const li1 = el("li");
+  li1.append(document.createTextNode("Boards Manager URL (File → Preferences), then install "),
+    el("strong", null, t.board_pkg), document.createTextNode(":"),
+    el("code", "wap-url", t.boards_url));
+  ol.append(li1);
+  const li2 = el("li");
+  li2.append(document.createTextNode("Libraries (Tools → Manage Libraries):"));
+  const ul = el("ul", "wap-btn-gestures");
+  for (const lib of t.libraries) ul.append(el("li", null, lib));
+  li2.append(ul);
+  ol.append(li2);
+  const li3 = el("li");
+  li3.append(document.createTextNode("Board settings (Tools menu):"));
+  const tab = el("div", "wap-facts wap-boardcfg");
+  for (const [k, v] of t.board_config) {
+    const row = el("div", "wap-fact");
+    row.append(el("span", "wap-fact-k", k), el("span", "wap-fact-v", v));
+    tab.append(row);
+  }
+  li3.append(tab);
+  ol.append(li3);
+  const li4 = el("li");
+  li4.append(document.createTextNode("Open and upload: "), el("code", "wap-url", t.sketch));
+  ol.append(li4);
+  w.append(ol);
+  return w;
+}
+
+// The strap-pin trainer: a miniature of the bench's power plane. BOOT is only
+// sampled at reset — the whole lesson in one interactive truth.
+function buildStrapTrainer() {
+  const wrap = el("div", "wap-bench");
+  const row = el("div", "wap-bench-row");
+  const usb = el("button", "bench-chip", "");
+  const boot = el("button", "bench-chip", "");
+  const reset = el("button", "bench-chip bench-momentary", "");
+  usb.append(el("strong", null, "USB-C cable"), el("span", "bench-chip-state"));
+  boot.append(el("strong", null, "BOOT"), el("span", "bench-chip-state"));
+  reset.append(el("strong", null, "RESET"), el("span", "bench-chip-state", "tap"));
+  row.append(usb, boot, reset);
+  const status = el("p", "wap-bench-status");
+  const cons = el("pre", "wap-bench-console");
+  wrap.append(row, status, cons);
+
+  let plugged = false, held = false, mode = "off";
+  const say = (t) => {
+    cons.textContent = (cons.textContent + t + "\n").split("\n").slice(-9).join("\n");
+    cons.scrollTop = cons.scrollHeight;
+  };
+  const sample = (how) => {
+    // the mask ROM samples GPIO0 once, at reset — this line IS the lesson
+    mode = held ? "download" : "run";
+    for (const l of romBanner(mode === "download" ? "download" : how).split("\n")) if (l.trim()) say(l);
+    say(mode === "download"
+      ? "✓ download mode — the ROM waits. Click Upload in your IDE now."
+      : "…app boots (the big banner above scrolls by).");
+  };
+  const paint = () => {
+    usb.classList.toggle("on", plugged);
+    usb.querySelector(".bench-chip-state").textContent = plugged ? "plugged" : "unplugged";
+    boot.classList.toggle("on", held);
+    boot.querySelector(".bench-chip-state").textContent = held ? "held" : "released";
+    status.textContent = !plugged ? "⏚ no power — plug the cable in"
+      : mode === "download" ? "ROM: waiting for download (flash now, then tap RESET)"
+        : "app running — BOOT does nothing until the next reset";
+  };
+  usb.addEventListener("click", () => {
+    plugged = !plugged;
+    if (plugged) { say("— cable in —"); sample("poweron"); }
+    else { mode = "off"; say("⏚ — cable out: port gone mid-anything is safe; NVS is flash — ⏚"); }
+    paint();
+  });
+  boot.addEventListener("click", () => {
+    held = !held;
+    if (held && plugged && mode === "run") say("(BOOT held — nothing happens: it's only sampled at reset)");
+    paint();
+  });
+  reset.addEventListener("click", () => {
+    reset.classList.add("pressed");
+    setTimeout(() => reset.classList.remove("pressed"), 160);
+    if (!plugged) { say("(no power — nothing to reset)"); return; }
+    say("— RESET tapped —");
+    sample("reset");
+    paint();
+  });
+  paint();
   return wrap;
 }
 

@@ -981,6 +981,159 @@
       "ha": "switch.<id>_mic_mute -> ON"
     }
   ],
+  "flash": {
+    "kit_note": "Kits arrive already flashed \u2014 you flash when you build from parts, or to update over USB. Updates never touch the ROM's USB recovery, so a Canary can always be re-flashed.",
+    "cable": "a data-capable USB-C cable (not charge-only) \u2014 the #1 'device not detected' cause",
+    "port_hint": "the board shows up as a USB-CDC serial port \u00b7 115200 8N1",
+    "buttons": [
+      {
+        "id": "boot",
+        "label": "BOOT",
+        "gpio": 0,
+        "what": "GPIO0, a strapping pin \u2014 the ROM samples it only at reset. While the app runs, the firmware reads it for its own gestures:",
+        "gestures": [
+          "short press (~1 s): prints the provisioning receipt \u2014 AP SSID + password \u2014 on serial",
+          "hold >3 s: factory reset (docs: hold 5 s during power-up if the device is unresponsive \u2014 new keypair, fresh credentials)",
+          "held LOW through a reset: the mask ROM parks in download mode and waits for a flasher"
+        ]
+      },
+      {
+        "id": "reset",
+        "label": "RESET",
+        "what": "chip reset \u2014 RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every reset)",
+        "gestures": [
+          "tap: reboot the app",
+          "tap while BOOT is held: enter download mode"
+        ]
+      }
+    ],
+    "download_mode": {
+      "title": "Download mode by hand (when the upload can't find the port)",
+      "steps": [
+        "Hold BOOT down and keep it held",
+        "Tap RESET once (or plug the USB cable in) while BOOT is still held",
+        "Release BOOT \u2014 the serial port re-enumerates and the ROM prints 'waiting for download'",
+        "Click Upload in your IDE now; when it finishes, tap RESET to boot the app"
+      ],
+      "rom_line": "rst:0x1 (POWERON),boot:0x0 (DOWNLOAD(USB/UART0))",
+      "note": "if the upload still fails: try again (esptool retries often just work), close every serial monitor holding the port, or restart the IDE \u2014 then redo the ritual."
+    },
+    "toolchains": [
+      {
+        "id": "platformio",
+        "name": "PlatformIO (recommended)",
+        "prereqs": [
+          {
+            "name": "VS Code",
+            "url": "https://code.visualstudio.com/"
+          },
+          {
+            "name": "PlatformIO Extension",
+            "url": "https://platformio.org/install/ide?install=vscode"
+          }
+        ],
+        "commands": [
+          {
+            "cmd": "cd firmware/projects/canary-wap",
+            "note": "Clone and navigate to project"
+          },
+          {
+            "cmd": "./setup.sh",
+            "note": "Run setup wizard"
+          },
+          {
+            "cmd": "make upload",
+            "note": "Build and upload"
+          },
+          {
+            "cmd": "make monitor",
+            "note": "Monitor serial output"
+          }
+        ],
+        "src_dir": "arduino/canary_wap"
+      },
+      {
+        "id": "arduino",
+        "name": "Arduino IDE",
+        "prereqs": [
+          {
+            "name": "Arduino IDE 2.x",
+            "url": "https://www.arduino.cc/en/software"
+          }
+        ],
+        "boards_url": "https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json",
+        "board_pkg": "esp32 by Espressif Systems",
+        "libraries": [
+          "ArduinoJson by Benoit Blanchon (7.x)",
+          "Crypto by Rhys Weatherley",
+          "NimBLE-Arduino by h2zero (2.3.8 or later \u2014 the firmware uses the 2.x callback API, 1.x will fail to compile and silently ship with Bluetooth disabled)"
+        ],
+        "board_config": [
+          [
+            "Board",
+            "ESP32S3 Dev Module"
+          ],
+          [
+            "USB CDC On Boot",
+            "Enabled"
+          ],
+          [
+            "Flash Size",
+            "8MB"
+          ],
+          [
+            "PSRAM",
+            "OPI PSRAM"
+          ]
+        ],
+        "sketch": "arduino/canary_wap/canary_wap.ino"
+      }
+    ],
+    "one_firmware_note": "One firmware, two toolchains. Both paths build the same sources \u2014 `arduino/canary_wap/`. PlatformIO points its `src_dir` at the sketch, so `make build` (`pio run`) and the Arduino IDE produce identical firmware, including the full BLE stack. The build profile (FULL/DEV/MINIMAL) and hardware target default in `arduino/canary_wap/build_config.h`; PlatformIO overrides them per-env via `-DBUILD_PROFILE_` / `-DHARDWARE_` build flags. BLE requires NimBLE-Arduino 2.x \u2014 if it's missing the build now stops with a clear error instead of silently shipping with Bluetooth disabled.",
+    "troubleshooting": [
+      {
+        "symptom": "Device not detected on USB",
+        "fixes": [
+          "Use a data-capable USB-C cable (not charge-only)",
+          "Hold BOOT button while connecting",
+          "Try a different USB port"
+        ]
+      },
+      {
+        "symptom": "Build fails with missing libraries",
+        "fixes": [
+          "make setup"
+        ]
+      },
+      {
+        "symptom": "WiFi AP not appearing",
+        "fixes": [
+          "Wait 10 seconds after boot",
+          "Check serial monitor for errors"
+        ]
+      },
+      {
+        "symptom": "SD card not mounting",
+        "fixes": [
+          "Format as FAT32 (not exFAT)",
+          "Use 32GB or smaller"
+        ]
+      }
+    ],
+    "recovery": {
+      "password": [
+        "Plug the Canary into a computer with a USB-C cable",
+        "Open a serial terminal at 115 200 baud on the new USB-CDC port",
+        "Press BOOT for ~1 second \u2014 the terminal prints the AP SSID and password"
+      ],
+      "factory": "Hold BOOT >3 s while running \u2014 or 5 s during power-up \u2014 for a factory reset: fresh keypair, new credentials printed on serial"
+    },
+    "sources": {
+      "build_paths": "firmware/projects/canary-wap/README.md \u00a7Choose Your Build Path + \u00a7Troubleshooting",
+      "buttons": "canary_wap.ino BOOT_BUTTON_* constants",
+      "recovery": "docs/getting_started_canary.md \u00a7Recovering the password"
+    }
+  },
   "docs": {
     "getting_started": "docs/getting_started_canary.md",
     "firmware_readme": "firmware/projects/canary-wap/README.md",

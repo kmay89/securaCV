@@ -55,13 +55,23 @@ try {
   await page.goto(`http://localhost:${port}/canary-local/wap.html`, { waitUntil: "networkidle", timeout: 45000 });
   await page.waitForSelector("#sandbox", { timeout: 15000 });
 
-  // all five sections render from the JSON
-  for (const id of ["board", "setup", "network", "sandbox", "more"])
+  // all sections render from the JSON
+  for (const id of ["board", "setup", "flash", "network", "sandbox", "more"])
     if (!(await page.$("#" + id))) fail("missing section #" + id);
 
   // version strip built from wap.json
   const chips = await page.$$eval(".hub-chips .chip", (e) => e.length);
   if (chips < 4) fail("version strip thin (" + chips + " chips)");
+
+  // the bench starts unplugged: the console must be gated until a power
+  // source is chosen — that choice IS the lesson
+  const plugCards = await page.$$(".wap-plug-card");
+  if (plugCards.length !== 2) fail("expected 2 plug-in choices, got " + plugCards.length);
+  if (!(await page.$eval(".wap-term .primary", (b) => b.disabled)))
+    fail("power-on must be disabled before the device is plugged in");
+  await plugCards[0].click(); // laptop: USB data — the console becomes yours
+  await page.waitForFunction(() => !document.querySelector(".wap-term .primary").disabled, null, { timeout: 4000 })
+    .catch(() => fail("choosing the laptop did not enable the serial console"));
 
   // power on the serial console → the phone must catch the SoftAP live
   await page.click(".wap-term .primary");
@@ -115,8 +125,21 @@ try {
   const red = await page.waitForFunction(() => !!document.querySelector(".wap-ac-card.alarm"), null, { timeout: 4000 }).catch(() => null);
   if (!red) fail("smoke cadence did not alarm the acoustic card");
 
-  // the real vendor board mesh mounted
+  // the real vendor board mesh mounted, and so did the plug-in device scene
   if (!(await page.$(".boardlab-3d"))) fail("board 3D canvas missing");
+  if (!(await page.$(".wap-plug-3d"))) fail("plug-in 3D canvas missing");
+
+  // §flash: the strap trainer must reach download mode the way a human would —
+  // cable in, hold BOOT, tap RESET → the ROM's own 'waiting for download'
+  const bench = await page.$$("#flash .wap-bench .bench-chip");
+  if (bench.length !== 3) fail("strap trainer should have 3 chips, got " + bench.length);
+  await bench[0].click(); // USB in
+  await bench[1].click(); // hold BOOT
+  await bench[2].click(); // tap RESET
+  const dl = await page.waitForFunction(
+    () => /waiting for download/.test(document.querySelector("#flash .wap-bench-console")?.textContent || ""),
+    null, { timeout: 4000 }).catch(() => null);
+  if (!dl) fail("strap trainer never reached download mode");
 
   if (errors.length) fail(errors.length + " page/console errors: " + errors.join(" | "));
   console.log(`WAP_PROBE_OK — ${chips} chips, ${ents} entities, ${cards.length} sandbox cards`);

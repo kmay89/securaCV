@@ -1096,3 +1096,54 @@ button.ghost.small.bench-ff { font-size: 12px; }
 .chip-soon { border-color: rgba(111, 214, 195, 0.55); border-style: dashed; color: #6fd6c3; }
 .concept-plan { margin: 8px 0 0 18px; padding: 0; }
 .concept-plan li { font-size: 13.5px; color: var(--muted); margin-bottom: 6px; }
+
+/* ── WAP: plug it in (the 3D device + the laptop/wall choice) ─────────── */
+.wap-plug { display: grid; grid-template-columns: 1.1fr 1fr; gap: 20px; align-items: stretch; margin-bottom: 22px; }
+.wap-plug-stage { position: relative; border-radius: 14px; background: radial-gradient(120% 100% at 50% 0%, #191817 0%, #121110 60%, #0d0c0b 100%); border: 1px solid rgba(255,255,255,0.06); min-height: 280px; }
+.wap-plug-3d { width: 100%; height: 100%; min-height: 280px; display: block; touch-action: none; }
+/* this rule lands after the global coarse-pointer pan-y override, so it
+   needs its own — a phone finger must still scroll past the 3D card */
+@media (pointer: coarse) { .wap-plug-3d { touch-action: pan-y; } }
+.wap-plug-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.wap-plug-card { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: #16151055; cursor: pointer; transition: border-color .15s, background .15s; }
+.wap-plug-card:hover { border-color: rgba(255, 212, 79, 0.4); }
+.wap-plug-card.on { border-color: var(--canary); background: rgba(255, 212, 79, 0.07); }
+.wap-plug-card .muted { font-size: 12.5px; }
+.wap-plug-card strong { color: #f0eee6; font-size: 14.5px; }
+.wap-plug-icon { font-size: 20px; }
+.wap-plug-verdict { min-height: 2.4em; margin-top: 8px; }
+
+/* wall power: the console lines happen — to nobody */
+.wap-term-ghost .wap-term-scroll { opacity: 0.55; }
+.wap-term-ghost .hub-term-title::after { content: "  ·  nobody listening"; color: var(--muted); font-weight: 400; }
+
+/* ── WAP: flashing — buttons, ritual, toolchains, trainer ─────────────── */
+.wap-flash .wap-col-h { margin-top: 22px; }
+.wap-flash-h { margin: 4px 0 8px; font-size: 14.5px; }
+.wap-btn-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.wap-btn-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px 14px; background: #16151055; }
+.wap-btn-card .muted { font-size: 12.5px; }
+.wap-btn-chip { display: inline-block; font: 700 12px ui-monospace, monospace; letter-spacing: 0.08em; color: #141414; background: var(--canary); border-radius: 6px; padding: 3px 9px; margin-bottom: 6px; }
+.wap-btn-gestures { margin: 6px 0 0 16px; padding: 0; }
+.wap-btn-gestures li { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+.wap-ritual { margin: 6px 0 8px 18px; padding: 0; }
+.wap-ritual li { font-size: 13px; margin-bottom: 6px; }
+.wap-prereqs a { color: var(--canary); }
+.wap-cmds { font: 12.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; background: #0c0b0a; border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 10px 14px; margin: 10px 0; overflow-x: auto; }
+.wap-cmd { color: #e6e2d8; white-space: pre; }
+.wap-cmd-note { color: #6f6a60; white-space: pre; }
+.wap-url { display: block; font-size: 11.5px; word-break: break-all; background: #0c0b0a; border-radius: 8px; padding: 6px 10px; margin: 6px 0; }
+.wap-tool-panel { margin-top: 10px; }
+.wap-boardcfg { margin-top: 8px; }
+.wap-trouble details { margin-bottom: 8px; }
+
+/* the strap trainer */
+.wap-bench { border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; background: #131210; }
+.wap-bench-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.wap-bench-status { font-size: 12.5px; color: var(--canary); margin: 8px 0 6px; min-height: 1.2em; }
+.wap-bench-console { font: 11.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: #b9b4a8; background: #0c0b0a; border-radius: 8px; padding: 8px 10px; min-height: 108px; max-height: 150px; overflow-y: auto; white-space: pre-wrap; margin: 0; }
+
+@media (max-width: 760px) {
+  .wap-plug, .wap-btn-cards, .wap-plug-choices { grid-template-columns: 1fr; }
+  .wap-plug-stage { min-height: 220px; }
+}
