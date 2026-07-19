@@ -292,9 +292,17 @@ export function buildPhone(data, bus) {
 
   function screenOnline(ssid, standaloneMode) {
     screen.innerHTML = "";
+    const step5 = wiz.steps[4] || {};
     const s = el("div", "wap-screen wap-screen-browser");
     s.append(browserChrome("canary.local/companion"));
     const body = el("div", "wap-wiz wap-wiz-done");
+
+    // progress: all five firmware steps are walked
+    const prog = el("div", "wap-wiz-prog");
+    wiz.steps.forEach(() => prog.append(el("span", "wap-wiz-dot on")));
+    body.append(prog);
+
+    // step 4 — the connect outcome
     body.append(el("div", "wap-check", "✓"));
     if (standaloneMode) {
       body.append(el("h4", "wap-wiz-h", "Running standalone."),
@@ -304,10 +312,46 @@ export function buildPhone(data, bus) {
         el("p", "muted wap-wiz-sub", "Joined " + ssid + ". The SecuraCV setup network turns itself off in about " +
           ap.ap_grace_sec + " seconds — reconnect this phone to your home WiFi and find your Canary at canary.local."));
     }
+
+    // step 5 — pre-flight checks (GET /api/selftest), the recovery kit, then the
+    // optional Home Assistant hookup. These are the firmware's own step-5
+    // surfaces (companion_pwa.h), driven from wap.json so they can't drift.
+    const pf = el("div", "wap-preflight");
+    pf.append(el("h5", null, step5.title || "Pre-flight checks"));
+    if (step5.api) pf.append(el("p", "fineprint muted", step5.api));
+    const checks = el("div", "wap-checks");
+    for (const c of step5.checks || []) {
+      const row = el("span", "wap-check-row");
+      row.append(el("span", "wap-check-ok", "✓"), document.createTextNode(c));
+      checks.append(row);
+    }
+    pf.append(checks);
+    body.append(pf);
+
+    const rk = (step5.blocks || []).find((b) => /recovery kit/i.test(b.title || ""));
+    if (rk) {
+      const rkEl = el("div", "wap-ha-block");
+      rkEl.append(el("h5", null, rk.title));
+      if (rk.detail) rkEl.append(el("p", "fineprint muted", rk.detail));
+      const rkRow = el("div", "wap-wiz-btns");
+      const later = el("button", "ghost", "Do this later");
+      const saveKit = el("button", "primary", "Save my recovery kit");
+      saveKit.addEventListener("click", () =>
+        rkRow.replaceWith(el("p", "ok fineprint", "✓ canary-recovery-kit.json saved")));
+      later.addEventListener("click", () =>
+        rkRow.replaceWith(el("p", "muted fineprint", "grab it later from Settings → Export")));
+      rkRow.append(later, saveKit);
+      rkEl.append(rkRow);
+      body.append(rkEl);
+    }
+
     // optional Home Assistant hookup (step 5 HA block)
+    const haBlock = (step5.blocks || []).find((b) => /home assistant/i.test(b.title || ""));
+    const haField = haBlock && haBlock.fields && haBlock.fields[0];
     const ha = el("div", "wap-ha-block");
-    ha.append(el("h5", null, "Use Home Assistant? (optional)"));
-    const host = el("input", "wap-input"); host.placeholder = "Broker address (like 192.168.1.10)";
+    ha.append(el("h5", null, (haBlock && haBlock.title) || "Use Home Assistant? (optional)"));
+    const host = el("input", "wap-input");
+    host.placeholder = (haField && haField.placeholder) || "Broker address (like 192.168.1.10)";
     ha.append(host);
     const row = el("div", "wap-wiz-btns");
     const skip = el("button", "ghost", "Skip"); skip.addEventListener("click", () => finish(false));
@@ -315,6 +359,7 @@ export function buildPhone(data, bus) {
     row.append(skip, save);
     ha.append(row);
     body.append(ha);
+
     s.append(body); screen.append(s);
   }
 
@@ -327,7 +372,9 @@ export function buildPhone(data, bus) {
   function finish(withHa) {
     bus.emit("online", { ha: withHa });
     if (withHa) bus.emit("mqtt");
-    const done = screen.querySelector(".wap-ha-block");
+    // the Home Assistant block is the last .wap-ha-block (after the recovery kit)
+    const blocks = screen.querySelectorAll(".wap-ha-block");
+    const done = blocks[blocks.length - 1];
     if (done) { done.innerHTML = ""; done.append(el("p", "ok", withHa ? "✓ Broker saved — entities announcing on Home Assistant." : "✓ Finished. Name it by its room from the dashboard.")); }
   }
 
