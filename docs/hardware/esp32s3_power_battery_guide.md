@@ -26,10 +26,10 @@ measure for real).
 |---|---|---|
 | MCU | ESP32-S3 dual-core @ 80/160/240 MHz | Firmware scales the clock per power mode |
 | Radios | WiFi 2.4 GHz + BLE 5 on **one shared front-end** | TX bursts are the peak-current driver |
-| Camera | OV2640 (Sense expansion) | ~80–150 mA while streaming |
+| Camera | OV2640/OV3660, kit-dependent (Sense expansion) | ~80–150 mA while streaming |
 | Storage | microSD (Sense expansion) | 30–100 mA write bursts |
 | USB | USB-C, 5 V input, native CDC | Primary supply + flashing |
-| Charger | Onboard Li-ion/LiPo charge IC on BAT+/BAT− pads | ≈100 mA charge current (board-fixed, per Seeed documentation); **LiPo/Li-ion 4.2 V only**; **no battery thermistor input** |
+| Charger | Onboard Li-ion/LiPo charge IC on BAT+/BAT− pads | 50 mA fast / 3.8 mA trickle charge current (board-fixed, per the Seeed spec table — the ≈100 mA figure applies to the XIAO ESP32-S3 *Plus*); **LiPo/Li-ion 4.2 V only**; **no battery thermistor input** |
 | Regulator | Onboard 3.3 V LDO, ~600 mA class | The brownout bottleneck — see §2 |
 | Battery sense | GPIO 1 (A0) via user-added 2:1 divider | 2 × 100 kΩ; ~21 µA constant drain on the cell |
 
@@ -196,10 +196,10 @@ battery, not a primary power strategy**; for permanently battery-only
 deployments, plan solar or a service schedule, and validate with a real
 discharge test.
 
-**Charging time:** the onboard charger is ≈100 mA, so a full charge takes
-roughly `capacity ÷ 100 mA` *plus* whatever the device is consuming while
-awake — a 2000 mAh cell is ~20 h from empty **if the device is in a
-low-draw mode**. In `PLUGGED_IN` mode running all features, net charge
+**Charging time:** the onboard charger is 50 mA (fast phase; Seeed lists
+100 mA only for the XIAO ESP32-S3 *Plus*), so a full charge takes roughly
+`capacity ÷ 50 mA` *plus* whatever the device is consuming while awake — a
+2000 mAh cell is ~40 h from empty **if the device is in a low-draw mode**. In `PLUGGED_IN` mode running all features, net charge
 current can approach zero; the device deliberately stays feature-rich on USB
 and lets charging be slow. If you need fast turnaround, charge with the
 device in a quiet state or use an external charger.
@@ -397,7 +397,7 @@ catches it only when the float drifts above 4.4 V.
 | SoC reads 2–15% constantly on a "good" battery | LiFePO4 or other non-LiPo chemistry | See §4.1 — don't use the divider with non-LiPo chemistries |
 | `est_runtime_min` is 0 | Not discharging, or < ~1 min of trend data | Normal — it refuses to guess |
 | `charge_cycles` never increases | Cell never swings below 3.8 V and back above 4.1 V (always topped up) | Normal for USB-powered units — that's a *good* sign for cell longevity |
-| Charges very slowly / not at all while running | ≈100 mA charger vs. device draw in full-feature mode | Expected; let it charge in a quiet state or charge externally |
+| Charges very slowly / not at all while running | 50 mA charger vs. device draw in full-feature mode | Expected; let it charge in a quiet state or charge externally |
 | Dies in cold weather at "40% SoC" | Cold derating + internal resistance (§4.3) | Bigger cell, warmer placement, or chemistry change |
 
 ---
