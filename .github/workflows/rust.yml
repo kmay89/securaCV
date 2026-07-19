@@ -72,6 +72,22 @@ jobs:
     - name: Test with PQC features
       run: cargo test --features pqc-signatures,pqc-vault
 
+  adapters:
+    name: Adapters (behavioral tests, all features)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: Swatinem/rust-cache@v2
+    - name: Install libseccomp
+      run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+    # The adapter surface is the kernel's primary untrusted-input boundary
+    # (docs/strategy/12, finding A1). Every adapter feature is off by default,
+    # so without this job their tests — including the security-critical
+    # adapter_cannot_bypass_enforcer suite and the parser fuzz-lite — compile
+    # under the clippy-only optional-features job but never execute.
+    - name: Test with all adapter features
+      run: cargo test --verbose --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-sandbox
+
   ingest-ffmpeg:
     name: Ingest (ffmpeg file decode)
     runs-on: ubuntu-latest

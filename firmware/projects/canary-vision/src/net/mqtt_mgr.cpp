@@ -387,7 +387,19 @@ void ha_discovery_publish_once(const Topics& topics) {
   discovery_done = true;
 }
 
-void mqtt_reconnect_blocking() {
+// ONE bounded connect attempt (TCP connect + MQTT CONNECT). On success it
+// republishes the retained surfaces and re-subscribes every command topic;
+// on failure it returns immediately so the caller's backoff owns the retry
+// cadence (canary-sense parity). Replaces the unbounded blocking loop that
+// froze the witness on a live-WiFi/dead-broker network — with delay(1000)
+// yielding to IDLE, not even the idle watchdog fired (docs/strategy/12, F1).
+bool mqtt_connect_attempt() {
+  if (mqtt.connected()) return true;
+
+  // A dead WiFi link makes every broker attempt hopeless — the caller's
+  // wifi_loop() supervision owns that recovery.
+  if (!wifi_connected()) return false;
+
   char lwtPayload[160];
   snprintf(lwtPayload, sizeof(lwtPayload),
            "{"
@@ -404,32 +416,22 @@ void mqtt_reconnect_blocking() {
   device_pseudonym::device_id_hex(devid_hex, sizeof(devid_hex));
 
   const auto& cfg = canary::cfg::get();
-  while (!mqtt.connected()) {
-    // A dead WiFi link makes every broker attempt hopeless — hand control
-    // back to the caller so wifi_loop()'s backoff/reboot supervision runs
-    // instead of spinning here forever.
-    if (!wifi_connected()) {
-      log_line("MQTT", "WiFi is down — deferring broker reconnect.");
-      return;
-    }
+  String clientId = String("securacv-") + cfg.device_id + "-" + devid_hex;
 
-    String clientId = String("securacv-") + cfg.device_id + "-" + devid_hex;
+  log_header("MQTT");
+  canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", cfg.mqtt_host, cfg.mqtt_port, clientId.c_str());
 
+  bool ok = false;
+  if (cfg.mqtt_user[0] != '\0') {
+    ok = mqtt.connect(clientId.c_str(), cfg.mqtt_user, cfg.mqtt_pass, g_topics.status, 1, true, lwtPayload);
+  } else {
+    ok = mqtt.connect(clientId.c_str(), nullptr, nullptr, g_topics.status, 1, true, lwtPayload);
+  }
+
+  if (!ok) {
     log_header("MQTT");
-    canary::dbg_serial().printf("Connecting %s:%u as %s ...\n", cfg.mqtt_host, cfg.mqtt_port, clientId.c_str());
-
-    bool ok = false;
-    if (cfg.mqtt_user[0] != '\0') {
-      ok = mqtt.connect(clientId.c_str(), cfg.mqtt_user, cfg.mqtt_pass, g_topics.status, 1, true, lwtPayload);
-    } else {
-      ok = mqtt.connect(clientId.c_str(), nullptr, nullptr, g_topics.status, 1, true, lwtPayload);
-    }
-
-    if (!ok) {
-      log_header("MQTT");
-      canary::dbg_serial().printf("Connect FAIL rc=%d. Retry 1s\n", mqtt.state());
-      delay(1000);
-    }
+    canary::dbg_serial().printf("Connect FAIL rc=%d — retrying on the main-loop backoff.\n", mqtt.state());
+    return false;
   }
 
   log_line("MQTT", "Connected.");
@@ -465,6 +467,7 @@ void mqtt_reconnect_blocking() {
   mqtt.subscribe(g_topics.cfg_lost_cmd, 1);
   mqtt.subscribe(g_topics.cfg_dwell_cmd, 1);
   publish_detect_cfg_retained(g_topics);
+  return true;
 }
 
 bool publish_detect_cfg_retained(const Topics& topics) {

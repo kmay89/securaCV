@@ -1,6 +1,9 @@
 [package]
 name = "witness-kernel"
-version = "0.5.0"
+# Kept in lockstep with custom_components/securacv/manifest.json and
+# privacy_witness_kernel/config.yaml via scripts/bump_version.sh; CI fails
+# on drift (scripts/lint_version_sync.sh).
+version = "0.6.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"
@@ -160,3 +163,12 @@ required-features = ["ingest-file-ffmpeg"]
 name = "detect_eval"
 path = "src/bin/detect_eval.rs"
 required-features = ["detect-eval"]
+
+# Flight Rules FR-2/FR-5 (docs/strategy/12): a panic in any thread must take
+# the whole process down for the supervisor to restart — never a half-dead
+# daemon with a silently missing API thread — and arithmetic overflow must be
+# a caught fault, not a silent wrap (Ariane 5's failure class).
+[profile.release]
+panic = "abort"
+overflow-checks = true
+lto = "thin"

@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_task_wdt.h>
 
 #include "canary/config.h"
 #include "canary/version.h"
@@ -38,6 +39,12 @@ static canary::state::PresenceFSM fsm;
 static char last_event_name[48] = "boot";
 static uint32_t last_invoke_ms = 0;
 static uint32_t last_heartbeat_ms = 0;
+
+// Broker reconnect schedule (canary-sense parity): a broker outage must
+// never pin the loop — each bounded connect attempt happens at most once
+// per backoff window (2 s → 4 s → 8 s → 16 s → 30 s cap).
+static uint32_t g_mqtt_next_attempt_ms = 0;
+static uint32_t g_mqtt_attempts = 0;
 
 // Aim assist (bench/aiming): boxes-only live channel, toggled from HA.
 // Auto-off after AIM_AUTO_OFF_MS so a forgotten switch can't stream box
@@ -401,17 +408,24 @@ void setup() {
     boot_kv("Witness", "signing unavailable (events publish unsigned)");
   }
 
-  canary::net::mqtt_reconnect_blocking();
-  canary::net::ha_discovery_publish_once(TOPICS);
+  // Bounded boot attempt: if the broker is down at boot the device still
+  // finishes setup — the loop's backoff supervisor brings the link (and
+  // every retained surface, discovery included) up when the broker returns.
+  if (canary::net::mqtt_connect_attempt()) {
+    canary::net::ha_discovery_publish_once(TOPICS);
 
-  // Broker link is up — gossip it on the fleet advert so a display or a
-  // sibling Canary that lost its broker can self-heal from ours.
-  canary::net::mdns_advertise_broker(canary::cfg::get().mqtt_host,
-                                     canary::cfg::get().mqtt_port);
+    // Broker link is up — gossip it on the fleet advert so a display or a
+    // sibling Canary that lost its broker can self-heal from ours.
+    canary::net::mdns_advertise_broker(canary::cfg::get().mqtt_host,
+                                       canary::cfg::get().mqtt_port);
 
-  canary::net::publish_status_retained(TOPICS, "online");
-  canary::net::publish_health_retained(TOPICS);   // carries public_key (TOFU)
-  canary::net::publish_chain_retained(TOPICS);    // retained signed head
+    canary::net::publish_health_retained(TOPICS);   // carries public_key (TOFU)
+    canary::net::publish_chain_retained(TOPICS);    // retained signed head
+  } else {
+    canary::log_line("MQTT",
+                     "Broker unreachable at boot — continuing; the loop's "
+                     "backoff supervisor owns the retry.");
+  }
 
   // Signed pull-OTA: arm the engine (validation already ran right after
   // WiFi). Daily jittered checks; HA's Install button and auto-update
@@ -426,6 +440,40 @@ void setup() {
   last_invoke_ms = canary::ms_now();
   last_heartbeat_ms = canary::ms_now();
 
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+  // Task watchdog — same IDF5 config as canary-sense/wap, armed LAST so the
+  // blocking boot phases above (WiFi connect, one bounded broker attempt)
+  // can't trip it. config.h has claimed FEATURE_WATCHDOG since day one but
+  // nothing ever armed it (docs/strategy/12, finding F1): a hung loop was
+  // a permanent freeze. Timeout must exceed loop()'s worst bounded block
+  // (one MQTT connect attempt against a dead broker).
+  // Same dual-API guard as firmware/canary: this project's PlatformIO env
+  // pins an IDF 4.x-era core where the struct API doesn't exist yet.
+  {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    // ESP-IDF 5.x: struct-based API
+    esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = CV_WATCHDOG_TIMEOUT_SEC * 1000,
+#if CONFIG_FREERTOS_UNICORE
+      .idle_core_mask = (1 << 0),               // XIAO ESP32-C3: single core
+#else
+      .idle_core_mask = (1 << 0) | (1 << 1),    // ESP32-S3 boards: both cores
+#endif
+      .trigger_panic = true
+    };
+    esp_err_t wdt_err = esp_task_wdt_reconfigure(&wdt_config);
+    if (wdt_err == ESP_ERR_INVALID_STATE) {
+      esp_task_wdt_init(&wdt_config);
+    }
+#else
+    // ESP-IDF 4.x: simple parameters (panics on timeout)
+    esp_task_wdt_init(CV_WATCHDOG_TIMEOUT_SEC, true);
+#endif
+    esp_task_wdt_add(NULL);
+    boot_kvf("Watchdog", "%lu s timeout", (unsigned long)CV_WATCHDOG_TIMEOUT_SEC);
+  }
+#endif
+
   boot_scene_ready(
       "It will publish presence events via MQTT",
       "to Home Assistant for real-time monitoring.",
@@ -434,6 +482,10 @@ void setup() {
 }
 
 void loop() {
+#if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+#endif
+
   // STA supervision first: backoff reconnects, outage reboot (S3 parity).
   canary::net::wifi_loop(canary::ms_now());
   canary::net::mdns_loop(canary::ms_now());  // drain deferred re-announce
@@ -445,20 +497,40 @@ void loop() {
       delay(50);
       return;
     }
-    canary::log_line("MQTT", "Disconnected. Reconnecting...");
-    // Ground-truth-only gossip: stop referring the fleet to a broker we
-    // can't reach ourselves.
-    canary::net::mdns_clear_broker();
-    canary::net::mqtt_reconnect_blocking();
-    if (!canary::net::mqtt_connected()) return;  // WiFi dropped mid-attempt
-    canary::net::mdns_advertise_broker(canary::cfg::get().mqtt_host,
-                                       canary::cfg::get().mqtt_port);
-    canary::net::publish_status_retained(TOPICS, "online");
-    canary::net::publish_health_retained(TOPICS);
-    canary::net::publish_chain_retained(TOPICS);
-    publish_state_now(canary::ms_now());
-    delay(250);
-    publish_state_now(canary::ms_now());
+    // Bounded single attempt on an exponential backoff (canary-sense
+    // parity). The old code blocked here in an unbounded retry loop — on a
+    // live-WiFi/dead-broker network the witness froze until power-cycle,
+    // and delay(1000) yielding to IDLE meant not even the idle watchdog
+    // fired (docs/strategy/12, finding F1).
+    const uint32_t mqtt_now = canary::ms_now();
+    if ((int32_t)(mqtt_now - g_mqtt_next_attempt_ms) >= 0) {
+      // Ground-truth-only gossip: stop referring the fleet to a broker we
+      // can't reach ourselves.
+      canary::net::mdns_clear_broker();
+      if (canary::net::mqtt_connect_attempt()) {
+        g_mqtt_attempts = 0;
+        // Covers the broker-was-down-at-boot case; internally once-guarded.
+        canary::net::ha_discovery_publish_once(TOPICS);
+        canary::net::mdns_advertise_broker(canary::cfg::get().mqtt_host,
+                                           canary::cfg::get().mqtt_port);
+        canary::net::publish_health_retained(TOPICS);
+        canary::net::publish_chain_retained(TOPICS);
+        publish_state_now(canary::ms_now());
+      } else {
+        uint32_t attempt = g_mqtt_attempts;
+        if (attempt > 4) attempt = 4;
+        uint32_t backoff_ms = 2000UL << attempt;
+        if (backoff_ms > 30000UL) backoff_ms = 30000UL;
+        g_mqtt_attempts++;
+        g_mqtt_next_attempt_ms = mqtt_now + backoff_ms;
+      }
+    }
+    // Still no broker: keep the loop's cadence (WDT fed, wifi/mdns/diag
+    // supervised) instead of running the publish-dependent pipeline.
+    if (!canary::net::mqtt_connected()) {
+      delay(50);
+      return;
+    }
   }
 
   canary::net::mqtt_loop();
