@@ -532,6 +532,151 @@ footer p { max-width: 720px; margin: 0 auto; }
 .ws-request { color: var(--canary); text-decoration: none; font-size: 13.5px; }
 .ws-request:hover { text-decoration: underline; }
 
+/* ── the hub (homeassistant.html) ───────────────────────────────────── */
+#hub { max-width: 980px; margin: 0 auto 90px; padding: 0 24px; }
+.hub-hero .lede { max-width: 680px; }
+#hub-versions { margin-top: 18px; }
+.hub-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.hub-chips .chip { text-transform: none; letter-spacing: 0.2px; font-size: 12px; padding: 4px 12px; }
+.hub-chip-k { color: var(--faint); }
+.hub-chips strong { color: var(--text); font-weight: 620; }
+.hub-fresh { margin-top: 10px; }
+.hub-fresh.stale { color: var(--warn); }
+
+.hub-section { margin: 64px 0 0; }
+.hub-kicker { font-size: 12px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--canary-deep); }
+.hub-section h2 { font-size: 30px; margin: 6px 0 8px; font-weight: 650; }
+.hub-lede { color: #c9c9c9; max-width: 640px; margin: 0 0 18px; }
+
+.hub-why { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.hub-why-card { border: 1px solid var(--edge); border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-2) 0%, #101012 100%); padding: 16px 16px 18px; }
+.hub-why-card h3 { margin: 0 0 6px; font-size: 16.5px; }
+.hub-why-card p { margin: 0; font-size: 14px; }
+
+.hub-needs { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }
+.hub-need { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--edge); border-radius: 12px; background: var(--surface); padding: 9px 14px; }
+.hub-need strong { font-weight: 620; }
+.hub-need .muted { font-size: 13px; flex: 1; min-width: 220px; }
+.hub-need-src { text-transform: none; letter-spacing: 0.2px; }
+.hub-stage .asmlab-3d { height: 440px; }
+
+/* the bench terminal */
+.hub-term { margin-top: 6px; }
+.hub-term-tabs { padding-bottom: 10px; }
+.hub-term-win { border: 1px solid #2c2c2e; border-radius: 14px; overflow: hidden;
+  background: #0a0a0c; box-shadow: 0 14px 50px rgba(0, 0, 0, 0.5); outline: none; }
+.hub-term-win:focus-visible { border-color: rgba(255, 212, 79, 0.5); }
+.hub-term-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: #141416; border-bottom: 1px solid #232325; }
+.hub-term-dots { display: inline-flex; gap: 5px; }
+.hub-term-dots i { width: 10px; height: 10px; border-radius: 50%; background: #333; display: inline-block; }
+.hub-term-dots i:first-child { background: #5a3d3d; }
+.hub-term-dots i:nth-child(2) { background: #5a533d; }
+.hub-term-dots i:nth-child(3) { background: #3d5a44; }
+.hub-term-title { color: var(--muted); font-size: 12.5px; }
+.hub-term-sim { margin-left: auto; color: var(--faint); font-size: 11px; }
+.hub-term-scroll { height: 300px; overflow-y: auto; padding: 12px 14px;
+  font: 13px/1.55 "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.hub-line { white-space: pre-wrap; word-break: break-word; color: #d8d8d8; }
+.hub-prompt { color: var(--canary); }
+.hub-cmd { color: #f0f0f0; }
+.hub-caret { color: var(--canary); animation: hub-blink 1s steps(1) infinite; }
+@keyframes hub-blink { 50% { opacity: 0; } }
+.hub-out { color: #9fb2a4; }
+.hub-intro, .hub-replay { color: var(--faint); }
+.hub-done { color: var(--ok); margin-top: 4px; }
+.hub-term-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border-top: 1px solid #232325; background: #101012; }
+.hub-term-controls .primary { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; }
+.hub-term-note { margin-top: 10px; min-height: 2.4em; }
+
+/* the Home Assistant sketch */
+.hub-ha { position: relative; margin-top: 6px; }
+.hub-ha-chrome { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: #141416; border: 1px solid #2c2c2e; border-bottom: none; border-radius: 14px 14px 0 0; }
+.hub-ha-url { background: #0a0a0c; border: 1px solid #232325; color: var(--muted);
+  font-size: 12px; border-radius: 8px; padding: 3px 12px; flex: 1; max-width: 420px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-ha-app { display: flex; min-height: 460px; border: 1px solid #2c2c2e; border-radius: 0 0 14px 14px;
+  overflow: hidden; background: #111318; box-shadow: 0 14px 50px rgba(0, 0, 0, 0.5); }
+.hub-ha-side { width: 148px; flex: 0 0 auto; background: #0d0f13; border-right: 1px solid #1d2027; padding: 10px 8px; }
+.hub-ha-nav { display: flex; align-items: center; gap: 9px; color: #9aa0aa; font-size: 13px;
+  padding: 7px 10px; border-radius: 9px; }
+.hub-ha-nav.on { background: rgba(3, 169, 244, 0.14); color: #e8f4fb; }
+.hub-ha-glyph { width: 18px; text-align: center; }
+.hub-ha-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hub-ha-top { display: flex; align-items: baseline; gap: 12px; padding: 12px 16px;
+  background: var(--signed); color: #08222e; }
+.hub-ha-title { font-weight: 650; font-size: 15px; }
+.hub-ha-ver { margin-left: auto; font-size: 12px; opacity: 0.75; }
+.hub-ha-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px; padding: 14px; overflow-y: auto; }
+.hub-ha-card { background: #171a20; border: 1px solid #232833; border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.hub-ha-card h4 { margin: 0 0 8px; font-size: 13.5px; color: #dfe3ea; }
+.hub-ha-wait { color: #7c8492; font-size: 12px; margin: 0 0 8px; font-family: ui-monospace, Menlo, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-ha-rows { display: flex; flex-direction: column; }
+.hub-ha-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px;
+  border-top: 1px solid #1e232d; font-size: 13px; color: #c8cdd6;
+  transition: background 0.5s, opacity 0.4s, transform 0.4s; flex-wrap: wrap; }
+.hub-ha-row.landing { opacity: 0; transform: translateY(6px); }
+.hub-ha-row.alert { background: rgba(229, 57, 53, 0.12); }
+.hub-ha-row.alert .hub-ha-value { color: #ff8a80; font-weight: 650; }
+.hub-ha-icon { width: 20px; text-align: center; flex: 0 0 auto; }
+.hub-ha-name { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.hub-ha-desc { color: #69707c; font-size: 11px; }
+.hub-ha-value { margin-left: auto; color: #e8ecf2; font-variant-numeric: tabular-nums; }
+.hub-ha-row.has-attrs { cursor: pointer; }
+.hub-ha-attrs { display: none; width: 100%; padding: 2px 0 4px 30px; }
+.hub-ha-row.open .hub-ha-attrs { display: flex; gap: 8px; flex-wrap: wrap; }
+.hub-ha-attrs code { background: #0d0f13; color: #8fd0f0; font-size: 11px; }
+.hub-ha-switch { appearance: none; width: 38px; height: 21px; border-radius: 999px; border: 1px solid #39404d;
+  background: #232833; position: relative; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+.hub-ha-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+  border-radius: 50%; background: #9aa0aa; transition: transform 0.2s, background 0.2s; }
+.hub-ha-switch.on { background: rgba(3, 169, 244, 0.35); border-color: var(--signed); }
+.hub-ha-switch.on::after { transform: translateX(17px); background: var(--signed); }
+.hub-ha-chain { font-size: 12px; color: var(--signed); margin: 0 0 8px; font-family: ui-monospace, Menlo, monospace; }
+.hub-ha-tl { display: flex; flex-direction: column; }
+.hub-ha-tlrow { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: #c8cdd6;
+  padding: 5px 0; border-top: 1px solid #1e232d; }
+.hub-ha-tlrow.warn .hub-ha-tltext { color: #ffcf86; }
+.hub-ha-tlrow.alert .hub-ha-tltext { color: #ff8a80; }
+.hub-ha-tltime { color: #69707c; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.hub-ha-tltext { flex: 1; min-width: 0; }
+.hub-ha-tlsig { color: var(--signed); font-size: 11px; flex: 0 0 auto; }
+.hub-ha-auto { font-size: 12.5px; border-radius: 8px; padding: 5px 10px; display: inline-block; }
+.hub-ha-auto.idle { background: #1e232d; color: #9aa0aa; }
+.hub-ha-auto.firing { background: rgba(229, 57, 53, 0.18); color: #ff8a80; }
+.hub-ha-trace { margin: 8px 0; display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; color: #9fb2a4; font-family: ui-monospace, Menlo, monospace; }
+.hub-ha-drill { margin-top: 4px; }
+.hub-ha-toast { position: absolute; top: 100px; right: 22px; width: min(300px, 74%);
+  background: #1c1f26; border: 1px solid #39414f; border-radius: 14px; padding: 10px 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.75);
+  opacity: 0; transform: translateY(-12px); pointer-events: none;
+  transition: opacity 0.3s, transform 0.3s; z-index: 5; }
+.hub-ha-toast.show { opacity: 1; transform: translateY(0); }
+.hub-ha-toast-app { color: #8a909a; font-size: 11px; margin-bottom: 3px; }
+.hub-ha-toast-title { font-weight: 650; font-size: 13.5px; color: #f0f2f5; }
+.hub-ha-toast-body { font-size: 12.5px; color: #b9bec7; margin-top: 2px; }
+.hub-ha-note { margin-top: 12px; }
+
+.hub-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.hub-link { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--edge);
+  border-radius: 14px; background: var(--surface); padding: 13px 15px; color: inherit; }
+.hub-link:hover { text-decoration: none; border-color: rgba(255, 212, 79, 0.45); }
+.hub-link strong { color: var(--canary); font-weight: 620; }
+.hub-link .muted { font-size: 13px; }
+.hub-link code { background: transparent; padding: 0; color: var(--faint); }
+
+@media (max-width: 640px) {
+  .hub-ha-side { display: none; }
+  .hub-term-sim { display: none; }
+}
+
 /* ── the Canary House (house.html) ─────────────────────────────────── */
 .house-main { display: grid; grid-template-columns: minmax(0, 1fr) 330px;
   gap: 22px; max-width: 1280px; margin: 26px auto 70px; padding: 0 24px;
