@@ -1,0 +1,110 @@
+# canary.local page CI — the emulator is the firmware, so this workflow
+# proves three things on every change to either side of that boundary:
+#   1. the display firmware still compiles to WebAssembly (both flavors)
+#   2. the freshly-built firmware actually boots in a browser (probe:
+#      framebuffer flushes, boot banner, MQTT round-trip, TOFU pinning)
+#   3. the page's DOM-free logic tests pass, and committed dist/
+#      artifacts stay consistent with the registry's firmware train
+name: canary.local
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "canary-local/**"
+      - "firmware/projects/canary-display/**"
+      - "firmware/configs/canary-display/**"
+      - "firmware/boards/xiao-esp32s3-round/**"
+      - "firmware/boards/waveshare-esp32s3-lcd43/**"
+      - "firmware/common/**"
+      - ".github/workflows/canary-local.yml"
+  pull_request:
+    paths:
+      - "canary-local/**"
+      - "firmware/projects/canary-display/**"
+      - "firmware/configs/canary-display/**"
+      - "firmware/boards/xiao-esp32s3-round/**"
+      - "firmware/boards/waveshare-esp32s3-lcd43/**"
+      - "firmware/common/**"
+      - ".github/workflows/canary-local.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  logic-tests:
+    name: page logic tests (committed artifacts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Node tests (shipped source, repo convention)
+        run: |
+          node --test canary-local/tests/canary_local.test.js
+          node --test canary-local/tests/chooser.test.js
+      - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
+        run: |
+          python3 canary-local/tools/gen_enclosures.py
+          if ! git diff --exit-code -- canary-local/devices/enclosures.json; then
+            echo "::error::enclosures.json is stale — run canary-local/tools/gen_enclosures.py and commit"
+            exit 1
+          fi
+
+  wasm-build-and-boot:
+    name: firmware → wasm → boots in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: SHA-256 shim vectors (FIPS 180-4)
+        run: |
+          gcc -I canary-local/emulator/shim \
+            canary-local/emulator/test/sha256_vectors.c \
+            canary-local/emulator/src/emu_sha256.c -o /tmp/shacheck
+          /tmp/shacheck
+      - name: Install emscripten
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y emscripten
+          emcc --version | head -1
+      - name: Cache third-party sources
+        uses: actions/cache@v4
+        with:
+          path: canary-local/emulator/third_party
+          key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
+      - name: Install Playwright Chromium
+        run: |
+          npm i --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Boot probe — COMMITTED artifacts (what a bare checkout serves)
+        run: node canary-local/tests/boot_probe.mjs
+      - name: Build both flavors from THIS tree
+        run: |
+          cd canary-local/emulator
+          ./build.sh all
+      - name: Dist drift check (committed artifacts match this tree's sources)
+        run: |
+          # meta.json embeds the checkout sha, which legitimately differs on
+          # a PR merge ref — the drift gate is the code bundles themselves.
+          if ! git diff --stat --exit-code -- 'canary-local/emulator/dist/*.js'; then
+            echo "── first differing bytes per artifact (diagnosis) ──"
+            for f in canary-local/emulator/dist/*.js; do
+              git show "HEAD:$f" > /tmp/committed.js || continue
+              off=$(cmp /tmp/committed.js "$f" | awk '{print $5}' | tr -d ',')
+              [ -n "$off" ] || continue
+              start=$(( off > 80 ? off - 80 : 1 ))
+              echo "· $f @ byte $off"
+              echo "  committed: $(tail -c +$start /tmp/committed.js | head -c 160 | tr -d '\n')"
+              echo "  rebuilt:   $(tail -c +$start "$f" | head -c 160 | tr -d '\n')"
+            done
+            echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result"
+            exit 1
+          fi
+      - name: Boot probe — rebuilt artifacts
+        run: node canary-local/tests/boot_probe.mjs
+      - name: Artifact stamps
+        run: cat canary-local/emulator/dist/*.meta.json
