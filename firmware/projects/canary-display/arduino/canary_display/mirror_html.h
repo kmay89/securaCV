@@ -241,11 +241,12 @@ $("mwifi").textContent=g.wifi?(g.hub?"":"no hub"):"no wifi";
 var n=g.witnesses.length;
 if(n===0){$("mword").textContent=g.time_valid?t:"Listening";
 $("msub").textContent="no canaries yet";}
-else if(g.worst===0){$("mword").textContent=g.time_valid?t:"All quiet";
-$("msub").textContent="all quiet • "+n+(n===1?" canary":" canaries");}
+// worst<=1 (Ok/Notice) is the wall's calm branch — same threshold, same voice
+else if(g.worst<=1){$("mword").textContent=g.time_valid?t:(g.aq||"All quiet");
+$("msub").textContent=(g.aql||"all quiet")+" • "+n+(n===1?" canary":" canaries");}
 else{$("mword").textContent=SEVW[g.worst]||"Alert";
 $("msub").textContent=g.acked?"acknowledged":"press and hold the glass to acknowledge";}
-$("mword").style.color=n&&g.worst?SEVC[g.worst]:"var(--tx)";
+$("mword").style.color=n&&g.worst>1?SEVC[g.worst]:"var(--tx)";
 $("bird").className="bird "+(MOOD[g.bird]||"idle");
 var row=$("mrow");row.innerHTML="";
 g.witnesses.forEach(function(w){var c=document.createElement("span");

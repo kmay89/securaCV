@@ -16,6 +16,7 @@
 #include "canary/ui/glance_ui.h"
 #include "canary/ui/theme.h"
 #include "canary/ui/canary_mark.h"
+#include "canary/ui/character.h"
 #include "canary/trust.h"
 #include "canary/version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
@@ -342,10 +343,13 @@ void update_halo(const Fleet& fleet, uint32_t now, const GlanceState& st) {
                                                  : "waiting for wifi"));
     } else if (st.time_valid) {
       lv_label_set_text_fmt(s_hero, "%02d:%02d", st.clock_hh, st.clock_mm);
-      lv_label_set_text_fmt(s_hero_sub, "all quiet • %d %s", n,
+      // The calm word speaks in the Character's voice (ambient copy only
+      // — trouble words never come from the Voice table).
+      lv_label_set_text_fmt(s_hero_sub, "%s • %d %s",
+                            active_voice().all_quiet_low, n,
                             n == 1 ? "canary" : "canaries");
     } else {
-      lv_label_set_text(s_hero, "All quiet");
+      lv_label_set_text(s_hero, active_voice().all_quiet);
       lv_label_set_text_fmt(s_hero_sub, "%d %s", n,
                             n == 1 ? "canary" : "canaries");
     }

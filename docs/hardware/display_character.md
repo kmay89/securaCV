@@ -42,7 +42,7 @@ A **Character** is a bundle of four coordinated dimensions:
 | **Ground & chrome** | background / surface / edge / text tiers, one accent hue | warm charcoal + brass ink vs true-black + electric cyan |
 | **Type feel** | which enabled Montserrat size fills each role | one step *up* everywhere vs the compact default |
 | **Temperament** | the bird's baseline breath rate, flourish cadence, hop energy | slow & sparing vs quick & springy |
-| **Voice** *(wave 2)* | register of the non-semantic microcopy | "Good evening. All is well." vs "all clear ✨" |
+| **Voice** | register of the non-semantic microcopy (§9 wave 2) | "All is well" / "welcome home" vs "All good" / "hey again" |
 
 A Character is **not** a license to change what anything *means*. Two lines
 are load-bearing and no Character may cross them:
@@ -245,11 +245,30 @@ the glass wakes up already wearing it.
 
 ## 9. Roadmap
 
-- **Wave 2 — Voice.** A per-Character register for the *non-semantic*
-  microcopy only (greetings, the empty-nest line, idle captions). Honest lines
-  ("TAMPER — check the grid") never soften; only the ambient, no-stakes copy
-  takes on the accent. Needs a careful pass so no reworded line ever implies
-  safety it can't prove.
+- **Wave 2 — Voice** *(shipped)*. A per-Character register for the
+  *non-semantic* microcopy only — three slots in the Character table
+  (`Voice` in `character.h`): the calm-fleet hero word ("All quiet" /
+  "All is well" / "All clear" / "All good"), its inline register under a
+  time hero, and the returning-boot splash greeting ("hello again" /
+  "welcome home" / "welcome back" / "hey again"). The rules that made it
+  safe to ship:
+  - **Contentment may be rephrased; trouble may not.** Severity words,
+    badge text, link labels, event copy, and every degraded-state
+    instruction ("waiting for wifi", "no canaries yet • hold to add",
+    "Plug in a canary…") are diagnosis and guidance — they never come from
+    the Voice table, structurally: the trouble branches in `glance_ui` /
+    `dash_ui` don't reference it.
+  - **The first meeting stays canonical.** The typed speech-bubble script
+    is the same bird for everyone; only the *returning* greeting takes the
+    register (and `character_apply` runs before the splash, so the glass
+    greets you in its saved voice from the first frame).
+  - **The mirror speaks in the wall's voice.** The active calm words ride
+    the `/api/glass` snapshot (`aq`/`aql`, static table strings), so the
+    phone mirror and the wall can never disagree on register; trouble
+    words the mirror still derives from `worst`, from the same invariant
+    vocabulary. Older mirror HTML falls back to "All quiet" harmlessly.
+  - **Plain ASCII by rule.** The built-in Montserrat tables carry no
+    emoji, and the glance contract wants words that read at 3 m.
 - **Wave 3 — Light / paper Characters.** A true cream-ground "Almanac" look,
   which requires the semantic set darkened within-family for 3:1 on light and
   a light-safe night story. Deferred, not faked.

@@ -16,6 +16,7 @@
 #include "splash.h"
 #include "canary_mark.h"
 #include "theme.h"
+#include "character.h"
 #include "display.h"
 
 namespace canary::ui {
@@ -227,9 +228,12 @@ void splash_play(uint32_t hold_ms) {
     // The short familiar splash: hop, wordmark — and the tagline becomes
     // a quiet greeting, because you two have already met. No bubble, no
     // extra time; a returning boot must never feel slower than home.
+    // The greeting is the Character's (character_apply runs before the
+    // splash); the first-meeting script above stays canonical — you meet
+    // the same bird no matter which look the glass later wears.
     lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(tag, "hello again");
+    lv_label_set_text(tag, active_voice().hello_again);
     canary_mark_mood(CanaryMood::Happy);
     pump(hold_ms, false);
   }

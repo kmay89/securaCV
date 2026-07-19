@@ -10,6 +10,7 @@
 #include "glass_web.h"
 #include "wifi_mgr.h"
 #include "mirror_html.h"
+#include "character.h"
 #include "glass_settings.h"
 #include "runtime_config.h"
 #include "version.h"
@@ -109,13 +110,21 @@ void handle_glass() {
 #else
   const char* flavor = "dash";
 #endif
+  // The mirror speaks in the wall's voice: the active Character's calm
+  // words ride the snapshot (static ASCII table strings — JSON-safe by
+  // construction) so glass and phone can never disagree on register.
+  // Trouble words are NOT here: the mirror derives those from `worst`
+  // exactly like the wall does, from the same invariant vocabulary.
+  const auto& voice = canary::ui::active_voice();
   o = bappend(body, C, o,
               "{\"flavor\":\"%s\",\"night\":%d,\"time_valid\":%d,"
               "\"hh\":%d,\"mm\":%d,\"wifi\":%d,\"hub\":%d,\"bird\":%u,"
-              "\"worst\":%u,\"acked\":%d,\"witnesses\":[",
+              "\"worst\":%u,\"acked\":%d,\"aq\":\"%s\",\"aql\":\"%s\","
+              "\"witnesses\":[",
               flavor, s_snap.night, s_snap.time_valid, s_snap.clock_hh,
               s_snap.clock_mm, s_snap.wifi_ok, s_snap.mqtt_ok, s_snap.bird,
-              s_snap.worst, s_snap.acked);
+              s_snap.worst, s_snap.acked, voice.all_quiet,
+              voice.all_quiet_low);
   for (uint8_t i = 0; i < s_snap.n; ++i) {
     const auto& w = s_snap.w[i];
     if (i) o = bappend(body, C, o, ",");
