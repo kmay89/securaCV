@@ -1,0 +1,350 @@
+{
+ "generated_by": "canary-local/tools/gen_boards.py",
+ "note": "Vendor board CAD (boards/vendor/*.step) tessellated to a committed GLB by cascadio; geometry facts recomputed from the committed mesh by the page's own loader (tools/glb_facts.mjs \u2192 assets/glb.js). See boards/vendor/README.md for provenance and licence.",
+ "device_board": {
+  "canary-wap": "seeed_xiao_esp32s3_sense",
+  "canary-vision": "seeed_grove_vision_ai_v2",
+  "canary-display-watch": "seeed_round_display_xiao"
+ },
+ "boards": {
+  "seeed_xiao_esp32s3_sense": {
+   "name": "Seeed XIAO ESP32-S3 Sense",
+   "vendor": "Seeed Studio",
+   "mpn": "102010469",
+   "devices": [
+    "canary-wap"
+   ],
+   "glb": "boards/seeed_xiao_esp32s3_sense.glb",
+   "source_step": "boards/vendor/seeed_xiao_esp32s3_sense.step.gz",
+   "dims_mm": [
+    24.36,
+    13.96,
+    17.78
+   ],
+   "triangles": 55493,
+   "parts": 18,
+   "materials": [
+    {
+     "color": "#f6f4e9",
+     "triangles": 13123
+    },
+    {
+     "color": "#020202",
+     "triangles": 10741
+    },
+    {
+     "color": "#e7c863",
+     "triangles": 7622
+    },
+    {
+     "color": "#000000",
+     "triangles": 6121
+    },
+    {
+     "color": "#121212",
+     "triangles": 6028
+    },
+    {
+     "color": "#8d8d8d",
+     "triangles": 4376
+    },
+    {
+     "color": "#392d1d",
+     "triangles": 2624
+    },
+    {
+     "color": "#ada186",
+     "triangles": 1689
+    },
+    {
+     "color": "#0d0d0d",
+     "triangles": 1112
+    },
+    {
+     "color": "#ebebe5",
+     "triangles": 603
+    },
+    {
+     "color": "#ffffff",
+     "triangles": 495
+    },
+    {
+     "color": "#5a5a5a",
+     "triangles": 456
+    },
+    {
+     "color": "#471e00",
+     "triangles": 290
+    },
+    {
+     "color": "#7f8e98",
+     "triangles": 96
+    },
+    {
+     "color": "#801407",
+     "triangles": 64
+    },
+    {
+     "color": "#131313",
+     "triangles": 24
+    },
+    {
+     "color": "#e59833",
+     "triangles": 16
+    },
+    {
+     "color": "#373737",
+     "triangles": 13
+    }
+   ],
+   "pose": {
+    "rx": 0.6,
+    "ry": 0.7,
+    "dist_factor": 2.7
+   },
+   "pinout": [
+    {
+     "label": "Chirp / buzzer",
+     "pin": "D1",
+     "gpio": "GPIO2",
+     "use": "Passive piezo (LEDC PWM 2 kHz)"
+    },
+    {
+     "label": "Status RGB LED",
+     "pin": "D2",
+     "gpio": "GPIO3",
+     "status": "planned",
+     "use": "External WS2812 \u2014 pin defined but not driven by canary-wap firmware yet; the live indicator is the onboard LED (GPIO21)."
+    },
+    {
+     "label": "Tamper",
+     "pin": "D3",
+     "gpio": "GPIO4",
+     "status": "planned",
+     "use": "Reed / hall switch (INPUT_PULLUP, active-low) \u2014 FEATURE_TAMPER_GPIO defined but not yet consumed by canary-wap firmware."
+    },
+    {
+     "label": "VBAT sense",
+     "pin": "A0",
+     "gpio": "GPIO1",
+     "use": "2:1 divider, VBAT_DIVIDER_RATIO=2.0"
+    },
+    {
+     "label": "GNSS UART",
+     "pin": "D6 / D7",
+     "gpio": "GPIO43 / GPIO44",
+     "use": "L76K TX/RX @ 9600 (FEATURE_GNSS)"
+    },
+    {
+     "label": "Battery",
+     "pin": "BAT+ / BAT-",
+     "gpio": "\u2014",
+     "use": "JST-PH LiPo, charged by the onboard charger"
+    },
+    {
+     "label": "Power",
+     "pin": "5V / 3V3 / GND",
+     "gpio": "\u2014",
+     "use": "USB-C 5 V in; 3V3 rail out"
+    }
+   ],
+   "blurb": "21 x 17.8 mm. ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger; the Sense expansion adds the OV camera + PDM mic on a stacked B2B board. The WAP build uses the plain-facing pins for chirp, tamper, LED and GNSS.",
+   "doc": "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
+   "provenance": "Seeed Studio open-hardware CAD (STEP). Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
+  },
+  "seeed_grove_vision_ai_v2": {
+   "name": "Seeed Grove Vision AI V2",
+   "vendor": "Seeed Studio",
+   "mpn": "101021040",
+   "devices": [
+    "canary-vision"
+   ],
+   "glb": "boards/seeed_grove_vision_ai_v2.glb",
+   "source_step": "boards/vendor/seeed_grove_vision_ai_v2.step.gz",
+   "dims_mm": [
+    43.31,
+    52.53,
+    25.2
+   ],
+   "triangles": 24754,
+   "parts": 16,
+   "materials": [
+    {
+     "color": "#e7c863",
+     "triangles": 7622
+    },
+    {
+     "color": "#121212",
+     "triangles": 6014
+    },
+    {
+     "color": "#392d1d",
+     "triangles": 2528
+    },
+    {
+     "color": "#5a5a5a",
+     "triangles": 2364
+    },
+    {
+     "color": "#020202",
+     "triangles": 2086
+    },
+    {
+     "color": "#97a3da",
+     "triangles": 1464
+    },
+    {
+     "color": "#f6f4e9",
+     "triangles": 1196
+    },
+    {
+     "color": "#116517",
+     "triangles": 736
+    },
+    {
+     "color": "#030303",
+     "triangles": 226
+    },
+    {
+     "color": "#0d0d0d",
+     "triangles": 196
+    },
+    {
+     "color": "#ffffff",
+     "triangles": 134
+    },
+    {
+     "color": "#7f8e98",
+     "triangles": 96
+    },
+    {
+     "color": "#727272",
+     "triangles": 28
+    },
+    {
+     "color": "#131313",
+     "triangles": 24
+    },
+    {
+     "color": "#ffdc04",
+     "triangles": 20
+    },
+    {
+     "color": "#090909",
+     "triangles": 20
+    }
+   ],
+   "pose": {
+    "rx": 0.5,
+    "ry": 2.35,
+    "dist_factor": 2.6
+   },
+   "pinout": [
+    {
+     "label": "Grove I2C",
+     "pin": "SDA / SCL",
+     "gpio": "varies by host",
+     "use": "Sensor bus to the host \u2014 the GPIOs depend on the host board: DevKit-C3 4/5, XIAO-C3 6/7 (D4/D5), XIAO-S3 5/6 (D4/D5)."
+    },
+    {
+     "label": "Camera",
+     "pin": "CSI FPC",
+     "gpio": "\u2014",
+     "use": "OV5647 / OV-series over the flex"
+    },
+    {
+     "label": "USB-C",
+     "pin": "\u2014",
+     "gpio": "\u2014",
+     "use": "Model flashing (SenseCraft), power"
+    },
+    {
+     "label": "Power",
+     "pin": "VCC / GND",
+     "gpio": "\u2014",
+     "use": "3V3 / 5 V from the Grove cable"
+    }
+   ],
+   "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU). Talks to the host over I2C on the Grove connector; the OV camera rides on the CSI FPC. Mount parts from the source assembly are filtered out.",
+   "doc": "https://wiki.seeedstudio.com/grove_vision_ai_v2/",
+   "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter. The generator drops those mount parts by name (mounting_plate, camera_mounting_shroud, adapter) and keeps only the board + camera. Verify Seeed's licence terms before external redistribution."
+  },
+  "seeed_round_display_xiao": {
+   "name": "Seeed Round Display for XIAO",
+   "vendor": "Seeed Studio",
+   "mpn": "104040143",
+   "devices": [
+    "canary-display-watch"
+   ],
+   "glb": "boards/seeed_round_display_xiao.glb",
+   "source_step": "boards/vendor/seeed_round_display_xiao.step.gz",
+   "dims_mm": [
+    43,
+    10,
+    43
+   ],
+   "triangles": 7892,
+   "parts": 3,
+   "materials": [
+    {
+     "color": "#242429",
+     "triangles": 5673
+    },
+    {
+     "color": "#363840",
+     "triangles": 1453
+    },
+    {
+     "color": "#17171c",
+     "triangles": 766
+    }
+   ],
+   "pose": {
+    "rx": -0.5,
+    "ry": 0.6,
+    "dist_factor": 2.4
+   },
+   "pinout": [
+    {
+     "label": "Display",
+     "pin": "SPI",
+     "gpio": "GC9A01",
+     "use": "240x240 round panel"
+    },
+    {
+     "label": "Backlight",
+     "pin": "D6",
+     "gpio": "GPIO43",
+     "use": "PWM-dimmable (night floor)"
+    },
+    {
+     "label": "Touch",
+     "pin": "I2C",
+     "gpio": "CST816S",
+     "use": "Single-touch"
+    },
+    {
+     "label": "RTC",
+     "pin": "I2C",
+     "gpio": "PCF8563",
+     "use": "Timekeeping across reboots"
+    },
+    {
+     "label": "Storage",
+     "pin": "microSD",
+     "gpio": "\u2014",
+     "use": "Journal / assets"
+    },
+    {
+     "label": "Battery",
+     "pin": "JST 1.25",
+     "gpio": "\u2014",
+     "use": "LiPo, onboard charger; verify polarity"
+    }
+   ],
+   "blurb": "\u00d8 39 mm 1.28-in GC9A01 (240x240) with CST816S touch, PCF8563 RTC, microSD and a LiPo charger; it seats a XIAO on its back socket. The backlight on D6/GPIO43 is PWM-dimmable \u2014 that is the bedside night floor.",
+   "doc": "https://wiki.seeedstudio.com/get_start_round_display/",
+   "provenance": "Seeed Studio CAD (SolidWorks STEP export). This export did not carry per-solid colours through the tessellator, so materials are assigned by geometry (dark PCB + grey glass); the shape is the vendor's exact model. Verify Seeed's licence terms before external redistribution."
+  }
+ }
+}

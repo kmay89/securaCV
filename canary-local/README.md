@@ -234,6 +234,39 @@ README's own option story, mesh volume math is exact on a reference
 cube); `tests/workshop_probe.mjs` drives the real page in CI — packages
 render, the ribbon flips, the checklist speaks BOM, every stage walks.
 
+## 4d. The Board tab: the vendor's actual CAD, rendered offline
+
+Every device sheet with a modeled board gets a **Board** tab — the off-the-shelf
+board it runs on, as the vendor's own CAD, spinning in the same WebGL viewer the
+printed enclosure parts use. Not an illustration: Seeed's published STEP, real
+soldermask + gold pads + shield + connectors, true to the millimetres they drew.
+
+The pipeline mirrors the enclosure lab's "generated from source, drift-gated"
+rule, one tier deeper:
+
+| Stage | What | Where |
+|---|---|---|
+| Source | vendor STEP (open-hardware CAD) | `boards/vendor/*.step` (+ provenance README) |
+| Generate | STEP → committed GLB (cascadio), mount parts filtered, materials baked | `canary-local/tools/gen_boards.py` ← `boards/boards.config.json` |
+| Artifact | committed mesh the page loads | `canary-local/boards/*.glb` |
+| Facts | dims · triangles · materials · pinout · provenance | `canary-local/devices/boards.json` |
+| Loader | GLB → scene3d parts, ~180 lines, zero deps | `canary-local/assets/glb.js` |
+| View | orbit + honesty ribbon + firmware pinout | `canary-local/assets/board-lab.js` |
+
+The honesty guarantee: `boards.json`'s geometry facts are **recomputed from the
+committed GLB by the page's own loader** (`tools/glb_facts.mjs` → `assets/glb.js`),
+and `tests/boards.test.js` re-derives them in CI — so the numbers on the card can
+never drift from the mesh the browser shows. Heavy STEP→GLB tessellation is a
+local authoring step (`pip install cascadio trimesh`); CI verifies the committed
+outputs with node only. Committed GLBs are not byte-drift-gated (tessellation
+varies by cascadio build, exactly as preview STLs vary by openscad build); the
+JSON is.
+
+Boards today: XIAO ESP32-S3 Sense (WAP), Grove Vision AI V2 (Vision), Round
+Display for XIAO (Watch). Boards without vendor CAD — e.g. the Waveshare
+4.3B-BOX — will land as dimensional models reverse-engineered from the datasheet
++ photographs, clearly labelled as such.
+
 ## 5. Where this lives (repo → Pages → securacv.com)
 
 Three tiers, no lock-in, one source of truth:
