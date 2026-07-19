@@ -133,7 +133,10 @@ void handle_settings_set() {
   auto gs = canary::glass::settings();  // copy; setters below persist
   bool ok = true;
   if (k == "day_pct" && v >= 20 && v <= 100) gs.day_pct = (uint8_t)v;
-  else if (k == "night_screen" && v >= 0 && v <= 2) gs.night_screen = (uint8_t)v;
+  // Two stored modes only (glow / off) — what "off" does on tap (peek vs
+  // wake) is per-flavor behavior, not a third value (review catch: a 2
+  // would be silently sanitized back to glow).
+  else if (k == "night_screen" && v >= 0 && v <= 1) gs.night_screen = (uint8_t)v;
   else if (k == "red_shift" && (v == 0 || v == 1)) gs.red_shift = (uint8_t)v;
   else if (k == "peek_s" && (v == 3 || v == 5 || v == 10)) gs.peek_s = (uint8_t)v;
   else if (k == "night_start_hh" && v >= 0 && v <= 23) gs.night_start_hh = (uint8_t)v;

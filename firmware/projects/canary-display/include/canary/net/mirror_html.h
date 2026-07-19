@@ -113,8 +113,8 @@ here stays inside your home network.</p>
   <label>Night glow (level) <input type="range" id="night_step" min="1"
     max="10"><span class="sub" id="night_stepv"></span></label>
   <label>Night screen <select id="night_screen">
-    <option value="0">glow</option><option value="1">off, tap peeks</option>
-    <option value="2">off, tap wakes</option></select></label>
+    <option value="0">glow</option>
+    <option value="1" id="ns_off">off, tap peeks</option></select></label>
   <label>Warm night colors <select id="red_shift">
     <option value="1">on</option><option value="0">off</option></select></label>
   <label>Night peek length <select id="peek_s"><option>3</option>
@@ -198,6 +198,7 @@ function tick(){fetch("/api/glass").then(function(r){return r.json()})
 .then(function(g){
 document.body.className=(g.flavor==="watch"?"watch":"dash")+
 (g.night?" night":"");
+$("ns_off").textContent=g.flavor==="dash"?"off, tap wakes":"off, tap peeks";
 $("live").className="dot"+(g.wifi?" on":"");
 var t=g.time_valid?pad(g.hh)+":"+pad(g.mm):"--:--";
 $("clock").textContent=t;$("mclock").textContent=t;
