@@ -15,6 +15,7 @@
 #include "canary/ui/settings_ui.h"
 #include "canary/ui/commission_ui.h"
 #include "canary/ui/theme.h"
+#include "canary/ui/character.h"
 #include "canary/glass_settings.h"
 #include "canary/hal/display.h"
 
@@ -27,7 +28,8 @@ namespace {
 // ── Flavor metrics: one tree, two renderers ──────────────────────────────
 #ifdef CD_FLAVOR_WATCH
 constexpr int PANEL_W = 240;
-constexpr int ROW_H = 24;      // 8 root rows on the round glass
+constexpr int ROW_H = 24;      // editor rows (the root packs tighter now —
+                               // nine rows since the style row; build_root)
 constexpr int ROOT_Y0 = 40;
 constexpr int HIT_PAD = 8;
 constexpr uint32_t IDLE_CLOSE_MS = 60000;
@@ -47,6 +49,7 @@ enum class Page {
   EditHours,
   EditLook,
   EditScreen,
+  EditStyle,   // the Character ring picker
   CalIntro,    // watch only — the black-point wizard
   CalDescend,
   CalComfort,
@@ -61,7 +64,7 @@ enum class Page {
 enum : int {
   IT_BACK = 1,
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
-  IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
+  IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
   IT_MINUS, IT_PLUS, IT_OPT_A, IT_OPT_B, IT_PEEK, IT_GO,
   IT_YES, IT_NO,
 };
@@ -185,6 +188,19 @@ void clear_host() {
   s_item_n = 0;
 }
 
+// A Character flip restyles the OPEN surface live — the screen is the
+// preview, taken literally: the ground under your thumb changes, and the
+// page rebuild repaints everything on top of it.
+void restyle_open_surface() {
+  if (s_scr) lv_obj_set_style_bg_color(s_scr, col_bg(), 0);
+#ifndef CD_FLAVOR_WATCH
+  if (s_host) {
+    lv_obj_set_style_bg_color(s_host, col_surface(), 0);
+    lv_obj_set_style_border_color(s_host, col_edge(), 0);
+  }
+#endif
+}
+
 void set_owns_backlight(bool owns) { s_owns_backlight = owns; }
 
 #ifdef CD_FLAVOR_WATCH
@@ -249,33 +265,42 @@ void cal_blink_cb(lv_timer_t*) {
 void build_root() {
   mk_back("settings • tap to leave");
   char v[24];
-  int y = ROOT_Y0;
+#ifdef CD_FLAVOR_WATCH
+  // Nine rows since the style row joined — the editor spacing would run
+  // off the round glass, so the root alone packs tighter.
+  const int y0 = 36, step = 22;
+#else
+  const int y0 = ROOT_Y0, step = ROW_H;
+#endif
+  int y = y0;
   const Settings& gs = settings();
 #ifdef CD_FLAVOR_WATCH
   snprintf(v, sizeof(v), "%d%%", gs.day_pct);
   mk_row(y, "day light", v, IT_ROW_DAY);
-  y += ROW_H;
+  y += step;
   snprintf(v, sizeof(v), "lvl %d",
            night_duty_step(cal_floor_or_default(), gs.night_duty));
   mk_row(y, "night light", v, IT_ROW_NIGHT);
-  y += ROW_H;
+  y += step;
 #endif
   snprintf(v, sizeof(v), "%02d-%02d", gs.night_start_hh, gs.night_end_hh);
   mk_row(y, "night hours", v, IT_ROW_HOURS);
-  y += ROW_H;
+  y += step;
   mk_row(y, "night look", gs.red_shift ? "soft red" : "plain", IT_ROW_LOOK);
-  y += ROW_H;
+  y += step;
   mk_row(y, "at night",
          gs.night_screen == NIGHT_SCREEN_OFF ? "off • peek" : "glow",
          IT_ROW_SCREEN);
-  y += ROW_H;
+  y += step;
+  mk_row(y, "style", character_name(active_character()), IT_ROW_STYLE);
+  y += step;
 #ifdef CD_FLAVOR_WATCH
   mk_row(y, "find the black point", nullptr, IT_ROW_CAL);
-  y += ROW_H;
+  y += step;
   // Not a screen setting, but the watch's only always-reachable doorway to
   // commissioning (the dash has its own on the transparency sheet).
   mk_row(y, "add a canary", nullptr, IT_ROW_ADD);
-  y += ROW_H;
+  y += step;
 #endif
   mk_row(y, "reset", nullptr, IT_ROW_RESET);
 }
@@ -366,6 +391,47 @@ void build_edit_screen() {
   lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
   lv_label_set_text(cap, "an alert always lights the glass");
   lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
+}
+
+// The Character picker (display_character.md §7): a flip-through, not a
+// swatch grid. The screen IS the preview — by the time this builds, the
+// palette and type ladder already belong to the look being named.
+void build_edit_style() {
+  mk_back("style");
+  const Character cur = active_character();
+  lv_obj_t* name = mk_label(s_host, font_title(), col_text());
+  lv_label_set_text(name, character_name(cur));
+  lv_obj_align(name, LV_ALIGN_CENTER, 0, -30);
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_muted());
+  lv_label_set_text(cap, character_caption(cur));
+  lv_obj_align(cap, LV_ALIGN_CENTER, 0, 2);
+  // Where you are on the ring: the filled stop is here. "•" is the one
+  // round glyph the built-in Montserrat range carries (the root rows
+  // already trust it); "o" stands in for the hollow stops.
+  char dots[2 * (int)Character::Count + 4];
+  int n = 0;
+  const uint8_t here = character_ring_pos(cur);
+  for (uint8_t i = 0; i < character_count() && n < (int)sizeof(dots) - 4; i++)
+    n += snprintf(dots + n, sizeof(dots) - n, "%s%s", i ? " " : "",
+                  i == here ? "•" : "o");
+  lv_obj_t* ring = mk_label(s_host, font_body(), col_accent());
+  lv_label_set_text(ring, dots);
+  lv_obj_align(ring, LV_ALIGN_CENTER, 0, 34);
+  // Flip affordances, stepper-cornered: every stop on the ring is a
+  // validated look, so flipping IS choosing — no apply, no confirm.
+  lv_obj_t* l = mk_label(s_host, font_title(), col_text());
+  lv_label_set_text(l, LV_SYMBOL_LEFT);
+  lv_obj_t* r = mk_label(s_host, font_title(), col_text());
+  lv_label_set_text(r, LV_SYMBOL_RIGHT);
+#ifdef CD_FLAVOR_WATCH
+  lv_obj_align(l, LV_ALIGN_CENTER, -58, 62);
+  lv_obj_align(r, LV_ALIGN_CENTER, 58, 62);
+#else
+  lv_obj_align(l, LV_ALIGN_BOTTOM_LEFT, 72, -40);
+  lv_obj_align(r, LV_ALIGN_BOTTOM_RIGHT, -72, -40);
+#endif
+  add_item(l, IT_MINUS);
+  add_item(r, IT_PLUS);
 }
 
 void build_cal_intro() {
@@ -505,6 +571,7 @@ void build(Page pg) {
     case Page::EditHours:    build_edit_hours(); break;
     case Page::EditLook:     build_edit_look(); break;
     case Page::EditScreen:   build_edit_screen(); break;
+    case Page::EditStyle:    build_edit_style(); break;
     case Page::CalIntro:     build_cal_intro(); break;
     case Page::CalDescend:   build_cal_descend(); break;
     case Page::CalComfort:   build_cal_comfort(); break;
@@ -593,6 +660,7 @@ void dispatch(int id) {
         case IT_ROW_HOURS:  s_hours_sel = 0; build(Page::EditHours); return;
         case IT_ROW_LOOK:   build(Page::EditLook); return;
         case IT_ROW_SCREEN: build(Page::EditScreen); return;
+        case IT_ROW_STYLE:  build(Page::EditStyle); return;
         case IT_ROW_CAL:    build(Page::CalIntro); return;
         case IT_ROW_RESET:  build(Page::ResetConfirm); return;
         case IT_ROW_ADD:
@@ -639,6 +707,22 @@ void dispatch(int id) {
         gs.peek_s = gs.peek_s == 3 ? 5 : gs.peek_s == 5 ? 10 : 3;
         settings_mark_dirty();
         build(Page::EditScreen);
+      }
+      return;
+
+    case Page::EditStyle:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_MINUS || id == IT_PLUS) {
+        // Landing IS choosing: apply + persist on every flip, restyle
+        // the open surface, and rebuild so name, caption, dots, and the
+        // type ladder all arrive in the new look.
+        const Character next =
+            character_ring_step(active_character(), id == IT_PLUS ? +1 : -1);
+        character_apply(next);
+        settings_mut().character = (uint8_t)next;
+        settings_mark_dirty();
+        restyle_open_surface();
+        build(Page::EditStyle);
       }
       return;
 
@@ -697,7 +781,14 @@ void dispatch(int id) {
       return;
 
     case Page::ResetConfirm:
-      if (id == IT_YES) settings_reset();
+      if (id == IT_YES) {
+        settings_reset();
+        // Reset comes home in look too (defaults() holds Quiet Glass):
+        // re-apply so the glass doesn't keep wearing a Character the
+        // blob no longer holds until the next boot.
+        character_apply((Character)settings().character);
+        restyle_open_surface();
+      }
       build(Page::Root);
       return;
   }

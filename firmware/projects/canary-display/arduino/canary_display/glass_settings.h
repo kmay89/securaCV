@@ -31,6 +31,7 @@ struct Settings {
   uint8_t  night_start_hh; // 0..23 local
   uint8_t  night_end_hh;   // 0..23 local
   uint16_t night_duty;     // night-profile duty (13-bit), floor-clamped
+  uint8_t  character;      // canary::ui::Character; 0 = Quiet Glass (default)
 };
 
 struct NightCal {

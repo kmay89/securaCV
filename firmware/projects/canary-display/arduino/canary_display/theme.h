@@ -1,9 +1,10 @@
 #pragma once
-#include "flavor_config.h"   // CD_FLAVOR_* — the type scale below is per-flavor
+#include "flavor_config.h"   // CD_FLAVOR_* (Character type ladders are per-flavor)
 #include <stdint.h>
 #include <stddef.h>
 #include <lvgl.h>
 #include "fleet_model.h"
+#include "character.h"
 
 // "Quiet Glass" design tokens (display_ux_design.md §Design language).
 //
@@ -13,24 +14,33 @@
 // surfaces, hairline #262626 edges, and glow-not-stripes for emphasis.
 // Color never carries meaning alone (WCAG 1.4.1): every state also has a
 // label, glyph, or position.
+//
+// Character wave (display_character.md): Quiet Glass is now the DEFAULT
+// look, not the only one. The ground/text tiers and the type ladder read
+// the active Character through this single choke point; the semantic and
+// night sets stay inline constants below ON PURPOSE — no Character may
+// repaint the alarms or defeat the night engine.
 
 namespace canary::ui {
 
-// ── Ground ───────────────────────────────────────────────────────────────
-inline lv_color_t col_bg()      { return lv_color_hex(0x000000); }
-inline lv_color_t col_surface() { return lv_color_hex(0x141414); }
-inline lv_color_t col_edge()    { return lv_color_hex(0x262626); }
-inline lv_color_t col_text()    { return lv_color_hex(0xEDEDED); }
-inline lv_color_t col_muted()   { return lv_color_hex(0x8A8A8A); }
-inline lv_color_t col_faint()   { return lv_color_hex(0x4A4A4A); }
+// ── Ground (the active Character's palette; see character.h) ─────────────
+lv_color_t col_bg();
+lv_color_t col_surface();
+lv_color_t col_edge();
+lv_color_t col_text();
+lv_color_t col_muted();
+lv_color_t col_faint();
+// The Character's one decorative chrome hue (10% budget; never semantic).
+lv_color_t col_accent();
 
-// ── Semantics (timeline-card parity) ─────────────────────────────────────
+// ── Semantics (timeline-card parity — constant in every Character) ───────
 inline lv_color_t col_ok()      { return lv_color_hex(0x43A047); }
 inline lv_color_t col_warn()    { return lv_color_hex(0xFB8C00); }
 inline lv_color_t col_alert()   { return lv_color_hex(0xE53935); }
 inline lv_color_t col_signed()  { return lv_color_hex(0x03A9F4); }
 
 // ── Night (red-shifted, melatonin-band-free; see UX doc §night) ─────────
+// The night engine outranks every Character — these never restyle.
 inline lv_color_t ncol_text()   { return lv_color_hex(0x5A1C12); }
 inline lv_color_t ncol_muted()  { return lv_color_hex(0x32100A); }
 inline lv_color_t ncol_alert()  { return lv_color_hex(0x992219); }
@@ -46,22 +56,15 @@ const char* signal_word(int dbm);   // "strong/ok/weak signal" — never dBm
 // a 4.3" panel read from across a room — same pixel sizes rendered both
 // (bench finding: dash text visibly undersized), so the dash scale runs
 // ~1.3-1.4x larger per role. Enabled-but-unreferenced Montserrat sizes
-// cost nothing (the linker drops unused font tables).
-#ifdef CD_FLAVOR_DASH
-inline const lv_font_t* font_hero()    { return &lv_font_montserrat_48; }
-inline const lv_font_t* font_title()   { return &lv_font_montserrat_36; }
-inline const lv_font_t* font_body()    { return &lv_font_montserrat_24; }
-inline const lv_font_t* font_label()   { return &lv_font_montserrat_20; }
-inline const lv_font_t* font_caption() { return &lv_font_montserrat_16; }
-inline const lv_font_t* font_clock()   { return &lv_font_montserrat_28; }
-#else
-inline const lv_font_t* font_hero()    { return &lv_font_montserrat_48; }
-inline const lv_font_t* font_title()   { return &lv_font_montserrat_28; }
-inline const lv_font_t* font_body()    { return &lv_font_montserrat_16; }
-inline const lv_font_t* font_label()   { return &lv_font_montserrat_14; }
-inline const lv_font_t* font_caption() { return &lv_font_montserrat_12; }
-inline const lv_font_t* font_clock()   { return &lv_font_montserrat_20; }
-#endif
+// cost nothing (the linker drops unused font tables). The ladder itself
+// now comes from the active Character (character.cpp holds the per-flavor
+// tables; Heirloom steps one enabled size up).
+const lv_font_t* font_hero();
+const lv_font_t* font_title();
+const lv_font_t* font_body();
+const lv_font_t* font_label();
+const lv_font_t* font_caption();
+const lv_font_t* font_clock();
 
 // ── Motion budget (calm tech: rationed, purposeful) ──────────────────────
 constexpr uint32_t MOTION_PAGE_MS   = 220;   // page/screen fades, ease-out
