@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <esp_heap_caps.h>
 
 #include "chirp_scan.h"
 #include "fleet_instance.h"
@@ -21,6 +22,21 @@ namespace {
 
 constexpr uint32_t BURST_MS  = 4000;   // scan window
 constexpr uint32_t PERIOD_MS = 20000;  // burst cadence while broker down
+
+// Minimum internal, DMA-capable SRAM headroom before standing the BT controller
+// up. With WiFi already associated the two contend for the internal heap the
+// controller draws from (PSRAM cannot back it), and starting it when that pool
+// is thin is what logged "BLE_INIT: Malloc failed" and tripped the interrupt
+// watchdog (the emi.c assert on the controller task) into a reboot loop. These
+// mirror the WAP's host-tested guard (bt_defaults.h; firmware/LESSONS_LEARNED):
+// the controller's largest single init allocation is ~30 KB contiguous — 0x7800,
+// the very size in the "BLE assert emi.c 164 ... 00007800" panic — and the whole
+// stack costs ~55-65 KB, so require a 48 KB contiguous block AND 96 KB total
+// free, both measured on the INTERNAL|DMA pool. Below this we skip the burst:
+// the off-grid chirp is the expendable radio decision (chirp_scan.h); a live
+// glass beats a boot-looping one.
+constexpr size_t BLE_MIN_FREE_BLOCK = 48 * 1024;
+constexpr size_t BLE_MIN_TOTAL_FREE = 96 * 1024;
 
 struct ChirpMsg {
   char fp4[5];
@@ -35,6 +51,7 @@ volatile int s_q_tail = 0;
 portMUX_TYPE s_q_mux = portMUX_INITIALIZER_UNLOCKED;
 
 bool s_ble_up = false;
+bool s_ble_failed = false;   // a failed bring-up disables bursts for this boot
 volatile bool s_scanning = false;
 uint32_t s_next_burst_ms = 0;
 uint32_t s_seen = 0;
@@ -99,9 +116,36 @@ ChirpCb s_cb;
 
 bool ble_up() {
   if (s_ble_up) return true;
+  if (s_ble_failed) return false;
+
+  // Preventive heap gate: never call into the BT controller without a
+  // comfortable internal DMA-capable margin (see BLE_MIN_* above). A thin pool
+  // here is the normal state mid-WiFi-reconnect, so this is a skip-and-retry,
+  // not a failure — re-check next window, when memory may have recovered.
+  if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) <
+          BLE_MIN_FREE_BLOCK ||
+      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) <
+          BLE_MIN_TOTAL_FREE) {
+    return false;
+  }
+
   NimBLEDevice::init("");
+  // Verify the stack came up before using it; if it didn't, stand down for the
+  // rest of this boot rather than hammer a failing radio every window. NimBLE
+  // 2.x (core 3) exposes isInitialized(); 1.4.x (core 2) does not, so there we
+  // rely on the scan handle alone (the original signal).
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  if (!NimBLEDevice::isInitialized()) {
+    s_ble_failed = true;
+    log_line("CHIRP", "BLE stack init failed - off-grid listener off this boot.");
+    return false;
+  }
+#endif
   NimBLEScan* scan = NimBLEDevice::getScan();
-  if (!scan) return false;
+  if (!scan) {
+    s_ble_failed = true;
+    return false;
+  }
   // wantDuplicates stays true deliberately: NimBLE's duplicate filter is
   // per-address, so it would hide a chirp *type escalation* (heartbeat ->
   // tamper from the same canary) for the rest of a burst. Flooding isn't a
@@ -149,9 +193,13 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down) {
 
   if (s_scanning) return;
   if ((int32_t)(now_ms - s_next_burst_ms) < 0) return;
+
+  // Schedule the next window up front so a skipped burst — heap gate not met,
+  // or the stack disabled for this boot — waits a full period instead of
+  // re-probing the heap (or re-initializing a failing radio) every loop pass.
+  s_next_burst_ms = now_ms + PERIOD_MS;
   if (!ble_up()) return;
 
-  s_next_burst_ms = now_ms + PERIOD_MS;
   s_scanning = true;
   // Async burst. NimBLE 1.x start() takes seconds + an end callback; 2.x
   // takes milliseconds + is_continue, with onScanEnd clearing the flag.

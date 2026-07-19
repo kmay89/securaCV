@@ -91,6 +91,7 @@ lv_obj_t* s_breathing = nullptr;
 lv_obj_t* s_ack_ring = nullptr;
 lv_anim_t s_ack_anim;
 bool s_ack_holding = false;
+bool s_glow_pulsing = false;    // heartbeat owns the header bloom while true
 
 // Proof sheet (trailblazer spec §1)
 lv_obj_t* s_proof = nullptr;        // modal container (hidden when closed)
@@ -440,12 +441,15 @@ void dash_ui_create() {
   lv_obj_set_pos(s_glow, 0, HDR_H - 3);
   lv_obj_set_style_border_width(s_glow, 0, 0);
   lv_obj_set_style_radius(s_glow, 0, 0);
-  lv_obj_set_style_bg_color(s_glow, col_ok(), 0);
+  lv_obj_set_style_bg_color(s_glow, col_faint(), 0);
   lv_obj_set_style_bg_opa(s_glow, LV_OPA_COVER, 0);
-  lv_obj_set_style_shadow_width(s_glow, 18, 0);
-  lv_obj_set_style_shadow_spread(s_glow, 1, 0);
-  lv_obj_set_style_shadow_color(s_glow, col_ok(), 0);
-  lv_obj_set_style_shadow_opa(s_glow, LV_OPA_40, 0);
+  // The soft bloom is opt-in per state (dash_ui_update): it stays OFF on the
+  // calm, empty, and link-down screens, where a wide shadow only bands on this
+  // RGB565 panel. Start as a clean hairline.
+  lv_obj_set_style_shadow_width(s_glow, 0, 0);
+  lv_obj_set_style_shadow_spread(s_glow, 0, 0);
+  lv_obj_set_style_shadow_color(s_glow, col_faint(), 0);
+  lv_obj_set_style_shadow_opa(s_glow, LV_OPA_TRANSP, 0);
   lv_obj_clear_flag(s_glow, LV_OBJ_FLAG_SCROLLABLE);
 
   // ── Cards ──
@@ -483,11 +487,17 @@ void dash_ui_create() {
   lv_obj_align(s_more, LV_ALIGN_BOTTOM_LEFT, 20, -8);
   s_today = mk_label(s_scr, font_caption(), col_muted());
   lv_obj_align(s_today, LV_ALIGN_BOTTOM_LEFT, 20, -28);
-  lv_obj_t* bird = canary_mark_create(s_scr, 64);
-  lv_obj_align(bird, LV_ALIGN_LEFT_MID, 110, -64);
+  // Empty-nest hero: the bird and its invitation, centered as one stack in the
+  // content column left of the events rail (the rail keeps its own "Nothing
+  // witnessed yet"). A fixed column width + centered text lets the pair read as
+  // one balanced unit instead of two left-floating fragments.
+  constexpr lv_coord_t COL_W = 800 - TL_W - 10;   // content column, left of rail
+  lv_obj_t* bird = canary_mark_create(s_scr, 72);
+  lv_obj_align(bird, LV_ALIGN_LEFT_MID, (COL_W - 72) / 2, -44);
   s_empty = mk_label(s_scr, font_body(), col_muted());
+  lv_obj_set_width(s_empty, COL_W);
   lv_obj_set_style_text_align(s_empty, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(s_empty, LV_ALIGN_LEFT_MID, 90, 0);
+  lv_obj_align(s_empty, LV_ALIGN_LEFT_MID, 0, 26);
 
   // ── Timeline ──
   lv_obj_t* rail = lv_obj_create(s_scr);
@@ -686,9 +696,31 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     lv_label_set_text(s_clock, "");
   }
   lv_obj_set_style_text_color(s_clock, mcol, 0);
-  const lv_color_t glow = sev_color(worst, st.night);
+  // Header underline: a crisp full-width hairline whose color states the
+  // house's worst severity. It goes neutral on the empty and link-down screens
+  // — a green "all-clear" over an empty or offline house is a false comfort,
+  // and absence of alarm is itself information. A soft bloom is spent only on
+  // real trouble (and the once-a-minute all-verified heartbeat below): a wide
+  // shadow is exactly what bands on the RGB565 panel, so calm states stay a
+  // clean line.
+  const bool trouble = worst >= Sev::Warn;   // real trouble always colors the line
+  lv_color_t glow;
+  if (trouble) {
+    glow = sev_color(worst, st.night);
+  } else if (n == 0 || !st.wifi_ok || !st.mqtt_ok) {
+    // Nothing urgent, and the house is empty or a link is down: a neutral
+    // hairline, never a green "all-clear" — that would be a false comfort.
+    glow = st.night ? ncol_muted() : col_faint();
+  } else {
+    // Populated, links up, all calm: the honest all-good line (green).
+    glow = sev_color(worst, st.night);
+  }
   lv_obj_set_style_bg_color(s_glow, glow, 0);
   lv_obj_set_style_shadow_color(s_glow, glow, 0);
+  if (!s_glow_pulsing) {
+    lv_obj_set_style_shadow_width(s_glow, trouble ? 12 : 0, 0);
+    lv_obj_set_style_shadow_opa(s_glow, trouble ? LV_OPA_30 : LV_OPA_TRANSP, 0);
+  }
 
   // ── Cards ──
   lv_obj_t* attention = nullptr;
@@ -877,22 +909,32 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
   }
 
   // The heartbeat (spec §4): the header glow swells once a minute, only
-  // when everything is reachable AND verified — absence is information.
+  // when everything is reachable AND verified — absence is information. The
+  // bloom is armed just for the pulse and recedes to the clean hairline after,
+  // so no steady soft shadow lingers to band on the panel.
   static uint32_t s_last_beat_ms = 0;
   if (!st.night && n > 0 && worst <= Sev::Notice && fleet.all_verified() &&
-      st.wifi_ok && st.mqtt_ok &&
+      st.wifi_ok && st.mqtt_ok && !s_glow_pulsing &&
       (int32_t)(now - s_last_beat_ms) >= (int32_t)CD_HEARTBEAT_UI_MS) {
     s_last_beat_ms = now;
+    s_glow_pulsing = true;
+    lv_obj_set_style_shadow_width(s_glow, 14, 0);
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_glow);
     lv_anim_set_exec_cb(&a, [](void* var, int32_t v) {
       lv_obj_set_style_shadow_opa((lv_obj_t*)var, (lv_opa_t)v, 0);
     });
-    lv_anim_set_values(&a, LV_OPA_40, LV_OPA_90);
+    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_50);
     lv_anim_set_time(&a, 800);
     lv_anim_set_playback_time(&a, 800);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_set_ready_cb(&a, [](lv_anim_t* an) {
+      // Recede to the clean hairline; dash_ui_update owns the glow again.
+      lv_obj_set_style_shadow_width((lv_obj_t*)an->var, 0, 0);
+      lv_obj_set_style_shadow_opa((lv_obj_t*)an->var, LV_OPA_TRANSP, 0);
+      s_glow_pulsing = false;
+    });
     lv_anim_start(&a);
   }
 
