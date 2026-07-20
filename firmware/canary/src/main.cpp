@@ -126,6 +126,10 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_ble_status.h"
 #endif
 
+#if FEATURE_USB_ONBOARD
+#include "securacv_usb_onboard.h"
+#endif
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -628,6 +632,19 @@ void setup() {
     if (setup_get_device_name(dev_name, sizeof(dev_name))) {
       Serial.printf("[OK] Device name: %s\n", dev_name);
     }
+  }
+#endif
+
+  // USB "plug me in" onboarding (opt-in USB-OTG build). Brings up the HID
+  // keyboard (idle — types nothing until a BOOT-button confirm) and, when the
+  // SD is mounted, exposes it read-only so the witness files are browsable.
+#if FEATURE_USB_ONBOARD
+  {
+    usb_onboard::Config oc;
+    oc.help_url_base = SECURACV_HELP_URL_BASE;
+    oc.device_id     = witness_get_device().device_id;
+    oc.expose_msc    = storage_is_mounted();
+    usb_onboard::begin(oc);
   }
 #endif
 
@@ -1328,6 +1345,11 @@ void loop() {
   // Handle serial commands
   handle_serial_commands();
 
+#if FEATURE_USB_ONBOARD
+  // Re-lock the HID keyboard if an arming window elapsed with no confirm.
+  usb_onboard::poll();
+#endif
+
   // Handle boot button (info print, factory reset)
   handle_boot_button();
 
@@ -1694,7 +1716,15 @@ static void handle_boot_button() {
       // Medium hold: print device info
       print_status();
     }
-    // Short press: reserved for future use (provisioning gate)
+#if FEATURE_USB_ONBOARD
+    else {
+      // Short press: the physical confirmation for USB onboarding. This is the
+      // trust keystone — the ONLY thing that lets the HID keyboard type, and
+      // only while it is ARMED (a no-op otherwise).
+      usb_onboard::confirm();
+    }
+#endif
+    // (Short press is otherwise reserved for future use / provisioning gate.)
   }
 }
 
@@ -2034,6 +2064,12 @@ static void handle_serial_commands() {
 #if FEATURE_HA_MQTT
       Serial.println("  m - MQTT status");
 #endif
+#if FEATURE_USB_ONBOARD
+      Serial.println("  u - Open help page (arms; press BOOT to confirm)");
+      Serial.println("  o - USB onboarding status / launch method");
+      Serial.println("  v - Recovery guide");
+      Serial.println("  k - Unseal guide");
+#endif
       Serial.println("  x - Reboot");
       Serial.println();
       break;
@@ -2213,6 +2249,46 @@ static void handle_serial_commands() {
     }
 #endif
 
+#if FEATURE_USB_ONBOARD
+    case 'u':
+    case 'U':
+      // Ask to open the help page. Announces the exact URL and arms the
+      // window; the keyboard types nothing until a physical BOOT press.
+      usb_onboard::request_launch();
+      break;
+
+    case 'o':
+    case 'O': {
+      // Cycle the launch method (MANUAL → macOS → Windows → Linux) and show
+      // status. Cancels any in-flight arming first.
+      usb_onboard::cancel();
+      usb_onboard::LaunchMethod next;
+      switch (usb_onboard::method()) {
+        case usb_onboard::LaunchMethod::MANUAL:
+          next = usb_onboard::LaunchMethod::MAC_SPOTLIGHT; break;
+        case usb_onboard::LaunchMethod::MAC_SPOTLIGHT:
+          next = usb_onboard::LaunchMethod::WIN_RUN; break;
+        case usb_onboard::LaunchMethod::WIN_RUN:
+          next = usb_onboard::LaunchMethod::GNOME_TERMINAL; break;
+        default:
+          next = usb_onboard::LaunchMethod::MANUAL; break;
+      }
+      usb_onboard::set_method(next);
+      usb_onboard::print_status();
+      break;
+    }
+
+    case 'v':
+    case 'V':
+      usb_onboard::print_recovery_guide();
+      break;
+
+    case 'k':
+    case 'K':
+      usb_onboard::print_unseal_guide();
+      break;
+#endif
+
     case 'x':
     case 'X':
       Serial.println("\nRebooting...");
@@ -2228,6 +2304,11 @@ static void handle_serial_commands() {
       break;
 
     default:
+#if FEATURE_USB_ONBOARD
+      // Any unrecognized key while the help launcher is armed cancels it, so
+      // the arming window only ever resolves via a deliberate BOOT press.
+      usb_onboard::cancel();
+#endif
       break;
   }
 

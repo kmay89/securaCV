@@ -56,6 +56,14 @@ WITSTORE_HDR  = ../common/witness/witness_store.h
 WITSTORE_TEST = ../projects/canary-wap/tests_host/test_witness_store_logic.cpp
 WITSTORE_BIN  = $(BUILD_DIR)/test_witness_store_common
 
+# USB onboarding trust model (common/usb/usb_onboard_logic.h): the consent
+# state machine (types only after an announced arm + physical confirm), the
+# help-URL builder/sanitizer, and the keystroke-plan allow-list that makes the
+# HID keyboard provably incapable of emitting anything but the help link.
+# Pure header, no Arduino/crypto deps.
+USBONB_HDR = ../common/usb/usb_onboard_logic.h
+USBONB_BIN = $(BUILD_DIR)/test_usb_onboard_logic
+
 .PHONY: all run clean
 all: run
 
@@ -77,12 +85,16 @@ $(WITCHAIN_BIN): test_witness_chain_core.cpp $(WITCHAIN_HDR) Makefile | $(BUILD_
 $(WITSTORE_BIN): $(WITSTORE_TEST) $(WITSTORE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common/witness $(WITSTORE_TEST) -lcrypto -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN)
+$(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_usb_onboard_logic.cpp -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
 	./$(WITCHAIN_BIN)
 	./$(WITSTORE_BIN)
+	./$(USBONB_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

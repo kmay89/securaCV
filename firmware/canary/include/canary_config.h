@@ -126,6 +126,9 @@
 #ifndef FEATURE_BLE_STATUS
   #define FEATURE_BLE_STATUS       1   // BLE GATT status service (battery, health, chain over BLE)
 #endif
+#ifndef FEATURE_USB_ONBOARD
+  #define FEATURE_USB_ONBOARD      0   // USB-OTG onboarding: consented HID help-launch + read-only SD-over-MSC + guided recovery/unseal (opt-in; needs ARDUINO_USB_MODE=0, enabled in [env:usb-onboard])
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS
@@ -157,6 +160,14 @@
 #define PROTOCOL_VERSION      "pwk:v0.3.0"
 #define CHAIN_ALGORITHM       "sha256-domain-sep"
 #define SIGNATURE_ALGORITHM   "ed25519"
+
+// The owner-help page the USB onboarding keyboard is allowed to open. This is
+// the ONLY URL the HID keyboard can ever type — it is both the compile-time
+// payload and the run-time allow-list origin (usb_onboard::is_allowed_help_url).
+// Must be https and must match the origin served by the securacv_website repo.
+#ifndef SECURACV_HELP_URL_BASE
+  #define SECURACV_HELP_URL_BASE  "https://securacv.com/canary"
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // PULL-OTA (signed firmware updates — firmware/common/ota)

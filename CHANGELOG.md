@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### USB onboarding — "plug me in" (consented HID + read-only drive + guided recovery)
+
+- **The anti-BadUSB keyboard.** On the opt-in `[env:usb-onboard]` (USB-OTG)
+  build the Canary enumerates as a composite device — CDC console (unchanged),
+  a HID keyboard, and the SD card read-only over MSC. The keyboard exists to
+  open one page (`https://securacv.com/canary`) so a person who just plugged the
+  device in lands somewhere that explains recovery and unsealing. It **never**
+  types on its own: enumerating does nothing; the console `u` key announces the
+  exact URL and arms a 15-second window; only a physical **BOOT** press then
+  types. The payload is compile-time fixed and run-time allow-listed to the help
+  origin, so even a corrupted device id can never become a typed command.
+- **Trust model is host-tested, not asserted.** `firmware/common/usb/`
+  `usb_onboard_logic.h` holds the consent state machine, the help-URL
+  builder/sanitizer, and the keystroke-plan allow-list;
+  `firmware/tests_host/test_usb_onboard_logic.cpp` pins the properties that make
+  a self-typing keyboard safe (types only after announce+confirm; can only ever
+  emit the allow-listed https help URL).
+- **Guided recovery / unsealing.** New console keys `v` (recovery) and `k`
+  (unseal) surface the existing SD-wins chain reconciliation and the off-device
+  `unseal_snapshot.py` flow. Read-only MSC lets `/WITNESS`, `/HEALTH`, `/CHAIN`,
+  `/VAULT` be browsed and copied off without an app.
+- **Ships off.** `FEATURE_USB_ONBOARD=0` in every stock profile; the glue is not
+  compiled unless the flag is on. Default builds/flashing are untouched. Phase 2
+  (on-device HID/MSC validation) pending before any release profile enables it.
+  Design: `docs/design/usb_onboard.md`.
+
 ### canary.local — the Sense Lab (the radar witness, placed right)
 
 - **`senselab.html` — the MR60BHA2 placement + pipeline bench.** The radar
