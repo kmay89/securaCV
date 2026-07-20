@@ -95,14 +95,19 @@ body:
           and keep the whole device sharp.
         - **Steady:** tap to focus, hold still (or prop the phone). A crisp,
           slightly-dim photo beats a bright blurry one.
+
+        **Two rules:** at least one photo is required, and it has to be a photo
+        of **your actual build** — on-topic and safe-for-work. Off-topic or
+        explicit images just get the issue closed, so please don't. A maintainer
+        looks at every photo before it ever reaches the gallery.
   - type: textarea
     id: photo_hero
     attributes:
-      label: "Photo 1 — the build itself"
-      description: The device on a table or in hand — the "hero" shot for the card.
+      label: "Photo 1 — the build itself (required)"
+      description: The device on a table or in hand — the "hero" shot for the card. Drag the image in; a real photo, not a placeholder.
       placeholder: "Drag your photo here."
     validations:
-      required: false
+      required: true
   - type: textarea
     id: photo_mounted
     attributes:
@@ -144,7 +149,9 @@ body:
     attributes:
       label: Sharing
       options:
-        - label: "I'm okay with this build being shown in the open gallery and remixed by others under the repo's Apache-2.0 license."
+        - label: "This is a photo of my actual build — it's safe-for-work and on-topic for the gallery (no explicit, offensive, or unrelated images)."
           required: true
         - label: "My photos don't show anything I wouldn't want public — no faces, screens, addresses, or documents in frame."
+          required: true
+        - label: "I'm okay with this build being shown in the open gallery and remixed by others under the repo's Apache-2.0 license."
           required: true
