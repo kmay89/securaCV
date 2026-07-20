@@ -1,7 +1,11 @@
 name: SBOM Generation
 
 # The SBOMs only change when a dependency manifest does, so the triggers are
-# scoped to those files (plus manual dispatch for an on-demand snapshot).
+# scoped to those files (plus manual dispatch for an on-demand snapshot). The
+# `release: published` trigger is separate: it regenerates the SBOMs against the
+# tagged tree and attaches them to the release as downloadable assets, so every
+# published version ships its bill of materials instead of it living only in a
+# 90-day CI artifact (#924, doc-12 A4 / FR-14).
 on:
   push:
     branches: [ "main" ]
@@ -19,6 +23,8 @@ on:
       - 'canary-vision/**/package.json'
       - 'canary-vision/package-lock.json'
       - '.github/workflows/sbom.yml'
+  release:
+    types: [ published ]
   workflow_dispatch: {}
 
 permissions:
@@ -165,6 +171,9 @@ jobs:
         done
 
     # ---- Upload artifacts ----
+    # Always keep the 90-day CI artifact (branch/PR visibility). On a release,
+    # the attach-to-release job below promotes these same files to permanent
+    # release assets.
     - name: Upload SBOM artifacts
       uses: actions/upload-artifact@v7
       with:
@@ -174,3 +183,35 @@ jobs:
           sbom-node.cdx.json
           sbom-firmware.cdx.json
         retention-days: 90
+
+  # Promote the generated SBOMs to permanent release assets. Split into its own
+  # job so the write scope (contents: write, needed to upload release assets) is
+  # never granted to the generation job that installs and runs third-party
+  # tooling (cargo-cyclonedx, cdxgen) — least privilege for the supply-chain
+  # workflow. Runs only for the release event; downloads the artifact the
+  # generate-sbom job just produced rather than regenerating.
+  attach-to-release:
+    needs: generate-sbom
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download generated SBOMs
+      uses: actions/download-artifact@v8
+      with:
+        name: sbom-artifacts
+        path: sbom
+
+    - name: Attach SBOMs to the release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      # --clobber so a re-run (or a re-published release) overwrites the
+      # existing assets instead of failing on the duplicate name.
+      run: |
+        gh release upload "${{ github.event.release.tag_name }}" \
+          sbom/sbom-rust.cdx.json \
+          sbom/sbom-node.cdx.json \
+          sbom/sbom-firmware.cdx.json \
+          --clobber --repo "${{ github.repository }}"
