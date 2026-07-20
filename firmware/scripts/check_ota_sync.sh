@@ -50,26 +50,33 @@ if [ ! -d "$CANONICAL" ]; then
     exit 1
 fi
 
+rel_canonical="${CANONICAL#"${REPO_ROOT}/"}"
+
+# Fail fast if a canonical file is missing — it is the same regardless of
+# which staged tree we compare against, so check it once up front rather
+# than re-reporting it per staged directory.
+for name in "${OTA_FILES[@]}"; do
+    if [ ! -f "$CANONICAL/$name" ]; then
+        echo "::error::Canonical OTA engine file missing: $rel_canonical/$name"
+        exit 1
+    fi
+done
+
 drift=0
 for staged in "${STAGED_DIRS[@]}"; do
     rel_staged="${staged#"${REPO_ROOT}/"}"
     for name in "${OTA_FILES[@]}"; do
         src="$CANONICAL/$name"
         dst="$staged/$name"
-        if [ ! -f "$src" ]; then
-            echo "::error::Canonical OTA engine file missing: $src"
-            drift=1
-            continue
-        fi
         if [ ! -f "$dst" ]; then
             echo "::error::Missing staged copy: $rel_staged/$name"
-            echo "         Run: cp $src $dst"
+            echo "         Run: cp $rel_canonical/$name $rel_staged/$name"
             drift=1
             continue
         fi
         if ! cmp -s "$src" "$dst"; then
             echo "::error::Drift detected: $rel_staged/$name differs from the canonical source"
-            echo "--- diff ($src vs $dst) ---"
+            echo "--- diff ($rel_canonical/$name vs $rel_staged/$name) ---"
             diff -u "$src" "$dst" || true
             drift=1
         fi
@@ -78,10 +85,11 @@ done
 
 if [ "$drift" -ne 0 ]; then
     echo ""
-    echo "The committed OTA engine copies must match ${CANONICAL#"${REPO_ROOT}/"}/."
+    joined_files=$(IFS=,; echo "${OTA_FILES[*]}")
+    echo "The committed OTA engine copies must match $rel_canonical/."
     echo "Re-stage every sketch, e.g.:"
     for staged in "${STAGED_DIRS[@]}"; do
-        echo "  cp $CANONICAL/{securacv_ota.h,securacv_ota.cpp,ota_release_key.h} ${staged#"${REPO_ROOT}/"}/"
+        echo "  cp $rel_canonical/{$joined_files} ${staged#"${REPO_ROOT}/"}/"
     done
     exit 1
 fi
