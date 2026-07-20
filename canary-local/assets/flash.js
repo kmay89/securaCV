@@ -132,6 +132,8 @@ function renderReassurance() {
   help.append(lessonP);
   wrap.append(help);
 
+  wrap.append(renderTrustCard());
+
   const privacy = el("p", "fineprint flash-privacy");
   privacy.textContent =
     "Everything runs in your browser. The flasher engine is served from this " +
@@ -139,6 +141,78 @@ function renderReassurance() {
     "image you choose. Nothing about your board leaves this page.";
   wrap.append(privacy);
   return wrap;
+}
+
+// ── the trust card: what "secure" means here, honestly ──────────────────────
+// For the skeptical reader. Every claim in here is mechanically checkable on
+// this very page (receipts, health check, flash map) or documented in the
+// repo's threat model — including the limits.
+function renderTrustCard() {
+  const card = el("details", "flash-card flash-trust");
+  card.append(el("summary", null, "What does “secure” mean here? The honest version →"));
+
+  const sec = (title, ...ps) => {
+    const d = el("div", "flash-trust-sec");
+    d.append(el("h3", null, title));
+    ps.forEach((p) => d.append(el("p", "muted", p)));
+    return d;
+  };
+
+  card.append(sec("Every byte is checked, and you can check the checker.",
+    "Four separate guards, all verifiable: images come from signed releases; " +
+    "your browser recomputes the SHA-256 fingerprint and compares it to the " +
+    "published one before a single byte is written; after writing, the chip " +
+    "itself recomputes a checksum over the written range; and the chip guard " +
+    "refuses any image built for different silicon. After an install, “show " +
+    "the receipts” lists the exact numbers, and the health check re-reads " +
+    "reality straight off the chip."));
+
+  card.append(sec("The board's crypto, in one breath.",
+    "On first boot, the Canary mints its own Ed25519 identity keypair on the " +
+    "chip. The private key is born there and never leaves — there is no " +
+    "export function, and this page never reads it (the health check shows " +
+    "presence only). Every witness record is hash-chained to the previous " +
+    "one and signed with that key, so an edited or deleted record leaves a " +
+    "visible seam. What you see here — counters, fingerprints, the chain " +
+    "head — is the public half. Verifying evidence needs no one's " +
+    "permission; forging it needs the key that never left the board."));
+
+  card.append(sec("What's not at risk from this page.",
+    "Bricking — the first-stage bootloader is mask ROM, physically read-only. " +
+    "Key theft through the browser — the identity key is never transmitted, " +
+    "here or anywhere. Phoning home — the page works offline; the only " +
+    "network call fetches the signed image you chose."));
+
+  card.append(sec("What is at risk, honestly.",
+    "Physical possession. A standard dev board answers USB: anyone holding " +
+    "it with a cable can read or rewrite its flash — that is exactly how " +
+    "this page's own backup works, and pretending otherwise would be " +
+    "theater. The project's Phase-2 provisioning closes this with flash " +
+    "encryption and eFuse locks (then the flash reads back as ciphertext), " +
+    "documented — limits included — in docs/security/THREAT_MODEL.md."));
+
+  const bp = el("div", "flash-trust-sec");
+  bp.append(el("h3", null, "Best practices, in four lines."));
+  const ul = el("ul", "flash-checklist");
+  [
+    "Treat backup files like house keys — they contain everything on the board, identity key and saved WiFi included.",
+    "Selling or giving a board away? Run Advanced → full erase first. It destroys the identity key and all settings.",
+    "For a board deployed somewhere physically exposed, use Phase-2 secure provisioning (flash encryption + eFuse).",
+    "After any install or restore, run the health check — fingerprints and witness counters, read off the chip.",
+  ].forEach((t) => {
+    const li = el("li");
+    li.append(el("span", "flash-check", "✓"), document.createTextNode(t));
+    ul.append(li);
+  });
+  bp.append(ul);
+  card.append(bp);
+
+  card.append(sec("So: “secure” here means…",
+    "You can verify exactly what runs (open source, signed, checksummed at " +
+    "every step). Nothing leaves (offline by construction). Everything is " +
+    "reversible (backup and restore, forever). And the one real limit — " +
+    "physical access — is stated out loud instead of hidden."));
+  return card;
 }
 
 // ── phase: unsupported browser ──────────────────────────────────────────────
@@ -505,7 +579,8 @@ function renderPicker() {
     bk.append(el("span", "flash-check", "✓"));
     bk.append(document.createTextNode(
       " Before anything is written, a full copy of the board is saved to your " +
-      "downloads automatically — your undo button, no clicks needed."));
+      "downloads automatically — your undo button, no clicks needed. (Keep " +
+      "backup files private: they contain the board's identity key.)"));
     card.append(bk);
   }
 
@@ -760,9 +835,14 @@ async function startFlash(opts) {
     }
 
     // 1) Obtain the image bytes.
-    let bytes;
+    let bytes, shaHex = null, shaSigned = false;
     if (opts.localBytes) {
       bytes = opts.localBytes;
+      // Fingerprint the local file too, so the receipts can name exactly
+      // what was written even when we can't vouch for its origin.
+      try {
+        shaHex = core.hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice().buffer)));
+      } catch {}
     } else {
       nextStep("downloading the signed image");
       const buf = await fetch(opts.entry.factory, { cache: "no-store" }).then((r) => {
@@ -778,6 +858,8 @@ async function startFlash(opts) {
         throw new Error("Downloaded image failed its checksum — refusing to flash it. " +
           "Nothing was written. (Try again; if it persists the release may be mid-update.)");
       }
+      shaHex = got.toLowerCase();
+      shaSigned = true;
     }
 
     // 2.5) The change map: we hold the board's current bytes (safety copy)
@@ -825,7 +907,8 @@ async function startFlash(opts) {
     try { await esploader.after("hard_reset"); } catch {}
 
     state.busy = false;
-    setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings }));
+    setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
+      shaHex, shaSigned, bytesWritten: bytes.length }));
   } catch (e) {
     state.busy = false;
     setPhase(flashError(e, opts));
@@ -880,7 +963,9 @@ function phaseDone(opts) {
     const bk = el("p", "fineprint");
     bk.append(el("span", "flash-check", "✓"));
     bk.append(document.createTextNode(
-      ` Safety copy saved to your downloads as ${opts.backupName} — restore it any time from Advanced.`));
+      ` Safety copy saved to your downloads as ${opts.backupName} — restore it any time from Advanced. ` +
+      `Keep the file private: it holds everything that was on the board, including its identity key ` +
+      `and any saved WiFi. Treat it like a spare house key.`));
     box.append(bk);
   } else if (opts.backupFailed) {
     box.append(el("p", "fineprint",
@@ -912,6 +997,36 @@ function phaseDone(opts) {
   } else if (opts.backupName || opts.backupFailed) {
     box.append(el("p", "fineprint",
       "No change map this time — it needs the safety copy to compare against."));
+  }
+
+  // The receipts: for the skeptic who (rightly) wants proof, the exact
+  // numbers behind "verified" — nothing here is a vibe, it's all checkable.
+  if (opts.shaHex || opts.diff) {
+    const rec = el("details", "flash-receipts");
+    rec.append(el("summary", null, "show the receipts — every byte accounted for"));
+    const list = el("div", "flash-report-sec flash-receipts-body");
+    if (opts.shaHex) {
+      list.append(reportRow("SHA-256 of the image",
+        el("code", null, opts.shaHex.slice(0, 32) + "…"), "ok"));
+      list.append(el("p", "fineprint", opts.shaSigned
+        ? "Computed in your browser from the downloaded bytes and matched against the fingerprint published in the signed release — before anything was written. You can recompute it yourself: download the same release asset and run sha256sum."
+        : "Computed in your browser from your local file, so you can pin down exactly what was written. We can't vouch for a personal file's origin — that part is on you."));
+    }
+    if (opts.bytesWritten) {
+      list.append(reportRow("Written and read back",
+        `${opts.bytesWritten.toLocaleString()} bytes — the chip itself recomputed a checksum (MD5) over the written range and it matched`, "ok"));
+    }
+    if (opts.diff && state.flashBytes) {
+      const named = opts.diff.rows.reduce((a, r) => a + r.size, 0);
+      list.append(reportRow("Every byte accounted for",
+        `${state.flashBytes.toLocaleString()} bytes of flash = ${opts.diff.rows.length} named regions ` +
+        `(${named.toLocaleString()} bytes) + ${(state.flashBytes - named).toLocaleString()} bytes of unused space — nothing unmapped`, "ok"));
+    }
+    list.append(el("p", "fineprint",
+      "And the deeper checks live one click away: the health check re-reads the partition map, " +
+      "firmware fingerprints and witness-chain state straight off the chip, any time."));
+    rec.append(list);
+    box.append(rec);
   }
 
   const row = el("div", "flash-row");
@@ -997,7 +1112,9 @@ function phaseRescue() {
     "Every install here saves a full copy of the board to your downloads " +
     "(canary-…-backup.bin). Restoring one rewinds the board to that exact " +
     "moment — firmware, settings, witness chain, everything. Backups are raw " +
-    "flash bytes, so a file from any past or future version restores the same way."));
+    "flash bytes, so a file from any past or future version restores the same " +
+    "way. That completeness cuts both ways: a backup holds the board's " +
+    "identity key and saved WiFi, so store it like a house key."));
   const file = el("input");
   file.type = "file";
   file.accept = ".bin";

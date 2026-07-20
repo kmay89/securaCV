@@ -268,6 +268,16 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-recovery-when { font-size: 13px; font-weight: 560; margin: 0 0 2px; color: #e7e7e7; }
 .flash-privacy { opacity: 0.75; }
 
+/* ── receipts + trust card ─────────────────────────────────────────────── */
+.flash-receipts { margin-top: 16px; text-align: left; }
+.flash-receipts summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.flash-receipts-body { border-top: none; padding-top: 6px; margin-top: 6px; }
+.flash-trust summary { cursor: pointer; font-weight: 600; font-size: 14.5px; }
+.flash-trust-sec { margin: 14px 0 0; }
+.flash-trust-sec h3 { font-size: 14.5px; margin: 0 0 4px; font-weight: 620; }
+.flash-trust-sec p { font-size: 13.5px; line-height: 1.55; margin: 4px 0; }
+.flash-trust .flash-checklist li { font-size: 13px; }
+
 /* ── confetti ──────────────────────────────────────────────────────────── */
 .flash-confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 50; }
 .flash-confetti-bit {
