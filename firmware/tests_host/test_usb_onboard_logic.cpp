@@ -34,52 +34,52 @@ static const char* kBase = "https://securacv.com/canary";
 // ── 1. Consent state machine ────────────────────────────────────────────────
 
 static void test_disabled_never_types() {
-  // From DISABLED, nothing — not even CONFIRM — can make it emit.
-  CHECK(step(State::DISABLED, Event::REQUEST).next == State::DISABLED);
-  CHECK(step(State::DISABLED, Event::CONFIRM).emit == false);
-  CHECK(step(State::DISABLED, Event::CONFIRM).next == State::DISABLED);
-  CHECK(step(State::DISABLED, Event::UNPLUG).next == State::DISABLED);
-  // ENABLE is the only way out of DISABLED.
-  CHECK(step(State::DISABLED, Event::ENABLE).next == State::IDLE);
+  // From Off, nothing — not even Confirm — can make it emit.
+  CHECK(step(State::Off, Event::Request).next == State::Off);
+  CHECK(step(State::Off, Event::Confirm).emit == false);
+  CHECK(step(State::Off, Event::Confirm).next == State::Off);
+  CHECK(step(State::Off, Event::Unplug).next == State::Off);
+  // Enable is the only way out of Off.
+  CHECK(step(State::Off, Event::Enable).next == State::Idle);
 }
 
 static void test_confirm_only_types_after_arming() {
-  // A bare CONFIRM from IDLE must NOT type — this is the anti-BadUSB core.
-  Outcome idle_confirm = step(State::IDLE, Event::CONFIRM);
+  // A bare Confirm from Idle must NOT type — this is the anti-BadUSB core.
+  Outcome idle_confirm = step(State::Idle, Event::Confirm);
   CHECK(idle_confirm.emit == false);
-  CHECK(idle_confirm.next == State::IDLE);
+  CHECK(idle_confirm.next == State::Idle);
 
-  // The only path that types: IDLE --REQUEST--> ARMED --CONFIRM--> LAUNCHED.
-  Outcome armed = step(State::IDLE, Event::REQUEST);
-  CHECK(armed.next == State::ARMED);
+  // The only path that types: Idle --Request--> Armed --Confirm--> Launched.
+  Outcome armed = step(State::Idle, Event::Request);
+  CHECK(armed.next == State::Armed);
   CHECK(armed.announce == true);   // the URL is announced before any typing
   CHECK(armed.emit == false);
 
-  Outcome launched = step(State::ARMED, Event::CONFIRM);
-  CHECK(launched.next == State::LAUNCHED);
+  Outcome launched = step(State::Armed, Event::Confirm);
+  CHECK(launched.next == State::Launched);
   CHECK(launched.emit == true);
 }
 
 static void test_timeout_and_cancel_relock() {
-  CHECK(step(State::ARMED, Event::TIMEOUT).next == State::IDLE);
-  CHECK(step(State::ARMED, Event::TIMEOUT).relock == true);
-  CHECK(step(State::ARMED, Event::CANCEL).next == State::IDLE);
-  // After a timeout re-lock, a stray CONFIRM does nothing.
-  CHECK(step(State::IDLE, Event::CONFIRM).emit == false);
+  CHECK(step(State::Armed, Event::Timeout).next == State::Idle);
+  CHECK(step(State::Armed, Event::Timeout).relock == true);
+  CHECK(step(State::Armed, Event::Cancel).next == State::Idle);
+  // After a timeout re-lock, a stray Confirm does nothing.
+  CHECK(step(State::Idle, Event::Confirm).emit == false);
 }
 
 static void test_unplug_relocks_but_keeps_disabled() {
-  CHECK(step(State::LAUNCHED, Event::UNPLUG).next == State::IDLE);
-  CHECK(step(State::ARMED, Event::UNPLUG).next == State::IDLE);
-  CHECK(step(State::DISABLED, Event::UNPLUG).next == State::DISABLED);
+  CHECK(step(State::Launched, Event::Unplug).next == State::Idle);
+  CHECK(step(State::Armed, Event::Unplug).next == State::Idle);
+  CHECK(step(State::Off, Event::Unplug).next == State::Off);
 }
 
 static void test_relaunch_requires_reconfirm() {
-  // LAUNCHED is one-shot: a second CONFIRM without a new REQUEST won't retype.
-  CHECK(step(State::LAUNCHED, Event::CONFIRM).emit == false);
+  // Launched is one-shot: a second Confirm without a new Request won't retype.
+  CHECK(step(State::Launched, Event::Confirm).emit == false);
   // Re-arming is allowed (owner wants the page again) and re-announces.
-  Outcome rearm = step(State::LAUNCHED, Event::REQUEST);
-  CHECK(rearm.next == State::ARMED);
+  Outcome rearm = step(State::Launched, Event::Request);
+  CHECK(rearm.next == State::Armed);
   CHECK(rearm.announce == true);
 }
 

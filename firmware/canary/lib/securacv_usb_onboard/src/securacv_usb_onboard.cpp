@@ -35,7 +35,7 @@ namespace usb_onboard {
 namespace {
 
 Config       s_cfg = { nullptr, nullptr, false };
-State        s_state = State::DISABLED;
+State        s_state = State::Off;
 LaunchMethod s_method = LaunchMethod::MANUAL;
 uint32_t     s_armed_since_ms = 0;
 bool         s_begun = false;
@@ -48,10 +48,10 @@ const char* allowed_prefix() {
 
 const char* state_name(State s) {
   switch (s) {
-    case State::DISABLED: return "disabled";
-    case State::IDLE:     return "idle (quiet)";
-    case State::ARMED:    return "ARMED — press BOOT to open help";
-    case State::LAUNCHED: return "launched";
+    case State::Off: return "disabled";
+    case State::Idle:     return "idle (quiet)";
+    case State::Armed:    return "Armed — press BOOT to open help";
+    case State::Launched: return "launched";
   }
   return "?";
 }
@@ -68,7 +68,7 @@ const char* method_name(LaunchMethod m) {
 
 // Apply an Outcome from the pure state machine, recording the arm timestamp.
 void apply(Outcome o) {
-  if (o.next == State::ARMED && s_state != State::ARMED) {
+  if (o.next == State::Armed && s_state != State::Armed) {
     s_armed_since_ms = millis();
   }
   s_state = o.next;
@@ -127,7 +127,7 @@ int32_t msc_write_cb(uint32_t, uint32_t, uint8_t*, uint32_t) {
 bool msc_start_stop_cb(uint8_t /*power*/, bool /*start*/, bool load_eject) {
   if (load_eject) {
     // Host ejected — treat like a re-lock of the onboarding session.
-    apply(step(s_state, Event::CANCEL));
+    apply(step(s_state, Event::Cancel));
   }
   return true;
 }
@@ -162,23 +162,23 @@ bool begin(const Config& cfg) {
   }
   USB.productName("SecuraCV Canary");
   USB.begin();
-  apply(step(State::DISABLED, Event::ENABLE));   // DISABLED → IDLE
+  apply(step(State::Off, Event::Enable));   // Off → Idle
   s_begun = true;
   Serial.println("[usb-onboard] ready — HID keyboard idle; press console 'u' to open help");
   return true;
 #else
   (void)cfg;
   s_begun = false;
-  s_state = State::DISABLED;
+  s_state = State::Off;
   return false;  // not an OTG build — onboarding unavailable
 #endif
 }
 
 void poll() {
   if (!s_begun) return;
-  if (s_state == State::ARMED &&
+  if (s_state == State::Armed &&
       arm_expired(s_armed_since_ms, millis())) {
-    apply(step(s_state, Event::TIMEOUT));
+    apply(step(s_state, Event::Timeout));
     Serial.println("[usb-onboard] arming window elapsed — re-locked (no keys sent)");
   }
 }
@@ -188,7 +188,7 @@ void request_launch() {
     Serial.println("[usb-onboard] not in this build (needs the usb-onboard OTG profile)");
     return;
   }
-  Outcome o = step(s_state, Event::REQUEST);
+  Outcome o = step(s_state, Event::Request);
   apply(o);
   if (!o.announce) {
     Serial.println("[usb-onboard] cannot arm from the current state");
@@ -206,10 +206,10 @@ void request_launch() {
 
 void confirm() {
   if (!s_begun) return;
-  if (s_state != State::ARMED) return;  // ignore stray presses
+  if (s_state != State::Armed) return;  // ignore stray presses
   char url[256];
   build_help_url(allowed_prefix(), s_cfg.device_id, "onboard", url, sizeof(url));
-  Outcome o = step(s_state, Event::CONFIRM);
+  Outcome o = step(s_state, Event::Confirm);
   apply(o);
   if (!o.emit) return;
 #if USB_ONBOARD_ACTIVE
@@ -223,7 +223,7 @@ void confirm() {
 
 void cancel() {
   if (!s_begun) return;
-  Outcome o = step(s_state, Event::CANCEL);
+  Outcome o = step(s_state, Event::Cancel);
   if (o.relock) {
     apply(o);
     Serial.println("[usb-onboard] cancelled — re-locked");
@@ -239,7 +239,7 @@ LaunchMethod method() { return s_method; }
 
 void on_unplug() {
   if (!s_begun) return;
-  apply(step(s_state, Event::UNPLUG));
+  apply(step(s_state, Event::Unplug));
 }
 
 State state() { return s_state; }

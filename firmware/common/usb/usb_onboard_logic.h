@@ -14,7 +14,7 @@
  * device glue:
  *
  *   1. The device NEVER types on its own. Enumerating does nothing. It types
- *      only after a human presses the physical BOOT button (a CONFIRM event),
+ *      only after a human presses the physical BOOT button (a Confirm event),
  *      and only inside a short arming window that the console opened by
  *      ANNOUNCING, in plain text, the exact URL it is about to type.
  *   2. The payload is fixed at compile time and validated at run time: the only
@@ -41,23 +41,23 @@ namespace usb_onboard {
 // ════════════════════════════════════════════════════════════════════════════
 
 enum class State : uint8_t {
-  DISABLED = 0,  // feature off — the HID keyboard never types, ever
-  IDLE,          // enumerated and quiet; waiting for the owner to ask
-  ARMED,         // owner asked ('u'); URL announced; awaiting BOOT confirm
-  LAUNCHED,      // keystrokes emitted once; will not repeat without re-arming
+  Off = 0,  // feature off — the HID keyboard never types, ever
+  Idle,          // enumerated and quiet; waiting for the owner to ask
+  Armed,         // owner asked ('u'); URL announced; awaiting BOOT confirm
+  Launched,      // keystrokes emitted once; will not repeat without re-arming
 };
 
 enum class Event : uint8_t {
-  ENABLE,        // build/init brought the feature up
-  REQUEST,       // owner asked to launch help (console 'u' / long-press)
-  CONFIRM,       // physical BOOT-button confirmation seen
-  TIMEOUT,       // arming window elapsed with no confirm
-  CANCEL,        // owner backed out (any key on the console)
-  UNPLUG,        // USB cable removed — re-lock everything
+  Enable,        // build/init brought the feature up
+  Request,       // owner asked to launch help (console 'u' / long-press)
+  Confirm,       // physical BOOT-button confirmation seen
+  Timeout,       // arming window elapsed with no confirm
+  Cancel,        // owner backed out (any key on the console)
+  Unplug,        // USB cable removed — re-lock everything
 };
 
-// Default arming window: how long a REQUEST stays open for the physical
-// CONFIRM before it re-locks. Short enough that a walk-away re-locks, long
+// Default arming window: how long a Request stays open for the physical
+// Confirm before it re-locks. Short enough that a walk-away re-locks, long
 // enough for a person to reach for the button.
 static constexpr uint32_t kDefaultArmWindowMs = 15000;
 
@@ -68,46 +68,46 @@ struct Outcome {
   bool relock;     // glue should note we returned to a quiet state
 };
 
-// Pure transition. `armed_since_ms`/`now_ms` are only consulted for TIMEOUT;
+// Pure transition. `armed_since_ms`/`now_ms` are only consulted for Timeout;
 // callers compute elapsed themselves so this stays clock-free and testable.
 inline Outcome step(State s, Event e) {
   Outcome o{ s, false, false, false };
   switch (e) {
-    case Event::ENABLE:
-      if (s == State::DISABLED) { o.next = State::IDLE; }
+    case Event::Enable:
+      if (s == State::Off) { o.next = State::Idle; }
       return o;
 
-    case Event::REQUEST:
-      // Re-arming from LAUNCHED is allowed (owner wants the page again), but
-      // never from DISABLED.
-      if (s == State::IDLE || s == State::LAUNCHED) {
-        o.next = State::ARMED;
+    case Event::Request:
+      // Re-arming from Launched is allowed (owner wants the page again), but
+      // never from Off.
+      if (s == State::Idle || s == State::Launched) {
+        o.next = State::Armed;
         o.announce = true;
       }
       return o;
 
-    case Event::CONFIRM:
-      // The ONLY edge that types. Requires having passed through ARMED.
-      if (s == State::ARMED) {
-        o.next = State::LAUNCHED;
+    case Event::Confirm:
+      // The ONLY edge that types. Requires having passed through Armed.
+      if (s == State::Armed) {
+        o.next = State::Launched;
         o.emit = true;
       }
       return o;
 
-    case Event::TIMEOUT:
-    case Event::CANCEL:
-      if (s == State::ARMED) { o.next = State::IDLE; o.relock = true; }
+    case Event::Timeout:
+    case Event::Cancel:
+      if (s == State::Armed) { o.next = State::Idle; o.relock = true; }
       return o;
 
-    case Event::UNPLUG:
-      // Never re-enable a disabled feature; otherwise drop back to quiet IDLE.
-      if (s != State::DISABLED) { o.next = State::IDLE; o.relock = true; }
+    case Event::Unplug:
+      // Never re-enable a disabled feature; otherwise drop back to quiet Idle.
+      if (s != State::Off) { o.next = State::Idle; o.relock = true; }
       return o;
   }
   return o;
 }
 
-// True once the arming window has elapsed — glue feeds this to raise TIMEOUT.
+// True once the arming window has elapsed — glue feeds this to raise Timeout.
 inline bool arm_expired(uint32_t armed_since_ms, uint32_t now_ms,
                         uint32_t window_ms = kDefaultArmWindowMs) {
   return (uint32_t)(now_ms - armed_since_ms) >= window_ms;
