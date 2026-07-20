@@ -478,13 +478,14 @@ async function onBackup() {
 
 function renderPicker() {
   const card = el("section", "flash-card flash-picker");
-  card.append(el("h3", null, "Choose what to flash"));
+  card.append(el("h3", null, "Choose the firmware to install"));
 
   const matches = core.productsForChip(state.catalog, state.chip);
   const info = core.chipInfo(state.catalog, state.chip) || {};
   card.append(el("p", "muted",
-    `Only firmware built for your ${info.label || state.chip} is shown — the ` +
-    `flasher won’t offer an image meant for a different board.`));
+    `Installing firmware over USB is what “flashing” means — same thing, two ` +
+    `words. Only firmware built for your ${info.label || state.chip} is shown ` +
+    `— the flasher won’t offer an image meant for a different board.`));
 
   const manifestState = el("div", "flash-manifest-state");
   manifestState.id = "flash-manifest-state";
@@ -513,8 +514,8 @@ function renderPicker() {
   adv.append(el("summary", null, "Advanced"));
   const local = el("div", "flash-local");
   local.append(el("p", "muted",
-    "Flash a firmware file from your computer (a .bin you built, or one for " +
-    "an air-gapped install). We can’t check a personal file’s signature, but " +
+    "Install a firmware file from your computer (a .bin you built, or one for " +
+    "an air-gapped setup). We can’t check a personal file’s signature, but " +
     "the board still can’t be bricked, and we verify the write against the chip."));
   const fileBtn = el("input");
   fileBtn.type = "file";
@@ -583,7 +584,7 @@ function productRow(p) {
   ver.dataset.for = p.id;
   left.append(ver);
   row.append(left);
-  const btn = el("button", "primary small flash-pick", "Flash this");
+  const btn = el("button", "primary small flash-pick", "Install this");
   btn.dataset.for = p.id;
   btn.disabled = true; // enabled when manifest confirms an image exists
   btn.addEventListener("click", () => onPick(p));
@@ -626,8 +627,8 @@ function refreshManifestState() {
   if (m.__missing || m.__invalid) {
     const note = el("p", "flash-note flash-note-soft");
     note.textContent = m.__invalid
-      ? "The published release manifest didn’t validate, so official images are hidden. You can still flash a local file under Advanced."
-      : "No signed firmware release is published yet. When the maintainer cuts one, the official images appear here automatically. Until then, use Advanced → flash a local file.";
+      ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
+      : "No signed firmware release is published yet. When the maintainer cuts one, the official images appear here automatically. Until then, use Advanced → install a local file.";
     banner.append(note);
     return;
   }
@@ -679,7 +680,10 @@ function phaseConfirm(product, entry) {
   const skipBackup = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
 
   const box = el("section", "flash-card flash-confirm");
-  box.append(el("h2", null, `Flash ${product.name}?`));
+  box.append(el("h2", null, `Install ${product.name}?`));
+  box.append(el("p", "muted", state.current && state.current.unknown
+    ? "This is the one-time first setup — after it, the board is a Canary."
+    : "This is the same “flash” process as first setup — the board just gets the new firmware."));
   const sum = el("div", "flash-summary");
   sum.append(fact("Firmware", `${product.name} · v${entry.version}`));
   sum.append(fact("For chip", entry.chipFamily));
@@ -706,7 +710,7 @@ function phaseConfirm(product, entry) {
   box.append(promise);
 
   const row = el("div", "flash-row");
-  const go = el("button", "primary flash-go", `Flash it${eraseOn ? " (with full erase)" : ""}`);
+  const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
   go.addEventListener("click", () => startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup }));
   const cancel = el("button", "ghost", "not yet");
   cancel.addEventListener("click", () => setPhase(phaseConnected()));
@@ -723,7 +727,7 @@ async function startFlash(opts) {
   const eraseAll = !!opts.eraseAll;
   const label = opts.product ? `${opts.product.name} v${opts.entry.version}` : opts.label;
 
-  const box = progressCard(`Flashing ${label}`, "Getting the image ready…");
+  const box = progressCard(`Installing ${label}`, "Getting the image ready…");
   setPhase(box.card);
 
   // Announce the whole journey up front — "step 2 of 4" is what makes the
@@ -814,7 +818,7 @@ async function startFlash(opts) {
 
 function flashError(e, opts) {
   const msg = String(e && e.message ? e.message : e);
-  const box = errorBox("The flash didn’t complete",
+  const box = errorBox("The install didn’t complete",
     "Your board is fine — remember, it can’t be bricked from here. Here’s what to try:", false);
   const steps = el("ul", "flash-steps");
   [
@@ -845,7 +849,7 @@ function phaseDone(opts) {
   confettiBurst();
   box.append(el("div", "flash-done-bird", "🎉"));
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
-    : "Flashed — your Canary is awake"));
+    : "Installed — your Canary is awake"));
 
   const product = opts.product;
   if (product) {
@@ -871,7 +875,7 @@ function phaseDone(opts) {
   const row = el("div", "flash-row");
   const watch = el("button", "primary", "Watch it boot →");
   watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true }));
-  const again = el("button", "ghost", "Flash another");
+  const again = el("button", "ghost", "Set up another board");
   again.addEventListener("click", () => onDisconnect().then(() => setPhase(phaseConnect())));
   row.append(watch, again);
   box.append(row);
@@ -948,7 +952,7 @@ function phaseRescue() {
   const restore = el("div", "flash-local flash-rescue-restore");
   restore.append(el("h3", null, "…or put back a backup you saved earlier"));
   restore.append(el("p", "muted",
-    "Every flash here saves a full copy of the board to your downloads " +
+    "Every install here saves a full copy of the board to your downloads " +
     "(canary-…-backup.bin). Restoring one rewinds the board to that exact " +
     "moment — firmware, settings, witness chain, everything. Backups are raw " +
     "flash bytes, so a file from any past or future version restores the same way."));
@@ -1106,7 +1110,7 @@ function renderReport(r) {
 
   if (r.blank) {
     box.append(el("p", "flash-note flash-note-soft",
-      "No partition table found — this board looks blank (or was fully erased). Flashing any firmware below will set it up from scratch."));
+      "No partition table found — this board looks blank (or was fully erased). Installing any firmware below sets it up from scratch."));
   }
 
   // Firmware slots.
@@ -1227,7 +1231,7 @@ function renderReport(r) {
   }
 
   const row = el("div", "flash-row");
-  const back = el("button", "primary", "Back to flashing");
+  const back = el("button", "primary", "Back to the flasher");
   back.addEventListener("click", () => setPhase(phaseConnected()));
   const save = el("button", "ghost", "Save report (.json)");
   save.addEventListener("click", () => {
