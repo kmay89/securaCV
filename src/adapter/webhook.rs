@@ -32,7 +32,7 @@ use subtle::ConstantTimeEq;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
 use crate::adapter::mqtt_sensor::{parse_messages, route_message, SensorMessage, SensorRoute};
-use crate::adapter::SensorAdapter;
+use crate::adapter::{LockTolerant, SensorAdapter};
 use crate::EventType;
 
 /// Maximum accepted request body, in bytes. Webhook payloads are tiny status messages.
@@ -131,7 +131,7 @@ impl Shared {
             return true;
         };
         let now = Instant::now();
-        let mut map = self.buckets.lock().expect("rate bucket mutex");
+        let mut map = self.buckets.lock_tolerant();
         // Hard cap (docs/strategy/12, K6): paths are attacker-controlled, so
         // an unbounded per-path map is a memory leak on demand — the same
         // trap the API's RateLimiter already closes. A bucket idle for 60 s
@@ -224,7 +224,7 @@ impl Shared {
         }
 
         // Signature is valid: reject if the nonce was already used inside the window.
-        let mut seen = self.seen_nonces.lock().expect("nonce cache mutex");
+        let mut seen = self.seen_nonces.lock_tolerant();
         let now = Instant::now();
         seen.retain(|_, &mut t| now.saturating_duration_since(t) < window.saturating_mul(2));
         if seen.contains_key(nonce) {
@@ -363,7 +363,7 @@ impl WebhookAdapter {
 
     /// Pure transform: map one request `(path, body)` to at most one claim.
     pub fn message_to_claim(&self, path: &str, body: &[u8]) -> Option<Claim> {
-        route_message(&self.routes.lock().expect("routes mutex"), path, body)
+        route_message(&self.routes.lock_tolerant(), path, body)
     }
 }
 
@@ -384,7 +384,7 @@ impl SensorAdapter for WebhookAdapter {
         if msgs.is_empty() {
             return Ok(Vec::new());
         }
-        let routes = self.routes.lock().expect("routes mutex");
+        let routes = self.routes.lock_tolerant();
         parse_messages(&routes, &msgs, self.sandbox)
     }
 }
@@ -465,7 +465,7 @@ fn run_pool(
         thread::spawn(move || loop {
             // Hold the lock only across recv; release before handling so peers can pick up work.
             let job = {
-                let guard = job_rx.lock().expect("webhook job queue mutex");
+                let guard = job_rx.lock_tolerant();
                 guard.recv()
             };
             let tcp = match job {

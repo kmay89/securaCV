@@ -43,7 +43,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
-use crate::adapter::SensorAdapter;
+use crate::adapter::{LockTolerant, SensorAdapter};
 use crate::EventType;
 
 /// A `(topic, payload)` message fed to the adapter (an MQTT topic and its JSON body).
@@ -200,7 +200,7 @@ impl MeshtasticAdapter {
     /// configured node.
     pub fn message_to_claim(&self, topic: &str, payload: &[u8]) -> Option<Claim> {
         frame_to_claim(
-            &self.nodes.lock().expect("nodes mutex"),
+            &self.nodes.lock_tolerant(),
             self.frame_kind,
             topic,
             payload,
@@ -297,7 +297,7 @@ impl SensorAdapter for MeshtasticAdapter {
             return Ok(Vec::new());
         }
         // Snapshot the nodes so we don't hold the lock across the sandbox fork.
-        let nodes = self.nodes.lock().expect("nodes mutex").clone();
+        let nodes = self.nodes.lock_tolerant().clone();
         let frame_kind = self.frame_kind;
         let parse_all = || {
             let mut out = Vec::new();

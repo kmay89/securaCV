@@ -22,7 +22,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
-use crate::adapter::SensorAdapter;
+use crate::adapter::{LockTolerant, SensorAdapter};
 use crate::{Attestation, EventType};
 
 static MQTT_SENSOR_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
@@ -259,7 +259,7 @@ impl MqttSensorAdapter {
 
     /// Pure transform: map one message to at most one claim, per the routing table.
     pub fn message_to_claim(&self, topic: &str, payload: &[u8]) -> Option<Claim> {
-        route_message(&self.routes.lock().expect("routes mutex"), topic, payload)
+        route_message(&self.routes.lock_tolerant(), topic, payload)
     }
 }
 
@@ -280,7 +280,7 @@ impl SensorAdapter for MqttSensorAdapter {
         if msgs.is_empty() {
             return Ok(Vec::new());
         }
-        let routes = self.routes.lock().expect("routes mutex");
+        let routes = self.routes.lock_tolerant();
         parse_messages(&routes, &msgs, self.sandbox)
     }
 }

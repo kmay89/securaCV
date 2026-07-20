@@ -15,7 +15,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use anyhow::Result;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
-use crate::adapter::SensorAdapter;
+use crate::adapter::{LockTolerant, SensorAdapter};
 use crate::transport::frigate::{map_label_to_event_type, parse_frigate_event, parse_review_event};
 use crate::EventType;
 
@@ -130,7 +130,7 @@ impl FrigateAdapter {
     /// Pure transform: parse one Frigate payload into zero or more claims, applying the
     /// camera/label/confidence filters. Reuses `transport::frigate`.
     pub fn parse_to_claims(&self, topic: &str, payload: &[u8]) -> Result<Vec<Claim>> {
-        let filter = self.filter.lock().expect("frigate filter mutex");
+        let filter = self.filter.lock_tolerant();
         parse_with_filter(&filter, topic, payload)
     }
 }
@@ -192,7 +192,7 @@ impl SensorAdapter for FrigateAdapter {
             return Ok(Vec::new());
         }
         // Snapshot the filter so we don't hold the lock across the sandbox fork.
-        let filter = self.filter.lock().expect("frigate filter mutex").clone();
+        let filter = self.filter.lock_tolerant().clone();
         let parse_all = || {
             let mut out = Vec::new();
             for (topic, payload) in &msgs {

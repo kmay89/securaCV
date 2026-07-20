@@ -44,6 +44,34 @@ pub use host::{AdapterHost, AdapterHostConfig};
 pub use registry::AdapterRegistry;
 
 use anyhow::Result;
+use std::sync::{Mutex, MutexGuard};
+
+/// Poison-tolerant mutex access for the adapter daemon.
+///
+/// The daemon runs long-lived worker threads (the webhook job queue, MQTT
+/// forwarders) that share in-memory state with the poll path — rate-limit
+/// buckets, the replay-nonce cache, route/node tables. A plain
+/// `.lock().expect()` turns one worker panic into a *permanent* wedge: the
+/// mutex stays poisoned and every later `.lock().expect()` panics too, so a
+/// single failure silently takes down Track-B ingest for good.
+///
+/// These are rebuildable operational caches, not the sealed evidence chain,
+/// so recovering the (possibly partially-updated) guard and pressing on is
+/// strictly safer than cascading the panic. This mirrors the kernel core's
+/// refusal to panic on a poisoned lock (it propagates an error instead);
+/// adapter methods return plain values with no `Result` to thread, so they
+/// recover in place. The security boundary is unaffected — it remains the
+/// kernel's three gates inside `append_event_checked`.
+pub(crate) trait LockTolerant<T> {
+    /// Acquire the guard, recovering it if the mutex was poisoned by a panic.
+    fn lock_tolerant(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> LockTolerant<T> for Mutex<T> {
+    fn lock_tolerant(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
 
 /// A sensor adapter: an untrusted producer of vendor-neutral [`Claim`]s.
 ///
