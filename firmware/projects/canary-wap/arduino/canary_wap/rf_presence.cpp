@@ -1265,7 +1265,7 @@ bool conformance_check_token_rotation() {
   }
   if (!tokens_cleared) {
     health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
-      "Conformance: token map not cleared (had %u, now %u)", old_token_count,
+      "Conformance: token map not cleared (had %u, now %u)", (unsigned)old_token_count,
       (unsigned)s_token_count);
   }
 
