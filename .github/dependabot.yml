@@ -85,3 +85,18 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  # Docker base images (FROM lines in the root and sidecar Dockerfiles). The
+  # bases are pinned by digest for reproducibility, so Dependabot is what keeps
+  # those digests fresh — it opens a PR to bump the pinned digest whenever the
+  # upstream tag moves (e.g. a bookworm security rebuild), instead of the pins
+  # silently going stale.
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/docker/sidecar"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(docker)"
