@@ -18,6 +18,7 @@ environments consistent, so the table below cannot silently rot.
 | `xiao-esp32c6-mr60` | ESP32-C6 | compile-tested | canary-sense | Seeed MR60BHA2 60 GHz mmWave kit (radar witness host) |
 | `xiao-esp32s3-round` | ESP32-S3 | compile-tested | canary-display | XIAO + Round Display — "Canary Watch" glance puck |
 | `waveshare-esp32s3-lcd43` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3" touch panel — "Canary Dash" |
+| `waveshare-esp32s3-lcd43b` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3B (isolated DI/DO, RS485, CAN, I2C header) — "Canary Dash B" / dev playground host |
 
 **Tiers** (defined in [`../HARDWARE.md`](../HARDWARE.md)):
 **verified** = CI-built *and* validated on real hardware by a maintainer;

@@ -7,7 +7,8 @@ packaged flat for the Arduino toolchain. One sketch, two flavors:
 | Flavor | Board | Panel |
 |---|---|---|
 | **watch** | Seeed XIAO ESP32-S3 + Round Display for XIAO | GC9A01 1.28" 240×240, CST816S touch |
-| **dash**  | ESP32-S3-DevKitC-1 profile + Waveshare 4.3B | 800×480 RGB, GT911 touch, CH422G expander |
+| **dash**  | ESP32-S3-DevKitC-1 profile + Waveshare 4.3/4.3B | 800×480 RGB, GT911 touch, CH422G expander |
+| **playground** | Waveshare ESP32-S3-Touch-LCD-4.3B (vendor board, core 3.x) | dash hardware + isolated-IO bench mode — [dev playground doc](../../../../docs/hardware/dev_playground_43b.md) |
 
 > ⚠️ **DEV STATUS (v0.1):** compile/CI-verified; not yet validated on bench
 > hardware. See the [bench bring-up runbook](../../../../docs/hardware/display_bench_bringup.md).
@@ -84,13 +85,21 @@ install).
    appears within a few seconds, open **Safari** (or any browser) and go to
    `http://192.168.4.1` — the glass shows this hint too.
 
-(Using a **vendor board package** — e.g. Waveshare's own
-"ESP32-S3-Touch-LCD-4.3B" board entry? The sketch can't infer the flavor
-from those and stops with a clear error. Either switch to the two official
-boards above, or force a flavor with `#define CD_BUILD_DASH 0|1` in a
-`flavor_local.h` next to the sketch — an explicit choice beats inference.
-The official `ESP32S3 Dev Module` + our committed pin map is the tested
-path for the Waveshare 4.3B panel.)
+**Waveshare's own board entries are recognized** (core 3.x Boards
+Manager): picking `Waveshare ESP32-S3-Touch-LCD-4.3` or `…-4.3B` builds
+the **dash** flavor, and the 4.3B entry additionally selects the 4.3B pin
+map (terminal-block isolated IO — required by the dev playground). The
+vendor variant bakes in the right flash/PSRAM, so no Tools tweaks needed.
+Any *other* vendor board still stops with a clear error; force a flavor
+with `#define CD_BUILD_DASH 0|1` in a `flavor_local.h` next to the sketch
+if you know what you're doing — an explicit choice beats inference.
+
+**Dev playground** (guided peripheral bench on the 4.3B —
+[doc](../../../../docs/hardware/dev_playground_43b.md)): run
+`../../setup.sh arduino playground`, then build with the IDE (board
+`Waveshare ESP32-S3-Touch-LCD-4.3B`) or `arduino-cli compile --profile
+playground`. Core 3.x only — the vendor board entry doesn't exist on
+2.0.x.
 
 ## Build — arduino-cli (zero manual installs)
 
@@ -119,7 +128,7 @@ copies `lv_conf.h` into your sketchbook libraries dir for IDE builds.
 | `config.h` | `../../include/canary/config.h` (composition header) |
 | `flavor_config.h` / `pins.h` | generated dispatchers keyed on `flavor_select.h` |
 | `flavor_watch.h` / `flavor_dash.h` | `../../../../configs/canary-display/<flavor>/config.h` |
-| `pins_watch.h` / `pins_dash.h` | `../../../../boards/<board>/pins/pins.h` |
+| `pins_watch.h` / `pins_dash.h` / `pins_dash43b.h` | `../../../../boards/<board>/pins/pins.h` |
 | `flavor_local.h` | your flavor override, written by `setup.sh` (git-ignored) |
 | `lv_conf.h` | `../../include/lv_conf.h` |
 | `secrets.h` | your credentials (git-ignored; optional — the wizard covers it) |

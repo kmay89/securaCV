@@ -89,5 +89,18 @@
     "tier_evidence": "",
     "used_by": ["canary-display"],
     "notes": "Dash fleet display: 800x480 RGB565 parallel panel, GT911 5-point touch, CH422G IO expander. Bench validation pending — run docs/hardware/display_bench_bringup.md Track D to promote."
+  },
+  {
+    "id": "waveshare-esp32s3-lcd43b",
+    "name": "Waveshare ESP32-S3-Touch-LCD-4.3B",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": ["canary-display"],
+    "notes": "Industrial-IO dash SKU + dev playground host: same 800x480 panel/GT911/CH422G as the 4.3, plus isolated DI0/DI1 + DO0/DO1, RS485, dedicated CAN, I2C sensor header, 6-36 V supply. Playground bring-up doc: docs/hardware/dev_playground_43b.md."
   }
 ]
