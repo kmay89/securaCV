@@ -54,6 +54,9 @@ static void secure_wipe(void* ptr, size_t len) {
 // DOMAIN SEPARATION STRINGS
 // ════════════════════════════════════════════════════════════════════════════
 
+// Value kept as "…:opera:…" on purpose: it's a domain-separation tag baked
+// into deployed key derivations — renaming the constant is cosmetic, but
+// changing the string would fork the crypto. Name-only rename (flock→fleet).
 static const char* DOMAIN_FLEET_ID = "securacv:opera:id:v0";
 static const char* DOMAIN_AUTH = "securacv:mesh:auth:v0";
 static const char* DOMAIN_SESSION = "securacv:mesh:session:v0";
@@ -66,6 +69,9 @@ static const char* DOMAIN_PAIR_CONFIRM = "securacv:pair:confirm:v0";
 
 static const char* NVS_NS = "mesh";
 static const char* NVS_ENABLED = "enabled";
+// Key strings kept as "opera_*" on purpose: they address existing NVS
+// entries on deployed devices — renaming them would orphan a provisioned
+// unit's stored identity. The constants are name-only (flock→fleet).
 static const char* NVS_FLEET_ID = "opera_id";
 static const char* NVS_FLEET_SECRET = "opera_sec";
 static const char* NVS_FLEET_NAME = "opera_name";
