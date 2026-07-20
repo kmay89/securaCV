@@ -670,7 +670,7 @@ impl WatchdogState {
             self.last_change = now;
             false
         } else {
-            now.duration_since(self.last_change) >= self.stall_timeout
+            now.saturating_duration_since(self.last_change) >= self.stall_timeout
         }
     }
 }
