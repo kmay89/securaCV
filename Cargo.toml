@@ -51,6 +51,7 @@ tempfile = "3.10"
 
 [dev-dependencies]
 trybuild = "1.0.89"
+proptest = "1"
 
 # libc is needed on every Unix (statvfs free-space preflight in witnessd);
 # seccomp is Linux-only.

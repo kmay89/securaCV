@@ -3784,6 +3784,58 @@ mod tests {
         Ok(())
     }
 
+    proptest::proptest! {
+        // TimeBucket::coarsen_to is aligned to the target size, never later
+        // than the input, within one bucket of it, and idempotent — for any
+        // epoch and any valid (>= 5 min) target size.
+        #[test]
+        fn coarsen_to_is_aligned_monotonic_and_idempotent(
+            epoch in 0u64..4_000_000_000,
+            size in MIN_BUCKET_SIZE_S..(7 * 24 * 3600),
+        ) {
+            let bucket = TimeBucket { start_epoch_s: epoch, size_s: 600 };
+            let coarse = bucket.coarsen_to(size).expect("valid size must coarsen");
+            proptest::prop_assert_eq!(coarse.size_s, size);
+            proptest::prop_assert_eq!(coarse.start_epoch_s % u64::from(size), 0); // aligned
+            proptest::prop_assert!(coarse.start_epoch_s <= epoch);               // never later
+            proptest::prop_assert!(epoch - coarse.start_epoch_s < u64::from(size)); // within one bucket
+            let again = coarse.coarsen_to(size).expect("idempotent");
+            proptest::prop_assert_eq!(again.start_epoch_s, coarse.start_epoch_s);
+        }
+
+        // Any bucket size below the 5-minute floor is always rejected.
+        #[test]
+        fn coarsen_below_minimum_is_always_rejected(size in 0u32..MIN_BUCKET_SIZE_S) {
+            let bucket = TimeBucket { start_epoch_s: 600, size_s: 600 };
+            proptest::prop_assert!(bucket.coarsen_to(size).is_err());
+        }
+    }
+
+    proptest::proptest! {
+        // Kernel-backed (opens an in-memory DB per case), so keep the case
+        // count modest.
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(48))]
+
+        // Round-trip invariant: any sequence of validly-sealed events yields a
+        // chain that verifies from the checkpoint through the tail.
+        #[test]
+        fn sealed_chain_of_any_length_verifies(
+            zones in proptest::collection::vec("[a-z][a-z0-9_-]{0,7}", 0..12),
+        ) {
+            let (mut kernel, cfg) = setup_test_kernel().expect("kernel");
+            for z in &zones {
+                seal_one_event(&mut kernel, &cfg, &format!("zone:{z}")).expect("seal");
+            }
+            let report = kernel.verify_sealed_log().expect("verify runs");
+            proptest::prop_assert!(
+                report.chain_valid,
+                "a chain of {} sealed events must verify: {:?}",
+                zones.len(),
+                report.error
+            );
+        }
+    }
+
     fn build_test_envelope() -> Result<EvidenceEnvelope> {
         let (mut kernel, cfg) = setup_test_kernel()?;
         seal_one_event(&mut kernel, &cfg, "zone:a")?;
