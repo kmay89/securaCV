@@ -81,6 +81,9 @@
 #include "chime.h"
 #include "core_compat.h"
 #include "glass_settings.h"
+#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+#include "playground.h"
+#endif
 
 #include <lvgl.h>
 #include "lvgl_port.h"
@@ -663,6 +666,16 @@ void setup() {
   boot_scene_banner(&bi);
   boot_scene_hardware(&bi);
 
+#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+  // Dev playground (docs/hardware/dev_playground_43b.md): the guided
+  // peripheral bench mode owns the device from here. Everything below —
+  // WiFi, MQTT, OTA, discovery, provisioning, watchdog — is deliberately
+  // never initialized: a bench unit can't join the fleet, phone home, or
+  // take an update by accident.
+  canary::playground::playground_setup();
+  return;
+#endif
+
   // Display-specific boot scene.
   boot_line("              .--------.");
   boot_line("              |  o  o  |        The fleet's face:");
@@ -864,6 +877,11 @@ void setup() {
 }
 
 void loop() {
+#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+  canary::playground::playground_loop();
+  return;
+#endif
+
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
   esp_task_wdt_reset();
 #endif

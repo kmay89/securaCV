@@ -14,7 +14,8 @@ canary-local/
   house.html            "The Canary House" — isometric home, whole flock in place
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   wap.html              "The WAP — first boot" — captive-portal setup, serial + MQTT (§4i)
-  sense.html            "The Sense Lab" — 60 GHz radar placement + pipeline bench (§4k)
+  sense.html            "The Sense — radar school" — meet it, place it, set it up
+  senselab.html         "The Sense Lab" — the radar pipeline dev bench (§4k)
   vault.html            "The Vault" — sealed evidence + break-glass by quorum (§4j)
   assets/
     app.js              card gallery + device sheets + guide player
@@ -558,9 +559,10 @@ real 2-of-3 with all the guardrails.
 | Generator | `canary-local/tools/gen_vault.py` |
 | Honesty gates | `tests/vault.test.js` + `tests/vault_probe.mjs` |
 
-## 4k. The Sense Lab: the radar witness, placed right (`sense.html`)
+## 4k. The Sense Lab: the radar pipeline, on the bench (`senselab.html`)
 
-The WAP teaches a first boot; **the Sense Lab teaches a placement** — because
+`sense.html` (radar school) teaches an owner to meet, place and provision the
+device; **the Sense Lab is its engineering sibling — the dev bench** — because
 the MR60BHA2 radar accepts no configuration commands at all (verified against
 the vendor library and both ESPHome components), the only knobs that exist
 are *where you put it* and *how the host firmware judges its claims*. The
@@ -594,13 +596,13 @@ page stages exactly that:
 
 | Piece | File |
 |---|---|
-| The page | `canary-local/sense.html` + `assets/sense.js` |
+| The page | `canary-local/senselab.html` + `assets/senselab.js` |
 | DOM-free cores — protocol, parser + FSM ports, physics, power (tested) | `canary-local/assets/sense-sim.js` |
-| The surfaces — stage, console, knobs, power lab, glass bridge | `canary-local/assets/sense-ui.js` |
+| The surfaces — stage, console, knobs, power lab, glass bridge | `canary-local/assets/senselab-ui.js` |
 | Canary Cards — schema, validator, renderer (tested) | `canary-local/assets/canary-cards.js` + `docs/standard/CANARY_CARDS.md` |
-| Generated data | `canary-local/devices/sense.json` |
-| Generator (drift-gates firmware + hardware notes) | `canary-local/tools/gen_sense.py` |
-| Honesty gates | `tests/sense.test.js` + `tests/sense_probe.mjs` |
+| Generated data | `canary-local/devices/senselab.json` |
+| Generator (drift-gates firmware + hardware notes) | `canary-local/tools/gen_senselab.py` |
+| Honesty gates | `tests/senselab.test.js` + `tests/senselab_probe.mjs` |
 
 ## 5. Where this lives (repo → Pages → securacv.com)
 

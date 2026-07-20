@@ -63,6 +63,8 @@ platformio_override.ini
 
 firmware/projects/canary-wap/tests_host/test_chirp_protocol_invariants
 firmware/projects/canary-wap/tests_host/test_mesh_coexistence
+firmware/projects/canary-wap/tests_host/test_evidence_drive_logic
+firmware/projects/canary-wap/tests_host/test_evidence_update_verify
 
 # Fetched detection models (scripts/fetch_detection_model.sh) — not committed
 vendor/models/*.onnx

@@ -3,8 +3,8 @@
 > Status: **DRAFT v1**. Reference implementation:
 > [`canary-local/assets/canary-cards.js`](../../canary-local/assets/canary-cards.js)
 > (renderer + validator + the canary-sense card set), exercised live on the
-> Sense Lab ([`canary-local/sense.html`](../../canary-local/sense.html)) and
-> validated in CI by `canary-local/tests/sense.test.js`.
+> Sense Lab ([`canary-local/senselab.html`](../../canary-local/senselab.html)) and
+> validated in CI by `canary-local/tests/senselab.test.js`.
 > Companion standard: [`AMBIENT_DISPLAY_STANDARD.md`](./AMBIENT_DISPLAY_STANDARD.md)
 > (which constrains *behavior*; this document constrains the *data shape*).
 

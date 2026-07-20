@@ -54,6 +54,33 @@ static bool parse_version(const char *version_str, int *major, int *minor, int *
     return (parsed >= 2);  // At least major.minor
 }
 
+// Prerelease ranking at an equal major.minor.patch: a "dev.N" build is
+// older than "rc.N", which is older than a stable build — so promoting a
+// commit (retagging it stable) is offered to channel testers as a real
+// update, and the anti-rollback floor stays coherent across channels
+// (docs/RELEASE_PROCESS.md). Variant suffixes ("2.2.0-wap") are NOT
+// prerelease markers: only explicit "dev."/"rc." dot-number segments
+// count, wherever they sit after the numeric triple.
+static void parse_prerelease(const char *v, int *band, int *num)
+{
+    *band = 3;  /* stable */
+    *num  = 0;
+    if (v == NULL) return;
+    const char *p = strstr(v, "-rc.");
+    if (p == NULL) p = strstr(v, ".rc.");
+    if (p != NULL) {
+        *band = 2;
+        *num  = atoi(p + 4);
+        return;
+    }
+    p = strstr(v, "-dev.");
+    if (p == NULL) p = strstr(v, ".dev.");
+    if (p != NULL) {
+        *band = 1;
+        *num  = atoi(p + 5);
+    }
+}
+
 int securacv_version_compare(const char *a, const char *b)
 {
     int a_major, a_minor, a_patch;
@@ -69,6 +96,12 @@ int securacv_version_compare(const char *a, const char *b)
     if (a_major != b_major) return (a_major > b_major) ? 1 : -1;
     if (a_minor != b_minor) return (a_minor > b_minor) ? 1 : -1;
     if (a_patch != b_patch) return (a_patch > b_patch) ? 1 : -1;
+
+    int a_band, a_pre, b_band, b_pre;
+    parse_prerelease(a, &a_band, &a_pre);
+    parse_prerelease(b, &b_band, &b_pre);
+    if (a_band != b_band) return (a_band > b_band) ? 1 : -1;
+    if (a_pre  != b_pre)  return (a_pre  > b_pre)  ? 1 : -1;
 
     return 0;
 }

@@ -4,7 +4,7 @@
 
 ### canary.local — the Sense Lab (the radar witness, placed right)
 
-- **`sense.html` — the MR60BHA2 placement + pipeline bench.** The radar
+- **`senselab.html` — the MR60BHA2 placement + pipeline bench.** The radar
   accepts no configuration commands (verified against the vendor library
   and both ESPHome components), so the only knobs that exist are placement
   and host-side judgement — the Lab stages exactly that: drag a person
@@ -45,10 +45,10 @@
   bench flags (incl. a distance-unit conflict with ESPHome's cm reading),
   placement physics with citations, and the power derivation — the
   `SIM:` tables are the drift-gated source for the Lab's physics/power.
-- **Honest data path, pinned.** `tools/gen_sense.py` parses the firmware +
-  notes doc into `devices/sense.json` (sys.exit on drift, CI-gated);
-  `tests/sense.test.js` re-derives every fact and exercises the DOM-free
-  cores; `tests/sense_probe.mjs` drives the page in headless Chromium
+- **Honest data path, pinned.** `tools/gen_senselab.py` parses the firmware +
+  notes doc into `devices/senselab.json` (sys.exit on drift, CI-gated);
+  `tests/senselab.test.js` re-derives every fact and exercises the DOM-free
+  cores; `tests/senselab_probe.mjs` drives the page in headless Chromium
   (stream → signed event → breathing lock → flavor flip → stall path).
 
 ### canary.local — the physical test bench (the layer the firmware can't see)

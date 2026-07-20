@@ -1,11 +1,12 @@
-// canary-local/tests/sense_probe.mjs — drive the real Sense Lab in a browser.
+// canary-local/tests/sense_probe.mjs — drive the real Sense bench in a browser.
 //
-// Serves the repo and loads sense.html in headless Chromium, then exercises
-// the bench: sections render from sense.json, the placement stage draws both
-// views, the live pipeline streams bytes → frames → a signed presence event,
-// the Canary Cards grid builds one card per entity (with the P1 story
-// honest), the privacy chokepoint drops what it promises, the knobs move the
-// FSM, and unplugging the radar drives the stall path — zero page errors.
+// Serves the repo and loads sense.html in headless Chromium, then walks the
+// staged flow end to end: every section renders from sense.json, the serial
+// console boots the firmware's own log, the MQTT retained snapshot and the
+// flavor-gated HA entity set land, the placement lab's FSM reaches Present
+// when the sandbox walks someone into the cone, the 3D radome mounts, and
+// the tuning/placement surfaces carry their source badges — all with zero
+// page errors.
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set), same as the
 // other probes. Prints SENSE_PROBE_OK / exits 0 on success.
@@ -29,6 +30,7 @@ const pw = await (async () => {
 
 const fail = (m) => { console.error("SENSE_PROBE_FAIL:", m); process.exit(1); };
 
+// tiny static server rooted at the repo (path-traversal guarded)
 const server = createServer(async (req, res) => {
   try {
     const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
@@ -46,107 +48,74 @@ const errors = [];
 const browser = await pw.chromium.launch(
   process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {}
 );
-const page = await browser.newPage({ viewport: { width: 1280, height: 950 } });
+const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
 page.on("pageerror", (e) => errors.push("pageerror: " + String(e)));
 
 try {
   await page.goto(`http://localhost:${port}/canary-local/sense.html`, { waitUntil: "networkidle", timeout: 45000 });
-  await page.waitForSelector("#power", { timeout: 15000 });
+  await page.waitForSelector("#sandbox", { timeout: 15000 });
 
   // all sections render from the JSON
-  for (const id of ["deep", "place", "pipeline", "cards", "glass", "power", "more"])
+  for (const id of ["device", "lab", "setup", "network", "placement", "tuning", "uses", "sandbox", "more"])
     if (!(await page.$("#" + id))) fail("missing section #" + id);
 
   // version strip built from sense.json
-  const chips = await page.$$eval("#sense-versions .chip", (e) => e.length);
+  const chips = await page.$$eval(".hub-chips .chip", (e) => e.length);
   if (chips < 5) fail("version strip thin (" + chips + " chips)");
 
-  // §deep: the protocol table carries all 5 decoded types + the refused list
-  const frameRows = await page.$$eval("#deep .sense-frames tbody tr", (e) => e.length);
-  if (frameRows < 8) fail("protocol tables thin (" + frameRows + " rows across decoded+refused)");
-  const benchItems = await page.$$eval(".sense-bench li", (e) => e.length);
-  if (benchItems < 3) fail("[BENCH] list missing (" + benchItems + ")");
-  if (!(await page.$(".sense-3d"))) fail("radome 3D canvas missing");
+  // 3D radome + lab canvas mounted
+  if (!(await page.$(".wap-plug-3d"))) fail("device 3D canvas missing");
+  if (!(await page.$(".sense-lab-canvas"))) fail("lab canvas missing");
 
-  // §place: both stage views drew, and the quality meter speaks
-  const views = await page.$$(".sense-view");
-  if (views.length !== 2) fail("expected 2 stage views, got " + views.length);
-  const fovDrawn = await page.$$eval(".sense-view .sense-fov", (e) => e.length);
-  if (fovDrawn < 1) fail("detection sector not drawn");
-  const qlabel = await page.$eval(".sense-qlabel", (n) => n.textContent);
-  if (!/quality \d+ %/.test(qlabel)) fail("quality meter silent: " + qlabel);
+  // the HA entity set is flavor-gated: default hides the vitals entities
+  const entsDefault = await page.$$eval(".sense-ents .wap-ent", (e) => e.length);
+  await page.locator(".sense-ents .tab", { hasText: "wellbeing" }).click();
+  const entsWell = await page.$$eval(".sense-ents .wap-ent", (e) => e.length);
+  if (entsWell - entsDefault !== 3) fail(`wellbeing must add exactly 3 entities (got ${entsDefault} → ${entsWell})`);
 
-  // §pipeline: bytes stream, frames decode, and the default bedside scene
-  // must sign a presence_detected within a few simulated seconds
-  await page.waitForFunction(
-    () => document.querySelectorAll(".sense-hex-scroll .wap-line").length > 3,
-    null, { timeout: 10000 }).catch(() => fail("UART hex stream never flowed"));
-  const ev = await page.waitForSelector(".sense-ev", { timeout: 15000 }).catch(() => null);
-  if (!ev) fail("no witness event was recorded");
-  const evText = await ev.textContent();
-  if (!/presence_detected/.test(evText)) fail("first event is not presence_detected: " + evText);
-  if (!/securacv-canary-sig\|v1\|sense\|/.test(evText)) fail("event canonical missing");
+  // provenance discipline: placement/tuning claims carry source badges
+  const badges = await page.$$eval(".sense-src", (e) => e.length);
+  if (badges < 15) fail("source badges thin (" + badges + ")");
 
-  // the chokepoint drops distance + shows the coarse vocabulary
-  const chokeRaw = await page.$eval(".sense-choke", (n) => n.textContent);
-  if (!/distance_cm/.test(chokeRaw) || !/dropped/.test(chokeRaw)) fail("chokepoint not dropping distance");
-  if (!/presence/.test(chokeRaw) || !/occupants/.test(chokeRaw)) fail("chokepoint vocabulary missing");
+  // serial console: skip to ready → the firmware's own scenes stream
+  await page.click(".wap-term .ghost");
+  await page.waitForFunction(() => /The canary is singing/.test(
+    document.querySelector(".wap-term-scroll")?.textContent || ""), null, { timeout: 10000 })
+    .catch(() => fail("serial console never reached the ready banner"));
+  const serialTxt = await page.$eval(".wap-term-scroll", (n) => n.textContent);
+  for (const a of ["Who is in the room?", "MR60BHA2 60GHz FMCW radar", "[MQTT] Connected."])
+    if (!serialTxt.includes(a)) fail("serial console missing: " + a);
 
-  // the unknown counter ticks (phase-waveform frames arrive and are refused)
-  await page.waitForFunction(
-    () => /unknown ×[1-9]/.test(document.querySelector(".sense-choke")?.textContent || ""),
-    null, { timeout: 12000 }).catch(() => fail("unknown-frame counter never ticked (0x0A13)"));
+  // MQTT retained snapshot lands after the boot stream's [MQTT] Connected
+  await page.waitForFunction(() => document.querySelectorAll(".wap-mqtt-row").length >= 5, null, { timeout: 8000 })
+    .catch(() => fail("MQTT retained topics never filled"));
 
-  // §cards: one card per entity, schema-valid, P1 honest
-  const cardCount = await page.$$eval(".ccard", (e) => e.length);
-  if (cardCount < 10) fail("card grid thin (" + cardCount + ")");
-  const cardIds = await page.$$eval(".ccard", (es) => es.map((e) => e.dataset.cardId));
-  for (const want of ["presence", "occupants", "range_band", "radar_link", "breathing", "heart_rate", "chain"])
-    if (!cardIds.includes(want)) fail("missing card: " + want);
-  if (await page.$(".ccard-invalid")) fail("an invalid card rendered");
+  // sandbox: walk into the room → the lab FSM debounces to Present, the
+  // console prints the firmware's line, a signed event streams on MQTT
+  const cards = await page.$$(".wap-sand-card");
+  if (cards.length < 6) fail("sandbox thin: " + cards.length + " cards");
+  let clicked = false;
+  for (const c of cards) { if (/Walk into the room/i.test(await c.textContent())) { await c.click(); clicked = true; break; } }
+  if (!clicked) fail("no walk-in sandbox card");
+  await page.waitForFunction(() => /Present/.test(
+    document.querySelector(".sense-lab-side .wap-pill")?.textContent || ""), null, { timeout: 6000 })
+    .catch(() => fail("lab FSM never reached Present after walk-in"));
+  await page.waitForFunction(() => /presence_detected/.test(
+    document.querySelector(".wap-mqtt-stream")?.textContent || ""), null, { timeout: 6000 })
+    .catch(() => fail("presence_detected never streamed on MQTT"));
+  await page.waitForFunction(() => /\[presence\] -> present/.test(
+    document.querySelector(".wap-term-scroll")?.textContent || ""), null, { timeout: 6000 })
+    .catch(() => fail("serial console missing [presence] -> present"));
 
-  // the default bedside scene must reach a breathing LOCK (the bench-found
-  // interleaved-traffic firmware fix — a still person at 1 m locks in ~4 s)
-  await page.waitForFunction(() => {
-    const br = [...document.querySelectorAll(".ccard")].find((c) => c.dataset.cardId === "breathing");
-    return br && /locked/.test(br.textContent);
-  }, null, { timeout: 25000 }).catch(() => fail("breathing never locked at the bedside preset"));
-
-  // flip to the presence-only flavor: BPM cards must go provably-absent
-  await page.click('button[data-flavor="canary-sense-default"]');
-  await page.waitForFunction(() => {
-    const hr = [...document.querySelectorAll(".ccard")].find((c) => c.dataset.cardId === "heart_rate");
-    return hr && hr.classList.contains("ccard-absent");
-  }, null, { timeout: 6000 }).catch(() => fail("presence-only build did not render BPM cards as absent"));
-  await page.click('button[data-flavor="canary-sense-wellbeing"]');
-
-  // scenario: unplug the radar → the stall deadline must drive radar_link to a problem
-  const sand = await page.$$(".sense-sandbox .wap-sand-card");
-  if (sand.length < 6) fail("sandbox thin (" + sand.length + ")");
-  let unplug = null;
-  for (const c of sand) if (/unplug/i.test(await c.textContent())) unplug = c;
-  if (!unplug) fail("no unplug scenario");
-  await unplug.click();
-  await page.waitForFunction(() => {
-    const rl = [...document.querySelectorAll(".ccard")].find((c) => c.dataset.cardId === "radar_link");
-    return rl && /stalled/.test(rl.textContent);
-  }, null, { timeout: 20000 }).catch(() => fail("stall deadline never surfaced on the radar_link card"));
-  await unplug.click(); // plug it back
-
-  // §power: rails render and the totals speak claims-per-joule
-  const pbars = await page.$$eval(".sense-pbar", (e) => e.length);
-  if (pbars < 5) fail("power rails thin (" + pbars + ")");
-  const totals = await page.$eval(".sense-ptotals", (n) => n.textContent);
-  if (!/claims per joule/.test(totals) || !/sensing share/.test(totals)) fail("power totals missing");
-
-  // §glass: the bridge offers the real-firmware boot (artifact presence is
-  // checked, not booted — the wasm boot has its own dedicated probes)
-  const glassBtn = await page.$(".sense-glass button");
-  if (!glassBtn) fail("glass bridge button missing");
+  // and the stall card: pull the radar UART → Unknown + the problem sensor
+  for (const c of cards) { if (/Unplug the radar/i.test(await c.textContent())) { await c.click(); break; } }
+  await page.waitForFunction(() => /Unknown/.test(
+    document.querySelector(".sense-lab-side .wap-pill")?.textContent || ""), null, { timeout: 10000 })
+    .catch(() => fail("lab FSM never stalled to Unknown"));
 
   if (errors.length) fail(errors.length + " page/console errors: " + errors.join(" | "));
-  console.log(`SENSE_PROBE_OK — ${chips} chips, ${cardCount} cards, ${sand.length} scenarios, ${pbars} rails`);
+  console.log(`SENSE_PROBE_OK — ${chips} chips, ${entsDefault}→${entsWell} entities, ${cards.length} sandbox cards, ${badges} source badges`);
 } finally {
   await browser.close();
   server.close();

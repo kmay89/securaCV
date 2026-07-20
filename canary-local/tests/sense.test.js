@@ -1,15 +1,17 @@
-// canary-local/tests/sense.test.js — the Sense Lab honesty gate.
+// canary-local/tests/sense.test.js — the Sense page's honesty gate.
 //
-// Two jobs, mirroring wap.test.js:
-//   1. Re-derive every fact in devices/sense.json from the firmware source
-//      and cross-check — so a hand-edit that bypasses gen_sense.py is caught
-//      exactly like generator drift.
-//   2. Exercise the DOM-free cores (assets/sense-sim.js, assets/canary-cards.js):
-//      the JS parser/FSM ports are pinned to the SAME behaviors the firmware's
-//      own host tests pin (firmware/tests_host/test_mr60_uart.cpp), so the
-//      page's simulation cannot drift from the device's semantics.
-//
-// Run: node --test canary-local/tests/sense.test.js
+// Two jobs, mirroring tests/wap.test.js:
+//  1. Cross-check devices/sense.json against its sources of truth (the
+//     canary-sense firmware, the flavor configs, the MR60 driver headers,
+//     the design doc, the registry) so a hand-edit that bypasses the
+//     generator — or firmware drift — is caught here, not just by the
+//     generator's own asserts. Every threshold, topic, HA entity, boot line
+//     and LED colour the page shows must still exist in the source it
+//     claims to come from.
+//  2. Exercise the DOM-free cores the page ships (sense-ui.js: bootLines,
+//     rangeBandOf, countBucketOf, makePresenceFSM, makeVitalsFSM) so the
+//     placement lab provably runs the firmware's semantics at the
+//     firmware's constants.
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -18,391 +20,265 @@ const { join } = require("node:path");
 
 const ROOT = join(__dirname, "..");
 const REPO = join(ROOT, "..");
+const PRJ = join(REPO, "firmware/projects/canary-sense");
+
 const read = (p) => readFileSync(p, "utf8");
-
 const data = JSON.parse(read(join(ROOT, "devices/sense.json")));
-const FW = join(REPO, "firmware");
-const mr60h = read(join(FW, "common/sensors/mmwave_mr60/mr60_uart.h"));
-const cfgDefault = read(join(FW, "configs/canary-sense/default/config.h"));
-const cfgWell = read(join(FW, "configs/canary-sense/wellbeing/config.h"));
-const pinsH = read(join(FW, "boards/xiao-esp32c6-mr60/pins/pins.h"));
-const mainCpp = read(join(FW, "projects/canary-sense/src/main.cpp"));
-const haCpp = read(join(FW, "projects/canary-sense/src/ha/ha_discovery.cpp"));
-const sigH = read(join(FW, "common/identity/device_signature.h"));
-const notesMd = read(join(REPO, "docs/hardware/mr60bha2_radar_notes.md"));
+const registry = JSON.parse(read(join(ROOT, "devices/registry.json")));
 
-const cs = (src, name) => {
-  const m = src.match(new RegExp(name + "\\s+(\\d+)"));
-  assert.ok(m, name + " missing");
-  return parseInt(m[1], 10);
-};
+const mainCpp = read(join(PRJ, "src/main.cpp"));
+const mqttCpp = read(join(PRJ, "src/net/mqtt_mgr.cpp"));
+const discCpp = read(join(PRJ, "src/ha/ha_discovery.cpp"));
+const topicsH = read(join(PRJ, "include/canary/topics.h"));
+const versionH = read(join(PRJ, "include/canary/version.h"));
+const cfgDefault = read(join(REPO, "firmware/configs/canary-sense/default/config.h"));
+const cfgWellbeing = read(join(REPO, "firmware/configs/canary-sense/wellbeing/config.h"));
+const pinsH = read(join(REPO, "firmware/boards/xiao-esp32c6-mr60/pins/pins.h"));
+const uartH = read(join(REPO, "firmware/common/sensors/mmwave_mr60/mr60_uart.h"));
+const design = read(join(REPO, "docs/canary_sense_mr60bha2_design.md"));
+const readme = read(join(PRJ, "README.md"));
 
-// ---------------------------------------------------------------------------
-// 1. sense.json vs the source
-// ---------------------------------------------------------------------------
+const cint = (src, macro) => Number(src.match(new RegExp("#define\\s+" + macro + "\\s+(\\d+)"))[1]);
 
-test("firmware version + train ride the registry", () => {
-  const versionH = read(join(FW, "projects/canary-sense/include/canary/version.h"));
-  const v = versionH.match(/CANARY_FW_VERSION\s+"([^"]+)"/)[1];
-  assert.strictEqual(data.device.fw_version, v);
-  const registry = JSON.parse(read(join(ROOT, "devices/registry.json")));
+// ── 1. shape + sanity floors ───────────────────────────────────────────────
+test("sense.json has every section the page requires", () => {
+  for (const k of ["device", "radar", "fsm", "events", "provisioning", "serial",
+                   "mqtt", "use_cases", "capabilities", "placement", "tuning", "sandbox", "docs"])
+    assert.ok(data[k], "missing section: " + k);
+});
+
+test("counts are not thin (a broken parse would fail here)", () => {
+  assert.ok(data.mqtt.discovery.entities.length >= 14, "too few HA entities");
+  assert.strictEqual(data.radar.protocol.frames.length, 5);
+  assert.ok(data.serial.banner.length >= 20, "banner too short");
+  assert.ok(data.serial.boot.length >= 10, "boot log too short");
+  assert.ok(data.sandbox.length >= 6, "too few sandbox scenarios");
+  assert.ok(data.tuning.knobs.length >= 5 && data.tuning.errors.length >= 6, "tuning thin");
+  assert.ok(data.placement.mounts.length === 3 && data.placement.avoid.length >= 5, "placement thin");
+});
+
+// ── 2. version + identity cross-checks ─────────────────────────────────────
+test("firmware version matches version.h and rides the registry train", () => {
+  const m = versionH.match(/CANARY_FW_VERSION\s+"([^"]+)"/);
+  assert.strictEqual(data.device.fw_version, m[1]);
   assert.strictEqual(data.device.fw_train, registry.fw_train);
-  assert.ok(v.startsWith(registry.fw_train));
+  assert.ok(data.device.fw_version.startsWith(data.device.fw_train));
 });
 
-test("frame type ids match mr60_uart.h", () => {
-  const want = {
-    PEOPLE_EXIST: "0x0F09", TARGET_COUNT: "0x0A04", DISTANCE: "0x0A16",
-    BREATH_RATE: "0x0A14", HEART_RATE: "0x0A15",
-  };
-  assert.strictEqual(data.protocol.frames.length, 5);
-  for (const f of data.protocol.frames) {
-    assert.strictEqual(f.type_hex.toLowerCase(), want[f.name].toLowerCase(), f.name);
-    assert.ok(mr60h.includes(want[f.name]), f.name + " id in header");
-  }
-  assert.strictEqual(parseInt(data.protocol.sof, 16), 0x01);
-  assert.strictEqual(data.protocol.header_len, 8);
+test("device identity matches the flavor config and the board pins header", () => {
+  assert.ok(cfgDefault.includes('CS_DEVICE_TYPE          "' + data.device.device_type + '"'));
+  assert.ok(pinsH.includes('BOARD_NAME              "' + data.device.board + '"'));
+  assert.ok(pinsH.includes('BOARD_ID                "' + data.device.board_id + '"'));
 });
 
-test("[BENCH] notes are quoted from the header", () => {
-  assert.ok(data.protocol.bench.length >= 3);
-  for (const b of data.protocol.bench) {
-    // first six words of each note must appear verbatim (modulo whitespace folding)
-    const probe = b.split(" ").slice(0, 6).join(" ");
-    assert.ok(mr60h.replace(/\s*\n \*\s*/g, " ").includes(probe), "bench note: " + probe);
-  }
-});
-
-test("FSM defaults are the CS_* config values (both flavors agree)", () => {
+// ── 3. every FSM threshold the page teaches is the firmware's own ──────────
+test("presence thresholds are configs/canary-sense/default/config.h verbatim", () => {
   const p = data.fsm.presence;
-  assert.strictEqual(p.present_debounce_ms, cs(cfgDefault, "CS_PRESENT_DEBOUNCE_MS"));
-  assert.strictEqual(p.clear_timeout_ms, cs(cfgDefault, "CS_CLEAR_TIMEOUT_MS"));
-  assert.strictEqual(p.stall_timeout_ms, cs(cfgDefault, "CS_RADAR_STALL_MS"));
-  assert.strictEqual(p.near_cm, cs(cfgDefault, "CS_RANGE_NEAR_CM"));
-  assert.strictEqual(p.mid_cm, cs(cfgDefault, "CS_RANGE_MID_CM"));
-  assert.strictEqual(p.present_debounce_ms, cs(cfgWell, "CS_PRESENT_DEBOUNCE_MS"));
+  assert.strictEqual(p.debounce_ms, cint(cfgDefault, "CS_PRESENT_DEBOUNCE_MS"));
+  assert.strictEqual(p.clear_ms, cint(cfgDefault, "CS_CLEAR_TIMEOUT_MS"));
+  assert.strictEqual(p.stall_ms, cint(cfgDefault, "CS_RADAR_STALL_MS"));
+  assert.strictEqual(p.near_cm, cint(cfgDefault, "CS_RANGE_NEAR_CM"));
+  assert.strictEqual(p.mid_cm, cint(cfgDefault, "CS_RANGE_MID_CM"));
+});
+
+test("vitals thresholds are the wellbeing config's own", () => {
   const v = data.fsm.vitals;
-  assert.strictEqual(v.lock_confirm_ms, cs(cfgWell, "CS_VITALS_LOCK_MS"));
-  assert.strictEqual(v.lock_lost_ms, cs(cfgWell, "CS_VITALS_LOST_MS"));
-  assert.strictEqual(v.breath_min_bpm, cs(cfgWell, "CS_BREATH_MIN_BPM"));
-  assert.strictEqual(v.breath_max_bpm, cs(cfgWell, "CS_BREATH_MAX_BPM"));
-  assert.strictEqual(v.heart_min_bpm, cs(cfgWell, "CS_HEART_MIN_BPM"));
-  assert.strictEqual(v.heart_max_bpm, cs(cfgWell, "CS_HEART_MAX_BPM"));
+  assert.strictEqual(v.lock_ms, cint(cfgWellbeing, "CS_VITALS_LOCK_MS"));
+  assert.strictEqual(v.lost_ms, cint(cfgWellbeing, "CS_VITALS_LOST_MS"));
+  assert.deepStrictEqual(v.breath_bpm, [cint(cfgWellbeing, "CS_BREATH_MIN_BPM"), cint(cfgWellbeing, "CS_BREATH_MAX_BPM")]);
+  assert.deepStrictEqual(v.heart_bpm, [cint(cfgWellbeing, "CS_HEART_MIN_BPM"), cint(cfgWellbeing, "CS_HEART_MAX_BPM")]);
 });
 
-test("pins match the board def", () => {
-  assert.strictEqual(data.pins.radar_tx, cs(pinsH, "RADAR_UART_TX"));
-  assert.strictEqual(data.pins.radar_rx, cs(pinsH, "RADAR_UART_RX"));
-  assert.strictEqual(data.pins.baud, cs(pinsH, "RADAR_UART_BAUD"));
-  assert.strictEqual(data.pins.sda, cs(pinsH, "I2C_PIN_SDA"));
-  assert.strictEqual(data.pins.scl, cs(pinsH, "I2C_PIN_SCL"));
-  assert.strictEqual(data.pins.led_pin, cs(pinsH, "LED_WS2812_PIN"));
+test("the LED grammar is main.cpp's led_for_presence, colour for colour", () => {
+  const rgb = {};
+  for (const s of data.fsm.presence.states) rgb[s.name] = s.rgb;
+  assert.ok(mainCpp.includes(`led_show(${rgb.Present.join(", ")})`), "Present LED drifted");
+  assert.ok(mainCpp.includes(`led_show(${rgb.Clear.join(", ")})`), "Clear LED drifted");
+  assert.ok(mainCpp.includes(`led_show(${rgb.Unknown.join(", ")})`), "Unknown LED drifted");
 });
 
-test("privacy vocabulary + events + canonical are the firmware's", () => {
+test("event names + chokepoint vocabulary are real firmware strings", () => {
+  for (const e of data.events) assert.ok(mainCpp.includes('"' + e + '"'), "event drifted: " + e);
   for (const w of ["present", "clear", "unknown", "near", "mid", "far", "2+"])
-    assert.ok(mainCpp.includes(`"${w}"`), w);
-  for (const e of data.privacy.events) assert.ok(mainCpp.includes(`"${e}"`), e);
-  assert.ok(mainCpp.includes("600UL) * 600UL"), "10-minute bucket");
-  assert.strictEqual(data.privacy.bucket_s, 600);
-  assert.ok(sigH.includes("|sense|"), "sense canonical domain");
-  assert.ok(data.privacy.canonical.startsWith("securacv-canary-sig|v1|sense|"));
+    assert.ok(mainCpp.includes('"' + w + '"'), "vocab drifted: " + w);
+  assert.ok(mainCpp.includes("(now_ms / 1000UL / 600UL) * 600UL"), "10-min bucketing drifted");
 });
 
-test("every entity id exists in ha_discovery.cpp; P1 gate is compile-time", () => {
-  assert.ok(data.entities.length >= 14);
-  for (const e of data.entities)
-    assert.ok(haCpp.includes(`_${e.id}`), "entity " + e.id);
-  assert.ok(haCpp.includes("CANARY_SENSE_VITALS"));
-  assert.ok(haCpp.includes("FEATURE_VITALS_BPM_P1"));
-  const bpm = data.entities.filter((e) => e.p1_only);
-  assert.strictEqual(bpm.length, 2, "exactly two P1 entities (breath/heart)");
+// ── 4. the radar protocol facts trace to the vendored decoder ──────────────
+test("wire-protocol frame ids are mr60_uart.h's constants", () => {
+  for (const f of data.radar.protocol.frames)
+    assert.ok(uartH.includes(f.id), "frame id drifted: " + f.id + " (" + f.name + ")");
+  assert.ok(uartH.includes("MR60_SOF = " + data.radar.protocol.sof));
+  assert.ok(uartH.includes("c ^= b; c = ~c;"), "checksum recipe drifted");
 });
 
-test("hardware + power tables come from the notes doc (drift both ways)", () => {
-  assert.ok(notesMd.includes("SIM:hardware") && notesMd.includes("SIM:power"));
-  assert.ok(notesMd.includes(String(data.hardware.fov_deg)), "fov in doc");
-  assert.ok(notesMd.includes("0.8 W"), "kit power anchor");
-  const rails = data.power.rails;
-  const total = rails.radar_mw + rails.c6_active_mw + rails.wifi_listen_mw +
-    rails.led_mw + rails.bh1750_mw;
-  assert.ok(total >= 700 && total <= 950,
-    "default rails must stay on the published 0.8 W kit anchor, got " + total);
+test("the kit wiring facts are pins.h's own", () => {
+  assert.match(data.radar.link, new RegExp("TX GPIO" + cint(pinsH, "RADAR_UART_TX")));
+  assert.match(data.radar.link, new RegExp("RX GPIO" + cint(pinsH, "RADAR_UART_RX")));
+  assert.match(data.radar.link, new RegExp(String(cint(pinsH, "RADAR_UART_BAUD"))));
 });
 
-// ---------------------------------------------------------------------------
-// 2. the DOM-free cores — pinned to the firmware host-test behaviors
-// ---------------------------------------------------------------------------
-
-const simP = import("../assets/sense-sim.js");
-const cardsP = import("../assets/canary-cards.js");
-
-test("wire golden: each frame type decodes like the firmware golden test", async () => {
-  const S = await simP;
-  const parser = new S.FrameParser();
-  parser.push(S.framePeople(true));
-  parser.push(S.frameCount(1));
-  parser.push(S.frameDistance(1.5)); // metres on the wire → 150 cm aggregate
-  parser.push(S.frameBreath(15.5));  // rounds half-up → 16
-  parser.push(S.frameHeart(72));
-  let last = null, n = 0;
-  for (let f = parser.poll(); f.kind !== S.FrameKind.None; f = parser.poll()) { last = f; n++; }
-  assert.strictEqual(n, 5);
-  assert.strictEqual(last.has_target, true);
-  assert.strictEqual(last.target_count, 1);
-  assert.strictEqual(last.distance_cm, 150);
-  assert.strictEqual(last.breath_rate, 16);
-  assert.strictEqual(last.heart_rate, 72);
-  assert.strictEqual(parser.errorCount(), 0);
-  assert.strictEqual(parser.unknownCount(), 0);
+// ── 5. provisioning is the README's own quickstart ─────────────────────────
+test("every provisioning command is in the firmware README", () => {
+  for (const s of data.provisioning.steps)
+    for (const cmd of s.cmd.split("   # or: "))
+      assert.ok(readme.includes(cmd.trim()), "quickstart cmd drifted: " + cmd);
 });
 
-test("absence zeroes the aggregate (no stale ride-along)", async () => {
-  const S = await simP;
-  const p = new S.FrameParser();
-  p.push(S.framePeople(true)); p.push(S.frameCount(2)); p.push(S.frameDistance(2.0));
-  p.push(S.framePeople(false));
-  let last = null;
-  for (let f = p.poll(); f.kind !== S.FrameKind.None; f = p.poll()) last = f;
-  assert.strictEqual(last.has_target, false);
-  assert.strictEqual(last.target_count, 0);
-  assert.strictEqual(last.distance_cm, 0);
+test("no-portal claims are true: no HTTP server, no SoftAP in the config", () => {
+  assert.ok(cfgDefault.includes("#define FEATURE_HTTP_SERVER         0"));
+  assert.ok(cfgDefault.includes("#define FEATURE_WIFI_AP             0"));
 });
 
-test("corruption raises error_count then resyncs on the next valid frame", async () => {
-  const S = await simP;
-  const p = new S.FrameParser();
-  const bad = S.framePeople(true);
-  bad[7] ^= 0xff; // wreck the header checksum
-  p.push(bad);
-  p.push(S.framePeople(true));
-  let got = 0;
-  for (let f = p.poll(); f.kind !== S.FrameKind.None; f = p.poll()) got++;
-  assert.ok(p.errorCount() >= 1, "corruption counted");
-  assert.ok(got >= 1, "recovered a valid frame after corruption");
+test("Track B facts are the design doc's own", () => {
+  assert.ok(design.includes("mqtt_statestream"));
+  assert.ok(design.includes("adapter-attested"));
+  assert.ok(design.includes("seeed_mr60bha2"));
 });
 
-test("well-framed unknown types are counted, not errors (phase waveform 0x0A13)", async () => {
-  const S = await simP;
-  const p = new S.FrameParser();
-  p.push(S.buildFrame(0x0a13, new Uint8Array(12)));
-  p.push(S.framePeople(true));
-  let got = 0;
-  for (let f = p.poll(); f.kind !== S.FrameKind.None; f = p.poll()) got++;
-  assert.strictEqual(p.unknownCount(), 1);
-  assert.strictEqual(p.errorCount(), 0);
-  assert.strictEqual(got, 1);
+// ── 6. MQTT topics + HA discovery trace to the firmware ────────────────────
+test("every topic suffix is built by topics.h", () => {
+  for (const t of data.mqtt.topics.concat(data.mqtt.subscribed))
+    assert.ok(topicsH.includes('"securacv/%s/' + t.suffix + '"'), "topic not in topics.h: " + t.suffix);
 });
 
-test("hostile floats are clamped, never UB-shaped", async () => {
-  const S = await simP;
-  const p = new S.FrameParser();
-  p.push(S.frameBreath(Infinity));
-  p.push(S.frameHeart(NaN));
-  p.push(S.frameDistance(Infinity));
-  p.push(S.frameDistance(-3));
-  let last = null;
-  for (let f = p.poll(); f.kind !== S.FrameKind.None; f = p.poll()) last = f;
-  assert.strictEqual(last.breath_rate, 65535);
-  assert.strictEqual(last.heart_rate, 0);
-  assert.strictEqual(last.distance_cm, 0); // the -3 came last → rejected to 0
+test("every HA entity object_id + name is in ha_discovery.cpp", () => {
+  for (const e of data.mqtt.discovery.entities) {
+    assert.ok(discCpp.includes('"' + e.object_id + '"'), "entity drifted: " + e.object_id);
+    assert.ok(discCpp.includes('\\"name\\":\\"' + e.name + '\\"'), "entity name drifted: " + e.name);
+  }
 });
 
-test("PresenceFSM: debounce, clear timeout, stall — the firmware integration walk", async () => {
-  const S = await simP;
+test("vitals entities are flavor-gated in the firmware, as the page claims", () => {
+  const idx = discCpp.indexOf("#ifdef CANARY_SENSE_VITALS");
+  assert.ok(idx > 0, "vitals gate missing");
+  for (const e of data.mqtt.discovery.entities.filter((x) => x.flavor !== "default"))
+    assert.ok(discCpp.indexOf('"' + e.object_id + '"') > idx,
+      e.object_id + " must be inside the CANARY_SENSE_VITALS gate");
+});
+
+test("only events + identify echo are non-retained", () => {
+  for (const t of data.mqtt.topics) {
+    const wantRetained = t.suffix !== "events" && t.suffix !== "identify";
+    assert.strictEqual(t.retained, wantRetained, t.suffix);
+  }
+});
+
+test("sandbox scenarios only publish to real topics", () => {
+  const suffixes = new Set(data.mqtt.topics.map((t) => t.suffix));
+  for (const sc of data.sandbox)
+    for (const pub of sc.mqtt || [])
+      assert.ok(suffixes.has(pub.suffix), "sandbox publishes unknown topic: " + pub.suffix);
+});
+
+// ── 7. serial log lines trace to firmware sources ──────────────────────────
+test("boot banner + radar scene anchors exist in the sources", () => {
+  const banner = read(join(REPO, "firmware/common/boot/boot_banner.cpp"));
+  for (const a of ["Waking up...", "This is your privacy witness device.", "The canary is singing."])
+    assert.ok(banner.includes(a), "banner drifted: " + a);
+  assert.ok(mainCpp.includes("Who is in the room?"));
+  assert.ok(data.serial.banner.some((l) => l.includes("SecuraCV Canary Sense")));
+  assert.ok(data.serial.banner.some((l) => l.includes("MR60BHA2 60GHz FMCW radar")));
+});
+
+test("runtime serial lines are main.cpp's own printf formats", () => {
+  assert.ok(mainCpp.includes('"[presence] -> %s%s"'));
+  assert.ok(mainCpp.includes('"[vitals] breathing %s%s"'));
+  assert.ok(mainCpp.includes('"[health] up %lus  heap %luKB  frame_errs %lu"'));
+});
+
+// ── 8. placement/tuning provenance discipline ──────────────────────────────
+test("every placement/tuning claim carries a source label", () => {
+  const SRC = new Set(["repo", "seeed", "esphome", "community"]);
+  for (const m of data.placement.mounts) assert.ok(SRC.has(m.src), "mount missing src");
+  for (const a of data.placement.avoid) assert.ok(SRC.has(a.src), "avoid missing src");
+  for (const k of data.tuning.knobs) assert.ok(SRC.has(k.src), "knob missing src");
+  for (const e of data.tuning.errors) assert.ok(SRC.has(e.src), "error missing src");
+  for (const f of data.tuning.reality.flags) assert.ok(SRC.has(f.src), "reality flag missing src");
+});
+
+test("repo-labeled tuning knobs carry the firmware's numbers", () => {
+  const knob = (n) => data.tuning.knobs.find((k) => k.name === n);
+  assert.strictEqual(knob("present_debounce_ms").value, data.fsm.presence.debounce_ms);
+  assert.strictEqual(knob("clear_timeout_ms").value, data.fsm.presence.clear_ms);
+  assert.strictEqual(knob("stall_timeout_ms").value, data.fsm.presence.stall_ms);
+});
+
+test("the single-target vitals rule is a code rule, and the page says so", () => {
+  assert.ok(mainCpp.includes("const bool single_target = (pev.count == CountBucket::One);"));
+  const err = data.tuning.errors.find((e) => e.cause.includes("2+ people"));
+  assert.ok(err && err.src === "repo");
+});
+
+// ── 9. DOM-free cores (sense-ui.js) — the lab runs firmware semantics ──────
+test("rangeBandOf mirrors band_of() at the firmware's gates", async () => {
+  const { rangeBandOf } = await import("../assets/sense-ui.js");
   const cfg = data.fsm.presence;
-  const fsm = new S.PresenceFSM(cfg);
-  fsm.reset(0);
-  const pf = (t) => ({ kind: S.FrameKind.Presence, has_target: t, target_count: t ? 1 : 0, distance_cm: t ? 100 : 0, breath_rate: 0, heart_rate: 0 });
-
-  // first data after boot lifts Unknown→Clear promptly
-  let ev = fsm.tick(pf(true), 10);
-  assert.strictEqual(fsm.state, S.Presence.Clear);
-  // sustained target settles to Present via the debounce
-  ev = fsm.tick(pf(true), 10 + cfg.present_debounce_ms);
-  assert.strictEqual(fsm.state, S.Presence.Present);
-  assert.ok(ev.state_changed);
-  assert.strictEqual(fsm.count, S.CountBucket.One);
-  assert.strictEqual(fsm.range, S.RangeBand.Near); // 100 cm <= near_cm
-
-  // absence: holds through the clear window, then Clear
-  const t0 = 10 + cfg.present_debounce_ms;
-  fsm.tick(pf(false), t0 + 10);
-  assert.strictEqual(fsm.state, S.Presence.Present, "clear timeout not yet elapsed");
-  ev = fsm.tick(pf(false), t0 + 10 + cfg.clear_timeout_ms);
-  assert.strictEqual(fsm.state, S.Presence.Clear);
-
-  // silence: the stall deadline drives Unknown even with no frames at all
-  const t1 = t0 + 10 + cfg.clear_timeout_ms;
-  ev = fsm.tick({ kind: S.FrameKind.None }, t1 + cfg.stall_timeout_ms + 1);
-  assert.strictEqual(fsm.state, S.Presence.Unknown);
-  assert.ok(ev.stalled);
+  assert.strictEqual(rangeBandOf(cfg.near_cm, cfg), "near");
+  assert.strictEqual(rangeBandOf(cfg.near_cm + 1, cfg), "mid");
+  assert.strictEqual(rangeBandOf(cfg.mid_cm, cfg), "mid");
+  assert.strictEqual(rangeBandOf(cfg.mid_cm + 1, cfg), "far");
+  assert.strictEqual(rangeBandOf(0, cfg), "unknown");
 });
 
-test("VitalsFSM: lock confirm, instant multi-target suppression, deadline loss", async () => {
-  const S = await simP;
-  const cfg = data.fsm.vitals;
-  const fsm = new S.VitalsFSM(cfg);
-  fsm.reset(0);
-  const vf = { kind: S.FrameKind.Vitals, has_target: true, target_count: 1, distance_cm: 90, breath_rate: 16, heart_rate: 70 };
-
-  fsm.tick(vf, true, 10);
-  assert.strictEqual(fsm.lock, S.VitalsLock.Lost, "seen data, not yet confirmed");
-  let ev = fsm.tick(vf, true, 10 + cfg.lock_confirm_ms);
-  assert.strictEqual(fsm.lock, S.VitalsLock.Locked);
-  assert.ok(ev.bpm_valid);
-  assert.strictEqual(ev.heart_bpm, 70);
-
-  // a second person appears: BPM reporting stops IMMEDIATELY, lock rides its window
-  ev = fsm.tick(vf, false, 30 + cfg.lock_confirm_ms);
-  assert.strictEqual(ev.bpm_valid, false);
-  assert.strictEqual(ev.breath_bpm, 0);
-
-  // silence past the lost deadline → Lost via the deadline-first branch
-  ev = fsm.tick({ kind: S.FrameKind.None }, true, 30 + cfg.lock_confirm_ms + cfg.lock_lost_ms + 1);
-  assert.strictEqual(fsm.lock, S.VitalsLock.Lost);
-  assert.ok(ev.stalled);
+test("countBucketOf buckets 0/1/2+ and never a precise count", async () => {
+  const { countBucketOf } = await import("../assets/sense-ui.js");
+  assert.strictEqual(countBucketOf(0), "0");
+  assert.strictEqual(countBucketOf(1), "1");
+  assert.strictEqual(countBucketOf(2), "2+");
+  assert.strictEqual(countBucketOf(7), "2+");
 });
 
-test("vitals lock survives real interleaved traffic (the bench-found firmware bug)", async () => {
-  // Regression twin of firmware/tests_host test_vitals_lock_survives_
-  // interleaved_presence: presence frames at 10 Hz + empty loop() ticks
-  // between 1 Hz vitals reports must not reset the confirm window.
-  const S = await simP;
-  const cfg = data.fsm.vitals;
-  const fsm = new S.VitalsFSM(cfg);
-  fsm.reset(0);
-  const vf = { kind: S.FrameKind.Vitals, breath_rate: 16, heart_rate: 70 };
-  const pf = { kind: S.FrameKind.Presence, has_target: true, target_count: 1, distance_cm: 100, breath_rate: 16, heart_rate: 70 };
-  fsm.tick(vf, true, 0);
-  let ev;
-  for (let t = 100; t <= cfg.lock_confirm_ms + 1000; t += 100) {
-    if (t % 1000 === 0) ev = fsm.tick(vf, true, t);
-    else { fsm.tick(pf, true, t); ev = fsm.tick({ kind: S.FrameKind.None }, true, t); }
-  }
-  assert.strictEqual(fsm.lock, S.VitalsLock.Locked, "interleaved traffic must not prevent the lock");
-  assert.ok(ev.bpm_valid && ev.heart_bpm === 70);
-  // non-vitals ticks still suppress BPM the instant a second person appears
-  ev = fsm.tick({ kind: S.FrameKind.None }, false, cfg.lock_confirm_ms + 1100);
-  assert.strictEqual(ev.bpm_valid, false);
+test("the presence FSM debounces, clears and stalls at the real constants", async () => {
+  const { makePresenceFSM } = await import("../assets/sense-ui.js");
+  const cfg = data.fsm.presence;
+  const fsm = makePresenceFSM(cfg);
+  let t = 1000;
+  fsm.reset(t);
+  const target = { hasTarget: true, count: 1, distanceCm: 200 };
+  const empty = { hasTarget: false, count: 0, distanceCm: 0 };
+  // a target must SUSTAIN the debounce window before Present
+  fsm.tick(target, t);
+  fsm.tick(target, t + cfg.debounce_ms - 50);
+  assert.notStrictEqual(fsm.state, "present", "fired before debounce");
+  fsm.tick(target, t + cfg.debounce_ms);
+  assert.strictEqual(fsm.state, "present");
+  assert.strictEqual(fsm.range, "mid");
+  // absence must sustain clear_ms before Clear
+  t += 5000;
+  fsm.tick(empty, t);
+  fsm.tick(empty, t + cfg.clear_ms - 50);
+  assert.strictEqual(fsm.state, "present", "cleared too early");
+  fsm.tick(empty, t + cfg.clear_ms);
+  assert.strictEqual(fsm.state, "clear");
+  // silence (no frame at all) past stall_ms is Unknown — deadline before data
+  const ev = fsm.tick(null, t + cfg.clear_ms + cfg.stall_ms);
+  assert.strictEqual(fsm.state, "unknown");
+  assert.ok(ev.stalled, "stall transition must be flagged");
 });
 
-test("an ambiguous interval resets the acquiring run (Codex review regression)", async () => {
-  // Twin of firmware test_vitals_ambiguity_resets_acquiring_run: a second
-  // person visible only on non-vitals ticks must restart the confirm window
-  // — a lock may never be acquired on credit that straddles count != 1.
-  const S = await simP;
-  const cfg = data.fsm.vitals;
-  const fsm = new S.VitalsFSM(cfg);
-  fsm.reset(0);
-  const vf = { kind: S.FrameKind.Vitals, breath_rate: 16, heart_rate: 70 };
-  const pf = { kind: S.FrameKind.Presence, has_target: true, target_count: 2, distance_cm: 100, breath_rate: 16, heart_rate: 70 };
-  fsm.tick(vf, true, 0);
-  for (let t = 1000; t <= 3000; t += 1000) fsm.tick(vf, true, t);
-  assert.strictEqual(fsm.lock, S.VitalsLock.Lost);
-
-  fsm.tick(pf, false, 3300); // second person, non-vitals tick only
-
-  let ev = fsm.tick(vf, true, 4500); // old run would have confirmed by now
-  assert.strictEqual(fsm.lock, S.VitalsLock.Lost, "must not lock across ambiguity");
-  assert.strictEqual(ev.bpm_valid, false);
-
-  for (let t = 5500; t <= 4500 + cfg.lock_confirm_ms; t += 1000) ev = fsm.tick(vf, true, t);
-  assert.strictEqual(fsm.lock, S.VitalsLock.Locked, "clean restarted run locks");
+test("the vitals FSM locks only on sustained single-target vitals", async () => {
+  const { makeVitalsFSM } = await import("../assets/sense-ui.js");
+  const v = data.fsm.vitals;
+  const fsm = makeVitalsFSM(v);
+  let t = 1000;
+  fsm.reset(t);
+  fsm.tick(true, true, t);
+  fsm.tick(true, true, t + v.lock_ms - 50);
+  assert.notStrictEqual(fsm.lock, "locked", "locked before the confirm window");
+  fsm.tick(true, true, t + v.lock_ms);
+  assert.strictEqual(fsm.lock, "locked");
+  // a second person (singleTarget=false) must drop the lock after lost_ms
+  t += 10000;
+  fsm.tick(true, false, t);
+  fsm.tick(true, false, t + v.lost_ms);
+  assert.strictEqual(fsm.lock, "lost", "2+ targets must lose the lock");
 });
 
-test("implausible vitals are rejected by the config bands", async () => {
-  const S = await simP;
-  const cfg = data.fsm.vitals;
-  const fsm = new S.VitalsFSM(cfg);
-  fsm.reset(0);
-  // the empty-room phantom: heart nonzero, breath zero (Seeed-documented fan artifact)
-  const phantom = { kind: S.FrameKind.Vitals, breath_rate: 0, heart_rate: 80 };
-  fsm.tick(phantom, true, 10);
-  fsm.tick(phantom, true, 10 + cfg.lock_confirm_ms * 2);
-  assert.notStrictEqual(fsm.lock, S.VitalsLock.Locked, "phantom must never lock");
-});
-
-test("placement physics: the Seeed bedside geometry is the strong placement", async () => {
-  const S = await simP;
-  const hw = data.hardware;
-  const bedside = {
-    mount: "stand", mountHeight: 1.0, tiltDeg: 45,
-    person: { x: 0.9, y: 0, posture: "lying", orientation: "facing", moving: false },
-    secondPerson: false, fan: false, truth: { breathBpm: 14, heartBpm: 68 },
-  };
-  const q1 = S.vitalsQuality(bedside, hw);
-  assert.ok(q1.quality > 0.6, "bedside quality " + q1.quality);
-
-  const acrossRoom = { ...bedside, tiltDeg: 5, person: { ...bedside.person, x: 3.2, posture: "standing" } };
-  const q2 = S.vitalsQuality(acrossRoom, hw);
-  assert.ok(q2.quality < q1.quality, "3 m must be worse than bedside");
-  assert.ok(q2.reasons.some((r) => r.includes("vitals envelope")), "names the envelope");
-
-  const moving = { ...bedside, person: { ...bedside.person, moving: true } };
-  assert.strictEqual(S.vitalsQuality(moving, hw).quality, 0, "motion kills vitals");
-
-  const twoPeople = { ...bedside, secondPerson: true };
-  assert.ok(S.vitalsQuality(twoPeople, hw).reasons.some((r) => r.includes("suppress")),
-    "multi-person names the firmware suppression");
-});
-
-test("power model: calibrated to the kit anchor; modem sleep is the lever", async () => {
-  const S = await simP;
-  const rails = data.power.rails;
-  const base = { modemSleep: false, heartbeatS: 5, eventsPerHour: 12, txPerEventMs: 40, ledOn: true, lux: true };
-  const m1 = S.powerModel(base, rails);
-  assert.ok(m1.totalMw > 700 && m1.totalMw < 950, "default total on the 0.8 W anchor: " + m1.totalMw);
-  const m2 = S.powerModel({ ...base, modemSleep: true }, rails);
-  assert.ok(m2.totalMw < m1.totalMw - 150, "modem sleep saves > 150 mW");
-  assert.ok(m1.sensingShare > 0.5, "sensing must dominate the heat budget");
-  assert.ok(m1.claimsPerJoule > 0);
-});
-
-test("the sense canonical matches the locked v1 format", async () => {
-  const S = await simP;
-  const c = S.senseCanonical("canary_sense_lab", 7, "presence_detected", "present", "1", "near", 600);
-  assert.strictEqual(c,
-    "securacv-canary-sig|v1|sense|canary_sense_lab|7|presence_detected|present|1|near|600");
-  assert.strictEqual(S.bucketUptime(11 * 60 * 1000), 600);
-});
-
-// ---------------------------------------------------------------------------
-// 3. Canary Cards — schema contract
-// ---------------------------------------------------------------------------
-
-test("every sense card validates against the schema; entity join keys hold", async () => {
-  const C = await cardsP;
-  const snap = {
-    presence: "present", count: "1", range: "near", radar_ok: true, frame_errors: 0,
-    lux: 140, last_event: "presence_detected",
-    breathing_locked: true, bpm_valid: true, breath_bpm: 14, heart_bpm: 68,
-  };
-  const meta = { vitalsBuild: true, p1OptIn: true, chain: { length: 4, badge: "verified", signed: true }, trend: { breath: [14, 15], heart: [68, 69] } };
-  const cards = C.senseCards(snap, meta);
-  assert.ok(cards.length >= 10);
-  const entityIds = new Set(data.entities.map((e) => e.id));
-  for (const card of cards) {
-    const errs = C.validateCard(card);
-    assert.deepStrictEqual(errs, [], card.id + ": " + errs.join("; "));
-    if (card.id !== "chain") assert.ok(entityIds.has(card.id), card.id + " is a real HA entity");
-  }
-});
-
-test("presence-only build renders BPM cards as provably absent — never silently missing", async () => {
-  const C = await cardsP;
-  const snap = { presence: "clear", count: "0", range: "unknown", radar_ok: true, frame_errors: 0, lux: 10, last_event: "boot" };
-  const cards = C.senseCards(snap, { vitalsBuild: false, p1OptIn: false, chain: { length: 0, badge: "unknown" }, trend: { breath: [], heart: [] } });
-  const byId = Object.fromEntries(cards.map((c) => [c.id, c]));
-  assert.strictEqual(byId.breathing.absent, true);
-  assert.strictEqual(byId.breath_rate.absent, true);
-  assert.strictEqual(byId.heart_rate.absent, true);
-  assert.strictEqual(byId.presence.absent, undefined, "presence card present in every build");
-  for (const c of cards) assert.deepStrictEqual(C.validateCard(c), []);
-});
-
-test("the cards doc pins the invariant the code implements", () => {
-  const doc = read(join(REPO, "docs/standard/CANARY_CARDS.md"));
-  assert.ok(doc.includes("one entity to one card"));
-  assert.ok(doc.includes("CARD_SCHEMA_V") || doc.includes("schema v1"));
+test("bootLines flattens banner+boot+ready in order with mapped classes", async () => {
+  const { bootLines } = await import("../assets/sense-ui.js");
+  const lines = bootLines(data.serial);
+  assert.strictEqual(lines.length,
+    data.serial.banner.length + data.serial.boot.length + data.serial.ready.length);
+  for (const l of lines) { assert.ok(typeof l.text === "string"); assert.ok(/^wap-/.test(l.cls)); }
 });

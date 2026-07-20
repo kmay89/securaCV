@@ -10,7 +10,7 @@ Firmware project (new): `firmware/projects/canary-sense`
 Sibling hardware (follow-on, same protocol family): MR60FDA2 fall-detection kit
 Hardware deep-dive (chip, placement physics, power, bench flags):
 [`docs/hardware/mr60bha2_radar_notes.md`](./hardware/mr60bha2_radar_notes.md) ·
-Interactive bench: **the Sense Lab**, `canary-local/sense.html` (drift-gated
+Interactive bench: **the Sense Lab**, `canary-local/senselab.html` (drift-gated
 against this firmware; widget-card layer in
 [`docs/standard/CANARY_CARDS.md`](./standard/CANARY_CARDS.md))
 

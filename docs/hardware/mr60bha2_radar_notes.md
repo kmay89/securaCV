@@ -2,8 +2,8 @@
 
 Deep-dive hardware notes for the Canary Sense radar (Seeed MR60BHA2 60 GHz
 kit, XIAO ESP32-C6 host). This file is the **source of truth for the Sense
-Lab's physics and power model**: `canary-local/tools/gen_sense.py` parses the
-`SIM:` tables below into `canary-local/devices/sense.json` and CI drift-gates
+Lab's physics and power model**: `canary-local/tools/gen_senselab.py` parses the
+`SIM:` tables below into `canary-local/devices/senselab.json` and CI drift-gates
 them, the same anti-rot contract as every other generated page. Change a
 number here and the bench page changes with it — nothing is written twice.
 

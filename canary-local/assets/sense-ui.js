@@ -1,713 +1,907 @@
-// canary-local/assets/sense-ui.js — the Sense Lab's surfaces.
+// canary-local/assets/sense-ui.js — the Canary Sense bench widgets.
 //
-// DOM widget builders for sense.html, all driven by devices/sense.json (the
-// generated, drift-gated data) + the DOM-free cores in sense-sim.js. Layout:
+// Staged surfaces for the canary-sense device (XIAO ESP32-C6 + MR60BHA2
+// 60 GHz mmWave), all fed from the drift-gated devices/sense.json
+// (tools/gen_sense.py parses the firmware):
 //
-//   buildProtocol   the wire — frame table, [BENCH] assumptions, checksum
-//   buildStage      the placement bench — top-down + side view, drag the
-//                   person, mount/height/tilt, live FoV + vitals quality
-//   buildConsole    the pipeline — UART hex → decoded frames → FSM states →
-//                   privacy chokepoint → signed witness events
-//   buildKnobs      FSM tunables (the CS_* values as live sliders) + flavor
-//   buildPowerLab   heat → useful computation: rails, duty cycles, claims/J
-//   buildGlassBridge  stage this witness on the real display firmware (wasm)
+//   · buildDevice    — the radome in 3D + the kit's real wiring facts + the
+//                      WS2812 LED grammar (green/blue/amber straight from
+//                      main.cpp's led_for_presence()).
+//   · buildProvision — the USB provisioning walkthrough: secrets.h, the two
+//                      build flavors, the NVS policy that makes identity
+//                      survive OTA — and the Track B stock-ESPHome on-ramp.
+//   · buildSerial    — the USB-CDC console: the real boot scenes + net
+//                      bring-up log, then the live [presence]/[vitals] lines.
+//   · buildRadarLab  — the placement lab: a top-down room with the real
+//                      80° cone and the firmware's own range gates; drag
+//                      people (and a cat, and a fan) through it and watch
+//                      the ACTUAL presence FSM — same thresholds, mirrored
+//                      in JS — debounce, clear, and suppress vitals.
+//   · buildMqtt      — an MQTT-explorer view: retained topics fill on
+//                      connect, signed events stream on transitions.
+//   · buildEntities  — the HA discovery set, flavor-gated exactly like the
+//                      firmware compiles it (BPM entities absent, not hidden).
+//   · buildPlacement / buildTuning — the max-capability playbook, each claim
+//                      labeled with where it comes from (repo / seeed / community).
 //
-// Everything numeric comes from sense.json; nothing is hardcoded here.
-// The DOM-free scene/quality/power math lives in sense-sim.js (tested).
+// Everything is wired through a tiny shared bus (see sense.js) so one action
+// ripples across all surfaces at once, the way it would on a real bench.
+// Nothing is faked past what the firmware strings say; where a claim comes
+// from outside the repo, its source badge says so to your face.
 
-import {
-  radarView, vitalsQuality, powerModel, TYPE_NAMES,
-} from "./sense-sim.js";
+import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { upgradeRealShape } from "./real-shapes.js";
+import { withId, mqttApply } from "./wap-ui.js";
 
-const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
   return n;
 };
-const svgel = (tag, attrs = {}) => {
-  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-  return n;
-};
-const fmt = (x, d = 1) => (Math.round(x * 10 ** d) / 10 ** d).toFixed(d);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const alive = (node) => document.body.contains(node);
 
-// ============================================================================
-// §protocol — the wire, said out loud
-// ============================================================================
+// ── DOM-free cores (exported; pinned in tests/sense.test.js) ──────────────
 
-export function buildProtocol(data) {
-  const wrap = el("div", "sense-proto");
+// Flatten the serial data into one ordered list of {cls,text} console lines:
+// the banner scenes, the tagged net bring-up log, then the ready scene —
+// the exact order main.cpp's setup() prints them.
+export function bootLines(serial) {
+  const out = [];
+  for (const t of serial.banner || []) out.push({ cls: "wap-b", text: t });
+  for (const s of serial.boot || []) {
+    const kind = (serial.tags || {})[s.tag] || "prov";
+    const cls = { done: "ok", wifi: "net", mqtt: "net", witness: "prov", heap: "faint" }[kind] || "prov";
+    out.push({ cls: "wap-" + cls, text: `${s.tag} ${s.text}`.trim() });
+  }
+  for (const t of serial.ready || []) out.push({ cls: "wap-b", text: t });
+  return out;
+}
 
+// The privacy chokepoint's range gate, mirrored: raw centimetres in, coarse
+// band out. Same comparisons as mr60_presence.cpp's band_of().
+export function rangeBandOf(cm, cfg) {
+  if (!(cm > 0)) return "unknown";
+  if (cm <= cfg.near_cm) return "near";
+  if (cm <= cfg.mid_cm) return "mid";
+  return "far";
+}
+
+// Bucketed occupant count — the 0/1/2+ vocabulary, never a track log.
+export function countBucketOf(n) {
+  return n <= 0 ? "0" : n === 1 ? "1" : "2+";
+}
+
+// A JS mirror of the firmware's PresenceFSM (mr60_presence): debounce into
+// Present, timeout into Clear, stall into Unknown — deadline checks first,
+// so a silent radar (frame == null) still drives the stall. Thresholds come
+// straight from sense.json (the firmware's own CS_* constants).
+export function makePresenceFSM(cfg) {
+  let state = "unknown", lastFrame = 0, targetSince = 0, targetGone = 0, rawTarget = false;
+  let count = "0", range = "unknown";
+  return {
+    get state() { return state; },
+    get count() { return count; },
+    get range() { return range; },
+    reset(now) { state = "unknown"; lastFrame = now; rawTarget = false; count = "0"; range = "unknown"; },
+    tick(frame, now) {
+      const before = state, beforeCount = count;
+      // deadline first: silence past the stall window is Unknown, always
+      if (now - lastFrame >= cfg.stall_ms) { state = "unknown"; range = "unknown"; }
+      if (frame) {
+        lastFrame = now;
+        if (frame.hasTarget) {
+          if (!rawTarget) { rawTarget = true; targetSince = now; }
+          if (state !== "present" && now - targetSince >= cfg.debounce_ms) state = "present";
+          if (state === "unknown" && now - targetSince < cfg.debounce_ms) { /* stay until debounced */ }
+          count = countBucketOf(frame.count);
+          range = rangeBandOf(frame.distanceCm, cfg);
+        } else {
+          if (rawTarget) { rawTarget = false; targetGone = now; }
+          if (state === "present") {
+            if (now - targetGone >= cfg.clear_ms) { state = "clear"; count = "0"; range = "unknown"; }
+          } else {
+            state = "clear"; count = "0"; range = "unknown";
+          }
+        }
+      }
+      return {
+        state, count, range,
+        stateChanged: state !== before,
+        countChanged: count !== beforeCount,
+        stalled: state === "unknown" && before !== "unknown",
+      };
+    },
+  };
+}
+
+// The vitals lock mirror (mr60_vitals): plausible vitals must sustain
+// lock_ms with EXACTLY one target; anything else drains toward lost. The
+// single-target rule is the firmware's hard suppress, not advice.
+export function makeVitalsFSM(cfg) {
+  let lock = "unknown", validSince = 0, lastValid = 0, wasValid = false;
+  return {
+    get lock() { return lock; },
+    reset(now) { lock = "unknown"; wasValid = false; validSince = lastValid = now; },
+    tick(plausible, singleTarget, now) {
+      const before = lock;
+      const valid = plausible && singleTarget;
+      if (valid) {
+        if (!wasValid) { wasValid = true; validSince = now; }
+        lastValid = now;
+        if (lock !== "locked" && now - validSince >= cfg.lock_ms) lock = "locked";
+      } else {
+        wasValid = false;
+        if (lock === "locked" && now - lastValid >= cfg.lost_ms) lock = "lost";
+        if (lock === "unknown" && now - lastValid >= cfg.lost_ms) lock = "lost";
+      }
+      return { lock, changed: lock !== before };
+    },
+  };
+}
+
+// Presence state → the WS2812 colour main.cpp shows for it.
+export function ledFor(state, fsm) {
+  const s = (fsm.presence.states || []).find((x) => x.name.toLowerCase() === state);
+  return s ? { led: s.led, rgb: s.rgb } : { led: "amber", rgb: [24, 8, 0] };
+}
+
+const STATE_PILL = { present: "wap-pill-presence", clear: "wap-pill-quiet", unknown: "wap-pill-off" };
+const LED_CSS = { green: "#3ddc84", blue: "#4f8cff", amber: "#e0a03c", white: "#f2f2f2" };
+
+// ── source badges — where a claim comes from ──────────────────────────────
+const SRC_LABEL = { repo: "repo · CI-gated", seeed: "Seeed wiki", esphome: "ESPHome docs", community: "community" };
+function srcBadge(src) {
+  return el("span", "sense-src sense-src-" + (src || "repo"), SRC_LABEL[src] || src);
+}
+
+// ── the device: radome in 3D + wiring facts + LED grammar ─────────────────
+export function buildDevice(data, bus) {
+  const wrap = el("div", "wap-plug sense-device");
+  const stage = el("div", "wap-plug-stage");
+  const cv = el("canvas", "wap-plug-3d");
+  cv.setAttribute("aria-label", "Interactive 3D render of the Canary Sense radome");
+  stage.append(cv, el("div", "asmlab-hint", "drag to orbit · pinch or scroll to zoom"));
+  const scene = new DeviceScene(cv, null);
+  BUILDERS["canary-sense"](scene);
+  // the printed RADOME shells, if the preview meshes are present; the
+  // stylised radome stays otherwise — same graceful path as the family cards
+  upgradeRealShape(scene, "canary-sense");
+  scene.start();
+
+  const side = el("div", "wap-plug-side");
+  side.append(el("h3", "wap-col-h", "the kit, wired the way it ships"));
+  side.append(el("p", "muted",
+    "The RADOME shell: the front over the antenna is a thin, flat membrane — 60 GHz " +
+    "transparency demands it (the air gap is computed and asserted in the OpenSCAD model). " +
+    "Inside, the radar talks to the host over one UART:"));
   const facts = el("div", "wap-facts");
   for (const [k, v] of [
-    ["Link", `UART${data.pins.uart_num} · TX GPIO${data.pins.radar_tx} → radar · RX GPIO${data.pins.radar_rx} ← radar · ${data.pins.baud} 8N1`],
-    ["Frame", `SOF 0x01 · id/len/type big-endian · payload little-endian · XOR-fold ~invert checksums ×2`],
-    ["Radar", `${data.hardware.soc} — the IQ data never crosses this link; scalars only`],
+    ["Radar", data.radar.module + " · " + data.radar.band],
+    ["Brain", data.radar.soc],
+    ["Host", data.radar.host],
+    ["Link", data.radar.link],
+    ["Extras", data.radar.peripherals.join("  ·  ")],
   ]) {
     const row = el("div", "wap-fact");
     row.append(el("span", "wap-fact-k", k), el("span", "wap-fact-v", v));
     facts.append(row);
   }
-  wrap.append(facts);
+  side.append(facts);
 
-  const tbl = el("table", "sense-frames pin-table");
-  const thead = el("thead");
-  const hr = el("tr");
-  for (const h of ["type id", "frame", "payload"]) hr.append(el("th", null, h));
-  thead.append(hr);
-  tbl.append(thead);
-  const tb = el("tbody");
-  for (const f of data.protocol.frames) {
-    const tr = el("tr");
-    tr.append(el("td", "sense-mono", f.type_hex));
-    tr.append(el("td", null, f.name));
-    tr.append(el("td", "muted", f.payload));
-    tb.append(tr);
+  // LED grammar — the state colours from main.cpp, live on the bench
+  const ledRow = el("div", "sense-leds");
+  const dots = {};
+  for (const s of data.fsm.presence.states) {
+    const d = el("div", "sense-led");
+    const dot = el("i");
+    dot.style.background = LED_CSS[s.led];
+    d.append(dot, el("strong", null, s.name), el("span", "muted fineprint", s.meaning));
+    dots[s.name.toLowerCase()] = dot;
+    ledRow.append(d);
   }
-  tbl.append(tb);
-  wrap.append(tbl);
+  side.append(el("h3", "wap-col-h", "the LED speaks presence"), ledRow);
+  bus.on("state", ({ state }) => {
+    for (const k in dots) dots[k].classList.toggle("on", k === state);
+  });
 
-  const bench = el("div", "sense-bench");
-  bench.append(el("h4", null, "The [BENCH] list — assumptions this lab lets you rehearse"));
-  const ul = el("ul");
-  for (const b of data.protocol.bench) ul.append(el("li", null, b));
-  bench.append(ul);
-  bench.append(el("p", "fineprint",
-    "Quoted verbatim from firmware/common/sensors/mmwave_mr60/mr60_uart.h — the open " +
-    "hardware-bench items. The stream below is built on exactly these assumptions, " +
-    "so when the bench proves one wrong, this page and the firmware change together."));
-  wrap.append(bench);
+  const priv = el("p", "ondevice wap-note");
+  priv.append(el("strong", null, "The privacy story: "), document.createTextNode(data.radar.privacy));
+  side.append(priv);
+
+  wrap.append(stage, side);
   return wrap;
 }
 
-// ============================================================================
-// §stage — the placement bench
-// ============================================================================
-//
-// scene state is owned by the page driver (sense.js); this builds the two
-// views + controls and calls onChange() whenever the user moves something.
+// ── provisioning: Track A (USB seeds NVS) + Track B (stock ESPHome) ───────
+export function buildProvision(data, bus) {
+  const p = data.provisioning;
+  const wrap = el("div", "sense-prov");
 
-const STAGE = { W: 460, H: 380, SCALE: 52, MX: 30 }; // px per metre, margins
-
-export function buildStage(data, scene, onChange) {
-  const hw = data.hardware;
-  const wrap = el("div", "sense-stage");
-
-  // ---- controls ----
-  const ctl = el("div", "sense-stage-ctl");
-
-  const mountRow = el("div", "sense-ctl-row");
-  mountRow.append(el("span", "sense-ctl-k", "mount"));
-  for (const m of data.placement.mounts) {
-    const b = el("button", "ghost small" + (scene.mount === m.id ? " on" : ""), m.label);
-    b.dataset.mount = m.id;
-    b.addEventListener("click", () => {
-      scene.mount = m.id;
-      scene.mountHeight = m.height_m;
-      scene.tiltDeg = m.tilt_deg;
-      if (m.person) Object.assign(scene.person, m.person);
-      onChange();
-    });
-    mountRow.append(b);
+  const two = el("div", "wap-two");
+  const left = el("div", "wap-two-col");
+  left.append(el("h3", "wap-col-h", "1 · fill in secrets.h (it never leaves your machine)"));
+  const sec = el("div", "wap-facts sense-secrets");
+  for (const f of p.secrets_fields) {
+    const row = el("div", "wap-fact");
+    row.append(el("span", "wap-fact-k", "#define " + f.macro), el("span", "wap-fact-v muted", f.hint));
+    sec.append(row);
   }
-  ctl.append(mountRow);
+  left.append(sec);
 
-  const sliders = [
-    ["height", "mount height", 0.3, 3.0, 0.05, "m",
-      () => scene.mountHeight, (v) => { scene.mountHeight = v; }],
-    ["tilt", "tilt (down)", 0, 60, 1, "°",
-      () => scene.tiltDeg, (v) => { scene.tiltDeg = v; }],
-  ];
-  for (const [id, label, min, max, step, unit, get, set] of sliders) {
-    const row = el("div", "sense-ctl-row");
-    row.append(el("span", "sense-ctl-k", label));
-    const s = el("input");
-    s.type = "range"; s.min = min; s.max = max; s.step = step; s.value = get();
-    s.id = "sense-stage-" + id;
-    const out = el("span", "sense-ctl-v", fmt(get(), step < 1 ? 2 : 0) + " " + unit);
-    s.addEventListener("input", () => {
-      set(parseFloat(s.value));
-      out.textContent = fmt(get(), step < 1 ? 2 : 0) + " " + unit;
-      onChange();
-    });
-    row.append(s, out);
-    ctl.append(row);
+  left.append(el("h3", "wap-col-h", "2 · pick a flavor"));
+  const flav = el("div", "sense-flavors");
+  for (const f of p.envs) {
+    const c = el("div", "card sense-flavor");
+    c.append(el("strong", null, f.label), el("code", "fineprint", f.id), el("span", "muted", f.note));
+    flav.append(c);
   }
+  left.append(flav);
 
-  const person = el("div", "sense-ctl-row");
-  person.append(el("span", "sense-ctl-k", "person"));
-  for (const [key, opts] of [
-    ["posture", ["standing", "sitting", "lying"]],
-    ["orientation", ["facing", "side", "back"]],
-  ]) {
-    const sel = el("select", "sense-sel");
-    for (const o of opts) {
-      const op = el("option", null, o);
-      op.value = o;
-      if (scene.person[key] === o) op.selected = true;
-      sel.append(op);
-    }
-    sel.dataset.pkey = key;
-    sel.addEventListener("change", () => { scene.person[key] = sel.value; onChange(); });
-    person.append(sel);
+  const right = el("div", "wap-two-col");
+  right.append(el("h3", "wap-col-h", "3 · flash once over USB-C"));
+  const term = el("div", "wap-cmds");
+  for (const s of p.steps) {
+    term.append(el("div", "wap-cmd-note", "# " + s.title + " — " + s.detail));
+    term.append(el("div", "wap-cmd", "$ " + s.cmd));
   }
-  ctl.append(person);
+  right.append(term);
 
-  const toggles = el("div", "sense-ctl-row sense-toggles");
-  for (const [key, label] of [
-    ["moving", "moving"], ["secondPerson", "second person"], ["fan", "fan in room"],
-  ]) {
-    const b = el("button", "ghost small" + (scene[key] || scene.person[key] ? " on" : ""), label);
-    b.dataset.toggle = key;
-    b.addEventListener("click", () => {
-      if (key === "moving") scene.person.moving = !scene.person.moving;
-      else scene[key] = !scene[key];
-      b.classList.toggle("on");
-      onChange();
-    });
-    toggles.append(b);
+  const nvs = el("div", "sense-nvs");
+  nvs.append(el("h4", "wap-flash-h", "Why once is enough — the NVS policy"));
+  const ul = el("ul", "wap-btn-gestures");
+  for (const line of p.nvs_policy) ul.append(el("li", null, line));
+  nvs.append(ul);
+  right.append(nvs);
+
+  two.append(left, right);
+  wrap.append(two);  // p.intro is the section lede — sense.js renders it once
+
+  // Track B — the honest on-ramp card
+  const tb = el("details", "fix sense-trackb");
+  tb.append(el("summary", null, p.trackb.title));
+  tb.append(el("p", "muted", p.trackb.body));
+  const paths = el("div", "sense-flavors");
+  for (const path of p.trackb.paths) {
+    const c = el("div", "card sense-flavor");
+    c.append(el("strong", null, path.name), el("span", "muted", path.how));
+    paths.append(c);
   }
-  ctl.append(toggles);
-
-  // ---- the two views ----
-  const views = el("div", "sense-views");
-  const top = svgel("svg", { viewBox: `0 0 ${STAGE.W} ${STAGE.H}`, class: "sense-view", "aria-label": "top-down view" });
-  const side = svgel("svg", { viewBox: `0 0 ${STAGE.W} ${STAGE.H}`, class: "sense-view", "aria-label": "side view" });
-  const topBox = el("div", "sense-view-box"); topBox.append(el("div", "sense-view-h", "from above"), top);
-  const sideBox = el("div", "sense-view-box"); sideBox.append(el("div", "sense-view-h", "from the side"), side);
-  views.append(topBox, sideBox);
-
-  // ---- quality meter ----
-  const meter = el("div", "sense-quality");
-  const meterBar = el("div", "sense-qbar");
-  const meterFill = el("div", "sense-qfill");
-  meterBar.append(meterFill);
-  const meterLabel = el("div", "sense-qlabel");
-  const meterWhy = el("ul", "sense-qwhy");
-  meter.append(el("h4", null, "Vitals signal quality at this placement"), meterBar, meterLabel, meterWhy);
-
-  wrap.append(ctl, views, meter);
-
-  // ---- drag the person (top view: x/y; side view: x only) ----
-  function attachDrag(svg, mapPoint) {
-    let dragging = false;
-    const toScene = (evt) => {
-      const r = svg.getBoundingClientRect();
-      const px = ((evt.clientX - r.left) / r.width) * STAGE.W;
-      const py = ((evt.clientY - r.top) / r.height) * STAGE.H;
-      return mapPoint(px, py);
-    };
-    svg.addEventListener("pointerdown", (e) => { dragging = true; svg.setPointerCapture(e.pointerId); toScene(e); onChange(); });
-    svg.addEventListener("pointermove", (e) => { if (dragging) { toScene(e); onChange(); } });
-    svg.addEventListener("pointerup", () => { dragging = false; });
-  }
-  attachDrag(top, (px, py) => {
-    scene.person.x = Math.max(0.15, (px - STAGE.MX) / STAGE.SCALE);
-    scene.person.y = (py - STAGE.H / 2) / STAGE.SCALE;
-  });
-  attachDrag(side, (px) => {
-    scene.person.x = Math.max(0.15, (px - STAGE.MX) / STAGE.SCALE);
-  });
-
-  // ---- redraw ----
-  function draw() {
-    const view = radarView(scene, hw);
-    const vq = vitalsQuality(scene, hw);
-    drawTop(top, scene, hw, view);
-    drawSide(side, scene, hw, view);
-
-    const q = vq.quality;
-    meterFill.style.width = (q * 100).toFixed(0) + "%";
-    meterFill.className = "sense-qfill " + (q > 0.65 ? "q-ok" : q > 0.3 ? "q-warn" : "q-bad");
-    meterLabel.textContent = view.detected
-      ? `radial ${fmt(view.r, 2)} m · ${fmt(view.offBoresightDeg, 0)}° off boresight · quality ${(q * 100).toFixed(0)} %`
-      : "not in the detection sector";
-    meterWhy.innerHTML = "";
-    for (const rr of vq.reasons) meterWhy.append(el("li", null, rr));
-    if (!vq.reasons.length && q > 0.65) meterWhy.append(el("li", "sense-q-good", "good geometry — this is a bench-grade vitals placement"));
-    // sync sliders that presets may have moved
-    $("#sense-stage-height", ctl).value = scene.mountHeight;
-    $("#sense-stage-tilt", ctl).value = scene.tiltDeg;
-  }
-
-  wrap.redraw = draw;
-  draw();
+  tb.append(paths);
+  const honest = el("p", "ondevice wap-note");
+  honest.append(el("strong", null, "Honesty rule: "), document.createTextNode(p.trackb.honesty));
+  tb.append(honest);
+  wrap.append(tb);
   return wrap;
 }
 
-function drawTop(svg, scene, hw, view) {
-  svg.innerHTML = "";
-  const ox = STAGE.MX, oy = STAGE.H / 2, S = STAGE.SCALE;
-  // floor grid, 1 m
-  for (let m = 0; m <= 8; m++) {
-    svg.append(svgel("line", { x1: ox + m * S, y1: 8, x2: ox + m * S, y2: STAGE.H - 8, class: "sense-grid" }));
-    if (m && m <= 6 && m % 2 === 0) {
-      const t = svgel("text", { x: ox + m * S, y: STAGE.H - 12, class: "sense-grid-t" });
-      t.textContent = m + " m";
-      svg.append(t);
-    }
-  }
-  const half = (hw.fov_deg / 2) * (Math.PI / 180);
-  // detection sector (azimuth cut) — ceiling mount shows footprint circle
-  if (scene.mount === "ceiling") {
-    const foot = Math.tan(half) * scene.mountHeight;
-    svg.append(svgel("circle", { cx: ox + scene.tiltDeg * 0, cy: oy, r: Math.min(foot * S, 300), class: "sense-fov", transform: `translate(${Math.sin(scene.tiltDeg * Math.PI / 180) * scene.mountHeight * S},0)` }));
-  } else {
-    const r = hw.presence_max_m * S;
-    const x1 = ox + Math.cos(-half) * r, y1 = oy + Math.sin(-half) * r;
-    const x2 = ox + Math.cos(half) * r, y2 = oy + Math.sin(half) * r;
-    svg.append(svgel("path", { d: `M ${ox} ${oy} L ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2} Z`, class: "sense-fov" }));
-    // range bands (near/mid) + vitals envelope
-    for (const [cm, cls] of [[scene.cfg.near_cm, "sense-band-near"], [scene.cfg.mid_cm, "sense-band-mid"]]) {
-      const rr = (cm / 100) * S;
-      svg.append(svgel("path", { d: arcPath(ox, oy, rr, -half, half), class: "sense-band " + cls }));
-    }
-    svg.append(svgel("path", { d: arcPath(ox, oy, hw.vitals_max_m * S, -half, half), class: "sense-vitals-ring" }));
-  }
-  // radar mark
-  svg.append(svgel("rect", { x: ox - 7, y: oy - 10, width: 8, height: 20, rx: 3, class: "sense-radar" }));
-  // person
-  const px = ox + scene.person.x * S, py = oy + scene.person.y * S;
-  const g = svgel("g", { class: "sense-person" + (view.detected ? " on" : "") });
-  g.append(svgel("circle", { cx: px, cy: py, r: 9 }));
-  if (view.detected && !scene.person.moving) {
-    for (let i = 1; i <= 2; i++) {
-      g.append(svgel("circle", { cx: px, cy: py, r: 9 + i * 7, class: "sense-breath-ring", style: `animation-delay:${i * 0.6}s` }));
-    }
-  }
-  svg.append(g);
-  if (scene.secondPerson) {
-    svg.append(svgel("circle", { cx: px + 0.7 * S, cy: py + 0.5 * S, r: 9, class: "sense-person2" }));
-  }
-  if (scene.fan) {
-    const fx = ox + 2.2 * S, fy = oy - 1.6 * S;
-    const fan = svgel("g", { class: "sense-fan" });
-    fan.append(svgel("circle", { cx: fx, cy: fy, r: 8 }));
-    fan.append(svgel("line", { x1: fx - 10, y1: fy, x2: fx + 10, y2: fy, class: "sense-fan-blade" }));
-    svg.append(fan);
-  }
-}
+// ── the serial console ────────────────────────────────────────────────────
+export function buildSerial(data, bus) {
+  const wrap = el("div", "wap-term");
+  const bar = el("div", "hub-term-bar");
+  const dots = el("span", "hub-term-dots");
+  dots.append(el("i"), el("i"), el("i"));
+  bar.append(dots, el("span", "hub-term-title", "USB-CDC · 115200 8N1"),
+    el("span", "hub-term-sim", "real firmware strings · staged boot"));
+  const scroll = el("div", "wap-term-scroll");
+  const controls = el("div", "hub-term-controls");
+  const btnPwr = el("button", "primary small", "⏻ power on");
+  const btnSkip = el("button", "ghost small", "skip to ready");
+  const hint = el("span", "muted fineprint",
+    "boots from devices/sense.json — the firmware's own boot log; " + data.serial.port_note);
+  controls.append(btnPwr, btnSkip, hint);
+  wrap.append(bar, scroll, controls);
 
-function drawSide(svg, scene, hw, view) {
-  svg.innerHTML = "";
-  const ox = STAGE.MX, S = STAGE.SCALE;
-  const floorY = STAGE.H - 40;
-  const zy = (z) => floorY - z * S; // metres above floor → px
-  svg.append(svgel("line", { x1: 8, y1: floorY, x2: STAGE.W - 8, y2: floorY, class: "sense-floor" }));
-  // wall or ceiling line
-  if (scene.mount === "ceiling") {
-    svg.append(svgel("line", { x1: 8, y1: zy(scene.mountHeight), x2: STAGE.W - 8, y2: zy(scene.mountHeight), class: "sense-grid" }));
-  } else {
-    svg.append(svgel("line", { x1: ox - 10, y1: 10, x2: ox - 10, y2: floorY, class: "sense-grid" }));
-  }
-  const half = (hw.fov_deg / 2) * (Math.PI / 180);
-  const tilt = (scene.tiltDeg * Math.PI) / 180;
-  const rz = zy(scene.mountHeight);
-  // beam edges (elevation cut around the tilted boresight)
-  const boreAng = scene.mount === "ceiling" ? Math.PI / 2 - tilt : tilt; // below horizontal
-  const rmax = hw.presence_max_m * S;
-  const edge = (a) => {
-    const dx = Math.cos(a) * rmax, dz = Math.sin(a) * rmax;
-    return [ox + (scene.mount === "ceiling" ? Math.sin(tilt) * rmax : dx), rz + (scene.mount === "ceiling" ? Math.cos(a - Math.PI / 2 + tilt) * rmax : dz)];
+  const lines = bootLines(data.serial);
+  let booting = false, booted = false;
+
+  const put = (cls, text) => {
+    const l = el("div", "wap-line " + cls);
+    l.textContent = text;
+    scroll.append(l);
+    scroll.scrollTop = scroll.scrollHeight;
+    return l;
   };
-  if (scene.mount === "ceiling") {
-    const spread = Math.tan(half) * scene.mountHeight * S;
-    const cx = ox + Math.sin(tilt) * scene.mountHeight * S;
-    svg.append(svgel("path", { d: `M ${ox} ${rz} L ${cx - spread} ${floorY} L ${cx + spread} ${floorY} Z`, class: "sense-fov" }));
-  } else {
-    const [x1, y1] = edge(boreAng - half), [x2, y2] = edge(boreAng + half);
-    svg.append(svgel("path", { d: `M ${ox} ${rz} L ${x1} ${Math.min(y1, floorY)} L ${x2} ${Math.min(y2, floorY)} Z`, class: "sense-fov" }));
+
+  async function boot(instant) {
+    if (booting || booted) return;
+    booting = true; btnPwr.disabled = true; btnSkip.disabled = instant;
+    scroll.innerHTML = "";
+    bus.emit("power");
+    for (const ln of lines) {
+      put(ln.cls, ln.text);
+      if (/Connected IP=/.test(ln.text)) bus.emit("wifi");
+      if (/\[MQTT\] Connected\./.test(ln.text)) bus.emit("mqtt");
+      if (!instant) {
+        if (!alive(scroll)) { booting = false; return; }
+        await sleep(ln.text.trim() === "" ? 8 : 24);
+      }
+    }
+    booted = true; booting = false;
+    btnSkip.disabled = true;
+    put("wap-faint", "");
+    put("wap-faint", "(steady state now: [presence]/[vitals] transitions and a [health] line every 5 s — drive them from the lab and the sandbox)");
+    bus.emit("ready");
   }
-  // radar
-  svg.append(svgel("rect", { x: ox - 8, y: rz - 8, width: 10, height: 16, rx: 3, class: "sense-radar" }));
-  // person silhouette (posture-aware)
-  const px = ox + scene.person.x * S;
-  const g = svgel("g", { class: "sense-person" + (view.detected ? " on" : "") });
-  const post = scene.person.posture;
-  if (post === "lying") {
-    g.append(svgel("rect", { x: px - 26, y: zy(0.35), width: 52, height: 12, rx: 6 }));
-    g.append(svgel("circle", { cx: px + 32, cy: zy(0.3), r: 7 }));
-  } else {
-    const h = post === "sitting" ? 1.25 : 1.72;
-    g.append(svgel("rect", { x: px - 7, y: zy(h * 0.82), width: 14, height: (h * 0.82 - 0.35) * S, rx: 7 }));
-    g.append(svgel("circle", { cx: px, cy: zy(h * 0.92), r: 8 }));
-  }
-  // chest displacement callout at chest height
-  g.append(svgel("circle", { cx: px, cy: zy(view.chestH), r: 3.5, class: "sense-chest" }));
-  svg.append(g);
+
+  // one live line per lab/sandbox signal — the exact strings main.cpp prints
+  bus.on("serial", ({ text, kind }) => {
+    if (!booted) return;
+    put("wap-" + (kind || "ok"), text);
+  });
+  bus.on("mqtt", () => { if (booted) return; }); // phase handled in boot stream
+
+  btnPwr.addEventListener("click", () => boot(false));
+  btnSkip.addEventListener("click", () => { if (!booting) boot(true); else booted = true; });
+  bus.on("flash", () => { if (!booted && !booting) boot(false); });
+  return wrap;
 }
 
-function arcPath(cx, cy, r, a1, a2) {
-  const x1 = cx + Math.cos(a1) * r, y1 = cy + Math.sin(a1) * r;
-  const x2 = cx + Math.cos(a2) * r, y2 = cy + Math.sin(a2) * r;
-  return `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
+// ── the placement lab — the real cone, the real FSM, your furniture ───────
+export function buildRadarLab(data, bus) {
+  const cfg = data.fsm.presence;
+  const vcfg = data.fsm.vitals;
+  const wrap = el("div", "sense-lab");
+
+  const stage = el("div", "sense-lab-stage");
+  const cv = el("canvas", "sense-lab-canvas");
+  cv.setAttribute("aria-label", "Top-down radar placement lab: drag people, a cat and a fan through the real 80-degree cone");
+  stage.append(cv, el("div", "asmlab-hint", "drag the people · toggle the troublemakers"));
+
+  const side = el("div", "sense-lab-side");
+
+  // live readout
+  const pill = el("div", "wap-pill wap-pill-off", "Unknown");
+  const ledDot = el("i", "sense-lab-led");
+  const pillRow = el("div", "sense-lab-pillrow");
+  pillRow.append(pill, ledDot);
+  const facts = el("div", "wap-facts");
+  const rows = {};
+  for (const k of ["Occupants", "Range band", "Vitals", "Publishes"]) {
+    const row = el("div", "wap-fact");
+    const v = el("span", "wap-fact-v", "—");
+    row.append(el("span", "wap-fact-k", k), v);
+    rows[k] = v;
+    facts.append(row);
+  }
+  const toggles = el("div", "sense-lab-toggles");
+  const mk = (id, label, hint) => {
+    const b = el("button", "chip sense-toggle");
+    b.append(el("strong", null, label), el("span", "muted fineprint", hint));
+    b.dataset.id = id;
+    toggles.append(b);
+    return b;
+  };
+  const tPerson2 = mk("p2", "＋ second person", "watch 1 → 2+ and vitals refuse");
+  const tCat = mk("cat", "🐈 the cat", "60 GHz sees any moving mass — honest");
+  const tFan = mk("fan", "🌀 a fan", "the #1 community false-positive");
+  const tWell = mk("well", "🫁 wellbeing build", "arm the breathing/heart lock");
+  const tStill = mk("still", "🧘 hold still", "vitals need a still, single target");
+
+  side.append(el("h3", "wap-col-h", "what the firmware decides"), pillRow, facts,
+    el("h3", "wap-col-h", "troublemakers"), toggles,
+    el("p", "fineprint muted",
+      `Every threshold here is the real one: ${cfg.debounce_ms} ms debounce, ${cfg.clear_ms} ms clear, ` +
+      `${cfg.stall_ms} ms stall, bands at ${cfg.near_cm}/${cfg.mid_cm} cm — mirrored from ` +
+      `configs/canary-sense/*/config.h and drift-gated in CI.`));
+
+  wrap.append(stage, side);
+
+  // ---- the simulated room --------------------------------------------------
+  // World coords in metres, device at (0,0) facing +x, cone ±40°. The canvas
+  // shows 0..6.5 m of x and −3..3 m of y.
+  const FOV = (data.radar.fov_deg * Math.PI / 180) / 2;   // half-angle
+  const MAXR = data.radar.presence_max_m;
+  const VITR = data.radar.vitals_range_m;
+  const world = {
+    // person ① starts OUTSIDE the cone (dist > 6 m) — walking them in is the
+    // first lesson, and it keeps the bench Clear until the visitor acts
+    people: [{ x: 5.9, y: 1.6, on: true }, { x: 4.6, y: -1.4, on: false }],
+    cat: { on: false, t: 0 },
+    fan: { on: false, x: 2.2, y: -1.7 },
+    still: false, wellbeing: false,
+    drag: null, stalled: false,
+  };
+  const fsm = makePresenceFSM(cfg);
+  const vfsm = makeVitalsFSM(vcfg);
+  fsm.reset(performance.now());
+  vfsm.reset(performance.now());
+
+  const inCone = (x, y) => {
+    const d = Math.hypot(x, y);
+    return d <= MAXR && d >= 0.1 && Math.abs(Math.atan2(y, x)) <= FOV ? d : 0;
+  };
+
+  function radarFrame(now) {
+    if (world.stalled) return null;
+    const targets = [];
+    for (const p of world.people) if (p.on) { const d = inCone(p.x, p.y); if (d) targets.push(d); }
+    if (world.cat.on) {
+      // the cat wanders an ellipse through the room; small radar cross-section
+      // → an intermittent target (the flicker IS the phenomenon to learn)
+      const cx = 3 + 2.2 * Math.cos(world.cat.t), cy = 1.8 * Math.sin(world.cat.t * 1.3);
+      const d = inCone(cx, cy);
+      if (d && Math.sin(now / 260) > -0.35) targets.push(d);
+      world.cat.pos = [cx, cy];
+    }
+    if (world.fan.on) {
+      const d = inCone(world.fan.x, world.fan.y);
+      // a fan is sustained motion at a FIXED range — exactly why it fools radar
+      if (d && Math.sin(now / 90) > -0.85) targets.push(d);
+    }
+    if (!targets.length) return { hasTarget: false, count: 0, distanceCm: 0 };
+    return { hasTarget: true, count: targets.length, distanceCm: Math.min(...targets) * 100 };
+  }
+
+  let lastState = "unknown", lastCount = "0", lastPub = "—";
+  function publish(event, extra) {
+    lastPub = event;
+    bus.emit("labevent", { event, ...extra });
+  }
+
+  function tick(now) {
+    world.cat.t += 0.006;
+    const frame = radarFrame(now);
+    const ev = fsm.tick(frame, now);
+
+    // vitals: exactly one person-scale target, close, still, wellbeing build
+    const singlePerson = world.people.filter((p) => p.on && inCone(p.x, p.y)).length === 1
+      && !(world.cat.on && world.cat.pos && inCone(...world.cat.pos));
+    const near = world.people.some((p) => p.on && inCone(p.x, p.y) && Math.hypot(p.x, p.y) <= VITR);
+    const plausible = world.wellbeing && world.still && near && fsm.state === "present";
+    const vev = vfsm.tick(plausible, singlePerson && fsm.count === "1", now);
+
+    if (ev.stateChanged) {
+      const s = fsm.state;
+      bus.emit("state", { state: s });
+      bus.emit("serial", { text: `[presence] -> ${s}${ev.stalled ? " (radar stall)" : ""}`, kind: ev.stalled ? "warn" : "ok" });
+      if (s === "present") publish("presence_detected", { presence: "present", occupants: fsm.count, range: fsm.range });
+      else if (s === "clear" && lastState === "present") publish("presence_cleared", { presence: "clear", occupants: "0", range: "unknown" });
+      lastState = s;
+    }
+    if (ev.countChanged && fsm.state === "present" && fsm.count !== lastCount) {
+      publish("occupancy_changed", { presence: "present", occupants: fsm.count, range: fsm.range });
+      lastCount = fsm.count;
+    }
+    if (vev.changed) {
+      bus.emit("serial", { text: `[vitals] breathing ${vfsm.lock === "locked" ? "locked" : "lost"}`, kind: "ok" });
+      bus.emit("labvitals", { locked: vfsm.lock === "locked" });
+    }
+
+    // readouts
+    const stateName = fsm.state[0].toUpperCase() + fsm.state.slice(1);
+    pill.className = "wap-pill " + (STATE_PILL[fsm.state] || "wap-pill-off");
+    pill.textContent = stateName;
+    const led = ledFor(fsm.state, data.fsm);
+    ledDot.style.background = LED_CSS[led.led];
+    rows["Occupants"].textContent = fsm.count + (fsm.count === "2+" ? "  (bucketed — never a track log)" : "");
+    rows["Range band"].textContent = fsm.range + (fsm.range !== "unknown" ? "  (raw cm never publish)" : "");
+    rows["Vitals"].textContent = !world.wellbeing ? "presence-only build — compiled out"
+      : vfsm.lock === "locked" ? "breathing locked · 14 / 68 bpm (P1)"
+        : (fsm.count === "2+" ? "suppressed — 2+ targets (code rule)" : "no lock (" + vfsm.lock + ")");
+    rows["Publishes"].textContent = lastPub;
+
+    draw(now);
+    if (alive(cv)) requestAnimationFrame(tick);
+  }
+
+  // ---- rendering -----------------------------------------------------------
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  function fit() {
+    const w = cv.clientWidth || 620, h = Math.max(300, Math.round(w * 0.62));
+    cv.width = w * DPR; cv.height = h * DPR;
+  }
+  const X = (m) => (cv.width * 0.08) + m * (cv.width * 0.86 / 6.5);
+  const Y = (m) => cv.height / 2 + m * (cv.width * 0.86 / 6.5);
+  const M = (px, py) => [((px * DPR) - cv.width * 0.08) / (cv.width * 0.86 / 6.5),
+                         ((py * DPR) - cv.height / 2) / (cv.width * 0.86 / 6.5)];
+
+  function draw(now) {
+    const ctx = cv.getContext("2d");
+    const w = cv.width, h = cv.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // the cone + the firmware's range gates
+    const bands = [
+      [cfg.near_cm / 100, "rgba(120,220,160,.16)"],
+      [cfg.mid_cm / 100, "rgba(120,190,255,.12)"],
+      [MAXR, "rgba(255,255,255,.06)"],
+    ];
+    let r0 = 0;
+    for (const [r, fill] of bands) {
+      ctx.beginPath();
+      ctx.moveTo(X(r0 * Math.cos(FOV)), Y(r0 * Math.sin(FOV)));
+      ctx.arc(X(0), Y(0), (X(r) - X(0)), -FOV, FOV);
+      ctx.arc(X(0), Y(0), (X(r0) - X(0)), FOV, -FOV, true);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+      r0 = r;
+    }
+    // vitals ring
+    ctx.beginPath();
+    ctx.arc(X(0), Y(0), X(VITR) - X(0), -FOV, FOV);
+    ctx.strokeStyle = "rgba(255,180,120,.55)";
+    ctx.setLineDash([6 * DPR, 5 * DPR]);
+    ctx.lineWidth = 1.4 * DPR;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // labels
+    ctx.fillStyle = "rgba(255,255,255,.5)";
+    ctx.font = `${11 * DPR}px ui-monospace, monospace`;
+    ctx.fillText("near", X(cfg.near_cm / 200) - 10 * DPR, Y(0) - 6 * DPR);
+    ctx.fillText("mid", X((cfg.near_cm / 100 + cfg.mid_cm / 100) / 2) - 8 * DPR, Y(0) - 6 * DPR);
+    ctx.fillText("far", X((cfg.mid_cm / 100 + MAXR) / 2) - 6 * DPR, Y(0) - 6 * DPR);
+    ctx.fillStyle = "rgba(255,180,120,.8)";
+    ctx.fillText("vitals ≤" + VITR + " m", X(VITR) - 34 * DPR, Y(-0.15) - 14 * DPR);
+
+    // sweep, while the radar is alive
+    if (!world.stalled) {
+      const a = -FOV + ((now / 1800) % 1) * 2 * FOV;
+      ctx.beginPath();
+      ctx.moveTo(X(0), Y(0));
+      ctx.lineTo(X(MAXR * Math.cos(a)), Y(MAXR * Math.sin(a)));
+      ctx.strokeStyle = "rgba(120,220,160,.25)";
+      ctx.lineWidth = 1.2 * DPR;
+      ctx.stroke();
+    }
+
+    // the device on the wall
+    ctx.fillStyle = world.stalled ? "#7a5c2e" : "#e8c15a";
+    ctx.beginPath();
+    ctx.arc(X(0), Y(0), 7 * DPR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.55)";
+    ctx.fillText("Canary Sense", X(0) - 14 * DPR, Y(0) + 22 * DPR);
+
+    // people
+    for (const [i, p] of world.people.entries()) {
+      if (!p.on) continue;
+      const d = inCone(p.x, p.y);
+      ctx.beginPath();
+      ctx.arc(X(p.x), Y(p.y), 9 * DPR, 0, Math.PI * 2);
+      ctx.fillStyle = d ? "rgba(120,220,160,.9)" : "rgba(255,255,255,.35)";
+      ctx.fill();
+      ctx.fillStyle = "#10131a";
+      ctx.font = `${10 * DPR}px system-ui`;
+      ctx.fillText(i === 0 ? "①" : "②", X(p.x) - 5 * DPR, Y(p.y) + 3.5 * DPR);
+    }
+    // cat
+    if (world.cat.on && world.cat.pos) {
+      const [cx, cy2] = world.cat.pos;
+      ctx.font = `${13 * DPR}px system-ui`;
+      ctx.fillText("🐈", X(cx) - 7 * DPR, Y(cy2) + 5 * DPR);
+    }
+    // fan
+    if (world.fan.on) {
+      ctx.font = `${13 * DPR}px system-ui`;
+      ctx.save();
+      ctx.translate(X(world.fan.x), Y(world.fan.y));
+      ctx.rotate((now / 300) % (Math.PI * 2));
+      ctx.fillText("🌀", -7 * DPR, 5 * DPR);
+      ctx.restore();
+    }
+  }
+
+  // ---- interactions --------------------------------------------------------
+  cv.addEventListener("pointerdown", (e) => {
+    const rect = cv.getBoundingClientRect();
+    const [mx, my] = M(e.clientX - rect.left, e.clientY - rect.top);
+    let best = null, bd = 0.45;
+    for (const [i, p] of world.people.entries()) {
+      if (!p.on) continue;
+      const d = Math.hypot(p.x - mx, p.y - my);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (world.fan.on && Math.hypot(world.fan.x - mx, world.fan.y - my) < bd) best = "fan";
+    if (best != null) { world.drag = best; cv.setPointerCapture(e.pointerId); }
+  });
+  cv.addEventListener("pointermove", (e) => {
+    if (world.drag == null) return;
+    const rect = cv.getBoundingClientRect();
+    const [mx, my] = M(e.clientX - rect.left, e.clientY - rect.top);
+    const t = world.drag === "fan" ? world.fan : world.people[world.drag];
+    t.x = Math.max(0.15, Math.min(6.4, mx));
+    t.y = Math.max(-2.25, Math.min(2.25, my));
+    world.still = false; tStill.classList.remove("on");
+  });
+  const drop = () => { world.drag = null; };
+  cv.addEventListener("pointerup", drop);
+  cv.addEventListener("pointercancel", drop);
+
+  const bindToggle = (btn, fn) => btn.addEventListener("click", () => {
+    btn.classList.toggle("on");
+    fn(btn.classList.contains("on"));
+  });
+  bindToggle(tPerson2, (on) => { world.people[1].on = on; });
+  bindToggle(tCat, (on) => { world.cat.on = on; });
+  bindToggle(tFan, (on) => { world.fan.on = on; });
+  bindToggle(tWell, (on) => { world.wellbeing = on; });
+  bindToggle(tStill, (on) => { world.still = on; });
+
+  // the sandbox can drive the lab too (stall, identify)
+  bus.on("labcmd", ({ cmd }) => {
+    if (cmd === "stall") { world.stalled = true; setTimeout(() => { world.stalled = false; }, 8000); }
+    if (cmd === "still") { world.still = true; world.wellbeing = true; tStill.classList.add("on"); tWell.classList.add("on"); }
+    if (cmd === "person2") { world.people[1].on = true; tPerson2.classList.add("on"); }
+    if (cmd === "clearall") {
+      world.people[0].x = 5.9; world.people[0].y = 1.6;
+      world.people[1].on = false; tPerson2.classList.remove("on");
+      world.cat.on = false; tCat.classList.remove("on");
+      world.fan.on = false; tFan.classList.remove("on");
+    }
+    if (cmd === "walkin") { world.people[0].x = 3.0; world.people[0].y = 0.4; }
+    if (cmd === "near") { world.people[0].x = 1.1; world.people[0].y = 0.1; }
+  });
+
+  fit();
+  window.addEventListener("resize", fit);
+  requestAnimationFrame(tick);
+  return wrap;
 }
 
-// ============================================================================
-// §console — the pipeline, live
-// ============================================================================
+// ── the MQTT explorer ─────────────────────────────────────────────────────
+export function buildMqtt(data, bus) {
+  const m = data.mqtt, id = data.device.id_example;
+  const wrap = el("div", "wap-mqtt");
+  const bar = el("div", "hub-term-bar");
+  bar.append(el("span", "hub-term-title", "MQTT · " + m.broker_uri),
+    el("span", "hub-term-sim", "topics + payloads from mqtt_mgr.cpp"));
+  wrap.append(bar);
 
-export function buildConsole() {
-  const wrap = el("div", "sense-console");
-
-  const cols = el("div", "sense-con-cols");
-
-  const hexBox = el("div", "sense-con-col");
-  hexBox.append(el("h4", null, "UART bytes (GPIO17 ← radar)"));
-  const hex = el("div", "sense-hex wap-term");
-  const hexScroll = el("div", "wap-term-scroll sense-hex-scroll");
-  hex.append(hexScroll);
-  hexBox.append(hex);
-
-  const frameBox = el("div", "sense-con-col");
-  frameBox.append(el("h4", null, "Decoded frames → FSMs"));
-  const frames = el("div", "sense-framelog wap-term");
-  const frameScroll = el("div", "wap-term-scroll sense-hex-scroll");
-  frames.append(frameScroll);
-  frameBox.append(frames);
-
-  cols.append(hexBox, frameBox);
+  const cols = el("div", "wap-mqtt-cols");
+  const retainedCol = el("div", "wap-mqtt-col");
+  retainedCol.append(el("div", "wap-mqtt-h", "retained topics"));
+  const retained = el("div", "wap-mqtt-tree");
+  retainedCol.append(retained);
+  const streamCol = el("div", "wap-mqtt-col");
+  streamCol.append(el("div", "wap-mqtt-h", "live — " + withId(m.topic_pattern.replace("<suffix>", "events"), id)));
+  const stream = el("div", "wap-mqtt-stream");
+  streamCol.append(stream);
+  cols.append(retainedCol, streamCol);
   wrap.append(cols);
 
-  // chokepoint strip: raw in → coarse out
-  const choke = el("div", "sense-choke");
-  const rawSide = el("div", "sense-choke-side");
-  rawSide.append(el("div", "sense-choke-h", "the radar said (read + dropped)"));
-  const rawVals = el("div", "sense-choke-vals sense-mono");
-  rawSide.append(rawVals);
-  const wall = el("div", "sense-choke-wall");
-  wall.append(el("span", null, "privacy"), el("span", null, "chokepoint"));
-  const outSide = el("div", "sense-choke-side");
-  outSide.append(el("div", "sense-choke-h", "the witness says (full vocabulary)"));
-  const outVals = el("div", "sense-choke-vals sense-mono");
-  outSide.append(outVals);
-  choke.append(rawSide, wall, outSide);
-  wrap.append(choke);
+  const note = el("p", "ondevice wap-note");
+  note.append(el("strong", null, "How to read this: "), document.createTextNode(
+    "the topic tree and payloads are the exact strings mqtt_mgr.cpp publishes; only events and the " +
+    "identify echo are non-retained. " + m.offline_note + "."));
+  wrap.append(note);
 
-  // witness event log
-  const evBox = el("div", "sense-events");
-  evBox.append(el("h4", null, "Signed witness events (securacv/<id>/events)"));
-  const evLog = el("div", "sense-evlog");
-  evBox.append(evLog);
-  wrap.append(evBox);
-
-  const MAXROWS = 60;
-  const trim = (node) => { while (node.childNodes.length > MAXROWS) node.removeChild(node.firstChild); };
-
-  wrap.pushHex = (bytes, names) => {
-    if (!bytes.length) return;
-    const row = el("div", "wap-line");
-    let s = "";
-    for (let i = 0; i < bytes.length && i < 64; i++) s += bytes[i].toString(16).padStart(2, "0") + " ";
-    if (bytes.length > 64) s += "…";
-    row.textContent = s.trim();
-    row.title = names.join(" + ");
-    hexScroll.append(row); trim(hexScroll);
-    hexScroll.scrollTop = hexScroll.scrollHeight;
-  };
-
-  wrap.pushFrame = (f) => {
-    const row = el("div", "wap-line");
-    const kindName = f.kind === 1 ? "Presence" : f.kind === 2 ? "Vitals" : "?";
-    row.textContent =
-      `${kindName.padEnd(8)} target=${f.has_target ? 1 : 0} n=${f.target_count} ` +
-      `d=${f.distance_cm}cm br=${f.breath_rate} hr=${f.heart_rate}`;
-    row.className = "wap-line " + (f.kind === 2 ? "sense-f-vitals" : "sense-f-presence");
-    frameScroll.append(row); trim(frameScroll);
-    frameScroll.scrollTop = frameScroll.scrollHeight;
-  };
-
-  wrap.pushStall = () => {
-    const row = el("div", "wap-line wap-warn", "… no frames — stall deadline running");
-    if (frameScroll.lastChild && frameScroll.lastChild.textContent === row.textContent) return;
-    frameScroll.append(row); trim(frameScroll);
-    frameScroll.scrollTop = frameScroll.scrollHeight;
-  };
-
-  wrap.setChokepoint = (raw, out) => {
-    rawVals.innerHTML = "";
-    for (const [k, v, dropped] of raw) {
-      const r = el("div", "sense-choke-row" + (dropped ? " dropped" : ""));
-      r.append(el("span", "sense-choke-k", k), el("span", null, String(v)));
-      if (dropped) r.append(el("span", "sense-choke-x", "✕ dropped here"));
-      rawVals.append(r);
+  const store = {};
+  function renderRetained() {
+    retained.innerHTML = "";
+    const keys = Object.keys(store).sort();
+    if (!keys.length) { retained.append(el("p", "muted fineprint", "nothing retained yet — the device isn't connected.")); return; }
+    for (const k of keys) {
+      const row = el("div", "wap-mqtt-row");
+      row.append(el("code", "wap-mqtt-topic", k), el("code", "wap-mqtt-payload", store[k]));
+      retained.append(row);
     }
-    outVals.innerHTML = "";
-    for (const [k, v] of out) {
-      const r = el("div", "sense-choke-row out");
-      r.append(el("span", "sense-choke-k", k), el("span", null, String(v)));
-      outVals.append(r);
+  }
+  function pushStream(topic, payload, cls) {
+    const row = el("div", "wap-mqtt-ev " + (cls || ""));
+    row.append(el("code", "wap-mqtt-topic", topic), el("code", "wap-mqtt-payload", payload));
+    stream.prepend(row);
+    while (stream.children.length > 7) stream.lastChild.remove();
+  }
+  renderRetained();
+
+  let chainLen = 313;
+  bus.on("mqtt", () => {
+    const seq = [];
+    for (const t of m.topics) {
+      if (!t.retained) continue;
+      seq.push({ topic: withId(m.topic_pattern.replace("<suffix>", t.suffix), id), payload: t.payload, retain: true });
     }
-  };
-
-  wrap.pushEvent = (ev) => {
-    const row = el("div", "sense-ev card");
-    const head = el("div", "sense-ev-head");
-    head.append(el("strong", null, ev.name), el("span", "muted", ` seq ${ev.seq} · bucket ${ev.bucket}s`));
-    head.append(el("span", "sense-ev-sig " + (ev.signed ? "cc-ok" : "cc-warn"), ev.signed ? "✓ Ed25519" : "unsigned"));
-    row.append(head);
-    const body = el("code", "fineprint sense-ev-canon", ev.canonical);
-    row.append(body);
-    if (ev.sig) row.append(el("code", "fineprint sense-ev-b64", "sig " + ev.sig.slice(0, 32) + "…"));
-    evLog.prepend(row);
-    while (evLog.childNodes.length > 8) evLog.removeChild(evLog.lastChild);
-  };
-
+    (async () => {
+      for (const msg of seq) {
+        await sleep(150); if (!alive(wrap)) return;
+        mqttApply(store, msg); renderRetained();
+      }
+      pushStream(m.discovery.prefix + "/…/config", m.discovery.counts.default + " announced (retained)", "disc");
+    })();
+  });
+  bus.on("labevent", (e) => {
+    chainLen += 1;
+    const evTopic = withId(m.topic_pattern.replace("<suffix>", "events"), id);
+    pushStream(evTopic,
+      `{"event":"${e.event}","presence":"${e.presence}","occupants":"${e.occupants}","range":"${e.range}","seq":${chainLen},"signed":true,"fp":"${data.device.fp_example}"}`,
+      "live");
+    const chTopic = withId(m.topic_pattern.replace("<suffix>", "chain"), id);
+    mqttApply(store, { topic: chTopic, payload: `{"v":1,"length":${chainLen},"latest_hash":"…","alg":"ed25519","sig":"…"}`, retain: true });
+    renderRetained();
+  });
+  bus.on("sandboxpub", ({ pubs }) => {
+    for (const pub of pubs || []) {
+      const topic = withId(m.topic_pattern.replace("<suffix>", pub.suffix), id);
+      const retain = pub.suffix !== "events" && pub.suffix !== "identify";
+      if (retain) { mqttApply(store, { topic, payload: pub.payload, retain: true }); renderRetained(); }
+      pushStream(topic, pub.payload, retain ? "" : "live");
+    }
+  });
   return wrap;
 }
 
-// ============================================================================
-// §knobs — FSM tunables + build flavor
-// ============================================================================
+// ── the HA discovery set (flavor-gated, like the firmware compiles it) ────
+export function buildEntities(data) {
+  const m = data.mqtt;
+  const wrap = el("div", "sense-ents");
+  const tabs = el("nav", "subtabs");
+  const grid = el("div", "wap-mqtt-ents");
+  const note = el("p", "fineprint muted");
 
-export function buildKnobs(data, state, onChange) {
-  const wrap = el("div", "sense-knobs");
-
-  const flav = el("div", "sense-ctl-row");
-  flav.append(el("span", "sense-ctl-k", "build flavor"));
-  for (const f of data.flavors) {
-    const b = el("button", "ghost small" + (state.flavor === f.env ? " on" : ""), f.env.replace("canary-sense-", ""));
-    b.dataset.flavor = f.env;
-    b.title = f.vitals ? "vitals compiled in (-DCANARY_SENSE_VITALS)" : "presence-only — BPM entities provably absent";
-    b.addEventListener("click", () => {
-      state.flavor = f.env;
-      for (const bb of flav.querySelectorAll("button")) bb.classList.toggle("on", bb === b);
-      onChange({ rebuild: true });
-    });
-    flav.append(b);
-  }
-  const p1 = el("button", "ghost small" + (state.p1OptIn ? " on" : ""), "P1 opt-in (BPM entities)");
-  p1.dataset.flavor = "p1";
-  p1.addEventListener("click", () => { state.p1OptIn = !state.p1OptIn; p1.classList.toggle("on"); onChange({}); });
-  flav.append(p1);
-  wrap.append(flav);
-
-  const grid = el("div", "sense-knob-grid");
-  const KNOBS = [
-    ["present_debounce_ms", "present debounce", 0, 3000, 50, "ms", "presence"],
-    ["clear_timeout_ms", "clear timeout", 200, 10000, 100, "ms", "presence"],
-    ["stall_timeout_ms", "radar stall", 1000, 20000, 250, "ms", "presence"],
-    ["near_cm", "near band ≤", 50, 400, 10, "cm", "presence"],
-    ["mid_cm", "mid band ≤", 100, 600, 10, "cm", "presence"],
-    ["lock_confirm_ms", "vitals lock", 500, 15000, 250, "ms", "vitals"],
-    ["lock_lost_ms", "vitals lost", 1000, 20000, 250, "ms", "vitals"],
+  const FLAVORS = [
+    ["default", "presence-only", (e) => e.flavor === "default"],
+    ["wellbeing", "wellbeing (+P1 opt-in)", () => true],
   ];
-  for (const [key, label, min, max, step, unit, group] of KNOBS) {
-    const cfg = group === "presence" ? state.presenceCfg : state.vitalsCfg;
-    const box = el("label", "sense-knob");
-    box.append(el("span", "sense-ctl-k", label));
-    const s = el("input");
-    s.type = "range"; s.min = min; s.max = max; s.step = step; s.value = cfg[key];
-    const out = el("span", "sense-ctl-v", cfg[key] + " " + unit);
-    const def = group === "presence" ? data.fsm.presence[key] : data.fsm.vitals[key];
-    s.addEventListener("input", () => {
-      cfg[key] = parseInt(s.value, 10);
-      out.textContent = cfg[key] + " " + unit + (cfg[key] !== def ? " *" : "");
-      onChange({ recfg: true });
+  function render(which) {
+    const [, , filter] = FLAVORS.find((f) => f[0] === which);
+    grid.innerHTML = "";
+    let n = 0;
+    for (const e of m.discovery.entities) {
+      if (!filter(e)) continue;
+      n++;
+      const row = el("div", "wap-ent" + (e.flavor !== "default" ? " sense-ent-well" : ""));
+      row.append(el("span", "wap-ent-comp", e.component.replace("_", " ")),
+        el("span", "wap-ent-name", e.name + (e.unit ? " (" + e.unit + ")" : "")),
+        el("code", "wap-ent-topic", "…/" + e.state_topic + (e.note ? "  — " + e.note : "")));
+      grid.append(row);
+    }
+    note.textContent = which === "default"
+      ? n + " entities. " + m.discovery.gating_note + "."
+      : n + " entities. " + m.discovery.counts.wellbeing + ". Vitals entities are highlighted.";
+  }
+  for (const [id, label] of FLAVORS) {
+    const b = el("button", "tab" + (id === "default" ? " on" : ""), label);
+    b.addEventListener("click", () => {
+      for (const x of tabs.children) x.classList.remove("on");
+      b.classList.add("on");
+      render(id);
     });
-    box.append(s, out);
-    box.title = `firmware default ${def} ${unit} (CS_* in configs/canary-sense)`;
-    grid.append(box);
+    tabs.append(b);
+  }
+  render("default");
+  wrap.append(tabs, grid, note,
+    el("p", "muted fineprint", m.discovery.note + " — config topics on " + m.discovery.config_topic));
+  return wrap;
+}
+
+// ── placement — mounts, the radome rule, what to keep out of the beam ─────
+export function buildPlacement(data) {
+  const p = data.placement;
+  const wrap = el("div", "sense-place");
+
+  const mounts = el("div", "sense-mounts");
+  for (const mnt of p.mounts) {
+    const c = el("div", "card sense-mount");
+    const h = el("strong", null, mnt.name);
+    c.append(h, srcBadge(mnt.src));
+    const facts = el("div", "wap-facts");
+    for (const [k, v] of [["Height", mnt.height], ["Aim", mnt.aim], ["Range", mnt.range], ["Best for", mnt.best_for]]) {
+      const row = el("div", "wap-fact");
+      row.append(el("span", "wap-fact-k", k), el("span", "wap-fact-v", v));
+      facts.append(row);
+    }
+    c.append(facts);
+    mounts.append(c);
+  }
+  wrap.append(mounts);
+
+  const radome = el("p", "ondevice wap-note");
+  radome.append(el("strong", null, "The radome rule: "),
+    document.createTextNode(p.radome.rule + " — " + p.radome.why + ". " + p.radome.repo_note));
+  wrap.append(radome);
+
+  wrap.append(el("h3", "wap-col-h", "keep out of the beam"));
+  const avoid = el("div", "sense-avoid");
+  for (const a of p.avoid) {
+    const d = el("details", "fix");
+    const s = el("summary");
+    s.append(document.createTextNode(a.what + " "), srcBadge(a.src));
+    d.append(s, el("p", "muted", a.why));
+    avoid.append(d);
+  }
+  wrap.append(avoid);
+  return wrap;
+}
+
+// ── tuning — the knobs, the error taxonomy, the playbook ──────────────────
+export function buildTuning(data) {
+  const t = data.tuning;
+  const wrap = el("div", "sense-tune");
+  wrap.append(el("p", "hub-lede", t.goal));
+
+  wrap.append(el("h3", "wap-col-h", "the knobs (all host-side, all versioned)"));
+  const knobs = el("div", "sense-knobs");
+  for (const k of t.knobs) {
+    const c = el("div", "card sense-knob");
+    const top = el("div", "sense-knob-top");
+    top.append(el("code", null, k.name), el("strong", "sense-knob-val", String(k.value)), srcBadge(k.src));
+    c.append(top, el("p", "muted", k.does));
+    if (k.raise_when !== "—") c.append(kv("raise it when", k.raise_when));
+    if (k.lower_when !== "—") c.append(kv("lower it when", k.lower_when));
+    knobs.append(c);
+  }
+  wrap.append(knobs);
+
+  wrap.append(el("h3", "wap-col-h", "the error taxonomy — least error means knowing your enemy"));
+  const errs = el("div", "sense-errs");
+  for (const e2 of t.errors) {
+    const d = el("details", "fix sense-err sense-err-" + e2.kind.replace("-", ""));
+    const s = el("summary");
+    s.append(el("span", "sense-err-kind", e2.kind), document.createTextNode(" " + e2.cause + " "), srcBadge(e2.src));
+    d.append(s, el("p", "muted", e2.reality), kv("the fix", e2.fix));
+    errs.append(d);
+  }
+  wrap.append(errs);
+
+  wrap.append(el("h3", "wap-col-h", "the placement-first playbook"));
+  const ol = el("ol", "wap-ritual");
+  for (const step of t.playbook) ol.append(el("li", null, step));
+  wrap.append(ol, el("p", "fineprint muted", t.sources_note));
+  return wrap;
+
+  function kv(k, v) {
+    const p2 = el("p", "fineprint sense-kv");
+    p2.append(el("strong", null, k + ": "), document.createTextNode(v));
+    return p2;
+  }
+}
+
+// ── use cases + the capability table ──────────────────────────────────────
+export function buildUseCases(data) {
+  const wrap = el("div", "sense-uses");
+  const grid = el("div", "sense-mounts");
+  for (const u of data.use_cases) {
+    const c = el("div", "card sense-mount");
+    c.append(el("strong", null, u.title), el("span", "muted fineprint", u.where));
+    c.append(el("p", "muted", u.how));
+    const why = el("p", "fineprint sense-kv");
+    why.append(el("strong", null, "why radar: "), document.createTextNode(u.why));
+    c.append(why);
+    grid.append(c);
   }
   wrap.append(grid);
-  wrap.append(el("p", "fineprint",
-    "Defaults are the firmware's own CS_* values (drift-gated from configs/canary-sense). " +
-    "A * marks a knob you've moved off the shipped tuning — the point of a bench."));
+
+  const tbl = el("div", "sense-captable");
+  const head = el("div", "sense-caprow sense-caphead");
+  for (const h of ["capability", "camera (vision)", "WiFi-CSI (WAP)", "60 GHz radar (Sense)"]) head.append(el("span", null, h));
+  tbl.append(head);
+  for (const r of data.capabilities) {
+    const row = el("div", "sense-caprow");
+    row.append(el("span", null, r.cap), el("span", "muted", r.vision), el("span", "muted", r.wap),
+      el("strong", null, r.sense));
+    tbl.append(row);
+  }
+  wrap.append(el("h3", "wap-col-h", "three physics, one family"), tbl,
+    el("p", "fineprint muted", "from the design doc's own comparison — CSI and radar fail independently, which is exactly the multi-witness corroboration model."));
   return wrap;
 }
 
-// ============================================================================
-// §power lab — heat → useful computation
-// ============================================================================
+// ── the sandbox cards ─────────────────────────────────────────────────────
+export function buildSandbox(data, bus) {
+  const wrap = el("div");
+  const pad = el("div", "wap-sandbox");
+  const readout = el("p", "muted wap-sandbox-read",
+    "Power the device on in the console above, or just tap a card — the bench will bring it online for you.");
 
-export function buildPowerLab(data, knobs, onChange) {
-  const wrap = el("div", "sense-power");
+  const LABCMD = { walk: "walkin", approach: "near", sit: "still", second: "person2", leave: "clearall", stall: "stall" };
 
-  const ctl = el("div", "sense-stage-ctl");
-  const rows = [
-    ["heartbeatS", "status heartbeat", 1, 120, 1, "s"],
-    ["eventsPerHour", "witness events", 0, 120, 1, "/h"],
-    ["txPerEventMs", "TX burst per publish", 5, 200, 5, "ms"],
-  ];
-  for (const [key, label, min, max, step, unit] of rows) {
-    const row = el("div", "sense-ctl-row");
-    row.append(el("span", "sense-ctl-k", label));
-    const s = el("input");
-    s.type = "range"; s.min = min; s.max = max; s.step = step; s.value = knobs[key];
-    const out = el("span", "sense-ctl-v", knobs[key] + " " + unit);
-    s.addEventListener("input", () => {
-      knobs[key] = parseInt(s.value, 10);
-      out.textContent = knobs[key] + " " + unit;
-      onChange();
+  for (const sc of data.sandbox) {
+    const card = el("button", "card wap-sand-card");
+    card.append(el("strong", null, sc.label), el("span", "muted", sc.blurb));
+    if (sc.ha) card.append(el("code", "fineprint wap-sand-ha", sc.ha));
+    card.addEventListener("click", () => {
+      if (!bus.has("mqtt")) { bus.emit("power"); bus.emit("wifi"); bus.emit("mqtt"); bus.emit("ready"); }
+      if (LABCMD[sc.id]) bus.emit("labcmd", { cmd: LABCMD[sc.id] });
+      if (sc.serial && !LABCMD[sc.id]) bus.emit("serial", { text: sc.serial, kind: "ok" });
+      if (sc.id === "identify" || sc.id === "lights") bus.emit("sandboxpub", { pubs: sc.mqtt });
+      if (sc.state) bus.emit("state", { state: sc.state.toLowerCase() });
+      readout.textContent = "▶ " + sc.label + " — " + sc.blurb + (sc.ha ? "  →  " + sc.ha : "");
     });
-    row.append(s, out);
-    ctl.append(row);
+    pad.append(card);
   }
-  const togg = el("div", "sense-ctl-row sense-toggles");
-  for (const [key, label] of [["modemSleep", "WiFi modem sleep"], ["ledOn", "status LED"], ["lux", "BH1750 lux"]]) {
-    const b = el("button", "ghost small" + (knobs[key] ? " on" : ""), label);
-    b.addEventListener("click", () => { knobs[key] = !knobs[key]; b.classList.toggle("on"); onChange(); });
-    togg.append(b);
-  }
-  ctl.append(togg);
-  wrap.append(ctl);
-
-  const bars = el("div", "sense-pbars");
-  const totals = el("div", "sense-ptotals");
-  wrap.append(bars, totals);
-
-  const noteBits = el("div", "sense-pnotes");
-  for (const n of data.power.notes) noteBits.append(el("p", "fineprint", n));
-  wrap.append(noteBits);
-
-  wrap.update = () => {
-    const m = powerModel(knobs, data.power.rails);
-    bars.innerHTML = "";
-    const max = Math.max(...m.parts.map((p) => p.mw));
-    for (const p of m.parts) {
-      const row = el("div", "sense-pbar");
-      row.append(el("span", "sense-pbar-k", p.name));
-      const track = el("div", "sense-pbar-track");
-      const fill = el("div", "sense-pbar-fill");
-      fill.style.width = Math.max(1.5, (p.mw / max) * 100) + "%";
-      track.append(fill);
-      row.append(track);
-      row.append(el("span", "sense-pbar-v", fmt(p.mw, 1) + " mW"));
-      row.title = p.note;
-      bars.append(row);
-    }
-    totals.innerHTML = "";
-    for (const [k, v] of [
-      ["total draw", fmt(m.totalMw, 0) + " mW"],
-      ["per day", fmt(m.perDayWh, 1) + " Wh"],
-      ["per year", fmt(m.perYearKwh, 1) + " kWh"],
-      ["signed claims", fmt(m.claimsPerHour, 0) + " /h"],
-      ["claims per joule", m.claimsPerJoule.toExponential(2)],
-      ["sensing share of heat", (m.sensingShare * 100).toFixed(0) + " %"],
-    ]) {
-      const c = el("span", "chip");
-      c.append(el("span", "hub-chip-k", k + " "), el("strong", null, v));
-      totals.append(c);
-    }
-    return m;
-  };
-  wrap.update();
+  wrap.append(pad, readout);
   return wrap;
-}
-
-// ============================================================================
-// §glass bridge — stage this witness on the real display firmware
-// ============================================================================
-//
-// Lazily loads the committed wasm display build (the SAME firmware bytes the
-// watch runs) and stages a canary-sense SimWitness on it. Live state from the
-// bench is published through emu.publish() → the firmware's own MQTT
-// dispatcher — so what appears on the glass is what the display firmware
-// actually does with a radar sibling today (the honest gap included).
-
-export function buildGlassBridge(data, getState) {
-  const wrap = el("div", "sense-glass");
-  const ribbon = el("p", "ondevice",
-    "The glass below runs the real canary-display firmware compiled to WebAssembly. " +
-    "This bench stages a canary-sense witness through the display's own MQTT dispatcher — " +
-    "today the glass renders it generically (liveness, events, breathing ✓/—); the Canary Cards " +
-    "schema (docs/standard/CANARY_CARDS.md) is the documented path to type-aware cards.");
-  wrap.append(ribbon);
-
-  const stage = el("div", "sense-glass-stage");
-  const canvas = el("canvas", "sense-glass-canvas");
-  canvas.width = 240; canvas.height = 240;
-  const boot = el("button", "primary", "Boot the glass + join this witness");
-  const status = el("p", "muted sense-glass-status", "The display artifact loads only when you ask (≈1 MB, from this repo — nothing phones anywhere).");
-  stage.append(canvas, boot, status);
-  wrap.append(stage);
-
-  let emu = null, witness = null, started = false;
-
-  async function bootGlass() {
-    if (started) return;
-    started = true;
-    boot.disabled = true;
-    status.textContent = "loading the wasm firmware…";
-    try {
-      await loadScript("emulator/dist/canary-display-watch.js");
-      const shell = await import("./../emulator/web/emu-shell.js");
-      emu = new shell.CanaryEmulator(window.createCanaryEmuWatch, {
-        canvas,
-        onDisplayReady: (w, h, round) => { if (round) canvas.classList.add("round"); },
-        onBacklight: (glow) => { canvas.style.filter = `brightness(${Math.max(0.05, glow)})`; },
-      });
-      await emu.start({ provisioned: true, seed: 20260720 });
-      const st = getState();
-      witness = new shell.SimWitness({
-        id: st.deviceId, deviceType: data.display.device_type_wire,
-        name: "Sense Lab", room: "Bench", battery: null, rssi: -47,
-      });
-      await emu.addWitness(witness);
-      emu.startFleetHeartbeat(15000);
-      await publishState();
-      status.textContent = "witness staged — move the person on the stage above and watch the glass.";
-      boot.textContent = "glass is live";
-    } catch (e) {
-      status.textContent = "couldn't boot the glass here (" + e.message + ") — the committed artifact may be missing in this checkout.";
-      boot.disabled = false;
-      started = false;
-    }
-  }
-  boot.addEventListener("click", bootGlass);
-
-  async function publishState() {
-    if (!emu || !witness) return;
-    const st = getState();
-    await emu.publish(witness.topic("state"), {
-      presence: st.snapshot.presence,
-      occupants: st.snapshot.count,
-      range: st.snapshot.range,
-      breathing_locked: !!st.snapshot.breathing_locked,
-    }, { retained: true });
-  }
-
-  wrap.onEvent = async (name) => {
-    if (!emu || !witness) return;
-    await emu.witnessEvent(witness, name, { signed: true });
-    await publishState();
-  };
-  wrap.onSnapshot = () => { publishState().catch(() => {}); };
-
-  return wrap;
-}
-
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) return resolve();
-    const s = document.createElement("script");
-    s.src = src;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error("failed to load " + src));
-    document.head.append(s);
-  });
-}
-
-// ============================================================================
-// Witness signing (WebCrypto Ed25519, same shape as emu-shell's SimWitness)
-// ============================================================================
-
-export class BenchSigner {
-  constructor() { this.key = null; this.ready = false; }
-  async init() {
-    try {
-      this.key = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
-      this.ready = true;
-    } catch { this.key = null; this.ready = false; }
-    return this.ready;
-  }
-  async sign(canonical) {
-    if (!this.key) return null;
-    const sig = new Uint8Array(await crypto.subtle.sign(
-      "Ed25519", this.key.privateKey, new TextEncoder().encode(canonical)));
-    let b64 = btoa(String.fromCharCode(...sig));
-    return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
 }

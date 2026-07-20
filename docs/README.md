@@ -72,6 +72,8 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Getting started with Canaries](getting_started_canary.md) — first device, end to end
 - [Hardware guides & BOMs](hardware/README.md) — build plans, bring-up benches, enclosures, per-device guides
 - [Firmware OTA](firmware_ota.md) — signed pull-updates with rollback
+- [Release process & channels](RELEASE_PROCESS.md) — tags → releases; how the dev channel stays invisible to release devices
+- [USB evidence drive (design)](design/usb_evidence_drive.md) — the Canary as a read-only USB drive + drop-file signed updates
 - [Browser flasher](browser_flasher.md) — flash a blank board from Chrome over USB, no toolchain
 - [Secure provisioning](secure_provisioning.md) — how a device earns its keys
 - [Device settings access](canary_settings_access_validation.md) — who may change what, verified

@@ -766,10 +766,14 @@ function productRow(p) {
 function activeManifestUrl() {
   // `?manifest=<url>` lets a self-hosted / air-gapped user point at their own
   // manifest — but only if it's same-origin or a private/LAN host (see
-  // manifestOverrideUrl). Otherwise fall back to the signed release.
+  // manifestOverrideUrl). `?channel=dev` switches to the rolling dev
+  // prerelease manifest (a fixed first-party URL, never user-supplied).
+  // Otherwise: the signed stable release.
   const override = core.manifestOverrideUrl(location.search, location.origin);
   state.manifestOverride = !!override;
-  return override || state.catalog.manifest_url;
+  state.devChannel = !override && core.channelFromSearch(location.search) === "dev";
+  if (override) return override;
+  return state.devChannel ? core.DEV_FLASH_MANIFEST_URL : state.catalog.manifest_url;
 }
 
 function ensureManifest() {
@@ -806,6 +810,11 @@ function refreshManifestState() {
   if (state.manifestOverride) {
     const note = el("p", "flash-note flash-note-soft");
     note.textContent = "Using a self-hosted firmware manifest from this page’s address bar, not the official signed release.";
+    banner.append(note);
+  }
+  if (state.devChannel) {
+    const note = el("p", "flash-note flash-note-soft");
+    note.textContent = "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same key but not yet promoted to stable. Remove ?channel=dev from the address bar to go back to release firmware.";
     banner.append(note);
   }
   // Fill versions + enable buttons for available products.

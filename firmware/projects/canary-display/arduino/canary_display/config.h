@@ -27,6 +27,18 @@
 #endif
 #include "flavor_config.h"
 
+// -------------------- Dev playground (bench mode) --------------------
+// FEATURE_PLAYGROUND boots the guided peripheral bench mode instead of the
+// fleet face (docs/hardware/dev_playground_43b.md): main.cpp branches into
+// canary::playground and never initializes WiFi/MQTT/OTA. Off everywhere
+// by default; the canary-display-playground PlatformIO env sets it via
+// -D, and the Arduino path sets it in flavor_local.h
+// (./setup.sh arduino playground). Dash flavor + 4.3B pins only —
+// feature_sanity enforces the board contract.
+#ifndef FEATURE_PLAYGROUND
+#define FEATURE_PLAYGROUND 0
+#endif
+
 // -------------------- Identity --------------------
 static constexpr const char* DEVICE_TYPE   = CD_DEVICE_TYPE;
 static constexpr const char* DEVICE_ID     = CD_DEVICE_ID;  // first-boot seed only

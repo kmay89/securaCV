@@ -484,7 +484,7 @@ void test_vitals_fsm_integration() {
 // original tick() treated them as invalid observations, resetting
 // valid_since on every interleave, so the confirm window could never elapse
 // against real traffic and the lock was unreachable. (Found by the Sense Lab
-// bench, canary-local/sense.html, whose stream models the real frame mix.)
+// bench, canary-local/senselab.html, whose stream models the real frame mix.)
 void test_vitals_lock_survives_interleaved_presence() {
     VitalsConfig cfg;  // 4000 confirm, 6000 lost
     VitalsFSM fsm(cfg);

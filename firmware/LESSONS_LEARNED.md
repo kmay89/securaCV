@@ -732,7 +732,7 @@
 ### An FSM's "no data" and "bad data" are different inputs — conflating them made the vitals lock unreachable
 - **What happened:** The canary-sense breathing/heart lock (`VitalsFSM`)
   could never reach `Locked` against realistic radar traffic. The Sense Lab
-  bench (`canary-local/sense.html`), which streams the real frame mix
+  bench (`canary-local/senselab.html`), which streams the real frame mix
   through a line-for-line JS port of the FSM, showed `breathing_locked`
   stuck false forever at Seeed's own reference bedside geometry.
 - **Root cause:** `tick()` computed `valid = single_target &&
@@ -751,7 +751,7 @@
   immediate (`bpm_valid` re-checks `single_target` on every tick, including
   non-vitals ticks).
 - **Regression check:** `test_vitals_lock_survives_interleaved_presence`
-  (host) and its JS twin in `canary-local/tests/sense.test.js` both stream
+  (host) and its JS twin in `canary-local/tests/senselab.test.js` both stream
   the realistic mix: 10 Hz presence + empty ticks + 1 Hz vitals. Rule of
   thumb pinned: when writing FSM integration tests for a multiplexed wire,
   feed the full frame mix, never a single-type stream.
