@@ -381,6 +381,80 @@ test("parseNvs survives blank flash and reports nothing", async () => {
   assert.strictEqual(witnessSummary(items), null);
 });
 
+// ── progress prediction (the bar the user can trust) ────────────────────────
+test("makeEtaTracker: monotonic fraction, sane ETA at steady rate", async () => {
+  const { makeEtaTracker } = await core();
+  const t = makeEtaTracker(1000_000);
+  t.feed(0, 0);
+  let p = t.feed(100_000, 1000); // 100 KB/s
+  p = t.feed(200_000, 2000);
+  p = t.feed(300_000, 3000);
+  assert.ok(Math.abs(p.frac - 0.3) < 1e-9);
+  assert.ok(p.etaSeconds > 5 && p.etaSeconds < 9, `eta ~7s, got ${p.etaSeconds}`);
+  assert.ok(p.kbps > 80 && p.kbps < 120, `kbps ~97, got ${p.kbps}`);
+  // A bogus backwards report must never move the bar backwards.
+  p = t.feed(50_000, 4000);
+  assert.ok(p.frac >= 0.3);
+  // Overshoot clamps to 100%.
+  p = t.feed(2_000_000, 5000);
+  assert.ok(p.frac <= 1);
+  // Unknown rate yet → no fake estimate.
+  const fresh = makeEtaTracker(500);
+  assert.strictEqual(fresh.feed(0, 0).etaSeconds, null);
+});
+
+test("formatDuration speaks human", async () => {
+  const { formatDuration } = await core();
+  assert.strictEqual(formatDuration(3), "a few seconds");
+  assert.strictEqual(formatDuration(42), "about 40 seconds");
+  assert.strictEqual(formatDuration(130), "about 2 minutes");
+  assert.strictEqual(formatDuration(61), "about 1 minute");
+  assert.strictEqual(formatDuration(null), "");
+  assert.strictEqual(formatDuration(NaN), "");
+});
+
+// ── serial console heuristics ───────────────────────────────────────────────
+test("looksLikeGarbage: wrong-baud soup yes, real console text no", async () => {
+  const { looksLikeGarbage } = await core();
+  // Real firmware output — including the help menu's box-drawing glyphs.
+  const menu = "┌────────────┐\n│ SERIAL COMMANDS │\n└────────────┘\n[BOOT] securacv canary v2.2.0\n".repeat(3);
+  assert.strictEqual(looksLikeGarbage(menu), false);
+  // Wrong baud: replacement chars and control soup.
+  const soup = ("�\x01x�\x02�~\x1f�").repeat(20);
+  assert.strictEqual(looksLikeGarbage(soup), true);
+  // Too little data to judge → not garbage (yet).
+  assert.strictEqual(looksLikeGarbage("��"), false);
+  assert.strictEqual(looksLikeGarbage(""), false);
+});
+
+// ── backup-file restore guard ───────────────────────────────────────────────
+test("validateBackupFile: equal ok, smaller warns, bigger refused", async () => {
+  const { validateBackupFile } = await core();
+  const flash = 8 * 1024 * 1024;
+  assert.deepStrictEqual(validateBackupFile(flash, flash, "b.bin"), { ok: true });
+  const small = validateBackupFile(4 * 1024 * 1024, flash, "b.bin");
+  assert.strictEqual(small.ok, true);
+  assert.ok(/smaller/.test(small.warn));
+  const big = validateBackupFile(16 * 1024 * 1024, flash, "b.bin");
+  assert.strictEqual(big.ok, false);
+  assert.ok(/bigger/.test(big.reason));
+  assert.strictEqual(validateBackupFile(0, flash, "b.bin").ok, false);
+  // Unknown flash size: only emptiness is checkable.
+  assert.strictEqual(validateBackupFile(123, null, "b.bin").ok, true);
+});
+
+// ── rescue product choice ───────────────────────────────────────────────────
+test("pickRescueProduct prefers what the board runs, else the only match", async () => {
+  const { pickRescueProduct } = await core();
+  // Board says it runs canary_wap → that product wins on the S3.
+  const wap = pickRescueProduct(catalog, "ESP32-S3", "canary_wap");
+  assert.strictEqual(wap.id, "securacv-canary-wap");
+  // Unknown project on a chip with several products → caller must ask.
+  assert.strictEqual(pickRescueProduct(catalog, "ESP32-S3", "mystery_fw"), null);
+  // Unknown chip → null.
+  assert.strictEqual(pickRescueProduct(catalog, "ESP32-NOPE", "x"), null);
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");

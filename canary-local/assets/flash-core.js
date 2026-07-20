@@ -398,6 +398,95 @@ export function witnessSummary(items) {
   };
 }
 
+// ── progress prediction (a bar the user can trust) ─────────────────────────
+// One tracker per stage. The fraction is monotonic — a progress bar must
+// never move backwards — and the rate is an EMA so the "time left" estimate
+// doesn't jitter with every packet. Timestamps are passed in, so this stays
+// pure and testable.
+export function makeEtaTracker(total) {
+  let lastT = null, lastDone = 0, rate = 0, frac = 0; // rate: bytes/ms
+  return {
+    feed(done, now) {
+      done = Math.min(Math.max(done, lastDone), total || done);
+      if (lastT == null) { lastT = now; lastDone = done; }
+      else if (done > lastDone) {
+        const dt = now - lastT;
+        if (dt > 0) {
+          const r = (done - lastDone) / dt;
+          rate = rate ? rate * 0.75 + r * 0.25 : r;
+        }
+        lastT = now; lastDone = done;
+      }
+      if (total > 0) frac = Math.max(frac, Math.min(1, done / total));
+      const remain = Math.max(0, (total || 0) - lastDone);
+      return {
+        frac,
+        kbps: rate * 1000 / 1024,
+        etaSeconds: rate > 0 && total > 0 ? remain / rate / 1000 : null,
+      };
+    },
+  };
+}
+
+export function formatDuration(s) {
+  if (!Number.isFinite(s) || s == null || s < 0) return "";
+  if (s < 8) return "a few seconds";
+  if (s < 60) return `about ${Math.max(10, Math.round(s / 5) * 5)} seconds`;
+  const m = Math.round(s / 60);
+  return `about ${m} minute${m === 1 ? "" : "s"}`;
+}
+
+// ── serial console heuristics ───────────────────────────────────────────────
+// Baud candidates for the monitor, most likely first. The firmware console is
+// console_baud (115200); 74880 is the classic ESP32 boot-ROM rate; the rest
+// cover common sketches. On native-USB boards (every current Canary) the baud
+// barely matters — CDC ignores it — so the default just works.
+export const CONSOLE_BAUDS = [115200, 74880, 9600, 230400, 460800, 921600];
+
+// Wrong-baud output decodes as a soup of U+FFFD replacement chars and raw
+// control bytes. Real firmware text — including the help menu's box-drawing
+// glyphs — decodes cleanly. Needs a decent sample before it will judge.
+export function looksLikeGarbage(text) {
+  if (!text || text.length < 60) return false;
+  let bad = 0, n = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    n++;
+    if (c === 0xfffd) bad++;
+    else if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) bad++;
+    else if (c === 0x7f) bad++;
+  }
+  return bad / n > 0.2;
+}
+
+// ── restoring a saved backup file (forward-compatible recovery) ─────────────
+// A backup is raw flash bytes, so restoring one never depends on firmware
+// version — but the file must plausibly belong on this chip.
+export function validateBackupFile(byteLength, flashBytes, name) {
+  if (!(byteLength > 0)) return { ok: false, reason: "that file is empty" };
+  if (flashBytes && byteLength > flashBytes) {
+    return { ok: false, reason: `that file is bigger than this chip's flash ` +
+      `(${formatBytes(byteLength)} vs ${formatBytes(flashBytes)}) — it can't be from this board` };
+  }
+  if (flashBytes && byteLength !== flashBytes) {
+    return { ok: true, warn: `heads up: ${name || "this file"} is smaller than the chip ` +
+      `(${formatBytes(byteLength)} of ${formatBytes(flashBytes)}) — it'll be written from the ` +
+      `start of flash and the rest is left untouched` };
+  }
+  return { ok: true };
+}
+
+// Which product a rescue should offer first: the one the board is already
+// running if we could read it, else the chip's only match, else the caller
+// shows a picker.
+export function pickRescueProduct(catalog, chip, currentProjectName) {
+  const matches = productsForChip(catalog, chip);
+  if (!matches.length) return null;
+  const current = matchProjectToProduct(catalog, currentProjectName);
+  if (current && matches.some((p) => p.id === current.id)) return current;
+  return matches.length === 1 ? matches[0] : null;
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.

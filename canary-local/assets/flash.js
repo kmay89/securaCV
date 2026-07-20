@@ -412,8 +412,16 @@ function phaseConnected() {
   const mon = el("button", "ghost", "🖥️ Serial monitor");
   mon.title = "Reboot into the firmware and talk to its built-in console.";
   mon.addEventListener("click", () => openMonitor());
-  tools.append(health, mon);
+  const rescue = el("button", "ghost", "🚑 Rescue");
+  rescue.title = "Board acting wrong? Wipe it and write the newest signed firmware — back to known-good.";
+  rescue.addEventListener("click", () => setPhase(phaseRescue()));
+  tools.append(health, mon, rescue);
   hello.append(tools);
+  const toolsNote = el("p", "fineprint",
+    "Health check reads the board’s story without changing a byte. The serial " +
+    "monitor is the board’s live voice over USB — watch it and send commands. " +
+    "Rescue brings a misbehaving board back to a known-good state.");
+  hello.append(toolsNote);
   wrap.append(hello);
 
   // Firmware picker (chip-guarded).
@@ -442,8 +450,10 @@ function haveBackupForThisBoard() {
 async function takeBackup(box) {
   const { esploader } = state.session;
   const total = state.flashBytes;
+  const eta = core.makeEtaTracker(total);
   const bytes = await readFlashChunked(esploader, 0, total, (prog, tot) => {
-    box.set(prog / tot, `${core.formatBytes(prog)} of ${core.formatBytes(tot)}`);
+    const p = eta.feed(prog, performance.now());
+    box.set(p.frac, progressMeta(prog, tot, p));
   });
   const name = `canary-${macStamp()}-backup.bin`;
   downloadBytes(bytes, name);
@@ -547,6 +557,18 @@ function renderPicker() {
     restoreRow.append(restore);
     adv.append(restoreRow);
   }
+
+  const restoreFile = el("div", "flash-local");
+  restoreFile.append(el("p", "muted",
+    "Restore a backup file saved earlier (canary-…-backup.bin) — rewinds the " +
+    "board to that exact moment, works with backups from any version."));
+  const rf = el("input");
+  rf.type = "file";
+  rf.accept = ".bin";
+  rf.className = "flash-file";
+  rf.addEventListener("change", onRestoreFile);
+  restoreFile.append(rf);
+  adv.append(restoreFile);
   card.append(adv);
   return card;
 }
@@ -704,14 +726,32 @@ async function startFlash(opts) {
   const box = progressCard(`Flashing ${label}`, "Getting the image ready…");
   setPhase(box.card);
 
+  // Announce the whole journey up front — "step 2 of 4" is what makes the
+  // bar predictable instead of a mystery that keeps restarting.
+  const willBackup = state.flashBytes && !opts.isBackup && !opts.skipBackup && !haveBackupForThisBoard();
+  const stepLabels = [];
+  if (willBackup) stepLabels.push("safety copy");
+  if (!opts.localBytes) stepLabels.push("download", "authenticity check");
+  if (eraseAll) stepLabels.push("full erase");
+  stepLabels.push("write + verify");
+  let stepNo = 0;
+  const nextStep = (text) => box.stage(`Step ${++stepNo} of ${stepLabels.length} — ${text}`);
+
   try {
     // 0) The automatic safety copy — best practice, no clicks. Skipped only
     //    when restoring a backup, when Advanced says so, or when this exact
-    //    board was already copied this session.
+    //    board was already copied this session. During a rescue a failing
+    //    backup (common on a corrupted board) must not block the recovery.
     let backupName = null;
-    if (state.flashBytes && !opts.isBackup && !opts.skipBackup && !haveBackupForThisBoard()) {
-      box.stage("Saving a safety copy of the board first (nothing is changed)");
-      backupName = await takeBackup(box);
+    let backupFailed = false;
+    if (willBackup) {
+      nextStep("saving a safety copy of the board first (nothing is changed)");
+      try {
+        backupName = await takeBackup(box);
+      } catch (e) {
+        if (!opts.rescue) throw e;
+        backupFailed = true;
+      }
       box.set(0, "");
     }
 
@@ -720,14 +760,14 @@ async function startFlash(opts) {
     if (opts.localBytes) {
       bytes = opts.localBytes;
     } else {
-      box.stage("Downloading the signed image");
+      nextStep("downloading the signed image");
       const buf = await fetch(opts.entry.factory, { cache: "no-store" }).then((r) => {
         if (!r.ok) throw new Error("download failed (HTTP " + r.status + ")");
         return r.arrayBuffer();
       });
       bytes = new Uint8Array(buf);
       // 2) Verify SHA-256 against the manifest BEFORE writing a byte.
-      box.stage("Checking the image is authentic (SHA-256)");
+      nextStep("checking the image is authentic (SHA-256)");
       const digest = await crypto.subtle.digest("SHA-256", buf);
       const got = core.hex(new Uint8Array(digest));
       if (got.toLowerCase() !== opts.entry.sha256) {
@@ -738,12 +778,12 @@ async function startFlash(opts) {
 
     // 3) Write, with live progress + automatic chip MD5 verification.
     if (eraseAll) {
-      box.stage("Erasing the whole chip");
+      nextStep("erasing the whole chip");
       await esploader.eraseFlash();
     }
-    box.stage("Writing firmware");
+    nextStep("writing firmware");
     const data = core.bytesToBinaryString(bytes);
-    const started = Date.now();
+    const eta = core.makeEtaTracker(bytes.length);
     await esploader.writeFlash({
       fileArray: [{ data, address: 0 }],
       flashSize: "keep",
@@ -752,9 +792,8 @@ async function startFlash(opts) {
       eraseAll: false, // regions being written are erased as needed
       compress: true,
       reportProgress: (_i, written, total) => {
-        const dt = Date.now() - started;
-        box.set(written / total,
-          `${core.formatBytes(written)} of ${core.formatBytes(total)} · ${core.throughput(written, dt)}`);
+        const p = eta.feed(written, performance.now());
+        box.set(p.frac, progressMeta(written, total, p));
       },
       calculateMD5Hash: (image) => md5Raw(image),
     });
@@ -766,7 +805,7 @@ async function startFlash(opts) {
     try { await esploader.after("hard_reset"); } catch {}
 
     state.busy = false;
-    setPhase(phaseDone({ ...opts, backupName }));
+    setPhase(phaseDone({ ...opts, backupName, backupFailed }));
   } catch (e) {
     state.busy = false;
     setPhase(flashError(e, opts));
@@ -823,6 +862,10 @@ function phaseDone(opts) {
     bk.append(document.createTextNode(
       ` Safety copy saved to your downloads as ${opts.backupName} — restore it any time from Advanced.`));
     box.append(bk);
+  } else if (opts.backupFailed) {
+    box.append(el("p", "fineprint",
+      "The safety copy couldn’t be read off this board first — common when a board " +
+      "is corrupted, and exactly why the rescue carried on without it."));
   }
 
   const row = el("div", "flash-row");
@@ -833,6 +876,102 @@ function phaseDone(opts) {
   row.append(watch, again);
   box.append(row);
   return box;
+}
+
+// ── rescue: back to known-good, for any firmware past or future ─────────────
+// The rescue path leans only on things that never change: the mask-ROM
+// bootloader, the chip family we detect from the silicon, and the signed
+// release manifest (regenerated for every future firmware release). So a
+// board messed up by ANY firmware — including ones that don't exist yet —
+// recovers the same way: best-effort safety copy, full erase, newest signed
+// image for the chip in hand.
+function phaseRescue() {
+  const box = el("section", "flash-card flash-rescue");
+  box.append(el("h2", null, "Rescue this board"));
+  box.append(el("p", "muted",
+    "For a Canary that’s acting wrong and you just want it back to known-good. " +
+    "Three steps: a safety copy is attempted first (a corrupted board may not " +
+    "give one — the rescue continues anyway), the whole chip is wiped, and the " +
+    "newest signed firmware for your exact chip is written and verified. This " +
+    "works the same for every future firmware release — the flasher always " +
+    "fetches the latest signed image for the silicon in hand."));
+
+  const matches = core.productsForChip(state.catalog, state.chip);
+  const preferred = core.pickRescueProduct(
+    state.catalog, state.chip, state.current && state.current.projectName);
+
+  let chosen = preferred || matches[0] || null;
+  if (matches.length > 1) {
+    const list = el("div", "flash-products");
+    matches.forEach((p) => {
+      const lab = el("label", "flash-rescue-choice");
+      const r = el("input");
+      r.type = "radio"; r.name = "rescue-product";
+      r.checked = chosen && p.id === chosen.id;
+      r.addEventListener("change", () => { chosen = p; });
+      lab.append(r);
+      const t = el("div");
+      t.append(el("div", "flash-product-name", p.name));
+      t.append(el("div", "flash-product-tag muted", p.tagline));
+      lab.append(t);
+      list.append(lab);
+    });
+    box.append(list);
+    if (preferred) box.append(el("p", "fineprint",
+      `${preferred.name} is pre-selected because that’s what the board says it was running.`));
+  } else if (chosen) {
+    box.append(el("p", "flash-current", `Firmware: ${chosen.name} — ${chosen.tagline}`));
+  }
+
+  const entry = chosen && core.manifestEntry(state.manifest, chosen, state.chip);
+  const row = el("div", "flash-row");
+  if (chosen && entry && !entry.error) {
+    const go = el("button", "primary", `Rescue with ${chosen.name} v${entry.version}`);
+    go.addEventListener("click", () => {
+      const e2 = core.manifestEntry(state.manifest, chosen, state.chip);
+      if (!e2 || e2.error) return;
+      startFlash({ entry: e2, product: chosen, eraseAll: true, rescue: true });
+    });
+    row.append(go);
+  } else {
+    box.append(el("p", "flash-note flash-note-soft",
+      state.manifest && (state.manifest.__missing || state.manifest.__invalid)
+        ? "No signed release is reachable right now, so the one-click rescue is unavailable — but restoring a backup file below always works."
+        : "Still checking for the latest signed release… come back to this card in a moment."));
+  }
+  const cancel = el("button", "ghost", "not yet");
+  cancel.addEventListener("click", () => setPhase(phaseConnected()));
+  row.append(cancel);
+  box.append(row);
+
+  // Restoring a saved backup file: raw bytes, so it can never go stale.
+  const restore = el("div", "flash-local flash-rescue-restore");
+  restore.append(el("h3", null, "…or put back a backup you saved earlier"));
+  restore.append(el("p", "muted",
+    "Every flash here saves a full copy of the board to your downloads " +
+    "(canary-…-backup.bin). Restoring one rewinds the board to that exact " +
+    "moment — firmware, settings, witness chain, everything. Backups are raw " +
+    "flash bytes, so a file from any past or future version restores the same way."));
+  const file = el("input");
+  file.type = "file";
+  file.accept = ".bin";
+  file.className = "flash-file";
+  file.addEventListener("change", onRestoreFile);
+  restore.append(file);
+  box.append(restore);
+  return box;
+}
+
+async function onRestoreFile(ev) {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  const check = core.validateBackupFile(f.size, state.flashBytes, f.name);
+  if (!check.ok) {
+    setPhase(errorRetry("That file can’t be restored here", new Error(check.reason), phaseConnected));
+    return;
+  }
+  const buf = await f.arrayBuffer();
+  startFlash({ localBytes: new Uint8Array(buf), label: f.name, isBackup: true, warn: check.warn });
 }
 
 // ── the health check (triage without changing a byte) ───────────────────────
@@ -1073,6 +1212,20 @@ function renderReport(r) {
     box.append(det);
   }
 
+  // If anything above looked off, point straight at the way out.
+  const worrying = r.blank || (r.coredump && r.coredump.present) ||
+    (r.ota && r.ota.pendingVerify) ||
+    (r.witness && r.witness.tamper != null && r.witness.tamper !== 0);
+  if (worrying && !r.blank) {
+    const fix = el("p", "flash-note flash-note-soft");
+    fix.append(document.createTextNode(
+      "Something above looks off? The Rescue button wipes the board and writes the newest signed firmware — back to known-good in one go. "));
+    const b = el("button", "ghost small", "🚑 open Rescue");
+    b.addEventListener("click", () => setPhase(phaseRescue()));
+    fix.append(b);
+    box.append(fix);
+  }
+
   const row = el("div", "flash-row");
   const back = el("button", "primary", "Back to flashing");
   back.addEventListener("click", () => setPhase(phaseConnected()));
@@ -1113,7 +1266,12 @@ function phaseMonitor(port, opts = {}) {
   const box = el("section", "flash-card flash-monitor");
   box.append(el("h2", null, "Serial monitor"));
   box.append(modeBadge("running"));
-  const status = el("p", "muted", "Opening the console…");
+  box.append(el("p", "muted",
+    "This is the board’s own voice: a live text feed the firmware prints over " +
+    "the USB cable, plus single-key commands you can send back. It’s how you " +
+    "check on a Canary without touching anything — and nothing you type here " +
+    "can break the board."));
+  const status = el("p", "muted flash-mon-status", "Opening the console…");
   box.append(status);
 
   const con = el("pre", "flash-console flash-console-tall");
@@ -1139,18 +1297,35 @@ function phaseMonitor(port, opts = {}) {
   inRow.append(input, sendBtn);
   box.append(inRow);
 
+  // Baud rate: pre-picked from the firmware catalog, changeable for the
+  // curious, self-correcting when the output doesn't decode as text.
+  const defaultBaud = state.catalog.console_baud || 115200;
+  const baudRow = el("label", "flash-mon-baud");
+  baudRow.append(el("span", "flash-fact-label", "baud"));
+  const baudSel = el("select");
+  const bauds = core.CONSOLE_BAUDS.includes(defaultBaud)
+    ? core.CONSOLE_BAUDS : [defaultBaud, ...core.CONSOLE_BAUDS];
+  bauds.forEach((b) => {
+    const o = el("option", null, b === defaultBaud ? `${b} (picked for your Canary)` : String(b));
+    o.value = String(b);
+    baudSel.append(o);
+  });
+  baudSel.value = String(defaultBaud);
+  baudRow.append(baudSel);
+  box.append(baudRow);
+
   const row = el("div", "flash-row");
   const done = el("button", "ghost", "← back to the flasher");
   row.append(done);
   box.append(row);
   box.append(el("p", "fineprint",
-    "Live from the board over USB at " + (state.catalog.console_baud || 115200) +
-    " baud. Nothing here leaves your computer. To flash again, go back — the " +
-    "flasher returns the board to download mode itself (or: hold BOOT, tap " +
-    "RESET, release BOOT)."));
+    "The right speed is already chosen for you (on native-USB Canaries the " +
+    "number barely matters). Nothing here leaves your computer. To flash " +
+    "again, go back — the flasher returns the board to download mode itself " +
+    "(or: hold BOOT, tap RESET, release BOOT)."));
 
   // — wire it up —
-  const mon = { alive: true, port: null, reader: null, writer: null };
+  const mon = { alive: true, port: null, reader: null, writer: null, manualBaud: false, session: 0 };
   let celebrated = !opts.celebrate;
 
   function send(text) {
@@ -1158,18 +1333,37 @@ function phaseMonitor(port, opts = {}) {
     mon.writer.write(new TextEncoder().encode(text)).catch(() => {});
   }
 
-  async function pump(p) {
-    await p.open({ baudRate: state.catalog.console_baud || 115200 });
+  async function stopStreams() {
+    try { mon.reader && await mon.reader.cancel(); } catch {}
+    try { mon.reader && mon.reader.releaseLock(); } catch {}
+    try { mon.writer && mon.writer.releaseLock(); } catch {}
+    mon.reader = mon.writer = null;
+    try { mon.port && await mon.port.close(); } catch {}
+  }
+
+  // One open-read session at a given baud. Resolves "garbage" if the first
+  // stretch of output doesn't decode as text (wrong baud), "ended" otherwise.
+  async function pumpOnce(p, baud) {
+    const mySession = ++mon.session;
+    await p.open({ baudRate: baud });
     mon.port = p;
     try { mon.writer = p.writable.getWriter(); } catch {}
     mon.reader = p.readable.getReader();
-    status.textContent = "Connected — the board is talking. Press a command, or h for its menu.";
+    status.textContent = `Connected at ${baud} — the board is talking. Press a command, or h for its menu.`;
     const dec = new TextDecoder();
-    let buf = "";
-    while (mon.alive) {
+    let buf = "", sample = "", judged = false;
+    while (mon.alive && mySession === mon.session) {
       const { value, done: fin } = await mon.reader.read();
       if (fin) break;
-      buf = (buf + dec.decode(value, { stream: true })).slice(-16000);
+      const text = dec.decode(value, { stream: true });
+      if (!judged) {
+        sample = (sample + text).slice(0, 600);
+        if (core.looksLikeGarbage(sample)) {
+          if (!mon.manualBaud) { await stopStreams(); return "garbage"; }
+          judged = true; // user chose this baud on purpose; show it raw
+        } else if (sample.length >= 600) judged = true;
+      }
+      buf = (buf + text).slice(-16000);
       con.textContent = buf;
       con.scrollTop = con.scrollHeight;
       if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
@@ -1178,18 +1372,44 @@ function phaseMonitor(port, opts = {}) {
         confettiBurst();
       }
     }
+    return "ended";
   }
 
-  async function closeMon() {
-    mon.alive = false;
-    try { mon.reader && await mon.reader.cancel(); } catch {}
-    try { mon.reader && mon.reader.releaseLock(); } catch {}
-    try { mon.writer && mon.writer.releaseLock(); } catch {}
-    try { mon.port && await mon.port.close(); } catch {}
+  // Try the chosen baud; if the text is soup, walk the candidates until one
+  // decodes (announcing each hop), so the user never stares at � garbage.
+  async function pump(p) {
+    let baud = Number(baudSel.value);
+    const tried = new Set();
+    for (;;) {
+      tried.add(baud);
+      const verdict = await pumpOnce(p, baud);
+      if (verdict !== "garbage" || !mon.alive) return;
+      const next = core.CONSOLE_BAUDS.find((b) => !tried.has(b));
+      if (!next) {
+        status.textContent = "None of the usual speeds decoded as clean text — showing it raw at " + defaultBaud + ".";
+        mon.manualBaud = true; // stop re-judging
+        baudSel.value = String(defaultBaud);
+        await pumpOnce(p, defaultBaud);
+        return;
+      }
+      status.textContent = `That didn’t look like text at ${baud} — trying ${next}…`;
+      con.textContent = "";
+      baudSel.value = String(next);
+      baud = next;
+    }
   }
+
+  baudSel.addEventListener("change", async () => {
+    mon.manualBaud = true;
+    const p = mon.port || port;
+    await stopStreams();
+    con.textContent = "";
+    try { await pumpOnce(p, Number(baudSel.value)); } catch {}
+  });
 
   done.addEventListener("click", async () => {
-    await closeMon();
+    mon.alive = false;
+    await stopStreams();
     setPhase(phaseConnect());
   });
 
@@ -1214,6 +1434,16 @@ function phaseMonitor(port, opts = {}) {
   })();
 
   return box;
+}
+
+// One consistent meta line under every progress bar: bytes, speed, and an
+// honest smoothed time estimate (blank until the rate settles).
+function progressMeta(done, total, p) {
+  let s = `${core.formatBytes(done)} of ${core.formatBytes(total)}`;
+  if (p.kbps > 1) s += ` · ${p.kbps.toFixed(0)} KB/s`;
+  const left = core.formatDuration(p.etaSeconds);
+  if (left) s += ` · ${left} left`;
+  return s;
 }
 
 // ── shared UI bits ──────────────────────────────────────────────────────────

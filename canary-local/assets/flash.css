@@ -161,7 +161,22 @@
 
 /* ── serial monitor ────────────────────────────────────────────────────── */
 .flash-console-tall { max-height: 380px; min-height: 220px; }
+.flash-mon-status { font-size: 13.5px; }
 .flash-mon-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.flash-mon-baud { display: flex; gap: 10px; align-items: center; margin-top: 12px; cursor: pointer; }
+.flash-mon-baud select {
+  background: #0c0c0d; border: 1px solid var(--edge); border-radius: 9px;
+  color: var(--text); padding: 6px 10px; font-size: 13px;
+}
+
+/* ── rescue ────────────────────────────────────────────────────────────── */
+.flash-rescue-choice {
+  display: flex; gap: 12px; align-items: flex-start; cursor: pointer;
+  border: 1px solid var(--edge); border-radius: 14px; padding: 12px 14px;
+  background: rgba(255,255,255,0.015);
+}
+.flash-rescue-choice input { margin-top: 4px; }
+.flash-rescue-restore { margin-top: 18px; border-top: 1px solid var(--edge); padding-top: 14px; }
 .flash-mon-input { display: flex; gap: 8px; margin-top: 10px; }
 .flash-mon-input input {
   flex: 1; min-width: 0; background: #0c0c0d; border: 1px solid var(--edge);
