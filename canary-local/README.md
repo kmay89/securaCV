@@ -11,7 +11,7 @@ canary-local/
   start.html            "Get started" — mission picker, 3-OS paths, one-tap-copy gates
   choose.html           "Find your Canary" — the four-question front door
   boards.html           "The Board Room" — every board + pin flags + wiring (§4g)
-  house.html            "The Canary House" — isometric home, whole flock in place
+  house.html            "The Canary House" — isometric home, whole fleet in place
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   wap.html              "The WAP — first boot" — captive-portal setup, serial + MQTT (§4i)
   sense.html            "The Sense — radar school" — meet it, place it, set it up
@@ -205,11 +205,11 @@ the configurator, the BOM. The chooser also accepts deep-link pre-fills
 half-answered quiz.
 
 **`house.html` — The Canary House.** An isometric cutaway home with the
-whole flock perched where it belongs, each device animating the way it
+whole fleet perched where it belongs, each device animating the way it
 actually senses (camera cone, WiFi-field ripples, radar arcs, breathing
 wave, display glow) and a "walk a visitor through" mode whose witness
-feed shows the ONLY thing the flock ever emits: small signed claims.
-Perches toggle on/off to size a real flock; every perch is a chooser
+feed shows the ONLY thing the fleet ever emits: small signed claims.
+Perches toggle on/off to size a real fleet; every perch is a chooser
 candidate (`assets/house-data.js` imports `chooser-data.js`, so titles
 and statuses cannot drift), and every perch deep-links back into the
 chooser with its answers pre-filled. Promises pinned by
@@ -457,7 +457,7 @@ one line per connection, and the step player walks.
 
 ## 4i. The WAP: first boot, from scratch (`wap.html`)
 
-The Hub teaches the place the flock converges; **The WAP teaches the first
+The Hub teaches the place the fleet converges; **The WAP teaches the first
 five minutes of a single device.** The Canary WAP is the WiFi-CSI witness on
 the XIAO ESP32-S3 Sense — and it is, literally, a **W**ireless **A**ccess
 **P**oint: unprovisioned, it brings up a `SecuraCV-XXXX` network with a

@@ -6607,9 +6607,9 @@ static void qr_scan_task_fn(void* param) {
           strlcpy(pass, prov.pass, sizeof(pass));
           if (!prov.wifi_only && prov.host[0]) {
             // The display told us where the hub lives: point the MQTT
-            // bridge there and re-init (idempotent) so the flock sees
+            // bridge there and re-init (idempotent) so the fleet sees
             // this canary the moment WiFi comes up — the display's
-            // "it's in the flock" celebration keys on that.
+            // "it's in the fleet" celebration keys on that.
             csi_mqtt::Config mc;
             if (csi_mqtt::config_load(&mc)) {
               strlcpy(mc.host, prov.host, sizeof(mc.host));

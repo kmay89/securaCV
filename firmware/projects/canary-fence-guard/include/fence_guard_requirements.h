@@ -22,7 +22,7 @@ enum class FenceEvent : uint8_t {
 // R2/R4 — mesh transport: Meshtastic, position broadcast OFF, always
 constexpr bool kMeshPositionBroadcast = false;
 
-// R3 — trust surface: same signer as the rest of the flock
+// R3 — trust surface: same signer as the rest of the fleet
 // canonical: "securacv-canary-sig|v1|fence|<device_id>|<len>|<hash>"
 //            (domain pending open question 4 — may reuse `sense`)
 constexpr char kSigDomain[] = "fence";  // TBD: open question 4

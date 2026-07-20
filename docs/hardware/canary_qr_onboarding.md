@@ -45,7 +45,7 @@ TOFU + on-glass blessing, same as every other join path.
 ## The display side (this wave)
 
 - **Entry points:** watch — "add a canary" in the settings tree, or
-  long-press the hero page when the flock is empty ("no canaries yet ·
+  long-press the hero page when the fleet is empty ("no canaries yet ·
   hold to add"); dash — "Add a canary" on the transparency sheet.
 - **Rendering:** dark-on-white card with a real quiet zone, never
   inverted (the iOS Smart-Invert failure class). Watch: 148 px code
@@ -84,7 +84,7 @@ it the shared grammar and made it scan on its own:
   apply to it; a plain `WIFI:` code in boot-scan mode joins Wi-Fi and
   leaves trust to the display's blessing.
 - **Hub handoff:** `h=`/`o=` from the code point the canary's MQTT
-  bridge at the hub immediately (config saved + re-init), so the flock —
+  bridge at the hub immediately (config saved + re-init), so the fleet —
   and the display's celebration — sees it the moment Wi-Fi comes up.
 - **It answers out loud:** credentials accepted = ascending chirp (LED
   blink on silent hardware); stale code = error buzz. Garbled or foreign

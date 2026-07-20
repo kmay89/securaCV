@@ -146,7 +146,7 @@ here stays inside your home network.</p>
 <div class="card">
 <p class="sub" style="margin-bottom:8px">Every canary you add teaches this
 display something new. Open like a 3D printer, not walled like a garden —
-anything that speaks the flock's language can join.</p>
+anything that speaks the fleet's language can join.</p>
 <ul style="color:var(--mut);font-size:13.5px;margin-left:18px">
 <li><b style="color:var(--tx)">Find my things</b> — canaries already hear
 Bluetooth tags and phones; soon this page will say "your keys are near the

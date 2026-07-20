@@ -350,7 +350,7 @@
           "Phase 0, zero custom firmware: stock Meshtastic + LIS3DH on I2C + a vibration switch on a free GPIO (Detection Sensor module) — a field mule on a real fence, measuring false alarms and the solar budget through weather.",
           "Let the mule's power data adjudicate ESP32-S3 vs the nRF52840 sibling kit (~11x idle gap; the S3 buys WiFi and price, the nRF52 buys the battery).",
           "Close the platform question: Meshtastic module on stock firmware vs the native witness stack with a mesh transport.",
-          "Then the witness surface: v1 fence canonical, Ed25519 chain, health claims — the same trust rules as the rest of the flock, position broadcast off forever.",
+          "Then the witness surface: v1 fence canonical, Ed25519 chain, health claims — the same trust rules as the rest of the fleet, position broadcast off forever.",
           "Enclosure last, informed by the mule: chain-link clamp, antenna stood off the metal plane, IP-rated, printed and validated like every other Canary shell."
         ],
         "request_title": "Concept request: Canary Fence Guard (Meshtastic perimeter witness)",

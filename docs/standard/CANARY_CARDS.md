@@ -22,7 +22,7 @@ numerics have nowhere type-aware to land, so today they get squeezed into
 
 Home Assistant solved this problem a decade ago: **devices announce
 entities; surfaces render entities through a fixed card vocabulary.** Canary
-Cards borrows exactly that move for the flock:
+Cards borrows exactly that move for the fleet:
 
 - a peripheral publishes the **same MQTT entity set it already announces to
   Home Assistant** (its `ha_discovery.cpp` is the single source of truth);

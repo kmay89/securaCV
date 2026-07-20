@@ -74,7 +74,7 @@ export const SENSE_COPY = {
   },
   lora: {
     label: "LoRa mesh backhaul",
-    how: "Solar-fed relay that carries witness claims over LoRa where WiFi ends — the flock's voice, off-grid.",
+    how: "Solar-fed relay that carries witness claims over LoRa where WiFi ends — the fleet's voice, off-grid.",
     emits: "relayed signed claims only — it moves proofs, it doesn't make them.",
   },
   mesh: {
@@ -92,7 +92,7 @@ export const SENSE_COPY = {
 //
 // A perch may instead carry `teaser: { title, pitch }` — a concept that
 // exists in no catalog yet. Teasers are honesty-fenced by tests: no
-// candidate, no chooser answers, excluded from the flock tally's real
+// candidate, no chooser answers, excluded from the fleet tally's real
 // counts, and (in house.js) they never file witness-feed events.
 export const PLACEMENTS = [
   {
@@ -200,7 +200,7 @@ export const PLACEMENTS = [
     aim: 0,
     range: 0.9,
     spot: "on the nightstand",
-    headline: "The bedside glance — your whole flock as one calm ring.",
+    headline: "The bedside glance — your whole fleet as one calm ring.",
     answers: { place: "bedside", want: ["show"], power: "outlet" },
   },
   {
@@ -224,7 +224,7 @@ export const PLACEMENTS = [
     aim: 0,
     range: 3.3,
     spot: "on a pole past the WiFi's edge",
-    headline: "Solar LoRa relay — the flock keeps its voice where the WiFi ends.",
+    headline: "Solar LoRa relay — the fleet keeps its voice where the WiFi ends.",
     answers: { place: "outdoor", power: "offgrid" },
   },
   {
@@ -293,11 +293,11 @@ export function chooserHash(answers) {
   return parts.length ? "#" + parts.join("&") : "";
 }
 
-// The flock, tallied honestly: witnesses vs displays vs infrastructure,
+// The fleet, tallied honestly: witnesses vs displays vs infrastructure,
 // and how many of the chosen perches are released vs in development.
 // Teaser concepts never inflate the real counts — they get their own
 // `soon` number and stay out of `total`.
-export function flockSummary(activeIds) {
+export function fleetSummary(activeIds) {
   const on = new Set(activeIds);
   let witnesses = 0, displays = 0, infra = 0, released = 0, indev = 0, soon = 0;
   for (const p of PLACEMENTS) {
