@@ -654,6 +654,115 @@ export function channelFromSearch(search) {
   }
 }
 
+// ── WiFi pre-provisioning (write NVS, not just read it) ────────────────────
+// The firmware reads its WiFi from the standard NVS partition — namespace
+// "securacv", blobs wifi_ssid / wifi_pass, bool wifi_en (canary_wap.ino).
+// So the flasher can hand a board its network at install time by writing a
+// minimal, VALID ESP-IDF NVS page containing exactly those three keys; the
+// firmware's first boot then adds its own identity beside them. If this
+// image were ever malformed, ESP-IDF's nvs_flash_init erases the region and
+// the board simply falls back to its setup network — graceful by design.
+//
+// Format (ESP-IDF NVS v2, mirroring the parser above): 4 KB page =
+// header(32) + entry-state bitmap(32) + 126×32-byte items. All CRCs are
+// esp_rom_crc32_le(UINT32_MAX, …) — crc32EspRom.
+
+const NVS_PAGE = 4096;
+
+function nvsItemCrc(page, o) {
+  // Item CRC covers bytes 0-3 (ns,type,span,chunk) and 8-31 (key+data),
+  // skipping the CRC field itself.
+  const tmp = new Uint8Array(28);
+  tmp.set(page.subarray(o, o + 4), 0);
+  tmp.set(page.subarray(o + 8, o + 32), 4);
+  return crc32EspRom(tmp);
+}
+
+function nvsWr32(page, o, v) {
+  page[o] = v & 0xff; page[o + 1] = (v >>> 8) & 0xff;
+  page[o + 2] = (v >>> 16) & 0xff; page[o + 3] = (v >>> 24) & 0xff;
+}
+
+export function buildNvsWifiImage(ssid, pass, partitionSize) {
+  const enc = new TextEncoder();
+  const ssidB = enc.encode(String(ssid));
+  const passB = enc.encode(String(pass || ""));
+  if (ssidB.length < 1 || ssidB.length > 32)
+    throw new Error("WiFi name must be 1-32 bytes");
+  if (passB.length !== 0 && (passB.length < 8 || passB.length > 63))
+    throw new Error("WiFi password must be 8-63 characters (or empty for an open network)");
+  if (!(partitionSize >= NVS_PAGE)) throw new Error("nvs partition too small");
+
+  const img = new Uint8Array(partitionSize).fill(0xff);
+  const page = img.subarray(0, NVS_PAGE);
+  let idx = 0; // next free 32-byte item slot
+
+  const markWritten = (j) => { page[32 + (j >> 2)] &= ~(1 << ((j & 3) * 2)); };
+  const itemBase = (j) => 64 + j * 32;
+
+  const writeHeader = (o, ns, type, span, chunk, key) => {
+    page[o] = ns; page[o + 1] = type; page[o + 2] = span; page[o + 3] = chunk;
+    for (let i = 0; i < 16; i++) page[o + 8 + i] = i < key.length ? key.charCodeAt(i) : 0;
+  };
+  const finishItem = (j) => { nvsWr32(page, itemBase(j) + 4, nvsItemCrc(page, itemBase(j))); };
+
+  // Namespace definition: "securacv" → index 1.
+  writeHeader(itemBase(idx), 0, 0x01, 1, 0xff, WITNESS_NVS_NAMESPACE);
+  page[itemBase(idx) + 24] = 1;
+  for (let i = 1; i < 8; i++) page[itemBase(idx) + 24 + i] = 0xff;
+  finishItem(idx); markWritten(idx); idx++;
+
+  const writeBlob = (key, bytes) => {
+    // v2 blob = one BLOB_DATA chunk (payload in the following entries) +
+    // one BLOB_IDX carrying the total size.
+    const payloadEntries = Math.ceil(bytes.length / 32);
+    const o = itemBase(idx);
+    writeHeader(o, 1, 0x42, 1 + payloadEntries, 0 /* chunkStart VER_0 + 0 */, key);
+    page[o + 24] = bytes.length & 0xff; page[o + 25] = (bytes.length >> 8) & 0xff;
+    page[o + 26] = 0xff; page[o + 27] = 0xff;               // reserved
+    nvsWr32(page, o + 28, crc32EspRom(bytes));              // payload CRC
+    finishItem(idx); markWritten(idx);
+    for (let i = 0; i < payloadEntries; i++) markWritten(idx + 1 + i);
+    page.set(bytes, o + 32);                                // 0xFF-padded tail
+    idx += 1 + payloadEntries;
+
+    const oi = itemBase(idx);
+    writeHeader(oi, 1, 0x48, 1, 0xff, key);
+    nvsWr32(page, oi + 24, bytes.length);
+    page[oi + 28] = 1;    // chunkCount
+    page[oi + 29] = 0;    // chunkStart (VER_0)
+    page[oi + 30] = 0xff; page[oi + 31] = 0xff;
+    finishItem(idx); markWritten(idx); idx++;
+  };
+
+  writeBlob("wifi_ssid", ssidB);
+  writeBlob("wifi_pass", passB);
+
+  // wifi_en = true (u8). Preferences putBool stores a u8.
+  const oe = itemBase(idx);
+  writeHeader(oe, 1, 0x01, 1, 0xff, "wifi_en");
+  page[oe + 24] = 1;
+  for (let i = 1; i < 8; i++) page[oe + 24 + i] = 0xff;
+  finishItem(idx); markWritten(idx); idx++;
+
+  // Page header: ACTIVE, seq 0, version 0xFE (v2); CRC over bytes 4..27.
+  nvsWr32(page, 0, 0xfffffffe);
+  nvsWr32(page, 4, 0);
+  page[8] = 0xfe;
+  for (let i = 9; i < 28; i++) page[i] = 0xff;
+  nvsWr32(page, 28, crc32EspRom(page.subarray(4, 28)));
+  return img;
+}
+
+// The standard WiFi-QR payload (WPA assumed unless the password is empty).
+// Escaping per the de-facto spec: backslash the chars \ ; , " :
+export function wifiQrString(ssid, pass) {
+  const esc = (s) => String(s).replace(/([\\;,":])/g, "\\$1");
+  return pass
+    ? `WIFI:T:WPA;S:${esc(ssid)};P:${esc(pass)};;`
+    : `WIFI:T:nopass;S:${esc(ssid)};;`;
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.

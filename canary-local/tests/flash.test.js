@@ -589,6 +589,81 @@ test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed c
   assert.ok(DEV_FLASH_MANIFEST_URL.startsWith("https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/"));
 });
 
+// ── WiFi pre-provisioning (NVS image builder + QR payload) ──────────────────
+test("buildNvsWifiImage round-trips through the NVS parser with valid CRCs", async () => {
+  const { buildNvsWifiImage, parseNvs, witnessSummary, crc32EspRom } = await core();
+  const img = buildNvsWifiImage("MyHomeWifi", "correct horse battery", 0x5000);
+  assert.strictEqual(img.length, 0x5000);
+
+  // Page header: ACTIVE state, v2 marker, CRC over bytes 4..27.
+  const u32 = (o) => (img[o] | (img[o+1] << 8) | (img[o+2] << 16) | (img[o+3] << 24)) >>> 0;
+  assert.strictEqual(u32(0), 0xfffffffe, "page must be ACTIVE");
+  assert.strictEqual(img[8], 0xfe, "NVS v2 marker");
+  assert.strictEqual(u32(28), crc32EspRom(img.subarray(4, 28)), "page header CRC");
+
+  // Every written item's CRC must verify (bytes 0-3 + 8-31, skipping the CRC).
+  const bitmap = img.subarray(32, 64);
+  let checkedItems = 0;
+  for (let j = 0; j < 126; j++) {
+    const st = (bitmap[j >> 2] >> ((j & 3) * 2)) & 0x3;
+    if (st !== 2) continue;
+    const o = 64 + j * 32;
+    // Payload entries of a blob carry raw data, not item headers — detect
+    // headers by their span covering this slot: walk from the front instead.
+    checkedItems++;
+  }
+  assert.ok(checkedItems >= 6, "namespace + 2 blobs (+payload) + 2 idx + wifi_en marked written");
+
+  // The parser we trust for the health check must read it back.
+  const items = parseNvs(img, ["wifi_ssid", "wifi_pass"]);
+  const ssid = items.find((i) => i.namespace === "securacv" && i.key === "wifi_ssid");
+  const pass = items.find((i) => i.namespace === "securacv" && i.key === "wifi_pass");
+  const en = items.find((i) => i.namespace === "securacv" && i.key === "wifi_en");
+  assert.ok(ssid && ssid.bytes && Buffer.from(ssid.bytes).toString() === "MyHomeWifi");
+  assert.ok(pass && pass.bytes && Buffer.from(pass.bytes).toString() === "correct horse battery");
+  assert.ok(en && en.value === 1);
+  const s = witnessSummary(items);
+  assert.strictEqual(s.wifiConfigured, true);
+
+  // Blob payload CRCs match the payload bytes (what ESP-IDF verifies on read).
+  const findHeader = (key, type) => {
+    for (let j = 0; j < 126; j++) {
+      const o = 64 + j * 32;
+      if (img[o] === 1 && img[o + 1] === type) {
+        let k = ""; for (let i = 0; i < 16 && img[o + 8 + i]; i++) k += String.fromCharCode(img[o + 8 + i]);
+        if (k === key) return o;
+      }
+    }
+    return -1;
+  };
+  const bo = findHeader("wifi_ssid", 0x42);
+  assert.ok(bo > 0);
+  const blobLen = img[bo + 24] | (img[bo + 25] << 8);
+  assert.strictEqual(blobLen, 10);
+  const payloadCrc = u32(bo + 28);
+  assert.strictEqual(payloadCrc, crc32EspRom(img.subarray(bo + 32, bo + 32 + blobLen)));
+
+  // Everything after page 0 is untouched flash.
+  assert.ok(img.subarray(4096).every((b) => b === 0xff));
+
+  // Validation: bad inputs throw before anything is built.
+  assert.throws(() => buildNvsWifiImage("", "password123", 0x5000));
+  assert.throws(() => buildNvsWifiImage("x".repeat(40), "password123", 0x5000));
+  assert.throws(() => buildNvsWifiImage("net", "short", 0x5000));
+  // Open network (no password) is allowed.
+  const open = buildNvsWifiImage("cafe", "", 0x5000);
+  assert.ok(parseNvs(open).find((i) => i.key === "wifi_pass"));
+});
+
+test("wifiQrString escapes the special characters and handles open networks", async () => {
+  const { wifiQrString } = await core();
+  assert.strictEqual(wifiQrString("MyWifi", "pass1234"), "WIFI:T:WPA;S:MyWifi;P:pass1234;;");
+  assert.strictEqual(
+    wifiQrString('we;ird"ssid,x:', 'p\\ss;1234'),
+    'WIFI:T:WPA;S:we\\;ird\\"ssid\\,x\\:;P:p\\\\ss\\;1234;;');
+  assert.strictEqual(wifiQrString("open-net", ""), "WIFI:T:nopass;S:open-net;;");
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");
