@@ -5,6 +5,10 @@
 name: Dismiss triaged code scanning alerts
 
 on:
+  push:
+    branches: [ "claude/code-scanning-vulnerabilities-vmh7ap" ]
+    paths:
+      - '.github/workflows/dismiss-code-scanning-alerts.yml'
   workflow_dispatch:
 
 permissions:
