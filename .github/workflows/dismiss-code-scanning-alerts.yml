@@ -56,4 +56,4 @@ jobs:
           dismiss 41 "false positive" \
             "canary-vision/device-api/server.js: all routes are behind the global rateLimit() middleware mounted before the auth middleware and route handlers. CodeQL does not recognize the in-house limiter."
           dismiss 17 "won't fix" \
-            "canary-vision/spa/app.js: the device API uses bearer-token auth via the Authorization header, so the SPA must hold the token in JS-reachable storage. sessionStorage is used deliberately (cleared on tab close, backed by session-expiry timers) on a local-network device UI. Accepted risk."
+            "spa/app.js: SPA bearer-token auth needs the token in JS-reachable storage; sessionStorage is deliberate (cleared on tab close, with session-expiry timers) on a local-network device UI. Accepted risk."
