@@ -1,0 +1,143 @@
+# Vision Model Asset — the pinned brain for the browser module-flasher.
+#
+# Builds the Grove Vision AI V2 person-detection model asset +
+# manifest-vision-model.json for an EXISTING fw-v* release tag and attaches
+# them, exactly the way flasher-release.yml handles the ESP32 factory images:
+# manual (workflow_dispatch), rebuildable per tag, trust = SHA-256 +
+# same-origin manifest (docs/browser_flasher.md § Trust model).
+#
+# Provenance & license: the source model is Seeed's SSCMA model zoo
+# "Person Detection (Swift-YOLO 192)" — MIT licensed, redistributable with
+# attribution (https://github.com/Seeed-Studio/sscma-model-zoo). We fetch
+# the INT8 TFLite, compile it for the module's Ethos-U55 NPU with Arm's
+# ethos-u-vela (the same compiler Seeed's deployment guide uses), and pin
+# the result to the release so the flasher can say exactly what it burns.
+# If Seeed publishes a ready Vela artifact, it is preferred over compiling.
+
+name: Vision Model Asset
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing fw-v* release tag to attach the model asset to (e.g. fw-v2.3.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  ZOO_BASE: https://files.seeedstudio.com/sscma/model_zoo/detection/person
+  MODEL_STEM: person_detection_int8
+
+jobs:
+  model-asset:
+    name: Build + attach the pinned person-detection model
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the target tag
+        id: tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in
+            fw-v*) ;;
+            *) echo "::error::expected a fw-v* tag, got '$TAG'"; exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#fw-v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch the source model (MIT — Seeed SSCMA model zoo)
+        run: |
+          mkdir -p /tmp/model
+          cd /tmp/model
+          # Prefer a vendor-published Vela artifact if one exists…
+          if curl -fsSL -o model_vela.tflite "$ZOO_BASE/${MODEL_STEM}_vela.tflite"; then
+            echo "vendor Vela artifact found — using it verbatim"
+            echo "VELA_SOURCE=vendor" >> "$GITHUB_ENV"
+          else
+            echo "no vendor Vela artifact — fetching INT8 TFLite to compile"
+            curl -fsSL -o model_int8.tflite "$ZOO_BASE/${MODEL_STEM}.tflite"
+            echo "VELA_SOURCE=compiled" >> "$GITHUB_ENV"
+          fi
+          ls -la
+
+      - name: Compile for the Ethos-U55 (ethos-u-vela)
+        if: env.VELA_SOURCE == 'compiled'
+        run: |
+          pip install --quiet ethos-u-vela
+          cd /tmp/model
+          # The WE2's NPU is an Ethos-U55/64-MAC configuration. Prefer Himax's
+          # own vela config when reachable; fall back to the accelerator flag
+          # alone (valid command streams either way — the config tunes memory
+          # placement/estimates, not correctness).
+          if curl -fsSL -o himax_vela.ini \
+              https://raw.githubusercontent.com/HimaxWiseEyePlus/ML_FVP_EVALUATION/main/vela/himax_vela.ini; then
+            vela --accelerator-config ethos-u55-64 \
+                 --config himax_vela.ini \
+                 --system-config My_Sys_Cfg --memory-mode My_Mem_Mode \
+                 --output-dir . model_int8.tflite || \
+            vela --accelerator-config ethos-u55-64 --output-dir . model_int8.tflite
+          else
+            vela --accelerator-config ethos-u55-64 --output-dir . model_int8.tflite
+          fi
+          mv model_int8_vela.tflite model_vela.tflite
+          ls -la
+
+      - name: Build manifest-vision-model.json + checksums
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          cd /tmp/model
+          test -s model_vela.tflite || { echo "::error::no model artifact produced"; exit 1; }
+          ASSET="person-detection-we2-v${VERSION}.tflite"
+          cp model_vela.tflite "$ASSET"
+          SIZE=$(stat -c%s "$ASSET")
+          SHA=$(sha256sum "$ASSET" | cut -d' ' -f1)
+          python3 - "$ASSET" "$SIZE" "$SHA" << 'PY'
+          import json, os, sys
+          asset, size, sha = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+          tag = os.environ["TAG"]; version = os.environ["VERSION"]
+          repo = os.environ.get("GITHUB_REPOSITORY", "kmay89/securaCV")
+          json.dump({
+              "$doc": "Pinned Grove Vision AI V2 model for the browser module-flasher. "
+                      "The flasher verifies sha256 before a byte is written.",
+              "version": version,
+              "tag": tag,
+              "model": {
+                  "name": asset,
+                  "url": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
+                  "size": size,
+                  "sha256": sha,
+                  "flash_addr": "0x400000",
+                  "arch": "Swift-YOLO (tiny) 192x192x3 INT8, Vela-compiled for Ethos-U55",
+                  "vela_source": os.environ.get("VELA_SOURCE", "compiled"),
+              },
+              "license": "MIT — Seeed SSCMA model zoo (person detection); "
+                         "redistributed with attribution, see NOTICE in the repo",
+              "source": "https://github.com/Seeed-Studio/sscma-model-zoo",
+          }, open("manifest-vision-model.json", "w"), indent=2)
+          PY
+          sha256sum "$ASSET" manifest-vision-model.json > vision-model-sha256sums.txt
+          cat manifest-vision-model.json
+
+      - name: Attach to the release (create if missing, clobber if rebuilt)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          cd /tmp/model
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "assets"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            person-detection-we2-v*.tflite \
+            manifest-vision-model.json \
+            vision-model-sha256sums.txt

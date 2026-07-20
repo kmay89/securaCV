@@ -22,6 +22,7 @@
 import { ESPLoader, Transport } from "./vendor/esptool-js/bundle.js";
 import { md5Raw } from "./vendor/md5/md5.js";
 import * as core from "./flash-core.js";
+import { phaseModule } from "./we2-flash.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -398,6 +399,24 @@ function phaseConnect() {
     "board into download mode on its own. If it can’t, do it by hand:"));
   dl.append(downloadModeSteps());
   box.append(dl);
+
+  // ── the OTHER port: the Vision's camera module (a different chip, its
+  // own engine — ROM bootloader + XMODEM instead of esptool) ──
+  if (state.catalog.we2_module) {
+    const mod = el("button", "flash-module-card");
+    mod.append(el("span", "flash-module-icon", "📷"),
+      el("strong", null, "Building a Canary Vision? Load the camera module’s brain here"),
+      el("span", "muted",
+        "The Grove Vision AI V2’s person-detection model, burned from this page over the " +
+        "MODULE’s USB-C port — pinned, SHA-256-verified, with a live bench check after. " +
+        "No vendor site, no account, no choices to get wrong."));
+    mod.addEventListener("click", () => setPhase(phaseModule({
+      catalog: state.catalog,
+      setPhase,
+      back: () => setPhase(phaseConnect()),
+    })));
+    box.append(mod);
+  }
   return box;
 }
 
@@ -888,14 +907,107 @@ function phaseConfirm(product, entry) {
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
   box.append(promise);
 
+  // WiFi (optional): fill it in and it's baked into the chip during the
+  // install; leave it empty and nothing changes. Either way the setup
+  // network is the safety net.
+  let wifiUI = null;
+  if (product && product.provisioning === "ap") {
+    wifiUI = renderWifiFields(box);
+  }
+
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
-  go.addEventListener("click", () => startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup }));
+  go.addEventListener("click", () => {
+    let wifi = null;
+    if (wifiUI) {
+      const r = wifiUI.credentials();
+      if (!r.ok) return; // invalid input — the field showed why
+      wifi = r.wifi;
+      wifiUI.clear();    // never leave the password sitting in the DOM
+    }
+    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi });
+  });
   const cancel = el("button", "ghost", "not yet");
   cancel.addEventListener("click", () => setPhase(phaseConnected()));
   row.append(go, cancel);
   box.append(row);
   return box;
+}
+
+// ── optional WiFi fields (confirm card) ─────────────────────────────────────
+function renderWifiFields(box) {
+  const sec = el("div", "flash-wifi");
+  sec.append(el("h3", null, "WiFi (optional)"));
+
+  const ssid = el("input"), pass = el("input");
+  ssid.type = "text"; ssid.placeholder = "network name (SSID)"; ssid.autocomplete = "off";
+  pass.type = "password"; pass.placeholder = "password";
+  pass.autocomplete = "new-password";
+  const showBtn = el("button", "ghost small", "show");
+  showBtn.addEventListener("click", () => {
+    pass.type = pass.type === "password" ? "text" : "password";
+    showBtn.textContent = pass.type === "password" ? "show" : "hide";
+  });
+  const rowIn = el("div", "flash-wifi-inputs");
+  rowIn.append(ssid, pass, showBtn);
+  sec.append(rowIn);
+
+  const err = el("p", "flash-note flash-note-soft flash-hidden");
+  sec.append(err);
+  sec.append(el("p", "fineprint",
+    "Fill this in and it’s written into the chip during the install, so the " +
+    "Canary joins your WiFi on its very first boot. If it can’t connect — " +
+    "or you leave this empty — it simply broadcasts its own setup network " +
+    "to connect to and finish setup there. What you type stays on this " +
+    "page and goes only to the chip over the cable."));
+
+  // Bonus for camera Canaries: the same fields can mint a standard WiFi QR
+  // (generated right here, nothing sent anywhere) to show the lens later.
+  const qrRow = el("div", "flash-row");
+  const qrBtn = el("button", "ghost small", "…or make a WiFi QR code to show a camera Canary");
+  const qrOut = el("div", "flash-wifi-qr");
+  qrBtn.addEventListener("click", async () => {
+    err.classList.add("flash-hidden");
+    if (!ssid.value) {
+      err.textContent = "Type the network name (and password) first, then make the QR.";
+      err.classList.remove("flash-hidden");
+      return;
+    }
+    try { core.buildNvsWifiImage(ssid.value, pass.value, 4096); }
+    catch (e) {
+      err.textContent = String(e.message || e);
+      err.classList.remove("flash-hidden");
+      return;
+    }
+    const { default: qrcode } = await import("./vendor/qrcode/qrcode.mjs");
+    const qr = qrcode(0, "M");
+    qr.addData(core.wifiQrString(ssid.value, pass.value));
+    qr.make();
+    qrOut.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 3 });
+    qrOut.append(el("p", "fineprint",
+      "Generated on this page — nothing was sent anywhere. Print it or show " +
+      "it on a phone; after install, hold it in front of the Canary’s camera."));
+  });
+  qrRow.append(qrBtn);
+  sec.append(qrRow, qrOut);
+
+  box.append(sec);
+  return {
+    credentials() {
+      err.classList.add("flash-hidden");
+      if (!ssid.value) return { ok: true, wifi: null }; // optional — skipped
+      try {
+        // The builder validates lengths; run it small just for the checks.
+        core.buildNvsWifiImage(ssid.value, pass.value, 4096);
+        return { ok: true, wifi: { ssid: ssid.value, pass: pass.value } };
+      } catch (e) {
+        err.textContent = String(e.message || e);
+        err.classList.remove("flash-hidden");
+        return { ok: false, wifi: null };
+      }
+    },
+    clear() { pass.value = ""; },
+  };
 }
 
 // ── the flash itself ────────────────────────────────────────────────────────
@@ -987,18 +1099,40 @@ async function startFlash(opts) {
       } catch { diff = null; }
     }
 
+    // 2.7) WiFi pre-provisioning: build a minimal valid NVS image carrying
+    // the typed credentials and write it into the image's own settings
+    // region, in the same pass as the firmware. If we can't locate that
+    // region, the install continues and the setup network takes over —
+    // never block a flash on a convenience.
+    let wifiFile = null, wifiSsid = null;
+    if (opts.wifi && !opts.isBackup) {
+      try {
+        const { entries } = core.parsePartitionTable(
+          bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
+        const nvs = entries.find(core.isNvsPart);
+        if (!nvs) throw new Error("no settings region in this image");
+        const nvsImg = core.buildNvsWifiImage(opts.wifi.ssid, opts.wifi.pass, nvs.size);
+        wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
+        wifiSsid = opts.wifi.ssid;
+      } catch (e) {
+        box.stage("Couldn’t bake the WiFi (" + String(e.message || e) +
+          ") — continuing; use the setup network instead");
+        await sleep(1200);
+      }
+    }
+
     // 3) Write, with live progress + automatic chip MD5 verification —
     // the map lights up region by region as the write cursor passes.
     if (eraseAll) {
       nextStep("erasing the whole chip");
       await esploader.eraseFlash();
     }
-    nextStep("writing firmware");
+    nextStep(wifiFile ? "writing firmware + your WiFi settings" : "writing firmware");
     const liveMap = diff ? box.attachMap(diff.rows, bytes.length, state.flashBytes || bytes.length) : null;
     const data = core.bytesToBinaryString(bytes);
     const eta = core.makeEtaTracker(bytes.length);
     await esploader.writeFlash({
-      fileArray: [{ data, address: 0 }],
+      fileArray: wifiFile ? [{ data, address: 0 }, wifiFile] : [{ data, address: 0 }],
       flashSize: "keep",
       flashMode: "keep",
       flashFreq: "keep",
@@ -1021,7 +1155,7 @@ async function startFlash(opts) {
 
     state.busy = false;
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
-      shaHex, shaSigned, bytesWritten: bytes.length }));
+      shaHex, shaSigned, bytesWritten: bytes.length, wifiSsid, wifi: null }));
   } catch (e) {
     state.busy = false;
     setPhase(flashError(e, opts));
@@ -1064,7 +1198,14 @@ function phaseDone(opts) {
     : "Installed — your Canary is awake"));
 
   const product = opts.product;
-  if (product) {
+  if (opts.wifiSsid) {
+    const w = el("p", "muted");
+    w.append(el("span", "flash-check", "✓"));
+    w.append(document.createTextNode(
+      ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
+      `No setup network needed (it still appears if the join fails, as the fallback).`));
+    box.append(w);
+  } else if (product) {
     const note = state.catalog.products.find((p) => p.id === product.id);
     const p = el("p", "muted", note ? note.provisioning_note : "");
     box.append(p);
@@ -1090,7 +1231,10 @@ function phaseDone(opts) {
   if (opts.diff) {
     const sec = el("div", "flash-report-sec");
     sec.append(el("h3", null, "What this install changed"));
-    if (opts.settings) {
+    if (opts.wifiSsid) {
+      sec.append(el("p", "flash-note flash-note-kept",
+        "The settings region was written fresh — with your WiFi already inside it."));
+    } else if (opts.settings) {
       sec.append(el("p", opts.settings.kept ? "flash-note flash-note-kept" : "flash-note flash-note-soft",
         opts.settings.text));
     }

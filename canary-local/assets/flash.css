@@ -278,6 +278,17 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-trust-sec p { font-size: 13.5px; line-height: 1.55; margin: 4px 0; }
 .flash-trust .flash-checklist li { font-size: 13px; }
 
+/* ── WiFi chooser (confirm card) ───────────────────────────────────────── */
+.flash-wifi { margin: 16px 0 4px; border-top: 1px solid var(--edge); padding-top: 14px; }
+.flash-wifi-inputs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.flash-wifi-inputs input {
+  flex: 1; min-width: 180px; background: #0c0c0d; border: 1px solid var(--edge);
+  border-radius: 10px; color: var(--text); padding: 9px 12px; font-size: 14px;
+}
+.flash-wifi-inputs input:focus { outline: none; border-color: var(--canary-deep); }
+.flash-wifi-qr { margin-top: 12px; text-align: center; }
+.flash-wifi-qr svg { background: #fff; border-radius: 10px; padding: 2px; }
+
 /* ── the layers tour ───────────────────────────────────────────────────── */
 .flash-story {
   margin: 18px 0 6px; border: 1px solid var(--edge); border-radius: 14px;
@@ -435,3 +446,25 @@ button.flash-map-key:hover { color: var(--text); }
   .flash-plug, .flash-spinner, .flash-done-bird, .flash-confetti-bit, .flash-bar-fill { animation: none; }
   .flash-confetti { display: none; }
 }
+
+/* ── the WE2 module flow (we2-flash.js) ─────────────────────────────────── */
+.flash-module-card { display: flex; flex-direction: column; gap: 5px; text-align: left; width: 100%;
+  margin-top: 18px; border: 1px dashed #3a4150; border-radius: 14px; background: rgba(124, 220, 255, 0.04);
+  color: var(--text); padding: 14px 16px; cursor: pointer; font: inherit; transition: border-color .15s; }
+.flash-module-card:hover { border-color: var(--canary); }
+.flash-module-icon { font-size: 22px; }
+.flash-module-card .muted { font-size: 13px; }
+.we2-flow .wap-facts { grid-template-columns: 1fr; }
+.we2-btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.we2-src { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.we2-src-card { display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer;
+  font: inherit; color: var(--text); }
+.we2-src-card:hover { border-color: var(--canary); }
+.we2-log { margin-top: 12px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #b9c2cc; background: #0c0d10; border: 1px solid #22242a; border-radius: 10px;
+  padding: 10px 12px; max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
+.we2-bench { margin-top: 22px; border-top: 1px solid var(--edge); padding-top: 16px; }
+.we2-preview { margin-top: 12px; border: 1px solid #23252b; border-radius: 10px; overflow: hidden;
+  background: #08090b; min-height: 120px; display: flex; align-items: center; justify-content: center; }
+.we2-preview-cv { display: block; max-width: 100%; image-rendering: pixelated; }
+@media (max-width: 700px) { .we2-src { grid-template-columns: 1fr; } }
