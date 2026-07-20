@@ -112,35 +112,84 @@ export function aimPayload(sample, g) {
   };
 }
 
-// The presence FSM, mirroring presence_fsm.cpp for the core vocabulary:
-// presence_started → dwell_started → dwell_ended → presence_ended, one
-// event per tick, dwell_ended fires the tick before presence_ended.
+// The presence FSM, mirroring presence_fsm.cpp for the full vocabulary:
+// presence_started → dwell_started → dwell_ended → presence_ended →
+// interaction_likely. One event per tick, in the firmware's order:
+// dwell_ended fires the tick before presence_ended, and a visit that
+// qualified — it dwelled, or held one voxel cell past the zone window —
+// signs interaction_likely within the post-leave window. `lastReason`
+// carries the firmware's reason string for the event payload.
 export function makeFsm() {
-  const s = { presence: false, dwelling: false, presenceStart: 0, lastSeen: 0 };
-  return {
+  const s = {
+    presence: false, dwelling: false, presenceStart: 0, lastSeen: 0,
+    dwellLatch: false, zoneLatch: false, zoneCandidate: false,
+    stableCell: null, stableEnter: 0,
+    lastLeave: 0, lastLeaveSeen: 0, interactionEmitted: false,
+  };
+  const fsm = {
+    lastReason: null,
     get state() { return { presence: s.presence, dwelling: s.dwelling }; },
-    reset() { s.presence = s.dwelling = false; s.presenceStart = s.lastSeen = 0; },
-    tick(personNow, nowMs, cfg) {
+    reset() {
+      s.presence = s.dwelling = false; s.presenceStart = s.lastSeen = 0;
+      s.dwellLatch = s.zoneLatch = s.zoneCandidate = false;
+      s.stableCell = null; s.stableEnter = 0;
+      s.lastLeave = s.lastLeaveSeen = 0; s.interactionEmitted = false;
+      fsm.lastReason = null;
+    },
+    // `cell` is the occupied voxel cell key ("r,c") — the voxel_tracker
+    // mirror: entering a different cell restarts the stable-zone clock.
+    tick(personNow, nowMs, cfg, cell = null) {
+      fsm.lastReason = null;
       if (personNow) {
         s.lastSeen = nowMs;
+        if (cell != null && cell !== s.stableCell) { s.stableCell = cell; s.stableEnter = nowMs; }
         if (!s.presence) {
           s.presence = true; s.dwelling = false; s.presenceStart = nowMs;
+          s.dwellLatch = s.zoneLatch = s.zoneCandidate = false;
+          s.interactionEmitted = false;
+          s.stableCell = cell; s.stableEnter = nowMs;
           return "presence_started";
         }
         if (!s.dwelling && nowMs - s.presenceStart >= cfg.dwell_start_ms) {
           s.dwelling = true;
           return "dwell_started";
         }
+        if (!s.zoneCandidate && cell != null &&
+            nowMs - s.stableEnter >= (cfg.zone_interaction_ms ?? 2500)) {
+          s.zoneCandidate = true;
+        }
+        if (s.dwelling) s.dwellLatch = true;
+        if (s.zoneCandidate) s.zoneLatch = true;
         return null;
       }
       if (s.presence && nowMs - s.lastSeen > cfg.lost_timeout_ms) {
         if (s.dwelling) { s.dwelling = false; return "dwell_ended"; }
         s.presence = false;
+        s.lastLeave = nowMs;
         return "presence_ended";
+      }
+      if (!s.presence && s.lastLeave !== 0 && s.lastLeave !== s.lastLeaveSeen) {
+        s.lastLeaveSeen = s.lastLeave;
+        s.interactionEmitted = false;
+      }
+      if (!s.presence && s.lastLeave !== 0 && !s.interactionEmitted) {
+        const win = cfg.interaction_window_ms ?? 3000;
+        const qualified = s.dwellLatch || s.zoneLatch;
+        if (qualified && nowMs - s.lastLeave <= win) {
+          s.interactionEmitted = true;
+          fsm.lastReason = s.dwellLatch ? "dwell_then_left" : "zone_interaction_then_left";
+          s.dwellLatch = s.zoneLatch = false;
+          return "interaction_likely";
+        }
+        if (nowMs - s.lastLeave > win) {
+          s.interactionEmitted = true;
+          s.dwellLatch = s.zoneLatch = false;
+        }
       }
       return null;
     },
   };
+  return fsm;
 }
 
 // Flatten the serial data into ordered {cls,text} console lines.
@@ -180,6 +229,8 @@ export class VisionSim {
       score_min: data.detect.score_min,
       lost_timeout_ms: data.detect.lost_timeout_ms,
       dwell_start_ms: data.detect.dwell_start_ms,
+      interaction_window_ms: data.detect.interaction_window_ms,
+      zone_interaction_ms: data.detect.zone_interaction_ms,
     };
     // SSCMA-Micro's own YOLO defaults (TSCORE 50 / TIOU 45); overwritten
     // from data.model_load.wire in vision.js when present
@@ -200,7 +251,8 @@ export class VisionSim {
   }
   snapshot() {
     return { t: this.t, raw: this.raw, sample: this.sample,
-             fsm: this.fsm.state, cfg: { ...this.cfg }, g: this.g };
+             fsm: this.fsm.state, reason: this.fsm.lastReason,
+             cfg: { ...this.cfg }, g: this.g };
   }
 
   // scenario launchers — each stages actors on the sim clock
@@ -303,7 +355,8 @@ export class VisionSim {
       bbox: bb,
       voxel: bb ? bboxToVoxel(bb, this.g) : { r: -1, c: -1, rows: this.g.rows, cols: this.g.cols },
     };
-    const ev = this.fsm.tick(!!bb, this.t, this.cfg);
+    const cell = bb ? this.sample.voxel.r + "," + this.sample.voxel.c : null;
+    const ev = this.fsm.tick(!!bb, this.t, this.cfg, cell);
     for (const fn of this.listeners.frame) fn(this.snapshot());
     if (ev) this.emitEvent(ev);
     return ev;
@@ -750,7 +803,8 @@ export function buildSerial(data, bus) {
   bus.on("sim-event", ({ name, snap }) => {
     if (state !== "booted") return;
     const c = snap.sample.bbox ? snap.sample.bbox.score : 0;
-    put("wap-prov", `[EVT] ${name}  conf=${c} voxel=${snap.sample.voxel ? snap.sample.voxel.r + "," + snap.sample.voxel.c : "-"}`);
+    const why = snap.reason ? " reason=" + snap.reason : "";
+    put("wap-prov", `[EVT] ${name}${why}  conf=${c} voxel=${snap.sample.voxel ? snap.sample.voxel.r + "," + snap.sample.voxel.c : "-"}`);
   });
   return wrap;
 }
@@ -809,7 +863,8 @@ export function buildMqtt(data, bus) {
     const bb = snap.sample.bbox || { x: 0, y: 0, w: 0, h: 0, score: 0 };
     const v = snap.sample.voxel || { r: -1, c: -1 };
     row(base + "/events", JSON.stringify({
-      event: name, signed: true, confidence: bb.score,
+      event: name, ...(snap.reason ? { reason: snap.reason } : {}),
+      signed: true, confidence: bb.score,
       voxel: { r: v.r, c: v.c }, bbox: { x: bb.x, y: bb.y, w: bb.w, h: bb.h },
     }), false);
     row(base + "/state", JSON.stringify({
@@ -1047,7 +1102,7 @@ export function buildTunePlay(data, bus, sim) {
     if (logBody.firstChild && logBody.firstChild.tagName === "P") logBody.innerHTML = "";
     const r = el("div", "vis-evlog-row");
     const bb3 = snap.sample.bbox;
-    r.append(el("code", null, name),
+    r.append(el("code", null, name + (snap.reason ? " (" + snap.reason + ")" : "")),
       el("span", "muted", bb3 ? "conf " + bb3.score + " · voxel " + snap.sample.voxel.r + "," + snap.sample.voxel.c : "frame empty"),
       el("span", "fineprint", "signed · seq +1"));
     logBody.prepend(r);

@@ -120,6 +120,9 @@ VOXEL_ROWS = igrab(CONFIG_H, r"VOXEL_ROWS\s*=\s*(\d+)", "VOXEL_ROWS")
 FRAME_W = igrab(CONFIG_H, r"FRAME_W\s*=\s*(\d+)", "FRAME_W")
 FRAME_H = igrab(CONFIG_H, r"FRAME_H\s*=\s*(\d+)", "FRAME_H")
 INVOKE_PERIOD_MS = igrab(CONFIG_H, r"INVOKE_PERIOD_MS\s*=\s*(\d+)", "INVOKE_PERIOD_MS")
+INTERACTION_WINDOW_MS = igrab(CONFIG_H, r"INTERACTION_AFTER_LEAVE_WINDOW_MS\s*=\s*(\d+)",
+                              "INTERACTION_AFTER_LEAVE_WINDOW_MS")
+ZONE_INTERACTION_MS = igrab(CONFIG_H, r"ZONE_INTERACTION_MS\s*=\s*(\d+)", "ZONE_INTERACTION_MS")
 HEARTBEAT_MS = igrab(CONFIG_H, r"HEARTBEAT_MS\s*=\s*(\d+)", "HEARTBEAT_MS")
 AIM_PUBLISH_MS = igrab(CONFIG_H, r"AIM_PUBLISH_MS\s*=\s*(\d+)", "AIM_PUBLISH_MS")
 AIM_IDLE_PUBLISH_MS = igrab(CONFIG_H, r"AIM_IDLE_PUBLISH_MS\s*=\s*(\d+)", "AIM_IDLE_PUBLISH_MS")
@@ -385,6 +388,8 @@ DETECT = {
     "lost_timeout_ms": LOST_TIMEOUT_MS,
     "dwell_start_ms": DWELL_START_MS,
     "bounds": BOUNDS,
+    "interaction_window_ms": INTERACTION_WINDOW_MS,
+    "zone_interaction_ms": ZONE_INTERACTION_MS,
     "voxel": {"cols": VOXEL_COLS, "rows": VOXEL_ROWS},
     "frame": {"w": FRAME_W, "h": FRAME_H},
     "invoke_period_ms": INVOKE_PERIOD_MS,
@@ -745,7 +750,8 @@ SANDBOX = [
      "event": "presence_started"},
     {"id": "linger", "label": "Stay a while", "icon": "🧍",
      "blurb": f"Stand still past the dwell timer ({DWELL_START_MS // 1000} s default) — "
-              "dwell_started fires; stillness is not absence.",
+              "dwell_started fires; stillness is not absence. Leave afterwards and the "
+              "qualified visit signs interaction_likely (dwell_then_left).",
      "event": "dwell_started"},
     {"id": "leave", "label": "Leave the frame", "icon": "👋",
      "blurb": f"The box drops; after the lost timeout ({LOST_TIMEOUT_MS} ms default) "

@@ -213,19 +213,53 @@ test("aimPayload: the firmware's key set, key for key", async () => {
 
 test("makeFsm: the event order presence_fsm.cpp enforces", async () => {
   const { makeFsm } = await import("../assets/vision-ui.js");
-  const cfg = { dwell_start_ms: 1000, lost_timeout_ms: 500 };
+  const cfg = { dwell_start_ms: 1000, lost_timeout_ms: 500,
+                interaction_window_ms: 3000, zone_interaction_ms: 2500 };
   const fsm = makeFsm();
   assert.strictEqual(fsm.tick(true, 0, cfg), "presence_started");
   assert.strictEqual(fsm.tick(true, 100, cfg), null);
   assert.strictEqual(fsm.tick(true, 1000, cfg), "dwell_started");
+  assert.strictEqual(fsm.tick(true, 1100, cfg), null); // latches the dwell
   // silence: dwell_ended fires the tick before presence_ended (firmware order)
-  assert.strictEqual(fsm.tick(false, 1400, cfg), null);      // within lost timeout
-  assert.strictEqual(fsm.tick(false, 1600, cfg), "dwell_ended");
-  assert.strictEqual(fsm.tick(false, 1601, cfg), "presence_ended");
-  assert.strictEqual(fsm.tick(false, 2000, cfg), null);
-  // a short visit skips dwell entirely
-  assert.strictEqual(fsm.tick(true, 3000, cfg), "presence_started");
-  assert.strictEqual(fsm.tick(false, 3600, cfg), "presence_ended");
+  assert.strictEqual(fsm.tick(false, 1500, cfg), null);      // within lost timeout
+  assert.strictEqual(fsm.tick(false, 1700, cfg), "dwell_ended");
+  assert.strictEqual(fsm.tick(false, 1701, cfg), "presence_ended");
+  // the qualified (dwelled) visit signs interaction_likely inside the window
+  assert.strictEqual(fsm.tick(false, 1800, cfg), "interaction_likely");
+  assert.strictEqual(fsm.lastReason, "dwell_then_left");
+  assert.strictEqual(fsm.tick(false, 1900, cfg), null); // emitted once, not again
+  // a short visit skips dwell — and earns no interaction event
+  assert.strictEqual(fsm.tick(true, 6000, cfg), "presence_started");
+  assert.strictEqual(fsm.tick(false, 6600, cfg), "presence_ended");
+  assert.strictEqual(fsm.tick(false, 6700, cfg), null);
+  assert.strictEqual(fsm.lastReason, null);
+});
+
+test("makeFsm: the stable-zone latch qualifies a visit without dwell", async () => {
+  const { makeFsm } = await import("../assets/vision-ui.js");
+  // dwell far away so only the zone path can qualify (firmware lines 61-66)
+  const cfg = { dwell_start_ms: 60000, lost_timeout_ms: 500,
+                interaction_window_ms: 3000, zone_interaction_ms: 2500 };
+  const fsm = makeFsm();
+  assert.strictEqual(fsm.tick(true, 0, cfg, "1,1"), "presence_started");
+  assert.strictEqual(fsm.tick(true, 1000, cfg, "1,1"), null);
+  assert.strictEqual(fsm.tick(true, 2600, cfg, "1,1"), null); // zone window passed → latch
+  assert.strictEqual(fsm.tick(false, 3200, cfg), "presence_ended");
+  assert.strictEqual(fsm.tick(false, 3300, cfg), "interaction_likely");
+  assert.strictEqual(fsm.lastReason, "zone_interaction_then_left");
+  // moving between cells restarts the stable clock: no latch, no event
+  const fsm2 = makeFsm();
+  fsm2.tick(true, 0, cfg, "0,0");
+  fsm2.tick(true, 1500, cfg, "0,1");
+  fsm2.tick(true, 2900, cfg, "0,2");
+  assert.strictEqual(fsm2.tick(false, 3500, cfg), "presence_ended");
+  assert.strictEqual(fsm2.tick(false, 3600, cfg), null);
+  // outside the post-leave window nothing fires either (firmware line 99)
+  const fsm3 = makeFsm();
+  fsm3.tick(true, 0, cfg, "1,1");
+  fsm3.tick(true, 2600, cfg, "1,1");
+  assert.strictEqual(fsm3.tick(false, 3200, cfg), "presence_ended");
+  assert.strictEqual(fsm3.tick(false, 6300, cfg), null); // 3.1 s after leave
 });
 
 test("iou + nms behave like a de-dup pass", async () => {
