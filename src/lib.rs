@@ -2280,6 +2280,21 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             .enforce_retention_with_checkpoint(retention, &signature_keys)
     }
 
+    /// Verify the sealed log — the latest checkpoint signature and the event
+    /// chain from that checkpoint through the tail — using the database's own
+    /// trusted key lineage. Intended for a caller that holds a live [`Kernel`]
+    /// and needs to confirm the log is intact, e.g. `witnessd`'s boot-time
+    /// tail check before it extends the chain.
+    ///
+    /// Mirrors the `POST /verify` path (`SignatureMode::Compat`, keys taken
+    /// from the trusted lineage). A structural failure — bad hash link, bad
+    /// signature, untrusted checkpoint signer — is reported as
+    /// `chain_valid: false`, not an `Err`; `Err` is reserved for being unable
+    /// to attempt verification at all.
+    pub fn verify_sealed_log(&self) -> Result<crate::verify_runner::VerifyReport> {
+        crate::verify_runner::run_full_verify(&self.conn, None, None, SignatureMode::Compat, |_| {})
+    }
+
     /// Read events from the sealed log for review or export.
     /// This is a *ruleset-bound* operation: attempting to read/interpret events under a different ruleset
     /// is treated as a conformance violation (Invariant VI).
@@ -3737,6 +3752,35 @@ mod tests {
             &cfg.ruleset_id,
             cfg.ruleset_hash,
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn verify_sealed_log_accepts_good_chain_and_rejects_tampering() -> Result<()> {
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+
+        // A freshly sealed chain verifies from the checkpoint through the tail.
+        let report = kernel.verify_sealed_log()?;
+        assert!(
+            report.chain_valid,
+            "intact chain must verify: {:?}",
+            report.error
+        );
+
+        // Tampering the tail must be caught by the boot-time check (K4 / FR-8),
+        // not laundered into the chain by the next append.
+        kernel.conn.execute(
+            "UPDATE sealed_events SET payload_json = '{\"tampered\":true}' \
+             WHERE id = (SELECT MAX(id) FROM sealed_events)",
+            [],
+        )?;
+        let report = kernel.verify_sealed_log()?;
+        assert!(
+            !report.chain_valid,
+            "a tampered tail must fail verification"
+        );
         Ok(())
     }
 
