@@ -124,6 +124,35 @@ Everything is built; the official images light up when a release is cut:
 3. Visit `canary-local/flash.html` (or the published Lab), plug in a board, and
    confirm it detects, reads, backs up, flashes, verifies, and boots.
 
+Both release paths build the factory images through the *same*
+`firmware/scripts/build_flash_manifest.py`, which reads the product list and
+each board's chip from `canary-local/devices/flash.json` — so they can't drift,
+and CI fails if a product exists without a build recipe.
+
+### Rebuilding or publishing out of band (`flasher-release.yml`)
+
+The flasher assets have a second, manual workflow — **Actions → Flasher Factory
+Images → Run workflow**, with a `fw-v*` tag — for two cases:
+
+- **Rebuild without a new version.** Fixed `make_factory.py` or the packaging
+  and want to regenerate the factory images for an existing tag? Run it with
+  that tag — it compiles the *tagged* firmware but with **today's** packaging
+  tooling (it overlays `make_factory.py`, `build_flash_manifest.py`, and the
+  `flash.json` catalog from the dispatch ref), so the fix reaches already-cut
+  tags, and re-attaches the images in place. (A firmware *source* change still
+  needs a new tag — the overlay is packaging only.)
+- **Publish before the OTA key ceremony.** The browser channel's integrity is
+  SHA-256 + same-origin, **not** the Ed25519 OTA key (see Trust model above), so
+  it doesn't need `OTA_SIGNING_KEY_PEM`. If you want the one-click flow live
+  before setting up OTA signing — where `firmware-release.yml` hard-stops for
+  the missing key — tag the release, then run `flasher-release.yml` by hand for
+  that tag. It builds the images and **creates the release if one doesn't exist
+  yet**, so the flasher lights up while OTA waits on the key.
+
+On a normal signed release you don't touch this — `firmware-release.yml` already
+produces the flasher assets in the same run. It's dispatch-only precisely so it
+doesn't race that workflow.
+
 Air-gapped / self-hosted: the page accepts `?manifest=<url>` to point at a
 manifest you host yourself. To keep a crafted link from turning the public Lab
 into a firmware-phishing vector, the override is honored **only** for a
@@ -147,6 +176,9 @@ offline posture the OTA engine also offers.
 | `canary-local/tools/gen_flash.py` | generates the chip-guard catalog from firmware |
 | `canary-local/devices/flash.json` | the generated catalog |
 | `firmware/scripts/make_factory.py` | merges a build into one factory image |
+| `firmware/scripts/build_flash_manifest.py` | builds every factory image + `manifest-flash.json` (shared by both release paths) |
+| `.github/workflows/firmware-release.yml` | signed OTA release; also builds flasher assets in the same run |
+| `.github/workflows/flasher-release.yml` | manual rebuild / pre-key publish of the flasher assets |
 
 ## Testing
 

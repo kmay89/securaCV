@@ -1,0 +1,187 @@
+name: Flasher Factory Images
+
+# Build the browser-flasher factory images + manifest-flash.json for an
+# EXISTING firmware tag and attach them to its GitHub Release. Manual
+# (workflow_dispatch) on purpose — this is the out-of-band path:
+#
+#   • Rebuild button — regenerate the flasher assets for a tag without cutting
+#     a new version (e.g. after a make_factory.py / packaging fix). The firmware
+#     built is still the tag's; only the packaging tooling is today's (overlay
+#     below), so a builder fix reaches already-cut tags.
+#   • Pre-key / no-key publishing — the browser flasher's integrity rests on
+#     SHA-256 + same-origin (docs/browser_flasher.md § Trust model), NOT the
+#     Ed25519 OTA release key. So these assets can go out before the OTA key
+#     ceremony: if firmware-release.yml hard-stops for a missing
+#     OTA_SIGNING_KEY_PEM, run THIS for the tag and the flasher lights up
+#     anyway (it will create the Release if one doesn't exist yet).
+#
+# On a normal signed release, firmware-release.yml already builds these in the
+# same run — via the SAME firmware/scripts/build_flash_manifest.py, so the two
+# paths can't drift. Dispatch-only here avoids racing that workflow to publish.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing fw-v* release tag to (re)build flasher assets for (e.g. fw-v2.3.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  factory-images:
+    name: Build + attach browser-flasher factory images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the target tag
+        id: tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in
+            fw-v*) ;;
+            *) echo "::error::expected a fw-v* tag, got '$TAG'"; exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#fw-v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Overlay current flasher tooling onto the tagged firmware
+        # `ref: <tag>` above gives us the firmware source AS TAGGED — correct,
+        # the flasher must ship the tagged firmware. But the *packaging* tooling
+        # (make_factory.py, build_flash_manifest.py, and the flash.json catalog)
+        # should be today's, so a factory-builder fix reaches older tags and a
+        # tag cut before build_flash_manifest.py existed still builds. The
+        # firmware compiled below is still the tag's; only how it's packaged for
+        # the flasher comes from the dispatch ref.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          path: _tooling
+      - name: Apply the tooling overlay
+        run: |
+          cp _tooling/firmware/scripts/make_factory.py firmware/scripts/make_factory.py
+          cp _tooling/firmware/scripts/build_flash_manifest.py firmware/scripts/build_flash_manifest.py
+          mkdir -p canary-local/devices
+          cp _tooling/canary-local/devices/flash.json canary-local/devices/flash.json
+          rm -rf _tooling
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+          # esptool 4.11 imports intelhex without declaring it (same workaround
+          # as the release workflow); esptool<5 keeps `merge_bin` stable for
+          # make_factory.py.
+          pip install intelhex
+          pip install "esptool>=4,<5"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-canary-release-${{ hashFiles('firmware/canary/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-canary-release-
+            ${{ runner.os }}-pio-canary-
+
+      - name: Build canary (release + Home Assistant MQTT)
+        working-directory: firmware/canary
+        run: pio run -e release_ha
+
+      - name: Build canary-vision (release)
+        working-directory: firmware/projects/canary-vision
+        run: |
+          # Placeholder secrets ON PURPOSE — the real identity/credentials live
+          # in device NVS, seeded by the user's first flash (same scheme as the
+          # signed release; docs/firmware_ota.md § generic release builds).
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic release build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3
+
+      - name: Build canary-sense (release)
+        working-directory: firmware/projects/canary-sense
+        run: |
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic release build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          pio run -e canary-sense-default -e canary-sense-wellbeing
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Configure Arduino CLI + libraries
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+          arduino-cli lib install "Crypto"
+          arduino-cli lib install "ArduinoJson"
+          arduino-cli lib install "NimBLE-Arduino"
+
+      - name: Build canary-wap (arduino-cli)
+        run: |
+          # PSRAM=opi is REQUIRED (build_config.h #errors on S3 without it).
+          arduino-cli compile \
+            --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
+            --libraries firmware/common \
+            --output-dir /tmp/wap-build \
+            firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
+
+      - name: Build factory images + manifest-flash.json
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          NOTES="$(awk "/^## \[${VERSION}\]/{f=1;next} /^## \[/{if(f)exit} f{print}" CHANGELOG.md | head -c 400 || true)"
+          python3 firmware/scripts/build_flash_manifest.py \
+            --version "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --tag "$TAG" \
+            --out-dir /tmp/release \
+            --notes "$NOTES"
+          # Checksum file scoped to what this workflow publishes (the signed
+          # release, when it exists, ships its own full sha256sums.txt).
+          ( cd /tmp/release && { sha256sum manifest-flash.json; sha256sum ./*-factory.bin 2>/dev/null || true; } > flasher-sha256sums.txt )
+          ls -la /tmp/release
+
+      - name: Attach to the release
+        # Adds/updates the flasher assets on the tag's release, creating the
+        # release if it doesn't exist yet (the pre-key path). Existing release
+        # notes and OTA assets are preserved.
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: |
+            /tmp/release/*-factory.bin
+            /tmp/release/manifest-flash.json
+            /tmp/release/flasher-sha256sums.txt

@@ -135,6 +135,24 @@ jobs:
             exit 1
           fi
 
+      - name: Flasher release build-map covers every product
+        # The release factory-image builder (firmware/scripts/build_flash_manifest.py)
+        # must know how to build every product the flasher offers, or a new
+        # board would silently vanish from the in-browser flasher.
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          sys.path.insert(0, "firmware/scripts")
+          import build_flash_manifest as bfm
+          catalog = json.load(open("canary-local/devices/flash.json"))
+          missing = [p["id"] for p in catalog["products"] if p["id"] not in bfm.BUILD]
+          if missing:
+              print("::error::build_flash_manifest.py BUILD map is missing:", ", ".join(missing),
+                    "— add build locations for it (or drop it from gen_flash.py).")
+              sys.exit(1)
+          print(f"BUILD map covers all {len(catalog['products'])} flasher products.")
+          PY
+
   wasm-build-and-boot:
     name: firmware → wasm → boots in a browser
     runs-on: ubuntu-latest
