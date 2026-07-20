@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Canary House — Scenes · canary.local</title>
+  <meta name="description" content="Zoom into the Canary House one room at a time. Each scene shows a single witness doing the one honest thing it does — and the one small signed claim that's all it ever says. Scene 1: presence. Someone is here, never who." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+  <link rel="stylesheet" href="assets/house.css?v=3" />
+  <style>
+    /* scene-specific layout, on top of the House's own dress */
+    .scenes-main { max-width: 900px; margin: 22px auto 70px; padding: 0 24px; }
+    .scene-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 2px 12px; }
+    .scene-tab { appearance: none; font: inherit; font-size: 13px; cursor: pointer;
+      border: 1px solid var(--edge); background: var(--surface); color: var(--muted);
+      border-radius: 999px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 8px; }
+    .scene-tab .n { font-variant-numeric: tabular-nums; color: var(--faint); }
+    .scene-tab.on { color: #151204; background: var(--canary); border-color: var(--canary); font-weight: 650; }
+    .scene-tab.on .n { color: rgba(21,18,4,.6); }
+    .scene-tab.soon { cursor: default; border-style: dashed; }
+    .scene-tab.soon .tag { font-size: 10px; color: #6fd6c3; border: 1px dashed rgba(111,214,195,.5);
+      border-radius: 999px; padding: 0 6px; }
+
+    .scene-head { margin: 0 2px 12px; }
+    .scene-head h2 { margin: 0; font-size: 22px; }
+    .scene-head .zoom { font-size: 12px; color: var(--faint); font-family: inherit;
+      display: inline-flex; align-items: center; gap: 6px; }
+    .scene-head p { margin: 6px 0 0; color: var(--muted); max-width: 62ch; font-size: 14px; }
+
+    .scene-stage { position: relative; }
+    #scene-svg { display: block; width: 100%; height: auto; }
+
+    /* the in-scene "someone is here" chip, drawn in SVG so it tracks the room */
+    .scene-chip { opacity: 0; }
+    .scene-chip.show { animation: sceneChip 3.4s ease-out forwards; }
+    .scene-chip rect { fill: rgba(10,10,12,.92); stroke: rgba(255,212,79,.6); stroke-width: 1; }
+    .scene-chip text { fill: var(--text); font: 600 13px/1 -apple-system, "Segoe UI", sans-serif; }
+    @keyframes sceneChip { 0% { opacity: 0; transform: translateY(8px); } 10% { opacity: 1; transform: translateY(0); }
+      82% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
+    .scene-chip { transform-box: fill-box; transform-origin: center; }
+
+    /* the payoff — what actually left the room */
+    .payoff { margin-top: 14px; border: 1px solid var(--edge); border-radius: 14px;
+      background: linear-gradient(180deg, var(--surface-2), #101012); padding: 0 16px;
+      max-height: 0; opacity: 0; overflow: hidden;
+      transition: max-height .5s ease, opacity .5s ease, padding .5s ease; }
+    .payoff.show { max-height: 240px; opacity: 1; padding: 16px; }
+    .payoff h3 { margin: 0; font-size: 15px; }
+    .payoff .claim { margin: 10px 0 0; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12.5px; color: var(--canary); background: #0a0a0c; border: 1px solid var(--edge);
+      border-radius: 8px; padding: 8px 10px; word-break: break-word; }
+    .payoff .never { margin: 10px 0 0; color: var(--muted); font-size: 13.5px; }
+    .payoff .never b { color: var(--text); }
+
+    .scene-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 2px 0; }
+    .scene-note { color: var(--faint); font-size: 12.5px; margin: 10px 2px 0; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .scene-chip.show { animation: none; opacity: 1; }
+      .payoff { transition: none; }
+    }
+  </style>
+</head>
+<body class="house-page">
+  <header id="hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+      </svg>
+    </div>
+    <h1>Canary House <span class="dot" style="color:var(--canary)">·</span> Scenes</h1>
+    <p class="lede">
+      The whole house, one room at a time. Each scene zooms in on a single witness
+      doing the one honest thing it does — and shows you the one small
+      <em>signed claim</em> that's all it ever says. No pictures. No identities.
+      Just proof that something happened.
+    </p>
+    <p class="fineprint">
+      <a href="house.html">← the whole house</a> ·
+      <a href="index.html">the family</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main class="scenes-main">
+    <nav class="scene-tabs" id="scene-tabs" aria-label="Scenes"></nav>
+
+    <div class="scene-head">
+      <span class="zoom" id="scene-zoom">⤢ zoomed in</span>
+      <h2 id="scene-title">—</h2>
+      <p id="scene-desc">—</p>
+    </div>
+
+    <div id="stage" class="house-stage scene-stage">
+      <svg id="scene-svg" viewBox="0 0 680 470" role="img" aria-labelledby="scene-svg-title">
+        <title id="scene-svg-title">An isometric room; a witness on the wall senses a visitor and emits a signed presence claim.</title>
+
+        <!-- floor -->
+        <polygon class="slab" points="340,160 600,295 340,430 80,295" fill="#0d0f13"/>
+        <polygon class="slab" points="340,160 600,295 340,430 80,295" fill="url(#floorGlow)"/>
+        <!-- faint iso floor grid -->
+        <g stroke="#1a1d22" stroke-width="1" opacity="0.7">
+          <line x1="210" y1="227.5" x2="470" y2="362.5"/>
+          <line x1="145" y1="260" x2="405" y2="395"/>
+          <line x1="470" y1="227.5" x2="210" y2="362.5"/>
+          <line x1="535" y1="260" x2="275" y2="395"/>
+        </g>
+        <!-- back-left wall (darker) -->
+        <polygon class="wall" points="340,160 80,295 80,175 340,40" fill="#111318"/>
+        <!-- back-right wall (lit a touch) -->
+        <polygon class="wall" points="340,160 600,295 600,175 340,40" fill="#171a20"/>
+        <!-- doorway on the front-right edge -->
+        <polygon points="470,362 520,388 520,318 470,292" fill="#0a0b0e" stroke="#23262c" stroke-width="1"/>
+        <rect class="doorlight" x="0" y="0" width="0" height="0" fill="none"/>
+        <line x1="470" y1="362" x2="470" y2="292" stroke="#2a2e35" stroke-width="1.5"/>
+
+        <!-- room label -->
+        <text class="room-label" x="120" y="300" fill="#4a4a4a" font-size="12"
+          font-family="-apple-system, Segoe UI, sans-serif" id="room-label">a quiet room</text>
+
+        <!-- the sensing field (radar), emanating from the marker into the room -->
+        <g class="field field-radar" id="field" aria-hidden="true">
+          <circle class="ripple" cx="500" cy="150" r="70" fill="none" stroke="#c9a4f0" stroke-width="1.4"/>
+          <circle class="ripple" cx="500" cy="150" r="110" fill="none" stroke="#c9a4f0" stroke-width="1.2" style="animation-delay:1.3s"/>
+          <circle class="ripple" cx="500" cy="150" r="150" fill="none" stroke="#c9a4f0" stroke-width="1" style="animation-delay:2.6s"/>
+        </g>
+
+        <!-- the visitor (starts at the door, hidden until the scene plays) -->
+        <g class="visitor hidden" id="visitor" transform="translate(492,352)">
+          <g class="visitor-inner">
+            <ellipse class="visitor-shadow" cx="0" cy="7" rx="10" ry="3.4"/>
+            <rect class="visitor-body" x="-5.5" y="-24" width="11" height="24" rx="5.5"/>
+            <circle class="visitor-head" cx="0" cy="-29" r="6"/>
+          </g>
+        </g>
+
+        <!-- the witness marker, high on the back-right wall -->
+        <g class="marker" id="marker" transform="translate(500,150)">
+          <ellipse class="marker-shadow" cx="0" cy="17" rx="13" ry="4.5"/>
+          <circle class="marker-pulse" cx="0" cy="0" r="12"/>
+          <circle class="marker-body" cx="0" cy="0" r="11"/>
+          <path class="marker-glyph" d="M -5 4 A 6 6 0 0 1 5 4 M -8.5 6 A 9.5 9.5 0 0 1 8.5 6 M 0 4.5 v -1"/>
+        </g>
+
+        <!-- the "someone is here" chip, revealed on the trip -->
+        <g class="scene-chip" id="chip" transform="translate(340,250)">
+          <rect x="-64" y="-16" width="128" height="26" rx="13"/>
+          <text x="0" y="2" text-anchor="middle">someone is here</text>
+        </g>
+
+        <defs>
+          <radialGradient id="floorGlow" cx="62%" cy="30%" r="70%">
+            <stop offset="0%" stop-color="rgba(201,164,240,0.10)"/>
+            <stop offset="100%" stop-color="rgba(201,164,240,0)"/>
+          </radialGradient>
+        </defs>
+      </svg>
+    </div>
+
+    <div class="scene-controls">
+      <button id="play-btn" class="walk-btn">▶ play the scene</button>
+      <div class="legend" aria-hidden="true"><span><i class="perch-dot dot-radar"></i> 60&nbsp;GHz radar · presence only</span></div>
+    </div>
+
+    <div class="payoff" id="payoff" aria-live="polite">
+      <h3>That's everything that left the room.</h3>
+      <p class="claim" id="payoff-claim">—</p>
+      <p class="never"><b>No camera. No picture. No name.</b> The radar can resolve <em>that</em> someone is there and never <em>who</em> — identity is impossible by construction, not by promise.</p>
+    </div>
+
+    <div class="house-feed">
+      <h3>The witness feed <span class="feed-sub">— everything this witness ever says</span></h3>
+      <ul id="feed-list" aria-live="polite"></ul>
+    </div>
+
+    <p class="scene-note" id="scene-note">One room of the Canary House, up close. More scenes — the camera that keeps its pixels, the WiFi field, the breathing wave — are coming.</p>
+  </main>
+
+  <footer>
+    <p>
+      A SecuraCV page. The honesty copy is the fleet's own: a witness only ever
+      emits a small Ed25519-signed claim. Architecture:
+      <a href="https://github.com/kmay89/securaCV/blob/main/canary-local/README.md">canary-local/README.md</a>
+    </p>
+  </footer>
+
+  <script>
+    (function () {
+      "use strict";
+      var $ = function (id) { return document.getElementById(id); };
+      var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      // ── the scene model: one entry per scene; only the first is built today ──
+      var SCENES = [
+        {
+          id: "presence",
+          n: 1,
+          tab: "Presence",
+          room: "a quiet room",
+          title: "Someone is here. Never who.",
+          desc: "A 60 GHz radar witness on the wall feels a body enter — range and motion, nothing more. Watch what it does, then watch what it says.",
+          claim: 'presence/detected  { occupants: 1, range_m: 2.4 }  · sig: ed25519:3af9…c2 ✓',
+          available: true,
+        },
+        { id: "vision", n: 2, tab: "Pixels stay put", available: false },
+        { id: "wifi", n: 3, tab: "The WiFi field", available: false },
+        { id: "breath", n: 4, tab: "The breathing wave", available: false },
+      ];
+      var scene = SCENES[0];
+
+      // ── build the scene tabs (the "one of many" model, made visible) ──
+      var tabs = $("scene-tabs");
+      SCENES.forEach(function (s) {
+        var b = document.createElement("button");
+        b.className = "scene-tab" + (s.available ? "" : " soon") + (s === scene ? " on" : "");
+        b.type = "button";
+        b.innerHTML = '<span class="n">' + s.n + '</span>' + s.tab +
+          (s.available ? "" : ' <span class="tag">soon</span>');
+        if (!s.available) b.disabled = true;
+        tabs.appendChild(b);
+      });
+
+      // paint the active scene's copy
+      $("scene-title").textContent = scene.title;
+      $("scene-desc").textContent = scene.desc;
+      $("room-label").textContent = scene.room;
+
+      // ── the witness feed ──
+      var feed = $("feed-list");
+      function feedLine(text, kind) {
+        var li = document.createElement("li");
+        li.className = "feed-item" + (kind ? " " + kind : "");
+        li.textContent = text;
+        feed.insertBefore(li, feed.firstChild);
+        while (feed.children.length > 6) feed.removeChild(feed.lastChild);
+      }
+      feedLine("scene armed — radar live, room empty", "feed-sys");
+
+      // ── play the scene ──
+      var marker = $("marker"), visitor = $("visitor"), chip = $("chip"),
+          payoff = $("payoff"), playBtn = $("play-btn");
+      var timers = [];
+      function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+      function at(ms, fn) { timers.push(setTimeout(fn, ms)); }
+      function moveVisitor(x, y) { visitor.setAttribute("transform", "translate(" + x + "," + y + ")"); }
+
+      function reset() {
+        clearTimers();
+        marker.classList.remove("tripped");
+        chip.classList.remove("show");
+        payoff.classList.remove("show");
+        visitor.classList.add("hidden");
+        moveVisitor(492, 352);
+        visitor.style.transition = "none";
+      }
+
+      function play() {
+        reset();
+        playBtn.disabled = true;
+        playBtn.textContent = "▶ playing…";
+        // enter
+        at(60, function () {
+          visitor.classList.remove("hidden");
+          visitor.style.transition = reduce ? "none" : "transform 1.2s ease-in-out";
+          moveVisitor(430, 320);
+        });
+        at(1250, function () { moveVisitor(360, 292); });           // into the room
+        // the trip
+        at(2450, function () {
+          marker.classList.add("tripped");
+          chip.classList.add("show");
+          $("payoff-claim").textContent = scene.claim;
+          feedLine(scene.claim, "feed-witness");
+          at(400, function () { payoff.classList.add("show"); });
+        });
+        at(2900, function () { moveVisitor(300, 300); });           // settles in
+        at(6200, function () {
+          playBtn.disabled = false;
+          playBtn.textContent = "↺ replay the scene";
+        });
+      }
+
+      playBtn.addEventListener("click", play);
+      reset();
+    })();
+  </script>
+</body>
+</html>
