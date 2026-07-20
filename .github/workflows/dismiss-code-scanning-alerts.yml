@@ -43,17 +43,7 @@ jobs:
             [ "$code" = "200" ]
           }
 
-          dismiss 59 "false positive" \
-            "src/vault/crypto.rs seal_v1: the [0u8;12] buffer is immediately overwritten by SysRng.try_fill_bytes, so the nonce is random per message. CodeQL's Rust dataflow does not model the &mut buffer fill as killing the zero literal."
-          dismiss 58 "false positive" \
-            "src/vault/crypto.rs wrap_dek: the [0u8;12] buffer is overwritten by SysRng.try_fill_bytes before use; the wrap nonce is random per DEK. CodeQL does not model the &mut fill."
-          dismiss 26 "false positive" \
-            "src/vault/format.rs: the [0u8;12] buffer is overwritten by copy_from_slice from the deserialized envelope nonce read back for decryption. It is not a static nonce."
-          dismiss 25 "false positive" \
-            "src/vault/format.rs: this [2u8;12] value is a unit-test fixture in envelope_round_trip_works, not a production nonce."
-          dismiss 55 "false positive" \
-            "canary-vision/device-api/routes/witness.js: the route is covered by the global per-IP rateLimit() middleware (server.js) plus a dedicated expensiveRouteLimiter on the crypto routes. CodeQL only recognizes known third-party rate-limit libraries, not this in-house limiter."
-          dismiss 41 "false positive" \
-            "canary-vision/device-api/server.js: all routes are behind the global rateLimit() middleware mounted before the auth middleware and route handlers. CodeQL does not recognize the in-house limiter."
+          # Alerts 59, 58, 26, 25, 55, 41 were dismissed in an earlier run
+          # (they now 400 on re-dismiss). Only #17 remains.
           dismiss 17 "won't fix" \
             "spa/app.js: SPA bearer-token auth needs the token in JS-reachable storage; sessionStorage is deliberate (cleared on tab close, with session-expiry timers) on a local-network device UI. Accepted risk."
