@@ -13,6 +13,7 @@ on:
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'deny.toml'
       - 'canary-vision/package.json'
       - 'canary-vision/device-api/package.json'
       - 'canary-vision/package-lock.json'
@@ -35,6 +36,19 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Audit Cargo.lock against the RustSec advisory DB
         run: cargo audit
+
+  cargo-deny:
+    name: cargo deny (licenses / bans / sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Check licenses, duplicate versions, and source provenance
+        # Advisories are gated by the cargo-audit job above (RustSec DB);
+        # cargo-deny owns license policy, duplicate detection, and source
+        # provenance per deny.toml (doc-12 A4 / FR-14).
+        run: cargo deny check bans licenses sources
 
   npm-audit:
     name: npm audit (canary-vision)
