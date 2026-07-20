@@ -42,6 +42,7 @@
 #include "canary/net/mdns_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
+#include <esp_random.h>  // esp_random() for reconnect jitter
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
 #include <esp_task_wdt.h>
@@ -162,6 +163,9 @@ static bool mqtt_supervise(uint32_t now) {
   if (attempt > 4) attempt = 4;
   uint32_t backoff_ms = 2000UL << attempt;
   if (backoff_ms > 30000UL) backoff_ms = 30000UL;
+  // Fleet reconnect jitter: up to a fraction of the backoff so brokers don't
+  // see a thundering herd.
+  backoff_ms += esp_random() % (backoff_ms / 4 + 1);
   g_mqtt_attempts++;
   g_mqtt_next_attempt_ms = now + backoff_ms;
   return false;

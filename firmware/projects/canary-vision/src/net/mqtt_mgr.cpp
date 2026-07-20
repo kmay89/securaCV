@@ -23,6 +23,11 @@ namespace canary::net {
 
 static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
+
+// Bound a stuck MQTT connect/read to well under the task watchdog budget
+// instead of resting on PubSubClient's library default, so the socket
+// timeout is a provable input to the WDT budget.
+static constexpr uint16_t MQTT_SOCKET_TIMEOUT_SEC = 5;
 static Topics g_topics{};
 static bool discovery_done = false;
 
@@ -201,6 +206,7 @@ void mqtt_init(const Topics& topics) {
   const auto& cfg = canary::cfg::get();
   mqtt.setServer(cfg.mqtt_host, cfg.mqtt_port);
   mqtt.setBufferSize(MQTT_BUFFER_BYTES);
+  mqtt.setSocketTimeout(MQTT_SOCKET_TIMEOUT_SEC);
   mqtt.setCallback(on_mqtt_message);
 }
 
