@@ -435,6 +435,11 @@ export class VitalsFSM {
     // of data is the deadline's job, never frame mix. This guard was added
     // to the firmware after this very bench surfaced the missing case.
     if (frame.kind !== FrameKind.Vitals) {
+      // Ambiguity DOES reset the acquiring run, even on a non-vitals tick: a
+      // lock must never be acquired on credit accumulated before a
+      // multi-person interval. (A held lock is unaffected; loss stays
+      // deadline-driven.)
+      if (!singleTarget) this.wasValid = false;
       ev.lock_changed = this.lock !== prev;
       ev.lock = this.lock;
       ev.bpm_valid = this.lock === VitalsLock.Locked && singleTarget;

@@ -287,6 +287,30 @@ test("vitals lock survives real interleaved traffic (the bench-found firmware bu
   assert.strictEqual(ev.bpm_valid, false);
 });
 
+test("an ambiguous interval resets the acquiring run (Codex review regression)", async () => {
+  // Twin of firmware test_vitals_ambiguity_resets_acquiring_run: a second
+  // person visible only on non-vitals ticks must restart the confirm window
+  // — a lock may never be acquired on credit that straddles count != 1.
+  const S = await simP;
+  const cfg = data.fsm.vitals;
+  const fsm = new S.VitalsFSM(cfg);
+  fsm.reset(0);
+  const vf = { kind: S.FrameKind.Vitals, breath_rate: 16, heart_rate: 70 };
+  const pf = { kind: S.FrameKind.Presence, has_target: true, target_count: 2, distance_cm: 100, breath_rate: 16, heart_rate: 70 };
+  fsm.tick(vf, true, 0);
+  for (let t = 1000; t <= 3000; t += 1000) fsm.tick(vf, true, t);
+  assert.strictEqual(fsm.lock, S.VitalsLock.Lost);
+
+  fsm.tick(pf, false, 3300); // second person, non-vitals tick only
+
+  let ev = fsm.tick(vf, true, 4500); // old run would have confirmed by now
+  assert.strictEqual(fsm.lock, S.VitalsLock.Lost, "must not lock across ambiguity");
+  assert.strictEqual(ev.bpm_valid, false);
+
+  for (let t = 5500; t <= 4500 + cfg.lock_confirm_ms; t += 1000) ev = fsm.tick(vf, true, t);
+  assert.strictEqual(fsm.lock, S.VitalsLock.Locked, "clean restarted run locks");
+});
+
 test("implausible vitals are rejected by the config bands", async () => {
   const S = await simP;
   const cfg = data.fsm.vitals;

@@ -65,6 +65,12 @@ VitalsEvent VitalsFSM::tick(const Frame& frame, bool single_target, uint32_t now
     // never by frame mix. (bpm_valid still re-checks single_target RIGHT NOW,
     // so multi-person suppression stays immediate even on non-vitals ticks.)
     if (frame.kind != FrameKind::Vitals) {
+        // Ambiguity DOES reset the acquiring run, even on a non-vitals tick:
+        // if the count is not exactly one right now, a lock must not later be
+        // acquired on credit accumulated before the ambiguous interval — the
+        // confirm window restarts once the room is single-target again. (An
+        // already-held lock is unaffected; loss stays deadline-driven.)
+        if (!single_target) was_valid_ = false;
         ev.lock_changed = (lock_ != prev);
         ev.lock = lock_;
         ev.bpm_valid  = (lock_ == VitalsLock::Locked) && single_target;

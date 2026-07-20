@@ -520,6 +520,46 @@ void test_vitals_lock_survives_interleaved_presence() {
     assert(fsm.lock() == VitalsLock::Lost);
     std::printf("PASS test_vitals_lock_survives_interleaved_presence\n");
 }
+
+// An ambiguous (multi-person) interval must reset the ACQUIRING run even
+// when the ambiguity is only ever visible on non-vitals ticks — a lock may
+// never be acquired on confirmation credit that straddles a count != 1
+// interval (Codex review on the interleave fix: without this, a second
+// person entering and leaving between 1 Hz vitals reports let the next
+// single-target sample inherit the old run and lock instantly).
+void test_vitals_ambiguity_resets_acquiring_run() {
+    VitalsConfig cfg;  // 4000 confirm, 6000 lost
+    VitalsFSM fsm(cfg);
+    FrameParser p;
+
+    uint32_t t = 0;
+    fsm.reset(t);
+
+    // Build 3 s of valid single-target credit (not yet the 4 s confirm).
+    (void)fsm.tick(decode_one(p, frame_breath(16.0f)), true, t);
+    for (t = 1000; t <= 3000; t += 1000) {
+        (void)fsm.tick(decode_one(p, frame_heart(70.0f)), true, t);
+    }
+    assert(fsm.lock() == VitalsLock::Lost);  // seen, unconfirmed
+
+    // A second person flickers through between vitals reports: only
+    // presence-kind ticks see single_target == false.
+    (void)fsm.tick(decode_one(p, frame_people(true)), /*single_target=*/false, 3300);
+
+    // Back to one person. The next vitals sample lands where the OLD run
+    // would have satisfied the confirm window (4 s+) — it must NOT lock.
+    VitalsEvent e = fsm.tick(decode_one(p, frame_heart(70.0f)), true, 4500);
+    assert(fsm.lock() == VitalsLock::Lost);
+    assert(!e.bpm_valid);
+
+    // A clean sustained run from here does lock, on the restarted window.
+    for (t = 5500; t <= 4500 + cfg.lock_confirm_ms; t += 1000) {
+        e = fsm.tick(decode_one(p, frame_heart(70.0f)), true, t);
+    }
+    assert(fsm.lock() == VitalsLock::Locked);
+    assert(e.bpm_valid && e.heart_bpm == 70);
+    std::printf("PASS test_vitals_ambiguity_resets_acquiring_run\n");
+}
 #endif
 
 }  // namespace
@@ -541,6 +581,7 @@ int main() {
 #ifdef CANARY_SENSE_VITALS
     test_vitals_fsm_integration();
     test_vitals_lock_survives_interleaved_presence();
+    test_vitals_ambiguity_resets_acquiring_run();
 #endif
     std::printf("ALL MR60 UART TESTS PASSED\n");
     return 0;
