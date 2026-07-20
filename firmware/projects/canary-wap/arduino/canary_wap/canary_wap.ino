@@ -110,6 +110,7 @@
 #endif
 
 #include <WiFi.h>
+#include <bootloader_random.h>  // early-entropy source for the first-boot identity keygen
 #include <ESPmDNS.h>
 #include "mdns.h"               // IDF mDNS C API — delegated hostname for canary.local catch-all
 #include "esp_idf_version.h"    // ESP_IDF_VERSION gate for mdns_delegate_hostname_add (>= 4.4)
@@ -1245,8 +1246,14 @@ static bool nvs_store_bytes(const char* key, const uint8_t* data, size_t len) {
 // ════════════════════════════════════════════════════════════════════════════
 
 static bool generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
-  // Get 32 bytes from hardware RNG
+  // Get 32 bytes from hardware RNG. This runs during provisioning, before the
+  // radio is brought up (the AP SSID / mDNS name are derived from the key
+  // fingerprint, so the keypair must exist first), so the RNG has no RF entropy
+  // source yet — gate the one-time draw with bootloader_random_enable()/
+  // _disable() to seed it properly (ESP-IDF's documented early-entropy pattern).
+  bootloader_random_enable();
   esp_fill_random(priv, 32);
+  bootloader_random_disable();
   
   // Derive public key
   Ed25519::derivePublicKey(pub, priv);

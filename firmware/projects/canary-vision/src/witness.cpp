@@ -6,6 +6,7 @@
 
 #include <Ed25519.h>
 #include <esp_random.h>
+#include <bootloader_random.h>  // early-entropy source for the first-boot identity keygen
 #include <mbedtls/sha256.h>
 
 #include "canary/config.h"
@@ -76,8 +77,14 @@ bool load_or_generate_keypair() {
 
   if (!have) {
     // First boot: 32 bytes from the hardware RNG, exactly like the
-    // canary-wap tree's generate_keypair.
+    // canary-wap tree's generate_keypair. This runs during witness init, before
+    // WiFi/BT start, so the RNG has no RF entropy source yet — gate the one-time
+    // identity draw with bootloader_random_enable()/_disable() to seed it
+    // properly (ESP-IDF's documented early-entropy pattern). The RF subsystem
+    // seeds the RNG for every later draw.
+    bootloader_random_enable();
     esp_fill_random(s_priv, sizeof(s_priv));
+    bootloader_random_disable();
     if (prefs.putBytes(KEY_PRIV, s_priv, sizeof(s_priv)) != sizeof(s_priv)) {
       // An unpersisted key would rotate on every reboot, and each
       // rotation reads as a "Fingerprint changed without rotation"
