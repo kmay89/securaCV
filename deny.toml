@@ -1,0 +1,54 @@
+# cargo-deny configuration — supply-chain gate for the Rust workspace
+# (doc-12 §3.3 A4 / FR-14). For a witness product the credibility of the
+# evidence chain rests on knowing what code produced it, so dependency
+# licenses, provenance, and duplication are policy, not vibes.
+#
+# Advisories (known CVEs) are gated separately by `cargo audit` in
+# audit.yml, so CI runs `cargo deny check bans licenses sources` here and
+# leaves the advisory DB to cargo-audit. Run locally with:
+#   cargo deny check bans licenses sources
+
+[graph]
+# Check the platforms we actually ship (Linux daemon + tooling).
+all-features = true
+
+[licenses]
+version = 2
+# Permissive/copyleft-compatible licenses only. A copyleft or unknown license
+# entering the tree fails the check until it is reviewed and added here.
+confidence-threshold = 0.9
+# Keep a generous permissive allow-list without failing on entries a given
+# feature set happens not to pull in.
+unused-allowed-license = "allow"
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "OpenSSL",
+    # Permissive licenses from the tract ONNX inference stack.
+    "WTFPL",
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+# Duplicate crate versions bloat the binary and widen the audit surface.
+# Warn (not deny) for now so the report is visible without blocking on the
+# long tail of transitive version skew.
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+# Everything must come from crates.io — no unknown registries or ad-hoc git
+# dependencies slipping into the build.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
