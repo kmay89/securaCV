@@ -161,6 +161,46 @@ function renderUnsupported() {
   return box;
 }
 
+// ── download mode: the BOOT/RESET gesture, one shared component ─────────────
+// The flasher usually flips the board into download mode by itself over USB
+// (DTR/RTS); the by-hand gesture is the fallback, and it's identical on every
+// chip we ship (see catalog chips[].download_mode). Rendered everywhere the
+// user might wonder "what state is my board in?".
+const kbd = (t) => el("kbd", "flash-kbd", t);
+
+function downloadModeSteps() {
+  const wrap = el("div", "flash-dlmode");
+  wrap.append(el("p", "flash-dlmode-title",
+    "Download mode by hand — the “flash me” state:"));
+  const ol = el("ol", "flash-steps flash-dlmode-steps");
+  const li1 = el("li");
+  li1.append(document.createTextNode("Hold the "), kbd("BOOT"),
+    document.createTextNode(" button down (marked B)."));
+  const li2 = el("li");
+  li2.append(document.createTextNode("While holding it, tap "), kbd("RESET"),
+    document.createTextNode(" once (marked R)."));
+  const li3 = el("li");
+  li3.append(document.createTextNode("Let go of "), kbd("BOOT"),
+    document.createTextNode(" — the board sits quietly, waiting for firmware."));
+  ol.append(li1, li2, li3);
+  wrap.append(ol);
+  wrap.append(el("p", "fineprint",
+    "To leave download mode, just tap RESET (or unplug and replug) — the board boots its firmware again."));
+  return wrap;
+}
+
+// A small badge stating which mode the board is in right now. We always know:
+// if esptool has it, it's in download mode; if the monitor has it, it's
+// running its firmware.
+function modeBadge(mode) {
+  const b = el("span", "flash-mode flash-mode-" + mode);
+  b.append(el("span", "flash-mode-dot", "●"));
+  b.append(document.createTextNode(mode === "download"
+    ? "download mode — safe to flash, firmware paused"
+    : "running its firmware"));
+  return b;
+}
+
 // ── phase: connect ──────────────────────────────────────────────────────────
 function phaseConnect() {
   const box = el("section", "flash-card flash-connect");
@@ -178,6 +218,17 @@ function phaseConnect() {
   const hint = el("p", "fineprint flash-connect-hint",
     "Nothing is written yet — connecting only lets the page look at the board.");
   box.append(hint);
+
+  // The BOOT/RESET gesture, one click away. Most boards never need it — the
+  // flasher flips them into download mode itself — but knowing the move is
+  // half the reassurance.
+  const dl = el("details", "flash-dlmode-details");
+  dl.append(el("summary", null, "Board won’t show up, or want to do it by hand? Download mode →"));
+  dl.append(el("p", "muted",
+    "Usually you don’t need this: when you click Connect, the flasher puts the " +
+    "board into download mode on its own. If it can’t, do it by hand:"));
+  dl.append(downloadModeSteps());
+  box.append(dl);
   return box;
 }
 
@@ -198,10 +249,9 @@ async function onConnect() {
   box.append(status, detail);
   // A gentle recovery nudge if it's slow (native-USB boards sometimes need
   // the download-mode gesture the flashing lesson teaches).
-  const nudge = el("p", "fineprint flash-hidden");
-  nudge.textContent =
-    "Taking a while? Put it in download mode: hold BOOT (B), tap RESET (R), " +
-    "release BOOT — then reconnect.";
+  const nudge = el("div", "flash-hidden");
+  nudge.append(el("p", "fineprint", "Taking a while? Put it in download mode yourself, then reconnect:"));
+  nudge.append(downloadModeSteps());
   box.append(nudge);
   setPhase(box);
   const nudgeTimer = setTimeout(() => nudge.classList.remove("flash-hidden"), 6000);
@@ -244,14 +294,8 @@ function connectFailed(e) {
     "Couldn’t reach the board",
     "That almost always means it isn’t in download mode yet — no harm done.",
     false);
-  const steps = el("ol", "flash-steps");
-  [
-    "Hold the BOOT (B) button down.",
-    "While holding BOOT, tap RESET (R) once.",
-    "Let go of BOOT.",
-    "Click “Try again”.",
-  ].forEach((s) => steps.append(el("li", null, s)));
-  box.append(steps);
+  box.append(downloadModeSteps());
+  box.append(el("p", "muted", "Then click “Try again”."));
   const retry = el("button", "primary", "Try again");
   retry.addEventListener("click", () => setPhase(phaseConnect()));
   box.append(retry);
@@ -351,6 +395,7 @@ function phaseConnected() {
     cur.append(document.createTextNode(`Looks like it’s running ${name}${ver} right now.`));
   }
   ht.append(cur);
+  ht.append(modeBadge("download"));
   head.append(ht);
   hello.append(head);
 
@@ -1067,6 +1112,7 @@ async function openMonitor(opts = {}) {
 function phaseMonitor(port, opts = {}) {
   const box = el("section", "flash-card flash-monitor");
   box.append(el("h2", null, "Serial monitor"));
+  box.append(modeBadge("running"));
   const status = el("p", "muted", "Opening the console…");
   box.append(status);
 
@@ -1099,7 +1145,9 @@ function phaseMonitor(port, opts = {}) {
   box.append(row);
   box.append(el("p", "fineprint",
     "Live from the board over USB at " + (state.catalog.console_baud || 115200) +
-    " baud. Nothing here leaves your computer."));
+    " baud. Nothing here leaves your computer. To flash again, go back — the " +
+    "flasher returns the board to download mode itself (or: hold BOOT, tap " +
+    "RESET, release BOOT)."));
 
   // — wire it up —
   const mon = { alive: true, port: null, reader: null, writer: null };

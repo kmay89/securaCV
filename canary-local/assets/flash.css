@@ -34,6 +34,29 @@
 .flash-connect-hint { margin: 4px 0 0; }
 .flash-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; align-items: center; }
 
+/* ── download mode: steps + kbd chips + mode badge ─────────────────────── */
+.flash-kbd {
+  display: inline-block; padding: 1px 8px; margin: 0 2px;
+  border: 1px solid var(--edge); border-bottom-width: 2px; border-radius: 7px;
+  background: #0c0c0d; color: var(--canary);
+  font: 600 12px/1.6 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+}
+.flash-dlmode { text-align: left; }
+.flash-dlmode-title { font-size: 14px; color: #e0e0e0; margin: 10px 0 4px; font-weight: 560; }
+.flash-dlmode-steps { margin-top: 4px; }
+.flash-dlmode-details { margin-top: 18px; border-top: 1px solid var(--edge); padding-top: 12px; }
+.flash-dlmode-details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.flash-dlmode-details p { text-align: left; }
+.flash-mode {
+  display: inline-flex; gap: 7px; align-items: baseline; margin-top: 8px;
+  border: 1px solid var(--edge); border-radius: 999px; padding: 3px 12px;
+  font-size: 12.5px; color: #cfcfcf; background: rgba(255,255,255,0.02);
+}
+.flash-mode-dot { font-size: 10px; }
+.flash-mode-download .flash-mode-dot { color: var(--canary); }
+.flash-mode-running .flash-mode-dot { color: var(--ok); }
+
 /* ── connect / working spinner ─────────────────────────────────────────── */
 .flash-working { text-align: center; }
 .flash-spinner {
