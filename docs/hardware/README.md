@@ -38,6 +38,7 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`display_settings.md`](./display_settings.md) | On-glass settings — what's adjustable without an app. |
 | [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md) | Discovery & resilience — finding sensors, surviving outages. |
 | [`display_bench_bringup.md`](./display_bench_bringup.md) | Display bench bring-up — from bare board to a beating face. |
+| [`dev_playground_43b.md`](./dev_playground_43b.md) | **Dev playground (bench mode)** — the Waveshare 4.3B as a safe guided peripheral test bench: doorbell/intrusion/light/cap-touch/ToF/beam-gap stations, the PG1 comms standard, and the fully-loaded pin tracker. |
 | [`display_research.md`](./display_research.md) | Display hardware research notes. |
 
 The CSVs use a flat, RoHS-style schema:

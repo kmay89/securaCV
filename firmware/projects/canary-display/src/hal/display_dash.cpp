@@ -163,6 +163,41 @@ void backlight_night_set(uint16_t duty13) {
   ch422g_set_bits(CH422G_BIT_BACKLIGHT, duty13 > 0);
 }
 
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+// ── Isolated IO (4.3B terminal block) ───────────────────────────────────
+// The CH422G's open-drain latch lives at its own command address; bit
+// HIGH releases the output, bit LOW conducts (pins.h VERIFY note). Cache
+// mirrors s_exio_state's role for the write-only chip.
+static uint8_t s_oc_state = 0x0F;   // all four OD channels released
+
+uint8_t expander_read_inputs() {
+  // EXIO direction is global (WR_SET bit 0): flip to inputs, read RD_IO,
+  // then restore output mode AND re-drive the latch — the control lines
+  // (backlight/LCD_RST/TP_RST/SD_CS) ride their external pulls through
+  // the brief float.
+  Wire.beginTransmission(CH422G_ADDR_SYS);
+  Wire.write(0x00);
+  if (Wire.endTransmission() != 0) return 0;
+  uint8_t v = 0;
+  if (Wire.requestFrom((int)CH422G_ADDR_IN, 1) == 1) v = (uint8_t)Wire.read();
+  ch422g_mode_output();
+  ch422g_write(s_exio_state);
+  return v;
+}
+
+bool expander_od_set(uint8_t mask, bool sink) {
+  const uint8_t v = sink ? (uint8_t)(s_oc_state & ~mask)
+                         : (uint8_t)(s_oc_state | mask);
+  Wire.beginTransmission(CH422G_ADDR_OC);
+  Wire.write(v);
+  if (Wire.endTransmission() != 0) return false;
+  s_oc_state = v;
+  return true;
+}
+
+uint8_t expander_od_state() { return s_oc_state; }
+#endif  // HAS_ISOLATED_IO
+
 TouchSample touch_read() {
   TouchSample s;
   if (!s_gt911_addr) return s;

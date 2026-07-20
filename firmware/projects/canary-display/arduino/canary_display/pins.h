@@ -4,7 +4,11 @@
 // pins_<flavor>.h copies, which mirror firmware/boards/<board>/pins/pins.h.
 #include "flavor_select.h"
 #if defined(CD_BUILD_DASH) && CD_BUILD_DASH
+#if defined(CD_BOARD_DASH43B) && CD_BOARD_DASH43B
+#include "pins_dash43b.h"
+#else
 #include "pins_dash.h"
+#endif
 #else
 #include "pins_watch.h"
 #endif

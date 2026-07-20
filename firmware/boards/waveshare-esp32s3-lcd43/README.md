@@ -22,7 +22,12 @@ RGB565 LCD peripheral.
 
 The pin map is expected to cover (bench-verify per SKU):
 
-- **ESP32-S3-Touch-LCD-4.3B** — same panel/pins + CAN/RS485 terminals.
+- **ESP32-S3-Touch-LCD-4.3B** — same panel/pins, but the terminal-block
+  IO differs enough that it has its own board dir now:
+  [`waveshare-esp32s3-lcd43b`](../waveshare-esp32s3-lcd43b/) (isolated
+  DI/DO on the CH422G, dedicated CAN on 15/16, RS485 on the console
+  UART, no USB_SEL bit). Use that map — and the dev playground mode —
+  when the terminals matter; this one still covers the B's panel.
 - **ESP32-S3-Touch-LCD-4.3C** ("AI voice") — same RGB control/data pins and
   I2C, but an ST7701 panel controller (verify timings; its LCD_RST rides an
   extra CH422G bit) and an ES8311/ES7210 audio stack this firmware never

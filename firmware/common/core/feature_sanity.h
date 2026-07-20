@@ -100,6 +100,27 @@
   #error "FEATURE_BACKLIGHT_DIM=1 but this board's backlight is not PWM-dimmable (HAS_BACKLIGHT_PWM=0 — e.g. the Waveshare 4.3's CH422G is on/off only). Set FEATURE_BACKLIGHT_DIM=0 in your config."
 #endif
 
+// ─── Dev playground (bench mode) ────────────────────────────────────────
+//
+// The playground's whole safety story is the 4.3B's terminal block: every
+// external wire lands on an isolated, buffered, or bused interface. So it
+// deliberately breaks the "both sides defined" convention: an UNDEFINED
+// HAS_ISOLATED_IO means the selected board has no isolated DI/DO and the
+// mode must not build — failing loud beats a bench build whose DI/DO
+// stations silently drive the wrong expander bits.
+
+#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+  #if !defined(HAS_ISOLATED_IO) || !HAS_ISOLATED_IO
+    #error "FEATURE_PLAYGROUND=1 requires a board with isolated DI/DO (HAS_ISOLATED_IO=1 — the Waveshare ESP32-S3-Touch-LCD-4.3B, boards/waveshare-esp32s3-lcd43b). Build the canary-display-playground env, or in the Arduino IDE pick the 'Waveshare ESP32-S3-Touch-LCD-4.3B' board (see docs/hardware/dev_playground_43b.md)."
+  #endif
+  #if defined(HAS_DISPLAY) && !HAS_DISPLAY
+    #error "FEATURE_PLAYGROUND=1 but this board has no display (HAS_DISPLAY=0) — the playground is a guided on-glass mode. Select the 4.3B display board."
+  #endif
+  #if defined(HAS_TOUCH) && !HAS_TOUCH
+    #error "FEATURE_PLAYGROUND=1 but this board has no touch controller (HAS_TOUCH=0) — the playground's station cards are tap-driven. Select the 4.3B display board."
+  #endif
+#endif
+
 // ─── Sensors & inputs ───────────────────────────────────────────────────
 
 #if defined(FEATURE_GNSS) && FEATURE_GNSS && defined(HAS_GNSS_UART) && !HAS_GNSS_UART
