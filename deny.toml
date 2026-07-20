@@ -51,4 +51,11 @@ wildcards = "allow"
 # dependencies slipping into the build.
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# crates.io only. Both forms are listed so the check is robust across
+# cargo-deny versions and Cargo's sparse registry (default since Rust 1.68),
+# regardless of whether cargo-deny canonicalizes the sparse index to the git
+# index URL.
+allow-registry = [
+    "https://github.com/rust-lang/crates.io-index",
+    "sparse+https://index.crates.io/",
+]
