@@ -278,6 +278,150 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-trust-sec p { font-size: 13.5px; line-height: 1.55; margin: 4px 0; }
 .flash-trust .flash-checklist li { font-size: 13px; }
 
+/* ── the layers tour ───────────────────────────────────────────────────── */
+.flash-story {
+  margin: 18px 0 6px; border: 1px solid var(--edge); border-radius: 14px;
+  padding: 14px 16px 12px; background: rgba(255,255,255,0.015);
+}
+.flash-story-kicker {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--muted); margin: 0 0 10px;
+}
+.flash-story-stage { min-height: 232px; }
+.flash-story-slide { animation: flash-slidein 0.45s ease both; }
+@keyframes flash-slidein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.flash-story-slide h3 { font-size: 15.5px; margin: 12px 0 4px; font-weight: 640; }
+.flash-story-slide p { font-size: 13.5px; line-height: 1.55; margin: 0; }
+.flash-story-dots { display: flex; gap: 7px; margin-top: 12px; justify-content: center; }
+.flash-story-dot {
+  appearance: none; border: none; padding: 0; cursor: pointer;
+  width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.16);
+}
+.flash-story-dot-on { background: var(--canary); }
+
+/* slide visuals — one calm animation each */
+.flash-sv { position: relative; height: 96px; display: flex; align-items: center; justify-content: center; gap: 10px; overflow: hidden; }
+.flash-sv-bird-emoji { font-size: 44px; z-index: 1; }
+.flash-sv-bird-ring {
+  position: absolute; width: 60px; height: 60px; border-radius: 50%;
+  border: 1px solid rgba(255,212,79,0.5); animation: flash-svring 2.4s ease-out infinite;
+}
+@keyframes flash-svring { from { transform: scale(0.6); opacity: 0.9; } to { transform: scale(2.1); opacity: 0; } }
+
+.flash-sv-stack { flex-direction: column; gap: 4px; }
+.flash-sv-layer {
+  width: min(340px, 90%); text-align: center; border-radius: 8px;
+  font-size: 12px; color: #101012; font-weight: 620; padding: 5px 8px;
+}
+.flash-sv-layer-glow { box-shadow: 0 0 18px rgba(255,212,79,0.35); }
+.flash-sv-stack .flash-map-data { color: #cfcfcf; }
+
+.flash-sv-loop, .flash-sv-hex { flex-direction: column; gap: 6px; height: auto; min-height: 96px; }
+.flash-sv-code {
+  background: #08080a; border: 1px solid var(--edge); border-radius: 10px;
+  padding: 8px 12px; margin: 0; font: 11.5px/1.6 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  color: #b9c7b9; width: min(360px, 100%); overflow-x: auto;
+}
+.flash-sv-codeline { border-radius: 4px; padding: 0 4px; white-space: pre; }
+.flash-sv-codeline:nth-child(2) { animation: flash-svline 3.2s linear infinite 0s; }
+.flash-sv-codeline:nth-child(3) { animation: flash-svline 3.2s linear infinite 0.8s; }
+.flash-sv-codeline:nth-child(4) { animation: flash-svline 3.2s linear infinite 1.6s; }
+.flash-sv-codeline:nth-child(5) { animation: flash-svline 3.2s linear infinite 2.4s; }
+@keyframes flash-svline {
+  0%, 22% { background: rgba(255,212,79,0.16); }
+  25%, 100% { background: transparent; }
+}
+.flash-sv-counter { margin: 0; }
+.flash-sv-hexlines { color: #d6c98a; white-space: pre; }
+
+.flash-sv-gate { font: 600 12.5px/1 "SF Mono", ui-monospace, Menlo, monospace; }
+.flash-sv-in, .flash-sv-out {
+  border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px;
+  color: var(--muted); transition: all 0.25s ease;
+}
+.flash-sv-and {
+  border: 1px solid rgba(255,212,79,0.4); border-radius: 10px; padding: 10px 12px;
+  color: var(--canary);
+}
+.flash-sv-hot { color: #101012; background: var(--canary); border-color: var(--canary); }
+
+.flash-sv-cell { flex-direction: column; gap: 6px; height: auto; min-height: 96px; }
+.flash-sv-cellwall { width: 150px; height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(191,230,251,0.8), transparent); }
+.flash-sv-cellbox {
+  width: 150px; height: 44px; border: 1px solid var(--edge); border-radius: 8px;
+  position: relative; background: rgba(3,169,244,0.05);
+}
+.flash-sv-electron {
+  position: absolute; width: 6px; height: 6px; border-radius: 50%;
+  background: #bfe6fb; box-shadow: 0 0 8px rgba(191,230,251,0.9);
+  animation: flash-svtunnel 3s ease-in infinite;
+}
+.flash-sv-electron:nth-child(1) { left: 18%; animation-delay: 0s; }
+.flash-sv-electron:nth-child(2) { left: 38%; animation-delay: 0.6s; }
+.flash-sv-electron:nth-child(3) { left: 55%; animation-delay: 1.2s; }
+.flash-sv-electron:nth-child(4) { left: 70%; animation-delay: 1.8s; }
+.flash-sv-electron:nth-child(5) { left: 84%; animation-delay: 2.4s; }
+@keyframes flash-svtunnel {
+  0% { top: -26px; opacity: 0; }
+  30% { top: -10px; opacity: 1; }
+  50% { top: 8px; opacity: 0.4; }  /* inside the wall: half-there (tunneling) */
+  70%, 100% { top: 26px; opacity: 1; }
+}
+
+.flash-sv-wave { }
+.flash-sv-antenna { font-size: 30px; z-index: 1; }
+.flash-sv-ring {
+  position: absolute; width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid rgba(255,212,79,0.55); animation: flash-svwave 2.7s linear infinite;
+}
+@keyframes flash-svwave { from { transform: scale(0.5); opacity: 0.9; } to { transform: scale(4.4); opacity: 0; } }
+
+.flash-sv-ladder { flex-wrap: wrap; font-size: 13px; color: #d7d7d7; }
+.flash-sv-rung {
+  border: 1px solid var(--edge); border-radius: 999px; padding: 5px 12px;
+  animation: flash-svrung 3.4s ease-in-out infinite;
+}
+.flash-sv-rung-arrow { color: var(--muted); }
+@keyframes flash-svrung {
+  0%, 100% { border-color: var(--edge); color: #d7d7d7; }
+  10%, 20% { border-color: var(--canary); color: var(--canary); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-story-slide, .flash-sv-bird-ring, .flash-sv-ring, .flash-sv-electron,
+  .flash-sv-codeline, .flash-sv-rung { animation: none; }
+  .flash-sv-electron { top: 12px; }
+}
+
+/* ── unsupported browser: the hop + the rig ────────────────────────────── */
+.flash-hop { display: flex; align-items: center; justify-content: center; gap: 22px; margin: 18px 0 8px; }
+.flash-hop-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.flash-hop-icon { font-size: 40px; line-height: 1; display: flex; align-items: center; justify-content: center; height: 44px; }
+.flash-hop-label { font-size: 12px; color: var(--muted); }
+.flash-hop-to .flash-hop-label { color: var(--text); }
+.flash-hop-arrow {
+  font-size: 30px; color: var(--canary);
+  animation: flash-hoparrow 1.6s ease-in-out infinite;
+}
+@keyframes flash-hoparrow { 0%,100% { transform: translateX(0); } 50% { transform: translateX(7px); } }
+.flash-hop-actions { justify-content: center; }
+.flash-unsupported { text-align: center; }
+.flash-unsupported .flash-note { text-align: left; }
+.flash-rig { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 20px 0 4px; }
+.flash-rig-item { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.flash-rig-icon { font-size: 34px; line-height: 1; position: relative; }
+.flash-rig-label { font-size: 11.5px; color: var(--muted); max-width: 110px; }
+.flash-rig-badge {
+  position: absolute; right: -7px; bottom: -4px; background: #fff; border-radius: 50%;
+  width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 2px #101012;
+}
+.flash-rig-cable { display: flex; align-items: center; margin-bottom: 18px; }
+.flash-rig-wire { width: clamp(40px, 12vw, 110px); height: 2px; background: var(--canary-deep); }
+.flash-rig-plug { width: 7px; height: 10px; border-radius: 2px; background: var(--canary-deep); }
+@media (prefers-reduced-motion: reduce) { .flash-hop-arrow { animation: none; } }
+
 /* ── confetti ──────────────────────────────────────────────────────────── */
 .flash-confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 50; }
 .flash-confetti-bit {

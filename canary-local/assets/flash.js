@@ -216,22 +216,105 @@ function renderTrustCard() {
 }
 
 // ── phase: unsupported browser ──────────────────────────────────────────────
+// A tiny Chrome-ish mark, drawn inline (nominative use — it just needs to be
+// recognizable at a glance next to the arrow).
+function chromeMark(size = 40) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 48 48");
+  s.setAttribute("width", size); s.setAttribute("height", size);
+  s.innerHTML =
+    '<circle cx="24" cy="24" r="22" fill="#fff"/>' +
+    '<path d="M24 2a22 22 0 0 1 19.05 11H24a11 11 0 0 0-9.53 5.5z" fill="#EA4335"/>' +
+    '<path d="M43.05 13A22 22 0 0 1 24 46l9.53-16.5A11 11 0 0 0 34 13z" fill="#FBBC05"/>' +
+    '<path d="M24 46A22 22 0 0 1 4.96 13l9.51 16.5A11 11 0 0 0 24 35z" fill="#34A853"/>' +
+    '<circle cx="24" cy="24" r="10" fill="#4285F4" stroke="#fff" stroke-width="2"/>';
+  return s;
+}
+
 function renderUnsupported() {
+  const b = core.detectBrowser(navigator.userAgent, navigator.maxTouchPoints || 0);
   const box = el("section", "flash-card flash-unsupported");
-  box.append(el("div", "flash-big-emoji", "🧭"));
-  box.append(el("h2", null, "This browser can’t talk to USB boards — but you’re one hop away"));
+
+  box.append(el("h2", null, b.mobile
+    ? `${b.label} can’t reach the board — you’ll need a computer with Chrome`
+    : `${b.label} can’t talk to USB boards — you’re one hop away`));
+
+  // The arrow: where you are → where it works.
+  const hop = el("div", "flash-hop");
+  const from = el("div", "flash-hop-item");
+  from.append(el("span", "flash-hop-icon", b.icon));
+  from.append(el("span", "flash-hop-label", b.label));
+  const arrow = el("span", "flash-hop-arrow", "⟶");
+  const to = el("div", "flash-hop-item flash-hop-to");
+  const chromeIcon = el("span", "flash-hop-icon");
+  chromeIcon.append(chromeMark(40));
+  to.append(chromeIcon);
+  to.append(el("span", "flash-hop-label", "Chrome (or Edge / Brave)"));
+  hop.append(from, arrow, to);
+  box.append(hop);
+
   box.append(el("p", "muted",
-    "In-browser flashing uses Web Serial, which today lives in Chromium " +
-    "browsers: Chrome, Edge, Brave, Opera, or Arc on a computer (not iPhone " +
-    "or iPad — Apple doesn’t allow it). Safari and Firefox can’t do it yet."));
-  const row = el("div", "flash-row");
-  const guide = el("a", "primary", "Use the guided flash instead →");
-  guide.href = LESSON;
-  row.append(guide);
+    "In-browser flashing uses Web Serial, which today only Chromium browsers " +
+    "on a computer have: Chrome, Edge, Brave, Opera, Arc. Safari and Firefox " +
+    "can’t do it yet."));
+
+  const row = el("div", "flash-row flash-hop-actions");
+  const get = el("a", "primary", "Get Chrome (free) →");
+  get.href = "https://www.google.com/chrome/";
+  get.target = "_blank";
+  get.rel = "noopener";
+  row.append(get);
+  const copy = el("button", "ghost", "Copy this page’s link");
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(location.href);
+      copy.textContent = "✓ copied — paste it into Chrome";
+    } catch {
+      copy.textContent = location.href; // worst case: show it to select by hand
+    }
+  });
+  row.append(copy);
   box.append(row);
+
+  // What the working setup looks like: board — cable — computer with Chrome.
+  const rig = el("div", "flash-rig");
+  const board = el("div", "flash-rig-item");
+  board.append(el("span", "flash-rig-icon", "🐤"));
+  board.append(el("span", "flash-rig-label", "your Canary"));
+  const cable = el("div", "flash-rig-cable");
+  cable.append(el("span", "flash-rig-plug"), el("span", "flash-rig-wire"), el("span", "flash-rig-plug"));
+  const pc = el("div", "flash-rig-item");
+  const pcIcon = el("span", "flash-rig-icon flash-rig-pc", "💻");
+  const badge = el("span", "flash-rig-badge");
+  badge.append(chromeMark(16));
+  pcIcon.append(badge);
+  pc.append(pcIcon);
+  pc.append(el("span", "flash-rig-label", "computer running Chrome"));
+  rig.append(board, cable, pc);
+  box.append(rig);
+  box.append(el("p", "fineprint",
+    "USB-C data cable, any computer: Windows, Mac, Linux, or a Chromebook."));
+
+  if (b.id === "ios") {
+    box.append(el("p", "flash-note flash-note-soft",
+      "Through the iPhone/iPad charging port? Sadly no — Apple requires every " +
+      "browser on iOS and iPadOS (even the one named Chrome) to use Safari’s " +
+      "engine underneath, and that engine isn’t allowed to talk to the port. " +
+      "The cable would power the board, but no web page may speak to it."));
+  } else if (b.id === "android") {
+    box.append(el("p", "flash-note flash-note-soft",
+      "On Android, Chrome doesn’t carry Web Serial either — it’s a desktop " +
+      "feature. A laptop or desktop is the way."));
+  }
+
+  const row2 = el("div", "flash-row");
+  const guide = el("a", "ghost", "No Chrome today? Use the guided flash instead →");
+  guide.href = LESSON;
+  row2.append(guide);
+  box.append(row2);
   box.append(el("p", "fineprint",
     "Same firmware, same safety — just a few more steps in a terminal. When " +
-    "you’re next at a Chromium browser, come back and it’s two clicks."));
+    "you’re next at Chrome on a computer, come back and it’s two clicks."));
   return box;
 }
 
@@ -805,6 +888,13 @@ async function startFlash(opts) {
   const box = progressCard(`Installing ${label}`, "Getting the image ready…");
   setPhase(box.card);
 
+  // The layers tour rides along for the whole install — backup included —
+  // and its hex slide starts showing the real image bytes the moment the
+  // download lands (imageBytesRef is filled in below).
+  const imageBytesRef = { bytes: opts.localBytes || null };
+  const logEl = box.card.querySelector(".flash-log");
+  box.card.insertBefore(installStory(() => imageBytesRef.bytes || (state.backup && state.backup.bytes)), logEl);
+
   // Announce the whole journey up front — "step 2 of 4" is what makes the
   // bar predictable instead of a mystery that keeps restarting.
   const willBackup = state.flashBytes && !opts.isBackup && !opts.skipBackup && !haveBackupForThisBoard();
@@ -861,6 +951,8 @@ async function startFlash(opts) {
       shaHex = got.toLowerCase();
       shaSigned = true;
     }
+    imageBytesRef.bytes = bytes;
+    state.lastImage = bytes; // lets the done card replay the tour with real hex
 
     // 2.5) The change map: we hold the board's current bytes (safety copy)
     // and the image's bytes, so we can say exactly which regions this
@@ -1034,7 +1126,14 @@ function phaseDone(opts) {
   watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true }));
   const again = el("button", "ghost", "Set up another board");
   again.addEventListener("click", () => onDisconnect().then(() => setPhase(phaseConnect())));
-  row.append(watch, again);
+  const tour = el("button", "ghost", "replay the layers tour");
+  let tourEl = null;
+  tour.addEventListener("click", () => {
+    if (tourEl) { tourEl.remove(); tourEl = null; return; }
+    tourEl = installStory(() => state.lastImage);
+    box.append(tourEl);
+  });
+  row.append(watch, again, tour);
   box.append(row);
   return box;
 }
@@ -1701,6 +1800,232 @@ function progressMeta(done, total, p) {
   const left = core.formatDuration(p.etaSeconds);
   if (left) s += ` · ${left} left`;
   return s;
+}
+
+// ── the layers tour ─────────────────────────────────────────────────────────
+// While the bytes are being written, walk the user down the whole stack —
+// from "what you're holding" to electrons tunneling through glass — so the
+// machine they just trusted stops being a black box. Every claim is true of
+// this exact board; the hex slide shows the actual bytes being installed.
+function installStory(getBytes) {
+  const root = el("div", "flash-story");
+  const stage = el("div", "flash-story-stage");
+  const dots = el("div", "flash-story-dots");
+  root.append(el("p", "flash-story-kicker", "while it installs — what this thing actually is"));
+  root.append(stage, dots);
+
+  const S = []; // slides: {title, body, visual()}
+
+  S.push({
+    title: "What you're holding",
+    body: "A watcher that can testify. The Canary senses presence, signs what it " +
+      "saw with its own key, and chains every record to the one before — " +
+      "evidence, not vibes. Every layer below exists to keep that one promise.",
+    visual() {
+      const v = el("div", "flash-sv flash-sv-bird");
+      v.append(el("span", "flash-sv-bird-emoji", "🐤"));
+      const ring = el("span", "flash-sv-bird-ring");
+      v.append(ring);
+      return v;
+    },
+  });
+
+  S.push({
+    title: "No — it's not a little Linux computer",
+    body: "There's no operating system in the laptop sense. No apps, no accounts, " +
+      "no background anything. One program — the one being written right now — " +
+      "plus a matchbox-sized scheduler juggling the few tasks that program " +
+      "creates. Nothing runs here that isn't in this image. The whole machine " +
+      "is knowable.",
+    visual() {
+      const v = el("div", "flash-sv flash-sv-stack");
+      [["the firmware — one program, yours", "app"],
+       ["a tiny scheduler (FreeRTOS) it brings along", "ota"],
+       ["silicon", "data"]].forEach(([t, c], i) => {
+        const layer = el("div", "flash-sv-layer flash-map-" + c);
+        layer.textContent = t;
+        if (i === 0) layer.classList.add("flash-sv-layer-glow");
+        v.append(layer);
+      });
+      return v;
+    },
+  });
+
+  S.push({
+    title: "Its whole life is one loop",
+    body: "This is the real shape of the firmware's main loop, simplified but not " +
+      "romanticized. Around and around, tens of thousands of times a second, " +
+      "for years. No scenes, no sessions — just a heartbeat.",
+    visual() {
+      const v = el("div", "flash-sv flash-sv-loop");
+      const pre = el("pre", "flash-sv-code");
+      pre.innerHTML = "";
+      ["for (;;) {              // forever",
+       "  sense();              // feel the room",
+       "  witness();            // sign + chain what happened",
+       "  chirp();              // tell your Home Assistant",
+       "  listen();             // answer h / i / s on the console",
+       "}"].forEach((line) => pre.append(el("div", "flash-sv-codeline", line)));
+      v.append(pre);
+      const c = el("p", "fineprint flash-sv-counter");
+      c.dataset.count = "0";
+      c.textContent = "loops since this slide appeared: 0";
+      v.append(c);
+      return v;
+    },
+  });
+
+  S.push({
+    title: "The bytes ARE the program",
+    body: "This hex isn't a file describing the program — it is the program, the " +
+      "exact bytes being placed on the chip right now. The two processor cores " +
+      "eat them directly, 240 million ticks a second, no interpreter in " +
+      "between. What you verify is what runs.",
+    visual() {
+      const v = el("div", "flash-sv flash-sv-hex");
+      const pre = el("pre", "flash-sv-code flash-sv-hexlines");
+      pre.textContent = "…";
+      v.append(pre);
+      return v;
+    },
+  });
+
+  S.push({
+    title: "Where an “if” actually lives",
+    body: "Every if in the code compiles down to gates — arrangements of " +
+      "microscopic switches doing pure boolean logic. This board carries " +
+      "hundreds of millions of them. A thought, in hardware: IF motion AND " +
+      "armed → witness.",
+    visual() {
+      const v = el("div", "flash-sv flash-sv-gate");
+      const a = el("span", "flash-sv-in", "motion");
+      const b = el("span", "flash-sv-in", "armed");
+      const g = el("span", "flash-sv-and", "AND");
+      const o = el("span", "flash-sv-out", "witness()");
+      v.append(a, b, g, o);
+      v.dataset.role = "gate";
+      return v;
+    },
+  });
+
+  S.push({
+    title: "Underneath: electrons behind glass",
+    body: "Writing a byte means pushing a few thousand electrons through a wall " +
+      "of glass thinner than anything you've ever seen — quantum tunneling; " +
+      "they cross without quite passing through. Trapped electrons read as 0, " +
+      "an empty cell as 1. Unplug it, and they stay put for decades. The chip " +
+      "itself is melted sand, grown into a flawless crystal, with metal roads " +
+      "narrower than a virus.",
+    visual() {
+      const v = el("div", "flash-sv flash-sv-cell");
+      const box2 = el("div", "flash-sv-cellbox");
+      for (let i = 0; i < 5; i++) box2.append(el("span", "flash-sv-electron"));
+      v.append(el("div", "flash-sv-cellwall"));
+      v.append(box2);
+      v.append(el("p", "fineprint", "the glass wall · electrons tunneling in · held for decades"));
+      return v;
+    },
+  });
+
+  S.push({
+    title: "And when it speaks: waves",
+    body: "A chirp is electrons sloshing up and down an antenna 2.4 billion times " +
+      "a second. The ripple crossing your room is the same physics as light — " +
+      "a color your eyes can't see. Boolean logic, riding a wave.",
+    visual() {
+      const v = el("div", "flash-sv flash-sv-wave");
+      for (let i = 0; i < 3; i++) {
+        const r = el("span", "flash-sv-ring");
+        r.style.animationDelay = i * 0.9 + "s";
+        v.append(r);
+      }
+      v.append(el("span", "flash-sv-antenna", "📡"));
+      return v;
+    },
+  });
+
+  S.push({
+    title: "All of it, checkable",
+    body: "Sand → electrons → gates → bytes → one loop → one promise. Every layer " +
+      "verifiable from this page: the receipts count the bytes, the health " +
+      "check reads them back, the monitor lets the loop speak for itself. Not " +
+      "magic — just physics you can audit.",
+    visual() {
+      const v = el("div", "flash-sv flash-sv-ladder");
+      ["sand", "electrons", "gates", "bytes", "loop", "witness"].forEach((w, i) => {
+        const s = el("span", "flash-sv-rung");
+        s.textContent = w;
+        s.style.animationDelay = i * 0.35 + "s";
+        v.append(s);
+        if (i < 5) v.append(el("span", "flash-sv-rung-arrow", "→"));
+      });
+      return v;
+    },
+  });
+
+  // — deck mechanics: auto-advance, dots, self-cleaning animations —
+  let idx = -1, autoTimer = null;
+  const show = (i) => {
+    idx = (i + S.length) % S.length;
+    stage.innerHTML = "";
+    const s = S[idx];
+    const slide = el("div", "flash-story-slide");
+    slide.append(s.visual());
+    slide.append(el("h3", null, s.title));
+    slide.append(el("p", "muted", s.body));
+    stage.append(slide);
+    [...dots.children].forEach((d, j) => d.classList.toggle("flash-story-dot-on", j === idx));
+  };
+  S.forEach((_, i) => {
+    const d = el("button", "flash-story-dot");
+    d.setAttribute("aria-label", `layer ${i + 1}`);
+    d.addEventListener("click", () => { show(i); resetAuto(); });
+    dots.append(d);
+  });
+  const resetAuto = () => {
+    if (autoTimer) clearInterval(autoTimer);
+    autoTimer = setInterval(() => {
+      if (!root.isConnected) { clearInterval(autoTimer); return; }
+      show(idx + 1);
+    }, 9500);
+  };
+  show(0);
+  resetAuto();
+
+  // One shared ticker animates whatever the current slide needs: the loop
+  // counter, the live hex, the gate's boolean truth.
+  let hexLine = 0;
+  const ticker = setInterval(() => {
+    if (!root.isConnected) { clearInterval(ticker); return; }
+    const counter = root.querySelector(".flash-sv-counter");
+    if (counter) {
+      const n = (parseInt(counter.dataset.count, 10) || 0) + 5800 + Math.floor(Math.random() * 900);
+      counter.dataset.count = String(n);
+      counter.textContent = "loops since this slide appeared: " + n.toLocaleString();
+    }
+    const hexEl = root.querySelector(".flash-sv-hexlines");
+    if (hexEl) {
+      const bytes = getBytes && getBytes();
+      if (bytes && bytes.length > 0x400) {
+        const base = 0x10000 + (hexLine % 24) * 16;
+        if (base + 48 < bytes.length) {
+          const lines = core.hexDumpLines(bytes.subarray(base, base + 48), base);
+          hexEl.textContent = lines.map((l) => `${l.addr}  ${l.hex}`).join("\n");
+        }
+        hexLine++;
+      }
+    }
+    const gate = root.querySelector('[data-role="gate"]');
+    if (gate && Math.random() > 0.4) {
+      const ins = gate.querySelectorAll(".flash-sv-in");
+      const a = Math.random() > 0.4, b = Math.random() > 0.4;
+      ins[0].classList.toggle("flash-sv-hot", a);
+      ins[1].classList.toggle("flash-sv-hot", b);
+      gate.querySelector(".flash-sv-out").classList.toggle("flash-sv-hot", a && b);
+    }
+  }, 250);
+
+  return root;
 }
 
 // ── shared UI bits ──────────────────────────────────────────────────────────
