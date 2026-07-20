@@ -214,6 +214,346 @@ test("bytes <-> binary string round-trips including 0x00/0x80/0xFF", async () =>
     Array.from(binaryStringToBytes(bytesToBinaryString(big))), Array.from(big));
 });
 
+// ── chunked reads (the backup-stall fix) ────────────────────────────────────
+test("planReadChunks covers the span exactly, in order, capped per chunk", async () => {
+  const { planReadChunks, READ_CHUNK } = await core();
+  const plan = planReadChunks(0, 8 * 1024 * 1024);
+  assert.strictEqual(plan.length, Math.ceil(8 * 1024 * 1024 / READ_CHUNK));
+  assert.strictEqual(plan[0].offset, 0);
+  let covered = 0;
+  for (const c of plan) {
+    assert.strictEqual(c.offset, covered, "chunks must be contiguous");
+    assert.ok(c.size > 0 && c.size <= READ_CHUNK);
+    covered += c.size;
+  }
+  assert.strictEqual(covered, 8 * 1024 * 1024);
+  // Unaligned tail + non-zero base.
+  const odd = planReadChunks(0x8000, READ_CHUNK + 5);
+  assert.strictEqual(odd.length, 2);
+  assert.strictEqual(odd[1].offset, 0x8000 + READ_CHUNK);
+  assert.strictEqual(odd[1].size, 5);
+  assert.deepStrictEqual(planReadChunks(0, 0), []);
+});
+
+// ── partition kinds (board report vocabulary) ───────────────────────────────
+test("partitionKind names app slots and data partitions", async () => {
+  const { partitionKind, isOtaDataPart, isCoredumpPart, isNvsPart, isWitnessLogPart } = await core();
+  assert.strictEqual(partitionKind({ type: 0, subtype: 0x10 }), "app · ota_0");
+  assert.strictEqual(partitionKind({ type: 0, subtype: 0x00 }), "app · factory");
+  assert.strictEqual(partitionKind({ type: 1, subtype: 0x02 }), "data · nvs");
+  assert.strictEqual(partitionKind({ type: 1, subtype: 0x03 }), "data · coredump");
+  assert.ok(isOtaDataPart({ type: 1, subtype: 0x00 }));
+  assert.ok(isCoredumpPart({ type: 1, subtype: 0x03 }));
+  assert.ok(isNvsPart({ type: 1, subtype: 0x02 }));
+  assert.ok(isWitnessLogPart({ type: 1, subtype: 0x80, label: "witness_log" }));
+  assert.ok(!isWitnessLogPart({ type: 1, subtype: 0x82, label: "spiffs" }));
+});
+
+// ── otadata (active slot + update count) ────────────────────────────────────
+function otaEntry(seq, state, crcFn) {
+  const b = Buffer.alloc(0x1000, 0xff);
+  b.writeUInt32LE(seq >>> 0, 0);
+  b.writeUInt32LE(state >>> 0, 24);
+  b.writeUInt32LE(crcFn(b.subarray(0, 4)), 28);
+  return b;
+}
+
+test("parseOtaData: fresh otadata → factory default; valid seq → active slot", async () => {
+  const { parseOtaData, crc32EspRom } = await core();
+  // esp_rom_crc32_le(UINT32_MAX, …) reference value: crc of 01 00 00 00.
+  // Erased otadata (all 0xFF) → fresh.
+  const blank = new Uint8Array(0x2000).fill(0xff);
+  assert.strictEqual(parseOtaData(blank, 2).fresh, true);
+  // seq=1 valid in sector 0 → active ota slot (1-1)%2 = 0.
+  const good = Buffer.concat([
+    otaEntry(1, 0x2 /* valid */, crc32EspRom),
+    Buffer.alloc(0x1000, 0xff),
+  ]);
+  const r = parseOtaData(new Uint8Array(good), 2);
+  assert.strictEqual(r.fresh, false);
+  assert.strictEqual(r.activeOta, 0);
+  assert.strictEqual(r.updatesSeen, 1);
+  assert.ok(/valid/.test(r.stateText));
+  // Higher seq in sector 1 wins; seq=4 on 2 slots → slot (4-1)%2 = 1.
+  const two = Buffer.concat([
+    otaEntry(3, 0xffffffff, crc32EspRom),
+    otaEntry(4, 0x1 /* pending verify */, crc32EspRom),
+  ]);
+  const r2 = parseOtaData(new Uint8Array(two), 2);
+  assert.strictEqual(r2.activeOta, 1);
+  assert.strictEqual(r2.pendingVerify, true);
+  // A corrupt CRC is ignored, falling back to the other sector.
+  const bad = Buffer.concat([otaEntry(9, 0x2, crc32EspRom), Buffer.alloc(0x1000, 0xff)]);
+  bad.writeUInt32LE(0xdeadbeef, 28); // stomp the CRC
+  assert.strictEqual(parseOtaData(new Uint8Array(bad), 2).fresh, true);
+});
+
+// ── coredump presence ───────────────────────────────────────────────────────
+test("parseCoredumpHeader: erased → absent, sane length → present", async () => {
+  const { parseCoredumpHeader } = await core();
+  const erased = new Uint8Array(16).fill(0xff);
+  assert.strictEqual(parseCoredumpHeader(erased, 0x10000).present, false);
+  const dumped = Buffer.alloc(16, 0);
+  dumped.writeUInt32LE(0x3000, 0);
+  const r = parseCoredumpHeader(new Uint8Array(dumped), 0x10000);
+  assert.strictEqual(r.present, true);
+  assert.strictEqual(r.size, 0x3000);
+  // A "length" bigger than the partition is garbage, not a dump.
+  dumped.writeUInt32LE(0x900000, 0);
+  assert.strictEqual(parseCoredumpHeader(new Uint8Array(dumped), 0x10000).present, false);
+});
+
+// ── NVS reader (witness chain without booting the board) ────────────────────
+// Build a minimal valid NVS page: header + bitmap + entries, matching the
+// firmware's namespace/keys (canary_wap.ino: ns "securacv", seq/boots/chain).
+function nvsPage(entries) {
+  const page = Buffer.alloc(4096, 0xff);
+  page.writeUInt32LE(0xfffffffe, 0); // ACTIVE
+  page.writeUInt32LE(0, 4);          // seq
+  const bitmap = page.subarray(32, 64);
+  let idx = 0;
+  const writeEntry = (e) => {
+    const o = 64 + idx * 32;
+    page[o] = e.ns; page[o + 1] = e.type; page[o + 2] = e.span || 1; page[o + 3] = e.chunkIdx || 0xff;
+    page.write(e.key, o + 8, 15, "ascii");
+    page[o + 8 + Math.min(e.key.length, 15)] = 0;
+    if (e.data) e.data.copy(page, o + 24);
+    // mark Written (0b10) for the header entry + its payload span
+    for (let s = 0; s < (e.span || 1); s++) {
+      const j = idx + s;
+      bitmap[j >> 2] &= ~(0x3 << ((j & 3) * 2));
+      bitmap[j >> 2] |= 0x2 << ((j & 3) * 2);
+    }
+    if (e.payload) e.payload.copy(page, o + 32);
+    idx += e.span || 1;
+  };
+  entries.forEach(writeEntry);
+  return page;
+}
+
+function u32data(v) { const b = Buffer.alloc(8, 0); b.writeUInt32LE(v >>> 0, 0); return b; }
+
+test("parseNvs + witnessSummary read chain state, never secret values", async () => {
+  const { parseNvs, witnessSummary, WITNESS_CHAIN_BLOB_KEY } = await core();
+  const chainBytes = Buffer.alloc(32).map((_, i) => i + 1);
+  const blobData = Buffer.alloc(8, 0);
+  blobData.writeUInt16LE(32, 0); // size
+  const idxData = Buffer.alloc(8, 0);
+  idxData.writeUInt32LE(32, 0);  // total size
+  idxData[4] = 1;                // chunkCount
+  idxData[5] = 0;                // chunkStart
+  const page = nvsPage([
+    { ns: 0, type: 0x01, key: "securacv", data: u32data(1) },      // namespace → index 1
+    { ns: 1, type: 0x04, key: "seq", data: u32data(1234) },        // U32
+    { ns: 1, type: 0x04, key: "boots", data: u32data(57) },
+    { ns: 1, type: 0x01, key: "tamper", data: u32data(0) },        // U8
+    { ns: 1, type: 0x42, key: "chain", span: 2, chunkIdx: 0,       // blob chunk + payload
+      data: blobData, payload: chainBytes },
+    { ns: 1, type: 0x48, key: "chain", data: idxData },            // blob index
+    { ns: 1, type: 0x42, key: "privkey", span: 2, chunkIdx: 0,     // secret — NOT allow-listed
+      data: blobData, payload: Buffer.alloc(32, 0x42) },
+    { ns: 1, type: 0x48, key: "privkey", data: idxData },
+    { ns: 1, type: 0x21, key: "wifi_ssid", span: 2, data: blobData,
+      payload: Buffer.from("MyHomeWifi\0") },
+  ]);
+
+  const items = parseNvs(new Uint8Array(page), [WITNESS_CHAIN_BLOB_KEY]);
+  const s = witnessSummary(items);
+  assert.ok(s, "securacv namespace should be found");
+  assert.strictEqual(s.seq, 1234);
+  assert.strictEqual(s.boots, 57);
+  assert.strictEqual(s.tamper, 0);
+  assert.strictEqual(s.chainHeadFp, "0102030405060708");
+  assert.strictEqual(s.provisioned, true, "privkey presence detected");
+  assert.strictEqual(s.wifiConfigured, true, "ssid presence detected");
+  // The guard: no secret CONTENT anywhere in the parsed output.
+  const flat = JSON.stringify(items, (k, v) => (v instanceof Uint8Array ? Array.from(v) : v));
+  assert.ok(!flat.includes("MyHomeWifi"), "ssid value must never be extracted");
+  const priv = items.find((i) => i.key === "privkey" && i.bytes);
+  assert.strictEqual(priv, undefined, "non-allow-listed blobs must not carry bytes");
+});
+
+test("parseNvs survives blank flash and reports nothing", async () => {
+  const { parseNvs, witnessSummary } = await core();
+  const blank = new Uint8Array(0x6000).fill(0xff);
+  const items = parseNvs(blank);
+  assert.deepStrictEqual(items, []);
+  assert.strictEqual(witnessSummary(items), null);
+});
+
+// ── progress prediction (the bar the user can trust) ────────────────────────
+test("makeEtaTracker: monotonic fraction, sane ETA at steady rate", async () => {
+  const { makeEtaTracker } = await core();
+  const t = makeEtaTracker(1000_000);
+  t.feed(0, 0);
+  let p = t.feed(100_000, 1000); // 100 KB/s
+  p = t.feed(200_000, 2000);
+  p = t.feed(300_000, 3000);
+  assert.ok(Math.abs(p.frac - 0.3) < 1e-9);
+  assert.ok(p.etaSeconds > 5 && p.etaSeconds < 9, `eta ~7s, got ${p.etaSeconds}`);
+  assert.ok(p.kbps > 80 && p.kbps < 120, `kbps ~97, got ${p.kbps}`);
+  // A bogus backwards report must never move the bar backwards.
+  p = t.feed(50_000, 4000);
+  assert.ok(p.frac >= 0.3);
+  // Overshoot clamps to 100%.
+  p = t.feed(2_000_000, 5000);
+  assert.ok(p.frac <= 1);
+  // Unknown rate yet → no fake estimate.
+  const fresh = makeEtaTracker(500);
+  assert.strictEqual(fresh.feed(0, 0).etaSeconds, null);
+});
+
+test("formatDuration speaks human", async () => {
+  const { formatDuration } = await core();
+  assert.strictEqual(formatDuration(3), "a few seconds");
+  assert.strictEqual(formatDuration(42), "about 40 seconds");
+  assert.strictEqual(formatDuration(130), "about 2 minutes");
+  assert.strictEqual(formatDuration(61), "about 1 minute");
+  assert.strictEqual(formatDuration(null), "");
+  assert.strictEqual(formatDuration(NaN), "");
+});
+
+// ── serial console heuristics ───────────────────────────────────────────────
+test("looksLikeGarbage: wrong-baud soup yes, real console text no", async () => {
+  const { looksLikeGarbage } = await core();
+  // Real firmware output — including the help menu's box-drawing glyphs.
+  const menu = "┌────────────┐\n│ SERIAL COMMANDS │\n└────────────┘\n[BOOT] securacv canary v2.2.0\n".repeat(3);
+  assert.strictEqual(looksLikeGarbage(menu), false);
+  // Wrong baud: replacement chars and control soup.
+  const soup = ("�\x01x�\x02�~\x1f�").repeat(20);
+  assert.strictEqual(looksLikeGarbage(soup), true);
+  // Too little data to judge → not garbage (yet).
+  assert.strictEqual(looksLikeGarbage("��"), false);
+  assert.strictEqual(looksLikeGarbage(""), false);
+});
+
+// ── backup-file restore guard ───────────────────────────────────────────────
+test("validateBackupFile: equal ok, smaller warns, bigger refused", async () => {
+  const { validateBackupFile } = await core();
+  const flash = 8 * 1024 * 1024;
+  assert.deepStrictEqual(validateBackupFile(flash, flash, "b.bin"), { ok: true });
+  const small = validateBackupFile(4 * 1024 * 1024, flash, "b.bin");
+  assert.strictEqual(small.ok, true);
+  assert.ok(/smaller/.test(small.warn));
+  const big = validateBackupFile(16 * 1024 * 1024, flash, "b.bin");
+  assert.strictEqual(big.ok, false);
+  assert.ok(/bigger/.test(big.reason));
+  assert.strictEqual(validateBackupFile(0, flash, "b.bin").ok, false);
+  // Unknown flash size: only emptiness is checkable.
+  assert.strictEqual(validateBackupFile(123, null, "b.bin").ok, true);
+});
+
+// ── rescue product choice ───────────────────────────────────────────────────
+test("pickRescueProduct prefers what the board runs, else the only match", async () => {
+  const { pickRescueProduct } = await core();
+  // Board says it runs canary_wap → that product wins on the S3.
+  const wap = pickRescueProduct(catalog, "ESP32-S3", "canary_wap");
+  assert.strictEqual(wap.id, "securacv-canary-wap");
+  // Unknown project on a chip with several products → caller must ask.
+  assert.strictEqual(pickRescueProduct(catalog, "ESP32-S3", "mystery_fw"), null);
+  // Unknown chip → null.
+  assert.strictEqual(pickRescueProduct(catalog, "ESP32-NOPE", "x"), null);
+});
+
+// ── hex peek (flash map magnifier) ──────────────────────────────────────────
+test("hexDumpLines: classic addr | hex | ascii rows", async () => {
+  const { hexDumpLines } = await core();
+  const bytes = new Uint8Array([0xe9, 0x06, 0x02, 0x2f, 0x41, 0x42, 0x43, 0x00,
+                                0xff, 0x20, 0x7e, 0x7f, 0x0a, 0x61, 0x62, 0x63,
+                                0x01, 0x02]);
+  const lines = hexDumpLines(bytes, 0x10000);
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines[0].addr, "0x010000");
+  assert.ok(lines[0].hex.startsWith("e9 06 02 2f 41 42 43 00"));
+  assert.ok(lines[0].ascii.includes("ABC"));
+  assert.ok(lines[0].ascii.includes("·"), "non-printables become middots");
+  assert.strictEqual(lines[1].addr, "0x010010");
+  assert.strictEqual(lines[1].hex, "01 02");
+});
+
+test("sniffRegion recognizes the chip's own magic numbers", async () => {
+  const { sniffRegion } = await core();
+  assert.ok(/erased/.test(sniffRegion(new Uint8Array(64).fill(0xff))));
+  const app = new Uint8Array(64); app[0] = 0xe9;
+  assert.ok(/firmware image/.test(sniffRegion(app)));
+  const pt = new Uint8Array(64); pt[0] = 0xaa; pt[1] = 0x50;
+  assert.ok(/partition table/.test(sniffRegion(pt)));
+  const desc = Buffer.alloc(64); desc.writeUInt32LE(0xabcd5432, 0);
+  assert.ok(/description block/.test(sniffRegion(new Uint8Array(desc))));
+  const mostly = new Uint8Array(100).fill(0xff); mostly[3] = 0x42;
+  assert.ok(/mostly erased/.test(sniffRegion(mostly)));
+  const data = new Uint8Array(64).fill(0x37);
+  assert.strictEqual(sniffRegion(data), "stored data");
+});
+
+// ── install diff (what actually changes on the board) ──────────────────────
+// Synthetic flash images with a real partition table at 0x8000: nvs at
+// 0x9000 (0x1000), app at 0x10000 (0x10000), witness at 0x20000 (0x1000).
+function appDescAt(version, project) {
+  const b = Buffer.alloc(256, 0);
+  b.writeUInt32LE(0xabcd5432, 0);
+  b.write(version, 16, 32, "ascii");
+  b.write(project, 48, 32, "ascii");
+  return b;
+}
+
+function synthFlash({ version, wifi, imageOnly }) {
+  const size = imageOnly ? 0x20000 : 0x21000; // image stops before witness
+  const img = Buffer.alloc(size, 0xff);
+  Buffer.concat([
+    ptEntry({ type: 1, subtype: 2, offset: 0x9000, size: 0x1000, label: "nvs" }),
+    ptEntry({ type: 0, subtype: 0x10, offset: 0x10000, size: 0x10000, label: "app0" }),
+    ptEntry({ type: 1, subtype: 0x80, offset: 0x20000, size: 0x1000, label: "witness_log" }),
+  ]).copy(img, 0x8000);
+  img[0] = 0xe9; // bootloader-ish
+  if (wifi) img.fill(0x42, 0x9000, 0x9100); // pretend settings data
+  appDescAt(version, "canary_wap").copy(img, 0x10000 + 0x20);
+  img.fill(0x11, 0x10000 + 0x200, 0x10000 + 0x400); // some app body
+  if (!imageOnly) img.fill(0x77, 0x20000, 0x20040); // witness data on board
+  return new Uint8Array(img);
+}
+
+test("diffInstall: firmware updated, settings untouched, witness beyond image", async () => {
+  const { diffInstall } = await core();
+  const board = synthFlash({ version: "2.1.0", wifi: true, imageOnly: false });
+  const image = synthFlash({ version: "2.2.0", wifi: true, imageOnly: true });
+  // Make the new app body actually differ.
+  image.fill(0x22, 0x10000 + 0x200, 0x10000 + 0x400);
+  const d = diffInstall(board, image);
+  assert.ok(d && d.rows.length >= 4);
+  assert.strictEqual(d.layoutChanged, false);
+  const by = (l) => d.rows.find((r) => r.label === l);
+  assert.strictEqual(by("nvs").verdict, "identical", "same settings bytes → identical");
+  const app = by("app0");
+  assert.strictEqual(app.verdict, "changed");
+  assert.ok(/2\.1\.0/.test(app.before) && /2\.2\.0/.test(app.after), "version change named");
+  assert.strictEqual(by("witness_log").verdict, "untouched", "image never reaches it");
+});
+
+test("diffInstall: factory image wipes settings; verdict says so plainly", async () => {
+  const { diffInstall, settingsVerdict } = await core();
+  const board = synthFlash({ version: "2.1.0", wifi: true, imageOnly: false });
+  const image = synthFlash({ version: "2.2.0", wifi: false, imageOnly: true }); // nvs all 0xFF
+  const d = diffInstall(board, image);
+  const nvs = d.rows.find((r) => r.label === "nvs");
+  assert.strictEqual(nvs.verdict, "wiped");
+  const v = settingsVerdict(d, true);
+  assert.strictEqual(v.kept, false);
+  assert.ok(/WiFi is cleared/.test(v.text));
+  // And the keep case:
+  const same = diffInstall(board, synthFlash({ version: "2.1.0", wifi: true, imageOnly: true }));
+  const v2 = settingsVerdict(same, true);
+  assert.strictEqual(v2.kept, true);
+  assert.ok(/survive/.test(v2.text));
+});
+
+test("diffInstall returns null without any partition table to anchor on", async () => {
+  const { diffInstall } = await core();
+  const blankOld = new Uint8Array(0x40000).fill(0xff);
+  const rawApp = new Uint8Array(0x1000).fill(0xe9); // bare app bin, no table
+  assert.strictEqual(diffInstall(blankOld, rawApp), null);
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");

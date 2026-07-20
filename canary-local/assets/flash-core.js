@@ -194,6 +194,432 @@ export function manifestOverrideUrl(search, pageOrigin) {
   return (localName || privateIp) ? u.href : null;
 }
 
+// ── chunked flash reads ────────────────────────────────────────────────────
+// esptool-js's readFlash issues ONE read command for the whole span and
+// streams it back with a ~4 MB un-acked window; on multi-megabyte reads a
+// single lost byte desyncs SLIP and the transfer stalls (upstream #218).
+// The fix is to plan many small reads — each its own command, each cheap to
+// retry — and stitch the results. Pure math here; flash.js drives the wire.
+export const READ_CHUNK = 0x10000; // 64 KB: small enough to retry, big enough to fly
+
+export function planReadChunks(offset, size, chunk = READ_CHUNK) {
+  const plan = [];
+  if (!(size > 0)) return plan;
+  let o = offset >>> 0;
+  const end = o + size;
+  while (o < end) {
+    const n = Math.min(chunk, end - o);
+    plan.push({ offset: o, size: n });
+    o += n;
+  }
+  return plan;
+}
+
+// ── partition naming (for the board report) ───────────────────────────────
+const DATA_SUBTYPE = {
+  0x00: "otadata", 0x01: "phy_init", 0x02: "nvs", 0x03: "coredump",
+  0x04: "nvs_keys", 0x05: "efuse", 0x06: "undefined",
+  0x81: "fat", 0x82: "spiffs", 0x83: "littlefs",
+};
+
+export function partitionKind(e) {
+  if (!e) return "?";
+  if (e.type === 0x00) {
+    if (e.subtype === 0x00) return "app · factory";
+    if (e.subtype >= 0x10 && e.subtype < 0x20) return `app · ota_${e.subtype - 0x10}`;
+    if (e.subtype === 0x20) return "app · test";
+    return `app · 0x${e.subtype.toString(16)}`;
+  }
+  if (e.type === 0x01) {
+    const n = DATA_SUBTYPE[e.subtype];
+    return n ? `data · ${n}` : `data · 0x${e.subtype.toString(16)}`;
+  }
+  return `0x${e.type.toString(16)} · 0x${e.subtype.toString(16)}`;
+}
+
+export const isOtaDataPart = (e) => e && e.type === 0x01 && e.subtype === 0x00;
+export const isNvsPart = (e) => e && e.type === 0x01 && e.subtype === 0x02;
+export const isCoredumpPart = (e) => e && e.type === 0x01 && e.subtype === 0x03;
+export const isWitnessLogPart = (e) => e && e.type === 0x01 && /witness/i.test(e.label || "");
+
+// ── otadata (which A/B slot is live, how many updates it has seen) ─────────
+// Two esp_ota_select_entry_t records, one per 4 KB sector:
+//   ota_seq u32 | seq_label[20] | ota_state u32 | crc32(ota_seq) u32
+// The bootloader trusts the highest CRC-valid seq; active app slot is
+// (seq - 1) % <number of ota slots>.
+const OTA_STATE = {
+  0x0: "new (never booted)",
+  0x1: "pending verify",
+  0x2: "valid",
+  0x3: "invalid (rolled back)",
+  0x4: "aborted",
+  0xffffffff: "normal",
+};
+
+// esp_rom_crc32_le(UINT32_MAX, buf, len): reflected 0xEDB88320, init 0,
+// final complement. (Seeding with ~UINT32_MAX is what zeroes the init.)
+export function crc32EspRom(bytes) {
+  let c = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    c ^= bytes[i];
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return (~c) >>> 0;
+}
+
+export function parseOtaData(bytes, otaSlotCount) {
+  const entries = [];
+  for (const off of [0x0, 0x1000]) {
+    if (off + 32 > bytes.length) break;
+    const seq = u32le(bytes, off);
+    const state = u32le(bytes, off + 24);
+    const crc = u32le(bytes, off + 28);
+    const crcOk = crc === crc32EspRom(bytes.subarray(off, off + 4));
+    entries.push({ seq, state, crcOk });
+  }
+  const valid = entries.filter((e) => e.seq !== 0xffffffff && e.crcOk);
+  if (!valid.length || !otaSlotCount) {
+    // Fresh otadata: the bootloader falls back to factory, else ota_0.
+    return { fresh: true, activeOta: 0, updatesSeen: 0, stateText: "factory default" };
+  }
+  const best = valid.reduce((a, b) => (b.seq > a.seq ? b : a));
+  return {
+    fresh: false,
+    activeOta: (best.seq - 1) % otaSlotCount,
+    updatesSeen: best.seq,
+    stateText: OTA_STATE[best.state] || `0x${best.state.toString(16)}`,
+    pendingVerify: best.state === 0x1,
+  };
+}
+
+// ── coredump header (has this board ever crashed hard?) ────────────────────
+// ESP-IDF writes the dump's total length as the partition's first word; an
+// erased partition reads 0xFFFFFFFF. Presence is the interesting bit — the
+// dump itself stays on the board.
+export function parseCoredumpHeader(bytes, partitionSize) {
+  if (!bytes || bytes.length < 4) return { present: false };
+  const len = u32le(bytes, 0);
+  const present = len !== 0xffffffff && len > 0 && len <= (partitionSize || 0x10000);
+  return present ? { present: true, size: len } : { present: false };
+}
+
+// ── NVS reader (witness-chain state without booting the board) ─────────────
+// ESP-IDF NVS: 4 KB pages — header(32) + entry-state bitmap(32) + 126×32-byte
+// entries. Entry: ns u8 | type u8 | span u8 | chunkIdx u8 | crc u32 |
+// key[16] | data[8]. Strings/blobs put length in the data field and the
+// payload in the following (span-1) entries.
+//
+// PRIVACY GUARD: values are extracted ONLY for integer types and for blob
+// keys explicitly allow-listed by the caller. Everything else (key material,
+// WiFi credentials, tokens, certs) is reported as presence + size, never
+// content — and the report UI only ever surfaces the allow-listed set.
+const NVS_WRITTEN = 2; // 2-bit entry state 0b10
+const NVS_INT_TYPES = { 0x01: 1, 0x11: 1, 0x02: 2, 0x12: 2, 0x04: 4, 0x14: 4, 0x08: 8, 0x18: 8 };
+
+export function parseNvs(bytes, allowBlobKeys = []) {
+  const allow = new Set(allowBlobKeys);
+  const nsNames = {};   // index → namespace name
+  const items = [];     // { nsIndex, key, type, value?, size? }
+  const blobChunks = {}; // "ns/key" → [{chunkIdx, data}]
+
+  for (let page = 0; page + 4096 <= bytes.length; page += 4096) {
+    const state = u32le(bytes, page);
+    if (state === 0xffffffff) continue; // uninitialized page
+    const bitmap = bytes.subarray(page + 32, page + 64);
+    for (let idx = 0; idx < 126; idx++) {
+      const st = (bitmap[idx >> 2] >> ((idx & 3) * 2)) & 0x3;
+      if (st !== NVS_WRITTEN) continue;
+      const o = page + 64 + idx * 32;
+      const ns = bytes[o], type = bytes[o + 1], span = bytes[o + 2] || 1, chunkIdx = bytes[o + 3];
+      const key = cstr(bytes, o + 8, 16);
+      if (!key) { idx += span - 1; continue; }
+
+      if (ns === 0 && type === 0x01) {
+        nsNames[bytes[o + 24]] = key; // namespace definition entry
+      } else if (NVS_INT_TYPES[type]) {
+        let v = 0;
+        for (let i = NVS_INT_TYPES[type] - 1; i >= 0; i--) v = v * 256 + bytes[o + 24 + i];
+        items.push({ nsIndex: ns, key, type, value: v });
+      } else if (type === 0x21 || type === 0x41 || type === 0x42) {
+        // string | legacy blob | v2 blob-data chunk — size u16 in the data
+        // field, payload inline in the following (span-1) entries.
+        const size = u16le(bytes, o + 24);
+        if (type === 0x42 && allow.has(key)) {
+          const data = bytes.slice(o + 32, o + 32 + Math.min(size, (span - 1) * 32));
+          (blobChunks[`${ns}/${key}`] ||= []).push({ chunkIdx, data });
+        }
+        if (type === 0x41) {
+          const item = { nsIndex: ns, key, type: 0x42, size };
+          if (allow.has(key)) item.bytes = bytes.slice(o + 32, o + 32 + Math.min(size, (span - 1) * 32));
+          items.push(item);
+        }
+        if (type === 0x21) items.push({ nsIndex: ns, key, type, size });
+      } else if (type === 0x48) { // v2 blob index: authoritative total size
+        items.push({ nsIndex: ns, key, type: 0x42, size: u32le(bytes, o + 24) });
+      }
+      idx += span - 1; // skip payload entries
+    }
+  }
+
+  for (const item of items) {
+    item.namespace = nsNames[item.nsIndex] || String(item.nsIndex);
+    if (item.type === 0x42 && allow.has(item.key)) {
+      const chunks = blobChunks[`${item.nsIndex}/${item.key}`];
+      if (chunks) {
+        chunks.sort((a, b) => a.chunkIdx - b.chunkIdx);
+        let total = 0; chunks.forEach((c) => { total += c.data.length; });
+        const buf = new Uint8Array(total);
+        let p = 0; chunks.forEach((c) => { buf.set(c.data, p); p += c.data.length; });
+        item.bytes = item.size ? buf.subarray(0, item.size) : buf;
+      }
+    }
+  }
+  return items;
+}
+
+// The firmware's own NVS map (canary_wap.ino): namespace "securacv" holds the
+// witness-chain fast-boot cache. Chain head is the only blob we ever read out.
+export const WITNESS_NVS_NAMESPACE = "securacv";
+export const WITNESS_CHAIN_BLOB_KEY = "chain";
+
+export function witnessSummary(items) {
+  const ours = items.filter((i) => i.namespace === WITNESS_NVS_NAMESPACE);
+  if (!ours.length) return null;
+  const get = (k) => ours.find((i) => i.key === k);
+  const chain = get(WITNESS_CHAIN_BLOB_KEY);
+  return {
+    seq: get("seq")?.value ?? null,          // witness records chained so far
+    boots: get("boots")?.value ?? null,      // lifetime boot counter
+    tamper: get("tamper")?.value ?? null,    // firmware's own tamper flag
+    logSeq: get("logseq")?.value ?? null,
+    chainHeadFp: chain?.bytes ? hex(chain.bytes.subarray(0, 8)) : null,
+    provisioned: !!get("privkey"),           // identity key exists (never read)
+    wifiConfigured: !!get("wifi_ssid"),      // presence only, never the value
+  };
+}
+
+// ── progress prediction (a bar the user can trust) ─────────────────────────
+// One tracker per stage. The fraction is monotonic — a progress bar must
+// never move backwards — and the rate is an EMA so the "time left" estimate
+// doesn't jitter with every packet. Timestamps are passed in, so this stays
+// pure and testable.
+export function makeEtaTracker(total) {
+  let lastT = null, lastDone = 0, rate = 0, frac = 0; // rate: bytes/ms
+  return {
+    feed(done, now) {
+      done = Math.min(Math.max(done, lastDone), total || done);
+      if (lastT == null) { lastT = now; lastDone = done; }
+      else if (done > lastDone) {
+        const dt = now - lastT;
+        if (dt > 0) {
+          const r = (done - lastDone) / dt;
+          rate = rate ? rate * 0.75 + r * 0.25 : r;
+        }
+        lastT = now; lastDone = done;
+      }
+      if (total > 0) frac = Math.max(frac, Math.min(1, done / total));
+      const remain = Math.max(0, (total || 0) - lastDone);
+      return {
+        frac,
+        kbps: rate * 1000 / 1024,
+        etaSeconds: rate > 0 && total > 0 ? remain / rate / 1000 : null,
+      };
+    },
+  };
+}
+
+export function formatDuration(s) {
+  if (!Number.isFinite(s) || s == null || s < 0) return "";
+  if (s < 8) return "a few seconds";
+  if (s < 60) return `about ${Math.max(10, Math.round(s / 5) * 5)} seconds`;
+  const m = Math.round(s / 60);
+  return `about ${m} minute${m === 1 ? "" : "s"}`;
+}
+
+// ── serial console heuristics ───────────────────────────────────────────────
+// Baud candidates for the monitor, most likely first. The firmware console is
+// console_baud (115200); 74880 is the classic ESP32 boot-ROM rate; the rest
+// cover common sketches. On native-USB boards (every current Canary) the baud
+// barely matters — CDC ignores it — so the default just works.
+export const CONSOLE_BAUDS = [115200, 74880, 9600, 230400, 460800, 921600];
+
+// Wrong-baud output decodes as a soup of U+FFFD replacement chars and raw
+// control bytes. Real firmware text — including the help menu's box-drawing
+// glyphs — decodes cleanly. Needs a decent sample before it will judge.
+export function looksLikeGarbage(text) {
+  if (!text || text.length < 60) return false;
+  let bad = 0, n = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    n++;
+    if (c === 0xfffd) bad++;
+    else if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) bad++;
+    else if (c === 0x7f) bad++;
+  }
+  return bad / n > 0.2;
+}
+
+// ── restoring a saved backup file (forward-compatible recovery) ─────────────
+// A backup is raw flash bytes, so restoring one never depends on firmware
+// version — but the file must plausibly belong on this chip.
+export function validateBackupFile(byteLength, flashBytes, name) {
+  if (!(byteLength > 0)) return { ok: false, reason: "that file is empty" };
+  if (flashBytes && byteLength > flashBytes) {
+    return { ok: false, reason: `that file is bigger than this chip's flash ` +
+      `(${formatBytes(byteLength)} vs ${formatBytes(flashBytes)}) — it can't be from this board` };
+  }
+  if (flashBytes && byteLength !== flashBytes) {
+    return { ok: true, warn: `heads up: ${name || "this file"} is smaller than the chip ` +
+      `(${formatBytes(byteLength)} of ${formatBytes(flashBytes)}) — it'll be written from the ` +
+      `start of flash and the rest is left untouched` };
+  }
+  return { ok: true };
+}
+
+// Which product a rescue should offer first: the one the board is already
+// running if we could read it, else the chip's only match, else the caller
+// shows a picker.
+export function pickRescueProduct(catalog, chip, currentProjectName) {
+  const matches = productsForChip(catalog, chip);
+  if (!matches.length) return null;
+  const current = matchProjectToProduct(catalog, currentProjectName);
+  if (current && matches.some((p) => p.id === current.id)) return current;
+  return matches.length === 1 ? matches[0] : null;
+}
+
+// ── hex peek (the flash map's magnifying glass) ────────────────────────────
+// Classic hex dump lines: address | 16 bytes | ASCII. Pure formatting so the
+// report can show real bytes read off the board without any surprises.
+export function hexDumpLines(bytes, baseAddr = 0, width = 16) {
+  const lines = [];
+  for (let o = 0; o < bytes.length; o += width) {
+    const row = bytes.subarray(o, o + width);
+    let hexs = "", ascii = "";
+    for (let i = 0; i < row.length; i++) {
+      hexs += row[i].toString(16).padStart(2, "0") + (i === 7 ? "  " : " ");
+      ascii += row[i] >= 0x20 && row[i] < 0x7f ? String.fromCharCode(row[i]) : "·";
+    }
+    lines.push({
+      addr: "0x" + (baseAddr + o).toString(16).padStart(6, "0"),
+      hex: hexs.trimEnd(),
+      ascii,
+    });
+  }
+  return lines;
+}
+
+// One honest sentence about what a region's first bytes look like — driven
+// by the same magic numbers the chip itself uses.
+export function sniffRegion(bytes) {
+  if (!bytes || !bytes.length) return "nothing readable";
+  let ff = 0;
+  for (let i = 0; i < bytes.length; i++) if (bytes[i] === 0xff) ff++;
+  if (ff === bytes.length) return "erased — nothing stored here yet (all 0xFF)";
+  if (bytes[0] === 0xe9) return "ESP32 firmware image — 0xE9 is the chip's own \"program starts here\" marker";
+  if (bytes.length >= 2 && u16le(bytes, 0) === PARTITION_MAGIC) return "partition table entries (magic 0xAA50) — the board's map of itself";
+  if (bytes.length >= 4 && u32le(bytes, 0) === APP_DESC_MAGIC) return "firmware description block (magic 0xABCD5432)";
+  if (ff / bytes.length > 0.9) return "mostly erased, a little data at the edges";
+  return "stored data";
+}
+
+// ── install diff (what will actually change on the board) ──────────────────
+// At install time we hold both worlds in memory: the safety copy (every byte
+// currently on the board) and the image about to be written. Comparing them
+// region-by-region answers the real questions — is the firmware updated, do
+// my settings (WiFi, identity, witness chain) survive, what's untouched —
+// with byte-level certainty instead of guesses.
+//
+// Regions come from the NEW image's partition table when it carries one
+// (factory images do), else from the board's current table; if both exist
+// and disagree, the layout itself is changing and we say so.
+function tableFrom(bytes) {
+  if (!bytes || bytes.length < 0x8000 + 32) return { entries: [], apps: [] };
+  return parsePartitionTable(bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
+}
+
+function regionAllFF(bytes, off, end) {
+  for (let i = off; i < end; i++) if (bytes[i] !== 0xff) return false;
+  return true;
+}
+
+function countDiff(a, b, off, end) {
+  let n = 0;
+  for (let i = off; i < end; i++) if (a[i] !== b[i]) n++;
+  return n;
+}
+
+export function diffInstall(oldBytes, newBytes) {
+  const newPt = tableFrom(newBytes);
+  const oldPt = tableFrom(oldBytes);
+  const table = newPt.entries.length ? newPt : oldPt;
+  if (!table.entries.length) return null; // nothing to anchor a map to
+
+  const layoutChanged = !!(newPt.entries.length && oldPt.entries.length &&
+    JSON.stringify(newPt.entries) !== JSON.stringify(oldPt.entries));
+
+  const rows = [];
+  // The system area first: bootloader + the partition map itself.
+  const firstOff = Math.min(...table.entries.map((e) => e.offset));
+  if (firstOff > 0) {
+    rows.push(describeRegion(oldBytes, newBytes,
+      { label: "system", type: 0xfe, subtype: 0, offset: 0, size: firstOff },
+      "bootloader + partition map"));
+  }
+  for (const e of table.entries) rows.push(describeRegion(oldBytes, newBytes, e));
+  return { layoutChanged, rows, imageLength: newBytes.length };
+}
+
+function describeRegion(oldBytes, newBytes, e, kindOverride) {
+  const row = {
+    label: e.label || partitionKind(e),
+    kind: kindOverride || partitionKind(e),
+    offset: e.offset, size: e.size,
+    type: e.type, subtype: e.subtype,
+  };
+  const end = e.offset + e.size;
+  if (e.offset >= newBytes.length) {
+    row.verdict = "untouched"; // the image never reaches this region
+    return row;
+  }
+  const cmpEnd = Math.min(end, newBytes.length, oldBytes.length);
+  const diff = countDiff(oldBytes, newBytes, e.offset, cmpEnd);
+  if (diff === 0) { row.verdict = "identical"; return row; }
+  if (regionAllFF(newBytes, e.offset, cmpEnd)) {
+    row.verdict = "wiped"; // written as erased flash: a factory-fresh region
+  } else {
+    row.verdict = "changed";
+    row.changedPct = Math.round((diff / (cmpEnd - e.offset)) * 100) || 1;
+  }
+  // App slots: name the change in firmware terms when descriptors are legible.
+  if (e.type === 0x00) {
+    const read = (bytes) => {
+      const o = e.offset + APP_DESC_OFFSET;
+      if (o + 256 > bytes.length) return null;
+      return parseAppDescriptor(bytes.subarray(o, o + 256));
+    };
+    const before = read(oldBytes), after = read(newBytes);
+    if (before) row.before = `${before.projectName || "?"} ${before.version || ""}`.trim();
+    if (after) row.after = `${after.projectName || "?"} ${after.version || ""}`.trim();
+  }
+  return row;
+}
+
+// The question people actually ask, answered from the diff: do my settings
+// survive this install?
+export function settingsVerdict(diff, hadWifi) {
+  if (!diff) return null;
+  const nvs = diff.rows.find((r) => r.type === 0x01 && r.subtype === 0x02);
+  if (!nvs) return null;
+  if (nvs.verdict === "identical" || nvs.verdict === "untouched") {
+    return { kept: true, text: hadWifi
+      ? "Your settings survive — saved WiFi, device identity and witness-chain counters stay exactly as they are."
+      : "The settings area is untouched." };
+  }
+  return { kept: false, text: hadWifi
+    ? "Your settings are reset — the saved WiFi is cleared, so the board comes up with its setup network again, like the first day."
+    : "The settings area is reset to factory-fresh." };
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.
