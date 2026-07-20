@@ -93,6 +93,8 @@ jobs:
           node --test canary-local/tests/boardroom.test.js
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/wap.test.js
+          node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
           node --test canary-local/tests/vault.test.js
           node --test canary-local/tests/bench.test.js
@@ -124,6 +126,13 @@ jobs:
           python3 canary-local/tools/gen_wap.py
           if ! git diff --exit-code -- canary-local/devices/wap.json; then
             echo "::error::generated WAP data stale — run canary-local/tools/gen_wap.py and commit (the firmware moved)"
+            exit 1
+          fi
+      - name: Vision data drift (parsed from the canary-vision firmware + docs)
+        run: |
+          python3 canary-local/tools/gen_vision.py
+          if ! git diff --exit-code -- canary-local/devices/vision.json; then
+            echo "::error::generated Vision data stale — run canary-local/tools/gen_vision.py and commit (the firmware moved)"
             exit 1
           fi
       - name: Sense data drift (parsed from the canary-sense firmware + design doc)
@@ -207,6 +216,8 @@ jobs:
         run: node canary-local/tests/render_probe.mjs
       - name: WAP probe — first-boot, captive portal, serial + MQTT
         run: node canary-local/tests/wap_probe.mjs
+      - name: Vision probe — two ports, model load + preview, boot, MQTT, aim
+        run: node canary-local/tests/vision_probe.mjs
       - name: Sense probe — radar lab, serial, MQTT + flavor-gated entities
         run: node canary-local/tests/sense_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum

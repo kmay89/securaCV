@@ -96,6 +96,26 @@
       "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
     }
   ],
+  "we2_module": {
+    "name": "Grove Vision AI V2 — the Vision’s camera module",
+    "chip": "Himax HX6538 (WiseEye2) · Ethos-U55 NPU · CH343 USB-serial",
+    "usb_vid": "0x1a86",
+    "usb_pid": "0x55d3",
+    "baud": 921600,
+    "model_addr": "0x400000",
+    "manifest_url": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-vision-model.json",
+    "model": {
+      "name": "Person Detection",
+      "arch": "Swift-YOLO (tiny) · 192×192×3 RGB · compiled for the Ethos-U55",
+      "license": "MIT — Seeed SSCMA model zoo, redistributable with attribution",
+      "why_pinned": "One model, chosen and tested with the canary-vision firmware train. No catalog to scroll, no wrong pick to make — and the firmware’s runtime class-index setting absorbs any future swap."
+    },
+    "port_note": "the MODULE’s USB-C port (the big carrier-PCB one, next to the Grove connector) — not the XIAO’s. The XIAO port cannot reach the Himax flash.",
+    "persistence": "The model lives in the module’s own 16 MB flash and persists across power cycles and every future host reflash.",
+    "no_brick": "The burn menu lives in the HX6538’s ROM bootloader — an interrupted transfer just means reset and flash again. And a bricked module bootloader is still recoverable through the host over I2C (we2_iic_bootloader_recover — device guide §7).",
+    "engine": "SecuraCV WE2 engine (assets/we2-core.js) — XMODEM/CRC-16 at 921600 over WebSerial, the same wire protocol Seeed’s open-source flasher speaks, clean-room implemented and pinned by tests/we2.test.js.",
+    "docs": "docs/hardware/grove_vision_ai_v2_guide.md"
+  },
   "no_brick": {
     "headline": "You cannot brick your Canary from here.",
     "why": "The ESP32’s first-stage bootloader lives in mask ROM — it can’t be erased or overwritten over USB. If a flash is interrupted or an image is wrong, the board just drops back into download mode and you flash again. Nothing you click here is one-way.",

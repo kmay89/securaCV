@@ -14,6 +14,7 @@ canary-local/
   house.html            "The Canary House" — isometric home, whole flock in place
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   wap.html              "The WAP — first boot" — captive-portal setup, serial + MQTT (§4i)
+  vision.html           "The Vision — first watch" — model load, aim card, tuning (§4k)
   vault.html            "The Vault" — sealed evidence + break-glass by quorum (§4j)
   assets/
     app.js              card gallery + device sheets + guide player
@@ -556,6 +557,93 @@ real 2-of-3 with all the guardrails.
 | Generated data | `canary-local/devices/vault.json` |
 | Generator | `canary-local/tools/gen_vault.py` |
 | Honesty gates | `tests/vault.test.js` + `tests/vault_probe.mjs` |
+
+## 4k. The Vision: first watch (`vision.html`)
+
+The WAP teaches a device that sets itself up; **The Vision teaches a device
+you set up once, correctly.** The Canary Vision is the optical witness —
+person detection runs on the Grove Vision AI V2 module's own NPU (Himax
+HX6538 + Ethos-U55) and the ESP32 host only ever hears boxes over I2C.
+`vision.html` stages its whole life:
+
+- **The board** — the vendor CAD (`seeed_grove_vision_ai_v2.glb`), reused
+  wholesale from the Board Room, plus the module spec table from the device
+  guide.
+- **The two ports** — a hands-on picker for the gotcha that trips everyone:
+  two USB-C ports, two different computers; a wrong-port click explains *why*
+  it physically can't work.
+- **The model load** — Seeed's SenseCraft workspace staged click for click
+  (Connect → USB Single Serial → Person Detection → upload → preview), ending
+  in a live preview pane. The scene is cartoon actors, and says so — but the
+  boxes on top run the **firmware's real detection math**: best-box rule,
+  class filter, thresholds, IoU/NMS.
+- **The host flash + serial console** — the README's own quickstart commands
+  with one-tap copy, then the staged boot log; `Grove Vision AI ID=` non-zero
+  is the lesson.
+- **MQTT + HA** — every topic from `topics.h`, all 16 discovery entities from
+  `ha_discovery.cpp`, the retained `cfg/state` and the signed events.
+- **The Aim card** — the boxes-only channel, drawn the way the Lovelace card
+  draws it: a wireframe box and a voxel cell on black. The exact `aim`
+  payload streams in a ticker, key for key from `main.cpp`.
+- **Placement + the sandbox** — use-case presets (entry, living room,
+  hallway, workshop, office) that land real numbers on the same four
+  NVS-backed sliders HA exposes; scenario buttons (walk, linger, leave, the
+  cat, two people, the TV) drive one shared sim whose events ripple across
+  the serial console, the MQTT explorer, the aim card and the event log.
+
+Anti-rot, same rule as everything here — nothing written twice:
+
+| Fact on the page | Source of truth |
+|---|---|
+| Thresholds, voxel grid, frame, cadences, aim timing | `include/canary/config.h` + `detect_config.h` |
+| Every MQTT topic | `include/canary/topics.h` |
+| The 16 HA entities | `src/ha/ha_discovery.cpp` |
+| Best-box rule + voxel math (mirrored in JS, pinned by tests) | `src/vision/vision_mgr.cpp` |
+| The event vocabulary + FSM order | `src/state/presence_fsm.cpp` |
+| The aim payload keys | `src/main.cpp` |
+| Boot banner + log lines | `firmware/common/boot/boot_banner.cpp` + net managers |
+| Ports, wiring, SenseCraft steps, recovery, symptoms | `docs/hardware/grove_vision_ai_v2_guide.md` + `canary_vision_getting_started.md` |
+| Host envs + quickstart + tuning table | `firmware/projects/canary-vision/README.md` |
+
+`tools/gen_vision.py` regenerates `devices/vision.json` and **`sys.exit`s if
+any of those literals moved**; the drift gate in `canary-local.yml` re-runs it
+and `git diff --exit-code`s. The preview scene is staged and labeled as such
+on the page — the detection semantics on top of it are not, and
+`tests/vision.test.js` pins the JS cores (bestBox, bboxToVoxel, the FSM, the
+aim payload) against the firmware sources so the "mirrors the firmware" claim
+can't rot.
+
+| Piece | File |
+|---|---|
+| The page | `canary-local/vision.html` + `assets/vision.js` |
+| Ports picker · SenseCraft stage · sim · aim card · sandbox | `canary-local/assets/vision-ui.js` |
+| The board + 3D reuse | `assets/board-lab.js`, `assets/scene3d.js`, `assets/glb.js` |
+| Generated data | `canary-local/devices/vision.json` |
+| Generator | `canary-local/tools/gen_vision.py` |
+| Honesty gates | `tests/vision.test.js` + `tests/vision_probe.mjs` |
+
+### The module flasher (the real one, on `flash.html`)
+
+The staged SenseCraft walkthrough above teaches the vendor path — but the
+flash page now carries SecuraCV's **own module flow**: burn the pinned
+person-detection model into the Grove Vision AI V2 over WebSerial, from our
+page, with zero choices to make. The engine (`assets/we2-core.js`) is a
+clean-room, fully-tested mirror of the module's ROM-bootloader protocol —
+XMODEM/CRC-16 at 921600, the burn-address preamble block, the reboot
+prompt — the same wire Seeed's open-source flasher speaks. The model asset
+rides the release train (`.github/workflows/vision-model-release.yml` →
+`manifest-vision-model.json`, SHA-256 pinned, MIT with attribution in the
+firmware NOTICE), and after burning, the flow proves it: AT handshake, our
+model card stored on-device (`AT+INFO`), one test inference, and an optional
+live bench preview with the on-module TSCORE/TIOU sliders.
+
+| Piece | File |
+|---|---|
+| Engine (DOM-free: CRC, XMODEM, preamble, state machine, AT parser) | `assets/we2-core.js` |
+| WebSerial transport + the flow UI | `assets/we2-flash.js` (mounted from `flash.js`) |
+| Catalog block + doc drift-gate | `tools/gen_flash.py` → `devices/flash.json` `we2_module` |
+| Release asset pipeline | `.github/workflows/vision-model-release.yml` |
+| Honesty gate (scripted fake bootloader, byte-level) | `tests/we2.test.js` |
 
 ## 5. Where this lives (repo → Pages → securacv.com)
 

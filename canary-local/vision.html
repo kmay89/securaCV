@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Vision — first watch · canary.local</title>
+  <meta name="description" content="Meet the Canary Vision before you own one: the Grove Vision AI V2 in vendor CAD, the two-USB-C-port gotcha as a hands-on picker, the one-time SenseCraft model load staged click for click with a live bounding-box preview running the firmware's real detection math, the host boot console, the MQTT/Home Assistant surfaces, the boxes-only Aim card, placement presets and live tuning — all parsed from the firmware and docs and drift-checked in CI, nothing hand-faked. A guide, a tutorial and a sandbox in one. Works offline; nothing phones anywhere." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+</head>
+<body>
+  <header id="hero" class="hub-hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+        <circle cx="26" cy="38" r="3.2" fill="#141414" opacity="0.55"/>
+      </svg>
+    </div>
+    <h1>The Vision — first watch</h1>
+    <p class="lede">
+      The Canary <strong>Vision</strong> detects people on the camera module's own
+      chip — an NPU behind the lens — and only <em>someone is here</em> ever leaves
+      the board. Meet it here before you own one: the module in 3D, the two-port
+      gotcha, the one-time model load with its bounding-box preview, the boot log,
+      the MQTT it speaks, and the boxes-only way you aim it forever after.
+    </p>
+    <div id="vision-versions" aria-live="polite"></div>
+    <p class="fineprint">
+      <a href="index.html">← the family</a> ·
+      <a href="flash.html">flash it in your browser</a> ·
+      <a href="boards.html">the Board Room</a> ·
+      <a href="homeassistant.html">the Hub</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main id="vision">
+    <noscript><p class="muted">This bench needs JavaScript — everything it stages
+    is also written out in <code>docs/hardware/canary_vision_getting_started.md</code>.</p></noscript>
+  </main>
+
+  <footer class="fineprint" id="foot">
+    <p>
+      Honest by construction: the thresholds, topics, entities, boot lines, port
+      rules and walkthrough steps are parsed from
+      <code>firmware/projects/canary-vision</code> and
+      <code>docs/hardware/</code> by <code>tools/gen_vision.py</code>, and
+      drift-checked in CI. The preview pane draws a staged scene — cartoon
+      actors, never a camera feed — but the detection math on top of it
+      (best-box, class filter, voxel grid, presence timing) mirrors the
+      firmware line for line and is pinned by tests. Nothing here is written twice.
+    </p>
+  </footer>
+
+  <script type="module" src="assets/vision.js"></script>
+</body>
+</html>

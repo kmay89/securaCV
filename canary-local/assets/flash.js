@@ -22,6 +22,7 @@
 import { ESPLoader, Transport } from "./vendor/esptool-js/bundle.js";
 import { md5Raw } from "./vendor/md5/md5.js";
 import * as core from "./flash-core.js";
+import { phaseModule } from "./we2-flash.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -398,6 +399,24 @@ function phaseConnect() {
     "board into download mode on its own. If it can’t, do it by hand:"));
   dl.append(downloadModeSteps());
   box.append(dl);
+
+  // ── the OTHER port: the Vision's camera module (a different chip, its
+  // own engine — ROM bootloader + XMODEM instead of esptool) ──
+  if (state.catalog.we2_module) {
+    const mod = el("button", "flash-module-card");
+    mod.append(el("span", "flash-module-icon", "📷"),
+      el("strong", null, "Building a Canary Vision? Load the camera module’s brain here"),
+      el("span", "muted",
+        "The Grove Vision AI V2’s person-detection model, burned from this page over the " +
+        "MODULE’s USB-C port — pinned, SHA-256-verified, with a live bench check after. " +
+        "No vendor site, no account, no choices to get wrong."));
+    mod.addEventListener("click", () => setPhase(phaseModule({
+      catalog: state.catalog,
+      setPhase,
+      back: () => setPhase(phaseConnect()),
+    })));
+    box.append(mod);
+  }
   return box;
 }
 
