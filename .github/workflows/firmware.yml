@@ -440,12 +440,15 @@ jobs:
           chmod +x firmware/scripts/check_boot_sync.sh
           firmware/scripts/check_boot_sync.sh
 
-      - name: Verify OTA engine copies in canary-wap sketch dir match canonical source
+      - name: Verify OTA engine copies in the canary-wap + canary-display sketch dirs match canonical source
         # The signed pull-OTA engine is canonical at firmware/common/ota/src/
-        # and committed next to the sketch. ota_release_key.h is in the sync
-        # set on purpose: the release public key must be identical across the
-        # canary (PIO) build, the WAP pull-OTA engine, and the WAP's BLE OTA
-        # path — one release signature serves every update channel.
+        # and committed byte-identical next to BOTH Arduino sketches (canary-wap
+        # and canary-display) — it is the most security-critical firmware
+        # module, so a fix must never silently miss a tree. ota_release_key.h is
+        # in the sync set on purpose: the release public key must be identical
+        # across the canary (PIO) build, the WAP + display pull-OTA engines, and
+        # the WAP's BLE OTA path — one release signature serves every update
+        # channel.
         run: |
           chmod +x firmware/scripts/check_ota_sync.sh
           firmware/scripts/check_ota_sync.sh
