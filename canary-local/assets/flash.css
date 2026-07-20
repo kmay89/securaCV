@@ -159,9 +159,77 @@
   .flash-report-trow > :nth-child(2) { display: none; }
 }
 
+/* ── flash map + hex peek ──────────────────────────────────────────────── */
+.flash-map {
+  display: flex; width: 100%; height: 26px; margin-top: 12px;
+  border: 1px solid var(--edge); border-radius: 8px; overflow: hidden;
+  background: #0a0a0c;
+}
+.flash-map-seg {
+  appearance: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  height: 100%; border-right: 1px solid rgba(0,0,0,0.55); min-width: 3px;
+  transition: filter 0.15s ease;
+}
+.flash-map-seg:last-child { border-right: none; }
+.flash-map-seg:hover, .flash-map-seg:focus-visible { filter: brightness(1.45); outline: none; }
+.flash-map-app     { background: rgba(255,212,79,0.42); }
+.flash-map-nvs     { background: rgba(3,169,244,0.38); }
+.flash-map-ota     { background: rgba(171,130,255,0.38); }
+.flash-map-core    { background: rgba(251,140,0,0.40); }
+.flash-map-fs      { background: rgba(67,160,71,0.36); }
+.flash-map-witness { background: rgba(240,98,146,0.38); }
+.flash-map-data    { background: rgba(255,255,255,0.14); }
+.flash-map-free    { background: rgba(255,255,255,0.045); }
+.flash-map-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; }
+.flash-map-key {
+  appearance: none; border: none; background: none; padding: 0; cursor: pointer;
+  display: inline-flex; gap: 7px; align-items: center;
+  font-size: 12px; color: var(--muted); font-family: inherit;
+}
+button.flash-map-key:hover { color: var(--text); }
+.flash-map-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid rgba(255,255,255,0.12); }
+.flash-hexpeek { margin-top: 12px; }
+.flash-hexpeek-title { font-size: 13px; color: #e0e0e0; margin: 0 0 6px; font-weight: 560; }
+.flash-hexdump {
+  background: #08080a; border: 1px solid var(--edge); border-radius: 10px;
+  padding: 10px 12px; overflow-x: auto;
+  font: 11.5px/1.65 "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: #b9c7b9;
+}
+.flash-hexline { display: flex; gap: 14px; white-space: pre; }
+.flash-hexaddr { color: var(--muted); }
+.flash-hexbytes { color: #d6c98a; }
+.flash-hexascii { color: #8fa88f; }
+@media (max-width: 560px) { .flash-hexascii { display: none; } }
+
+/* ── live write map (install progress) ─────────────────────────────────── */
+.flash-livemap { margin: 2px 0 12px; }
+.flash-livemap .flash-map-seg { cursor: default; }
+.flash-map-pending { filter: brightness(0.35) saturate(0.6); }
+.flash-map-active { animation: flash-writing 0.9s ease-in-out infinite alternate; }
+@keyframes flash-writing { from { filter: brightness(0.9); } to { filter: brightness(1.7); } }
+.flash-livemap-label { margin: 6px 0 0; min-height: 1.2em; }
+.flash-note-kept { border: 1px solid rgba(67,160,71,0.35); background: rgba(67,160,71,0.08); color: #bfe3c1; }
+.flash-done .flash-report-sec { text-align: left; }
+@media (prefers-reduced-motion: reduce) { .flash-map-active { animation: none; filter: brightness(1.4); } }
+
 /* ── serial monitor ────────────────────────────────────────────────────── */
 .flash-console-tall { max-height: 380px; min-height: 220px; }
+.flash-mon-status { font-size: 13.5px; }
 .flash-mon-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.flash-mon-baud { display: flex; gap: 10px; align-items: center; margin-top: 12px; cursor: pointer; }
+.flash-mon-baud select {
+  background: #0c0c0d; border: 1px solid var(--edge); border-radius: 9px;
+  color: var(--text); padding: 6px 10px; font-size: 13px;
+}
+
+/* ── rescue ────────────────────────────────────────────────────────────── */
+.flash-rescue-choice {
+  display: flex; gap: 12px; align-items: flex-start; cursor: pointer;
+  border: 1px solid var(--edge); border-radius: 14px; padding: 12px 14px;
+  background: rgba(255,255,255,0.015);
+}
+.flash-rescue-choice input { margin-top: 4px; }
+.flash-rescue-restore { margin-top: 18px; border-top: 1px solid var(--edge); padding-top: 14px; }
 .flash-mon-input { display: flex; gap: 8px; margin-top: 10px; }
 .flash-mon-input input {
   flex: 1; min-width: 0; background: #0c0c0d; border: 1px solid var(--edge);
@@ -199,6 +267,16 @@
 .flash-recovery-row { margin: 10px 0; }
 .flash-recovery-when { font-size: 13px; font-weight: 560; margin: 0 0 2px; color: #e7e7e7; }
 .flash-privacy { opacity: 0.75; }
+
+/* ── receipts + trust card ─────────────────────────────────────────────── */
+.flash-receipts { margin-top: 16px; text-align: left; }
+.flash-receipts summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.flash-receipts-body { border-top: none; padding-top: 6px; margin-top: 6px; }
+.flash-trust summary { cursor: pointer; font-weight: 600; font-size: 14.5px; }
+.flash-trust-sec { margin: 14px 0 0; }
+.flash-trust-sec h3 { font-size: 14.5px; margin: 0 0 4px; font-weight: 620; }
+.flash-trust-sec p { font-size: 13.5px; line-height: 1.55; margin: 4px 0; }
+.flash-trust .flash-checklist li { font-size: 13px; }
 
 /* ── confetti ──────────────────────────────────────────────────────────── */
 .flash-confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 50; }
