@@ -888,21 +888,22 @@ function phaseConfirm(product, entry) {
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
   box.append(promise);
 
-  // WiFi: three honest paths for AP-provisioned Canaries. Default stays the
-  // setup network; typing it here bakes it into the settings region during
-  // the install; the QR path serves camera builds after they boot.
+  // WiFi (optional): fill it in and it's baked into the chip during the
+  // install; leave it empty and nothing changes. Either way the setup
+  // network is the safety net.
   let wifiUI = null;
   if (product && product.provisioning === "ap") {
-    wifiUI = renderWifiChooser(box);
+    wifiUI = renderWifiFields(box);
   }
 
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
   go.addEventListener("click", () => {
     let wifi = null;
-    if (wifiUI && wifiUI.mode() === "bake") {
-      wifi = wifiUI.credentials();
-      if (!wifi) return; // invalid input — chooser showed why
+    if (wifiUI) {
+      const r = wifiUI.credentials();
+      if (!r.ok) return; // invalid input — the field showed why
+      wifi = r.wifi;
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
     startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi });
@@ -914,96 +915,79 @@ function phaseConfirm(product, entry) {
   return box;
 }
 
-// ── the WiFi chooser (confirm card) ─────────────────────────────────────────
-function renderWifiChooser(box) {
+// ── optional WiFi fields (confirm card) ─────────────────────────────────────
+function renderWifiFields(box) {
   const sec = el("div", "flash-wifi");
-  sec.append(el("h3", null, "WiFi for this Canary"));
-
-  const options = [
-    ["later", "Set it up after install, on the Canary’s own setup network", "the normal way — nothing to type here"],
-    ["bake", "Type it here — baked into the board during this install", "your network name and password are written straight into the chip’s settings, so it joins your WiFi on its very first boot"],
-    ["qr", "Make a WiFi QR code to show it later", "for camera Canaries: hold the code up after it boots and it reads the network off the paper"],
-  ];
-  let mode = "later";
-  const detail = el("div", "flash-wifi-detail");
-  const radios = el("div", "flash-wifi-options");
-  options.forEach(([id, label, hint]) => {
-    const lab = el("label", "flash-wifi-option");
-    const r = el("input");
-    r.type = "radio"; r.name = "flash-wifi-mode"; r.checked = id === "later";
-    r.addEventListener("change", () => { mode = id; renderDetail(); });
-    lab.append(r);
-    const t = el("div");
-    t.append(el("div", "flash-product-name", label));
-    t.append(el("div", "flash-product-tag muted", hint));
-    lab.append(t);
-    radios.append(lab);
-  });
-  sec.append(radios, detail);
+  sec.append(el("h3", null, "WiFi (optional)"));
 
   const ssid = el("input"), pass = el("input");
   ssid.type = "text"; ssid.placeholder = "network name (SSID)"; ssid.autocomplete = "off";
-  pass.type = "password"; pass.placeholder = "password (leave empty for an open network)";
+  pass.type = "password"; pass.placeholder = "password";
   pass.autocomplete = "new-password";
   const showBtn = el("button", "ghost small", "show");
   showBtn.addEventListener("click", () => {
     pass.type = pass.type === "password" ? "text" : "password";
     showBtn.textContent = pass.type === "password" ? "show" : "hide";
   });
+  const rowIn = el("div", "flash-wifi-inputs");
+  rowIn.append(ssid, pass, showBtn);
+  sec.append(rowIn);
+
   const err = el("p", "flash-note flash-note-soft flash-hidden");
+  sec.append(err);
+  sec.append(el("p", "fineprint",
+    "Fill this in and it’s written into the chip during the install, so the " +
+    "Canary joins your WiFi on its very first boot. If it can’t connect — " +
+    "or you leave this empty — it simply broadcasts its own setup network " +
+    "to connect to and finish setup there. What you type stays on this " +
+    "page and goes only to the chip over the cable."));
+
+  // Bonus for camera Canaries: the same fields can mint a standard WiFi QR
+  // (generated right here, nothing sent anywhere) to show the lens later.
+  const qrRow = el("div", "flash-row");
+  const qrBtn = el("button", "ghost small", "…or make a WiFi QR code to show a camera Canary");
   const qrOut = el("div", "flash-wifi-qr");
-
-  function renderDetail() {
-    detail.innerHTML = "";
-    qrOut.innerHTML = "";
-    if (mode === "later") return;
-    const rowIn = el("div", "flash-wifi-inputs");
-    rowIn.append(ssid, pass, showBtn);
-    detail.append(rowIn, err);
-    if (mode === "bake") {
-      detail.append(el("p", "fineprint",
-        "Privacy, plainly: what you type stays on this page and is written " +
-        "only onto the chip over the USB cable — this page makes no network " +
-        "calls with it. It lands in the same settings region the setup " +
-        "network would write, and a later backup of the board will contain " +
-        "it (as always — treat backups like house keys)."));
-    } else {
-      const make = el("button", "ghost small", "make the QR code");
-      make.addEventListener("click", async () => {
-        const c = validate();
-        if (!c) return;
-        const { default: qrcode } = await import("./vendor/qrcode/qrcode.mjs");
-        const qr = qrcode(0, "M");
-        qr.addData(core.wifiQrString(c.ssid, c.pass));
-        qr.make();
-        qrOut.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 3 });
-        qrOut.append(el("p", "fineprint",
-          "Generated right here on this page — nothing was sent anywhere. " +
-          "Print it or show it on a phone screen; after install, hold it in " +
-          "front of the Canary’s camera."));
-      });
-      detail.append(make, qrOut);
-    }
-  }
-
-  function validate() {
+  qrBtn.addEventListener("click", async () => {
     err.classList.add("flash-hidden");
-    try {
-      // The builder validates lengths; run it small just for the checks.
-      core.buildNvsWifiImage(ssid.value, pass.value, 4096);
-      return { ssid: ssid.value, pass: pass.value };
-    } catch (e) {
+    if (!ssid.value) {
+      err.textContent = "Type the network name (and password) first, then make the QR.";
+      err.classList.remove("flash-hidden");
+      return;
+    }
+    try { core.buildNvsWifiImage(ssid.value, pass.value, 4096); }
+    catch (e) {
       err.textContent = String(e.message || e);
       err.classList.remove("flash-hidden");
-      return null;
+      return;
     }
-  }
+    const { default: qrcode } = await import("./vendor/qrcode/qrcode.mjs");
+    const qr = qrcode(0, "M");
+    qr.addData(core.wifiQrString(ssid.value, pass.value));
+    qr.make();
+    qrOut.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 3 });
+    qrOut.append(el("p", "fineprint",
+      "Generated on this page — nothing was sent anywhere. Print it or show " +
+      "it on a phone; after install, hold it in front of the Canary’s camera."));
+  });
+  qrRow.append(qrBtn);
+  sec.append(qrRow, qrOut);
 
   box.append(sec);
   return {
-    mode: () => mode,
-    credentials: validate,
-    clear: () => { pass.value = ""; },
+    credentials() {
+      err.classList.add("flash-hidden");
+      if (!ssid.value) return { ok: true, wifi: null }; // optional — skipped
+      try {
+        // The builder validates lengths; run it small just for the checks.
+        core.buildNvsWifiImage(ssid.value, pass.value, 4096);
+        return { ok: true, wifi: { ssid: ssid.value, pass: pass.value } };
+      } catch (e) {
+        err.textContent = String(e.message || e);
+        err.classList.remove("flash-hidden");
+        return { ok: false, wifi: null };
+      }
+    },
+    clear() { pass.value = ""; },
   };
 }
 

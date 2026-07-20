@@ -280,15 +280,7 @@ button.flash-map-key:hover { color: var(--text); }
 
 /* ── WiFi chooser (confirm card) ───────────────────────────────────────── */
 .flash-wifi { margin: 16px 0 4px; border-top: 1px solid var(--edge); padding-top: 14px; }
-.flash-wifi-options { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-.flash-wifi-option {
-  display: flex; gap: 12px; align-items: flex-start; cursor: pointer;
-  border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px;
-  background: rgba(255,255,255,0.015);
-}
-.flash-wifi-option input { margin-top: 4px; }
-.flash-wifi-detail { margin-top: 10px; }
-.flash-wifi-inputs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.flash-wifi-inputs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .flash-wifi-inputs input {
   flex: 1; min-width: 180px; background: #0c0c0d; border: 1px solid var(--edge);
   border-radius: 10px; color: var(--text); padding: 9px 12px; font-size: 14px;
