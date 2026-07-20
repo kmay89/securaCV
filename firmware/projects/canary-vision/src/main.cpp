@@ -522,7 +522,8 @@ void loop() {
         if (attempt > 4) attempt = 4;
         uint32_t backoff_ms = 2000UL << attempt;
         if (backoff_ms > 30000UL) backoff_ms = 30000UL;
-        // Fleet reconnect jitter: up to ~25% so brokers don't see a herd.
+        // Fleet reconnect jitter: up to a fraction of the backoff so brokers
+        // don't see a herd.
         backoff_ms += esp_random() % (backoff_ms / 4 + 1);
         g_mqtt_attempts++;
         g_mqtt_next_attempt_ms = mqtt_now + backoff_ms;

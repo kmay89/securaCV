@@ -128,9 +128,9 @@ void wifi_loop(uint32_t now_ms) {
   if (attempt > 5) attempt = 5;
   uint32_t backoff_ms = WIFI_RETRY_BASE_MS << (attempt > 0 ? (attempt - 1) : 0);
   if (backoff_ms > WIFI_RETRY_MAX_MS) backoff_ms = WIFI_RETRY_MAX_MS;
-  // Decorrelate a fleet's reconnects after a shared outage: add up to ~25%
-  // random jitter so N devices don't retry in lockstep (same esp_random()
-  // jitter the OTA manifest fetch already applies).
+  // Decorrelate a fleet's reconnects after a shared outage: add up to a
+  // fraction of the backoff as random jitter so N devices don't retry in
+  // lockstep (same esp_random() jitter the OTA manifest fetch already applies).
   backoff_ms += esp_random() % (backoff_ms / 4 + 1);
 
   if ((int32_t)(now_ms - s_last_attempt_ms) >= (int32_t)backoff_ms) {

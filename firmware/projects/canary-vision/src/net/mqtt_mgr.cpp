@@ -25,7 +25,7 @@ static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
 
 // Bound a stuck MQTT connect/read to well under the task watchdog budget
-// instead of resting on PubSubClient's 15 s library default, so the socket
+// instead of resting on PubSubClient's library default, so the socket
 // timeout is a provable input to the WDT budget.
 static constexpr uint16_t MQTT_SOCKET_TIMEOUT_SEC = 5;
 static Topics g_topics{};

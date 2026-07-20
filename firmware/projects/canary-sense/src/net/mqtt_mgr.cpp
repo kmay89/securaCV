@@ -23,8 +23,8 @@ namespace canary::net {
 static WiFiClient wifiClient;
 static PubSubClient mqtt(wifiClient);
 
-// Bound a stuck MQTT connect/read to well under the 30 s task watchdog
-// (CS_WATCHDOG_TIMEOUT_SEC) instead of resting on PubSubClient's 15 s library
+// Bound a stuck MQTT connect/read to well under the task watchdog timeout
+// (CS_WATCHDOG_TIMEOUT_SEC) instead of resting on PubSubClient's library
 // default, so the socket timeout is a provable input to the WDT budget.
 static constexpr uint16_t MQTT_SOCKET_TIMEOUT_SEC = 5;
 static Topics g_topics{};
