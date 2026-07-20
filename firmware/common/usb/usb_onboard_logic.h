@@ -37,6 +37,22 @@
 namespace usb_onboard {
 
 // ════════════════════════════════════════════════════════════════════════════
+// 0. Onboarding "contract" — the strings the outside world sees
+// ════════════════════════════════════════════════════════════════════════════
+//
+// These are the bare facts a user (and the website's /plugin emulator +
+// onboarding-spec.json) depends on: the reason tag in the help URL and the
+// names of the START-HERE shortcuts dropped on the drive. They live here, in
+// one host-testable place, so the glue can't hardcode a different value and the
+// host test can pin them — if any changes, the test in
+// tests_host/test_usb_onboard_logic.cpp fails and the message says to update
+// securacv_website/onboarding-spec.json in lockstep.
+static constexpr const char kOnboardReason[]       = "onboard";
+static constexpr const char kStartHereHtml[]       = "START-HERE.html";
+static constexpr const char kStartHereWinUrl[]     = "Open-Canary-Help.url";
+static constexpr const char kStartHereMacWebloc[]  = "Open-Canary-Help.webloc";
+
+// ════════════════════════════════════════════════════════════════════════════
 // 1. Consent state machine (who is allowed to make the keyboard type)
 // ════════════════════════════════════════════════════════════════════════════
 
