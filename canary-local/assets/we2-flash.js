@@ -124,9 +124,12 @@ function makeAtClient(t) {
     start() { if (!looping) loop(); },
     stop() { looping = false; },
     onEvent(fn) { eventHandlers.push(fn); },
-    // send AT+<body>\r and await the type-0 reply whose name matches
+    // send AT+<body>\r and await the type-0 reply whose name matches.
+    // The reply's `name` echoes the command tag — sometimes with the '?'
+    // (e.g. "VER?"), sometimes without and never with the "=…" tail, so
+    // match on the pre-'=' stem with the fallbacks below.
     async cmd(body, { timeoutMs = 3000 } = {}) {
-      const name = body.split("=")[0].replace("?", "?");
+      const name = body.split("=")[0];
       t.writeString(atCommand(body));
       return await new Promise((resolve) => {
         const w = {
