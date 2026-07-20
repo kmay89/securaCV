@@ -3787,7 +3787,7 @@ mod tests {
     proptest::proptest! {
         // TimeBucket::coarsen_to is aligned to the target size, never later
         // than the input, within one bucket of it, and idempotent — for any
-        // epoch and any valid (>= 5 min) target size.
+        // epoch and any valid (>= MIN_BUCKET_SIZE_S) target size.
         #[test]
         fn coarsen_to_is_aligned_monotonic_and_idempotent(
             epoch in 0u64..4_000_000_000,
@@ -3803,7 +3803,7 @@ mod tests {
             proptest::prop_assert_eq!(again.start_epoch_s, coarse.start_epoch_s);
         }
 
-        // Any bucket size below the 5-minute floor is always rejected.
+        // Any bucket size below the minimum bucket size floor is always rejected.
         #[test]
         fn coarsen_below_minimum_is_always_rejected(size in 0u32..MIN_BUCKET_SIZE_S) {
             let bucket = TimeBucket { start_epoch_s: 600, size_s: 600 };
