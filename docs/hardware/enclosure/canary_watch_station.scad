@@ -1,58 +1,90 @@
 // ============================================================================
-//  SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.1-dev)
-//  Hardware: Seeed Round Display for XIAO (1.28" 240x240 GC9A01 touch, 39 mm
-//  disc, RTC/SD/charger) with a XIAO ESP32-S3 seated in its back socket.
+//  SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.2-dev)
+//  Hardware: Seeed Round Display for XIAO (1.28" 240x240 GC9A01 touch,
+//  Ø43.0 mm PCB disc — the "39 mm" in marketing copy is the glass, not the
+//  board) with a XIAO ESP32-S3 pinned into its BACK SOCKET: the XIAO rides
+//  the display's own two 7-pin headers, component/USB side facing the drum
+//  floor, USB-C pointing radially out through the drum's side slot.
 //  See docs/hardware/display_research.md for the selection rationale.
 //
-//  SenseCAP-Watcher-style desk puck: a straight DRUM holds the display disc
-//  behind a screwed BEZEL (XIAO stack rides the display's own socket); the
-//  drum rests in a separate 25° tilted STAND with a rear cable channel, or
-//  wall-mounts via its blind keyhole pockets without the stand.
+//  v0.2 REDESIGN — measured against the vendor CAD (the committed board GLB,
+//  canary-local/boards/seeed_round_display_xiao.glb) and cross-checked against
+//  Seeed's own printable case for this display (Ø48 body, Ø44 bore, snap ring):
+//    · disc_d 39 → 43.0. The v0.1 drum was designed around the marketing
+//      "39 mm disc"; the real PCB is Ø43.0 with back parts sweeping Ø43.9 —
+//      it could never seat. Bore and bezel now fit the measured board.
+//    · screwed bezel → SNAP bezel. The display's back parts fill the bore
+//      wall-to-wall (Ø43.9 envelope), so internal screw posts cannot exist
+//      at any sane drum diameter. The bezel is now a snap ring: a skirt
+//      drops into the bore over the disc edge and four nubs click into
+//      wall slots — same architecture as Seeed's reference case.
+//    · the USB slot moved from the rim down to the XIAO's actual level
+//      (the XIAO hangs BELOW the display socket, USB shell toward the
+//      floor — the old rim slot pointed at the display glass).
+//    · the STAND is a true cradle: a full-depth cylindrical divot bored
+//      normal to the 25°-reclined face — the drum sinks pocket_dep into it,
+//      with thumb scallops for removal, a chin slot passing the USB cable,
+//      and an open under-base channel routing the cable out the back.
 //  All parts print flat, no supports.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated. Measure
-//     your display disc (disc_d, stack_t) and XIAO USB position first.
+//     your display disc (disc_d) and XIAO USB position before printing.
 // ============================================================================
 
 /* [What to render] */
 part = "all";        // ["drum","bezel","stand","all"]
 
-/* [Display stack] — Round Display for XIAO + seated XIAO. MEASURE */
-disc_d   = 39.0;     // display PCB disc diameter
-disc_t   = 6.2;      // display module thickness (glass to socket face)
-stack_t  = 14.0;     // full stack: glass front to XIAO back (incl. USB boot room)
-usb_ang  = 270;      // XIAO USB direction, degrees (0 = +X; 270 = -Y = rear/down on the stand)
-usb_w    = 10.5;
-usb_h    = 6.5;
+/* [Display stack] — Round Display for XIAO + XIAO in its back socket.
+   Defaults measured from the committed vendor GLB (mm). */
+disc_d    = 43.0;    // display PCB disc diameter (measured Ø43.0)
+disc_t    = 5.0;     // disc pack: PCB back face → front trim ring (measured)
+disp_back = 5.0;     // back-side stack: sockets / SD / RTC below the PCB (measured)
+xiao_t    = 4.4;     // XIAO seated proud of the socket: PCB + USB shell (measured)
+xiao_gap  = 1.2;     // clearance under the XIAO's USB shell (boot-button room)
+bore_clear = 0.7;    // bore radial clearance over disc_d (back parts sweep Ø43.9)
+usb_ang   = 270;     // XIAO USB direction, degrees (0 = +X; 270 = -Y = chin/front in the stand)
+usb_w     = 11.0;    // side-slot width (USB-C plug shells run ~10.5)
+usb_h     = 7.0;
 
-/* [Battery] — optional LiPo laid in the drum back (display has JST + charger) */
+/* [Battery] — optional LiPo laid on the drum floor (display has JST + charger) */
 opt_batt = false;
 batt_l = 30.0;  batt_w = 20.0;  batt_h = 3.4;   // 302030-class cell — MEASURE
 
 /* [Puck] */
-drum_d   = 52.0;     // drum outer diameter (posts fully clear of the 39 mm disc)
-wall_t   = 2.5;
-back_t   = 2.5;
-bez_t    = 7.0;      // bezel thickness (holds the display seat)
-bez_ap_d = 34.0;     // face aperture (1.28" active circle + margin)
-seat_dep = 5.2;      // display seat depth in the bezel
-tilt     = 25;       // stand angle  // [15:5:40]
+wall_t   = 2.3;      // drum wall
+back_t   = 2.5;      // drum back plate
+bez_t    = 2.2;      // bezel face plate thickness
+bez_ap_d = 39.4;     // face aperture — shows the full Ø37.7 glass, covers the PCB rim
+flush    = 0.4;      // disc front ring sits this far below the drum rim
+tilt     = 25;       // stand recline from vertical  // [15:5:35]
 
 /* [Print tolerances] */
 tol_slide = 0.20;
 tol_press = 0.10;
-tol_hole  = 0.30;
 
-/* [Fasteners + mounting] */
-screw_d      = 1.6;  // M2 self-tap into the drum posts
-screw_head_d = 4.0;
-screw_head_h = 1.6;
-kh_head_d  = 7.0;    // blind keyhole pockets in the drum back (wall mount)
+/* [Snap bezel] */
+snap_n       = 4;     // nubs / wall slots
+snap_w       = 6.5;   // slot width (arc chord)
+snap_h       = 1.8;   // slot height
+snap_depth   = 2.6;   // slot centre below the drum rim
+snap_proud   = 0.6;   // nub stand-proud of the skirt
+skirt_dep    = 4.0;   // bezel skirt reach into the bore
+
+/* [Mounting] */
+kh_head_d  = 7.0;    // blind keyhole pocket in the drum back (wall mount)
 kh_shank_d = 4.2;
 kh_slot_l  = 7.0;
 kh_head_h  = 3.0;
 kh_face    = 1.0;
-kh_extra   = 2.5;    // drum back thickening hosting the pockets
+kh_extra   = 2.5;    // drum back thickening hosting the pocket
+
+/* [Stand cradle] */
+pocket_dep  = 11.0;  // how deep the drum sinks into the divot (buries the USB slot)
+pocket_clear = 0.4;  // radial clearance around the drum barrel
+rim_margin  = 5.0;   // face margin around the pocket circle
+chin_w      = 14.0;  // USB/cable chin-slot width
+scallop_d   = 18.0;  // thumb scallops for lifting the drum out
+foot_h      = 1.5;   // foot pads (base cable channel runs beneath)
 
 /* [Aesthetics] */
 lid_edge  = 1.0;     // bezel face chamfer
@@ -63,22 +95,33 @@ label_size = 4.0;  label_depth = 0.5;  label_font = "Liberation Sans:style=Bold"
 $fa = 3; $fs = 0.4;
 
 // ----------------------------------------------------------------------------
-cav_d   = drum_d - 2*wall_t;                 // internal bore
-drum_h  = back_t + kh_extra + (stack_t - seat_dep) + 1.0;   // depth behind the bezel
-seat_d  = disc_d + 2*tol_slide;
-post_r  = cav_d/2 - 1.0;                     // bezel screw posts: outboard of the 39 mm disc
-post_h  = drum_h - back_t - kh_extra - 1.5;  // posts stop short of the rim (the display's
-                                             // back protrudes ~1 mm past the bezel seat)
+//  Derived — the axial stack, from the drum back (z = 0)
+// ----------------------------------------------------------------------------
+bore_d  = disc_d + 2*bore_clear;             // Ø44.4 — passes the Ø43.9 envelope
+drum_d  = bore_d + 2*wall_t;                 // Ø49.0
+floor_z = back_t + kh_extra;                 // 5.0 — inner floor
+gap_eff = opt_batt ? batt_h + 1.0 : xiao_gap;
+z_xiao0 = floor_z + gap_eff;                 // XIAO USB-shell face (toward floor)
+z_sock  = z_xiao0 + xiao_t;                  // display socket underside
+z_pcb   = z_sock + disp_back;                // display PCB back face
+drum_h  = z_pcb + disc_t + flush;            // rim — disc front ring 0.4 below it
+usb_cz  = z_xiao0 + (xiao_t - 1.2 - 1.6);    // USB shell centre (PCB 1.2, shell/2 1.6)
 
-assert(seat_d < cav_d - 1, "display disc too large for the drum bore — grow drum_d");
-assert(bez_ap_d < disc_d - 3, "aperture must land on the display bezel ring");
+skirt_od = bore_d - 2*tol_press - 0.1;       // bezel skirt slides into the bore
+puck_len = drum_h + bez_t;                   // full seated length, back cap → face
+
+assert(bez_ap_d < disc_d - 3, "aperture must land on the display's trim ring");
+assert(bez_ap_d < skirt_od - 3, "skirt wall too thin — shrink bez_ap_d");
 assert(kh_head_h + 1.2 <= back_t + kh_extra, "keyhole pocket too deep — raise kh_extra");
-assert(!opt_batt || sqrt(pow(batt_l/2,2) + pow(batt_w/2 + 2,2)) < cav_d/2, "battery too large for the drum bore");
-echo(str("Canary Watch station v0.1-dev — drum ", drum_d, " x ", drum_h + bez_t,
-         " mm, stand tilt ", tilt, " deg  (IN DEVELOPMENT)"));
+assert(usb_cz - usb_h/2 > 1.0, "USB slot digs into the drum back — raise xiao_gap");
+assert(usb_cz + usb_h/2 < z_pcb, "USB slot reaches the display PCB — check stack");
+assert(!opt_batt || sqrt(pow(batt_l/2,2) + pow(batt_w/2 + 2,2)) < bore_d/2, "battery too large for the bore");
+echo(str("Canary Watch station v0.2-dev — drum Ø", drum_d, " x ", puck_len,
+         " mm (bore Ø", bore_d, ", USB slot z ", usb_cz, "), stand tilt ", tilt, " deg"));
 
 // ----------------------------------------------------------------------------
-//  DRUM — straight cup, prints open-face-up; keyhole pockets in the back
+//  DRUM — straight cup, prints open-face-up; keyhole pocket in the back;
+//  snap slots near the rim; USB slot at the XIAO's measured level
 // ----------------------------------------------------------------------------
 module keyhole_pocket_r(ang) {                // radial blind pocket, slot toward drum top
     rotate([0, 0, ang]) translate([0, 6, 0]) union() {
@@ -90,102 +133,147 @@ module keyhole_pocket_r(ang) {                // radial blind pocket, slot towar
             hull() { circle(d = kh_head_d + 0.6); translate([0, kh_slot_l]) circle(d = kh_head_d + 0.6); }
     }
 }
+// the four snap windows, mid-wall between the USB slot (270°) and keyhole (90°)
+function snap_angs() = [45, 135, 225, 315];
 module drum() {
-    union() {
-        difference() {
-            cylinder(d = drum_d, h = drum_h);
-            translate([0, 0, back_t + kh_extra]) cylinder(d = cav_d, h = drum_h);
-            // XIAO USB slot through the wall (drum sits stack-first; slot at the rim)
-            rotate([0, 0, usb_ang]) translate([drum_d/2 - wall_t/2, 0, drum_h - usb_h/2])
-                cube([wall_t*3, usb_w, usb_h + 1], center = true);
-            // blind keyhole pocket (single, centred) for stand-less wall mount
-            keyhole_pocket_r(0);
-            // bottom-edge chamfer
-            difference() {
-                translate([0, 0, -0.01]) cylinder(d = drum_d + 0.1, h = 0.5);
-                translate([0, 0, -0.02]) cylinder(d1 = drum_d - 1.0, d2 = drum_d + 0.12, h = 0.53);
-            }
-        }
-        // LiPo fence rails on the drum back floor (cell strapped with foam tape)
-        if (opt_batt) for (s2 = [1, -1])
-            translate([-batt_l/2, s2*(batt_w/2 + tol_slide + 1.0) - 1.0, back_t + kh_extra - 0.01])
-                cube([batt_l, 2.0, 2.0]);
-        // bezel screw posts INSIDE the bore, fused to the wall — added AFTER the
-        // cavity cut so the bore cannot carve them away (review catch)
-        for (a = [0, 180]) rotate([0, 0, a])
-            translate([0, 0, back_t + kh_extra]) hull() {
-                translate([post_r, 0, 0]) cylinder(d = 5, h = post_h);
-                translate([cav_d/2 - 0.3, 0, 0]) cylinder(d = 2, h = post_h);
-            }
-    }
-}
-module drum_final() {
     difference() {
-        drum();
-        for (a = [0, 180]) rotate([0, 0, a])
-            translate([post_r, 0, back_t + kh_extra + 1.5]) cylinder(d = screw_d, h = drum_h);
+        cylinder(d = drum_d, h = drum_h);
+        // bore — smooth wall to wall, nothing protrudes (the display's back
+        // parts sweep Ø43.9; internal posts are impossible with this board)
+        translate([0, 0, floor_z]) cylinder(d = bore_d, h = drum_h);
+        // XIAO USB-C slot through the wall at the measured shell height
+        rotate([0, 0, usb_ang]) translate([drum_d/2 - wall_t/2, 0, usb_cz])
+            cube([wall_t*3, usb_w, usb_h], center = true);
+        // snap windows for the bezel nubs
+        for (a = snap_angs()) rotate([0, 0, a])
+            translate([drum_d/2 - wall_t/2, 0, drum_h - snap_depth])
+                cube([wall_t*3, snap_w, snap_h], center = true);
+        // blind keyhole pocket (single, centred) for stand-less wall mount
+        keyhole_pocket_r(0);
+        // bottom-edge chamfer
+        difference() {
+            translate([0, 0, -0.01]) cylinder(d = drum_d + 0.1, h = 0.5);
+            translate([0, 0, -0.02]) cylinder(d1 = drum_d - 1.0, d2 = drum_d + 0.12, h = 0.53);
+        }
+        // rim lead-in — the disc and the bezel skirt both enter here
+        translate([0, 0, drum_h - 0.6]) cylinder(d1 = bore_d, d2 = bore_d + 1.2, h = 0.61);
     }
+    // LiPo fence rails on the drum floor (cell strapped with foam tape)
+    if (opt_batt) for (s2 = [1, -1])
+        translate([-batt_l/2, s2*(batt_w/2 + tol_slide + 1.0) - 1.0, floor_z - 0.01])
+            cube([batt_l, 2.0, 2.0]);
 }
 
 // ----------------------------------------------------------------------------
-//  BEZEL — flat ring, prints face-down; seats the display disc
+//  BEZEL — snap ring, prints face-down: face plate on the rim, skirt drops
+//  into the bore over the disc edge, nubs click into the wall slots
 // ----------------------------------------------------------------------------
 module bezel() {
     difference() {
         union() {
+            // face plate with edge chamfer
             cylinder(d = drum_d, h = bez_t - lid_edge);
             translate([0, 0, bez_t - lid_edge - 0.01])
                 cylinder(d1 = drum_d, d2 = drum_d - 2*lid_edge, h = lid_edge);
+            // retaining skirt — presses the disc's trim ring down `flush`
+            translate([0, 0, -skirt_dep]) difference() {
+                cylinder(d = skirt_od, h = skirt_dep + 0.01);
+                translate([0, 0, -0.1]) cylinder(d = bez_ap_d, h = skirt_dep + 0.2);
+            }
+            // snap nubs, chamfered both ways (assembly AND service removal).
+            // The face underside (bezel z=0) rests on the drum rim (drum z=drum_h),
+            // so drum_z = drum_h + bezel_z; the drum's slot centre is at
+            // drum_h − snap_depth, hence the nub sits at bezel z = −snap_depth.
+            for (a = snap_angs()) rotate([0, 0, a]) {
+                nz = -snap_depth;             // slot centre, bezel frame
+                translate([skirt_od/2 - 0.5, 0, nz]) hull() {
+                    translate([0, -snap_w/2 + 1.2, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
+                    translate([snap_proud + 0.5, 0, 0]) cube([0.5, 0.1, 0.6], center = true);
+                    translate([0, snap_w/2 - 1.2, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
+                }
+            }
         }
-        // display seat (from the back) + face aperture
-        translate([0, 0, -0.1]) cylinder(d = seat_d, h = seat_dep + 0.1);
-        translate([0, 0, -0.1]) cylinder(d = bez_ap_d, h = bez_t + 1);
-        // aperture lead-in on the face
+        // face aperture + lead-in — shows the full glass, covers the PCB rim
+        translate([0, 0, -skirt_dep - 1]) cylinder(d = bez_ap_d, h = skirt_dep + bez_t + 2);
         translate([0, 0, bez_t - 0.5]) cylinder(d1 = bez_ap_d, d2 = bez_ap_d + 1.2, h = 0.51);
-        // bezel screws into the drum posts
-        for (a = [0, 180]) rotate([0, 0, a]) translate([post_r, 0, 0]) {
-            translate([0, 0, -0.1]) cylinder(d = screw_d + 2*tol_hole, h = bez_t + 1);
-            translate([0, 0, bez_t - screw_head_h]) cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
-        }
         if (label_text != "")
-            translate([0, -drum_d/2 + 5, bez_t - label_depth]) linear_extrude(label_depth + 1)
+            translate([0, -drum_d/2 + 4, bez_t - label_depth]) linear_extrude(label_depth + 1)
                 text(label_text, size = label_size, font = label_font, halign = "center", valign = "center");
     }
 }
+// print orientation: face-down on the bed
+module bezel_print() { translate([0, 0, bez_t]) rotate([180, 0, 0]) bezel(); }
 
 // ----------------------------------------------------------------------------
-//  STAND — tilted cradle pocket + rear cable channel; prints upright
+//  STAND — the cradle. A cylindrical divot bored NORMAL to the 25°-reclined
+//  face: the drum sinks pocket_dep into it and cannot rock or roll. Thumb
+//  scallops free it; the chin slot passes the USB cable straight down into
+//  an open channel under the base and out the back. Prints upright.
 // ----------------------------------------------------------------------------
-module stand() {
-    sw = drum_d + 12;                          // stand width
-    sd = drum_d * 0.9 + 14;                    // depth
-    sh = drum_d * sin(tilt) + 22;              // height
-    difference() {
-        // wedge body
-        hull() {
-            translate([-sw/2, -sd/2, 0]) cube([sw, sd, 4]);
-            translate([-sw/2, sd/2 - 10, 0]) cube([sw, 10, sh]);
-        }
-        // tilted drum pocket (leans back against the tall rear wall).
-        // rotate([90 - tilt]) points the pocket axis (0, -cos(tilt), sin(tilt)):
-        // trough open up-front, glass reclined `tilt` from vertical. The
-        // previous rotate([tilt + 90]) mirrored the axis in Z and carved the
-        // cradle tipping the drum face-down 65° — the drum could never seat.
-        // ⚠️ regenerate enclosures/preview/canary_watch_station_stand.stl.
-        translate([0, 6, sh - 4]) rotate([90 - tilt, 0, 0])
-            cylinder(d = drum_d + 2*tol_slide + 0.2, h = drum_d);
-        // rear cable channel down the back face
-        translate([0, sd/2 - 3, -0.1]) rotate([-tilt, 0, 0])
-            translate([-6, -6, 0]) cube([12, 20, sh + 10]);
+pkt_d  = drum_d + 2*pocket_clear;                       // divot bore
+slope  = 90 - tilt;                                     // face angle from horizontal
+// unit vectors (stand frame): a = pocket/drum axis (out of the face),
+// u = up-the-face direction
+function vec_a() = [0, -sin(slope), cos(slope)];        // (0, −0.906, 0.423) @ 25°
+function vec_u() = [0,  cos(slope), sin(slope)];        // (0,  0.423, 0.906) @ 25°
+
+chin   = [0, -20, 4];                                   // lowest face point
+s_ctr  = rim_margin + 1 + pkt_d/2;                      // chin → pocket centre, along the face
+// pocket centre on the face plane, and the drum's back-cap seat point
+C_rim  = [for (i = [0:2]) chin[i] + vec_u()[i] * s_ctr];
+P0     = [for (i = [0:2]) C_rim[i] - vec_a()[i] * pocket_dep];
+s_top  = s_ctr + pkt_d/2 + rim_margin;                  // chin → face top edge
+sw     = drum_d + 14;                                   // stand width
+sh     = chin[2] + vec_u()[2] * s_top + 2;              // height to cover the face
+sd_f   = -chin[1] + 2;                                  // front reach of the base
+sd_b   = 30;                                            // rear reach
+
+echo(str("Stand cradle — pocket Ø", pkt_d, " x ", pocket_dep,
+         " deep; DRUM SEAT pos [", P0[0], ", ", P0[1], ", ", P0[2],
+         "] rot [", slope, ", 0, 0] (drum +z along the pocket axis)"));
+
+module rbox(l, w, h, r) { linear_extrude(h) offset(r = r) offset(r = -r) square([l, w], center = true); }
+
+module stand_body() {
+    hull() {
+        translate([0, (sd_b - sd_f)/2, 0]) rbox(sw, sd_f + sd_b, 5, 8);   // base slab
+        translate([0, sd_b - 11, 0]) rbox(sw, 20, sh, 8);                 // rear column
     }
+}
+module stand() {
+    difference() {
+        stand_body();
+        // the reclined face: shear everything in front of the plane through
+        // `chin` with normal a — the pocket rim lands as a clean circle on it
+        translate(chin) rotate([slope, 0, 0])
+            translate([-sw, -sh - 20, 0]) cube([2*sw, 2*(sh + 20), sh + 40]);
+        // the divot — bored along a from the seat plane; generous overrun
+        translate(P0) rotate([slope, 0, 0]) {
+            cylinder(d = pkt_d, h = pocket_dep + 30);
+            // rim chamfer (lead-in for the drum)
+            translate([0, 0, pocket_dep - 0.01]) cylinder(d1 = pkt_d, d2 = pkt_d + 2.4, h = 1.2 + 0.02);
+            // chin slot: cable drops from the drum's USB straight down the
+            // face and under the base (floor flush with the pocket floor)
+            translate([-chin_w/2, -pkt_d/2 - 60, 0]) cube([chin_w, pkt_d/2 + 60 - (pkt_d/2 - 6), 60]);
+            // thumb scallops at 3 and 9 o'clock, biting the rim by ~7 mm
+            for (sx = [1, -1]) translate([sx * (pkt_d/2 + scallop_d/2 - 7), 0, pocket_dep - 6])
+                cylinder(d = scallop_d, h = 40);
+        }
+        // open cable channel under the base, chin to the rear edge
+        translate([-6, -sd_f - 1, -0.1]) cube([12, sd_f + sd_b + 2, 4 + 0.1]);
+    }
+    // foot pads lift the base over the cable channel
+    for (fx = [1, -1], fy = [1, -1])
+        translate([fx*(sw/2 - 9), fy == 1 ? sd_b - 9 : -(sd_f - 9), -foot_h])
+            cylinder(d = 12, h = foot_h + 0.01);
 }
 
 // ----------------------------------------------------------------------------
-if      (part == "drum")  drum_final();
-else if (part == "bezel") bezel();
+if      (part == "drum")  drum();
+else if (part == "bezel") bezel_print();
 else if (part == "stand") stand();
 else {
-    drum_final();
-    translate([drum_d + 12, 0, 0]) bezel();
-    translate([-(drum_d + 30), 0, 0]) stand();
+    drum();
+    translate([drum_d + 12, 0, 0]) bezel_print();
+    translate([-(drum_d + 34), 0, 0]) stand();
 }

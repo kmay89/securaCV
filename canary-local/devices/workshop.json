@@ -795,7 +795,7 @@
      "id": "watch-station",
      "label": "Watch station",
      "set": "watch-station",
-     "contents": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 + Round Display (see [display research](../display_research.md))",
+     "contents": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.2 bore sized to the measured Ø43.0 disc, snap bezel (no fasteners), and a true cradle divot",
      "status": "in-development",
      "parts": [
       {

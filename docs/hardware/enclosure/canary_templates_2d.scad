@@ -22,9 +22,9 @@ stud_gap = 30.0;
 br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.2;
 
 /* [Doorbell] — mirror canary_vision_doorbell plate defaults */
-db_out_x = 35.8;  db_out_y = 98.2;
+db_out_x = 31.8;  db_out_y = 113.2;
 db_screw_inset_x = 8.0;  db_screw_inset_y = 14.0;  db_screw_d = 4.2;
-db_exit_dx = 5.0;  db_exit_cy = -13.6;  db_exit_w = 12.0;  db_exit_h = 7.0;
+db_exit_dx = 5.0;  db_exit_cy = -20.8;  db_exit_w = 12.0;  db_exit_h = 7.0;
 
 line = 0.5;          // drawn line weight
 

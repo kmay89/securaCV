@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.1
+//  SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.2
 //  A slim vertical unit in the Wyze/Ring video-doorbell form factor, holding
 //  the stacked-XIAO Vision build: OV5647 camera (top) + Grove Vision AI V2
 //  with a XIAO ESP32-C3/S3 seated in its socket (middle) + a 12 mm
@@ -33,13 +33,16 @@ opt_vent   = false;  // GORE vent cluster on the face (recommended in wet climat
 opt_led    = false;  // separate light-pipe port (the 12 mm button usually has its own LED ring)
 opt_tamper = false;  // reed/Hall magnet pocket on the face underside
 
-/* [Boards] — the stacked-XIAO Vision build (measure YOURS) */
-vm_l     = 25.0;     // Grove Vision AI V2 (Y; USB edge down)
-vm_w     = 25.0;
-xiao_l   = 21.0;
-xiao_w   = 17.5;
-stack_sock_h = 11.5; // module underside -> XIAO underside when seated — MEASURE
-vm_front_h   = 5.0;  // module front-side component height
+/* [Boards] — the stacked-XIAO Vision build. Defaults measured from the
+   committed vendor GLB (canary-local/boards/seeed_grove_vision_ai_v2.glb):
+   the module PCB is 40 x 20 mm (Grove 1x2 form factor — NOT the 25 x 25 the
+   v0.1 bay assumed), mounted VERTICALLY: 40 mm along Y, USB edge down. */
+vm_l     = 40.0;     // Grove Vision AI V2 long side (Y; USB edge down) — measured
+vm_w     = 20.0;     // module short side (X) — measured
+xiao_l   = 21.0;     // XIAO stacked on the module's socket, lower half, centred
+xiao_w   = 17.8;
+stack_sock_h = 6.5;  // module underside -> XIAO underside when seated (measured 6.2)
+vm_front_h   = 5.0;  // module front-side component height (measured)
 cam_w    = 25.0;     // OV5647 carrier (Pi-cam v1.3 form)
 cam_h    = 24.0;
 pcb_t    = 1.0;
@@ -112,7 +115,7 @@ skirt_t       = 1.6;
 plate_t     = 4.0;    // plate thickness at the THIN end
 plate_wedge = 0;      // vertical wedge: camera tilts down the approach  // [0:5:15]
 plate_wedge_x = 0;    // horizontal wedge: aims left/right (corner installs)  // [-15:5:15]
-stud_y      = 26.0;   // T-stud/pocket centres at y = ±stud_y
+stud_y      = 34.0;   // T-stud/pocket centres at y = ±stud_y (clear of the cable exit)
 kh_head_d   = 7.0;    // pocket head pass (stud head 6.6)
 kh_shank_d  = 4.2;    // pocket slot (stud stem 4.0)
 kh_slot_l   = 8.0;
@@ -213,7 +216,7 @@ assert(abs(plate_wedge_x) <= 15 && plate_wedge <= 15, "keep wedge angles <= 15 d
 assert(well_cy + usb_exit_dy - usb_exit_h/2 >= -stud_y + kh_slot_l/2 + (kh_head_d + 0.6)/2 + 0.8,
        "cable exit overlaps the lower T-stud pocket — raise usb_exit_dy or stud_y");
 assert(abs(usb_exit_dx) + usb_exit_w/2 <= inner_x/2 - 1, "cable exit too wide/offset for the cavity");
-echo(str("Canary Vision DOORBELL v0.1 — body ", out_x, " x ", out_y, " x ", base_d + lid_t + kh_extra,
+echo(str("Canary Vision DOORBELL v0.2 — body ", out_x, " x ", out_y, " x ", base_d + lid_t + kh_extra,
          " mm + plate ", plate_t, " mm (wedge ", plate_wedge, " deg, seal=", e_seal, ")"));
 
 // ----------------------------------------------------------------------------
@@ -309,15 +312,21 @@ module body() {
                 for (p = posts) translate([p[0], p[1], floor_t + cav_d - insert_h - 0.5])
                     cylinder(d = insert_d - 0.1, h = insert_h + 1);
         }
-        // module rails (notched at the clips) — the stacked XIAO hangs beneath
+        // module rails + clips, TOP HALF ONLY — the stacked XIAO (17.8 wide on
+        // the 20 mm module) hangs beneath the LOWER half, so full-length side
+        // rails would collide with it. Two bottom-corner pins catch the module's
+        // lower edge outboard of the XIAO and the down-facing USB ports.
         for (s = [1, -1]) {
+            rail_l = vm_l/2 - 4;
             difference() {
-                translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
-                    cube([3, vm_l - 1, vm_standoff]);
-                translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy, floor_t + vm_standoff/2])
+                translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy + 2, floor_t])
+                    cube([3, rail_l, vm_standoff]);
+                translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy + 2 + rail_l/2, floor_t + vm_standoff/2])
                     cube([5, clip_w + 2, vm_standoff + 1], center = true);
             }
-            edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180, vm_standoff);
+            edgeclip(vm_cx + s*vm_w/2, vm_cy + 2 + rail_l/2, s > 0 ? 0 : 180, vm_standoff);
+            translate([vm_cx + s*(vm_w/2 - 0.5), vm_cy - vm_l/2 + 1.2, floor_t])
+                cylinder(d = 2.0, h = vm_standoff);
         }
     }
     // security-screw pilot, drilled LAST so it passes through wall AND boss,

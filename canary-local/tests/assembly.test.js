@@ -126,7 +126,7 @@ test("caliper readout: mm · decimal inch · nearest-1/64 fraction", async () =>
   const { fmtLen, fracInch } = await import("../assets/assembly-rules.js");
   assert.strictEqual(fracInch(25.4), "1");
   assert.strictEqual(fracInch(12.7), "1/2");
-  assert.strictEqual(fracInch(52.0), "2 3/64");     // watch drum Ø
+  assert.strictEqual(fracInch(52.0), "2 3/64");     // formatter check (arbitrary length)
   assert.strictEqual(fmtLen(25.4, "mm"), "25.4 mm");
   assert.strictEqual(fmtLen(25.4, "in"), "1.000″ · 1″");
   assert.strictEqual(fmtLen(52, "all"), "52.0 mm · 2.047″ · 2 3/64″");
@@ -134,18 +134,27 @@ test("caliper readout: mm · decimal inch · nearest-1/64 fraction", async () =>
 
 // ── physical sanity for the two display builds (same spirit as the WAP
 // pins): geometry from canary_watch_station.scad / canary_dash_display.scad
-test("canary-display-watch: seated on the stand's 25° pocket axis", () => {
+test("canary-display-watch: seated in the stand's cradle divot (scad v0.2 echo)", () => {
   const a = asm.devices["canary-display-watch"];
   const by = Object.fromEntries(a.parts.map((p) => [p.id, p]));
-  // drum back cap at the scad's pocket start (0, 6, sh−4 = 39.98)
-  assert.deepStrictEqual(by.drum.seated.pos, [0, 6, 39.98]);
-  assert.strictEqual(by.drum.seated.rot[0], 65, "drum axis reclined 25° from vertical");
-  // bezel flips from its face-down print (65 + 180)
+  // drum back cap at the scad's own DRUM SEAT echo: [0, 3.03, 27.36] rot [65,0,0]
+  assert.deepStrictEqual(by.drum.seated.pos, [0, 3.03, 27.36]);
+  assert.deepStrictEqual(by.drum.seated.rot, [65, 0, 0],
+    "drum axis reclined 25° from vertical, USB azimuth (270) into the chin slot — no 180 flip");
+  // the XIAO pins into the display's BACK socket: component/USB side toward the
+  // drum floor (the 180 in rx: 65+180 = 245), USB end spun to the slot azimuth
+  assert.deepStrictEqual(by.xiao.seated.rot, [245, 0, -90], "XIAO upside-down in the socket, USB at 270");
+  assert.ok(by.xiao.seated.pos[1] < by.drum.seated.pos[1],
+    "XIAO offset toward the USB slot azimuth (the socket rows sit off-centre on the disc)");
+  // display: glass along the drum axis, socket-row axis spun onto the USB azimuth
+  assert.deepStrictEqual(by.display.seated.rot, [155, -90, 0]);
+  // bezel flips from its face-down print (65 + 180) and SNAPS — no fasteners in v0.2
   assert.strictEqual(by.bezel.seated.rot[0], 245);
-  // screws: the very last step, outermost explode, at the scad's post radius
-  const maxOther = Math.max(...a.parts.filter((p) => p.id !== "screws").map((p) => p.step));
-  assert.ok(by.screws.step > maxOther, "screws drive last");
-  for (const [x] of by.screws.instances) assert.ok(Math.abs(Math.abs(x) - 22.5) < 0.05, "screws on the post circle");
+  assert.ok(!a.parts.some((p) => p.part === "screw"),
+    "v0.2 drum is fastener-free (snap bezel) — the Ø43.9 back-parts envelope leaves no room for posts");
+  // bezel snaps last and outermost
+  const maxOther = Math.max(...a.parts.filter((p) => p.id !== "bezel").map((p) => p.step));
+  assert.ok(by.bezel.step >= maxOther, "the snap bezel closes the build");
 });
 
 test("canary-display-dash: panel seats against the frame lip, screws from the back", () => {

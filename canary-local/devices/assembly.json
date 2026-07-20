@@ -346,7 +346,8 @@
     },
     {
      "title": "Press the board home",
-     "readmeStep": 1
+     "readmeStep": 1,
+     "note": ""
     },
     {
      "title": "Prep the lid: magnet + light pipe",
@@ -372,14 +373,14 @@
    ]
   },
   "canary-display-watch": {
-   "title": "Canary Watch Station — drum, stack, bezel, stand",
+   "title": "Canary Watch Station — drum, stack, snap bezel, cradle",
    "board": "seeed_round_display_xiao",
    "frame": {
     "rx": -0.36,
     "ry": 0.58,
     "pad": 2.0
    },
-   "assembly_source": "docs/hardware/enclosure/canary_watch_station.scad (v0.1-dev — steps authored here, not yet in the catalog README)",
+   "assembly_source": "docs/hardware/enclosure/canary_watch_station.scad (v0.2-dev — steps authored here, not yet in the catalog README; seats derived from the scad's own cradle echo and the measured board GLB)",
    "parts": [
     {
      "id": "stand",
@@ -400,7 +401,7 @@
       -16
      ],
      "step": 0,
-     "name": "Tilted stand",
+     "name": "Cradle stand",
      "class": "support"
     },
     {
@@ -412,42 +413,8 @@
      "seated": {
       "pos": [
        0,
-       6,
-       39.98
-      ],
-      "rot": [
-       65,
-       0,
-       180
-      ]
-     },
-     "explode": [
-      0,
-      -9.1,
-      4.2
-     ],
-     "insert": [
-      0,
-      -19.9,
-      9.3
-     ],
-     "step": 1,
-     "name": "Display drum"
-    },
-    {
-     "id": "batt",
-     "source": "proc",
-     "part": "lipo",
-     "params": {
-      "w": 30,
-      "h": 20,
-      "t": 3.4
-     },
-     "seated": {
-      "pos": [
-       0,
-       -0.07,
-       42.81
+       3.03,
+       27.36
       ],
       "rot": [
        65,
@@ -457,18 +424,16 @@
      },
      "explode": [
       0,
-      -23.6,
-      11.0
+      -13.6,
+      6.3
      ],
      "insert": [
       0,
-      -18.1,
-      8.5
+      -19.9,
+      9.3
      ],
-     "step": 2,
-     "name": "LiPo 302030 cell (optional)",
-     "qty": 1,
-     "ref": "W-BT1"
+     "step": 1,
+     "name": "Display drum"
     },
     {
      "id": "xiao",
@@ -482,27 +447,27 @@
      "seated": {
       "pos": [
        0,
-       -2.07,
-       43.74
+       -10.68,
+       23.05
       ],
       "rot": [
-       65,
+       245,
        0,
-       0
+       -90
       ]
      },
      "explode": [
       0,
-      12.7,
-      -5.9
+      -27.2,
+      12.7
      ],
      "insert": [
       0,
-      16.3,
-      -7.6
+      -18.1,
+      8.5
      ],
-     "step": 3,
-     "name": "XIAO ESP32-S3 (stand-in — vendor CAD not committed)",
+     "step": 2,
+     "name": "XIAO ESP32-S3 (plain) — pins into the display's back socket",
      "qty": 1,
      "ref": "W-U1"
     },
@@ -513,19 +478,19 @@
      "seated": {
       "pos": [
        0,
-       -6.24,
-       45.69
+       -11.11,
+       33.95
       ],
       "rot": [
        155,
-       0,
+       -90,
        0
       ]
      },
      "explode": [
       0,
-      -36.3,
-      16.9
+      -32.6,
+      15.2
      ],
      "insert": [
       0,
@@ -546,8 +511,8 @@
      "seated": {
       "pos": [
        0,
-       -13.76,
-       49.19
+       -18.0,
+       37.16
       ],
       "rot": [
        245,
@@ -557,8 +522,8 @@
      },
      "explode": [
       0,
-      -52.6,
-      24.5
+      -43.5,
+      20.3
      ],
      "insert": [
       0,
@@ -566,78 +531,34 @@
       11.0
      ],
      "step": 4,
-     "name": "Screwed bezel"
-    },
-    {
-     "id": "screws",
-     "source": "proc",
-     "part": "screw",
-     "params": {
-      "len": 8
-     },
-     "instances": [
-      [
-       22.5,
-       -13.76,
-       49.19
-      ],
-      [
-       -22.5,
-       -13.76,
-       49.19
-      ]
-     ],
-     "irot": [
-      65,
-      0,
-      0
-     ],
-     "explode": [
-      0,
-      -67.1,
-      31.3
-     ],
-     "insert": [
-      0,
-      -18.1,
-      8.5
-     ],
-     "step": 5,
-     "name": "M2 x 8 self-tap screw",
-     "qty": 2,
-     "ref": "W-SCR1"
+     "name": "Snap bezel"
     }
    ],
    "steps": [
     {
      "title": "Start with the stand",
      "readmeStep": null,
-     "note": "The 25-degree cradle prints upright, no supports. The whole build is shown seated in it so the assembly axis reads true — on the bench you assemble the puck flat on the desk, then rest it here."
+     "note": "The cradle prints upright, no supports: a full-depth divot bored normal to the 25° reclined face, thumb scallops to lift the puck out, and a chin slot that passes the USB-C cable into the open channel under the base."
     },
     {
      "title": "Rest the drum in the cradle",
      "readmeStep": null,
-     "note": "The drum is the back shell — every part nests into its bore. Its blind keyholes wall-mount the puck without the stand."
+     "note": "The drum sinks 11 mm into the divot — it cannot rock or roll, and its USB slot lands in the chin channel. The blind keyhole in its back wall-mounts the puck without the stand."
     },
     {
-     "title": "Lay in the optional battery",
+     "title": "Pin the XIAO into the display's back socket",
      "readmeStep": null,
-     "note": "A protected 302030 cell drops between the fence rails on the drum floor, lead to the display’s JST 1.25. VERIFY polarity against the board — vendor pigtails vary."
+     "note": "The XIAO rides the Round Display's own two 7-pin headers — component side away from the display, USB-C at the disc edge. Zero wiring; the display's charger, RTC and SD come along for free."
     },
     {
-     "title": "Seat the XIAO, then the display stack",
+     "title": "Lower the stack into the bore",
      "readmeStep": null,
-     "note": "The XIAO clicks into the Round Display’s back socket (zero wiring), and the whole stack slides into the drum, USB aligned to the wall slot."
+     "note": "The Ø43.0 disc slides down the Ø44.4 bore (measured from the vendor CAD — the disc is 43 mm, not the marketing 39), USB-C aligned to the side slot. The trim ring stops 0.4 mm below the rim."
     },
     {
-     "title": "Cap it with the bezel",
+     "title": "Snap the bezel home",
      "readmeStep": null,
-     "note": "The bezel’s seat receives the display disc; the aperture lands on the display’s own bezel ring. Face chamfer out."
-    },
-    {
-     "title": "Drive the two M2s — snug, not cranked",
-     "readmeStep": null,
-     "note": "Last and outermost, like every proper fastener: through the bezel counterbores into the drum posts. Max ~0.3 N·m into printed posts."
+     "note": "The bezel's skirt drops into the bore over the disc edge and its four nubs click into the wall slots — no fasteners. The aperture shows the full glass and lands on the display's own trim ring."
     }
    ]
   },

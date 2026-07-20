@@ -291,9 +291,9 @@
   {
    "id": "watch-station",
    "name": "Watch station",
-   "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 + Round Display (see [display research](../display_research.md))",
+   "for": "SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.2 bore sized to the measured Ø43.0 disc, snap bezel (no fasteners), and a true cradle divot",
    "status": "in-development",
-   "note": "drum + bezel + 25° stand",
+   "note": "drum + snap bezel + 25° cradle",
    "device": "canary-display-watch",
    "preview": "preview_dev_station.png",
    "parts": [
@@ -2289,7 +2289,7 @@
    ]
   },
   "canary_vision_doorbell.scad": {
-   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.1",
+   "title": "SecuraCV Canary Vision — DOORBELL enclosure (parametric)  v0.2",
    "groups": [
     {
      "name": "What to render",
@@ -2331,39 +2331,35 @@
        "name": "opt_tamper",
        "default": "false",
        "comment": "reed/Hall magnet pocket on the face underside"
-      }
-     ]
-    },
-    {
-     "name": "Boards",
-     "note": "the stacked-XIAO Vision build (measure YOURS)",
-     "params": [
+      },
       {
        "name": "vm_l",
-       "default": "25.0",
-       "comment": "Grove Vision AI V2 (Y; USB edge down)"
+       "default": "40.0",
+       "comment": "Grove Vision AI V2 long side (Y; USB edge down) — measured"
       },
       {
        "name": "vm_w",
-       "default": "25.0"
+       "default": "20.0",
+       "comment": "module short side (X) — measured"
       },
       {
        "name": "xiao_l",
-       "default": "21.0"
+       "default": "21.0",
+       "comment": "XIAO stacked on the module's socket, lower half, centred"
       },
       {
        "name": "xiao_w",
-       "default": "17.5"
+       "default": "17.8"
       },
       {
        "name": "stack_sock_h",
-       "default": "11.5",
-       "comment": "module underside -> XIAO underside when seated — MEASURE"
+       "default": "6.5",
+       "comment": "module underside -> XIAO underside when seated (measured 6.2)"
       },
       {
        "name": "vm_front_h",
        "default": "5.0",
-       "comment": "module front-side component height"
+       "comment": "module front-side component height (measured)"
       },
       {
        "name": "cam_w",
@@ -2660,8 +2656,8 @@
       },
       {
        "name": "stud_y",
-       "default": "26.0",
-       "comment": "T-stud/pocket centres at y = ±stud_y"
+       "default": "34.0",
+       "comment": "T-stud/pocket centres at y = ±stud_y (clear of the cable exit)"
       },
       {
        "name": "kh_head_d",
@@ -3633,7 +3629,7 @@
    ]
   },
   "canary_watch_station.scad": {
-   "title": "SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "SecuraCV Canary Watch — monitoring-station puck  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -3648,46 +3644,56 @@
         "stand",
         "all"
        ]
-      }
-     ]
-    },
-    {
-     "name": "Display stack",
-     "note": "Round Display for XIAO + seated XIAO. MEASURE",
-     "params": [
+      },
       {
        "name": "disc_d",
-       "default": "39.0",
-       "comment": "display PCB disc diameter"
+       "default": "43.0",
+       "comment": "display PCB disc diameter (measured Ø43.0)"
       },
       {
        "name": "disc_t",
-       "default": "6.2",
-       "comment": "display module thickness (glass to socket face)"
+       "default": "5.0",
+       "comment": "disc pack: PCB back face → front trim ring (measured)"
       },
       {
-       "name": "stack_t",
-       "default": "14.0",
-       "comment": "full stack: glass front to XIAO back (incl. USB boot room)"
+       "name": "disp_back",
+       "default": "5.0",
+       "comment": "back-side stack: sockets / SD / RTC below the PCB (measured)"
+      },
+      {
+       "name": "xiao_t",
+       "default": "4.4",
+       "comment": "XIAO seated proud of the socket: PCB + USB shell (measured)"
+      },
+      {
+       "name": "xiao_gap",
+       "default": "1.2",
+       "comment": "clearance under the XIAO's USB shell (boot-button room)"
+      },
+      {
+       "name": "bore_clear",
+       "default": "0.7",
+       "comment": "bore radial clearance over disc_d (back parts sweep Ø43.9)"
       },
       {
        "name": "usb_ang",
        "default": "270",
-       "comment": "XIAO USB direction, degrees (0 = +X; 270 = -Y = rear/down on the stand)"
+       "comment": "XIAO USB direction, degrees (0 = +X; 270 = -Y = chin/front in the stand)"
       },
       {
        "name": "usb_w",
-       "default": "10.5"
+       "default": "11.0",
+       "comment": "side-slot width (USB-C plug shells run ~10.5)"
       },
       {
        "name": "usb_h",
-       "default": "6.5"
+       "default": "7.0"
       }
      ]
     },
     {
      "name": "Battery",
-     "note": "optional LiPo laid in the drum back (display has JST + charger)",
+     "note": "optional LiPo laid on the drum floor (display has JST + charger)",
      "params": [
       {
        "name": "opt_batt",
@@ -3700,37 +3706,34 @@
      "note": "",
      "params": [
       {
-       "name": "drum_d",
-       "default": "52.0",
-       "comment": "drum outer diameter (posts fully clear of the 39 mm disc)"
-      },
-      {
        "name": "wall_t",
-       "default": "2.5"
+       "default": "2.3",
+       "comment": "drum wall"
       },
       {
        "name": "back_t",
-       "default": "2.5"
+       "default": "2.5",
+       "comment": "drum back plate"
       },
       {
        "name": "bez_t",
-       "default": "7.0",
-       "comment": "bezel thickness (holds the display seat)"
+       "default": "2.2",
+       "comment": "bezel face plate thickness"
       },
       {
        "name": "bez_ap_d",
-       "default": "34.0",
-       "comment": "face aperture (1.28\" active circle + margin)"
+       "default": "39.4",
+       "comment": "face aperture — shows the full Ø37.7 glass, covers the PCB rim"
       },
       {
-       "name": "seat_dep",
-       "default": "5.2",
-       "comment": "display seat depth in the bezel"
+       "name": "flush",
+       "default": "0.4",
+       "comment": "disc front ring sits this far below the drum rim"
       },
       {
        "name": "tilt",
        "default": "25",
-       "comment": "stand angle  // [15:5:40]"
+       "comment": "stand recline from vertical  // [15:5:35]"
       }
      ]
     },
@@ -3745,34 +3748,53 @@
       {
        "name": "tol_press",
        "default": "0.10"
-      },
-      {
-       "name": "tol_hole",
-       "default": "0.30"
       }
      ]
     },
     {
-     "name": "Fasteners + mounting",
+     "name": "Snap bezel",
      "note": "",
      "params": [
       {
-       "name": "screw_d",
-       "default": "1.6",
-       "comment": "M2 self-tap into the drum posts"
+       "name": "snap_n",
+       "default": "4",
+       "comment": "nubs / wall slots"
       },
       {
-       "name": "screw_head_d",
-       "default": "4.0"
+       "name": "snap_w",
+       "default": "6.5",
+       "comment": "slot width (arc chord)"
       },
       {
-       "name": "screw_head_h",
-       "default": "1.6"
+       "name": "snap_h",
+       "default": "1.8",
+       "comment": "slot height"
       },
+      {
+       "name": "snap_depth",
+       "default": "2.6",
+       "comment": "slot centre below the drum rim"
+      },
+      {
+       "name": "snap_proud",
+       "default": "0.6",
+       "comment": "nub stand-proud of the skirt"
+      },
+      {
+       "name": "skirt_dep",
+       "default": "4.0",
+       "comment": "bezel skirt reach into the bore"
+      }
+     ]
+    },
+    {
+     "name": "Mounting",
+     "note": "",
+     "params": [
       {
        "name": "kh_head_d",
        "default": "7.0",
-       "comment": "blind keyhole pockets in the drum back (wall mount)"
+       "comment": "blind keyhole pocket in the drum back (wall mount)"
       },
       {
        "name": "kh_shank_d",
@@ -3793,7 +3815,43 @@
       {
        "name": "kh_extra",
        "default": "2.5",
-       "comment": "drum back thickening hosting the pockets"
+       "comment": "drum back thickening hosting the pocket"
+      }
+     ]
+    },
+    {
+     "name": "Stand cradle",
+     "note": "",
+     "params": [
+      {
+       "name": "pocket_dep",
+       "default": "11.0",
+       "comment": "how deep the drum sinks into the divot (buries the USB slot)"
+      },
+      {
+       "name": "pocket_clear",
+       "default": "0.4",
+       "comment": "radial clearance around the drum barrel"
+      },
+      {
+       "name": "rim_margin",
+       "default": "5.0",
+       "comment": "face margin around the pocket circle"
+      },
+      {
+       "name": "chin_w",
+       "default": "14.0",
+       "comment": "USB/cable chin-slot width"
+      },
+      {
+       "name": "scallop_d",
+       "default": "18.0",
+       "comment": "thumb scallops for lifting the drum out"
+      },
+      {
+       "name": "foot_h",
+       "default": "1.5",
+       "comment": "foot pads (base cable channel runs beneath)"
       }
      ]
     },
@@ -3817,28 +3875,111 @@
      "note": "",
      "params": [
       {
-       "name": "cav_d",
-       "default": "drum_d - 2*wall_t",
-       "comment": "internal bore"
+       "name": "bore_d",
+       "default": "disc_d + 2*bore_clear",
+       "comment": "Ø44.4 — passes the Ø43.9 envelope"
+      },
+      {
+       "name": "drum_d",
+       "default": "bore_d + 2*wall_t",
+       "comment": "Ø49.0"
+      },
+      {
+       "name": "floor_z",
+       "default": "back_t + kh_extra",
+       "comment": "5.0 — inner floor"
+      },
+      {
+       "name": "gap_eff",
+       "default": "opt_batt ? batt_h + 1.0 : xiao_gap"
+      },
+      {
+       "name": "z_xiao0",
+       "default": "floor_z + gap_eff",
+       "comment": "XIAO USB-shell face (toward floor)"
+      },
+      {
+       "name": "z_sock",
+       "default": "z_xiao0 + xiao_t",
+       "comment": "display socket underside"
+      },
+      {
+       "name": "z_pcb",
+       "default": "z_sock + disp_back",
+       "comment": "display PCB back face"
       },
       {
        "name": "drum_h",
-       "default": "back_t + kh_extra + (stack_t - seat_dep) + 1.0",
-       "comment": "depth behind the bezel"
+       "default": "z_pcb + disc_t + flush",
+       "comment": "rim — disc front ring 0.4 below it"
       },
       {
-       "name": "seat_d",
-       "default": "disc_d + 2*tol_slide"
+       "name": "usb_cz",
+       "default": "z_xiao0 + (xiao_t - 1.2 - 1.6)",
+       "comment": "USB shell centre (PCB 1.2, shell/2 1.6)"
       },
       {
-       "name": "post_r",
-       "default": "cav_d/2 - 1.0",
-       "comment": "bezel screw posts: outboard of the 39 mm disc"
+       "name": "skirt_od",
+       "default": "bore_d - 2*tol_press - 0.1",
+       "comment": "bezel skirt slides into the bore"
       },
       {
-       "name": "post_h",
-       "default": "drum_h - back_t - kh_extra - 1.5",
-       "comment": "posts stop short of the rim (the display's"
+       "name": "puck_len",
+       "default": "drum_h + bez_t",
+       "comment": "full seated length, back cap → face"
+      },
+      {
+       "name": "pkt_d",
+       "default": "drum_d + 2*pocket_clear",
+       "comment": "divot bore"
+      },
+      {
+       "name": "slope",
+       "default": "90 - tilt",
+       "comment": "face angle from horizontal"
+      },
+      {
+       "name": "chin",
+       "default": "[0, -20, 4]",
+       "comment": "lowest face point"
+      },
+      {
+       "name": "s_ctr",
+       "default": "rim_margin + 1 + pkt_d/2",
+       "comment": "chin → pocket centre, along the face"
+      },
+      {
+       "name": "C_rim",
+       "default": "[for (i = [0:2]) chin[i] + vec_u()[i] * s_ctr]"
+      },
+      {
+       "name": "P0",
+       "default": "[for (i = [0:2]) C_rim[i] - vec_a()[i] * pocket_dep]"
+      },
+      {
+       "name": "s_top",
+       "default": "s_ctr + pkt_d/2 + rim_margin",
+       "comment": "chin → face top edge"
+      },
+      {
+       "name": "sw",
+       "default": "drum_d + 14",
+       "comment": "stand width"
+      },
+      {
+       "name": "sh",
+       "default": "chin[2] + vec_u()[2] * s_top + 2",
+       "comment": "height to cover the face"
+      },
+      {
+       "name": "sd_f",
+       "default": "-chin[1] + 2",
+       "comment": "front reach of the base"
+      },
+      {
+       "name": "sd_b",
+       "default": "30",
+       "comment": "rear reach"
       }
      ]
     }
@@ -6220,13 +6361,15 @@
        "name": "recline",
        "default": "15",
        "comment": "bay recline angle (degrees)"
-      }
-     ]
-    },
-    {
-     "name": "Board",
-     "note": "bare XIAO (any variant)",
-     "params": [
+      },
+      {
+       "name": "variant",
+       "default": "bare",
+       "enum": [
+        "bare",
+        "sense"
+       ]
+      },
       {
        "name": "board_l",
        "default": "21.0",
@@ -6234,12 +6377,18 @@
       },
       {
        "name": "board_w",
-       "default": "17.5"
+       "default": "17.8",
+       "comment": "measured (was 17.5 — pockets pinched the real board)"
       },
       {
-       "name": "pocket_d",
+       "name": "pocket_bare",
        "default": "7.0",
-       "comment": "pocket depth into the block (board + both-side parts)"
+       "comment": "pocket depth: bare XIAO (4.4 measured + finger room)"
+      },
+      {
+       "name": "pocket_sense",
+       "default": "14.5",
+       "comment": "pocket depth: Sense w/ camera folded on top (13.7 measured)"
       },
       {
        "name": "thumb_d",
@@ -6280,6 +6429,10 @@
      "name": "Quality",
      "note": "",
      "params": [
+      {
+       "name": "pocket_d",
+       "default": "variant == \"sense\" ? pocket_sense : pocket_bare"
+      },
       {
        "name": "bw",
        "default": "n_bays * bay_pitch + 10"

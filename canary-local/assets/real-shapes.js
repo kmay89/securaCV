@@ -55,7 +55,6 @@ function place(scene, parsed, { pre = M4.ident(), at = M4.ident(), color = SHELL
 }
 
 const rotXpi = M4.rotX(Math.PI);          // face-down print → face forward
-const rotZpi = M4.mul(M4.rotY(Math.PI), M4.rotX(Math.PI)); // spin about the part's own axis
 const standUp = M4.rotX(-Math.PI / 2);    // flat print → upright (z → y)
 
 // ── seated placement, derived instead of eyeballed ──────────────────────
@@ -71,13 +70,12 @@ function seatPart(scene, parsed, { G, D, R = M4.ident(), color = SHELL, gloss = 
   scene.addMesh(parsed.mesh, { color, gloss, model });
 }
 
-// canary_watch_station.scad — the drum rests in the stand's tilted pocket.
-// Pocket axis (stand frame): starts p0 = (0, 6, sh−4), sh = 43.98, and the
-// INTENT is rotate([90−tilt]) → axis a = (0, −cos25°, sin25°): glass faces
-// front, reclined 25°. (The committed SCAD says rotate([tilt+90]) — that
-// carves the cradle trough tipping the drum face-down 65°, a design bug
-// flagged in the scad; the seat below is the intended pose.) The drum's
-// back cap rests at p0; drum spans 0…14.8 along a, bezel 14.8…21.8.
+// canary_watch_station.scad (v0.2) — the drum sinks pocket_dep = 11 into the
+// stand's divot, a cylindrical recess bored NORMAL to the 25°-reclined face.
+// The seat comes from the scad's own echo: DRUM SEAT pos [0, 3.03, 27.36]
+// rot [65, 0, 0] — drum +z along the pocket axis a = (0, −sin65°, cos65°),
+// no azimuth flip (the USB slot at 270° lands in the stand's chin slot).
+// Drum spans 0…21 along a; the snap bezel's face caps it at 23.2.
 async function realWatch(scene) {
   const [drum, bezel, stand] = await Promise.all([
     load("canary_watch_station_drum.stl"),
@@ -85,22 +83,21 @@ async function realWatch(scene) {
     load("canary_watch_station_stand.stl"),
   ]);
   scene.clearParts();
-  const G = M4.mul(M4.translate(0, -12, 0), standUp);   // upright + vertical trim
-  const cS = stand.bbox.center;                          // (0, 0, 21.99)
+  const G = M4.mul(M4.translate(0, -14, 0), standUp);   // upright + vertical trim
+  const cS = stand.bbox.center;                          // ≈ (0, 4.07, 29.8)
   const A = 65 * Math.PI / 180;                          // pocket axis = Rx(65°)·ẑ
   const Ra = M4.rotX(A);
-  const spin = M4.mul(Ra, rotZpi);                       // spin 180° on-axis: USB slot to the rear channel
-  const p0 = [0, 6 - cS[1], 43.98 - 4 - cS[2]];          // pocket start, stand-centred
-  const a = [0, -Math.cos(25 * Math.PI / 180), Math.sin(25 * Math.PI / 180)];
+  const p0 = [0, 3.03 - cS[1], 27.36 - cS[2]];           // scad's drum seat, stand-centred
+  const a = [0, -Math.sin(A), Math.cos(A)];
   const along = (s) => [p0[0], p0[1] + a[1] * s, p0[2] + a[2] * s];
   seatPart(scene, stand, { G, D: [0, 0, 0], color: SHELL2, gloss: 0.18 });
-  seatPart(scene, drum, { G, D: along(7.4), R: spin, gloss: 0.22 });          // drum centre at s=7.4
-  seatPart(scene, bezel, { G, D: along(18.3), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out
-  scene.addMesh(screenPlane(34, 34, true), {                                  // glass 5.2 behind the bezel face
+  seatPart(scene, drum, { G, D: along(10.5), R: Ra, gloss: 0.22 });           // drum centre at s=10.5
+  seatPart(scene, bezel, { G, D: along(20.1), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out
+  scene.addMesh(screenPlane(37.5, 37.5, true), {         // the Ø37.7 glass behind the Ø39.4 aperture
     screen: true,
-    model: M4.mul(G, M4.mul(M4.translate(...along(16.8)), Ra)),
+    model: M4.mul(G, M4.mul(M4.translate(...along(20.5)), Ra)),
   });
-  scene.dist = 175;
+  scene.dist = 185;
 }
 
 // canary_dash_display.scad — the panel sits in the stand's channel, back
