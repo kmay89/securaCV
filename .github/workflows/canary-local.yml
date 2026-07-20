@@ -14,6 +14,8 @@ on:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
       - "firmware/projects/canary-sense/**"
+      - "docs/hardware/mr60bha2_radar_notes.md"
+      - "docs/standard/CANARY_CARDS.md"
       - "docs/getting_started_canary.md"
       - "docs/canary_sense_mr60bha2_design.md"
       - "src/vault/**"
@@ -44,6 +46,8 @@ on:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
       - "firmware/projects/canary-sense/**"
+      - "docs/hardware/mr60bha2_radar_notes.md"
+      - "docs/standard/CANARY_CARDS.md"
       - "docs/getting_started_canary.md"
       - "docs/canary_sense_mr60bha2_design.md"
       - "src/vault/**"
@@ -96,6 +100,7 @@ jobs:
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
+          node --test canary-local/tests/senselab.test.js
           node --test canary-local/tests/vault.test.js
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
@@ -140,6 +145,13 @@ jobs:
           python3 canary-local/tools/gen_sense.py
           if ! git diff --exit-code -- canary-local/devices/sense.json; then
             echo "::error::generated Sense data stale — run canary-local/tools/gen_sense.py and commit (the firmware moved)"
+            exit 1
+          fi
+      - name: Sense Lab data drift (parsed from the canary-sense firmware + hardware notes)
+        run: |
+          python3 canary-local/tools/gen_senselab.py
+          if ! git diff --exit-code -- canary-local/devices/senselab.json; then
+            echo "::error::generated Sense Lab data stale — run canary-local/tools/gen_senselab.py and commit (the firmware or hardware notes moved)"
             exit 1
           fi
       - name: Vault data drift (parsed from src/vault, src/break_glass + specs)
@@ -220,6 +232,8 @@ jobs:
         run: node canary-local/tests/vision_probe.mjs
       - name: Sense probe — radar lab, serial, MQTT + flavor-gated entities
         run: node canary-local/tests/sense_probe.mjs
+      - name: Sense Lab probe — placement bench, pipeline, cards, stall path
+        run: node canary-local/tests/senselab_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs
       - name: Build both flavors from THIS tree

@@ -120,7 +120,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Feature flags](feature-flags.md) · [logging](logging.md) · [CLI UI conventions](cli_ui.md)
 - [Flight rules](FLIGHT_RULES.md) — the engineering constitution
 - [Manual test plans](manual_test_plan_captive_portal.md) — captive portal · [MQTT](manual_test_plan_mqtt.md)
-- [The ambient display standard](standard/AMBIENT_DISPLAY_STANDARD.md)
+- [The ambient display standard](standard/AMBIENT_DISPLAY_STANDARD.md) · [Canary Cards — the widget-card schema](standard/CANARY_CARDS.md)
 - Learnings from elsewhere: [Marlin & Klipper](marlin_klipper_learnings.md) · [OpenIPC](openipc_architecture_learnings.md)
 
 </details>

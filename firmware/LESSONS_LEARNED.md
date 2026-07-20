@@ -729,6 +729,36 @@
 
 ---
 
+### An FSM's "no data" and "bad data" are different inputs — conflating them made the vitals lock unreachable
+- **What happened:** The canary-sense breathing/heart lock (`VitalsFSM`)
+  could never reach `Locked` against realistic radar traffic. The Sense Lab
+  bench (`canary-local/senselab.html`), which streams the real frame mix
+  through a line-for-line JS port of the FSM, showed `breathing_locked`
+  stuck false forever at Seeed's own reference bedside geometry.
+- **Root cause:** `tick()` computed `valid = single_target &&
+  plausible(frame)` for EVERY frame, and `plausible()` requires
+  `kind == Vitals`. But the MR60 wire interleaves presence/count/distance
+  frames between 1 Hz vitals reports, and `loop()` also ticks the FSMs with
+  an empty frame when nothing arrived — so `was_valid_` flipped false and
+  the `valid_since_ms_` confirm window restarted on every interleave. The
+  4 s lock-confirm could never elapse. The host test passed because it fed
+  back-to-back vitals frames only — a stream real hardware never produces.
+  The sibling `PresenceFSM` had the correct data guard all along
+  ("a None/other frame is normal — leaves debounce timers running").
+- **Fix:** `mr60_vitals.cpp` data-guards non-vitals frames after the
+  deadline check: they no longer touch the valid-run bookkeeping. Loss
+  stays deadline-driven (`lock_lost_ms`), multi-person suppression stays
+  immediate (`bpm_valid` re-checks `single_target` on every tick, including
+  non-vitals ticks).
+- **Regression check:** `test_vitals_lock_survives_interleaved_presence`
+  (host) and its JS twin in `canary-local/tests/senselab.test.js` both stream
+  the realistic mix: 10 Hz presence + empty ticks + 1 Hz vitals. Rule of
+  thumb pinned: when writing FSM integration tests for a multiplexed wire,
+  feed the full frame mix, never a single-type stream.
+- **Date learned:** 2026-07
+
+---
+
 ## Memory Budget
 
 ### Internal-DRAM statics are the lever for the BLE budget — and nm lies about where they live

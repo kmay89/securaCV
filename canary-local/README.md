@@ -14,6 +14,8 @@ canary-local/
   house.html            "The Canary House" — isometric home, whole flock in place
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   wap.html              "The WAP — first boot" — captive-portal setup, serial + MQTT (§4i)
+  sense.html            "The Sense — radar school" — meet it, place it, set it up
+  senselab.html         "The Sense Lab" — the radar pipeline dev bench (§4l)
   vision.html           "The Vision — first watch" — model load, aim card, tuning (§4k)
   vault.html            "The Vault" — sealed evidence + break-glass by quorum (§4j)
   assets/
@@ -644,6 +646,50 @@ live bench preview with the on-module TSCORE/TIOU sliders.
 | Catalog block + doc drift-gate | `tools/gen_flash.py` → `devices/flash.json` `we2_module` |
 | Release asset pipeline | `.github/workflows/vision-model-release.yml` |
 | Honesty gate (scripted fake bootloader, byte-level) | `tests/we2.test.js` |
+## 4l. The Sense Lab: the radar pipeline, on the bench (`senselab.html`)
+
+`sense.html` (radar school) teaches an owner to meet, place and provision the
+device; **the Sense Lab is its engineering sibling — the dev bench** — because
+the MR60BHA2 radar accepts no configuration commands at all (verified against
+the vendor library and both ESPHome components), the only knobs that exist
+are *where you put it* and *how the host firmware judges its claims*. The
+page stages exactly that:
+
+- **The hardware, all the way down** — the ADT6101P (2T2R, on-module
+  Cortex-M3 running the whole vitals pipeline), the five-frame UART grammar
+  with live checksums, the `[BENCH]` assumptions quoted from `mr60_uart.h`,
+  and the frames the witness *refuses* to decode (phase waveforms, point
+  cloud) arriving and being counted `unknown` in front of you.
+- **The placement bench** — drag a person through top-down and side views;
+  the 80°×80° sector, the near/mid range bands (the live CS_* knobs) and the
+  1.5 m vitals envelope are the device's published geometry; the quality
+  meter's U-curve (sweet spot ≈ 0.7 m), orientation projection and
+  interference penalties are grounded in the vital-sign radar literature —
+  every number parsed from `docs/hardware/mr60bha2_radar_notes.md`.
+- **The pipeline** — real wire bytes stream through **line-for-line JS ports
+  of the firmware's parser and FSMs** (pinned in CI to the same behaviors
+  `firmware/tests_host/test_mr60_uart.cpp` pins), across the privacy
+  chokepoint (watch distance and BPM be read and dropped), into
+  Ed25519-signed witness events over the real v1 `sense` canonical.
+- **Canary Cards** — the standardized widget-card layer
+  (`docs/standard/CANARY_CARDS.md`, renderer `assets/canary-cards.js`):
+  one HA-discovery entity, one card, on every surface — including the
+  honest "provably absent" cards a presence-only build renders for BPM.
+- **On the glass** — boot the real canary-display firmware (wasm) and this
+  witness joins its fleet through the display's own MQTT dispatcher.
+- **The power lab** — rails calibrated to Seeed's published 0.8 W kit
+  figure; move the levers (modem sleep, heartbeat, LED) and watch
+  claims-per-joule and the sensing share of the heat budget.
+
+| Piece | File |
+|---|---|
+| The page | `canary-local/senselab.html` + `assets/senselab.js` |
+| DOM-free cores — protocol, parser + FSM ports, physics, power (tested) | `canary-local/assets/sense-sim.js` |
+| The surfaces — stage, console, knobs, power lab, glass bridge | `canary-local/assets/senselab-ui.js` |
+| Canary Cards — schema, validator, renderer (tested) | `canary-local/assets/canary-cards.js` + `docs/standard/CANARY_CARDS.md` |
+| Generated data | `canary-local/devices/senselab.json` |
+| Generator (drift-gates firmware + hardware notes) | `canary-local/tools/gen_senselab.py` |
+| Honesty gates | `tests/senselab.test.js` + `tests/senselab_probe.mjs` |
 
 ## 5. Where this lives (repo → Pages → securacv.com)
 

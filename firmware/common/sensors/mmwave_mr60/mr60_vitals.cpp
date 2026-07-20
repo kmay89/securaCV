@@ -55,7 +55,31 @@ VitalsEvent VitalsFSM::tick(const Frame& frame, bool single_target, uint32_t now
         return ev;
     }
 
-    // ---- SUPPRESSION + DATA GUARD ----------------------------------------
+    // ---- DATA GUARD --------------------------------------------------------
+    // Only vitals frames advance the lock machinery. A None/Presence frame is
+    // normal interleaving on this wire — the radar sends presence, count and
+    // distance as separate frames between vitals reports, and loop() also
+    // ticks with an empty frame when nothing arrived — so it must not break a
+    // valid run, or the confirm window could never elapse against real
+    // interleaved traffic. Loss of data is handled by the deadline above,
+    // never by frame mix. (bpm_valid still re-checks single_target RIGHT NOW,
+    // so multi-person suppression stays immediate even on non-vitals ticks.)
+    if (frame.kind != FrameKind::Vitals) {
+        // Ambiguity DOES reset the acquiring run, even on a non-vitals tick:
+        // if the count is not exactly one right now, a lock must not later be
+        // acquired on credit accumulated before the ambiguous interval — the
+        // confirm window restarts once the room is single-target again. (An
+        // already-held lock is unaffected; loss stays deadline-driven.)
+        if (!single_target) was_valid_ = false;
+        ev.lock_changed = (lock_ != prev);
+        ev.lock = lock_;
+        ev.bpm_valid  = (lock_ == VitalsLock::Locked) && single_target;
+        ev.breath_bpm = ev.bpm_valid ? breath_bpm_ : 0;
+        ev.heart_bpm  = ev.bpm_valid ? heart_bpm_  : 0;
+        return ev;
+    }
+
+    // ---- SUPPRESSION -------------------------------------------------------
     // Hard rule: no vitals unless exactly one target. Multi-person ambiguity
     // would mis-attribute BPM, so we don't even consider the frame.
     const bool valid = single_target && plausible(frame);
