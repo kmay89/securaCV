@@ -119,7 +119,7 @@ measurements welcome.
 
 | Design | Status | Preview | Source |
 |--------|--------|---------|--------|
-| **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 + Round Display (see [display research](../display_research.md)) | drum + bezel + 25° stand | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
+| **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.2 bore sized to the measured Ø43.0 disc, snap bezel (no fasteners), and a true cradle divot | drum + snap bezel + 25° cradle | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
 | **Sense bedside stand** — weighted base + tilted stalk with the three-prong hinge head (wellbeing channel, ≤1.5 m) | ballast pockets, GoPro-compatible head | <img src="./preview_dev_stand.png" width="230"> | [`canary_sense_stand.scad`](./canary_sense_stand.scad) |
 | **Sense in-wall plate** — single-gang flush mount; the faceplate IS the radome (check local code; low-voltage box only) | one-piece plate, 6-32 slots | <img src="./preview_dev_gang.png" width="230"> | [`canary_sense_gang.scad`](./canary_sense_gang.scad) |
 | **Outlet cradle** — collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary | measure your adapter | <img src="./preview_dev_cradle.png" width="230"> | [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) |
@@ -673,15 +673,19 @@ the fin round-overs self-supporting). Gasket in TPU 90–95A.
 
 ---
 
-# Canary Vision — Doorbell (v0.1)
+# Canary Vision — Doorbell (v0.2)
 
 The stacked-XIAO Vision build in a **video-doorbell form factor**
 ([`canary_vision_doorbell.scad`](./canary_vision_doorbell.scad)): a slim
-vertical pill, **35.8 × 98.2 × 27 mm** — the Ring Wired is 98 × 46 × 22, the
+vertical pill, **31.8 × 113.2 × 24 mm** — the Ring Wired is 98 × 46 × 22, the
 Wyze 93 × 41 × 22 — with the OV5647 behind a sealed disc at the top, the
 module + stacked XIAO in the middle, and a **12 mm illuminated momentary
 button** (short body, IP65, wired to the multifunction input; its LED ring
-replaces the light pipe) at the bottom.
+replaces the light pipe) at the bottom. **v0.2** sizes the board bay to the
+measured Grove Vision AI V2 footprint (40 × 20 mm, mounted vertically — the
+v0.1 bay assumed a 25 × 25 square the module never was): the side rails now run
+the module's top half only so the 17.8 mm-wide XIAO clears as it hangs beneath,
+and the T-studs moved out to ±34 mm so they clear the taller cable well.
 
 ![doorbell — body, face, plate and gasket](./preview_doorbell.png)
 

@@ -306,12 +306,12 @@
    "glb": "boards/seeed_grove_vision_ai_v2.glb",
    "source_step": "boards/vendor/seeed_grove_vision_ai_v2.step.gz",
    "dims_mm": [
-    43.31,
-    52.53,
-    25.2
+    41.5,
+    15.71,
+    20.0
    ],
-   "triangles": 24754,
-   "parts": 16,
+   "triangles": 23590,
+   "parts": 10,
    "materials": [
     {
      "color": "#e7c863",
@@ -342,40 +342,16 @@
      "triangles": 1196
     },
     {
-     "color": "#116517",
-     "triangles": 736
-    },
-    {
-     "color": "#030303",
-     "triangles": 226
-    },
-    {
      "color": "#0d0d0d",
      "triangles": 196
-    },
-    {
-     "color": "#ffffff",
-     "triangles": 134
     },
     {
      "color": "#7f8e98",
      "triangles": 96
     },
     {
-     "color": "#727272",
-     "triangles": 28
-    },
-    {
      "color": "#131313",
      "triangles": 24
-    },
-    {
-     "color": "#ffdc04",
-     "triangles": 20
-    },
-    {
-     "color": "#090909",
-     "triangles": 20
     }
    ],
    "pose": {
@@ -414,7 +390,7 @@
      "use": "3V3 / 5 V from the Grove cable"
     }
    ],
-   "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU). Talks to the host over I2C on the Grove connector; the OV camera rides on the CSI FPC. Mount parts from the source assembly are filtered out.",
+   "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU) with a XIAO host stacked on its socket. Talks to the host over I2C on the Grove connector; the OV5647 camera hangs on the CSI flex and is placed by each device model (it is not rigid to the board). Mount parts and the loose camera from the source assembly are filtered out.",
    "doc": "https://wiki.seeedstudio.com/grove_vision_ai_v2/",
    "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter. The generator drops those mount parts by name (mounting_plate, camera_mounting_shroud, adapter) and keeps only the board + camera. Verify Seeed's licence terms before external redistribution."
   },
@@ -511,7 +487,7 @@
      ]
     }
    ],
-   "blurb": "\u00d8 39 mm 1.28-in GC9A01 (240x240) with CST816S touch, PCF8563 RTC, microSD and a LiPo charger; it seats a XIAO on its back socket. The backlight on D6/GPIO43 is PWM-dimmable \u2014 that is the bedside night floor.",
+   "blurb": "\u00d8 43.0 mm PCB disc (the \u201c39 mm\u201d in marketing copy is the glass), 1.28-in GC9A01 (240x240) with CST816S touch, PCF8563 RTC, microSD and a LiPo charger; it seats a XIAO on its back socket. The backlight on D6/GPIO43 is PWM-dimmable \u2014 that is the bedside night floor.",
    "doc": "https://wiki.seeedstudio.com/get_start_round_display/",
    "provenance": "Seeed Studio CAD (SolidWorks STEP export). This export did not carry per-solid colours through the tessellator, so materials are assigned by geometry (dark PCB + grey glass); the shape is the vendor's exact model. Verify Seeed's licence terms before external redistribution."
   }

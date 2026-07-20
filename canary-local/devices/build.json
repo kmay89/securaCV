@@ -692,22 +692,11 @@
       "qty": "1",
       "required": false,
       "category": "Enclosure",
-      "desc": "3D-printed Watch Station puck (drum + bezel + 25deg stand)",
+      "desc": "3D-printed Watch Station puck (drum + snap bezel + 25deg cradle stand)",
       "mpn": "canary_watch_station.scad",
       "mfr": "SecuraCV",
       "usd": 1.0,
-      "notes": "docs/hardware/enclosure/canary_watch_station.scad (v0.1-dev, not print-validated). Prints flat, no supports; wall-mounts via blind keyholes without the stand"
-     },
-     {
-      "ref": "W-SCR1",
-      "qty": "2",
-      "required": false,
-      "category": "Mechanical",
-      "desc": "M2 x 8 self-tapping pan head (bezel posts)",
-      "mpn": "M2X8-ST",
-      "mfr": "Generic",
-      "usd": 0.1,
-      "notes": "~$5-8 per 100 on Amazon/uxcell; max ~0.3 N-m into printed posts"
+      "notes": "docs/hardware/enclosure/canary_watch_station.scad (v0.2-dev, not print-validated). Bore/bezel sized to the measured vendor CAD (Ø43.0 disc); bezel snaps into wall slots, no fasteners. Prints flat, no supports; wall-mounts via blind keyhole without the stand"
      },
      {
       "ref": "W-BT1",
@@ -755,7 +744,7 @@
      }
     ],
     "required_usd": 34.99,
-    "full_usd": 42.04
+    "full_usd": 41.94
    }
   },
   "canary-display-dash": {
@@ -804,7 +793,7 @@
       "mpn": "M2X8-ST",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "Same stock as W-SCR1"
+      "notes": "Generic M2 self-tap stock (the watch drum is fastener-free since v0.2)"
      },
      {
       "ref": "D-SCR2",

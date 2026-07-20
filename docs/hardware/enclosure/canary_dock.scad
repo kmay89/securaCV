@@ -15,10 +15,15 @@ part = "dock";       // ["dock"]
 n_bays = 4;          // number of XIAO bays  // [2:1:10]
 recline = 15;        // bay recline angle (degrees)
 
-/* [Board] — bare XIAO (any variant) */
+/* [Board] — XIAO (any variant); defaults measured from the committed vendor
+   GLB (canary-local/boards/seeed_xiao_esp32s3_sense.glb): board 21 x 17.8 mm,
+   bare thickness 4.4 incl the USB shell; a Sense with its camera folded flat
+   stacks to 13.7 — pick the variant to size the pocket. */
+variant = "bare";    // ["bare","sense"]
 board_l = 21.0;      // board length (USB edge at the TOP of the bay)
-board_w = 17.5;
-pocket_d = 7.0;      // pocket depth into the block (board + both-side parts)
+board_w = 17.8;      // measured (was 17.5 — pockets pinched the real board)
+pocket_bare  = 7.0;  // pocket depth: bare XIAO (4.4 measured + finger room)
+pocket_sense = 14.5; // pocket depth: Sense w/ camera folded on top (13.7 measured)
 thumb_d = 12.0;      // thumb cutout for extraction
 
 /* [Block] */
@@ -31,6 +36,7 @@ tol_slide = 0.20;
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
+pocket_d = variant == "sense" ? pocket_sense : pocket_bare;
 bw = n_bays * bay_pitch + 10;
 bh = board_l * cos(recline) + 14;
 echo(str("Canary provisioning dock v0.1-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));

@@ -113,6 +113,7 @@ function roundedBox(m, hw, hh, z0, z1, r = 1.2, seg = 4) {
 const STEEL = [0.66, 0.68, 0.72], BRASS = [0.72, 0.58, 0.28], GOLD = [0.85, 0.72, 0.30];
 const NICKEL = [0.80, 0.81, 0.84], BLACK = [0.10, 0.10, 0.12], WHITE = [0.90, 0.90, 0.88];
 const LIPO = [0.20, 0.26, 0.52], RED = [0.75, 0.18, 0.15], CLEAR = [0.72, 0.82, 0.88];
+const FLEX = [0.61, 0.42, 0.14]; // amber polyimide FPC
 
 export const PARTS = {
   // M2 machine/self-tap screw: head at z=0, shaft down to -len. csk = countersunk.
@@ -128,6 +129,45 @@ export const PARTS = {
   lightPipe({ d = 3, len = 8, color = CLEAR } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, len, 20); return [{ builder: m.out(), color, gloss: 0.85 }]; },
   disc({ d = 12, t = 1, color = CLEAR } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, t, 40); return [{ builder: m.out(), color, gloss: 0.9 }]; },
   vent({ d = 8, t = 1.2, color = BLACK } = {}) { const m = new MB(); cyl(m, 0, 0, d / 2, 0, t, 32); return [{ builder: m.out(), color, gloss: 0.4 }]; },
+  // A flexible FPC camera ribbon that ARCS from its connector (local origin,
+  // lying in the local frame) up to the camera head at `to`. Real camera flex
+  // is not rigid — a quadratic Bézier bows through `bow` so the head reaches
+  // the aperture wherever the enclosure puts it. Built as a flat swept strip.
+  ribbon({ to = [0, 0, 12], bow = 6, width = 8.5, color = FLEX } = {}) {
+    const m = new MB(), N = 36, half = width / 2;
+    const b = to, mid = [b[0] / 2, b[1] / 2, b[2] / 2];
+    const len = Math.hypot(b[0], b[1], b[2]) || 1;
+    const dir = [b[0] / len, b[1] / len, b[2] / len];
+    const up = Math.abs(dir[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+    // nrm = dir × up (the ribbon's flat-face direction and the bow direction)
+    const nrm = [dir[1] * up[2] - dir[2] * up[1], dir[2] * up[0] - dir[0] * up[2], dir[0] * up[1] - dir[1] * up[0]];
+    const ctrl = [mid[0] + nrm[0] * bow, mid[1] + nrm[1] * bow, mid[2] + nrm[2] * bow];
+    const bez = (t) => { const u = 1 - t; return [
+      u * u * 0 + 2 * u * t * ctrl[0] + t * t * b[0],
+      u * u * 0 + 2 * u * t * ctrl[1] + t * t * b[1],
+      u * u * 0 + 2 * u * t * ctrl[2] + t * t * b[2]]; };
+    const rows = [];
+    for (let i = 0; i <= N; i++) {
+      const c = bez(i / N);
+      rows.push([
+        m.v([c[0] - nrm[0] * half, c[1] - nrm[1] * half, c[2] - nrm[2] * half], nrm),
+        m.v([c[0] + nrm[0] * half, c[1] + nrm[1] * half, c[2] + nrm[2] * half], nrm)]);
+    }
+    for (let i = 0; i < N; i++) m.quad(rows[i][0], rows[i][1], rows[i + 1][1], rows[i + 1][0]);
+    return [{ builder: m.out(), color, gloss: 0.4 }];
+  },
+  // The camera head at the end of the flex — module + lens barrel, looking −Z
+  // so it points out through the aperture it's seated at.
+  camera({ s = 8.5, lens = 5, color = BLACK } = {}) {
+    const body = new MB(); roundedBox(body, s / 2, s / 2, -2.0, 0, 0.8);
+    const barrel = new MB(); cyl(barrel, 0, 0, lens / 2 + 0.6, -3.4, -2.0, 24);
+    const glass = new MB(); cyl(glass, 0, 0, lens / 2, -3.7, -3.3, 24);
+    return [
+      { builder: body.out(), color, gloss: 0.4 },
+      { builder: barrel.out(), color, gloss: 0.5 },
+      { builder: glass.out(), color: [0.10, 0.11, 0.15], gloss: 0.85 },
+    ];
+  },
   // Bare dev-board stand-in (XIAO-class): PCB slab + RF shield + USB nub.
   // Used ONLY where no vendor CAD is committed — the parts list says so.
   pcb({ w = 21, h = 17.8, t = 1.2, color = [0.12, 0.30, 0.20] } = {}) {

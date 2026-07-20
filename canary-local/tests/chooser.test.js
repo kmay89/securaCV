@@ -160,6 +160,7 @@ test("STL parser handles the real preview meshes", async () => {
   const { bbox, triangles } = parseSTL(
     buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   assert.ok(triangles > 100, "real geometry");
-  // the drum is Ø52 — the mesh must agree with the .scad within coarse-$fn slack
-  assert.ok(Math.abs(bbox.size[0] - 52) < 1.5, `drum Ø ~52, got ${bbox.size[0]}`);
+  // the v0.2 drum is Ø49 (bore Ø44.4 over the measured Ø43.0 disc + walls) —
+  // the mesh must agree with the .scad within coarse-$fn slack
+  assert.ok(Math.abs(bbox.size[0] - 49) < 1.5, `drum Ø ~49, got ${bbox.size[0]}`);
 });
