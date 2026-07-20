@@ -226,7 +226,11 @@ impl AdapterHost {
         let bucket = match TimeBucket::now(self.config.bucket_size_secs) {
             Ok(b) => b,
             Err(e) => {
-                log::error!("adapter '{}' outage: could not form time bucket: {}", name, e);
+                log::error!(
+                    "adapter '{}' outage: could not form time bucket: {}",
+                    name,
+                    e
+                );
                 return;
             }
         };
@@ -240,7 +244,10 @@ impl AdapterHost {
             self.config.ruleset_hash,
         ) {
             Ok(_) => {
-                self.stats.entry(name.to_string()).or_default().outage_gaps_sealed += 1;
+                self.stats
+                    .entry(name.to_string())
+                    .or_default()
+                    .outage_gaps_sealed += 1;
                 log::warn!(
                     "sealed GapMissingData record for adapter '{}' outage ({} consecutive poll errors)",
                     name,

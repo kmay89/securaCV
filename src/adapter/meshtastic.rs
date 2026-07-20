@@ -199,12 +199,7 @@ impl MeshtasticAdapter {
     /// Pure transform: map one `(topic, payload)` to a claim if it is a detection frame from a
     /// configured node.
     pub fn message_to_claim(&self, topic: &str, payload: &[u8]) -> Option<Claim> {
-        frame_to_claim(
-            &self.nodes.lock_tolerant(),
-            self.frame_kind,
-            topic,
-            payload,
-        )
+        frame_to_claim(&self.nodes.lock_tolerant(), self.frame_kind, topic, payload)
     }
 }
 

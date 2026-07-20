@@ -460,11 +460,12 @@ fn main() -> Result<()> {
                     };
                     *filter
                         .lock()
-                        .map_err(|_| anyhow!("frigate filter mutex poisoned"))? = FrigateFilter::new(
-                        fc.cameras.clone(),
-                        fc.labels.clone(),
-                        fc.min_confidence.unwrap_or(0.5),
-                    );
+                        .map_err(|_| anyhow!("frigate filter mutex poisoned"))? =
+                        FrigateFilter::new(
+                            fc.cameras.clone(),
+                            fc.labels.clone(),
+                            fc.min_confidence.unwrap_or(0.5),
+                        );
                     Ok(())
                 }));
                 spawn_mqtt_forwarder(
