@@ -158,21 +158,23 @@ bool bring_up_msc() {
 // the read-only drive. Written once, before the drive is exposed read-only.
 void write_start_here_files() {
   char url[256];
-  build_help_url(allowed_prefix(), s_cfg.device_id, "onboard", url, sizeof(url));
+  build_help_url(allowed_prefix(), s_cfg.device_id, kOnboardReason, url, sizeof(url));
 
   char body[512];
-  auto write_file = [&](const char* path, size_t len) {
+  auto write_file = [&](const char* name, size_t len) {
     if (len == 0) return;
+    char path[48];
+    snprintf(path, sizeof(path), "/%s", name);   // SD root
     File f = SD.open(path, FILE_WRITE);
     if (!f) return;
     f.write(reinterpret_cast<const uint8_t*>(body), len);
     f.close();
   };
-  write_file("/START-HERE.html",
+  write_file(kStartHereHtml,
              build_start_here_html(url, allowed_prefix(), body, sizeof(body)));
-  write_file("/Open-Canary-Help.url",
+  write_file(kStartHereWinUrl,
              build_url_shortcut(url, allowed_prefix(), body, sizeof(body)));
-  write_file("/Open-Canary-Help.webloc",
+  write_file(kStartHereMacWebloc,
              build_webloc(url, allowed_prefix(), body, sizeof(body)));
 }
 #endif  // USB_ONBOARD_ACTIVE
@@ -240,7 +242,7 @@ void request_launch() {
   }
   // ANNOUNCE, in plain text, exactly what will be typed — the trust keystone.
   char url[256];
-  build_help_url(allowed_prefix(), s_cfg.device_id, "onboard", url, sizeof(url));
+  build_help_url(allowed_prefix(), s_cfg.device_id, kOnboardReason, url, sizeof(url));
   Serial.println("\n=== Open help page? ===");
   Serial.printf("  Method : %s\n", method_name(s_method));
   Serial.printf("  Will type: %s\n", url);
@@ -254,7 +256,7 @@ void confirm() {
   // Idle (no console needed); it also confirms a console-armed preview. step()
   // is the authority on whether this emits (never from Off).
   char url[256];
-  build_help_url(allowed_prefix(), s_cfg.device_id, "onboard", url, sizeof(url));
+  build_help_url(allowed_prefix(), s_cfg.device_id, kOnboardReason, url, sizeof(url));
   Outcome o = step(s_state, Event::Confirm);
   apply(o);
   if (!o.emit) return;

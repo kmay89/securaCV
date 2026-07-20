@@ -214,6 +214,21 @@ static void test_webloc_escapes_and_wraps() {
   CHECK(std::strstr(buf, "<string>https://securacv.com/canary?d=x&amp;r=onboard</string>") != nullptr);
 }
 
+// ── 6. Onboarding contract (mirrored by the website /plugin emulator) ───────
+
+static void test_onboarding_contract() {
+  // These strings are the public contract the securacv_website emulator mirrors
+  // in onboarding-spec.json. If you change one here, update that file (and the
+  // plugin SPEC) in lockstep — the website's plugin-facts.test.mjs pins the
+  // other side.
+  CHECK(std::strcmp(kOnboardReason, "onboard") == 0);
+  CHECK(std::strcmp(kStartHereHtml, "START-HERE.html") == 0);
+  CHECK(std::strcmp(kStartHereWinUrl, "Open-Canary-Help.url") == 0);
+  CHECK(std::strcmp(kStartHereMacWebloc, "Open-Canary-Help.webloc") == 0);
+  // The default launch method must stay MANUAL (the emulator documents that).
+  CHECK(static_cast<int>(LaunchMethod::MANUAL) == 0);
+}
+
 static void test_link_files_refuse_bad_url() {
   char buf[256];
   // A disallowed URL yields an empty file from every builder — never written.
@@ -242,6 +257,7 @@ int main() {
   test_url_shortcut();
   test_webloc_escapes_and_wraps();
   test_link_files_refuse_bad_url();
+  test_onboarding_contract();
 
   if (g_failures == 0) {
     std::printf("PASS test_usb_onboard_logic (all assertions)\n");

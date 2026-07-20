@@ -141,9 +141,21 @@ path (the same enumeration change the WAP evidence-drive build already documents
   Linux / iPadOS hosts; confirm HID timing (prelude settle, per-key delay) and
   read-only MSC of the SPI SD; only then consider enabling in any release profile.
 
+## Keeping the demo honest (anti-rot)
+
+The website's `/plugin` emulator illustrates this exact behaviour, so the two
+must not drift. The shared "contract" — the `?r=onboard` reason tag and the
+START-HERE filenames — lives in one place, `usb_onboard_logic.h`
+(`kOnboardReason`, `kStartHereHtml`, `kStartHereWinUrl`, `kStartHereMacWebloc`),
+used by the glue and pinned by `test_usb_onboard_logic.cpp::test_onboarding_contract`.
+The website mirrors the same values in `securacv_website/onboarding-spec.json`
+(with `provenance` back to these symbols) and pins them in
+`tests/plugin-facts.test.mjs`. Change a value on either side and that side's CI
+fails with a message to update the other — neither can rot silently.
+
 ## Files
 
-- `firmware/common/usb/usb_onboard_logic.h` — pure trust model + URL/allow-list + keystroke plan
+- `firmware/common/usb/usb_onboard_logic.h` — pure trust model + URL/allow-list + keystroke plan + onboarding contract constants
 - `firmware/tests_host/test_usb_onboard_logic.cpp` — host tests (CI: firmware host tests)
 - `firmware/canary/lib/securacv_usb_onboard/` — Arduino HID/MSC glue (flagged)
 - `firmware/canary/include/canary_config.h` — `FEATURE_USB_ONBOARD`, `SECURACV_HELP_URL_BASE`
