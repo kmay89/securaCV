@@ -522,6 +522,104 @@ export function sniffRegion(bytes) {
   return "stored data";
 }
 
+// ── install diff (what will actually change on the board) ──────────────────
+// At install time we hold both worlds in memory: the safety copy (every byte
+// currently on the board) and the image about to be written. Comparing them
+// region-by-region answers the real questions — is the firmware updated, do
+// my settings (WiFi, identity, witness chain) survive, what's untouched —
+// with byte-level certainty instead of guesses.
+//
+// Regions come from the NEW image's partition table when it carries one
+// (factory images do), else from the board's current table; if both exist
+// and disagree, the layout itself is changing and we say so.
+function tableFrom(bytes) {
+  if (!bytes || bytes.length < 0x8000 + 32) return { entries: [], apps: [] };
+  return parsePartitionTable(bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
+}
+
+function regionAllFF(bytes, off, end) {
+  for (let i = off; i < end; i++) if (bytes[i] !== 0xff) return false;
+  return true;
+}
+
+function countDiff(a, b, off, end) {
+  let n = 0;
+  for (let i = off; i < end; i++) if (a[i] !== b[i]) n++;
+  return n;
+}
+
+export function diffInstall(oldBytes, newBytes) {
+  const newPt = tableFrom(newBytes);
+  const oldPt = tableFrom(oldBytes);
+  const table = newPt.entries.length ? newPt : oldPt;
+  if (!table.entries.length) return null; // nothing to anchor a map to
+
+  const layoutChanged = !!(newPt.entries.length && oldPt.entries.length &&
+    JSON.stringify(newPt.entries) !== JSON.stringify(oldPt.entries));
+
+  const rows = [];
+  // The system area first: bootloader + the partition map itself.
+  const firstOff = Math.min(...table.entries.map((e) => e.offset));
+  if (firstOff > 0) {
+    rows.push(describeRegion(oldBytes, newBytes,
+      { label: "system", type: 0xfe, subtype: 0, offset: 0, size: firstOff },
+      "bootloader + partition map"));
+  }
+  for (const e of table.entries) rows.push(describeRegion(oldBytes, newBytes, e));
+  return { layoutChanged, rows, imageLength: newBytes.length };
+}
+
+function describeRegion(oldBytes, newBytes, e, kindOverride) {
+  const row = {
+    label: e.label || partitionKind(e),
+    kind: kindOverride || partitionKind(e),
+    offset: e.offset, size: e.size,
+    type: e.type, subtype: e.subtype,
+  };
+  const end = e.offset + e.size;
+  if (e.offset >= newBytes.length) {
+    row.verdict = "untouched"; // the image never reaches this region
+    return row;
+  }
+  const cmpEnd = Math.min(end, newBytes.length, oldBytes.length);
+  const diff = countDiff(oldBytes, newBytes, e.offset, cmpEnd);
+  if (diff === 0) { row.verdict = "identical"; return row; }
+  if (regionAllFF(newBytes, e.offset, cmpEnd)) {
+    row.verdict = "wiped"; // written as erased flash: a factory-fresh region
+  } else {
+    row.verdict = "changed";
+    row.changedPct = Math.round((diff / (cmpEnd - e.offset)) * 100) || 1;
+  }
+  // App slots: name the change in firmware terms when descriptors are legible.
+  if (e.type === 0x00) {
+    const read = (bytes) => {
+      const o = e.offset + APP_DESC_OFFSET;
+      if (o + 256 > bytes.length) return null;
+      return parseAppDescriptor(bytes.subarray(o, o + 256));
+    };
+    const before = read(oldBytes), after = read(newBytes);
+    if (before) row.before = `${before.projectName || "?"} ${before.version || ""}`.trim();
+    if (after) row.after = `${after.projectName || "?"} ${after.version || ""}`.trim();
+  }
+  return row;
+}
+
+// The question people actually ask, answered from the diff: do my settings
+// survive this install?
+export function settingsVerdict(diff, hadWifi) {
+  if (!diff) return null;
+  const nvs = diff.rows.find((r) => r.type === 0x01 && r.subtype === 0x02);
+  if (!nvs) return null;
+  if (nvs.verdict === "identical" || nvs.verdict === "untouched") {
+    return { kept: true, text: hadWifi
+      ? "Your settings survive — saved WiFi, device identity and witness-chain counters stay exactly as they are."
+      : "The settings area is untouched." };
+  }
+  return { kept: false, text: hadWifi
+    ? "Your settings are reset — the saved WiFi is cleared, so the board comes up with its setup network again, like the first day."
+    : "The settings area is reset to factory-fresh." };
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.

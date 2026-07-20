@@ -201,6 +201,17 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-hexascii { color: #8fa88f; }
 @media (max-width: 560px) { .flash-hexascii { display: none; } }
 
+/* ── live write map (install progress) ─────────────────────────────────── */
+.flash-livemap { margin: 2px 0 12px; }
+.flash-livemap .flash-map-seg { cursor: default; }
+.flash-map-pending { filter: brightness(0.35) saturate(0.6); }
+.flash-map-active { animation: flash-writing 0.9s ease-in-out infinite alternate; }
+@keyframes flash-writing { from { filter: brightness(0.9); } to { filter: brightness(1.7); } }
+.flash-livemap-label { margin: 6px 0 0; min-height: 1.2em; }
+.flash-note-kept { border: 1px solid rgba(67,160,71,0.35); background: rgba(67,160,71,0.08); color: #bfe3c1; }
+.flash-done .flash-report-sec { text-align: left; }
+@media (prefers-reduced-motion: reduce) { .flash-map-active { animation: none; filter: brightness(1.4); } }
+
 /* ── serial monitor ────────────────────────────────────────────────────── */
 .flash-console-tall { max-height: 380px; min-height: 220px; }
 .flash-mon-status { font-size: 13.5px; }

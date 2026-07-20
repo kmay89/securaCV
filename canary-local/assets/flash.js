@@ -780,12 +780,26 @@ async function startFlash(opts) {
       }
     }
 
-    // 3) Write, with live progress + automatic chip MD5 verification.
+    // 2.5) The change map: we hold the board's current bytes (safety copy)
+    // and the image's bytes, so we can say exactly which regions this
+    // install touches — before a single byte is written.
+    let diff = null, settings = null;
+    const oldBytes = state.backup && state.backup.mac === state.mac ? state.backup.bytes : null;
+    if (oldBytes && !opts.isBackup) {
+      try {
+        diff = core.diffInstall(oldBytes, bytes);
+        settings = core.settingsVerdict(diff, hadSavedWifi(oldBytes));
+      } catch { diff = null; }
+    }
+
+    // 3) Write, with live progress + automatic chip MD5 verification —
+    // the map lights up region by region as the write cursor passes.
     if (eraseAll) {
       nextStep("erasing the whole chip");
       await esploader.eraseFlash();
     }
     nextStep("writing firmware");
+    const liveMap = diff ? box.attachMap(diff.rows, bytes.length, state.flashBytes || bytes.length) : null;
     const data = core.bytesToBinaryString(bytes);
     const eta = core.makeEtaTracker(bytes.length);
     await esploader.writeFlash({
@@ -798,18 +812,20 @@ async function startFlash(opts) {
       reportProgress: (_i, written, total) => {
         const p = eta.feed(written, performance.now());
         box.set(p.frac, progressMeta(written, total, p));
+        if (liveMap) liveMap.update(p.frac);
       },
       calculateMD5Hash: (image) => md5Raw(image),
     });
 
     box.stage("Verified — the chip holds exactly what we sent ✓");
     box.set(1, "");
+    if (liveMap) liveMap.update(1);
 
     // 4) Reset into the freshly-flashed app.
     try { await esploader.after("hard_reset"); } catch {}
 
     state.busy = false;
-    setPhase(phaseDone({ ...opts, backupName, backupFailed }));
+    setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings }));
   } catch (e) {
     state.busy = false;
     setPhase(flashError(e, opts));
@@ -870,6 +886,32 @@ function phaseDone(opts) {
     box.append(el("p", "fineprint",
       "The safety copy couldn’t be read off this board first — common when a board " +
       "is corrupted, and exactly why the rescue carried on without it."));
+  }
+
+  // What actually changed — the byte-verified answer, region by region.
+  if (opts.diff) {
+    const sec = el("div", "flash-report-sec");
+    sec.append(el("h3", null, "What this install changed"));
+    if (opts.settings) {
+      sec.append(el("p", opts.settings.kept ? "flash-note flash-note-kept" : "flash-note flash-note-soft",
+        opts.settings.text));
+    }
+    if (opts.diff.layoutChanged) {
+      sec.append(el("p", "fineprint", "The storage layout itself changed with this install — the map below is the new one."));
+    }
+    opts.diff.rows.forEach((r) => {
+      let text, tone = null;
+      if (r.verdict === "identical") { text = "unchanged — byte-for-byte the same"; tone = "ok"; }
+      else if (r.verdict === "untouched") { text = "not touched by this install"; tone = "ok"; }
+      else if (r.verdict === "wiped") { text = "reset to factory-fresh"; }
+      else if (r.before || r.after) { text = `updated: ${r.before || "empty"} → ${r.after || "?"}`; }
+      else { text = `updated (${r.changedPct || 1}% of its bytes changed)`; }
+      sec.append(reportRow(`${r.label} · ${plainRegionName(r)}`, text, tone));
+    });
+    box.append(sec);
+  } else if (opts.backupName || opts.backupFailed) {
+    box.append(el("p", "fineprint",
+      "No change map this time — it needs the safety copy to compare against."));
   }
 
   const row = el("div", "flash-row");
@@ -1521,6 +1563,19 @@ function phaseMonitor(port, opts = {}) {
   return box;
 }
 
+// Did the board have a saved WiFi before this install? Read from the safety
+// copy's NVS region — presence only, never the value.
+function hadSavedWifi(oldBytes) {
+  try {
+    const { entries } = core.parsePartitionTable(oldBytes.subarray(0x8000, 0x8c00));
+    const nvs = entries.find(core.isNvsPart);
+    if (!nvs) return false;
+    const items = core.parseNvs(oldBytes.subarray(nvs.offset, nvs.offset + nvs.size));
+    const s = core.witnessSummary(items);
+    return !!(s && s.wifiConfigured);
+  } catch { return false; }
+}
+
 // One consistent meta line under every progress bar: bytes, speed, and an
 // honest smoothed time estimate (blank until the rate settles).
 function progressMeta(done, total, p) {
@@ -1561,7 +1616,73 @@ function progressCard(title, subtitle) {
       fill.style.width = pct.toFixed(1) + "%";
       if (metaText != null) meta.textContent = metaText;
     },
+    // The live write map: the chip's regions, lighting up as the write
+    // cursor passes through them — Arduino's console line, but visual.
+    attachMap(rows, imageLen, flashLen) {
+      const wrap = el("div", "flash-livemap");
+      const barEl = el("div", "flash-map");
+      const segs = [];
+      rows.forEach((r) => {
+        const seg = el("span", "flash-map-seg flash-map-pending flash-map-" + liveKindClass(r));
+        seg.style.width = Math.max(1.2, (r.size / flashLen) * 100) + "%";
+        seg.title = `${r.label} · ${core.formatBytes(r.size)}`;
+        barEl.append(seg);
+        segs.push({ r, seg });
+      });
+      if (flashLen > imageLen) {
+        const rest = el("span", "flash-map-seg flash-map-free");
+        rest.style.flex = "1";
+        rest.title = "not touched by this install";
+        barEl.append(rest);
+      }
+      const label = el("p", "fineprint flash-livemap-label", "");
+      wrap.append(barEl, label);
+      bar.before(wrap);
+      return {
+        update(frac) {
+          const addr = Math.min(1, Math.max(0, frac)) * imageLen;
+          let activeRow = null;
+          segs.forEach(({ r, seg }) => {
+            if (r.offset >= imageLen) return; // never written
+            if (addr >= r.offset + r.size) {
+              seg.classList.remove("flash-map-pending", "flash-map-active");
+            } else if (addr > r.offset) {
+              seg.classList.add("flash-map-active");
+              seg.classList.remove("flash-map-pending");
+              activeRow = r;
+            }
+          });
+          if (activeRow) {
+            label.textContent = `now writing: ${activeRow.label} — ${plainRegionName(activeRow)}`;
+          } else if (frac >= 1) {
+            label.textContent = "every region written and verified ✓";
+          }
+        },
+      };
+    },
   };
+}
+
+// Plain-language names for regions in the live map and the change list.
+function plainRegionName(r) {
+  if (r.kind && r.kind.includes("bootloader")) return "the board's startup code and map";
+  if (r.type === 0x00) return "the firmware itself";
+  if (r.type === 0x01 && r.subtype === 0x02) return "your settings (WiFi, identity, witness chain)";
+  if (r.type === 0x01 && r.subtype === 0x00) return "the boot selector";
+  if (r.type === 0x01 && r.subtype === 0x03) return "crash-dump space";
+  if (/witness/i.test(r.label || "")) return "the tamper-evident witness log";
+  if (/fat|spiffs|littlefs/.test(r.kind || "")) return "file storage";
+  return "on-board data";
+}
+
+function liveKindClass(r) {
+  if (/witness/i.test(r.label || "")) return "witness";
+  if (r.type === 0x00) return "app";
+  if (r.type === 0x01 && r.subtype === 0x02) return "nvs";
+  if (r.type === 0x01 && r.subtype === 0x00) return "ota";
+  if (r.type === 0x01 && r.subtype === 0x03) return "core";
+  if (/fat|spiffs|littlefs/.test(r.kind || "")) return "fs";
+  return "data";
 }
 
 function errorBox(title, subtitle, fatal) {

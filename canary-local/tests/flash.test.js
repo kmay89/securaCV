@@ -486,6 +486,74 @@ test("sniffRegion recognizes the chip's own magic numbers", async () => {
   assert.strictEqual(sniffRegion(data), "stored data");
 });
 
+// ── install diff (what actually changes on the board) ──────────────────────
+// Synthetic flash images with a real partition table at 0x8000: nvs at
+// 0x9000 (0x1000), app at 0x10000 (0x10000), witness at 0x20000 (0x1000).
+function appDescAt(version, project) {
+  const b = Buffer.alloc(256, 0);
+  b.writeUInt32LE(0xabcd5432, 0);
+  b.write(version, 16, 32, "ascii");
+  b.write(project, 48, 32, "ascii");
+  return b;
+}
+
+function synthFlash({ version, wifi, imageOnly }) {
+  const size = imageOnly ? 0x20000 : 0x21000; // image stops before witness
+  const img = Buffer.alloc(size, 0xff);
+  Buffer.concat([
+    ptEntry({ type: 1, subtype: 2, offset: 0x9000, size: 0x1000, label: "nvs" }),
+    ptEntry({ type: 0, subtype: 0x10, offset: 0x10000, size: 0x10000, label: "app0" }),
+    ptEntry({ type: 1, subtype: 0x80, offset: 0x20000, size: 0x1000, label: "witness_log" }),
+  ]).copy(img, 0x8000);
+  img[0] = 0xe9; // bootloader-ish
+  if (wifi) img.fill(0x42, 0x9000, 0x9100); // pretend settings data
+  appDescAt(version, "canary_wap").copy(img, 0x10000 + 0x20);
+  img.fill(0x11, 0x10000 + 0x200, 0x10000 + 0x400); // some app body
+  if (!imageOnly) img.fill(0x77, 0x20000, 0x20040); // witness data on board
+  return new Uint8Array(img);
+}
+
+test("diffInstall: firmware updated, settings untouched, witness beyond image", async () => {
+  const { diffInstall } = await core();
+  const board = synthFlash({ version: "2.1.0", wifi: true, imageOnly: false });
+  const image = synthFlash({ version: "2.2.0", wifi: true, imageOnly: true });
+  // Make the new app body actually differ.
+  image.fill(0x22, 0x10000 + 0x200, 0x10000 + 0x400);
+  const d = diffInstall(board, image);
+  assert.ok(d && d.rows.length >= 4);
+  assert.strictEqual(d.layoutChanged, false);
+  const by = (l) => d.rows.find((r) => r.label === l);
+  assert.strictEqual(by("nvs").verdict, "identical", "same settings bytes → identical");
+  const app = by("app0");
+  assert.strictEqual(app.verdict, "changed");
+  assert.ok(/2\.1\.0/.test(app.before) && /2\.2\.0/.test(app.after), "version change named");
+  assert.strictEqual(by("witness_log").verdict, "untouched", "image never reaches it");
+});
+
+test("diffInstall: factory image wipes settings; verdict says so plainly", async () => {
+  const { diffInstall, settingsVerdict } = await core();
+  const board = synthFlash({ version: "2.1.0", wifi: true, imageOnly: false });
+  const image = synthFlash({ version: "2.2.0", wifi: false, imageOnly: true }); // nvs all 0xFF
+  const d = diffInstall(board, image);
+  const nvs = d.rows.find((r) => r.label === "nvs");
+  assert.strictEqual(nvs.verdict, "wiped");
+  const v = settingsVerdict(d, true);
+  assert.strictEqual(v.kept, false);
+  assert.ok(/WiFi is cleared/.test(v.text));
+  // And the keep case:
+  const same = diffInstall(board, synthFlash({ version: "2.1.0", wifi: true, imageOnly: true }));
+  const v2 = settingsVerdict(same, true);
+  assert.strictEqual(v2.kept, true);
+  assert.ok(/survive/.test(v2.text));
+});
+
+test("diffInstall returns null without any partition table to anchor on", async () => {
+  const { diffInstall } = await core();
+  const blankOld = new Uint8Array(0x40000).fill(0xff);
+  const rawApp = new Uint8Array(0x1000).fill(0xe9); // bare app bin, no table
+  assert.strictEqual(diffInstall(blankOld, rawApp), null);
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");
