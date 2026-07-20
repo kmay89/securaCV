@@ -213,15 +213,14 @@ impl AdapterHost {
     /// URLs, device paths, or payloads, matching the ingest path's rule that
     /// sealed records must not contain network identifiers.
     fn note_adapter_poll_error(&mut self, name: &str) {
-        let consecutive = {
+        let (consecutive, already_sealed) = {
             let o = self.outage.entry(name.to_string()).or_default();
             o.consecutive_errors = o.consecutive_errors.saturating_add(1);
-            if o.gap_sealed || o.consecutive_errors < ADAPTER_OUTAGE_FAILURE_THRESHOLD {
-                return;
-            }
-            o.gap_sealed = true;
-            o.consecutive_errors
+            (o.consecutive_errors, o.gap_sealed)
         };
+        if already_sealed || consecutive < ADAPTER_OUTAGE_FAILURE_THRESHOLD {
+            return;
+        }
 
         let bucket = match TimeBucket::now(self.config.bucket_size_secs) {
             Ok(b) => b,
@@ -244,6 +243,12 @@ impl AdapterHost {
             self.config.ruleset_hash,
         ) {
             Ok(_) => {
+                // Latch only after a durable write, so a transient append failure
+                // (db lock, disk full, clock skew) retries on the next poll error
+                // instead of leaving the outage permanently unrecorded.
+                if let Some(o) = self.outage.get_mut(name) {
+                    o.gap_sealed = true;
+                }
                 self.stats
                     .entry(name.to_string())
                     .or_default()
