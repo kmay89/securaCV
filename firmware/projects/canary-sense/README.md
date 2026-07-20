@@ -6,6 +6,12 @@ no microphone, no MAC surface — the raw radar IQ never leaves the radar module
 own DSP; the host MCU only ever sees pre-digested scalar claims over UART.
 
 Design + roadmap: [`docs/canary_sense_mr60bha2_design.md`](../../../docs/canary_sense_mr60bha2_design.md).
+Hardware deep-dive (chip, placement physics, power budget, bench flags):
+[`docs/hardware/mr60bha2_radar_notes.md`](../../../docs/hardware/mr60bha2_radar_notes.md).
+Try it before the bench: **the Sense Lab** (`canary-local/sense.html`) stages
+this firmware's wire protocol, FSM semantics, privacy chokepoint, placement
+geometry and power model in the browser — drift-gated against this project's
+source by `canary-local/tools/gen_sense.py`.
 
 > **Status: Phase 2 complete (signing witness).** On top of the Phase 0
 > sensing core (UART frame decoder + stall-safe presence/vitals FSMs,

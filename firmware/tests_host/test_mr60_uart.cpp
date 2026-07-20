@@ -477,6 +477,49 @@ void test_vitals_fsm_integration() {
     assert(e.stalled && fsm.lock() == VitalsLock::Lost);
     std::printf("PASS test_vitals_fsm_integration\n");
 }
+
+// Regression: on the real wire, presence/count/distance frames interleave
+// between every vitals report (and loop() ticks an empty frame when nothing
+// arrived at all). Those non-vitals ticks must NOT break the valid run — the
+// original tick() treated them as invalid observations, resetting
+// valid_since on every interleave, so the confirm window could never elapse
+// against real traffic and the lock was unreachable. (Found by the Sense Lab
+// bench, canary-local/sense.html, whose stream models the real frame mix.)
+void test_vitals_lock_survives_interleaved_presence() {
+    VitalsConfig cfg;  // 4000 confirm, 6000 lost
+    VitalsFSM fsm(cfg);
+    FrameParser p;
+
+    uint32_t t = 0;
+    fsm.reset(t);
+
+    // Seed the aggregate, then stream the realistic mix: presence frames at
+    // 10 Hz, an empty tick between them, vitals once a second.
+    (void)fsm.tick(decode_one(p, frame_breath(16.0f)), true, t);
+    VitalsEvent e = fsm.tick(decode_one(p, frame_heart(70.0f)), true, t);
+    assert(fsm.lock() == VitalsLock::Lost);
+
+    for (t = 100; t <= 5000; t += 100) {
+        if (t % 1000 == 0) {
+            (void)fsm.tick(decode_one(p, frame_breath(16.0f)), true, t);
+            e = fsm.tick(decode_one(p, frame_heart(70.0f)), true, t);
+        } else {
+            (void)fsm.tick(decode_one(p, frame_people(true)), true, t);
+            e = fsm.tick(Frame(), true, t);  // loop()'s empty-frame tick
+        }
+    }
+    assert(fsm.lock() == VitalsLock::Locked);
+    assert(e.bpm_valid && e.heart_bpm == 70 && e.breath_bpm == 16);
+
+    // The non-vitals ticks still honor immediate multi-person suppression...
+    e = fsm.tick(Frame(), /*single_target=*/false, t);
+    assert(!e.bpm_valid && e.heart_bpm == 0);
+
+    // ...and the lost deadline still fires through pure presence traffic.
+    e = fsm.tick(decode_one(p, frame_people(true)), true, t + 6001);
+    assert(fsm.lock() == VitalsLock::Lost);
+    std::printf("PASS test_vitals_lock_survives_interleaved_presence\n");
+}
 #endif
 
 }  // namespace
@@ -497,6 +540,7 @@ int main() {
     test_presence_fsm_integration();
 #ifdef CANARY_SENSE_VITALS
     test_vitals_fsm_integration();
+    test_vitals_lock_survives_interleaved_presence();
 #endif
     std::printf("ALL MR60 UART TESTS PASSED\n");
     return 0;

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Sense Lab — 60 GHz radar · canary.local</title>
+  <meta name="description" content="The Canary Sense placement and pipeline bench: the MR60BHA2 60 GHz radar's real wire protocol, the firmware's own FSM semantics, placement physics, the power lab, Canary Cards, and the display firmware watching it all — offline, drift-gated against the source." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+</head>
+<body>
+  <header id="hero" class="hub-hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="30" r="17" fill="none" stroke="#ffd44f" stroke-width="2.5" />
+        <path d="M32 13 A17 17 0 0 1 49 30" fill="none" stroke="#ffd44f" stroke-width="2.5" opacity="0.45" />
+        <path d="M32 6 A24 24 0 0 1 56 30" fill="none" stroke="#ffd44f" stroke-width="2" opacity="0.25" />
+        <circle cx="32" cy="30" r="4" fill="#ffd44f" />
+        <path d="M20 52 q6 -8 12 0 q6 8 12 0" fill="none" stroke="#8fd3a8" stroke-width="2.5" />
+      </svg>
+    </div>
+    <h1>The Sense Lab — 60 GHz radar</h1>
+    <p class="lede">
+      Meet the radar witness before you mount it: the MR60BHA2's real wire
+      protocol, the firmware's own presence and vitals state machines, a
+      placement bench grounded in the vital-sign radar literature, a power lab
+      that prices every claim in joules — and the display firmware watching it
+      all, live. It knows someone is there. It never knows who.
+    </p>
+    <div id="sense-versions" aria-live="polite"></div>
+    <p class="fineprint">
+      <a href="index.html">← the family</a> ·
+      <a href="boards.html">the Board Room</a> ·
+      <a href="homeassistant.html">the Hub</a> ·
+      <a href="wap.html">the WAP</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main id="sense">
+    <noscript><p class="muted">This bench needs JavaScript — everything it
+    stages is also written out in <code>docs/canary_sense_mr60bha2_design.md</code>
+    and <code>docs/hardware/mr60bha2_radar_notes.md</code>.</p></noscript>
+  </main>
+
+  <footer class="fineprint" id="foot">
+    <p>
+      Honest by construction: frame ids, checksums, FSM defaults, pins, the
+      privacy vocabulary, HA entities, physics constants and power rails are
+      parsed from the firmware and <code>docs/hardware/mr60bha2_radar_notes.md</code>
+      by <code>tools/gen_sense.py</code>, drift-checked in CI. The parser and
+      FSMs on this page are line-for-line ports of the firmware's own, pinned
+      by the same behaviors its host tests pin.
+    </p>
+  </footer>
+
+  <script type="module" src="assets/sense.js"></script>
+</body>
+</html>

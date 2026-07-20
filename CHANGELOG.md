@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### canary.local — the Sense Lab (the radar witness, placed right)
+
+- **`sense.html` — the MR60BHA2 placement + pipeline bench.** The radar
+  accepts no configuration commands (verified against the vendor library
+  and both ESPHome components), so the only knobs that exist are placement
+  and host-side judgement — the Lab stages exactly that: drag a person
+  through top-down/side views against the real 80°×80° sector, the live
+  CS_* range bands and the 1.5 m vitals envelope, with a quality meter
+  grounded in the vital-sign radar literature (U-curve optimum ≈ 0.7 m,
+  orientation projection, interference penalties).
+- **The pipeline, honest end to end.** Real wire bytes (SOF 0x01,
+  big-endian header, XOR-inverted checksums) stream through line-for-line
+  JS ports of the firmware's FrameParser and both FSMs — pinned in CI to
+  the same behaviors `firmware/tests_host/test_mr60_uart.cpp` pins — across
+  the privacy chokepoint (distance and BPM visibly read-and-dropped, phase
+  waveform/point-cloud frames counted `unknown`), into Ed25519-signed
+  events over the real v1 `sense` canonical.
+- **Firmware fix the bench found: vitals lock was unreachable.**
+  `VitalsFSM::tick()` treated every non-vitals frame as an invalid vitals
+  observation, so the interleaved presence/count/distance traffic of the
+  real wire reset the lock-confirm window forever. The FSM now data-guards
+  non-vitals frames (loss stays deadline-driven; multi-person suppression
+  stays immediate), with host + JS regression twins streaming the realistic
+  frame mix.
+- **Canary Cards (schema v1).** The standardized widget-card layer —
+  one HA-discovery entity, one card, on every surface
+  (`docs/standard/CANARY_CARDS.md`, reference renderer + validator in
+  `assets/canary-cards.js`): binary/stat/band/sparkline/event/trust kinds,
+  null-as-unknown, severity semantics, and provably-`absent` cards for
+  entities compiled out of a build (the presence-only BPM story, rendered).
+  The documented on-ramp for canary-display's dash/glance/mirror surfaces
+  and the companion app to stop rebuilding per-peripheral UI.
+- **On the glass.** The Lab stages its witness on the real canary-display
+  firmware (wasm) through the display's own MQTT dispatcher — the honest
+  gap (generic Witness rendering today, Canary Cards tomorrow) bannered.
+- **The power lab.** Rails calibrated to Seeed's published 0.5/0.8 W kit
+  envelope; levers (modem sleep, heartbeat cadence, LED, lux) price every
+  signed claim in joules and show the sensing share of the heat budget.
+- **Deep hardware dossier.** `docs/hardware/mr60bha2_radar_notes.md`:
+  the ADT6101P all the way down, the wire beyond what we decode, six new
+  bench flags (incl. a distance-unit conflict with ESPHome's cm reading),
+  placement physics with citations, and the power derivation — the
+  `SIM:` tables are the drift-gated source for the Lab's physics/power.
+- **Honest data path, pinned.** `tools/gen_sense.py` parses the firmware +
+  notes doc into `devices/sense.json` (sys.exit on drift, CI-gated);
+  `tests/sense.test.js` re-derives every fact and exercises the DOM-free
+  cores; `tests/sense_probe.mjs` drives the page in headless Chromium
+  (stream → signed event → breathing lock → flavor flip → stall path).
+
 ### canary.local — the physical test bench (the layer the firmware can't see)
 
 - **The Bench tab.** Display sheets gain a full physical test bench:
