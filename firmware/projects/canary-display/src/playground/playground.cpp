@@ -460,12 +460,19 @@ void playground_loop() {
   if (now - t_di >= DI_POLL_MS) {
     t_di = now;
     static uint8_t last_raw = 0xFF;
-    const uint8_t raw = canary::hal::expander_read_inputs();
-    if (raw == last_raw) {  // two consecutive identical reads = stable
-      di_update(&g.di0, (raw & ISO_IN_BIT_DI0) != 0, now, "doorbell");
-      di_update(&g.di1, (raw & ISO_IN_BIT_DI1) != 0, now, "intrusion");
+    uint8_t raw = 0;
+    // A failed/short expander read skips the sample entirely — with
+    // active-low inputs, a defaulted 0 would debounce two bus glitches
+    // into phantom doorbell/intrusion events and a DO0 ding (review
+    // catch). last_raw is left alone so the glitch also can't reset a
+    // real edge's debounce.
+    if (canary::hal::expander_read_inputs(&raw)) {
+      if (raw == last_raw) {  // two consecutive identical reads = stable
+        di_update(&g.di0, (raw & ISO_IN_BIT_DI0) != 0, now, "doorbell");
+        di_update(&g.di1, (raw & ISO_IN_BIT_DI1) != 0, now, "intrusion");
+      }
+      last_raw = raw;
     }
-    last_raw = raw;
     // Live hold timer while a channel is active (gap timing on the glass).
     if (g.di0.active) g.di0.active_ms = now - g.di0.last_edge_ms;
     if (g.di1.active) g.di1.active_ms = now - g.di1.last_edge_ms;

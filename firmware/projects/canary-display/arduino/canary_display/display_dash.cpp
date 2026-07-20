@@ -170,19 +170,24 @@ void backlight_night_set(uint16_t duty13) {
 // mirrors s_exio_state's role for the write-only chip.
 static uint8_t s_oc_state = 0x0F;   // all four OD channels released
 
-uint8_t expander_read_inputs() {
+bool expander_read_inputs(uint8_t* value) {
   // EXIO direction is global (WR_SET bit 0): flip to inputs, read RD_IO,
   // then restore output mode AND re-drive the latch — the control lines
   // (backlight/LCD_RST/TP_RST/SD_CS) ride their external pulls through
-  // the brief float.
+  // the brief float. A failed or short read reports false WITHOUT
+  // touching *value: with active-low inputs, a defaulted 0 would look
+  // exactly like "both DI channels energized" (review catch).
   Wire.beginTransmission(CH422G_ADDR_SYS);
   Wire.write(0x00);
-  if (Wire.endTransmission() != 0) return 0;
-  uint8_t v = 0;
-  if (Wire.requestFrom((int)CH422G_ADDR_IN, 1) == 1) v = (uint8_t)Wire.read();
-  ch422g_mode_output();
-  ch422g_write(s_exio_state);
-  return v;
+  if (Wire.endTransmission() != 0) return false;
+  const bool got = (Wire.requestFrom((int)CH422G_ADDR_IN, 1) == 1);
+  const uint8_t v = got ? (uint8_t)Wire.read() : 0;
+  // Restore output mode unconditionally — even a failed read must not
+  // leave the panel control lines floating as inputs.
+  const bool restored = ch422g_mode_output() && ch422g_write(s_exio_state);
+  if (!got || !restored) return false;
+  *value = v;
+  return true;
 }
 
 bool expander_od_set(uint8_t mask, bool sink) {
