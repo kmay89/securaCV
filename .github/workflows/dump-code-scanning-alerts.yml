@@ -1,0 +1,29 @@
+# Temporary diagnostic workflow: dumps open code scanning alerts to the job
+# log so they can be triaged from an environment without security_events API
+# access. Removed before merge.
+name: Dump code scanning alerts
+
+on:
+  push:
+    branches: [ "claude/code-scanning-vulnerabilities-vmh7ap" ]
+  workflow_dispatch:
+
+permissions:
+  security-events: read
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List open code scanning alerts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for page in 1 2 3 4 5; do
+            curl -sS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts?state=open&per_page=100&page=${page}" \
+              | jq -c '.[] | {number, rule: .rule.id, severity: .rule.security_severity_level // .rule.severity, desc: .rule.description, tool: .tool.name, path: .most_recent_instance.location.path, start: .most_recent_instance.location.start_line, end: .most_recent_instance.location.end_line, msg: .most_recent_instance.message.text}'
+          done
