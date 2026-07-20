@@ -10,6 +10,7 @@ Two hardware flavors of one app (selection rationale:
 |--------|----------|----------------|-----|
 | **watch** | XIAO ESP32-S3 + Seeed Round Display (1.28" 240×240 GC9A01, CST816S touch) | bedside table, desk | `canary-display-watch` |
 | **dash** | Waveshare ESP32-S3-Touch-LCD-4.3 (800×480 IPS, GT911 5-pt touch) | by the front door, kitchen wall | `canary-display-dash` |
+| **playground** | Waveshare ESP32-S3-Touch-LCD-4.3**B** (dash hardware + isolated DI/DO, RS485, CAN, I2C terminals) | the workbench — a safe guided peripheral test mode, no network ([doc](../../../docs/hardware/dev_playground_43b.md)) | `canary-display-playground` |
 
 Companion docs: [BOM](../../../docs/hardware/display_bom.md) ·
 [UX design goals](../../../docs/hardware/display_ux_design.md) ·

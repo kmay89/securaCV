@@ -13,10 +13,9 @@ on:
     paths:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
-      - "firmware/projects/canary-vision/**"
+      - "firmware/projects/canary-sense/**"
       - "docs/getting_started_canary.md"
-      - "docs/hardware/grove_vision_ai_v2_guide.md"
-      - "docs/hardware/canary_vision_getting_started.md"
+      - "docs/canary_sense_mr60bha2_design.md"
       - "src/vault/**"
       - "src/break_glass/**"
       - "src/crypto/signatures.rs"
@@ -27,6 +26,7 @@ on:
       - "firmware/projects/canary-display/**"
       - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
+      - "firmware/boards/xiao-esp32c6-mr60/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
       - "firmware/flavors.json"
@@ -43,10 +43,9 @@ on:
     paths:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
-      - "firmware/projects/canary-vision/**"
+      - "firmware/projects/canary-sense/**"
       - "docs/getting_started_canary.md"
-      - "docs/hardware/grove_vision_ai_v2_guide.md"
-      - "docs/hardware/canary_vision_getting_started.md"
+      - "docs/canary_sense_mr60bha2_design.md"
       - "src/vault/**"
       - "src/break_glass/**"
       - "src/crypto/signatures.rs"
@@ -57,6 +56,7 @@ on:
       - "firmware/projects/canary-display/**"
       - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
+      - "firmware/boards/xiao-esp32c6-mr60/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
       - "firmware/flavors.json"
@@ -94,6 +94,7 @@ jobs:
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/sense.test.js
           node --test canary-local/tests/vault.test.js
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
@@ -131,6 +132,13 @@ jobs:
           python3 canary-local/tools/gen_vision.py
           if ! git diff --exit-code -- canary-local/devices/vision.json; then
             echo "::error::generated Vision data stale — run canary-local/tools/gen_vision.py and commit (the firmware moved)"
+            exit 1
+          fi
+      - name: Sense data drift (parsed from the canary-sense firmware + design doc)
+        run: |
+          python3 canary-local/tools/gen_sense.py
+          if ! git diff --exit-code -- canary-local/devices/sense.json; then
+            echo "::error::generated Sense data stale — run canary-local/tools/gen_sense.py and commit (the firmware moved)"
             exit 1
           fi
       - name: Vault data drift (parsed from src/vault, src/break_glass + specs)
@@ -209,6 +217,8 @@ jobs:
         run: node canary-local/tests/wap_probe.mjs
       - name: Vision probe — two ports, model load + preview, boot, MQTT, aim
         run: node canary-local/tests/vision_probe.mjs
+      - name: Sense probe — radar lab, serial, MQTT + flavor-gated entities
+        run: node canary-local/tests/sense_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs
       - name: Build both flavors from THIS tree

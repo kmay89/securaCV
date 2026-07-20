@@ -1445,3 +1445,80 @@ button.ghost.small.bench-ff { font-size: 12px; }
   .vis-ports-diagram { position: static; }
   .vis-ports-tasks, .vis-ws-models, .vis-preview-controls { grid-template-columns: 1fr; }
 }
+/* ══ The Sense page (sense.html) — radar school ══════════════════════════ */
+
+/* source badges — where a claim comes from */
+.sense-src { display: inline-block; font-size: 10px; letter-spacing: 0.04em; padding: 2px 8px;
+  border-radius: 999px; border: 1px solid; vertical-align: middle; white-space: nowrap; }
+.sense-src-repo { color: #6bd06f; border-color: rgba(67, 160, 71, 0.45); background: rgba(67, 160, 71, 0.10); }
+.sense-src-seeed { color: #67c7f5; border-color: rgba(3, 169, 244, 0.4); background: rgba(3, 169, 244, 0.08); }
+.sense-src-esphome { color: #b8a6f5; border-color: rgba(140, 110, 245, 0.4); background: rgba(140, 110, 245, 0.08); }
+.sense-src-community { color: #ffb04d; border-color: rgba(251, 140, 0, 0.4); background: rgba(251, 140, 0, 0.08); }
+
+/* the device section */
+.sense-device .wap-plug-side { min-width: 0; }
+.sense-leds { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 8px 0; }
+.sense-led { border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px; display: grid; gap: 3px; font-size: 13px; }
+.sense-led i { width: 14px; height: 14px; border-radius: 50%; display: inline-block; opacity: 0.45; transition: all 0.25s; }
+.sense-led i.on { opacity: 1; box-shadow: 0 0 14px currentColor; }
+.sense-proto { margin-top: 14px; }
+
+/* provisioning */
+.sense-prov .wap-cmds { margin-top: 6px; }
+.sense-secrets .wap-fact-k { min-width: 170px; }
+.sense-flavors { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 8px 0 14px; }
+.sense-flavor { padding: 12px 14px; display: grid; gap: 5px; font-size: 13px; cursor: default; }
+.sense-nvs { margin-top: 14px; }
+.sense-trackb { margin-top: 16px; }
+
+/* the placement lab */
+.sense-lab { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; align-items: start; }
+.sense-lab-stage { position: relative; border: 1px solid var(--edge); border-radius: var(--radius);
+  background: radial-gradient(700px 340px at 18% 50%, #131b16 0%, #0b0d10 70%); overflow: hidden; }
+.sense-lab-canvas { display: block; width: 100%; height: auto; touch-action: none; cursor: grab; }
+.sense-lab-canvas:active { cursor: grabbing; }
+.sense-lab-pillrow { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.sense-lab-led { width: 16px; height: 16px; border-radius: 50%; background: #e0a03c; box-shadow: 0 0 12px rgba(224, 160, 60, 0.5); transition: all 0.3s; }
+.sense-lab-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.sense-toggle { display: grid; gap: 2px; text-align: left; padding: 8px 12px; cursor: pointer; border-radius: 12px; }
+.sense-toggle.on { border-color: var(--canary); background: rgba(255, 212, 79, 0.08); }
+.sense-toggle strong { font-size: 13px; }
+
+/* placement + use cases */
+.sense-mounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; margin: 10px 0; }
+.sense-mount { padding: 14px 16px; display: grid; gap: 8px; cursor: default; align-content: start; }
+.sense-mount .wap-fact-k { min-width: 74px; }
+.sense-avoid details { margin-bottom: 8px; }
+
+/* tuning */
+.sense-knobs { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; margin: 10px 0 18px; }
+.sense-knob { padding: 13px 15px; display: grid; gap: 6px; cursor: default; align-content: start; }
+.sense-knob-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sense-knob-val { color: var(--canary); }
+.sense-kv strong { color: #c9c9c9; }
+.sense-errs details { margin-bottom: 8px; }
+.sense-err-kind { display: inline-block; font-size: 10.5px; padding: 2px 8px; border-radius: 6px; margin-right: 6px; }
+.sense-err-falsepositive .sense-err-kind { background: rgba(251, 140, 0, 0.15); color: #ffb04d; }
+.sense-err-falsenegative .sense-err-kind { background: rgba(3, 169, 244, 0.15); color: #67c7f5; }
+.sense-err-wrongvalue .sense-err-kind { background: rgba(229, 57, 53, 0.15); color: #ff7a76; }
+
+/* capability + reality tables */
+.sense-captable { border: 1px solid var(--edge); border-radius: 12px; overflow: hidden; margin: 10px 0; font-size: 13px; }
+.sense-caprow { display: grid; grid-template-columns: 1.1fr 1fr 1fr 1.1fr; gap: 10px; padding: 8px 14px; border-top: 1px solid rgba(255,255,255,0.05); align-items: baseline; }
+.sense-caprow:first-child { border-top: 0; }
+.sense-caphead { background: var(--surface); color: var(--muted); font-size: 11.5px; letter-spacing: 0.04em; }
+.sense-reality .sense-caprow { grid-template-columns: 0.8fr 1.9fr auto; }
+.sense-reality { margin-top: 22px; }
+
+/* HA entity flavors */
+.sense-ent-well { border-left: 2px solid rgba(140, 110, 245, 0.6); padding-left: 8px; }
+.sense-ents .subtabs { margin-bottom: 8px; }
+
+@media (max-width: 860px) {
+  .sense-lab { grid-template-columns: 1fr; }
+  .sense-caprow { grid-template-columns: 1fr 1fr; }
+  .sense-caprow > :nth-child(3), .sense-caprow > :nth-child(4) { grid-column: auto; }
+}
+
+/* sense page container (the workshop's width — the lab wants room) */
+#sense { max-width: 1180px; margin: 0 auto 90px; padding: 0 24px; }

@@ -638,6 +638,22 @@ export function detectBrowser(ua, maxTouchPoints = 0) {
   return { id: "other", label: "this browser", icon: "🌐", mobile: false };
 }
 
+// ── release channels (docs/RELEASE_PROCESS.md) ─────────────────────────────
+// The dev channel's one stable address: the rolling fw-dev-latest prerelease
+// that CI re-points on every fw-v*-dev.*/-rc.* tag. This is a fixed
+// first-party constant, deliberately NOT routed through manifestOverrideUrl
+// (which guards arbitrary URLs) — ?channel=dev can only ever mean this URL.
+export const DEV_FLASH_MANIFEST_URL =
+  "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
+
+export function channelFromSearch(search) {
+  try {
+    return new URLSearchParams(search || "").get("channel") === "dev" ? "dev" : "release";
+  } catch {
+    return "release";
+  }
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.

@@ -1,0 +1,109 @@
+# Release Process — dev and release channels
+
+The single source of truth for shipping firmware. One mechanism, two
+channels, gated **structurally** (at the manifest layer), not by client-side
+filtering. Companion to `docs/firmware_ota.md` (engine + signing details) and
+`docs/design/usb_evidence_drive.md` (drop-file updates ride the same
+artifacts).
+
+## The model in one paragraph
+
+Git tags are the only control surface. A stable tag (`fw-vX.Y.Z`) publishes a
+normal GitHub Release: `releases/latest` moves, and every default device —
+which polls `releases/latest/download/manifest-<product>.json` — sees the
+update on its next daily check. A dev tag (`fw-vX.Y.Z-dev.N` or `-rc.N`)
+publishes a GitHub **prerelease**: `releases/latest` does not move (GitHub
+guarantees this), so release-channel devices and their Home Assistant update
+entities *cannot* learn it exists — there is nothing to hide because nothing
+arrives. The same CI run mirrors the prerelease's **manifests** to a rolling
+`fw-dev-latest` release, which is the dev channel's one stable address.
+
+Dev builds are **full production builds** — same features, same signing key,
+same workflow. The only difference is the version suffix. You test exactly
+what users will run.
+
+## Version + tag grammar
+
+| Intent | Source version (e.g. WAP) | Tag | GitHub | Who sees it |
+|---|---|---|---|---|
+| Stable release | `2.3.0-wap` | `fw-v2.3.0` | Release; `latest` moves | everyone |
+| Release candidate | `2.3.0-wap.rc.1` | `fw-v2.3.0-rc.1` | Prerelease | dev channel only |
+| Dev iteration | `2.3.1-wap.dev.2` | `fw-v2.3.1-dev.2` | Prerelease | dev channel only |
+
+Rules:
+- The numeric triple in the tag and in every variant's source version must
+  match — CI's version-string guard greps each binary for its version and
+  fails the release if the source wasn't bumped.
+- Prerelease markers are the exact segments `dev.N` / `rc.N` (dot-number).
+  Variant suffixes (`-wap`) are not prerelease markers. Ordering is enforced
+  by `securacv_version_compare`: **stable > rc.N > dev.N** at an equal
+  triple, numeric within a band — so promoting a build offers a real update
+  to every dev-channel device, and anti-rollback floors stay coherent.
+
+## Shipping — the whole ceremony
+
+```sh
+# 0) preflight (any release, either channel)
+firmware/scripts/check_ota_sync.sh           # engine copies in sync
+make -C firmware/projects/canary-wap/tests_host run   # host suites green
+# bump FIRMWARE_VERSION / CANARY_FW_VERSION in every variant, update CHANGELOG
+
+# 1) dev iteration
+git tag fw-v2.3.1-dev.2 && git push origin fw-v2.3.1-dev.2
+
+# 2) promote the SAME commit to stable once it has soaked
+git tag fw-v2.3.1 <same-sha> && git push origin fw-v2.3.1
+```
+
+CI does everything else: builds all seven products, verifies the signing key
+matches the committed public key, signs every image and manifest, runs
+`ota_release.py verify` over its own output, greps binaries for the version
+string, generates the browser-flasher factory images + `manifest-flash.json`,
+and publishes. There are no manual artifact steps — if you did something by
+hand, that's the bug.
+
+Promotion is a rebuild of the same commit from the same pinned workflow —
+the honest guarantee is "same source, same toolchain, re-verified
+signatures". (Bit-identical artifact promotion is a possible future
+hardening; don't claim it until it's implemented.)
+
+## Opting a device into the dev channel
+
+The engine already has the mechanism: an NVS-persisted manifest-URL override
+(`securacv_ota_set_manifest_url`, surfaced via the device's OTA settings
+API). Point it at:
+
+```
+https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-<product>.json
+```
+
+Clearing the override returns the device to the release channel. Because the
+override lives in the device's own NVS, the choice is local, per-device, and
+invisible to every other device. HA update entities announce only what the
+device's channel manifest offers.
+
+The Lab flasher's dev toggle (`flash.html?channel=dev`) reads the same
+`fw-dev-latest` flash manifest, with a visible banner. The default page is
+release-only.
+
+## Rollback (when a stable release goes wrong)
+
+1. Do **not** delete the release or its artifacts — devices mid-download and
+   audit trails depend on published assets staying put.
+2. Tag the previous good commit as a new, higher version
+   (`fw-v2.3.2` = re-issue of 2.3.1's content with a bumped version) — the
+   anti-rollback floor on devices refuses versions that go backwards, so
+   roll *forward* to old content rather than backwards in version.
+3. For the dev channel nothing special is needed: the next dev tag re-points
+   `fw-dev-latest`.
+
+## Invariants CI enforces (don't fight them)
+
+- Signing key in CI must match the committed `ota_release_key.h` (rotation
+  window via `ota_release_key_previous.h`).
+- Every manifest signature is re-verified after generation.
+- Binary version strings must match the tag's version.
+- `canary-local` catalog drift gates (`gen_flash.py` etc.) keep the flasher
+  honest against the firmware tree.
+- Prerelease tags can never move `releases/latest` — that's GitHub's
+  guarantee, and it is the entire channel-privacy mechanism.

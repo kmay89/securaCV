@@ -157,6 +157,7 @@
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
 #include "csi_witness_payload.h" // Builds the witness-chain payload string
 #include <ble_events_module.h>   // spec §10 BLE event chokepoint helpers
+#include "usb_evidence_drive.h" // USB evidence drive / update drop-zone (opt-in build)
 #include "setup_page_html.h"     // Static captive-portal "open canary.local" page
 #include "captive_probe.h"       // Pure per-platform connectivity-probe response policy
 extern "C" {
@@ -9337,6 +9338,7 @@ static void print_help() {
   Serial.println("│ r     : Show data management stats  │");
   Serial.println("│ b     : Show battery status         │");
   Serial.println("│ p     : Show power policy           │");
+  Serial.println("│ u     : USB drive (evidence/update)  │");
   Serial.println("└─────────────────────────────────────┘");
 }
 
@@ -9412,6 +9414,23 @@ static void handle_serial_commands() {
         Serial.println("Power policy not enabled");
         #endif
         break;
+      case 'u': {
+        // USB drive modes: OFF -> EVIDENCE (SD read-only) -> UPDATE
+        // (signed drop-zone) -> OFF. Honest no-op on non-OTG builds.
+        static bool usb_drive_init = false;
+        if (!usb_drive_init) {
+          usb_evidence_drive::Config c;
+          c.product = OTA_PRODUCT;
+          c.running_version = FIRMWARE_VERSION;
+          c.sd_quiesce = nullptr;  // Phase 2: wire real SD flush/close hooks
+          c.sd_resume = nullptr;
+          usb_evidence_drive::begin(c);
+          usb_drive_init = true;
+        }
+        usb_evidence_drive::cycle_mode();
+        Serial.println(usb_evidence_drive::status_line());
+        break;
+      }
       case '\r':
       case '\n':
       case ' ':
@@ -10842,6 +10861,9 @@ void loop() {
 
   // Handle serial commands
   handle_serial_commands();
+
+  // USB evidence drive: apply deferred host events (eject -> verify/install)
+  usb_evidence_drive::poll();
 
   // Check boot button:
   //   Short press (<2s) = open provisioning gate

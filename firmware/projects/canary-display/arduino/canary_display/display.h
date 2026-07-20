@@ -46,4 +46,28 @@ struct TouchSample {
 // Poll the touch controller (cheap; called every loop pass).
 TouchSample touch_read();
 
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+// ── Isolated IO (Waveshare 4.3B terminal block, via the CH422G) ─────────
+// Provided by display_dash.cpp only when the board pin map declares
+// HAS_ISOLATED_IO (waveshare-esp32s3-lcd43b). The dev playground is the
+// only consumer today (docs/hardware/dev_playground_43b.md).
+
+// Read EXIO0..7 as a raw bit snapshot into *value (mask with
+// ISO_IN_BIT_*). Returns false — leaving *value untouched — on any I2C
+// failure or short read, so a bus glitch can never masquerade as an
+// active-low input edge (review catch). The CH422G's EXIO direction is
+// global, so this briefly flips the expander to input mode and restores
+// the output latch afterwards — call at a bounded rate (the playground
+// polls 50 Hz) and VERIFY no backlight flicker at the bench.
+bool expander_read_inputs(uint8_t* value);
+
+// Drive an isolated open-drain output (mask with ISO_OUT_BIT_*).
+// sink=true conducts (pulls the DO terminal low through the optocoupler),
+// sink=false releases it. Latch polarity carries a VERIFY note in pins.h.
+bool expander_od_set(uint8_t mask, bool sink);
+
+// Last written OD latch (bit HIGH = released) — playground UI truth.
+uint8_t expander_od_state();
+#endif  // HAS_ISOLATED_IO
+
 }  // namespace canary::hal
