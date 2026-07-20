@@ -2,7 +2,7 @@
 # debian:bookworm-slim runtime stage. The locked gstreamer/glib crates
 # declare rust-version 1.92, so keep this at or above that (pinned in
 # lockstep with docker/sidecar/Dockerfile).
-FROM rust:1.93-slim-bookworm AS build
+FROM rust:1.93-slim-bookworm@sha256:5b9332190bb3b9ece73b810cd1f1e9f06343b294ce184bcb067f0747d7d333ea AS build
 
 # libssl-dev: the bundled SQLCipher (rusqlite bundled-sqlcipher) compiles
 # against OpenSSL headers and links libcrypto dynamically.
@@ -31,7 +31,7 @@ COPY README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md ./
 ARG CARGO_FEATURES=rtsp-gstreamer
 RUN cargo build --release --features "${CARGO_FEATURES}"
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 # libssl3 provides the libcrypto.so.3 the SQLCipher-linked binary loads at
 # runtime (listed explicitly rather than relying on transitive dependencies).
