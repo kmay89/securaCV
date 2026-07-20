@@ -34,7 +34,9 @@ static const char* kBase = "https://securacv.com/canary";
 // ── 1. Consent state machine ────────────────────────────────────────────────
 
 static void test_disabled_never_types() {
-  // From Off, nothing — not even Confirm — can make it emit.
+  // From Off, nothing — not even Confirm (a physical press) — can make it emit.
+  // This is the anti-BadUSB core: a device on which the feature is off types
+  // nothing regardless of what happens on the button or the console.
   CHECK(step(State::Off, Event::Request).next == State::Off);
   CHECK(step(State::Off, Event::Confirm).emit == false);
   CHECK(step(State::Off, Event::Confirm).next == State::Off);
@@ -43,29 +45,32 @@ static void test_disabled_never_types() {
   CHECK(step(State::Off, Event::Enable).next == State::Idle);
 }
 
-static void test_confirm_only_types_after_arming() {
-  // A bare Confirm from Idle must NOT type — this is the anti-BadUSB core.
-  Outcome idle_confirm = step(State::Idle, Event::Confirm);
-  CHECK(idle_confirm.emit == false);
-  CHECK(idle_confirm.next == State::Idle);
+static void test_one_tap_confirm_types() {
+  // Frictionless: a physical BOOT press (Confirm) from Idle types directly —
+  // no serial console, no pre-arming needed. The press IS the consent, and a
+  // dropped device won't press its own button, so this stays anti-BadUSB.
+  Outcome tap = step(State::Idle, Event::Confirm);
+  CHECK(tap.next == State::Launched);
+  CHECK(tap.emit == true);
 
-  // The only path that types: Idle --Request--> Armed --Confirm--> Launched.
+  // A console Request still offers the announced-preview path (Armed), and a
+  // press then confirms it — but Request ALONE never types.
   Outcome armed = step(State::Idle, Event::Request);
   CHECK(armed.next == State::Armed);
-  CHECK(armed.announce == true);   // the URL is announced before any typing
+  CHECK(armed.announce == true);
   CHECK(armed.emit == false);
-
-  Outcome launched = step(State::Armed, Event::Confirm);
-  CHECK(launched.next == State::Launched);
-  CHECK(launched.emit == true);
+  Outcome confirmed = step(State::Armed, Event::Confirm);
+  CHECK(confirmed.next == State::Launched);
+  CHECK(confirmed.emit == true);
 }
 
 static void test_timeout_and_cancel_relock() {
   CHECK(step(State::Armed, Event::Timeout).next == State::Idle);
   CHECK(step(State::Armed, Event::Timeout).relock == true);
   CHECK(step(State::Armed, Event::Cancel).next == State::Idle);
-  // After a timeout re-lock, a stray Confirm does nothing.
-  CHECK(step(State::Idle, Event::Confirm).emit == false);
+  // Timeout/Cancel only act on an armed preview; they never emit.
+  CHECK(step(State::Armed, Event::Timeout).emit == false);
+  CHECK(step(State::Armed, Event::Cancel).emit == false);
 }
 
 static void test_unplug_relocks_but_keeps_disabled() {
@@ -74,10 +79,13 @@ static void test_unplug_relocks_but_keeps_disabled() {
   CHECK(step(State::Off, Event::Unplug).next == State::Off);
 }
 
-static void test_relaunch_requires_reconfirm() {
-  // Launched is one-shot: a second Confirm without a new Request won't retype.
-  CHECK(step(State::Launched, Event::Confirm).emit == false);
-  // Re-arming is allowed (owner wants the page again) and re-announces.
+static void test_relaunch_on_each_press() {
+  // Frictionless: each deliberate physical press re-opens the page — tapping
+  // BOOT again from Launched types again (every press is its own consent).
+  Outcome again = step(State::Launched, Event::Confirm);
+  CHECK(again.next == State::Launched);
+  CHECK(again.emit == true);
+  // A console Request from Launched still offers the announced-preview path.
   Outcome rearm = step(State::Launched, Event::Request);
   CHECK(rearm.next == State::Armed);
   CHECK(rearm.announce == true);
@@ -178,12 +186,49 @@ static void test_plan_refuses_bad_url() {
   CHECK(p.url[0] == '\0');   // nothing to type
 }
 
+// ── 5. START-HERE link files (zero-touch, zero-injection) ───────────────────
+
+static void test_start_here_html() {
+  char buf[512];
+  const char* url = "https://securacv.com/canary?d=x&r=onboard";
+  size_t n = build_start_here_html(url, kBase, buf, sizeof(buf));
+  CHECK(n > 0);
+  CHECK(std::strstr(buf, "http-equiv=\"refresh\"") != nullptr);
+  // The '&' query separator is escaped for well-formed HTML.
+  CHECK(std::strstr(buf, "d=x&amp;r=onboard") != nullptr);
+  CHECK(std::strstr(buf, "d=x&r=onboard") == nullptr);
+}
+
+static void test_url_shortcut() {
+  char buf[256];
+  size_t n = build_url_shortcut("https://securacv.com/canary?d=x", kBase, buf, sizeof(buf));
+  CHECK(n > 0);
+  CHECK(std::strcmp(buf, "[InternetShortcut]\r\nURL=https://securacv.com/canary?d=x\r\n") == 0);
+}
+
+static void test_webloc_escapes_and_wraps() {
+  char buf[512];
+  size_t n = build_webloc("https://securacv.com/canary?d=x&r=onboard", kBase, buf, sizeof(buf));
+  CHECK(n > 0);
+  CHECK(std::strstr(buf, "<plist") != nullptr);
+  CHECK(std::strstr(buf, "<string>https://securacv.com/canary?d=x&amp;r=onboard</string>") != nullptr);
+}
+
+static void test_link_files_refuse_bad_url() {
+  char buf[256];
+  // A disallowed URL yields an empty file from every builder — never written.
+  CHECK(build_start_here_html("https://evil.example/x", kBase, buf, sizeof(buf)) == 0);
+  CHECK(buf[0] == '\0');
+  CHECK(build_url_shortcut("http://securacv.com/canary", kBase, buf, sizeof(buf)) == 0);
+  CHECK(build_webloc("https://securacv.com/canary; rm", kBase, buf, sizeof(buf)) == 0);
+}
+
 int main() {
   test_disabled_never_types();
-  test_confirm_only_types_after_arming();
+  test_one_tap_confirm_types();
   test_timeout_and_cancel_relock();
   test_unplug_relocks_but_keeps_disabled();
-  test_relaunch_requires_reconfirm();
+  test_relaunch_on_each_press();
   test_arm_window();
   test_build_help_url();
   test_url_sanitizes_injection();
@@ -193,6 +238,10 @@ int main() {
   test_manual_plan_types_url_only();
   test_os_methods_carry_only_help_url();
   test_plan_refuses_bad_url();
+  test_start_here_html();
+  test_url_shortcut();
+  test_webloc_escapes_and_wraps();
+  test_link_files_refuse_bad_url();
 
   if (g_failures == 0) {
     std::printf("PASS test_usb_onboard_logic (all assertions)\n");

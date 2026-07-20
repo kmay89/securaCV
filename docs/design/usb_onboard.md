@@ -37,45 +37,61 @@ These are enforced in host-tested pure logic
 `firmware/tests_host/test_usb_onboard_logic.cpp`), not just asserted in prose:
 
 1. **It never types on its own.** Enumerating does nothing. The HID keyboard
-   emits keystrokes only on the `CONFIRM` edge of the consent state machine,
-   which is reachable only from `ARMED`, which is reachable only from an
-   explicit owner `REQUEST` (the console `u` key). `step(IDLE, CONFIRM)` does
-   not type — pinned by `test_confirm_only_types_after_arming`.
-2. **It announces first.** `REQUEST` prints, in plain text on the console, the
-   exact URL it will type and opens a **15-second** arming window. Any other
-   key, a timeout, or an unplug re-locks it. The physical **BOOT** button is the
-   only confirmation.
-3. **One fixed destination, validated twice.** The only thing the keyboard can
-   type is the compile-time `SECURACV_HELP_URL_BASE`
-   (`https://securacv.com/canary`). `build_launch_plan()` refuses any URL that
-   fails `is_allowed_help_url()` — a positive-character allow-list that admits
-   only `https://<help-origin>…` with URL-safe characters and no shell
-   metacharacter — so even a corrupted device id can never become a typed
-   command. Pinned by `test_allowlist_rejects_everything_else` and
-   `test_plan_refuses_bad_url`.
+   emits keystrokes only on the `Confirm` edge of the consent state machine — a
+   physical **BOOT** press. `step(Off, Confirm)` never types (feature off) and a
+   console `Request` alone never types; pinned by `test_disabled_never_types`
+   and `test_one_tap_confirm_types`. A dropped device won't press its own
+   button, which is what keeps a self-typing keyboard from being a drop attack.
+2. **The frictionless open is injection-free.** The default way to "open the
+   website on plug-in" is *not* the keyboard at all: the firmware drops a
+   `START-HERE.html` (+ Windows `.url` + macOS `.webloc`) at the root of the
+   read-only drive. Plug in, open the obvious file, done — no console, no
+   keystrokes. The keyboard is the *one-tap* convenience on top (tap BOOT and it
+   types the URL), not the primary path.
+3. **One fixed destination, validated twice.** The only thing the keyboard — or
+   a START-HERE file — can carry is the compile-time `SECURACV_HELP_URL_BASE`
+   (`https://securacv.com/canary`). `build_launch_plan()` and every link-file
+   builder refuse any URL that fails `is_allowed_help_url()` — a
+   positive-character allow-list that admits only `https://<help-origin>…` with
+   URL-safe characters and no shell metacharacter — so even a corrupted device
+   id can never become a typed command or a booby-trapped shortcut. Pinned by
+   `test_allowlist_rejects_everything_else`, `test_plan_refuses_bad_url`, and
+   `test_link_files_refuse_bad_url`.
 4. **The drive is read-only.** The MSC LUN's write callback always fails; the
    host can copy evidence off but cannot alter or erase it.
 5. **Off by default, disableable.** `FEATURE_USB_ONBOARD=0` everywhere except the
    opt-in profile; even there the default launch method is `MANUAL` (type the
-   URL as text, the person presses Enter — no OS hotkey, no automation).
+   URL as text, the person presses Enter — no OS hotkey). Fully hands-off
+   auto-typing exists only behind the separate, default-off
+   `USB_ONBOARD_AUTOLAUNCH` compile flag (see below).
 
-## What the person experiences
+## What the person experiences (frictionless by default)
 
 1. Plug the Canary into a computer. It appears as a serial device and (if the
-   SD is mounted) a read-only drive named `CANARY-EVIDENCE`. **Nothing types.**
-2. Open the serial console (115200 baud) and press `u`. The console prints:
+   SD is mounted) a **read-only drive** with a `START-HERE.html` /
+   `Open-Canary-Help.url` / `Open-Canary-Help.webloc` at its root. **Nothing
+   types.**
+2. **Zero-touch:** open `START-HERE` from the drive → the browser goes to
+   `securacv.com/canary?d=<device-id>&r=onboard`. No console, no button, no HID.
+3. **One-tap:** or just tap the physical **BOOT** button → the keyboard types
+   the URL (and, for the OS launch methods, opens the browser). One deliberate
+   action, no serial console.
+4. **Console (optional preview):** power users can press `u` on the serial
+   console for an announced preview + a 15-second armed window, then confirm
+   with BOOT — useful when choosing the OS launch method.
 
-   ```
-   === Open help page? ===
-     Method : manual (type URL, you press Enter)
-     Will type: https://securacv.com/canary?d=<device-id>&r=onboard
-     Nothing is typed until you press the physical BOOT button.
-     Press any other key to cancel. Auto-cancels in 15s.
-   ```
-3. Press **BOOT** (short press). The keyboard types the URL (and, for the OS
-   launch methods, opens the browser). The person lands on
-   `securacv.com/canary`, which explains file browsing, recovery, and unsealing
-   — and opens the relevant section when the URL carries `&r=recover` / `&r=unseal`.
+Either way the person lands on `securacv.com/canary`, which explains file
+browsing, recovery, and unsealing — and opens the relevant section when the URL
+carries `&r=recover` / `&r=unseal`.
+
+### Fully hands-off (opt-in): `USB_ONBOARD_AUTOLAUNCH`
+
+For a genuinely zero-interaction auto-open, `-DUSB_ONBOARD_AUTOLAUNCH=1` makes
+the device auto-fire the launch once, a few seconds after enumeration, with no
+button press. This is real HID auto-typing — the BadUSB shape — so it ships
+**off**; the START-HERE file gives the same "it just opens" feel without
+injecting into whatever machine the device is plugged into. Enable it only for
+devices and hosts you control.
 
 ## Console commands (added)
 
