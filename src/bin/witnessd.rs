@@ -10,7 +10,7 @@
 
 use anyhow::{anyhow, Result};
 use std::io::IsTerminal;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -73,13 +73,40 @@ fn main() -> Result<()> {
         Kernel::open(&cfg)?
     };
 
+    // Boot-time chain-tail verification (K4 / FR-8). Startup used to append onto
+    // whatever tail existed with no crypto check, so a corrupted or tampered tail
+    // was only caught at the next manual `/verify`. Verify the sealed log — the
+    // latest checkpoint and the chain through the tail — BEFORE extending it. If
+    // it does not verify, enter report-but-not-append safe mode: keep the read /
+    // verify API up so an operator can inspect the damage, but seal nothing —
+    // appending onto an untrusted tail would launder the tampering into the chain.
+    let safe_mode_reason: Option<String> = {
+        let _stage = ui.stage("Verify sealed-log tail");
+        match kernel.verify_sealed_log() {
+            Ok(report) if report.chain_valid => None,
+            Ok(report) => Some(
+                report
+                    .error
+                    .unwrap_or_else(|| "sealed-log chain did not verify".to_string()),
+            ),
+            Err(e) => Some(format!("sealed log could not be verified at boot: {e:#}")),
+        }
+    };
+    if let Some(reason) = &safe_mode_reason {
+        log::error!(
+            "SAFE MODE: sealed-log tail failed boot verification — {reason}. \
+             witnessd will serve the read/verify API but will NOT append to the chain. \
+             Investigate and restore a trusted log, then restart."
+        );
+    }
+
     // Witness the daemon lifecycle. If the previous run's last lifecycle record
     // is `start` (no clean shutdown), it died uncleanly — seal a PowerLoss
     // failure record (proxy for power loss, crash, or kill; see
     // docs/failure_semantics.md). Then seal this run's start record. Sealing
     // the start record is fail-closed: if we cannot witness our own startup we
-    // must not run.
-    {
+    // must not run. Skipped in safe mode — an untrusted tail must not be extended.
+    if safe_mode_reason.is_none() {
         let _stage = ui.stage("Seal lifecycle start");
         match kernel.last_lifecycle_phase() {
             Ok(Some(LifecyclePhase::Start)) => {
@@ -153,6 +180,17 @@ fn main() -> Result<()> {
         log::warn!(
             "event api capability token not written to file; use --api-token-path to persist it safely"
         );
+    }
+
+    // Safe mode: the sealed-log tail did not verify at boot. Serve the read /
+    // verify API (already listening above) so an operator can inspect the log,
+    // but do not stand up the ingest pipeline or append anything. Idle until a
+    // shutdown signal, re-logging the diagnosis periodically.
+    if let Some(reason) = &safe_mode_reason {
+        run_safe_mode(&shutdown, reason);
+        api_handle.stop()?;
+        log::info!("witnessd stopped (safe mode)");
+        return Ok(());
     }
 
     let crypto_mode = kernel
@@ -318,7 +356,17 @@ fn main() -> Result<()> {
         witness_kernel::MAX_PREROLL_SECS
     );
 
+    // Liveness watchdog (K4 / FR-9): the main loop bumps `progress` every
+    // iteration; an independent thread aborts the process if it stops advancing
+    // for WATCHDOG_STALL_TIMEOUT, turning a wedged daemon into a supervisor
+    // restart (panic=abort in release) instead of a silent stall. The watchdog
+    // exits cleanly on shutdown so a slow, orderly drain is never mistaken for a
+    // hang.
+    let progress = Arc::new(AtomicU64::new(0));
+    spawn_watchdog(Arc::clone(&progress), Arc::clone(&shutdown));
+
     while !shutdown.load(Ordering::SeqCst) {
+        progress.fetch_add(1, Ordering::Relaxed);
         // Coarse time bucket (10 minutes). A broken clock must be witnessed,
         // not crash the daemon: seal a ClockSkew failure and retry.
         let bucket = match TimeBucket::now_10min() {
@@ -586,6 +634,116 @@ fn main() -> Result<()> {
     api_handle.stop()?;
     log::info!("witnessd stopped");
     Ok(())
+}
+
+/// How often the watchdog samples the main loop's progress counter.
+const WATCHDOG_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+/// How long the main loop may make no progress before the watchdog aborts.
+/// Generous relative to the ~100 ms loop cadence: only a genuine wedge — a
+/// blocked syscall, a deadlock — stalls this long.
+const WATCHDOG_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Tracks whether the monitored progress counter is advancing. Extracted from
+/// the watchdog thread so the stall decision is unit-testable without spawning
+/// threads or aborting the process.
+struct WatchdogState {
+    last_value: u64,
+    last_change: Instant,
+    stall_timeout: Duration,
+}
+
+impl WatchdogState {
+    fn new(initial: u64, now: Instant, stall_timeout: Duration) -> Self {
+        Self {
+            last_value: initial,
+            last_change: now,
+            stall_timeout,
+        }
+    }
+
+    /// Record the latest counter value at time `now`. Returns `true` when the
+    /// counter has not advanced for at least `stall_timeout` — i.e. the loop is
+    /// wedged and the process should abort.
+    fn observe(&mut self, value: u64, now: Instant) -> bool {
+        if value != self.last_value {
+            self.last_value = value;
+            self.last_change = now;
+            false
+        } else {
+            now.duration_since(self.last_change) >= self.stall_timeout
+        }
+    }
+}
+
+/// Spawn the liveness watchdog (K4 / FR-9). It samples `progress` every
+/// [`WATCHDOG_CHECK_INTERVAL`]; if the counter has not advanced for
+/// [`WATCHDOG_STALL_TIMEOUT`] it logs the cause and aborts the process, so a
+/// wedged daemon becomes a supervisor restart instead of a silent stall. It
+/// returns as soon as `shutdown` is set, so an orderly drain is never mistaken
+/// for a hang.
+fn spawn_watchdog(progress: Arc<AtomicU64>, shutdown: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut state = WatchdogState::new(
+            progress.load(Ordering::Relaxed),
+            Instant::now(),
+            WATCHDOG_STALL_TIMEOUT,
+        );
+        loop {
+            std::thread::sleep(WATCHDOG_CHECK_INTERVAL);
+            if shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            let value = progress.load(Ordering::Relaxed);
+            if state.observe(value, Instant::now()) {
+                log::error!(
+                    "watchdog: witnessd main loop made no progress for {}s (stuck at tick {}); \
+                     aborting so the supervisor can restart it",
+                    WATCHDOG_STALL_TIMEOUT.as_secs(),
+                    value
+                );
+                std::process::abort();
+            }
+        }
+    });
+}
+
+/// Report-but-not-append safe mode: idle until shutdown, re-logging the boot
+/// verification failure every minute. The read/verify API keeps serving from
+/// the (read-only, untrusted) log so an operator can inspect it; nothing is
+/// appended, because extending an unverified tail would launder tampering into
+/// the chain.
+fn run_safe_mode(shutdown: &AtomicBool, reason: &str) {
+    let mut last_warn = Instant::now();
+    while !shutdown.load(Ordering::SeqCst) {
+        if last_warn.elapsed() >= Duration::from_secs(60) {
+            log::error!("SAFE MODE active — not appending (reason: {reason})");
+            last_warn = Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use super::*;
+
+    #[test]
+    fn watchdog_trips_only_after_stall_timeout_and_resets_on_progress() {
+        let base = Instant::now();
+        let timeout = Duration::from_secs(60);
+        let mut wd = WatchdogState::new(0, base, timeout);
+
+        // Same counter value, but only 5s elapsed — not a stall yet.
+        assert!(!wd.observe(0, base + Duration::from_secs(5)));
+        // Still stuck at the same value past the timeout — abort.
+        assert!(wd.observe(0, base + Duration::from_secs(61)));
+        // The loop advanced — the watchdog resets and does not abort.
+        assert!(!wd.observe(1, base + Duration::from_secs(62)));
+        // Shortly after the reset, no stall.
+        assert!(!wd.observe(1, base + Duration::from_secs(63)));
+        // Stuck again long enough after the reset — abort once more.
+        assert!(wd.observe(1, base + Duration::from_secs(200)));
+    }
 }
 
 struct IngestStats {
