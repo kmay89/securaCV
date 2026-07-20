@@ -576,6 +576,19 @@ test("detectBrowser: safari, firefox, iPhone, iPad-as-Mac, android, chrome-ish",
   assert.strictEqual(detectBrowser(chrome, 0).id, "other");
 });
 
+// ── release channels (dev toggle) ───────────────────────────────────────────
+test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed constant", async () => {
+  const { channelFromSearch, DEV_FLASH_MANIFEST_URL } = await core();
+  assert.strictEqual(channelFromSearch(""), "release");
+  assert.strictEqual(channelFromSearch("?foo=1"), "release");
+  assert.strictEqual(channelFromSearch("?channel=dev"), "dev");
+  assert.strictEqual(channelFromSearch("?channel=DEV"), "release");   // exact opt-in only
+  assert.strictEqual(channelFromSearch("?channel=stable"), "release");
+  // The dev manifest lives on the repo's own rolling prerelease — never a
+  // user-supplied host (that path is manifestOverrideUrl's, LAN-guarded).
+  assert.ok(DEV_FLASH_MANIFEST_URL.startsWith("https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/"));
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");

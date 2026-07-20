@@ -122,6 +122,21 @@ CSI_FEAT_SOURCES = test_csi_features.cpp \
 .PHONY: all run clean
 all: run
 
+
+# USB evidence drive core (share-mode state machine + FAT16 staging volume).
+# See docs/design/usb_evidence_drive.md.
+EVDRIVE_BIN = test_evidence_drive_logic
+EVDRIVE_SOURCES = test_evidence_drive_logic.cpp \
+                  $(SRC_DIR)/evidence_drive_logic.cpp
+
+
+# Drop-file update verification, end-to-end with real Ed25519 (OpenSSL).
+# Links the OTA engine's pure subset (SECURACV_OTA_HOST_BUILD).
+EVVERIFY_BIN = test_evidence_update_verify
+EVVERIFY_SOURCES = test_evidence_update_verify.cpp \
+                   $(SRC_DIR)/evidence_update_verify.cpp \
+                   $(SRC_DIR)/securacv_ota.cpp
+
 $(BIN): $(SOURCES)
 	$(CXX) $(CXXFLAGS) -o $@ $(SOURCES)
 
@@ -167,7 +182,13 @@ $(AUDIO_BIN): $(AUDIO_SOURCES)
 $(CSI_FEAT_BIN): $(CSI_FEAT_SOURCES)
 	$(CXX) $(CXXFLAGS) -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES)
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)
+$(EVDRIVE_BIN): $(EVDRIVE_SOURCES)
+	$(CXX) $(CXXFLAGS) -o $@ $(EVDRIVE_SOURCES)
+
+$(EVVERIFY_BIN): $(EVVERIFY_SOURCES)
+	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(EVVERIFY_SOURCES) -lcrypto
+
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -183,6 +204,8 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(GPS_COARSEN_BIN)
 	./$(AUDIO_BIN)
 	./$(CSI_FEAT_BIN)
+	./$(EVDRIVE_BIN)
+	./$(EVVERIFY_BIN)
 
 clean:
-	rm -f $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)
+	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)
