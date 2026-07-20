@@ -18,7 +18,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
-use crate::adapter::SensorAdapter;
+use crate::adapter::{LockTolerant, SensorAdapter};
 use crate::EventType;
 
 /// A `(topic, payload)` message fed to the adapter (an MQTT topic and its JSON body).
@@ -100,7 +100,7 @@ impl BlePresenceAdapter {
     /// Pure transform: map one `(topic, payload)` to a presence claim if the room is configured
     /// and the reported distance is within threshold.
     pub fn message_to_claim(&self, topic: &str, payload: &[u8]) -> Option<Claim> {
-        room_to_claim(&self.rooms.lock().expect("rooms mutex"), topic, payload)
+        room_to_claim(&self.rooms.lock_tolerant(), topic, payload)
     }
 }
 
@@ -143,7 +143,7 @@ impl SensorAdapter for BlePresenceAdapter {
             return Ok(Vec::new());
         }
         // Snapshot the rooms so we don't hold the lock across the sandbox fork.
-        let rooms = self.rooms.lock().expect("rooms mutex").clone();
+        let rooms = self.rooms.lock_tolerant().clone();
         let parse_all = || {
             let mut out = Vec::new();
             for (topic, payload) in &msgs {

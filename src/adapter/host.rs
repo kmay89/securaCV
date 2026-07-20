@@ -21,7 +21,7 @@ use serde::Serialize;
 use crate::adapter::contract::{claim_to_candidate, AdapterDescriptor, Claim};
 use crate::adapter::registry::AdapterRegistry;
 use crate::adapter::SensorAdapter;
-use crate::{Event, Kernel, TimeBucket};
+use crate::{Event, FailureType, Kernel, TimeBucket};
 
 /// Per-adapter runtime counters, surfaced for observability (see [`AdapterHost::stats_snapshot`]).
 ///
@@ -43,6 +43,9 @@ pub struct AdapterStats {
     pub poll_errors: u64,
     /// Unix epoch (seconds) of the most recently sealed event, or 0 if none.
     pub last_seal_epoch_s: u64,
+    /// Latched `GapMissingData` records the host sealed for this adapter's
+    /// poll outages (one per outage — see `ADAPTER_OUTAGE_FAILURE_THRESHOLD`).
+    pub outage_gaps_sealed: u64,
 }
 
 /// Configuration for an [`AdapterHost`].
@@ -59,6 +62,25 @@ pub struct AdapterHostConfig {
     pub min_confidence: f32,
 }
 
+/// Consecutive failed polls of a single adapter before the host seals one
+/// latched [`FailureType::GapMissingData`] record for the outage.
+///
+/// This mirrors the ingest path's `IngestSupervisor` (see `bin/witnessd.rs`):
+/// "interruption is evidence." Without it a Track-B (adapter) outage — a
+/// Frigate broker going away, an MQTT sensor falling silent — leaves no trace
+/// in the sealed record, unlike the camera path which already seals a gap.
+/// The latch is cleared when the adapter next polls successfully, so exactly
+/// one gap is sealed per outage rather than one per failed cycle.
+const ADAPTER_OUTAGE_FAILURE_THRESHOLD: u32 = 3;
+
+/// Per-adapter poll-outage state: how many consecutive polls have failed, and
+/// whether a gap record has already been sealed for the current outage.
+#[derive(Default)]
+struct AdapterOutage {
+    consecutive_errors: u32,
+    gap_sealed: bool,
+}
+
 /// Orchestrates registered adapters against a single owned [`Kernel`].
 pub struct AdapterHost {
     kernel: Kernel,
@@ -68,6 +90,8 @@ pub struct AdapterHost {
     recent: HashMap<String, u64>,
     /// per-adapter runtime counters, keyed by adapter name.
     stats: BTreeMap<String, AdapterStats>,
+    /// per-adapter poll-outage state, keyed by adapter name.
+    outage: HashMap<String, AdapterOutage>,
 }
 
 impl AdapterHost {
@@ -78,6 +102,7 @@ impl AdapterHost {
             registry: AdapterRegistry::new(),
             recent: HashMap::new(),
             stats: BTreeMap::new(),
+            outage: HashMap::new(),
         }
     }
 
@@ -166,6 +191,80 @@ impl AdapterHost {
         Ok(Some(event))
     }
 
+    /// A successful poll clears any outage latch, so the *next* outage seals a
+    /// fresh gap record (exactly one gap per outage).
+    fn note_adapter_poll_ok(&mut self, name: &str) {
+        if let Some(o) = self.outage.get_mut(name) {
+            if o.gap_sealed {
+                log::info!(
+                    "adapter '{}' recovered after {} consecutive poll error(s)",
+                    name,
+                    o.consecutive_errors
+                );
+            }
+            o.consecutive_errors = 0;
+            o.gap_sealed = false;
+        }
+    }
+
+    /// Record a failed poll. Once `ADAPTER_OUTAGE_FAILURE_THRESHOLD` consecutive
+    /// failures accrue, seal exactly one latched `GapMissingData` record for the
+    /// outage. Details carry only the adapter name and the error count — never
+    /// URLs, device paths, or payloads, matching the ingest path's rule that
+    /// sealed records must not contain network identifiers.
+    fn note_adapter_poll_error(&mut self, name: &str) {
+        let (consecutive, already_sealed) = {
+            let o = self.outage.entry(name.to_string()).or_default();
+            o.consecutive_errors = o.consecutive_errors.saturating_add(1);
+            (o.consecutive_errors, o.gap_sealed)
+        };
+        if already_sealed || consecutive < ADAPTER_OUTAGE_FAILURE_THRESHOLD {
+            return;
+        }
+
+        let bucket = match TimeBucket::now(self.config.bucket_size_secs) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!(
+                    "adapter '{}' outage: could not form time bucket: {}",
+                    name,
+                    e
+                );
+                return;
+            }
+        };
+        let details = format!("adapter_stalled adapter={name} consecutive_errors={consecutive}");
+        match self.kernel.append_failure_event(
+            FailureType::GapMissingData,
+            bucket,
+            Some(details),
+            &self.config.kernel_version,
+            &self.config.ruleset_id,
+            self.config.ruleset_hash,
+        ) {
+            Ok(_) => {
+                // Latch only after a durable write, so a transient append failure
+                // (db lock, disk full, clock skew) retries on the next poll error
+                // instead of leaving the outage permanently unrecorded.
+                if let Some(o) = self.outage.get_mut(name) {
+                    o.gap_sealed = true;
+                }
+                self.stats
+                    .entry(name.to_string())
+                    .or_default()
+                    .outage_gaps_sealed += 1;
+                log::warn!(
+                    "sealed GapMissingData record for adapter '{}' outage ({} consecutive poll errors)",
+                    name,
+                    consecutive
+                );
+            }
+            Err(e) => {
+                log::error!("failed to seal adapter-outage record for '{}': {}", name, e);
+            }
+        }
+    }
+
     fn prune_recent(&mut self) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -186,7 +285,10 @@ impl AdapterHost {
                 None => continue,
             };
             // A single failing or poisoned adapter must not starve the others this cycle.
-            let (desc, claims) = {
+            // The poll result is captured inside the guard's scope but handled after it
+            // is dropped, so the outage bookkeeping can borrow `self` (the guard borrows
+            // only the adapter).
+            let (desc, poll_result) = {
                 let mut guard = match adapter.lock() {
                     Ok(g) => g,
                     Err(_) => {
@@ -195,13 +297,20 @@ impl AdapterHost {
                     }
                 };
                 let desc = guard.descriptor();
-                match guard.poll() {
-                    Ok(claims) => (desc, claims),
-                    Err(e) => {
-                        log::warn!("adapter '{}' poll failed: {}; skipping", name, e);
-                        self.stats.entry(name.clone()).or_default().poll_errors += 1;
-                        continue;
-                    }
+                (desc, guard.poll())
+            };
+            let claims = match poll_result {
+                Ok(claims) => {
+                    self.note_adapter_poll_ok(&name);
+                    claims
+                }
+                Err(e) => {
+                    log::warn!("adapter '{}' poll failed: {}; skipping", name, e);
+                    self.stats.entry(name.clone()).or_default().poll_errors += 1;
+                    // Seal a latched GapMissingData record once the outage crosses
+                    // the threshold, so a silent adapter is visible in the log.
+                    self.note_adapter_poll_error(&name);
+                    continue;
                 }
             };
             let stat = self.stats.entry(name.clone()).or_default();
@@ -247,8 +356,8 @@ impl AdapterHost {
     pub fn log_stats_summary(&self) {
         for (name, s) in &self.stats {
             log::info!(
-                "adapter '{}' stats: polls={} emitted={} sealed={} filtered={} rejected={} poll_errors={}",
-                name, s.polls, s.claims_emitted, s.claims_sealed, s.claims_filtered, s.claims_rejected, s.poll_errors
+                "adapter '{}' stats: polls={} emitted={} sealed={} filtered={} rejected={} poll_errors={} outage_gaps={}",
+                name, s.polls, s.claims_emitted, s.claims_sealed, s.claims_filtered, s.claims_rejected, s.poll_errors, s.outage_gaps_sealed
             );
         }
     }
@@ -265,4 +374,169 @@ fn now_epoch_s() -> u64 {
 fn stats_log_interval_cycles(poll_interval: Duration) -> u64 {
     let secs = poll_interval.as_secs().max(1);
     (60 / secs).max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
+    use crate::adapter::{LockTolerant, SensorAdapter};
+    use crate::{EventType, Kernel, KernelConfig, SealedLogRecord, ZonePolicy};
+    use anyhow::anyhow;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    static TEST_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
+        id: "outage_test_adapter",
+        allowed_claim_kinds: &[ClaimKind::AcousticImpulseInZone],
+        allowed_event_types: &[EventType::AcousticImpulseInZone],
+        requested_capabilities: &[],
+    };
+
+    /// A controllable adapter: `fail` toggles whether `poll` errors, and every
+    /// poll touches an internal shared mutex through the poison-tolerant path
+    /// so a poisoned lock can be exercised end-to-end.
+    struct TestAdapter {
+        fail: Arc<AtomicBool>,
+        state: Arc<Mutex<u32>>,
+    }
+
+    impl SensorAdapter for TestAdapter {
+        fn name(&self) -> &'static str {
+            "outage_test_adapter"
+        }
+        fn descriptor(&self) -> &'static AdapterDescriptor {
+            &TEST_DESCRIPTOR
+        }
+        fn poll(&mut self) -> Result<Vec<Claim>> {
+            // Recover the guard even if a worker poisoned it — the fix under test.
+            *self.state.lock_tolerant() += 1;
+            if self.fail.load(Ordering::SeqCst) {
+                Err(anyhow!("simulated adapter outage"))
+            } else {
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    fn test_host() -> AdapterHost {
+        let hash = KernelConfig::ruleset_hash_from_id("ruleset:outage_test");
+        let cfg = KernelConfig {
+            db_path: crate::shared_memory_uri(),
+            ruleset_id: "ruleset:outage_test".to_string(),
+            ruleset_hash: hash,
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:outage_test:0123456789abcdef".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let kernel = Kernel::open(&cfg).expect("open kernel");
+        AdapterHost::new(
+            kernel,
+            AdapterHostConfig {
+                bucket_size_secs: 600,
+                kernel_version: "0.0.0-test".to_string(),
+                ruleset_id: "ruleset:outage_test".to_string(),
+                ruleset_hash: hash,
+                min_confidence: 0.0,
+            },
+        )
+    }
+
+    fn gap_count(host: &mut AdapterHost) -> usize {
+        let hash = host.config.ruleset_hash;
+        host.kernel_mut()
+            .read_events_ruleset_bound(hash, 1000)
+            .expect("read records")
+            .into_iter()
+            .filter(|r| {
+                matches!(r, SealedLogRecord::Failure(f) if f.failure_type == FailureType::GapMissingData)
+            })
+            .count()
+    }
+
+    #[test]
+    fn adapter_outage_seals_one_latched_gap_per_outage() {
+        let mut host = test_host();
+        let fail = Arc::new(AtomicBool::new(true));
+        host.register(TestAdapter {
+            fail: fail.clone(),
+            state: Arc::new(Mutex::new(0)),
+        });
+
+        // Below the threshold: failing polls accrue but nothing is sealed yet.
+        for _ in 0..(ADAPTER_OUTAGE_FAILURE_THRESHOLD - 1) {
+            host.run_once().expect("run_once");
+        }
+        assert_eq!(gap_count(&mut host), 0, "no gap before the threshold");
+
+        // Crossing the threshold seals exactly one gap.
+        host.run_once().expect("run_once");
+        assert_eq!(gap_count(&mut host), 1, "one gap at the threshold");
+
+        // Continued failures stay latched — no duplicate gaps for one outage.
+        host.run_once().expect("run_once");
+        host.run_once().expect("run_once");
+        assert_eq!(gap_count(&mut host), 1, "latched: still one gap");
+
+        // Recovery clears the latch without sealing anything.
+        fail.store(false, Ordering::SeqCst);
+        host.run_once().expect("run_once");
+        assert_eq!(gap_count(&mut host), 1, "recovery seals nothing new");
+
+        // A fresh outage seals a second gap.
+        fail.store(true, Ordering::SeqCst);
+        for _ in 0..ADAPTER_OUTAGE_FAILURE_THRESHOLD {
+            host.run_once().expect("run_once");
+        }
+        assert_eq!(gap_count(&mut host), 2, "a new outage seals a second gap");
+    }
+
+    #[test]
+    fn poisoned_adapter_lock_does_not_wedge_the_host() {
+        let mut host = test_host();
+        let state = Arc::new(Mutex::new(0u32));
+        host.register(TestAdapter {
+            fail: Arc::new(AtomicBool::new(false)),
+            state: state.clone(),
+        });
+
+        // A worker thread panics while holding the adapter's internal lock,
+        // poisoning it — exactly the condition that used to cascade panics.
+        let poisoner = state.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = poisoner.lock().expect("acquire before poisoning");
+            panic!("poison the adapter's internal mutex");
+        })
+        .join();
+        assert!(state.lock().is_err(), "internal mutex is poisoned");
+
+        // With `.lock().expect()` this poll would panic and take down the host;
+        // with `lock_tolerant()` it recovers and the cycle completes.
+        let written = host
+            .run_once()
+            .expect("run_once must not panic on a poisoned adapter lock");
+        assert_eq!(written, 0);
+        assert_eq!(
+            *state.lock_tolerant(),
+            1,
+            "poll ran once and advanced the recovered state"
+        );
+    }
+
+    #[test]
+    fn lock_tolerant_recovers_a_poisoned_mutex() {
+        let m = Arc::new(Mutex::new(41u32));
+        let poisoner = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = poisoner.lock().expect("acquire before poisoning");
+            panic!("poison");
+        })
+        .join();
+        assert!(m.lock().is_err(), "mutex is poisoned");
+        // Recovers the guard instead of propagating the poison as a panic.
+        let mut g = m.lock_tolerant();
+        *g += 1;
+        assert_eq!(*g, 42);
+    }
 }

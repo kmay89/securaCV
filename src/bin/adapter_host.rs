@@ -458,7 +458,9 @@ fn main() -> Result<()> {
                     let AdapterCfg::Frigate(fc) = c else {
                         return Err(anyhow!("adapter type changed at this position"));
                     };
-                    *filter.lock().expect("frigate filter mutex") = FrigateFilter::new(
+                    // Recover a poisoned lock: reload overwrites the state wholesale,
+                    // so SIGHUP is exactly how an operator un-wedges a poisoned adapter.
+                    *filter.lock().unwrap_or_else(|p| p.into_inner()) = FrigateFilter::new(
                         fc.cameras.clone(),
                         fc.labels.clone(),
                         fc.min_confidence.unwrap_or(0.5),
@@ -498,7 +500,7 @@ fn main() -> Result<()> {
                              a restart to (un)subscribe (attributes for existing topics applied)"
                         );
                     }
-                    *handle.lock().expect("routes mutex") = build_routes(&mc.route)?;
+                    *handle.lock().unwrap_or_else(|p| p.into_inner()) = build_routes(&mc.route)?;
                     Ok(())
                 }));
                 let topics = adapter.topics();
@@ -525,7 +527,7 @@ fn main() -> Result<()> {
                     let AdapterCfg::Webhook(wc) = c else {
                         return Err(anyhow!("adapter type changed at this position"));
                     };
-                    *handle.lock().expect("routes mutex") = build_routes(&wc.route)?;
+                    *handle.lock().unwrap_or_else(|p| p.into_inner()) = build_routes(&wc.route)?;
                     Ok(())
                 }));
                 let options = build_webhook_options(&wc);
@@ -604,7 +606,7 @@ fn main() -> Result<()> {
                     let AdapterCfg::BlePresence(bc) = c else {
                         return Err(anyhow!("adapter type changed at this position"));
                     };
-                    *handle.lock().expect("rooms mutex") = bc
+                    *handle.lock().unwrap_or_else(|p| p.into_inner()) = bc
                         .room
                         .iter()
                         .map(|r| BleRoom::new(r.room.clone(), r.zone.clone(), r.max_distance))
@@ -634,7 +636,7 @@ fn main() -> Result<()> {
                     let AdapterCfg::Meshtastic(mc) = c else {
                         return Err(anyhow!("adapter type changed at this position"));
                     };
-                    *handle.lock().expect("nodes mutex") = build_mesh_nodes(&mc.node)?;
+                    *handle.lock().unwrap_or_else(|p| p.into_inner()) = build_mesh_nodes(&mc.node)?;
                     Ok(())
                 }));
                 spawn_mqtt_forwarder(
