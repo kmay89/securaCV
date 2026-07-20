@@ -87,8 +87,13 @@ inline Outcome step(State s, Event e) {
       return o;
 
     case Event::Confirm:
-      // The ONLY edge that types. Requires having passed through Armed.
-      if (s == State::Armed) {
+      // The physical BOOT press — the one deliberate human action that lets the
+      // keyboard type, and the anti-BadUSB keystone (a dropped device won't
+      // press its own button). Frictionless: one tap opens the page directly
+      // from Idle, so no serial console is needed. It also confirms a console
+      // Request that pre-armed (Armed) or re-opens after a Launched. The only
+      // state it does nothing from is Off (feature disabled).
+      if (s == State::Idle || s == State::Armed || s == State::Launched) {
         o.next = State::Launched;
         o.emit = true;
       }
@@ -282,6 +287,84 @@ inline LaunchPlan build_launch_plan(LaunchMethod method, const char* url,
   }
   p.valid = true;
   return p;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 4. "START-HERE" link files (the zero-touch, zero-injection path)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The frictionless way to "open the website on plug-in" WITHOUT a keyboard:
+// drop a clickable shortcut at the root of the read-only drive. Plug in, see a
+// drive, open "START-HERE" — the browser goes to the help page. No console, no
+// button, no HID injection, works on every OS. The firmware writes these once
+// (to the SD) before exposing the drive read-only.
+//
+// Every builder validates the URL against the same allow-list and returns 0
+// (empty output) on failure, so a bad URL can never be written into a shortcut.
+
+// Portable HTML redirect (open on any OS). is_allowed_help_url() has already
+// excluded quotes and angle brackets; the one remaining markup-significant
+// character the allow-list permits is '&' (the query separator), which we
+// escape to '&amp;' so the file is well-formed HTML/XML in every builder.
+inline size_t build_start_here_html(const char* url, const char* allowed_prefix,
+                                    char* out, size_t out_len) {
+  if (!out || out_len == 0) return 0;
+  out[0] = '\0';
+  if (!is_allowed_help_url(url, allowed_prefix)) return 0;
+
+  size_t n = 0;
+  auto put = [&](const char* s) { for (; s && *s && n + 1 < out_len; ++s) out[n++] = *s; };
+  auto put_url = [&](const char* s) {
+    for (; s && *s; ++s) { if (*s == '&') put("&amp;"); else { char t[2] = {*s, 0}; put(t); } }
+  };
+  put("<!doctype html><html><head><meta charset=\"utf-8\">"
+      "<meta http-equiv=\"refresh\" content=\"0;url=");
+  put_url(url);
+  put("\"><title>SecuraCV Canary</title></head><body>"
+      "<p>Opening your Canary help page… If it doesn't, <a href=\"");
+  put_url(url);
+  put("\">click here</a>.</p></body></html>\n");
+  out[n < out_len ? n : out_len - 1] = '\0';
+  return n;
+}
+
+// Windows ".url" Internet Shortcut.
+inline size_t build_url_shortcut(const char* url, const char* allowed_prefix,
+                                 char* out, size_t out_len) {
+  if (!out || out_len == 0) return 0;
+  out[0] = '\0';
+  if (!is_allowed_help_url(url, allowed_prefix)) return 0;
+
+  size_t n = 0;
+  auto put = [&](const char* s) { for (; s && *s && n + 1 < out_len; ++s) out[n++] = *s; };
+  put("[InternetShortcut]\r\nURL=");
+  put(url);
+  put("\r\n");
+  out[n < out_len ? n : out_len - 1] = '\0';
+  return n;
+}
+
+// macOS ".webloc" (plist). The URL sits in a <string>; the allow-list excludes
+// '<' '>' but permits '&', so escape '&' → '&amp;' for well-formed XML.
+inline size_t build_webloc(const char* url, const char* allowed_prefix,
+                           char* out, size_t out_len) {
+  if (!out || out_len == 0) return 0;
+  out[0] = '\0';
+  if (!is_allowed_help_url(url, allowed_prefix)) return 0;
+
+  size_t n = 0;
+  auto put = [&](const char* s) { for (; s && *s && n + 1 < out_len; ++s) out[n++] = *s; };
+  auto put_url = [&](const char* s) {
+    for (; s && *s; ++s) { if (*s == '&') put("&amp;"); else { char t[2] = {*s, 0}; put(t); } }
+  };
+  put("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+      "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+      "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+      "<plist version=\"1.0\"><dict><key>URL</key><string>");
+  put_url(url);
+  put("</string></dict></plist>\n");
+  out[n < out_len ? n : out_len - 1] = '\0';
+  return n;
 }
 
 }  // namespace usb_onboard

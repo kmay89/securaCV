@@ -2065,7 +2065,8 @@ static void handle_serial_commands() {
       Serial.println("  m - MQTT status");
 #endif
 #if FEATURE_USB_ONBOARD
-      Serial.println("  u - Open help page (arms; press BOOT to confirm)");
+      Serial.println("  u - Open help page (announced preview; press BOOT to confirm)");
+      Serial.println("      (or just tap BOOT any time, or open START-HERE on the drive)");
       Serial.println("  o - USB onboarding status / launch method");
       Serial.println("  v - Recovery guide");
       Serial.println("  k - Unseal guide");

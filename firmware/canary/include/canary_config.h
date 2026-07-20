@@ -129,6 +129,9 @@
 #ifndef FEATURE_USB_ONBOARD
   #define FEATURE_USB_ONBOARD      0   // USB-OTG onboarding: consented HID help-launch + read-only SD-over-MSC + guided recovery/unseal (opt-in; needs ARDUINO_USB_MODE=0, enabled in [env:usb-onboard])
 #endif
+#ifndef USB_ONBOARD_AUTOLAUNCH
+  #define USB_ONBOARD_AUTOLAUNCH   0   // Hands-off auto-open of the help page a few seconds after plug-in, with NO button press. This is genuine HID auto-typing (BadUSB-shaped) — leave OFF unless you accept that; the frictionless defaults are the START-HERE drive file + a one-tap BOOT press.
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

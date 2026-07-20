@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### USB onboarding — frictionless plug-in (START-HERE drive file + one-tap)
+
+- **Injection-free zero-touch open.** The read-only drive now carries a
+  `START-HERE.html` (+ Windows `.url` + macOS `.webloc`) at its root, generated
+  by the firmware and pointing at the device's help URL. Plugging in and opening
+  that file launches the help page with **no keystroke injection at all** — the
+  frictionless default. Builders live in `usb_onboard_logic.h` (host-tested,
+  allow-list-gated, `&`-escaped for well-formed HTML/XML).
+- **One-tap launch.** A single physical **BOOT** press now opens the help page
+  directly (the press is the consent) — no serial console needed. The console
+  `u` announced-preview path still exists for choosing the OS launch method. The
+  consent state machine and its tests were updated accordingly; typing still
+  requires a physical press and never happens from the Off state.
+- **Opt-in hands-off auto-open.** New default-off `USB_ONBOARD_AUTOLAUNCH` flag
+  auto-fires the launch a few seconds after enumeration with no button — genuine
+  HID auto-typing (BadUSB-shaped), documented as such and off by default.
+
 ### USB onboarding — "plug me in" (consented HID + read-only drive + guided recovery)
 
 - **The anti-BadUSB keyboard.** On the opt-in `[env:usb-onboard]` (USB-OTG)

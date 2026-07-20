@@ -40,6 +40,12 @@ LaunchMethod s_method = LaunchMethod::MANUAL;
 uint32_t     s_armed_since_ms = 0;
 bool         s_begun = false;
 bool         s_msc_up = false;
+[[maybe_unused]] uint32_t s_begin_ms = 0;          // only read by the opt-in autolaunch
+[[maybe_unused]] bool     s_autolaunched = false;  // "
+
+// Grace period before an (opt-in) autolaunch fires, so the host has finished
+// enumerating the composite device and a browser can receive the URL.
+[[maybe_unused]] static constexpr uint32_t kAutolaunchDelayMs = 4000;
 
 // The allow-list prefix the typed URL must match: the compile-time help origin.
 const char* allowed_prefix() {
@@ -146,6 +152,29 @@ bool bring_up_msc() {
   s_msc.isWritable(false);            // enforce read-only to the host
   return s_msc.begin(sectors, ssz);
 }
+
+// Drop clickable "START-HERE" shortcuts at the SD root so plugging in surfaces
+// the help page with ZERO keystroke injection — the person just opens a file on
+// the read-only drive. Written once, before the drive is exposed read-only.
+void write_start_here_files() {
+  char url[256];
+  build_help_url(allowed_prefix(), s_cfg.device_id, "onboard", url, sizeof(url));
+
+  char body[512];
+  auto write_file = [&](const char* path, size_t len) {
+    if (len == 0) return;
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) return;
+    f.write(reinterpret_cast<const uint8_t*>(body), len);
+    f.close();
+  };
+  write_file("/START-HERE.html",
+             build_start_here_html(url, allowed_prefix(), body, sizeof(body)));
+  write_file("/Open-Canary-Help.url",
+             build_url_shortcut(url, allowed_prefix(), body, sizeof(body)));
+  write_file("/Open-Canary-Help.webloc",
+             build_webloc(url, allowed_prefix(), body, sizeof(body)));
+}
 #endif  // USB_ONBOARD_ACTIVE
 
 }  // namespace
@@ -155,6 +184,8 @@ bool begin(const Config& cfg) {
 #if USB_ONBOARD_ACTIVE
   s_kbd.begin();
   if (cfg.expose_msc) {
+    // Write the START-HERE shortcuts BEFORE the drive goes read-only.
+    write_start_here_files();
     s_msc_up = bring_up_msc();
     if (!s_msc_up) {
       Serial.println("[usb-onboard] MSC not started (SD not mounted?) — HID only");
@@ -163,8 +194,9 @@ bool begin(const Config& cfg) {
   USB.productName("SecuraCV Canary");
   USB.begin();
   apply(step(State::Off, Event::Enable));   // Off → Idle
+  s_begin_ms = millis();
   s_begun = true;
-  Serial.println("[usb-onboard] ready — HID keyboard idle; press console 'u' to open help");
+  Serial.println("[usb-onboard] ready — open START-HERE on the drive, or tap BOOT to open help");
   return true;
 #else
   (void)cfg;
@@ -181,6 +213,18 @@ void poll() {
     apply(step(s_state, Event::Timeout));
     Serial.println("[usb-onboard] arming window elapsed — re-locked (no keys sent)");
   }
+
+#if defined(USB_ONBOARD_AUTOLAUNCH) && USB_ONBOARD_AUTOLAUNCH
+  // Opt-in, fully hands-off auto-open: fire the launch once, a few seconds
+  // after enumeration, with no button press. This is genuine HID auto-typing
+  // (BadUSB-shaped) and ships OFF by default — see docs/design/usb_onboard.md.
+  if (!s_autolaunched && s_state == State::Idle &&
+      (uint32_t)(millis() - s_begin_ms) >= kAutolaunchDelayMs) {
+    s_autolaunched = true;
+    Serial.println("[usb-onboard] autolaunch enabled — opening help page");
+    confirm();
+  }
+#endif
 }
 
 void request_launch() {
@@ -206,7 +250,9 @@ void request_launch() {
 
 void confirm() {
   if (!s_begun) return;
-  if (s_state != State::Armed) return;  // ignore stray presses
+  // Frictionless one-tap: a physical BOOT press opens the page directly from
+  // Idle (no console needed); it also confirms a console-armed preview. step()
+  // is the authority on whether this emits (never from Off).
   char url[256];
   build_help_url(allowed_prefix(), s_cfg.device_id, "onboard", url, sizeof(url));
   Outcome o = step(s_state, Event::Confirm);
