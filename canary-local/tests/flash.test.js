@@ -455,6 +455,37 @@ test("pickRescueProduct prefers what the board runs, else the only match", async
   assert.strictEqual(pickRescueProduct(catalog, "ESP32-NOPE", "x"), null);
 });
 
+// ── hex peek (flash map magnifier) ──────────────────────────────────────────
+test("hexDumpLines: classic addr | hex | ascii rows", async () => {
+  const { hexDumpLines } = await core();
+  const bytes = new Uint8Array([0xe9, 0x06, 0x02, 0x2f, 0x41, 0x42, 0x43, 0x00,
+                                0xff, 0x20, 0x7e, 0x7f, 0x0a, 0x61, 0x62, 0x63,
+                                0x01, 0x02]);
+  const lines = hexDumpLines(bytes, 0x10000);
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines[0].addr, "0x010000");
+  assert.ok(lines[0].hex.startsWith("e9 06 02 2f 41 42 43 00"));
+  assert.ok(lines[0].ascii.includes("ABC"));
+  assert.ok(lines[0].ascii.includes("·"), "non-printables become middots");
+  assert.strictEqual(lines[1].addr, "0x010010");
+  assert.strictEqual(lines[1].hex, "01 02");
+});
+
+test("sniffRegion recognizes the chip's own magic numbers", async () => {
+  const { sniffRegion } = await core();
+  assert.ok(/erased/.test(sniffRegion(new Uint8Array(64).fill(0xff))));
+  const app = new Uint8Array(64); app[0] = 0xe9;
+  assert.ok(/firmware image/.test(sniffRegion(app)));
+  const pt = new Uint8Array(64); pt[0] = 0xaa; pt[1] = 0x50;
+  assert.ok(/partition table/.test(sniffRegion(pt)));
+  const desc = Buffer.alloc(64); desc.writeUInt32LE(0xabcd5432, 0);
+  assert.ok(/description block/.test(sniffRegion(new Uint8Array(desc))));
+  const mostly = new Uint8Array(100).fill(0xff); mostly[3] = 0x42;
+  assert.ok(/mostly erased/.test(sniffRegion(mostly)));
+  const data = new Uint8Array(64).fill(0x37);
+  assert.strictEqual(sniffRegion(data), "stored data");
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");

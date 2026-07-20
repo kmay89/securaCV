@@ -487,6 +487,41 @@ export function pickRescueProduct(catalog, chip, currentProjectName) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+// ── hex peek (the flash map's magnifying glass) ────────────────────────────
+// Classic hex dump lines: address | 16 bytes | ASCII. Pure formatting so the
+// report can show real bytes read off the board without any surprises.
+export function hexDumpLines(bytes, baseAddr = 0, width = 16) {
+  const lines = [];
+  for (let o = 0; o < bytes.length; o += width) {
+    const row = bytes.subarray(o, o + width);
+    let hexs = "", ascii = "";
+    for (let i = 0; i < row.length; i++) {
+      hexs += row[i].toString(16).padStart(2, "0") + (i === 7 ? "  " : " ");
+      ascii += row[i] >= 0x20 && row[i] < 0x7f ? String.fromCharCode(row[i]) : "·";
+    }
+    lines.push({
+      addr: "0x" + (baseAddr + o).toString(16).padStart(6, "0"),
+      hex: hexs.trimEnd(),
+      ascii,
+    });
+  }
+  return lines;
+}
+
+// One honest sentence about what a region's first bytes look like — driven
+// by the same magic numbers the chip itself uses.
+export function sniffRegion(bytes) {
+  if (!bytes || !bytes.length) return "nothing readable";
+  let ff = 0;
+  for (let i = 0; i < bytes.length; i++) if (bytes[i] === 0xff) ff++;
+  if (ff === bytes.length) return "erased — nothing stored here yet (all 0xFF)";
+  if (bytes[0] === 0xe9) return "ESP32 firmware image — 0xE9 is the chip's own \"program starts here\" marker";
+  if (bytes.length >= 2 && u16le(bytes, 0) === PARTITION_MAGIC) return "partition table entries (magic 0xAA50) — the board's map of itself";
+  if (bytes.length >= 4 && u32le(bytes, 0) === APP_DESC_MAGIC) return "firmware description block (magic 0xABCD5432)";
+  if (ff / bytes.length > 0.9) return "mostly erased, a little data at the edges";
+  return "stored data";
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.

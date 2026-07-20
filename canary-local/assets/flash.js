@@ -1199,8 +1199,89 @@ function renderReport(r) {
       `This board also carries a dedicated ${core.formatBytes(r.witnessLog.size)} tamper-evident witness_log partition.`));
   }
 
-  // Storage map.
-  if (r.partitions && r.partitions.length) {
+  // The flash map: the chip's whole address space, drawn to scale from the
+  // partition table we just read off the board. Click any region to see its
+  // actual first bytes — real hex from the real chip, reading only.
+  if (r.partitions && r.partitions.length && r.flashBytes) {
+    const det = el("details", "flash-report-map");
+    det.append(el("summary", null, "flash map — what lives where on the chip"));
+    det.append(el("p", "fineprint",
+      "Every byte on the chip has an address; the board’s own partition table " +
+      "says what each region is for. Click a region to peek at its actual " +
+      "bytes — looking never changes anything."));
+
+    const bar = el("div", "flash-map");
+    const peek = el("div", "flash-hexpeek flash-hidden");
+
+    const openPeek = async (label, kind, offset, size) => {
+      peek.classList.remove("flash-hidden");
+      peek.innerHTML = "";
+      peek.append(el("p", "flash-hexpeek-title",
+        `${label || kind} · 0x${offset.toString(16)} · ${core.formatBytes(size)}`));
+      const body = el("div", "flash-hexdump", "reading 256 bytes…");
+      peek.append(body);
+      try {
+        const bytes = await readFlashChunked(state.session.esploader, offset, 256);
+        body.textContent = "";
+        core.hexDumpLines(bytes, offset).forEach((l) => {
+          const line = el("div", "flash-hexline");
+          line.append(el("span", "flash-hexaddr", l.addr));
+          line.append(el("span", "flash-hexbytes", l.hex));
+          line.append(el("span", "flash-hexascii", l.ascii));
+          body.append(line);
+        });
+        peek.append(el("p", "fineprint", "What this looks like: " + core.sniffRegion(bytes) + "."));
+      } catch (e) {
+        body.textContent = "couldn’t read that region right now — reconnect and try again";
+      }
+    };
+
+    const kindClass = (kind) => {
+      if (kind.startsWith("app")) return "app";
+      if (kind.includes("nvs")) return "nvs";
+      if (kind.includes("otadata")) return "ota";
+      if (kind.includes("coredump")) return "core";
+      if (/fat|spiffs|littlefs/.test(kind)) return "fs";
+      return "data";
+    };
+
+    let covered = 0;
+    const addSeg = (label, kind, offset, size, cls) => {
+      const seg = el("button", "flash-map-seg flash-map-" + cls);
+      seg.style.width = Math.max(1.2, (size / r.flashBytes) * 100) + "%";
+      seg.title = `${label || kind} · 0x${offset.toString(16)} · ${core.formatBytes(size)}`;
+      seg.addEventListener("click", () => openPeek(label, kind, offset, size));
+      bar.append(seg);
+    };
+    r.partitions.forEach((p) => {
+      addSeg(p.label, p.kind, p.offset, p.size, /witness/i.test(p.label || "") ? "witness" : kindClass(p.kind));
+      covered = Math.max(covered, p.offset + p.size);
+    });
+    if (covered < r.flashBytes) {
+      addSeg("unused space", "free", covered, r.flashBytes - covered, "free");
+    }
+    det.append(bar);
+
+    const legend = el("div", "flash-map-legend");
+    r.partitions.forEach((p) => {
+      const item = el("button", "flash-map-key");
+      item.append(el("span", "flash-map-dot flash-map-" +
+        (/witness/i.test(p.label || "") ? "witness" : kindClass(p.kind))));
+      item.append(document.createTextNode(`${p.label || p.kind} · ${core.formatBytes(p.size)}`));
+      item.addEventListener("click", () => openPeek(p.label, p.kind, p.offset, p.size));
+      legend.append(item);
+    });
+    if (covered < r.flashBytes) {
+      const item = el("span", "flash-map-key");
+      item.append(el("span", "flash-map-dot flash-map-free"));
+      item.append(document.createTextNode(`unused · ${core.formatBytes(r.flashBytes - covered)}`));
+      legend.append(item);
+    }
+    det.append(legend);
+    det.append(peek);
+    box.append(det);
+  } else if (r.partitions && r.partitions.length) {
+    // No flash size known: fall back to the plain table.
     const det = el("details", "flash-report-map");
     det.append(el("summary", null, "storage map (partitions)"));
     const tbl = el("div", "flash-report-table");
