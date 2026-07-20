@@ -622,6 +622,29 @@ can't rot.
 | Generator | `canary-local/tools/gen_vision.py` |
 | Honesty gates | `tests/vision.test.js` + `tests/vision_probe.mjs` |
 
+### The module flasher (the real one, on `flash.html`)
+
+The staged SenseCraft walkthrough above teaches the vendor path — but the
+flash page now carries SecuraCV's **own module flow**: burn the pinned
+person-detection model into the Grove Vision AI V2 over WebSerial, from our
+page, with zero choices to make. The engine (`assets/we2-core.js`) is a
+clean-room, fully-tested mirror of the module's ROM-bootloader protocol —
+XMODEM/CRC-16 at 921600, the burn-address preamble block, the reboot
+prompt — the same wire Seeed's open-source flasher speaks. The model asset
+rides the release train (`.github/workflows/vision-model-release.yml` →
+`manifest-vision-model.json`, SHA-256 pinned, MIT with attribution in the
+firmware NOTICE), and after burning, the flow proves it: AT handshake, our
+model card stored on-device (`AT+INFO`), one test inference, and an optional
+live bench preview with the on-module TSCORE/TIOU sliders.
+
+| Piece | File |
+|---|---|
+| Engine (DOM-free: CRC, XMODEM, preamble, state machine, AT parser) | `assets/we2-core.js` |
+| WebSerial transport + the flow UI | `assets/we2-flash.js` (mounted from `flash.js`) |
+| Catalog block + doc drift-gate | `tools/gen_flash.py` → `devices/flash.json` `we2_module` |
+| Release asset pipeline | `.github/workflows/vision-model-release.yml` |
+| Honesty gate (scripted fake bootloader, byte-level) | `tests/we2.test.js` |
+
 ## 5. Where this lives (repo → Pages → securacv.com)
 
 Three tiers, no lock-in, one source of truth:

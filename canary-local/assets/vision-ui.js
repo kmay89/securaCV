@@ -552,6 +552,15 @@ export function buildPorts(data) {
 // ── §the model load (SenseCraft, staged) ──────────────────────────────────
 export function buildModelLoad(data, bus, sim) {
   const d = data.model_load;
+  const outer0 = el("div");
+  if (d.securacv_flasher) {
+    const ribbon = el("p", "ondevice wap-note");
+    const a = el("a", null, "open the module flasher →");
+    a.href = "flash.html";
+    ribbon.append(el("strong", null, "Skip the vendor site: "),
+      document.createTextNode(d.securacv_flasher + " "), a);
+    outer0.append(ribbon);
+  }
   const wrap = el("div", "vis-load");
 
   // left: the staged workspace
@@ -736,9 +745,8 @@ export function buildModelLoad(data, bus, sim) {
     row.append(el("span", "wap-fact-k", k), el("span", "wap-fact-v", v));
     facts.append(row);
   }
-  const outer = el("div");
-  outer.append(wrap, facts);
-  return outer;
+  outer0.append(wrap, facts);
+  return outer0;
 }
 
 // ── §the serial console (host boot) ───────────────────────────────────────

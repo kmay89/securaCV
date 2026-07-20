@@ -94,6 +94,7 @@ jobs:
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
           node --test canary-local/tests/vault.test.js
           node --test canary-local/tests/bench.test.js

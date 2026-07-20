@@ -139,6 +139,14 @@ choose and load the **detection model** once before first deployment. The
 model lives in the module's 16 MB flash and **persists across power cycles
 and host reflashes** — you do not repeat this when you update canary-vision.
 
+> **Prefer the Lab's own flasher.** The canary.local flash page
+> (`canary-local/flash.html`) carries a module flow that burns the pinned
+> person-detection model over WebSerial from our own page — SHA-256-verified
+> against the release manifest (`manifest-vision-model.json`), followed by an
+> AT handshake proof and an optional live bench preview with the TSCORE/TIOU
+> sliders. No vendor account, no model catalog to misnavigate. The SenseCraft
+> steps below remain the documented vendor fallback and work identically.
+
 1. **Use Chrome or Edge** (the flasher needs WebSerial; Firefox/Safari won't work).
 2. Plug your computer into the **module's USB-C port** (the carrier PCB one —
    see §2). The XIAO can stay stacked; just make sure the cable is in the

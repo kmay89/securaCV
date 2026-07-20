@@ -210,6 +210,7 @@
     }
   ],
   "model_load": {
+    "securacv_flasher": "Prefer to stay in the Lab? flash.html now carries a module flow: the same pinned model, burned from our own page over WebSerial, SHA-256-verified, with a live bench check after. The SenseCraft path below remains the documented vendor fallback \u2014 staged here click for click either way.",
     "url": "https://sensecraft.seeed.cc/ai/device/local/36",
     "browser": "Chrome or Edge \u2014 the flasher needs WebSerial; Firefox/Safari won't work",
     "port": "the MODULE's USB-C port (the big carrier-PCB one, next to the Grove connector) \u2014 not the XIAO's",
@@ -868,10 +869,10 @@
     }
   ],
   "roadmap": {
-    "today": "Today the model load is Seeed's SenseCraft workspace \u2014 one visit, one model, done. This page stages every click of it so you can't get lost, and the firmware's runtime class-index setting means even a different model never needs a rebuild.",
-    "next": "In the nest: a SecuraCV model flasher on the Lab's own flash page \u2014 the person-detection model vendored with the firmware releases, pushed to the module's port over WebSerial with zero choices to make. Same posture as the ESP32 flasher: you can't pick the wrong image, and the model is pinned to the release the firmware was tested against.",
-    "feasibility": "The pieces are public: the module flashes over XMODEM at 921600 baud (128-byte CRC16 blocks), Seeed's own web toolkit implements it in browser JavaScript under an open-source license, and the model-zoo person model is MIT-licensed \u2014 redistributable with attribution. The open question is pinning a Vela-compiled artifact for the Ethos-U55, which Seeed's flow currently compiles on demand.",
-    "status": "exploratory"
+    "today": "The Lab's own module flasher lives on the flash page: the pinned person-detection model, fetched from the project's release manifest, SHA-256-verified, burned to the module over WebSerial, then proven with an AT handshake and a live bench preview \u2014 no vendor site, no account, no choices to get wrong.",
+    "next": "SenseCraft remains the documented fallback (this page stages every click of it), and the firmware's runtime class-index setting means even a different model never needs a rebuild.",
+    "feasibility": "The engine is a clean-room mirror of the public protocol: XMODEM/CRC-16 at 921600 baud with the module's ROM-bootloader burn menu \u2014 the same wire Seeed's open-source flasher speaks \u2014 and the model-zoo person model is MIT-licensed, redistributed with attribution and pinned per release (manifest-vision-model.json).",
+    "status": "beta \u2014 live on flash.html"
   },
   "troubleshooting": [
     {

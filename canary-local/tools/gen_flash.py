@@ -312,6 +312,12 @@ def main() -> None:
         "console_baud": 115200,
         "chips": {c: CHIP_INFO[c] for c in sorted(chips_used)},
         "products": products_out,
+        # The Vision's camera module — a different chip (Himax HX6538 behind a
+        # CH343 bridge), a different engine (ROM bootloader + XMODEM, mirrored
+        # from Seeed's open-source flasher), the same posture: pinned asset,
+        # SHA-256 before a byte is written, and you can't brick it (the burn
+        # menu lives in ROM). Facts drift-gated against the device guide.
+        "we2_module": we2_module_block(),
         # The promise the whole tool is built to keep, shown in the UI and
         # grounded in docs/firmware_ota.md § the no-brick guarantees.
         "no_brick": {
@@ -348,10 +354,67 @@ def main() -> None:
         ],
     }
 
+    validate_we2_guide()
+
     out = CANARY_LOCAL / "devices/flash.json"
     out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {out.relative_to(REPO)} — {len(products_out)} products, "
           f"chips: {', '.join(sorted(chips_used))}")
+
+
+GUIDE = REPO / "docs/hardware/grove_vision_ai_v2_guide.md"
+
+
+def we2_module_block() -> dict:
+    return {
+        "name": "Grove Vision AI V2 — the Vision’s camera module",
+        "chip": "Himax HX6538 (WiseEye2) · Ethos-U55 NPU · CH343 USB-serial",
+        "usb_vid": "0x1a86",
+        "usb_pid": "0x55d3",
+        "baud": 921600,
+        "model_addr": "0x400000",
+        "manifest_url": f"{RELEASE_LATEST}/manifest-vision-model.json",
+        "model": {
+            "name": "Person Detection",
+            "arch": "Swift-YOLO (tiny) · 192×192×3 RGB · compiled for the Ethos-U55",
+            "license": "MIT — Seeed SSCMA model zoo, redistributable with attribution",
+            "why_pinned": "One model, chosen and tested with the canary-vision firmware "
+                          "train. No catalog to scroll, no wrong pick to make — and the "
+                          "firmware’s runtime class-index setting absorbs any future swap.",
+        },
+        "port_note": "the MODULE’s USB-C port (the big carrier-PCB one, next to the Grove "
+                     "connector) — not the XIAO’s. The XIAO port cannot reach the Himax flash.",
+        "persistence": "The model lives in the module’s own 16 MB flash and persists across "
+                       "power cycles and every future host reflash.",
+        "no_brick": "The burn menu lives in the HX6538’s ROM bootloader — an interrupted "
+                    "transfer just means reset and flash again. And a bricked module "
+                    "bootloader is still recoverable through the host over I2C "
+                    "(we2_iic_bootloader_recover — device guide §7).",
+        "engine": "SecuraCV WE2 engine (assets/we2-core.js) — XMODEM/CRC-16 at 921600 over "
+                  "WebSerial, the same wire protocol Seeed’s open-source flasher speaks, "
+                  "clean-room implemented and pinned by tests/we2.test.js.",
+        "docs": "docs/hardware/grove_vision_ai_v2_guide.md",
+    }
+
+
+def validate_we2_guide() -> None:
+    """Drift-gate the module facts against the device guide (the doc of record)."""
+    try:
+        guide = GUIDE.read_text(encoding="utf-8")
+    except OSError:
+        sys.exit("gen_flash.py: ERROR: device guide missing: " + str(GUIDE))
+    for needle, label in [
+        ('ATTRS{idVendor}=="1a86"', "CH343 USB vendor id"),
+        ('ATTRS{idProduct}=="55d3"', "CH343 USB product id"),
+        ("921600", "module serial baud"),
+        ("HX6538", "module chip name"),
+        ("16 MB", "module flash size"),
+        ("we2_iic_bootloader_recover", "I2C bootloader recovery"),
+        ("never the module's", "port rule"),
+    ]:
+        if needle not in guide:
+            sys.exit(f"gen_flash.py: ERROR: we2_module fact drifted — {label} "
+                     f"({needle!r}) not found in {GUIDE.name}")
 
 
 if __name__ == "__main__":
