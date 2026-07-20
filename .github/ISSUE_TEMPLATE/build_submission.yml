@@ -1,0 +1,157 @@
+name: "Share a Build"
+description: "Add your Canary build to the community gallery on securacv.com/gallery."
+title: "[Build] "
+labels:
+  - "build-gallery"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing what you made. 💛
+
+        There's no form that stores your data — a maintainer turns this issue
+        into a one-line entry in
+        [`builds.json`](https://github.com/kmay89/securaCV) (reviewed in the
+        open) and it shows up on **securacv.com/gallery**, credited to you and
+        remixable by the next person.
+
+        Only four things are required: a **name**, the **device**, a **line
+        about your build**, and whether it's **novel or a remix**. Everything
+        else is optional — fill in what you like.
+  - type: input
+    id: title
+    attributes:
+      label: Name your build
+      description: The headline for your gallery card.
+      placeholder: "e.g., Nursery Sense in soft sage"
+    validations:
+      required: true
+  - type: dropdown
+    id: device
+    attributes:
+      label: Which Canary is it?
+      options:
+        - "Canary WAP"
+        - "Canary Vision"
+        - "Canary Sense"
+        - "Canary Hub"
+        - "Canary Vault"
+        - "Other / a mix"
+    validations:
+      required: true
+  - type: textarea
+    id: blurb
+    attributes:
+      label: What did you make or change — and why?
+      description: A sentence or two. What's different, what problem it solved, how it prints.
+      placeholder: "Printed the shell in a wood-fill filament so it disappears on a shelf. Zero supports at 0.2mm."
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### Novel, or a remix?
+
+        Same idea as Thingiverse: most builds are **your own design**. If yours
+        started from someone else's build (or from the stock model) and you
+        changed it, say so — it credits the original and lets people trace the
+        lineage. If it's all yours, just leave the "original" box blank.
+  - type: dropdown
+    id: origin
+    attributes:
+      label: Is this novel or a remix?
+      options:
+        - "Novel — my own design"
+        - "Remix — based on an existing build or the stock model"
+    validations:
+      required: true
+  - type: input
+    id: remix_of
+    attributes:
+      label: If it's a remix, what's the original?
+      description: Link the gallery card / issue / STL you started from, or just name it. Leave blank if it's novel.
+      placeholder: "e.g., https://securacv.com/gallery#doorway-vision  ·  or: stock doorway bracket"
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### Photos
+
+        A good photo is what makes a card worth stopping on. Two quick ones is
+        plenty — **drag each image straight into the box below** and GitHub
+        hosts it for us (nothing to upload anywhere else).
+
+        **How to make them look great — no studio needed:**
+        - **Light:** shoot near a window in daytime, light coming from the
+          *side* (not behind you, not overhead). Turn the room lights off so
+          you don't mix warm + cool. No on-camera flash.
+        - **Background:** a plain wall, a clean table, or right where it lives.
+          Less clutter reads as "considered."
+        - **Angle:** slightly above and off to one corner (a ~30–45° three-
+          quarter view) shows depth better than dead-on. Fill most of the frame
+          and keep the whole device sharp.
+        - **Steady:** tap to focus, hold still (or prop the phone). A crisp,
+          slightly-dim photo beats a bright blurry one.
+
+        **Two rules:** at least one photo is required, and it has to be a photo
+        of **your actual build** — on-topic and safe-for-work. Off-topic or
+        explicit images just get the issue closed, so please don't. A maintainer
+        looks at every photo before it ever reaches the gallery.
+  - type: textarea
+    id: photo_hero
+    attributes:
+      label: "Photo 1 — the build itself (required)"
+      description: The device on a table or in hand — the "hero" shot for the card. Drag the image in; a real photo, not a placeholder.
+      placeholder: "Drag your photo here."
+    validations:
+      required: true
+  - type: textarea
+    id: photo_mounted
+    attributes:
+      label: "Photo 2 — where it lives (optional)"
+      description: Mounted or in place — over the crib, above the door, on the shelf. Shows the build doing its job.
+      placeholder: "Drag your photo here."
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        ---
+  - type: input
+    id: color_name
+    attributes:
+      label: Filament / finish name (optional)
+      description: Becomes the color chip on your card.
+      placeholder: "e.g., Sage"
+    validations:
+      required: false
+  - type: input
+    id: color_hex
+    attributes:
+      label: Filament color, as a hex (optional)
+      description: The card's swatch color when there's no photo. A rough match is fine.
+      placeholder: "#9cae8a"
+    validations:
+      required: false
+  - type: input
+    id: maker
+    attributes:
+      label: How should we credit you? (optional)
+      description: A name or @handle for the card. Leave blank to stay anonymous.
+      placeholder: "e.g., @yourhandle"
+    validations:
+      required: false
+  - type: checkboxes
+    id: license
+    attributes:
+      label: Sharing
+      options:
+        - label: "This is a photo of my actual build — it's safe-for-work and on-topic for the gallery (no explicit, offensive, or unrelated images)."
+          required: true
+        - label: "My photos don't show anything I wouldn't want public — no faces, screens, addresses, or documents in frame."
+          required: true
+        - label: "I'm okay with this build being shown in the open gallery and remixed by others under the repo's Apache-2.0 license."
+          required: true
