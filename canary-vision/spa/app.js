@@ -627,8 +627,11 @@ var Router = {
 
     var path = hash.substring(1); // Remove #
 
-    // Try exact match first
-    if (Router.routes[path]) {
+    // Try exact match first (own properties only — the hash is
+    // user-controlled, so never dispatch via inherited names like
+    // 'constructor')
+    if (Object.prototype.hasOwnProperty.call(Router.routes, path) &&
+        typeof Router.routes[path] === 'function') {
       Router.routes[path]();
       return;
     }

@@ -41,6 +41,15 @@ namespace mesh_network {
 
 const uint8_t BROADCAST_ADDR[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
+// Zeroize secrets in a way the optimizer cannot elide (a plain memset on a
+// dying local is a dead store the compiler may delete). Same pattern as
+// baseline.cpp / csi_hal.cpp.
+static void secure_wipe(void* ptr, size_t len) {
+  volatile uint8_t* p = static_cast<volatile uint8_t*>(ptr);
+  while (len--) { *p++ = 0; }
+  asm volatile("" ::: "memory");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // DOMAIN SEPARATION STRINGS
 // ════════════════════════════════════════════════════════════════════════════
@@ -303,7 +312,7 @@ static bool derive_session_key(const uint8_t* local_priv, const uint8_t* peer_pu
   // Perform X25519 scalar multiplication: shared = local_priv * peer_pub
   // Curve25519::eval() computes the Diffie-Hellman shared secret
   if (!Curve25519::eval(shared_secret, local_priv, peer_pub)) {
-    memset(shared_secret, 0, sizeof(shared_secret));
+    secure_wipe(shared_secret, sizeof(shared_secret));
     return false;
   }
 
@@ -316,7 +325,7 @@ static bool derive_session_key(const uint8_t* local_priv, const uint8_t* peer_pu
                          key_out, SESSION_KEY_SIZE);
 
   // Clear sensitive data
-  memset(shared_secret, 0, sizeof(shared_secret));
+  secure_wipe(shared_secret, sizeof(shared_secret));
 
   return ret == 0;
 }

@@ -293,8 +293,10 @@ def run_server(port: int = DEFAULT_PORT,
         print(f"Run: python {sys.argv[0]} generate <firmware.bin> [version]")
         print()
 
-    # Create SSL context
+    # Create SSL context (TLS 1.2+ only — legacy TLS 1.0/1.1 are insecure
+    # and the ESP32 OTA client speaks TLS 1.2)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(cert_path, key_path)
 
     # Create handler with directory argument (avoids os.chdir side effects)

@@ -349,10 +349,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        # Serve static files from wizard dir
-        file_path = WIZARD_DIR / path.lstrip("/")
-        if file_path.is_file():
-            self._serve_file(file_path)
+        # Serve static files from wizard dir. The request path is
+        # attacker-controlled, so resolve it and refuse anything that
+        # escapes WIZARD_DIR (e.g. via ../ segments or symlinks).
+        base_dir = os.path.realpath(WIZARD_DIR)
+        requested = os.path.realpath(os.path.join(base_dir, path.lstrip("/")))
+        if requested.startswith(base_dir + os.sep) and os.path.isfile(requested):
+            self._serve_file(Path(requested))
         else:
             # Fall back to index.html for SPA routing
             index = WIZARD_DIR / "index.html"

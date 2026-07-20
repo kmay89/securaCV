@@ -1265,7 +1265,8 @@ bool conformance_check_token_rotation() {
   }
   if (!tokens_cleared) {
     health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
-      "Conformance: token map not cleared (had %u, now %u)", old_token_count, s_token_count);
+      "Conformance: token map not cleared (had %u, now %u)", old_token_count,
+      (unsigned)s_token_count);
   }
 
   return epoch_incremented && tokens_differ && tokens_cleared;
@@ -1310,7 +1311,8 @@ bool conformance_check_secure_wipe() {
   for (size_t i = 0; i < sizeof(test_buffer); i++) {
     if (test_buffer[i] != 0) {
       health_logging::logf(health_logging::LEVEL_ERROR, health_logging::CAT_RF,
-        "Conformance: secure_wipe failed at byte %u (value 0x%02X)", i, test_buffer[i]);
+        "Conformance: secure_wipe failed at byte %u (value 0x%02X)", (unsigned)i,
+        test_buffer[i]);
       return false;
     }
   }
