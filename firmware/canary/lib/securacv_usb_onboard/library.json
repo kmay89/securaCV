@@ -1,0 +1,19 @@
+{
+    "name": "securacv_usb_onboard",
+    "version": "0.1.0",
+    "description": "USB-OTG onboarding: consented HID keyboard help-launch, read-only SD-over-MSC, and guided recovery/unseal console (opt-in, needs ARDUINO_USB_MODE=0)",
+    "keywords": ["securacv", "usb", "hid", "msc", "onboarding", "recovery"],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kmay89/securaCV.git"
+    },
+    "authors": [
+        {
+            "name": "Karl May",
+            "email": "karl@errerlabs.com"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
