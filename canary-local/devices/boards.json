@@ -392,7 +392,7 @@
    ],
    "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU) with a XIAO host stacked on its socket. Talks to the host over I2C on the Grove connector; the OV5647 camera hangs on the CSI flex and is placed by each device model (it is not rigid to the board). Mount parts and the loose camera from the source assembly are filtered out.",
    "doc": "https://wiki.seeedstudio.com/grove_vision_ai_v2/",
-   "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter. The generator drops those mount parts by name (mounting_plate, camera_mounting_shroud, adapter) and keeps only the board + camera. Verify Seeed's licence terms before external redistribution."
+   "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter and a posed OV5647 camera. The generator drops the mount parts AND the loose camera by name (mounting_plate, camera_mounting_shroud, adapter, rpi cam) \u2014 the camera rides a flex and is posed per-device by the models, not welded to the board. Verify Seeed's licence terms before external redistribution."
   },
   "seeed_round_display_xiao": {
    "name": "Seeed Round Display for XIAO",

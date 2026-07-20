@@ -180,9 +180,12 @@ module bezel() {
                 cylinder(d = skirt_od, h = skirt_dep + 0.01);
                 translate([0, 0, -0.1]) cylinder(d = bez_ap_d, h = skirt_dep + 0.2);
             }
-            // snap nubs, chamfered both ways (assembly AND service removal)
+            // snap nubs, chamfered both ways (assembly AND service removal).
+            // The face underside (bezel z=0) rests on the drum rim (drum z=drum_h),
+            // so drum_z = drum_h + bezel_z; the drum's slot centre is at
+            // drum_h − snap_depth, hence the nub sits at bezel z = −snap_depth.
             for (a = snap_angs()) rotate([0, 0, a]) {
-                nz = -(snap_depth - bez_t);   // slot centre, bezel frame
+                nz = -snap_depth;             // slot centre, bezel frame
                 translate([skirt_od/2 - 0.5, 0, nz]) hull() {
                     translate([0, -snap_w/2 + 1.2, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
                     translate([snap_proud + 0.5, 0, 0]) cube([0.5, 0.1, 0.6], center = true);
