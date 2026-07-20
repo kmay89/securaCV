@@ -280,4 +280,18 @@
   #define HARDWARE_TARGET_NAME "XIAO_ESP32S3"
 #endif
 
+// ════════════════════════════════════════════════════════════════════════════
+// USB EVIDENCE DRIVE (opt-in build; docs/design/usb_evidence_drive.md)
+// ════════════════════════════════════════════════════════════════════════════
+// Present the Canary over USB mass storage: the SD card read-only (evidence
+// hand-off to any computer, or an iPhone's Files app) and a PSRAM-backed
+// signed-update drop-zone. OFF by default in every profile — it is new USB
+// attack surface, and it additionally requires a TinyUSB (USB-OTG) build
+// (USBMode=default, ARDUINO_USB_MODE=0), not the stock hwcdc profile.
+// Enable per-build with -DFEATURE_USB_EVIDENCE_DRIVE=1; on non-OTG builds
+// the module compiles to an honest "not in this build" stub either way.
+#ifndef FEATURE_USB_EVIDENCE_DRIVE
+#define FEATURE_USB_EVIDENCE_DRIVE 0
+#endif
+
 #endif // SECURACV_BUILD_CONFIG_H

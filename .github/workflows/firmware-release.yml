@@ -41,12 +41,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Derive version from tag
+      - name: Derive version + channel from tag
         id: ver
         run: |
           VERSION="${GITHUB_REF_NAME#fw-v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Firmware release version: $VERSION"
+          # Channel gating happens HERE, not in any client: a dev/rc tag is a
+          # GitHub prerelease, so releases/latest — the URL every default
+          # device polls — never moves for it. Release-channel devices are
+          # structurally unable to see dev builds (docs/RELEASE_PROCESS.md).
+          case "$VERSION" in
+            *-dev.*|*.dev.*|*-rc.*|*.rc.*)
+              echo "prerelease=true"  >> "$GITHUB_OUTPUT"
+              echo "channel=dev"      >> "$GITHUB_OUTPUT"
+              echo "Firmware DEV-CHANNEL release: $VERSION" ;;
+            *)
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              echo "channel=release"  >> "$GITHUB_OUTPUT"
+              echo "Firmware release version: $VERSION" ;;
+          esac
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -380,7 +393,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: Canary Firmware ${{ steps.ver.outputs.version }}
+          name: "Canary Firmware ${{ steps.ver.outputs.version }}${{ steps.ver.outputs.prerelease == 'true' && ' (dev channel)' || '' }}"
+          prerelease: ${{ steps.ver.outputs.prerelease }}
           body_path: /tmp/release_notes.md
           files: |
             /tmp/release/canary-${{ steps.ver.outputs.version }}.bin
@@ -392,6 +406,37 @@ jobs:
             /tmp/release/canary-vision-xiao-s3-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-sense-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-sense-wellbeing-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/manifest-canary.json
+            /tmp/release/manifest-canary-wap.json
+            /tmp/release/manifest-canary-vision.json
+            /tmp/release/manifest-canary-vision-xiao-c3.json
+            /tmp/release/manifest-canary-vision-xiao-s3.json
+            /tmp/release/manifest-canary-sense.json
+            /tmp/release/manifest-canary-sense-wellbeing.json
+            /tmp/release/manifest-index.json
+            /tmp/release/sha256sums.txt
+
+      # The dev channel's stable address. Only the MANIFESTS are mirrored —
+      # each manifest's binary URL points at the real fw-v*-dev.* tag's
+      # assets, so nothing is duplicated and old dev binaries stay where
+      # they were published. Devices opt in by pointing manifest_url at
+      # releases/download/fw-dev-latest/manifest-<product>.json.
+      - name: Mirror channel manifests to the rolling dev release
+        if: steps.ver.outputs.prerelease == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: fw-dev-latest
+          name: Canary Firmware — dev channel (rolling)
+          prerelease: true
+          body: |
+            Rolling pointer for the **dev update channel** — always the most
+            recent `fw-v*-dev.*` / `fw-v*-rc.*` prerelease's manifests.
+            Devices on the release channel never see this: their manifest
+            URL rides `releases/latest`, which GitHub never points at
+            prereleases. Currently: **${{ steps.ver.outputs.version }}**.
+            See docs/RELEASE_PROCESS.md.
+          files: |
+            /tmp/release/manifest-flash.json
             /tmp/release/manifest-canary.json
             /tmp/release/manifest-canary-wap.json
             /tmp/release/manifest-canary-vision.json

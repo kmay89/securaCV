@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Sense — radar school · canary.local</title>
+  <meta name="description" content="Meet the Canary Sense before you own one: the 60 GHz mmWave radar kit (Seeed MR60BHA2 + XIAO ESP32-C6) in 3D, a placement lab running the firmware's real presence FSM — drag people, a cat and a fan through the actual detection cone — the USB provisioning walkthrough, its real boot log, and the signed MQTT it announces to Home Assistant. All parsed from the firmware and drift-checked in CI, external claims source-labeled. Works offline; nothing phones anywhere." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+</head>
+<body>
+  <header id="hero" class="hub-hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+        <path d="M46 34 a10 10 0 0 1 0 8" fill="none" stroke="#F08C2E" stroke-width="2" stroke-linecap="round"/>
+        <path d="M50 31 a15 15 0 0 1 0 14" fill="none" stroke="#F08C2E" stroke-width="2" stroke-linecap="round" opacity=".65"/>
+        <path d="M54 28 a20 20 0 0 1 0 20" fill="none" stroke="#F08C2E" stroke-width="2" stroke-linecap="round" opacity=".35"/>
+      </svg>
+    </div>
+    <h1>The Sense — radar school</h1>
+    <p class="lede">
+      The Canary <strong>Sense</strong> witnesses presence over <em>60 GHz radar</em> —
+      no camera, no microphone, no idea who you are. It knows someone is there,
+      how many (0/1/2+), how far (near/mid/far), and — bedside, opted-in — that
+      they're breathing. Meet it here: the real cone, the real thresholds, the
+      real boot log, and the placement playbook that gets the most out of it
+      with the fewest false alarms.
+    </p>
+    <div id="sense-versions" aria-live="polite"></div>
+    <p class="fineprint">
+      <a href="index.html">← the family</a> ·
+      <a href="wap.html">the WAP — first boot</a> ·
+      <a href="homeassistant.html">the Hub</a> ·
+      <a href="workshop.html">the Workshop</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main id="sense">
+    <noscript><p class="muted">This bench needs JavaScript — everything it stages
+    is also written out in <code>docs/canary_sense_mr60bha2_design.md</code> and
+    <code>firmware/projects/canary-sense/README.md</code>.</p></noscript>
+  </main>
+
+  <footer class="fineprint" id="foot">
+    <p>
+      Honest by construction: every threshold, topic, boot line, LED colour and
+      HA entity is parsed from <code>firmware/projects/canary-sense</code> and
+      <code>docs/canary_sense_mr60bha2_design.md</code> by
+      <code>tools/gen_sense.py</code>, and drift-checked in CI. The placement
+      lab runs a JS mirror of the firmware's own FSM at the firmware's own
+      constants. Placement numbers from outside the repo (Seeed wiki, community
+      deployments) carry source badges — nothing pretends to be firmware truth
+      that isn't.
+    </p>
+  </footer>
+
+  <script type="module" src="assets/sense.js"></script>
+</body>
+</html>

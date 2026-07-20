@@ -46,6 +46,20 @@ static int test_version_compare()
     CHECK(securacv_version_compare("1.0", "1.0.0") == 0);      // patch defaults to 0
     CHECK(securacv_version_compare("garbage", "1.0.0") == 0);  // unparseable -> equal (no update)
     CHECK(securacv_version_compare(NULL, "1.0.0") == 0);
+
+    // Prerelease ranking (release channels, docs/RELEASE_PROCESS.md):
+    // stable > rc.N > dev.N at an equal triple; numeric within a band.
+    CHECK(securacv_version_compare("2.3.0", "2.3.0-dev.1") == 1);        // promotion is an update
+    CHECK(securacv_version_compare("2.3.0-dev.1", "2.3.0") == -1);
+    CHECK(securacv_version_compare("2.3.0-rc.1", "2.3.0-dev.9") == 1);   // rc outranks dev
+    CHECK(securacv_version_compare("2.3.0-dev.2", "2.3.0-dev.1") == 1);  // numeric within band
+    CHECK(securacv_version_compare("2.3.0-dev.10", "2.3.0-dev.9") == 1); // numeric, not lexicographic
+    CHECK(securacv_version_compare("2.3.0-rc.2", "2.3.0-rc.2") == 0);
+    CHECK(securacv_version_compare("2.4.0-dev.1", "2.3.0") == 1);        // triple still dominates
+    // Variant suffixes are NOT prerelease markers.
+    CHECK(securacv_version_compare("2.2.0-wap", "2.2.0") == 0);
+    CHECK(securacv_version_compare("2.3.0-wap", "2.3.0-wap.dev.2") == 1); // wap dev build ranks below
+    CHECK(securacv_version_compare("2.3.0-wap.dev.2", "2.3.0-wap.dev.1") == 1);
     return 0;
 }
 
