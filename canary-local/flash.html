@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Flash a Canary — in your browser · canary.local</title>
-  <meta name="description" content="Flash SecuraCV Canary firmware straight from a Chromium browser over USB-C — no Arduino, no PlatformIO, no terminal. It detects your ESP32 chip, reads the firmware already on the board, takes a one-click backup, writes a signed release image, and verifies it against the chip's own checksum. Built so you can't pick the wrong image and can't brick the board: the ESP32's bootloader is mask ROM. Works offline; the flashing engine is served from this site, nothing phones anywhere." />
+  <meta name="description" content="Flash SecuraCV Canary firmware straight from a Chromium browser over USB-C — no Arduino, no PlatformIO, no terminal. It detects your ESP32 chip, backs the board up automatically before writing, flashes a signed release image, and verifies it against the chip's own checksum. It's a triage bench too: a read-only health check reports firmware slots, update history, crash dumps and witness-chain state, and a built-in serial monitor talks to the firmware's console. Built so you can't pick the wrong image and can't brick the board: the ESP32's bootloader is mask ROM. Works offline; the flashing engine is served from this site, nothing phones anywhere." />
   <link rel="stylesheet" href="assets/canary-local.css" />
   <link rel="stylesheet" href="assets/flash.css" />
 </head>
@@ -23,10 +23,11 @@
     <h1>Flash a Canary, right here</h1>
     <p class="lede">
       Plug a Canary board into this computer and flash it from the browser —
-      no Arduino, no PlatformIO, no terminal. It reads what's already on the
-      board, offers you a backup, writes a signed image, and checks every byte
-      against the chip. Built so you <em>can't</em> pick the wrong firmware, and
-      <em>can't</em> brick the board.
+      no Arduino, no PlatformIO, no terminal. It backs the board up by itself,
+      writes a signed image, and checks every byte against the chip. Built so
+      you <em>can't</em> pick the wrong firmware, and <em>can't</em> brick the
+      board. It's a workbench too: run a health check or open a serial monitor
+      without leaving the page.
     </p>
     <div id="flash-versions" aria-live="polite"></div>
     <p class="fineprint">

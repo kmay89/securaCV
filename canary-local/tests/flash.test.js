@@ -214,6 +214,173 @@ test("bytes <-> binary string round-trips including 0x00/0x80/0xFF", async () =>
     Array.from(binaryStringToBytes(bytesToBinaryString(big))), Array.from(big));
 });
 
+// ── chunked reads (the backup-stall fix) ────────────────────────────────────
+test("planReadChunks covers the span exactly, in order, capped per chunk", async () => {
+  const { planReadChunks, READ_CHUNK } = await core();
+  const plan = planReadChunks(0, 8 * 1024 * 1024);
+  assert.strictEqual(plan.length, Math.ceil(8 * 1024 * 1024 / READ_CHUNK));
+  assert.strictEqual(plan[0].offset, 0);
+  let covered = 0;
+  for (const c of plan) {
+    assert.strictEqual(c.offset, covered, "chunks must be contiguous");
+    assert.ok(c.size > 0 && c.size <= READ_CHUNK);
+    covered += c.size;
+  }
+  assert.strictEqual(covered, 8 * 1024 * 1024);
+  // Unaligned tail + non-zero base.
+  const odd = planReadChunks(0x8000, READ_CHUNK + 5);
+  assert.strictEqual(odd.length, 2);
+  assert.strictEqual(odd[1].offset, 0x8000 + READ_CHUNK);
+  assert.strictEqual(odd[1].size, 5);
+  assert.deepStrictEqual(planReadChunks(0, 0), []);
+});
+
+// ── partition kinds (board report vocabulary) ───────────────────────────────
+test("partitionKind names app slots and data partitions", async () => {
+  const { partitionKind, isOtaDataPart, isCoredumpPart, isNvsPart, isWitnessLogPart } = await core();
+  assert.strictEqual(partitionKind({ type: 0, subtype: 0x10 }), "app · ota_0");
+  assert.strictEqual(partitionKind({ type: 0, subtype: 0x00 }), "app · factory");
+  assert.strictEqual(partitionKind({ type: 1, subtype: 0x02 }), "data · nvs");
+  assert.strictEqual(partitionKind({ type: 1, subtype: 0x03 }), "data · coredump");
+  assert.ok(isOtaDataPart({ type: 1, subtype: 0x00 }));
+  assert.ok(isCoredumpPart({ type: 1, subtype: 0x03 }));
+  assert.ok(isNvsPart({ type: 1, subtype: 0x02 }));
+  assert.ok(isWitnessLogPart({ type: 1, subtype: 0x80, label: "witness_log" }));
+  assert.ok(!isWitnessLogPart({ type: 1, subtype: 0x82, label: "spiffs" }));
+});
+
+// ── otadata (active slot + update count) ────────────────────────────────────
+function otaEntry(seq, state, crcFn) {
+  const b = Buffer.alloc(0x1000, 0xff);
+  b.writeUInt32LE(seq >>> 0, 0);
+  b.writeUInt32LE(state >>> 0, 24);
+  b.writeUInt32LE(crcFn(b.subarray(0, 4)), 28);
+  return b;
+}
+
+test("parseOtaData: fresh otadata → factory default; valid seq → active slot", async () => {
+  const { parseOtaData, crc32EspRom } = await core();
+  // esp_rom_crc32_le(UINT32_MAX, …) reference value: crc of 01 00 00 00.
+  // Erased otadata (all 0xFF) → fresh.
+  const blank = new Uint8Array(0x2000).fill(0xff);
+  assert.strictEqual(parseOtaData(blank, 2).fresh, true);
+  // seq=1 valid in sector 0 → active ota slot (1-1)%2 = 0.
+  const good = Buffer.concat([
+    otaEntry(1, 0x2 /* valid */, crc32EspRom),
+    Buffer.alloc(0x1000, 0xff),
+  ]);
+  const r = parseOtaData(new Uint8Array(good), 2);
+  assert.strictEqual(r.fresh, false);
+  assert.strictEqual(r.activeOta, 0);
+  assert.strictEqual(r.updatesSeen, 1);
+  assert.ok(/valid/.test(r.stateText));
+  // Higher seq in sector 1 wins; seq=4 on 2 slots → slot (4-1)%2 = 1.
+  const two = Buffer.concat([
+    otaEntry(3, 0xffffffff, crc32EspRom),
+    otaEntry(4, 0x1 /* pending verify */, crc32EspRom),
+  ]);
+  const r2 = parseOtaData(new Uint8Array(two), 2);
+  assert.strictEqual(r2.activeOta, 1);
+  assert.strictEqual(r2.pendingVerify, true);
+  // A corrupt CRC is ignored, falling back to the other sector.
+  const bad = Buffer.concat([otaEntry(9, 0x2, crc32EspRom), Buffer.alloc(0x1000, 0xff)]);
+  bad.writeUInt32LE(0xdeadbeef, 28); // stomp the CRC
+  assert.strictEqual(parseOtaData(new Uint8Array(bad), 2).fresh, true);
+});
+
+// ── coredump presence ───────────────────────────────────────────────────────
+test("parseCoredumpHeader: erased → absent, sane length → present", async () => {
+  const { parseCoredumpHeader } = await core();
+  const erased = new Uint8Array(16).fill(0xff);
+  assert.strictEqual(parseCoredumpHeader(erased, 0x10000).present, false);
+  const dumped = Buffer.alloc(16, 0);
+  dumped.writeUInt32LE(0x3000, 0);
+  const r = parseCoredumpHeader(new Uint8Array(dumped), 0x10000);
+  assert.strictEqual(r.present, true);
+  assert.strictEqual(r.size, 0x3000);
+  // A "length" bigger than the partition is garbage, not a dump.
+  dumped.writeUInt32LE(0x900000, 0);
+  assert.strictEqual(parseCoredumpHeader(new Uint8Array(dumped), 0x10000).present, false);
+});
+
+// ── NVS reader (witness chain without booting the board) ────────────────────
+// Build a minimal valid NVS page: header + bitmap + entries, matching the
+// firmware's namespace/keys (canary_wap.ino: ns "securacv", seq/boots/chain).
+function nvsPage(entries) {
+  const page = Buffer.alloc(4096, 0xff);
+  page.writeUInt32LE(0xfffffffe, 0); // ACTIVE
+  page.writeUInt32LE(0, 4);          // seq
+  const bitmap = page.subarray(32, 64);
+  let idx = 0;
+  const writeEntry = (e) => {
+    const o = 64 + idx * 32;
+    page[o] = e.ns; page[o + 1] = e.type; page[o + 2] = e.span || 1; page[o + 3] = e.chunkIdx || 0xff;
+    page.write(e.key, o + 8, 15, "ascii");
+    page[o + 8 + Math.min(e.key.length, 15)] = 0;
+    if (e.data) e.data.copy(page, o + 24);
+    // mark Written (0b10) for the header entry + its payload span
+    for (let s = 0; s < (e.span || 1); s++) {
+      const j = idx + s;
+      bitmap[j >> 2] &= ~(0x3 << ((j & 3) * 2));
+      bitmap[j >> 2] |= 0x2 << ((j & 3) * 2);
+    }
+    if (e.payload) e.payload.copy(page, o + 32);
+    idx += e.span || 1;
+  };
+  entries.forEach(writeEntry);
+  return page;
+}
+
+function u32data(v) { const b = Buffer.alloc(8, 0); b.writeUInt32LE(v >>> 0, 0); return b; }
+
+test("parseNvs + witnessSummary read chain state, never secret values", async () => {
+  const { parseNvs, witnessSummary, WITNESS_CHAIN_BLOB_KEY } = await core();
+  const chainBytes = Buffer.alloc(32).map((_, i) => i + 1);
+  const blobData = Buffer.alloc(8, 0);
+  blobData.writeUInt16LE(32, 0); // size
+  const idxData = Buffer.alloc(8, 0);
+  idxData.writeUInt32LE(32, 0);  // total size
+  idxData[4] = 1;                // chunkCount
+  idxData[5] = 0;                // chunkStart
+  const page = nvsPage([
+    { ns: 0, type: 0x01, key: "securacv", data: u32data(1) },      // namespace → index 1
+    { ns: 1, type: 0x04, key: "seq", data: u32data(1234) },        // U32
+    { ns: 1, type: 0x04, key: "boots", data: u32data(57) },
+    { ns: 1, type: 0x01, key: "tamper", data: u32data(0) },        // U8
+    { ns: 1, type: 0x42, key: "chain", span: 2, chunkIdx: 0,       // blob chunk + payload
+      data: blobData, payload: chainBytes },
+    { ns: 1, type: 0x48, key: "chain", data: idxData },            // blob index
+    { ns: 1, type: 0x42, key: "privkey", span: 2, chunkIdx: 0,     // secret — NOT allow-listed
+      data: blobData, payload: Buffer.alloc(32, 0x42) },
+    { ns: 1, type: 0x48, key: "privkey", data: idxData },
+    { ns: 1, type: 0x21, key: "wifi_ssid", span: 2, data: blobData,
+      payload: Buffer.from("MyHomeWifi\0") },
+  ]);
+
+  const items = parseNvs(new Uint8Array(page), [WITNESS_CHAIN_BLOB_KEY]);
+  const s = witnessSummary(items);
+  assert.ok(s, "securacv namespace should be found");
+  assert.strictEqual(s.seq, 1234);
+  assert.strictEqual(s.boots, 57);
+  assert.strictEqual(s.tamper, 0);
+  assert.strictEqual(s.chainHeadFp, "0102030405060708");
+  assert.strictEqual(s.provisioned, true, "privkey presence detected");
+  assert.strictEqual(s.wifiConfigured, true, "ssid presence detected");
+  // The guard: no secret CONTENT anywhere in the parsed output.
+  const flat = JSON.stringify(items, (k, v) => (v instanceof Uint8Array ? Array.from(v) : v));
+  assert.ok(!flat.includes("MyHomeWifi"), "ssid value must never be extracted");
+  const priv = items.find((i) => i.key === "privkey" && i.bytes);
+  assert.strictEqual(priv, undefined, "non-allow-listed blobs must not carry bytes");
+});
+
+test("parseNvs survives blank flash and reports nothing", async () => {
+  const { parseNvs, witnessSummary } = await core();
+  const blank = new Uint8Array(0x6000).fill(0xff);
+  const items = parseNvs(blank);
+  assert.deepStrictEqual(items, []);
+  assert.strictEqual(witnessSummary(items), null);
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");

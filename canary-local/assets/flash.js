@@ -1,12 +1,19 @@
 // canary-local/assets/flash.js — the browser flasher.
 //
 // Plug a Canary into a Chromium browser over USB-C and it flashes itself:
-// detect the chip, read what firmware is already on it, take a one-click
-// backup, write a signed release image, verify the bytes against the chip's
-// own MD5, and watch it boot — all offline, nothing phones anywhere. The
-// whole thing is built around one true promise: you cannot brick the board
-// from here (the ESP32's first-stage bootloader is mask ROM), and the UI
-// never lets you reach for an image that isn't meant for the silicon in hand.
+// detect the chip, read what firmware is already on it, take a safety copy
+// automatically, write a signed release image, verify the bytes against the
+// chip's own MD5, and watch it boot — all offline, nothing phones anywhere.
+// The whole thing is built around one true promise: you cannot brick the
+// board from here (the ESP32's first-stage bootloader is mask ROM), and the
+// UI never lets you reach for an image that isn't meant for the silicon in
+// hand.
+//
+// Beyond flashing, the page doubles as a triage bench: a health check reads
+// the board's partition map, both firmware slots, OTA history, crash-dump
+// presence and the witness-chain counters straight off the flash (read-only,
+// secrets never surfaced), and a serial monitor talks to the firmware's
+// built-in command console.
 //
 // DOM-free logic + parsers live in flash-core.js (tested under node --test);
 // the flashing engine is the vendored, self-hosted esptool-js. This file is
@@ -37,7 +44,8 @@ const state = {
   mac: null,
   flashBytes: null,
   current: null,        // { productName, version, projectName } | { unknown:true }
-  backup: null,         // { bytes, name } once taken
+  backup: null,         // { bytes, name, mac } once taken this session
+  report: null,         // last health-check result
   busy: false,
 };
 
@@ -59,12 +67,10 @@ async function boot() {
     return;
   }
 
-  const layout = el("div", "flash-layout");
   const flow = el("div", "flash-flow");
   flow.id = "flash-flow";
-  const rail = renderRail();
-  layout.append(flow, rail);
-  mount.append(layout);
+  mount.append(flow);
+  mount.append(renderReassurance());
 
   renderVersionStrip();
   setPhase(phaseConnect());
@@ -83,7 +89,7 @@ function renderVersionStrip() {
   strip.append(pill("engine", "esptool-js (vendored, offline)"));
 }
 
-// The flow is a single swappable panel; the rail persists.
+// The flow is a single swappable panel; the reassurance strip persists below.
 function setPhase(node) {
   const flow = $("#flash-flow");
   flow.innerHTML = "";
@@ -91,14 +97,16 @@ function setPhase(node) {
   flow.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-// ── the persistent "you can't mess up" rail ─────────────────────────────────
-function renderRail() {
-  const rail = el("aside", "flash-rail");
+// ── the persistent "you can't mess up" strip (compact, below the flow) ──────
+function renderReassurance() {
+  const wrap = el("div", "flash-reassure-strip");
   const nb = state.catalog.no_brick;
 
-  const promise = el("section", "flash-card flash-promise");
-  promise.append(el("div", "flash-promise-badge", "🛟"));
-  promise.append(el("h3", null, nb.headline));
+  const promise = el("details", "flash-card flash-promise");
+  const sum = el("summary");
+  sum.append(el("span", "flash-promise-badge", "🛟"));
+  sum.append(el("span", null, nb.headline));
+  promise.append(sum);
   promise.append(el("p", "muted", nb.why));
   const ul = el("ul", "flash-checklist");
   nb.points.forEach((pt) => {
@@ -107,7 +115,7 @@ function renderRail() {
     ul.append(li);
   });
   promise.append(ul);
-  rail.append(promise);
+  wrap.append(promise);
 
   const help = el("details", "flash-card flash-recovery");
   help.append(el("summary", null, "Board not showing up? Fixes →"));
@@ -122,15 +130,15 @@ function renderRail() {
   a.href = LESSON;
   lessonP.append(a);
   help.append(lessonP);
-  rail.append(help);
+  wrap.append(help);
 
   const privacy = el("p", "fineprint flash-privacy");
   privacy.textContent =
     "Everything runs in your browser. The flasher engine is served from this " +
     "site, not a CDN; the only network call is fetching the signed firmware " +
     "image you choose. Nothing about your board leaves this page.";
-  rail.append(privacy);
-  return rail;
+  wrap.append(privacy);
+  return wrap;
 }
 
 // ── phase: unsupported browser ──────────────────────────────────────────────
@@ -153,6 +161,46 @@ function renderUnsupported() {
   return box;
 }
 
+// ── download mode: the BOOT/RESET gesture, one shared component ─────────────
+// The flasher usually flips the board into download mode by itself over USB
+// (DTR/RTS); the by-hand gesture is the fallback, and it's identical on every
+// chip we ship (see catalog chips[].download_mode). Rendered everywhere the
+// user might wonder "what state is my board in?".
+const kbd = (t) => el("kbd", "flash-kbd", t);
+
+function downloadModeSteps() {
+  const wrap = el("div", "flash-dlmode");
+  wrap.append(el("p", "flash-dlmode-title",
+    "Download mode by hand — the “flash me” state:"));
+  const ol = el("ol", "flash-steps flash-dlmode-steps");
+  const li1 = el("li");
+  li1.append(document.createTextNode("Hold the "), kbd("BOOT"),
+    document.createTextNode(" button down (marked B)."));
+  const li2 = el("li");
+  li2.append(document.createTextNode("While holding it, tap "), kbd("RESET"),
+    document.createTextNode(" once (marked R)."));
+  const li3 = el("li");
+  li3.append(document.createTextNode("Let go of "), kbd("BOOT"),
+    document.createTextNode(" — the board sits quietly, waiting for firmware."));
+  ol.append(li1, li2, li3);
+  wrap.append(ol);
+  wrap.append(el("p", "fineprint",
+    "To leave download mode, just tap RESET (or unplug and replug) — the board boots its firmware again."));
+  return wrap;
+}
+
+// A small badge stating which mode the board is in right now. We always know:
+// if esptool has it, it's in download mode; if the monitor has it, it's
+// running its firmware.
+function modeBadge(mode) {
+  const b = el("span", "flash-mode flash-mode-" + mode);
+  b.append(el("span", "flash-mode-dot", "●"));
+  b.append(document.createTextNode(mode === "download"
+    ? "download mode — safe to flash, firmware paused"
+    : "running its firmware"));
+  return b;
+}
+
 // ── phase: connect ──────────────────────────────────────────────────────────
 function phaseConnect() {
   const box = el("section", "flash-card flash-connect");
@@ -170,6 +218,17 @@ function phaseConnect() {
   const hint = el("p", "fineprint flash-connect-hint",
     "Nothing is written yet — connecting only lets the page look at the board.");
   box.append(hint);
+
+  // The BOOT/RESET gesture, one click away. Most boards never need it — the
+  // flasher flips them into download mode itself — but knowing the move is
+  // half the reassurance.
+  const dl = el("details", "flash-dlmode-details");
+  dl.append(el("summary", null, "Board won’t show up, or want to do it by hand? Download mode →"));
+  dl.append(el("p", "muted",
+    "Usually you don’t need this: when you click Connect, the flasher puts the " +
+    "board into download mode on its own. If it can’t, do it by hand:"));
+  dl.append(downloadModeSteps());
+  box.append(dl);
   return box;
 }
 
@@ -190,10 +249,9 @@ async function onConnect() {
   box.append(status, detail);
   // A gentle recovery nudge if it's slow (native-USB boards sometimes need
   // the download-mode gesture the flashing lesson teaches).
-  const nudge = el("p", "fineprint flash-hidden");
-  nudge.textContent =
-    "Taking a while? Put it in download mode: hold BOOT (B), tap RESET (R), " +
-    "release BOOT — then reconnect.";
+  const nudge = el("div", "flash-hidden");
+  nudge.append(el("p", "fineprint", "Taking a while? Put it in download mode yourself, then reconnect:"));
+  nudge.append(downloadModeSteps());
   box.append(nudge);
   setPhase(box);
   const nudgeTimer = setTimeout(() => nudge.classList.remove("flash-hidden"), 6000);
@@ -209,6 +267,9 @@ async function onConnect() {
   try {
     state.chipDesc = await esploader.main();
     state.chip = esploader.chip.CHIP_NAME;
+    // A stalled read should fail fast and retry (we read in small chunks),
+    // not sit out esptool-js's default 100 s silence window per packet.
+    esploader.FLASH_READ_TIMEOUT = 15000;
     try { state.mac = await esploader.chip.readMac(esploader); } catch { state.mac = null; }
     try {
       const kb = await esploader.getFlashSize();
@@ -233,14 +294,8 @@ function connectFailed(e) {
     "Couldn’t reach the board",
     "That almost always means it isn’t in download mode yet — no harm done.",
     false);
-  const steps = el("ol", "flash-steps");
-  [
-    "Hold the BOOT (B) button down.",
-    "While holding BOOT, tap RESET (R) once.",
-    "Let go of BOOT.",
-    "Click “Try again”.",
-  ].forEach((s) => steps.append(el("li", null, s)));
-  box.append(steps);
+  box.append(downloadModeSteps());
+  box.append(el("p", "muted", "Then click “Try again”."));
   const retry = el("button", "primary", "Try again");
   retry.addEventListener("click", () => setPhase(phaseConnect()));
   box.append(retry);
@@ -261,16 +316,48 @@ function makeTerminal() {
   };
 }
 
+// ── chunked flash reads (the stall fix) ─────────────────────────────────────
+// One big readFlash call streams the whole span against a ~4 MB un-acked
+// window; a single lost byte stalls it (esptool-js #218 — exactly the
+// "backup stuck at 1.8 MB" failure). Instead: many small reads, each its own
+// command, each retried on its own if the stream hiccups.
+async function readFlashChunked(esploader, offset, size, onProgress) {
+  const out = new Uint8Array(size);
+  const plan = core.planReadChunks(offset, size);
+  let done = 0;
+  for (const c of plan) {
+    let attempt = 0;
+    for (;;) {
+      try {
+        const part = await esploader.readFlash(c.offset, c.size, (_pkt, prog) => {
+          if (onProgress) onProgress(Math.min(done + prog, size), size);
+        });
+        if (part.length < c.size) throw new Error(`short read at 0x${c.offset.toString(16)}`);
+        out.set(part.subarray(0, c.size), c.offset - offset);
+        break;
+      } catch (e) {
+        if (++attempt >= 3) throw e;
+        // Drop any half-delivered packets before asking again.
+        try { await esploader.transport.flushInput(); } catch {}
+        await sleep(300 * attempt);
+      }
+    }
+    done += c.size;
+    if (onProgress) onProgress(done, size);
+  }
+  return out;
+}
+
 // ── read what firmware is already on the board (best-effort) ────────────────
 async function readCurrentFirmware() {
   state.current = null;
   const { esploader } = state.session;
   try {
-    const ptBytes = await esploader.readFlash(0x8000, 0xc00);
+    const ptBytes = await readFlashChunked(esploader, 0x8000, 0xc00);
     const { apps } = core.parsePartitionTable(ptBytes);
     const app = core.pickAppPartition(apps);
     if (!app) { state.current = { unknown: true }; return; }
-    const desc = await esploader.readFlash(app.offset + core.APP_DESC_OFFSET, 256);
+    const desc = await readFlashChunked(esploader, app.offset + core.APP_DESC_OFFSET, 256);
     const d = core.parseAppDescriptor(desc);
     if (!d) { state.current = { unknown: true }; return; }
     const product = core.matchProjectToProduct(state.catalog, d.projectName);
@@ -292,15 +379,10 @@ function phaseConnected() {
   // The chip hello card.
   const info = core.chipInfo(state.catalog, state.chip) || {};
   const hello = el("section", "flash-card flash-hello");
-  hello.append(el("div", "flash-chip-emoji", "🐤"));
-  const h = el("h2", null, `Say hello to your ${info.label || state.chip}`);
-  hello.append(h);
-  const facts = el("div", "flash-facts");
-  facts.append(fact("Chip", state.chipDesc || state.chip));
-  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac)));
-  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes)));
-  hello.append(facts);
-
+  const head = el("div", "flash-hello-head");
+  head.append(el("div", "flash-chip-emoji", "🐤"));
+  const ht = el("div");
+  ht.append(el("h2", null, `Say hello to your ${info.label || state.chip}`));
   // Current-firmware readout.
   const cur = el("p", "flash-current");
   if (state.current && state.current.unknown) {
@@ -312,11 +394,27 @@ function phaseConnected() {
     const ver = state.current.version ? ` ${state.current.version}` : "";
     cur.append(document.createTextNode(`Looks like it’s running ${name}${ver} right now.`));
   }
-  hello.append(cur);
-  wrap.append(hello);
+  ht.append(cur);
+  ht.append(modeBadge("download"));
+  head.append(ht);
+  hello.append(head);
 
-  // Backup offer.
-  wrap.append(renderBackupCard());
+  const facts = el("div", "flash-facts");
+  facts.append(fact("Chip", state.chipDesc || state.chip));
+  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac)));
+  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes)));
+  hello.append(facts);
+
+  const tools = el("div", "flash-row flash-tools");
+  const health = el("button", "ghost", "🩺 Health check");
+  health.title = "Read the board’s story — firmware slots, crash dumps, witness chain. Nothing is changed.";
+  health.addEventListener("click", runHealthCheck);
+  const mon = el("button", "ghost", "🖥️ Serial monitor");
+  mon.title = "Reboot into the firmware and talk to its built-in console.";
+  mon.addEventListener("click", () => openMonitor());
+  tools.append(health, mon);
+  hello.append(tools);
+  wrap.append(hello);
 
   // Firmware picker (chip-guarded).
   wrap.append(renderPicker());
@@ -334,53 +432,32 @@ function fact(label, val) {
   return f;
 }
 
-function renderBackupCard() {
-  const card = el("section", "flash-card flash-backup");
-  const head = el("div", "flash-backup-head");
-  head.append(el("span", "flash-backup-emoji", "💾"));
-  const t = el("div");
-  t.append(el("h3", null, "Take a safety copy first"));
-  t.append(el("p", "muted",
-    "Save everything currently on the board to a file. If you ever want to " +
-    "put it back exactly as it was, you can — this is your undo button."));
-  head.append(t);
-  card.append(head);
+// ── the safety copy (runs automatically before every flash) ─────────────────
+function haveBackupForThisBoard() {
+  return !!(state.backup && state.backup.mac === state.mac);
+}
 
-  if (state.backup) {
-    const done = el("p", "flash-backup-done");
-    done.append(el("span", "flash-check", "✓"));
-    done.append(document.createTextNode(`Backed up — ${state.backup.name} (${core.formatBytes(state.backup.bytes.length)}) saved to your downloads.`));
-    card.append(done);
-    const restore = el("button", "ghost small", "restore this backup instead");
-    restore.addEventListener("click", () => startFlash({ localBytes: state.backup.bytes, label: "your backup", isBackup: true }));
-    card.append(restore);
-  } else {
-    const btn = el("button", "ghost", "Back up what’s on it now");
-    btn.addEventListener("click", onBackup);
-    card.append(btn);
-    if (!state.flashBytes) {
-      card.append(el("p", "fineprint", "(Flash size unknown, so backup is unavailable on this board — flashing is still perfectly safe.)"));
-      btn.disabled = true;
-    }
-  }
-  return card;
+// Standalone backup (from the health report). The auto-backup inside
+// startFlash reuses takeBackup with the flash progress card.
+async function takeBackup(box) {
+  const { esploader } = state.session;
+  const total = state.flashBytes;
+  const bytes = await readFlashChunked(esploader, 0, total, (prog, tot) => {
+    box.set(prog / tot, `${core.formatBytes(prog)} of ${core.formatBytes(tot)}`);
+  });
+  const name = `canary-${macStamp()}-backup.bin`;
+  downloadBytes(bytes, name);
+  state.backup = { bytes, name, mac: state.mac };
+  return name;
 }
 
 async function onBackup() {
   if (state.busy || !state.flashBytes) return;
   state.busy = true;
-  const { esploader } = state.session;
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
   try {
-    const total = state.flashBytes;
-    const bytes = await esploader.readFlash(0, total, (_pkt, prog, tot) => {
-      box.set(prog / tot, `${core.formatBytes(prog)} of ${core.formatBytes(tot)}`);
-    });
-    const stamp = macStamp();
-    const name = `canary-${stamp}-backup.bin`;
-    downloadBytes(bytes, name);
-    state.backup = { bytes, name };
+    await takeBackup(box);
     state.busy = false;
     setPhase(phaseConnected());
   } catch (e) {
@@ -411,7 +488,17 @@ function renderPicker() {
   card.append(list);
   refreshManifestState(); // fills versions/availability once manifest lands
 
-  // Advanced: local file + erase toggle.
+  // The best-practice promise: a safety copy happens by itself.
+  if (state.flashBytes) {
+    const bk = el("p", "flash-autobackup fineprint");
+    bk.append(el("span", "flash-check", "✓"));
+    bk.append(document.createTextNode(
+      " Before anything is written, a full copy of the board is saved to your " +
+      "downloads automatically — your undo button, no clicks needed."));
+    card.append(bk);
+  }
+
+  // Advanced: local file, erase toggle, skip-backup, restore.
   const adv = el("details", "flash-advanced");
   adv.append(el("summary", null, "Advanced"));
   const local = el("div", "flash-local");
@@ -436,6 +523,30 @@ function renderPicker() {
     " Erase the entire chip first — an extra-clean start that also clears any " +
     "leftover data from a previous firmware. Use it if a board is misbehaving."));
   adv.append(eraseWrap);
+
+  if (state.flashBytes) {
+    const skipWrap = el("label", "flash-erase");
+    const skip = el("input");
+    skip.type = "checkbox";
+    skip.id = "flash-skip-backup";
+    skipWrap.append(skip);
+    skipWrap.append(el("span", null,
+      " Skip the automatic safety copy this time. Only worth it if you’re " +
+      "reflashing a board you already backed up — the copy is what lets you " +
+      "put everything back exactly as it was."));
+    adv.append(skipWrap);
+  }
+
+  if (haveBackupForThisBoard()) {
+    const restoreRow = el("div", "flash-local");
+    restoreRow.append(el("p", "muted",
+      `This session holds a backup of this exact board (${state.backup.name}).`));
+    const restore = el("button", "ghost small", "restore that backup");
+    restore.addEventListener("click", () =>
+      startFlash({ localBytes: state.backup.bytes, label: "your backup", isBackup: true }));
+    restoreRow.append(restore);
+    adv.append(restoreRow);
+  }
   card.append(adv);
   return card;
 }
@@ -534,12 +645,17 @@ function onPick(product) {
 async function onLocalFile(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
+  const skip = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
-  startFlash({ localBytes: bytes, label: file.name, isLocal: true });
+  startFlash({ localBytes: bytes, label: file.name, isLocal: true, skipBackup: skip });
 }
 
 function phaseConfirm(product, entry) {
+  // Read the Advanced toggles while the picker is still in the DOM.
+  const eraseOn = $("#flash-erase-all") && $("#flash-erase-all").checked;
+  const skipBackup = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
+
   const box = el("section", "flash-card flash-confirm");
   box.append(el("h2", null, `Flash ${product.name}?`));
   const sum = el("div", "flash-summary");
@@ -549,17 +665,7 @@ function phaseConfirm(product, entry) {
   sum.append(fact("Verified by", "SHA-256 before · chip MD5 after"));
   box.append(sum);
 
-  if (!state.backup) {
-    const warn = el("p", "flash-note flash-note-soft");
-    warn.append(el("strong", null, "No backup yet. "));
-    warn.append(document.createTextNode("You can still go back to any signed release, but a backup captures this exact board. "));
-    const b = el("button", "ghost small", "back up first");
-    b.addEventListener("click", () => { onBackup(); });
-    warn.append(b);
-    box.append(warn);
-  }
-
-  const eraseOn = $("#flash-erase-all") && $("#flash-erase-all").checked;
+  const willBackup = state.flashBytes && !skipBackup && !haveBackupForThisBoard();
   const isSensor = product && product.provisioning === "usb-secrets";
   const settingsLine = isSensor
     ? " It comes up with the network baked into this firmware."
@@ -567,16 +673,19 @@ function phaseConfirm(product, entry) {
   const promise = el("p", "flash-reassure");
   promise.append(el("span", "flash-shield", "🛟"));
   promise.append(document.createTextNode(
+    (willBackup
+      ? "First, a full safety copy of the board is saved to your downloads — your undo button. Then "
+      : "") +
     (eraseOn
-      ? "Full erase selected — the board is wiped completely, then written fresh."
-      : "This writes a clean install." ) +
+      ? (willBackup ? "the board is wiped completely and written fresh." : "Full erase selected — the board is wiped completely, then written fresh.")
+      : (willBackup ? "a clean install is written." : "This writes a clean install.")) +
     settingsLine +
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
   box.append(promise);
 
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Flash it${eraseOn ? " (with full erase)" : ""}`);
-  go.addEventListener("click", () => startFlash({ entry, product, eraseAll: !!eraseOn }));
+  go.addEventListener("click", () => startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup }));
   const cancel = el("button", "ghost", "not yet");
   cancel.addEventListener("click", () => setPhase(phaseConnected()));
   row.append(go, cancel);
@@ -596,6 +705,16 @@ async function startFlash(opts) {
   setPhase(box.card);
 
   try {
+    // 0) The automatic safety copy — best practice, no clicks. Skipped only
+    //    when restoring a backup, when Advanced says so, or when this exact
+    //    board was already copied this session.
+    let backupName = null;
+    if (state.flashBytes && !opts.isBackup && !opts.skipBackup && !haveBackupForThisBoard()) {
+      box.stage("Saving a safety copy of the board first (nothing is changed)");
+      backupName = await takeBackup(box);
+      box.set(0, "");
+    }
+
     // 1) Obtain the image bytes.
     let bytes;
     if (opts.localBytes) {
@@ -647,7 +766,7 @@ async function startFlash(opts) {
     try { await esploader.after("hard_reset"); } catch {}
 
     state.busy = false;
-    setPhase(phaseDone(opts));
+    setPhase(phaseDone({ ...opts, backupName }));
   } catch (e) {
     state.busy = false;
     setPhase(flashError(e, opts));
@@ -698,83 +817,403 @@ function phaseDone(opts) {
     box.append(el("p", "muted", "It rebooted into the firmware you just wrote. If it doesn’t light up, tap the RESET button once."));
   }
 
+  if (opts.backupName) {
+    const bk = el("p", "fineprint");
+    bk.append(el("span", "flash-check", "✓"));
+    bk.append(document.createTextNode(
+      ` Safety copy saved to your downloads as ${opts.backupName} — restore it any time from Advanced.`));
+    box.append(bk);
+  }
+
   const row = el("div", "flash-row");
   const watch = el("button", "primary", "Watch it boot →");
-  watch.addEventListener("click", () => watchBoot(box));
+  watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true }));
   const again = el("button", "ghost", "Flash another");
   again.addEventListener("click", () => onDisconnect().then(() => setPhase(phaseConnect())));
   row.append(watch, again);
   box.append(row);
-
-  const consoleWrap = el("div", "flash-console-wrap flash-hidden");
-  consoleWrap.id = "flash-console-wrap";
-  consoleWrap.append(el("div", "flash-console-head", "serial console · 115200"));
-  const con = el("pre", "flash-console");
-  con.id = "flash-console";
-  consoleWrap.append(con);
-  box.append(consoleWrap);
   return box;
 }
 
-// Open the port at console baud and stream the boot log. Best-effort: native
-// USB boards re-enumerate on reset, so if the held port won't open we ask for
-// it again. Any failure degrades to a friendly note — never blocks anything.
-async function watchBoot(doneBox) {
-  const wrap = $("#flash-console-wrap");
-  const con = $("#flash-console");
-  wrap.classList.remove("flash-hidden");
-  con.textContent = "";
+// ── the health check (triage without changing a byte) ───────────────────────
+async function runHealthCheck() {
+  if (state.busy || !state.session) return;
+  state.busy = true;
+  const { esploader } = state.session;
+  const box = progressCard("Reading your board’s story", "Partition map, firmware slots, crash dumps, witness chain — read-only, nothing is changed.");
+  setPhase(box.card);
 
-  // Release esptool's hold on the port first.
-  let port = state.session && state.session.port;
-  try { if (state.session) await state.session.transport.disconnect(); } catch {}
-  state.session = null;
-
-  const openConsole = async (p) => {
-    await p.open({ baudRate: state.catalog.console_baud || 115200 });
-    // Toggle reset lines so we catch the banner from the top (harmless if the
-    // board ignores them).
-    try { await p.setSignals({ dataTerminalReady: false, requestToSend: true }); await sleep(120);
-          await p.setSignals({ dataTerminalReady: true, requestToSend: false }); } catch {}
-    const reader = p.readable.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    const deadline = Date.now() + 20000;
-    let celebrated = false;
-    while (Date.now() < deadline) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      con.textContent = buf.slice(-4000);
-      con.scrollTop = con.scrollHeight;
-      if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
-        celebrated = true;
-        const ok = el("p", "flash-console-ok");
-        ok.append(el("span", "flash-check", "✓"), document.createTextNode("It’s talking — your Canary is alive."));
-        wrap.append(ok);
-        confettiBurst();
-      }
-    }
-    try { reader.releaseLock(); } catch {}
-    try { await p.close(); } catch {}
+  const report = {
+    generatedAt: new Date().toISOString(),
+    chip: state.chipDesc || state.chip,
+    mac: state.mac ? core.formatMac(state.mac) : null,
+    flashBytes: state.flashBytes,
   };
 
   try {
-    if (!port) throw new Error("no port");
-    await openConsole(port);
+    // 1) Partition table — everything else hangs off it.
+    box.stage("Reading the partition map");
+    box.set(0.1, "");
+    const ptBytes = await readFlashChunked(esploader, 0x8000, 0xc00);
+    const { entries, apps } = core.parsePartitionTable(ptBytes);
+    report.partitions = entries.map((e) => ({
+      label: e.label, kind: core.partitionKind(e),
+      offset: e.offset, size: e.size,
+    }));
+
+    if (!entries.length) {
+      report.blank = true;
+    } else {
+      // 2) Every app slot's descriptor — what's installed, when it was built.
+      box.stage("Reading the firmware in each slot");
+      box.set(0.3, "");
+      report.slots = [];
+      for (const app of apps) {
+        let desc = null;
+        try {
+          const d = await readFlashChunked(esploader, app.offset + core.APP_DESC_OFFSET, 256);
+          desc = core.parseAppDescriptor(d);
+        } catch {}
+        report.slots.push({
+          label: app.label || core.partitionKind(app),
+          subtype: app.subtype,
+          empty: !desc,
+          project: desc ? desc.projectName : null,
+          version: desc ? desc.version : null,
+          built: desc && desc.date ? `${desc.date} ${desc.time || ""}`.trim() : null,
+          idf: desc ? desc.idfVer : null,
+        });
+      }
+
+      // 3) otadata — which slot boots, how many updates this board has seen.
+      const otaPart = entries.find(core.isOtaDataPart);
+      const otaSlots = apps.filter((a) => a.subtype >= 0x10 && a.subtype < 0x20);
+      if (otaPart) {
+        box.stage("Reading update history (otadata)");
+        box.set(0.5, "");
+        try {
+          const ob = await readFlashChunked(esploader, otaPart.offset, Math.min(otaPart.size, 0x2000));
+          report.ota = core.parseOtaData(ob, otaSlots.length);
+          if (report.ota && !report.ota.fresh && otaSlots[report.ota.activeOta]) {
+            const activeLabel = otaSlots[report.ota.activeOta].label;
+            const slot = report.slots.find((s) => s.label === activeLabel);
+            if (slot) slot.active = true;
+          } else if (report.ota && report.ota.fresh) {
+            // Factory default boot: factory partition if present, else ota_0.
+            const first = apps.find((a) => a.subtype === 0x00) || otaSlots[0];
+            const slot = first && report.slots.find((s) => s.label === first.label);
+            if (slot) slot.active = true;
+          }
+        } catch {}
+      }
+
+      // 4) Coredump — has this board ever crashed hard?
+      const cd = entries.find(core.isCoredumpPart);
+      if (cd) {
+        box.stage("Checking for stored crash dumps");
+        box.set(0.65, "");
+        try {
+          const cb = await readFlashChunked(esploader, cd.offset, 16);
+          report.coredump = core.parseCoredumpHeader(cb, cd.size);
+        } catch {}
+      }
+
+      // 5) NVS — the witness chain's fast-boot cache lives here. Values are
+      //    only pulled for the chain head; secrets stay as presence-only.
+      const nvs = entries.find(core.isNvsPart);
+      if (nvs) {
+        box.stage("Reading witness-chain state (NVS)");
+        box.set(0.8, "");
+        try {
+          const nb = await readFlashChunked(esploader, nvs.offset, nvs.size);
+          const items = core.parseNvs(nb, [core.WITNESS_CHAIN_BLOB_KEY]);
+          report.witness = core.witnessSummary(items);
+        } catch {}
+      }
+
+      const wl = entries.find(core.isWitnessLogPart);
+      if (wl) report.witnessLog = { label: wl.label, size: wl.size };
+    }
+
+    box.set(1, "");
+    state.report = report;
+    state.busy = false;
+    setPhase(renderReport(report));
   } catch (e) {
-    // Re-enumerated or lost — offer a fresh pick.
-    con.textContent = "";
-    const p = el("p", "fineprint");
-    p.append(document.createTextNode("The board reconnected as a new USB device (normal for these chips). "));
-    const b = el("button", "ghost small", "pick it again to watch →");
-    b.addEventListener("click", async () => {
-      try { const np = await navigator.serial.requestPort(); await openConsole(np); }
-      catch {}
-    });
-    p.append(b);
-    con.parentElement.append(p);
+    state.busy = false;
+    setPhase(errorRetry("The health check didn’t finish", e, phaseConnected));
   }
+}
+
+function reportRow(label, value, tone) {
+  const row = el("div", "flash-report-row" + (tone ? ` flash-report-${tone}` : ""));
+  row.append(el("span", "flash-report-label", label));
+  const v = el("span", "flash-report-val");
+  if (value instanceof Node) v.append(value); else v.textContent = value;
+  row.append(v);
+  return row;
+}
+
+function renderReport(r) {
+  const box = el("section", "flash-card flash-report");
+  box.append(el("h2", null, "Board report"));
+  box.append(el("p", "muted", "Read straight off the flash — nothing was changed, and nothing left this page."));
+
+  const facts = el("div", "flash-facts");
+  facts.append(fact("Chip", r.chip));
+  if (r.mac) facts.append(fact("ID (MAC)", r.mac));
+  if (r.flashBytes) facts.append(fact("Flash", core.formatBytes(r.flashBytes)));
+  box.append(facts);
+
+  if (r.blank) {
+    box.append(el("p", "flash-note flash-note-soft",
+      "No partition table found — this board looks blank (or was fully erased). Flashing any firmware below will set it up from scratch."));
+  }
+
+  // Firmware slots.
+  if (r.slots && r.slots.length) {
+    const sec = el("div", "flash-report-sec");
+    sec.append(el("h3", null, "Firmware on the board"));
+    r.slots.forEach((s) => {
+      const badge = s.active ? " — running now" : "";
+      const text = s.empty
+        ? "empty"
+        : `${s.project || "unknown"} ${s.version || ""}`.trim() +
+          (s.built ? ` · built ${s.built}` : "");
+      sec.append(reportRow(s.label + badge, text, s.active ? "ok" : null));
+    });
+    const note = el("p", "fineprint",
+      "“Built” is the firmware’s own compile stamp — the closest thing a board keeps to “when it was last flashed”.");
+    sec.append(note);
+    box.append(sec);
+  }
+
+  // Update history.
+  if (r.ota) {
+    const sec = el("div", "flash-report-sec");
+    sec.append(el("h3", null, "Update history"));
+    if (r.ota.fresh) {
+      sec.append(reportRow("Over-the-air updates", "none yet — still on its first-flashed firmware"));
+    } else {
+      sec.append(reportRow("Over-the-air updates", `${r.ota.updatesSeen} slot switch${r.ota.updatesSeen === 1 ? "" : "es"} recorded`));
+      sec.append(reportRow("Boot state", r.ota.stateText, r.ota.pendingVerify ? "warn" : null));
+      if (r.ota.pendingVerify) {
+        sec.append(el("p", "fineprint",
+          "“Pending verify” means the last update hasn’t confirmed itself yet — if the board reboots before it does, it rolls back. Usually it just needs one good boot."));
+      }
+    }
+    box.append(sec);
+  }
+
+  // Health.
+  const health = el("div", "flash-report-sec");
+  health.append(el("h3", null, "Health"));
+  if (r.coredump) {
+    if (r.coredump.present) {
+      health.append(reportRow("Crash dump", `found (${core.formatBytes(r.coredump.size)}) — the board hard-crashed at some point and kept the evidence`, "warn"));
+      health.append(el("p", "fineprint",
+        "Not an emergency: the dump is from an earlier fault, and flashing fresh firmware (or a full erase) clears it. If a board keeps crashing, this is the breadcrumb to mention in a bug report."));
+    } else {
+      health.append(reportRow("Crash dump", "none stored — no hard crashes on record", "ok"));
+    }
+  }
+  if (r.witness && r.witness.boots != null) {
+    health.append(reportRow("Lifetime boots", String(r.witness.boots)));
+  }
+  if (r.witness && r.witness.tamper != null && r.witness.tamper !== 0) {
+    health.append(reportRow("Tamper flag", `set (${r.witness.tamper}) — the firmware recorded a tamper event`, "warn"));
+  }
+  if (!r.coredump && (!r.witness || r.witness.boots == null)) {
+    health.append(el("p", "muted", "Nothing health-related readable on this layout."));
+  }
+  box.append(health);
+
+  // Witness chain.
+  if (r.witness) {
+    const sec = el("div", "flash-report-sec");
+    sec.append(el("h3", null, "Witness chain"));
+    if (r.witness.seq != null) {
+      sec.append(reportRow("Records chained", String(r.witness.seq), "ok"));
+    }
+    if (r.witness.chainHeadFp) {
+      sec.append(reportRow("Chain head", el("code", null, r.witness.chainHeadFp + "…")));
+    }
+    sec.append(reportRow("Device identity", r.witness.provisioned
+      ? "provisioned — this board has its signing key" : "not provisioned yet",
+      r.witness.provisioned ? "ok" : null));
+    sec.append(reportRow("WiFi settings", r.witness.wifiConfigured ? "stored on the board" : "none stored"));
+    sec.append(el("p", "fineprint",
+      "Counters and fingerprints only — keys, passwords and tokens are never read out of the board, here or anywhere."));
+    box.append(sec);
+  } else if (!r.blank) {
+    const sec = el("div", "flash-report-sec");
+    sec.append(el("h3", null, "Witness chain"));
+    sec.append(el("p", "muted", "No SecuraCV witness state found — normal for a board that hasn’t run Canary firmware yet."));
+    box.append(sec);
+  }
+  if (r.witnessLog) {
+    box.append(el("p", "fineprint",
+      `This board also carries a dedicated ${core.formatBytes(r.witnessLog.size)} tamper-evident witness_log partition.`));
+  }
+
+  // Storage map.
+  if (r.partitions && r.partitions.length) {
+    const det = el("details", "flash-report-map");
+    det.append(el("summary", null, "storage map (partitions)"));
+    const tbl = el("div", "flash-report-table");
+    r.partitions.forEach((p) => {
+      const row = el("div", "flash-report-trow");
+      row.append(el("code", null, p.label || "—"));
+      row.append(el("span", "muted", p.kind));
+      row.append(el("code", null, "0x" + p.offset.toString(16)));
+      row.append(el("span", null, core.formatBytes(p.size)));
+      tbl.append(row);
+    });
+    det.append(tbl);
+    box.append(det);
+  }
+
+  const row = el("div", "flash-row");
+  const back = el("button", "primary", "Back to flashing");
+  back.addEventListener("click", () => setPhase(phaseConnected()));
+  const save = el("button", "ghost", "Save report (.json)");
+  save.addEventListener("click", () => {
+    const blob = new TextEncoder().encode(JSON.stringify(r, null, 2));
+    downloadBytes(blob, `canary-${macStamp()}-report.json`);
+  });
+  const bk = el("button", "ghost", "💾 Save a full backup");
+  bk.addEventListener("click", onBackup);
+  row.append(back, save, bk);
+  box.append(row);
+  return box;
+}
+
+// ── the serial monitor (talk to the firmware's own console) ─────────────────
+// The firmware answers single-key commands on its USB console ('h' prints the
+// full menu). We reboot the board out of download mode, reopen the port at
+// console baud, and give the user a live console with a send box.
+const MONITOR_CMDS = [
+  ["h", "help"], ["i", "identity"], ["s", "status"], ["t", "time"],
+  ["w", "wifi"], ["m", "system"], ["b", "battery"],
+];
+
+async function openMonitor(opts = {}) {
+  if (state.busy) return;
+  let port = state.session && state.session.port;
+  if (state.session) {
+    // Leave the bootloader: reset into the app, then let go of the port.
+    if (!opts.skipReset) { try { await state.session.esploader.after("hard_reset"); } catch {} }
+    try { await state.session.transport.disconnect(); } catch {}
+    state.session = null;
+  }
+  setPhase(phaseMonitor(port, opts));
+}
+
+function phaseMonitor(port, opts = {}) {
+  const box = el("section", "flash-card flash-monitor");
+  box.append(el("h2", null, "Serial monitor"));
+  box.append(modeBadge("running"));
+  const status = el("p", "muted", "Opening the console…");
+  box.append(status);
+
+  const con = el("pre", "flash-console flash-console-tall");
+  box.append(con);
+
+  const chips = el("div", "flash-mon-chips");
+  MONITOR_CMDS.forEach(([ch, label]) => {
+    const b = el("button", "ghost small", `${label} (${ch})`);
+    b.addEventListener("click", () => send(ch));
+    chips.append(b);
+  });
+  box.append(chips);
+
+  const inRow = el("div", "flash-mon-input");
+  const input = el("input");
+  input.type = "text";
+  input.placeholder = "type a command — the firmware answers single keys; h shows its menu";
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { send(input.value + "\n"); input.value = ""; }
+  });
+  const sendBtn = el("button", "primary small", "Send");
+  sendBtn.addEventListener("click", () => { send(input.value + "\n"); input.value = ""; });
+  inRow.append(input, sendBtn);
+  box.append(inRow);
+
+  const row = el("div", "flash-row");
+  const done = el("button", "ghost", "← back to the flasher");
+  row.append(done);
+  box.append(row);
+  box.append(el("p", "fineprint",
+    "Live from the board over USB at " + (state.catalog.console_baud || 115200) +
+    " baud. Nothing here leaves your computer. To flash again, go back — the " +
+    "flasher returns the board to download mode itself (or: hold BOOT, tap " +
+    "RESET, release BOOT)."));
+
+  // — wire it up —
+  const mon = { alive: true, port: null, reader: null, writer: null };
+  let celebrated = !opts.celebrate;
+
+  function send(text) {
+    if (!mon.writer || !text) return;
+    mon.writer.write(new TextEncoder().encode(text)).catch(() => {});
+  }
+
+  async function pump(p) {
+    await p.open({ baudRate: state.catalog.console_baud || 115200 });
+    mon.port = p;
+    try { mon.writer = p.writable.getWriter(); } catch {}
+    mon.reader = p.readable.getReader();
+    status.textContent = "Connected — the board is talking. Press a command, or h for its menu.";
+    const dec = new TextDecoder();
+    let buf = "";
+    while (mon.alive) {
+      const { value, done: fin } = await mon.reader.read();
+      if (fin) break;
+      buf = (buf + dec.decode(value, { stream: true })).slice(-16000);
+      con.textContent = buf;
+      con.scrollTop = con.scrollHeight;
+      if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
+        celebrated = true;
+        status.textContent = "✓ It’s talking — your Canary is alive.";
+        confettiBurst();
+      }
+    }
+  }
+
+  async function closeMon() {
+    mon.alive = false;
+    try { mon.reader && await mon.reader.cancel(); } catch {}
+    try { mon.reader && mon.reader.releaseLock(); } catch {}
+    try { mon.writer && mon.writer.releaseLock(); } catch {}
+    try { mon.port && await mon.port.close(); } catch {}
+  }
+
+  done.addEventListener("click", async () => {
+    await closeMon();
+    setPhase(phaseConnect());
+  });
+
+  (async () => {
+    try {
+      if (!port) throw new Error("no port");
+      await pump(port);
+    } catch (e) {
+      if (!mon.alive) return;
+      // Native-USB boards re-enumerate after reset — offer a fresh pick.
+      status.textContent = "The board reconnected as a new USB device (normal for these chips).";
+      const b = el("button", "ghost small", "pick it again to keep watching →");
+      b.addEventListener("click", async () => {
+        b.remove();
+        try {
+          const np = await navigator.serial.requestPort();
+          await pump(np);
+        } catch {}
+      });
+      status.after(b);
+    }
+  })();
+
+  return box;
 }
 
 // ── shared UI bits ──────────────────────────────────────────────────────────
@@ -830,6 +1269,7 @@ async function onDisconnect(silent) {
   try { if (state.session) await state.session.transport.disconnect(); } catch {}
   state.session = null;
   state.chip = state.mac = state.flashBytes = state.current = null;
+  state.report = null;
   state.busy = false;
   if (!silent) { /* caller decides next phase */ }
 }
