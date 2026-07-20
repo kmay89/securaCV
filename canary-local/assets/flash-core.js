@@ -620,6 +620,24 @@ export function settingsVerdict(diff, hadWifi) {
     : "The settings area is reset to factory-fresh." };
 }
 
+// ── browser detection (for the "hop to Chrome" card) ───────────────────────
+// Only used when Web Serial is absent, to name what the user IS on and point
+// the arrow at a browser that works. iPadOS masquerades as a Mac, hence the
+// touch-points hint.
+export function detectBrowser(ua, maxTouchPoints = 0) {
+  ua = String(ua || "");
+  if (/iPhone|iPod/.test(ua)) return { id: "ios", label: "iPhone", icon: "📱", mobile: true };
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && maxTouchPoints > 1)) {
+    return { id: "ios", label: "iPad", icon: "📱", mobile: true };
+  }
+  if (/Android/.test(ua)) return { id: "android", label: "Android", icon: "📱", mobile: true };
+  if (/Firefox\//.test(ua)) return { id: "firefox", label: "Firefox", icon: "🦊", mobile: false };
+  if (/Safari\//.test(ua) && !/Chrome|Chromium|Edg\/|OPR\//.test(ua)) {
+    return { id: "safari", label: "Safari", icon: "🧭", mobile: false };
+  }
+  return { id: "other", label: "this browser", icon: "🌐", mobile: false };
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.

@@ -554,6 +554,28 @@ test("diffInstall returns null without any partition table to anchor on", async 
   assert.strictEqual(diffInstall(blankOld, rawApp), null);
 });
 
+// ── browser detection (the hop-to-Chrome card) ──────────────────────────────
+test("detectBrowser: safari, firefox, iPhone, iPad-as-Mac, android, chrome-ish", async () => {
+  const { detectBrowser } = await core();
+  const safari = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
+  assert.strictEqual(detectBrowser(safari, 0).id, "safari");
+  const fx = "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0";
+  assert.strictEqual(detectBrowser(fx).id, "firefox");
+  const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/124.0 Mobile/15E148 Safari/604.1";
+  const ip = detectBrowser(iphone, 5);
+  assert.strictEqual(ip.id, "ios");
+  assert.strictEqual(ip.mobile, true);
+  // iPadOS pretends to be a Mac; the touch points give it away.
+  const ipadAsMac = detectBrowser(safari, 5);
+  assert.strictEqual(ipadAsMac.id, "ios");
+  assert.strictEqual(ipadAsMac.label, "iPad");
+  const android = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36";
+  assert.strictEqual(detectBrowser(android).id, "android");
+  // Desktop Chrome contains "Safari/" too — must NOT classify as safari.
+  const chrome = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+  assert.strictEqual(detectBrowser(chrome, 0).id, "other");
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");
