@@ -249,7 +249,8 @@ function renderUnsupported() {
   const chromeIcon = el("span", "flash-hop-icon");
   chromeIcon.append(chromeMark(40));
   to.append(chromeIcon);
-  to.append(el("span", "flash-hop-label", "Chrome (or Edge / Brave)"));
+  to.append(el("span", "flash-hop-label",
+    b.mobile ? "Chrome on a computer" : "Chrome (or Edge / Brave)"));
   hop.append(from, arrow, to);
   box.append(hop);
 
@@ -258,23 +259,34 @@ function renderUnsupported() {
     "on a computer have: Chrome, Edge, Brave, Opera, Arc. Safari and Firefox " +
     "can’t do it yet."));
 
+  // On a phone or tablet, installing Chrome HERE wouldn't help (mobile Chrome
+  // has no Web Serial) — so the primary action is getting this link onto a
+  // computer, and the Chrome install link only leads on desktops.
   const row = el("div", "flash-row flash-hop-actions");
-  const get = el("a", "primary", "Get Chrome (free) →");
-  get.href = "https://www.google.com/chrome/";
-  get.target = "_blank";
-  get.rel = "noopener";
-  row.append(get);
-  const copy = el("button", "ghost", "Copy this page’s link");
+  const copy = el("button", b.mobile ? "primary" : "ghost",
+    b.mobile ? "Copy the link for your computer" : "Copy this page’s link");
   copy.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(location.href);
-      copy.textContent = "✓ copied — paste it into Chrome";
+      copy.textContent = "✓ copied — open it in Chrome on your computer";
     } catch {
       copy.textContent = location.href; // worst case: show it to select by hand
     }
   });
-  row.append(copy);
-  box.append(row);
+  if (b.mobile) {
+    row.append(copy);
+    box.append(row);
+    box.append(el("p", "fineprint",
+      "No Chrome on that computer yet? It’s a free download at google.com/chrome — " +
+      "or use Edge or Brave, already on most machines."));
+  } else {
+    const get = el("a", "primary", "Get Chrome (free) →");
+    get.href = "https://www.google.com/chrome/";
+    get.target = "_blank";
+    get.rel = "noopener";
+    row.append(get, copy);
+    box.append(row);
+  }
 
   // What the working setup looks like: board — cable — computer with Chrome.
   const rig = el("div", "flash-rig");
