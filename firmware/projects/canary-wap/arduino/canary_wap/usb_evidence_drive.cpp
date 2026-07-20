@@ -101,14 +101,24 @@ static void run_update_check() {
     return;
   }
 
-  // Manifest: read + parse (ArduinoJson) into the engine's struct.
-  char man_json[FAT_MAX_MANIFEST_BYTES + 1] = {0};
+  // Manifest: read + parse (ArduinoJson) into the engine's struct. Heap,
+  // not stack — poll() runs on the loop task and 16 KiB would blow its
+  // 8 KiB stack before JsonDocument even allocates.
+  char* man_json = (char*)malloc(FAT_MAX_MANIFEST_BYTES + 1);
+  if (!man_json) {
+    fat16_write_result(s_staging, "out of memory reading the manifest");
+    return;
+  }
+  memset(man_json, 0, FAT_MAX_MANIFEST_BYTES + 1);
   if (fat16_read_file(s_staging, man, (uint8_t*)man_json, FAT_MAX_MANIFEST_BYTES) != man.size) {
+    free(man_json);
     fat16_write_result(s_staging, "could not read the manifest back - copy both files again");
     return;
   }
   JsonDocument doc;
-  if (deserializeJson(doc, man_json, man.size) != DeserializationError::Ok) {
+  const bool json_ok = deserializeJson(doc, man_json, man.size) == DeserializationError::Ok;
+  free(man_json);
+  if (!json_ok) {
     fat16_write_result(s_staging, "the manifest is not valid JSON - re-download it from the release");
     return;
   }
@@ -210,16 +220,17 @@ static void enter_off() {
   snprintf(s_status, sizeof s_status, "USB drive off");
 }
 
-static void enter_evidence() {
+static bool enter_evidence() {
   if (!s_cfg.sd_quiesce || !s_cfg.sd_quiesce()) {
     snprintf(s_status, sizeof s_status, "SD not ready - evidence drive unavailable");
-    return;
+    return false;
   }
   share_apply(s_share, ShareEvent::SHARE_REQUEST, true);
   s_mode = Mode::EVIDENCE;
   msc_present((uint32_t)SD.numSectors(), /*writable=*/false);
   snprintf(s_status, sizeof s_status,
            "EVIDENCE drive shared read-only - eject on the computer when done");
+  return true;
 }
 
 static void enter_update() {
@@ -261,7 +272,12 @@ void poll() {
 
 void cycle_mode() {
   switch (s_mode) {
-    case Mode::OFF:      enter_evidence(); break;
+    case Mode::OFF:
+      // The update drop-zone lives entirely in PSRAM and never needs the
+      // SD, so a build without SD share hooks (or a missing/busy card)
+      // must still reach it — fall through when evidence can't start.
+      if (!enter_evidence()) enter_update();
+      break;
     case Mode::EVIDENCE: enter_off(); enter_update(); break;
     case Mode::UPDATE:   enter_off(); break;
   }

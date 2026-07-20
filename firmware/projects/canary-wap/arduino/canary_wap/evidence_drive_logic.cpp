@@ -75,10 +75,17 @@ static uint32_t rd32(const uint8_t* p) {
 static const char README_TEXT[] =
   "SecuraCV Canary update drop-zone\r\n"
   "--------------------------------\r\n"
-  "Copy ONE signed firmware file (canary-...-factory.bin from a SecuraCV\r\n"
-  "release) onto this drive, then eject it. The Canary checks the file's\r\n"
-  "signature exactly like a network update: a good file installs on\r\n"
-  "reboot, anything else is ignored and explained in RESULT.TXT.\r\n"
+  "Copy TWO files from a SecuraCV release onto this drive, then eject:\r\n"
+  "\r\n"
+  "  1. the firmware image for your product, e.g. canary-wap-2.3.0.bin\r\n"
+  "     (the plain .bin - NOT the *-factory.bin, which is for the\r\n"
+  "     browser flasher)\r\n"
+  "  2. its manifest, e.g. manifest-canary-wap.json - this small file\r\n"
+  "     carries the release signature the image is checked against\r\n"
+  "\r\n"
+  "The Canary verifies the pair exactly like a network update: a good\r\n"
+  "pair installs on reboot, anything else is ignored and explained in\r\n"
+  "RESULT.TXT.\r\n"
   "\r\n"
   "This drive is temporary memory - it empties every time you unplug.\r\n"
   "Your evidence lives on the read-only CANARY-EVIDENCE drive.\r\n";
@@ -115,23 +122,29 @@ void fat16_format(uint8_t* buf) {
   memcpy(b + 54, "FAT16   ", 8);
   b[510] = 0x55; b[511] = 0xAA;
 
-  // Both FATs: media byte + EOC, then the README's single cluster chain.
+  // Both FATs: media byte + EOC, then the README's cluster chain — however
+  // many contiguous clusters its text needs, starting at cluster 2.
+  const uint32_t readme_len = (uint32_t)sizeof(README_TEXT) - 1;
+  const uint32_t readme_clusters = (readme_len + FAT_SECTOR_SIZE - 1) / FAT_SECTOR_SIZE;
   for (int f = 0; f < 2; f++) {
     uint8_t* fat = buf + (1 + f * FAT_SECTORS_PER_FAT) * FAT_SECTOR_SIZE;
     wr16(fat + 0, 0xFFF8);
     wr16(fat + 2, 0xFFFF);
-    wr16(fat + 4, 0xFFFF);                            // cluster 2 = README, EOC
+    for (uint32_t i = 0; i < readme_clusters; i++) {
+      const uint16_t c = (uint16_t)(2 + i);
+      wr16(fat + c * 2, i + 1 < readme_clusters ? (uint16_t)(c + 1) : 0xFFFF);
+    }
   }
 
   // Root directory: volume label + README.TXT.
   uint8_t* root = buf + (1 + 2 * FAT_SECTORS_PER_FAT) * FAT_SECTOR_SIZE;
   write_dirent(root, "CANARY-UPD ", 0x08, 0, 0);
   write_dirent(root + 32, "README  TXT", 0x21 /* read-only + archive */,
-               2, (uint32_t)sizeof(README_TEXT) - 1);
+               2, readme_len);
 
-  // README contents in cluster 2 (first data cluster).
-  memcpy(buf + FAT_FIRST_DATA_SECTOR * FAT_SECTOR_SIZE,
-         README_TEXT, sizeof(README_TEXT) - 1);
+  // README contents from the first data cluster (chain is contiguous, so a
+  // straight copy lands each cluster on its sector).
+  memcpy(buf + FAT_FIRST_DATA_SECTOR * FAT_SECTOR_SIZE, README_TEXT, readme_len);
 }
 
 // Walk one file's FAT chain, bounded. Returns chained cluster count (0 on

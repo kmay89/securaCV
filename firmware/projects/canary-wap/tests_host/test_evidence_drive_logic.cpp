@@ -159,36 +159,47 @@ int main() {
   // ── corruption resistance ─────────────────────────────────────────────────
   {
     // Fresh volume; a file whose directory size exceeds its FAT chain
-    // (interrupted copy) must be flagged and refused.
+    // (interrupted copy) must be flagged and refused. Cluster numbers are
+    // derived from the listing, not assumed — the README's own chain length
+    // is an implementation detail.
     std::vector<uint8_t> v2(FAT_VOLUME_BYTES);
     fat16_format(v2.data());
-    host_write_file(v2.data(), "TORN    BIN", image.data(), 1024);
-    // Truncate its chain: mark the second cluster free in FAT0.
-    uint8_t* fat0 = v2.data() + FAT_SECTOR_SIZE;
-    // README owns cluster 2; TORN got clusters 3,4 → cut 3's link to 4.
-    fat0[3 * 2] = 0xFF; fat0[3 * 2 + 1] = 0xFF; // 3 = EOC → chain shorter than size? no: 1024B needs 2 clusters; now chain=1
+    host_write_file(v2.data(), "TORN    BIN", image.data(), 1024); // needs 2 clusters
     FatFile files[8];
-    const size_t n = fat16_list_root(v2.data(), files, 8);
-    bool saw_torn = false;
-    for (size_t i = 0; i < n; i++) {
-      if (strcmp(files[i].name, "TORN.BIN") == 0) {
-        saw_torn = true;
-        CHECK(!files[i].size_matches_chain);
-      }
-    }
-    CHECK(saw_torn);
+    size_t n = fat16_list_root(v2.data(), files, 8);
+    FatFile* torn = nullptr;
+    for (size_t i = 0; i < n; i++)
+      if (strcmp(files[i].name, "TORN.BIN") == 0) torn = &files[i];
+    CHECK(torn && torn->size_matches_chain);
+    // Truncate its chain: mark its FIRST cluster end-of-chain in FAT0.
+    uint8_t* fat0 = v2.data() + FAT_SECTOR_SIZE;
+    fat0[torn->first_cluster * 2] = 0xFF;
+    fat0[torn->first_cluster * 2 + 1] = 0xFF;
+    n = fat16_list_root(v2.data(), files, 8);
+    torn = nullptr;
+    for (size_t i = 0; i < n; i++)
+      if (strcmp(files[i].name, "TORN.BIN") == 0) torn = &files[i];
+    CHECK(torn && !torn->size_matches_chain);
 
-    // A looped FAT chain must terminate, not hang.
+    // A looped FAT chain must terminate and fail closed, not hang or hand
+    // back duplicated sectors.
     std::vector<uint8_t> v3(FAT_VOLUME_BYTES);
     fat16_format(v3.data());
     host_write_file(v3.data(), "LOOP    BIN", image.data(), 2048);
+    FatFile lfound{};
+    n = fat16_list_root(v3.data(), files, 8);
+    for (size_t i = 0; i < n; i++)
+      if (strcmp(files[i].name, "LOOP.BIN") == 0) lfound = files[i];
+    CHECK(lfound.first_cluster >= 2);
     uint8_t* f3 = v3.data() + FAT_SECTOR_SIZE;
-    // Point cluster 4 back at 3 (README has 2; LOOP has 3..6).
-    f3[4 * 2] = 3; f3[4 * 2 + 1] = 0;
-    FatFile lf{};
-    strcpy(lf.name, "LOOP.BIN"); lf.size = 2048; lf.first_cluster = 3;
+    // Point its second cluster back at its first: 1→2→1→2…
+    const uint16_t c0 = lfound.first_cluster;
+    const uint16_t c1 = (uint16_t)(f3[c0 * 2] | (f3[c0 * 2 + 1] << 8));
+    CHECK(c1 >= 2);
+    f3[c1 * 2] = (uint8_t)(c0 & 0xff);
+    f3[c1 * 2 + 1] = (uint8_t)(c0 >> 8);
     std::vector<uint8_t> sink(4096);
-    CHECK(fat16_read_file(v3.data(), lf, sink.data(), (uint32_t)sink.size()) == 0);
+    CHECK(fat16_read_file(v3.data(), lfound, sink.data(), (uint32_t)sink.size()) == 0);
   }
 
   // Oversized file claim → refused before any read.
