@@ -51,7 +51,7 @@ protected cell only, chemistry per climate, ships per BOM safety notes), doorbel
 faceplate (+$9). Battery SKUs follow the BOM's safety-critical notes verbatim; no
 unprotected cells, ever.
 
-Bundles: **Starter Flock** (Watch + 2× WAP) $199 (vs $217 à la carte) · **Whole-House**
+Bundles: **Starter Fleet** (Watch + 2× WAP) $199 (vs $217 à la carte) · **Whole-House**
 (Dash + Vision + 2× WAP) $329 (vs $366). Bundles are where the display devices pull
 the witnesses through.
 

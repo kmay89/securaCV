@@ -4,7 +4,7 @@
 // perches as data), animates each Canary's sensing modality the way it
 // actually works — camera cones that keep their pixels, WiFi-field
 // ripples, radar arcs, a breathing wave, display glows — and walks a
-// visitor through so the witness feed can show the ONLY thing a flock
+// visitor through so the witness feed can show the ONLY thing a fleet
 // ever says out loud: small signed claims.
 //
 // Pure SVG + CSS animation; no libraries, works offline like the rest
@@ -12,7 +12,7 @@
 import {
   WALL_H, SLAB_T, FLOORS, ROOMS, DIVIDERS, DIVIDER_H,
   SENSE_COPY, PLACEMENTS, WALK,
-  placementInfo, chooserHash, flockSummary,
+  placementInfo, chooserHash, fleetSummary,
 } from "./house-data.js";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -471,7 +471,7 @@ requestAnimationFrame(() => {
     `${(bb.x - 16).toFixed(0)} ${(bb.y - 20).toFixed(0)} ${(bb.width + 32).toFixed(0)} ${(bb.height + 36).toFixed(0)}`);
 });
 
-// ── side panel: flock list, details, summary ───────────────────────────
+// ── side panel: fleet list, details, summary ───────────────────────────
 
 const panel = document.getElementById("panel");
 const feedList = document.getElementById("feed-list");
@@ -488,14 +488,14 @@ function renderPanel() {
   panel.innerHTML = "";
   if (state.selected) return renderDetails(PLACEMENTS.find((p) => p.id === state.selected));
 
-  const s = flockSummary([...state.on]);
-  const head = html("div", "flock-head");
-  head.append(html("h2", null, "Your flock"));
-  head.append(html("p", "flock-count",
+  const s = fleetSummary([...state.on]);
+  const head = html("div", "fleet-head");
+  head.append(html("h2", null, "Your fleet"));
+  head.append(html("p", "fleet-count",
     `${s.witnesses} witness${s.witnesses === 1 ? "" : "es"} · ${s.displays} display${s.displays === 1 ? "" : "s"}` +
     (s.infra ? ` · ${s.infra} relay` : "") +
     (s.soon ? ` · +${s.soon} coming soon` : "")));
-  head.append(html("p", "flock-honest",
+  head.append(html("p", "fleet-honest",
     s.total === 0 ? "Nothing perched yet — tap a marker or switch one on below." :
     `${s.released} released today, ${s.indev} in development — statuses never hidden.`));
   panel.append(head);
@@ -506,7 +506,7 @@ function renderPanel() {
       return floorId === "outside" ? r.outside : (!r.outside && r.floor === floorId);
     });
     if (!perches.length) continue;
-    panel.append(html("h3", "flock-floor",
+    panel.append(html("h3", "fleet-floor",
       floorId === "ground" ? "Ground floor" : floorId === "upper" ? "Upstairs" : "Outside"));
     for (const p of perches) {
       const info = placementInfo(p);
@@ -526,7 +526,7 @@ function renderPanel() {
     }
   }
 
-  const doors = html("div", "flock-doors");
+  const doors = html("div", "fleet-doors");
   const a1 = html("a", "primary small door", "refine in the chooser →");
   a1.href = "choose.html";
   const a2 = html("a", "door", "spec builds in the Workshop →");
@@ -539,7 +539,7 @@ function renderPanel() {
 
 function renderDetails(p) {
   const info = placementInfo(p);
-  const back = html("button", "back", "← whole flock");
+  const back = html("button", "back", "← whole fleet");
   back.addEventListener("click", () => select(null));
   panel.append(back);
 
@@ -563,7 +563,7 @@ function renderDetails(p) {
     panel.append(od);
   }
 
-  const doors = html("div", "flock-doors");
+  const doors = html("div", "fleet-doors");
   if (info.teaser) {
     const req = html("a", "primary small door", "→ request it (opens a GitHub issue)");
     req.href = "https://github.com/kmay89/securaCV/issues/new?title=" +
@@ -660,7 +660,7 @@ function startWalk() {
   walkBtn.textContent = "…visitor walking";
   person.classList.remove("hidden");
   feedList.innerHTML = "";
-  feed("visitor approaching — the flock is listening", "sys");
+  feed("visitor approaching — the fleet is listening", "sys");
 
   const speed = matchMedia("(prefers-reduced-motion: reduce)").matches ? 5.5 : 1.7; // units/s
   const tripped = new Set();
@@ -706,7 +706,7 @@ function endWalk() {
   person.classList.add("hidden");
   walkBtn.disabled = false;
   walkBtn.textContent = "▶ walk a visitor through";
-  feed("walk complete — every claim above is the ENTIRE story the flock told. No pixels, no audio, no identities.", "sys");
+  feed("walk complete — every claim above is the ENTIRE story the fleet told. No pixels, no audio, no identities.", "sys");
 }
 
 walkBtn.addEventListener("click", startWalk);

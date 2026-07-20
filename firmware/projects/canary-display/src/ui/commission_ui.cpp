@@ -241,7 +241,7 @@ void build() {
 
     case Face::Joined: {
       lv_obj_t* hero = mk_label(s_scr, font_title(), col_ok());
-      lv_label_set_text(hero, "It's in the flock");
+      lv_label_set_text(hero, "It's in the fleet");
       lv_obj_align(hero, LV_ALIGN_CENTER, 0, -18);
       lv_obj_t* sub = mk_label(s_scr, font_caption(), col_muted());
       lv_label_set_text(sub, "a new canary just joined");

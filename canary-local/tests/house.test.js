@@ -1,7 +1,7 @@
 // canary-local/tests/house.test.js — the Canary House's promises, pinned:
 // every perch is a real chooser candidate (titles/statuses can't drift),
 // every deep link into the chooser uses real question/option ids, rooms
-// don't overlap, perches sit in their rooms, and the flock tally adds up.
+// don't overlap, perches sit in their rooms, and the fleet tally adds up.
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync } = require("node:fs");
@@ -19,7 +19,7 @@ async function chooser() {
 test("every real perch resolves to a real chooser candidate with honest status", async () => {
   const { PLACEMENTS, placementInfo } = await house();
   const { CANDIDATES } = await chooser();
-  assert.ok(PLACEMENTS.filter((p) => !p.teaser).length >= 8, "the house shows a real flock");
+  assert.ok(PLACEMENTS.filter((p) => !p.teaser).length >= 8, "the house shows a real fleet");
   for (const p of PLACEMENTS.filter((p) => !p.teaser)) {
     const c = CANDIDATES.find((x) => x.id === p.candidate);
     assert.ok(c, `${p.id} references chooser candidate ${p.candidate}`);
@@ -116,20 +116,20 @@ test("a house deep link actually scores in the chooser", async () => {
   }
 });
 
-test("the flock tally adds up, reacts to toggles, and never counts concepts", async () => {
-  const { PLACEMENTS, flockSummary } = await house();
+test("the fleet tally adds up, reacts to toggles, and never counts concepts", async () => {
+  const { PLACEMENTS, fleetSummary } = await house();
   const real = PLACEMENTS.filter((p) => !p.teaser);
   const teasers = PLACEMENTS.filter((p) => p.teaser);
-  const all = flockSummary(PLACEMENTS.map((p) => p.id));
+  const all = fleetSummary(PLACEMENTS.map((p) => p.id));
   assert.strictEqual(all.total, real.length, "teasers never inflate the real total");
   assert.strictEqual(all.soon, teasers.length, "…but they are counted as coming-soon");
   assert.strictEqual(all.witnesses + all.displays + all.infra, all.total);
   assert.strictEqual(all.released + all.indev, all.total);
   assert.ok(all.witnesses >= 5, "the house is mostly witnesses");
-  const none = flockSummary([]);
+  const none = fleetSummary([]);
   assert.strictEqual(none.total, 0);
   assert.strictEqual(none.soon, 0);
-  const one = flockSummary([real[0].id]);
+  const one = fleetSummary([real[0].id]);
   assert.strictEqual(one.total, 1);
 });
 

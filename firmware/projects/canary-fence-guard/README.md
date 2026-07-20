@@ -21,7 +21,7 @@ hop. Solar over battery, weather-sealed, and mounted in **shade by
 preference**: lithium cells age in heat, and a fence line usually has a
 shaded run.
 
-Same witness rules as the rest of the flock, non-negotiable:
+Same witness rules as the rest of the fleet, non-negotiable:
 
 - **What leaves the device:** fence-event claims (climb/cut/rattle as
   debounced states), Ed25519-signed over a v1 canonical, hash-chained.

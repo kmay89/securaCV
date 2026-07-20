@@ -54,7 +54,7 @@ static void secure_wipe(void* ptr, size_t len) {
 // DOMAIN SEPARATION STRINGS
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* DOMAIN_FLOCK_ID = "securacv:opera:id:v0";
+static const char* DOMAIN_FLEET_ID = "securacv:opera:id:v0";
 static const char* DOMAIN_AUTH = "securacv:mesh:auth:v0";
 static const char* DOMAIN_SESSION = "securacv:mesh:session:v0";
 static const char* DOMAIN_MESSAGE = "securacv:mesh:message:v0";
@@ -66,9 +66,9 @@ static const char* DOMAIN_PAIR_CONFIRM = "securacv:pair:confirm:v0";
 
 static const char* NVS_NS = "mesh";
 static const char* NVS_ENABLED = "enabled";
-static const char* NVS_FLOCK_ID = "opera_id";
-static const char* NVS_FLOCK_SECRET = "opera_sec";
-static const char* NVS_FLOCK_NAME = "opera_name";
+static const char* NVS_FLEET_ID = "opera_id";
+static const char* NVS_FLEET_SECRET = "opera_sec";
+static const char* NVS_FLEET_NAME = "opera_name";
 static const char* NVS_PEER_COUNT = "peer_cnt";
 static const char* NVS_PEER_PREFIX = "peer_";   // peer_0, peer_1, etc.
 
@@ -298,7 +298,7 @@ static void compute_fingerprint(const uint8_t* pubkey, uint8_t* fp_out) {
 
 static void compute_opera_id(const uint8_t* secret, uint8_t* id_out) {
   uint8_t hash[32];
-  sha256_domain(DOMAIN_FLOCK_ID, secret, OPERA_SECRET_SIZE, hash);
+  sha256_domain(DOMAIN_FLEET_ID, secret, OPERA_SECRET_SIZE, hash);
   memcpy(id_out, hash, OPERA_ID_SIZE);
 }
 
@@ -1165,9 +1165,9 @@ static bool persist_opera_config() {
   }
   g_prefs.begin(NVS_NS, false);
   g_prefs.putBool(NVS_ENABLED, g_opera_config.enabled);
-  g_prefs.putBytes(NVS_FLOCK_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
-  g_prefs.putBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
-  g_prefs.putString(NVS_FLOCK_NAME, g_opera_config.opera_name);
+  g_prefs.putBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
+  g_prefs.putBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+  g_prefs.putString(NVS_FLEET_NAME, g_opera_config.opera_name);
   g_prefs.end();
   return true;
 }
@@ -1186,9 +1186,9 @@ static bool load_opera_config() {
 
   g_prefs.begin(NVS_NS, true);
   g_opera_config.enabled = g_prefs.getBool(NVS_ENABLED, false);
-  size_t id_len = g_prefs.getBytes(NVS_FLOCK_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
-  size_t secret_len = g_prefs.getBytes(NVS_FLOCK_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
-  String name = g_prefs.getString(NVS_FLOCK_NAME, "");
+  size_t id_len = g_prefs.getBytes(NVS_FLEET_ID, g_opera_config.opera_id, OPERA_ID_SIZE);
+  size_t secret_len = g_prefs.getBytes(NVS_FLEET_SECRET, g_opera_config.opera_secret, OPERA_SECRET_SIZE);
+  String name = g_prefs.getString(NVS_FLEET_NAME, "");
   strncpy(g_opera_config.opera_name, name.c_str(), MAX_OPERA_NAME_LEN);
   g_opera_config.opera_name[MAX_OPERA_NAME_LEN] = '\0';
   g_opera_config.configured = (id_len == OPERA_ID_SIZE && secret_len == OPERA_SECRET_SIZE);

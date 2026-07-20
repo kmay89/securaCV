@@ -247,7 +247,7 @@ void handle_device() {
     "proof-carrying history",
 #endif
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
-    "finds its flock by itself",
+    "finds its fleet by itself",
 #endif
 #if defined(FEATURE_QR_COMMISSION) && FEATURE_QR_COMMISSION
     "QR canary onboarding",
