@@ -131,3 +131,23 @@ test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   assert.ok(m, "version.h parses");
   assert.strictEqual(reg.fw_train, m[1]);
 });
+
+// ── the filament finish system (finishes.js) ───────────────────────────────
+test("finishes: a curated two-tone set, Canary the bold default", async () => {
+  const { FINISHES, activeFinish, setFinish } = await import("../assets/finishes.js");
+  assert.ok(FINISHES.length >= 3, "at least Canary/Walnut/Graphite");
+  assert.strictEqual(activeFinish().id, "canary", "Canary is the default (no storage in Node)");
+  for (const f of FINISHES) {
+    for (const k of ["shell", "shell2", "gasket", "beacon"])
+      assert.ok(Array.isArray(f[k]) && f[k].length === 3, `${f.id}.${k} is an RGB triple`);
+    assert.match(f.swatch, /^#[0-9a-f]{6}$/i, `${f.id} has a hex swatch`);
+    // two-tone: the secondary is a genuinely different (darker) shade
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    assert.ok(lum(f.shell2) < lum(f.shell) + 0.02, `${f.id}: secondary is not lighter than the body`);
+  }
+  // setting a finish is sticky and idempotent
+  assert.strictEqual(setFinish("walnut").id, "walnut");
+  assert.strictEqual(activeFinish().id, "walnut");
+  assert.strictEqual(setFinish("nope").id, "walnut", "unknown id is ignored");
+  setFinish("canary"); // restore for any later import consumers
+});
