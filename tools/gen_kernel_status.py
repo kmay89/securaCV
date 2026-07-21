@@ -65,8 +65,81 @@ def cargo_has_dep(*names: str) -> bool:
 # per-tile detection — each returns "done" | "wip" | "planned"
 # --------------------------------------------------------------------------- #
 
+def _derives_on(src: str, struct_name: str) -> str:
+    """The `#[...]` attribute lines immediately above a struct (its derives).
+
+    Only real attribute lines — NOT doc comments, which for RawFrame literally
+    read 'no Clone, no AsRef<[u8]>' and would otherwise trip a naive scan.
+    """
+    lines = src.splitlines()
+    for i, ln in enumerate(lines):
+        if re.match(r"\s*(pub\s+)?struct\s+" + re.escape(struct_name) + r"\b", ln):
+            block, j = [], i - 1
+            while j >= 0 and lines[j].strip() != "":
+                s = lines[j].strip()
+                if s.startswith("#["):
+                    block.append(s)
+                j -= 1
+            return "\n".join(block)
+    return ""
+
+
+def _inherent_impl(src: str, name: str) -> str:
+    """The bodies of `impl <name> { ... }` blocks (inherent methods, NOT trait impls),
+    brace-matched — so a byte-getter check is scoped to RawFrame's own methods and
+    doesn't trip on getters that legitimately live on other types in the file."""
+    out = []
+    for m in re.finditer(r"\bimpl\s+" + re.escape(name) + r"\s*\{", src):
+        depth, j = 0, m.end() - 1
+        while j < len(src):
+            if src[j] == "{":
+                depth += 1
+            elif src[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        out.append(src[m.end() - 1:j + 1])
+    return "\n".join(out)
+
+
+def _raw_frame_export_hole(src: str) -> bool:
+    """True if RawFrame gained a raw-export hole (breaks Invariant I: No Raw Export).
+
+    The Frame-isolation tile's whole meaning is the *type-level* guarantee that raw
+    bytes can't escape — so a change that adds Clone, AsRef<[u8]>, a byte-exposing
+    trait, or a public byte getter must NOT keep the tile green just because the
+    isolation machinery (export_for_vault, BreakGlassToken) is still present.
+    """
+    if re.search(r"impl\s+Clone\s+for\s+RawFrame\b", src):
+        return True
+    if re.search(r"\bClone\b", _derives_on(src, "RawFrame")):
+        return True
+    forbidden_traits = [
+        r"impl\s+AsRef<\s*\[u8\]\s*>\s+for\s+RawFrame\b",
+        r"impl\s+(?:std::|core::)?ops::Deref\s+for\s+RawFrame\b",
+        r"impl\s+Deref\s+for\s+RawFrame\b",
+        r"impl\s+(?:std::|core::)?borrow::Borrow<\s*\[u8\]\s*>\s+for\s+RawFrame\b",
+        r"impl\s+Borrow<\s*\[u8\]\s*>\s+for\s+RawFrame\b",
+    ]
+    if any(re.search(p, src) for p in forbidden_traits):
+        return True
+    # a public byte accessor on RawFrame itself (export_for_vault, the ONE sanctioned
+    # path, is deliberately not in this name set) — scoped to RawFrame's inherent impl
+    if re.search(r"pub\s+fn\s+(?:as_bytes|as_slice|bytes|raw_bytes|data)\s*\([^)]*\)\s*->\s*&?\s*(?:\[u8\]|Vec<u8>)",
+                 _inherent_impl(src, "RawFrame")):
+        return True
+    return False
+
+
 def st_frame_isolation():
-    return "done" if has("src/frame.rs", "struct RawFrame", "fn export_for_vault", "BreakGlassToken") else "planned"
+    src = read("src/frame.rs")
+    if not all(x in src for x in ("struct RawFrame", "fn export_for_vault", "BreakGlassToken")):
+        return "planned"
+    # present, but a raw-export hole means the type-level guarantee is broken —
+    # don't let the public grid read ✓ for exactly the privacy regression this
+    # tile represents.
+    return "wip" if _raw_frame_export_hole(src) else "done"
 
 
 def st_hash_log():
