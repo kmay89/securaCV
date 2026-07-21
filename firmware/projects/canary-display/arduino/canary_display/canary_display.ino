@@ -66,6 +66,9 @@
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
 #include "chirp_scan.h"
 #endif
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+#include "field_io.h"   // 4.3B isolated DI/DO -> events + siren
+#endif
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
 #include "fleet_link.h"
 #endif
@@ -852,6 +855,12 @@ void setup() {
   canary::care::care_begin();
 #endif
 
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // 4.3B field I/O: isolated contacts -> unsigned local events, siren on
+  // unacked alerts. Reports under this dash's own id; never signs.
+  canary::io::field_io_begin(canary::cfg::get().device_id);
+#endif
+
   // Seed the heap-health snapshot so the first status publish carries real
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
@@ -1036,6 +1045,12 @@ void loop() {
   // too, passive BLE bursts keep tamper/liveness flowing to the glass. The
   // module itself stops scanning the moment the broker is back.
   canary::net::chirp_scan_loop(now, !broker, canary::net::wifi_connected());
+#endif
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // Poll the isolated contacts into events and drive the siren output. Cheap
+  // and self-throttled; 4.3B only.
+  canary::io::field_io_loop(now);
 #endif
 
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
