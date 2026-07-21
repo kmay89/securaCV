@@ -256,7 +256,8 @@ outdoor, UV and heat and is far easier to print — reach for it first.**
 - **Dry your filament.** PETG (and especially ASA/PC/nylon) absorbs water from
   the air; wet filament prints weak, hisses, strings, and leaks. Dry PETG ~60–65 °C
   for 4–6 h before any sealed or structural build. This one habit fixes more
-  "bad prints" than any setting.
+  "bad prints" than any setting — and buying good filament in the first place is
+  half the battle (see [§6](#6-the-filament-itself--judge-the-supplier-not-the-brand-name)).
 - **Nail the first layer.** Clean the plate (isopropyl — skin oils kill
   adhesion), level it, slow layer 1 down, fatten it slightly, and print it hot
   with the fan off. PETG bonds *aggressively* to smooth PEI/glass and can tear a
@@ -265,6 +266,64 @@ outdoor, UV and heat and is far easier to print — reach for it first.**
 - **Brim the tippy parts.** Tall or small-footprint parts (hinge knob, bracket,
   doorbell pill, gaskets, field case) want a brim so they don't peel or topple
   mid-print.
+
+---
+
+## 6. The filament itself — judge the supplier, not the brand name
+
+The best settings can't rescue bad plastic, and for a *security* housing the
+stakes are real: off-spec or damp filament attacks the two things these cases
+depend on — **watertightness** (porous, under-bonded walls leak) and
+**layer-adhesion strength** (a clip or lid cracks in service). We deliberately
+**don't** keep an "approved brands" list — quality drifts batch to batch, the
+good names differ by region, and a stale list helps no one. Judge the spool
+instead. The signals below are what separate a manufacturer with real QC from a
+repackaged mystery roll.
+
+**Before you buy — what a good supplier tells you:**
+
+- **A stated diameter tolerance.** Reputable 1.75 mm filament is spec'd to
+  **±0.02–0.03 mm**; ±0.05 is loose. This matters *here* specifically — loose
+  tolerance swings your flow, and these parts' snap/gasket fits are calibrated,
+  so an inconsistent diameter makes them inconsistent too.
+- **A published technical data sheet** (print/bed temp range, sometimes a
+  per-spool QC card with the measured diameter) and **lot/batch numbers** —
+  traceability is a tell that a real QC process exists.
+- **Sealed on arrival:** vacuum bag **+ desiccant**. A spool that shows up loose
+  or in a leaky bag has already been drinking from the air.
+- **Reviews about *consistency*, not just price** — batch-to-batch sameness and
+  clean winding (no tangles/crossed wraps that snag mid-print) are the real
+  signal. Be wary of no-name "PETG" with no TDS and no tolerance figure; some is
+  an off-spec blend that won't hit the temps or strength you expect.
+
+**How filament goes bad — the aging risks:**
+
+- **Moisture is the number-one killer.** PETG is moderately hygroscopic;
+  ASA/PC/TPU/nylon far more so. Wet filament flashes to steam at the nozzle:
+  weak layers, stringing, popping/hissing, a hairy surface, and **porous walls
+  that leak** — exactly the failure a sealed Canary can't afford. Signs you're
+  printing wet: hiss/pop while printing, a fuzzy surface, or prints that snap
+  along the layer lines.
+- **Brittleness with age / bad storage.** Filament left out for months —
+  especially in a humid shop — turns brittle and snaps in the feeder. Nylon and
+  PC degrade fastest; PLA embrittles too.
+- **UV & heat on the spool.** A roll parked in a sunny window ages like the parts
+  would outdoors. Store cool and dark.
+- **Shelf life is a storage question, not a calendar one.** Sealed with desiccant
+  in a cool, dark box, most filament lasts *years*. Loose in humid air, it can be
+  unusable in **weeks**.
+
+**Store it, and test the spool you already have:**
+
+- **Storage:** an airtight box with fresh desiccant (or a dry box); dry before any
+  sealed or structural build (PETG ~60–65 °C / 4–6 h; PC and nylon hotter and
+  longer), and print PC/nylon straight from a dry box.
+- **A 5-minute quality check on any spool:** measure the diameter with calipers at
+  several points (round, and on-tolerance?), and do a bend test — badly aged or
+  wet filament cracks instead of flexing. Then let the **[fit coupon](./canary_fit_coupon.scad)
+  plus a temperature tower double as your per-spool QC**: re-run them whenever you
+  switch brand *or* spool, because tolerance and flow differ between them and
+  that's exactly what your calibrated fits ride on.
 
 ---
 
@@ -296,7 +355,8 @@ If you remember five things:
    temperature tower per spool.
 4. **Calibrate flow and the fit coupon once**, then leave slicer compensation at
    0 — the tolerance is in the model.
-5. **Dry your filament** and **nail the first layer** on textured PEI.
+5. **Start with good, dry filament** (on-tolerance, sealed with desiccant) and
+   **nail the first layer** on textured PEI.
 
 Exact Cura numbers and the importable profile:
 [printing_petg_cura.md](./printing_petg_cura.md).
