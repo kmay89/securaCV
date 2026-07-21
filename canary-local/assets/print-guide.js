@@ -296,3 +296,48 @@ export function fmtDuration(s) {
   const h = Math.floor(m / 60);
   return `${h} h ${String(m % 60).padStart(2, "0")} min`;
 }
+
+// A starting slicer config, generated from the SAME settings the estimate uses
+// so the two can't drift. Emitted in the Slic3r/PrusaSlicer config-bundle
+// format (`[print:…]` / `[filament:…]` / `[printer:…]`), which PrusaSlicer,
+// OrcaSlicer and SuperSlicer all import via "Import Config". A starting point,
+// not a tuned profile — the fit coupon still tunes tolerances for your printer.
+export function slicerConfigIni({ machine = MACHINE, settings = DEFAULT_SETTINGS, material = "PETG" } = {}) {
+  const s = { ...DEFAULT_SETTINGS, ...settings };
+  const mat = MATERIALS[material] || MATERIALS.PETG;
+  const [w, d, h] = machine.bed_mm;
+  const bedTemp = material === "PLA" ? 60 : 75;
+  const L = [
+    `# SecuraCV Canary — slicer config (${mat.label})`,
+    `# Generated for a ${machine.nozzle_mm} mm nozzle from the print guide's own settings.`,
+    `# Starting point for PrusaSlicer / OrcaSlicer / SuperSlicer — import as a config.`,
+    ``,
+    `[print:SecuraCV Canary ${s.layer_height_mm}mm ${s.walls}-wall]`,
+    `layer_height = ${s.layer_height_mm}`,
+    `first_layer_height = ${s.layer_height_mm}`,
+    `perimeters = ${s.walls}`,
+    `top_solid_layers = ${s.top_bottom_layers}`,
+    `bottom_solid_layers = ${s.top_bottom_layers}`,
+    `fill_density = ${s.infill_pct}%`,
+    `fill_pattern = gyroid`,
+    `top_fill_pattern = monotonic`,
+    `bottom_fill_pattern = monotonic`,
+    `extrusion_width = ${s.line_width_mm}`,
+    ``,
+    `[filament:SecuraCV ${mat.label}]`,
+    `filament_type = ${material}`,
+    `filament_diameter = ${FILAMENT_DIA}`,
+    `temperature = ${mat.temp}`,
+    `first_layer_temperature = ${mat.temp}`,
+    `bed_temperature = ${bedTemp}`,
+    `first_layer_bed_temperature = ${bedTemp}`,
+    ``,
+    `[printer:${machine.name}]`,
+    `printer_technology = FFF`,
+    `nozzle_diameter = ${machine.nozzle_mm}`,
+    `bed_shape = 0x0,${w}x0,${w}x${d},0x${d}`,
+    `max_print_height = ${h}`,
+    ``,
+  ];
+  return L.join("\n");
+}

@@ -78,6 +78,25 @@ test("materialForPart: gaskets force TPU regardless of shell choice", async () =
   assert.strictEqual(materialForPart({ material: "PETG / ASA (PLA indoors)" }, "PETG"), "PETG");
 });
 
+test("slicerConfigIni: importable config matches the shown settings", async () => {
+  const { slicerConfigIni } = await import("../assets/print-guide.js");
+  const petg = slicerConfigIni({ material: "PETG" });
+  // PrusaSlicer/Slic3r config-bundle sections + the numbers the card shows
+  for (const line of [
+    "[print:", "[filament:", "[printer:",
+    "layer_height = 0.2", "perimeters = 3", "fill_density = 25%",
+    "top_solid_layers = 5", "nozzle_diameter = 0.4", "filament_diameter = 1.75",
+    "filament_type = PETG", "temperature = 235",
+    "bed_shape = 0x0,220x0,220x220,0x220", "max_print_height = 250",
+  ]) {
+    assert.ok(petg.includes(line), `config missing: ${line}`);
+  }
+  // material selection flows through
+  const asa = slicerConfigIni({ material: "ASA" });
+  assert.ok(asa.includes("filament_type = ASA") && asa.includes("temperature = 245"));
+  assert.ok(slicerConfigIni({ material: "PLA" }).includes("bed_temperature = 60"));
+});
+
 test("estimateSet: totals sum the parts", async () => {
   const { estimateSet } = await import("../assets/print-guide.js");
   const parts = [

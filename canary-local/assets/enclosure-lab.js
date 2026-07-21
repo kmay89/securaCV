@@ -25,6 +25,7 @@ import {
   estimateSet,
   materialForPart,
   fmtDuration,
+  slicerConfigIni,
   MATERIALS,
   MACHINE,
   ELECTRICITY_DEFAULT,
@@ -608,6 +609,24 @@ export function buildEnclosureLab(encData, deviceId) {
         "The layer scrub is a true cross-section of this mesh at 0.2 mm; red = " +
         "faces steeper than 45° that would need support (these parts are " +
         "designed not to). Source: " + ps.source));
+
+      // Take these settings straight to your slicer — a config generated from
+      // the same numbers, so it can't drift from what's shown here.
+      const dlRow = el("div", "est-slice");
+      const cfgBtn = el("button", "est-slice-btn", "⬇ slicer config (.ini)");
+      cfgBtn.addEventListener("click", () => {
+        const ini = slicerConfigIni({ material: lab.shellMaterial });
+        const url = URL.createObjectURL(new Blob([ini], { type: "text/plain" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `securacv-canary-${lab.shellMaterial.toLowerCase()}-${LAYER_MM}mm.ini`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+      dlRow.append(cfgBtn, el("span", "muted est-slice-note",
+        "for PrusaSlicer / OrcaSlicer / SuperSlicer (import as a config). " +
+        "Cura: the numbers above are your setup."));
+      sc.append(dlRow);
       printCtl.append(sc);
     }
   }
@@ -641,8 +660,12 @@ export function buildEnclosureLab(encData, deviceId) {
     else renderShowroom();
     renderLegend();
 
-    // downloads / sources
+    // downloads / sources — the STL is the tool-agnostic handoff: drop it into
+    // any slicer. (The print guide's settings card exports a matching config.)
     const files = el("p", "enclab-files");
+    if (set.parts.some((p) => !p.preview_mesh)) {
+      files.append(el("span", "muted", "Print it — download and drop into any slicer: "));
+    }
     for (const p of set.parts.filter((p) => !p.preview_mesh)) {
       const a = el("a", null, `${p.name}.stl`);
       a.href = ENC_BASE + p.file;
