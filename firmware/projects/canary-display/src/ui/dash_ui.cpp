@@ -25,6 +25,7 @@
 #include "canary/trust.h"
 #include "canary/version.h"
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
+#include "canary/fleet/fleet_cards.h"
 #include "canary/fleet/journal_instance.h"
 #endif
 #if defined(FEATURE_CARE) && FEATURE_CARE
@@ -794,8 +795,23 @@ void dash_ui_update(const Fleet& fleet, uint32_t now, const DashState& st) {
     }
 
     lv_obj_set_style_text_color(c.meta, fcol, 0);
-    char wb[48] = "";
-    if (w->wb_present) {
+    char wb[128] = "";
+    // Canary Cards (docs/standard/CANARY_CARDS.md): a card-bearing witness
+    // (canary-sense) renders its coarse claim vocabulary as a compact card
+    // strip — presence/occupants/range + breathing/BPM — instead of the
+    // generic field list. The trust/event cards are dropped (skip_shown): the
+    // card's own badge + event row already carry those. Non-card witnesses
+    // keep the wellbeing + comfort text below.
+    if (canary::fleet::has_cards(*w)) {
+      static const canary::fleet::FleetLimits kCardLimits;
+      canary::fleet::CardSet cs;
+      canary::fleet::build_cards(*w, now, kCardLimits, cs);
+      char strip[104];
+      if (canary::fleet::format_card_strip(cs, /*skip_shown=*/true, strip,
+                                           sizeof(strip)) > 0) {
+        snprintf(wb, sizeof(wb), "   %s", strip);
+      }
+    } else if (w->wb_present) {
       snprintf(wb, sizeof(wb), "   breathing %s",
                w->wb_breathing ? LV_SYMBOL_OK : "-");
     }

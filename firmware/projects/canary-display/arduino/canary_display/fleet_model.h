@@ -65,6 +65,24 @@ struct BeaconStatus {
   bool     tamper = false;
 };
 
+// Decoded canary-sense radar state row (mqtt_mgr fills this from the retained
+// securacv/<id>/state payload). Pure values, no wire types — so the model
+// stays dependency-free and host-testable. Sentinels/`have_*` flags keep
+// "not published" distinct from a real zero (schema null-vs-zero honesty).
+struct SenseState {
+  uint8_t  presence  = 0;      // 0 unknown / 1 clear / 2 present
+  uint8_t  occupants = 0;      // 0 "0" / 1 "1" / 2 "2+"
+  uint8_t  range     = 0;      // 0 unknown / 1 near / 2 mid / 3 far
+  bool     radar_ok  = false;
+  uint32_t frame_errors = 0;
+  bool     have_lux  = false;
+  int      lux       = 0;
+  bool     have_bpm  = false;  // the build publishes BPM entities (P1 opt-in)
+  bool     bpm_valid = false;  // BPM currently valid (locked, single target)
+  uint8_t  breath_bpm = 0;
+  uint8_t  heart_bpm  = 0;
+};
+
 struct Witness {
   bool     used = false;
   char     id[48] = {0};
@@ -82,6 +100,23 @@ struct Witness {
   // Wellbeing surface (spec §9; canary-sense wellbeing state topic).
   bool     wb_present = false;    // this witness publishes a breathing lock
   bool     wb_breathing = false;  // lock currently held
+
+  // Radar claim surface (canary-sense state topic) — the coarse vocabulary the
+  // glass renders as Canary Cards (docs/standard/CANARY_CARDS.md). Compact by
+  // design: a handful of bytes per witness, no per-target data ever. `*_known`
+  // / sentinels keep "not published" (—) distinct from a real zero, the
+  // schema's null-vs-zero honesty. Set by on_sense_state; drives has_cards().
+  bool     sense_present  = false;  // has published at least one radar state row
+  uint8_t  radar_presence = 0;      // 0 unknown / 1 clear / 2 present
+  uint8_t  radar_occupants = 0;     // 0 "0" / 1 "1" / 2 "2+"
+  uint8_t  radar_range    = 0;      // 0 unknown / 1 near / 2 mid / 3 far
+  bool     radar_ok       = false;  // false while the radar UART is stalled
+  uint16_t frame_errors   = 0;      // UART checksum drops (monotonic, clamped)
+  int16_t  lux            = -1;     // BH1750 illuminance; -1 = not published
+  bool     bpm_valid      = false;  // P1 numerics currently valid (locked+1 tgt)
+  bool     bpm_offered    = false;  // this build publishes BPM entities at all
+  uint8_t  breath_bpm     = 0;      // P1 breaths/min (0 unless bpm_valid)
+  uint8_t  heart_bpm      = 0;      // P1 beats/min  (0 unless bpm_valid)
 
   // Liveness
   Link     link = Link::Unknown;
@@ -291,6 +326,38 @@ class FleetModel {
     if (!w->wb_present || w->wb_breathing != breathing) dirty_ = true;
     w->wb_present = true;
     w->wb_breathing = breathing;
+  }
+
+  // Radar claim surface (canary-sense state topic): the coarse presence/count/
+  // range vocabulary plus lux and the P1-gated vitals numerics. Stored for the
+  // Canary Cards renderer (fleet_cards.h). Marks the witness as card-bearing
+  // (sense_present) so a detail page renders type-aware cards instead of the
+  // generic field list. Never carries raw distance or per-target data — the
+  // device already coarsened those at its own privacy chokepoint.
+  void on_sense_state(const char* id, const SenseState& s, uint32_t now) {
+    Witness* w = upsert(id);
+    if (!w) return;
+    w->last_seen_ms = now;
+    if (!w->sense_present ||
+        w->radar_presence != s.presence || w->radar_occupants != s.occupants ||
+        w->radar_range != s.range || w->radar_ok != s.radar_ok ||
+        w->bpm_valid != s.bpm_valid || w->breath_bpm != s.breath_bpm ||
+        w->heart_bpm != s.heart_bpm) {
+      dirty_ = true;
+    }
+    w->sense_present   = true;
+    w->radar_presence  = s.presence;
+    w->radar_occupants = s.occupants;
+    w->radar_range     = s.range;
+    w->radar_ok        = s.radar_ok;
+    w->frame_errors    = (s.frame_errors > 0xFFFFu) ? 0xFFFFu
+                                                    : (uint16_t)s.frame_errors;
+    if (s.have_lux) w->lux = (s.lux < 0) ? -1 : (s.lux > 32767 ? 32767
+                                                              : (int16_t)s.lux);
+    if (s.have_bpm) w->bpm_offered = true;
+    w->bpm_valid  = s.bpm_valid;
+    w->breath_bpm = s.bpm_valid ? s.breath_bpm : 0;
+    w->heart_bpm  = s.bpm_valid ? s.heart_bpm : 0;
   }
 
   // Chirp ingest (spec §6): an off-grid BLE advert — coarse and UNSIGNED,

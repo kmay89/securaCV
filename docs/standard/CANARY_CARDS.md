@@ -117,12 +117,18 @@ own glyphs by id (LVGL surfaces will); unknown ids fall back to `chip`.
 
 - **Web (reference)**: `renderCardGrid(descs)` in `canary-cards.js` —
   Quiet Glass styling, `.ccard-*` classes in `canary-local.css`.
-- **canary-display glass**: the fixed `Card` struct in `dash_ui.cpp` is the
-  natural landing zone — one LVGL renderer per kind (six small functions),
-  driven by a per-device-type entity table instead of today's hardcoded
-  field list. The fleet model needs no change to carry v1 binary/band data
-  it already parses; `stat`/`sparkline` values ride the state topic it
-  already subscribes to.
+- **canary-display glass** (shipped): the firmware carries a pure-logic card
+  model, `firmware/projects/canary-display/include/canary/fleet/fleet_cards.h`
+  (`build_cards()` → an ordered fixed-capacity `CardSet`), host-tested against
+  this schema and against parity with `canary-cards.js senseCards`
+  (`tests_host/test_fleet_cards.cpp`). A card-bearing witness (canary-sense)
+  renders its coarse claim vocabulary — presence/occupants/range +
+  breathing/BPM, with `absent` BPM cards on a presence-only build — as a
+  compact card strip on both the wall dash and the watch detail, driven by
+  that model (`format_card_strip()`). `null`-as-unknown, `absent`, privacy
+  classes and the one-entity-one-card ordering are all pinned by the host
+  test. The full per-kind LVGL grid (one widget per kind, a card-detail modal)
+  is the documented next step; the model already emits everything it needs.
 - **glass_web mirror**: the `/api/glass` witness objects extend naturally
   to a `cards: [...]` array — the mirror page then renders any sibling with
   the same ~200-line renderer this repo ships.

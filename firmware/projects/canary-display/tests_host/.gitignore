@@ -2,3 +2,4 @@
 *.o
 test_beacon_parse
 test_fleet_beacon_model
+test_fleet_cards

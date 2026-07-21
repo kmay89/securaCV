@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### canary-display — Canary Cards on the glass (radar witnesses get type-aware cards)
+
+- **The display firmware learns the Canary Cards kinds.** A card-bearing
+  witness (canary-sense) now renders its coarse claim vocabulary —
+  presence/occupants/range band + breathing lock and P1 BPM — on the wall
+  dash and the watch detail, instead of the generic Witness fallback that
+  dropped every radar numeric on the floor. New pure-logic card model
+  `include/canary/fleet/fleet_cards.h` (`build_cards()` → a fixed-capacity
+  `CardSet`; `format_card_strip()` the text realization of the six card kinds),
+  host-tested in `tests_host/test_fleet_cards.cpp` against the schema
+  (`docs/standard/CANARY_CARDS.md`) **and** parity with the JS reference
+  renderer (`canary-local/assets/canary-cards.js senseCards`) — same 11 cards,
+  same order, same ids/kinds/privacy classes, same `null`-as-unknown and
+  provably-`absent` BPM cards on a presence-only build.
+- **The fleet model + MQTT dispatch carry the radar surface.** `Witness` gains
+  a compact radar block (presence/occupants/range/radar_ok/frame_errors/lux/
+  breath+heart BPM, a few bytes each) and `on_sense_state()`; `mqtt_mgr` parses
+  the coarse vocabulary from the `securacv/<id>/state` payload — the presence/
+  count/range strings, lux, and the P1-gated BPM numerics that were previously
+  read past. Raw distance and per-target data never appear (the device
+  coarsened them at its own privacy chokepoint).
+- **Honest by construction.** `null` renders "—" (a stalled radar is *unknown*
+  presence, not *no* presence); BPM entities compiled out of a build render as
+  provably `absent`, never silently missing; the strip drops absent + unknown
+  cards so a wall dash stays glanceable. The Arduino parity sketch is
+  regenerated (`setup.sh regen`) and the sync guard stays green.
+
 ### USB onboarding — frictionless plug-in (START-HERE drive file + one-tap)
 
 - **Injection-free zero-touch open.** The read-only drive now carries a
