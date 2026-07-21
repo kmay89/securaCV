@@ -11,6 +11,7 @@
 #include "canary/log.h"
 #include "canary/runtime_config.h"  // NVS-backed identity + broker credentials
 #include "canary/detect_config.h"   // NVS-backed runtime detection settings
+#include "canary/vision/optical_features.h"  // coarse posture/proximity/occupancy names
 #include "canary/diagnostics.h"     // heap health for the status heartbeat
 #include "canary/net/wifi_mgr.h"    // RSSI + link state
 #include "canary/ha/ha_discovery.h"
@@ -279,6 +280,11 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
            "\"confidence\":%d,"
            "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
            "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
+           "\"persons\":%u,"
+           "\"occupancy\":\"%s\","
+           "\"posture\":\"%s\","
+           "\"proximity\":\"%s\","
+           "\"occ_mask\":%u,"
            "\"last_event\":\"%s\","
            "\"uptime_s\":%lu,"
            "\"ts_ms\":%lu"
@@ -291,6 +297,11 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
            (int)s.confidence,
            (unsigned)s.voxel.rows, (unsigned)s.voxel.cols, s.voxel.r, s.voxel.c,
            s.bbox.x, s.bbox.y, s.bbox.w, s.bbox.h,
+           (unsigned)s.person_count,
+           canary::vision::optical::occupancy_name(s.person_count),
+           canary::vision::optical::posture_name(s.posture),
+           canary::vision::optical::proximity_name(s.proximity),
+           (unsigned)s.voxel_mask,
            s.last_event ? s.last_event : "boot",
            (unsigned long)s.uptime_s,
            (unsigned long)s.ts_ms);

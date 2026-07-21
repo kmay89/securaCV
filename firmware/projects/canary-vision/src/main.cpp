@@ -38,6 +38,7 @@
 #include "canary/net/fleet_roster_scan.h" // RX twin: track the other Canaries
 #endif
 #include "canary/vision/vision_mgr.h"
+#include "canary/vision/optical_features.h"  // coarse posture/proximity/occupancy names
 #include "canary/state/presence_fsm.h"
 
 static Topics TOPICS;
@@ -218,7 +219,12 @@ static void publish_event_json(
         "\"dwell_ms\":%lu,"
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
-        "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}"
+        "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
+        "\"persons\":%u,"
+        "\"occupancy\":\"%s\","
+        "\"posture\":\"%s\","
+        "\"proximity\":\"%s\","
+        "\"occ_mask\":%u"
         "%s"
       "}",
       canary::cfg::get().device_id, DEVICE_TYPE,
@@ -233,6 +239,11 @@ static void publish_event_json(
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
       snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
+      (unsigned)snap.person_count,
+      canary::vision::optical::occupancy_name(snap.person_count),
+      canary::vision::optical::posture_name(snap.posture),
+      canary::vision::optical::proximity_name(snap.proximity),
+      (unsigned)snap.voxel_mask,
       sig_env
     );
   } else {
@@ -252,7 +263,12 @@ static void publish_event_json(
         "\"dwell_ms\":%lu,"
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
-        "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}"
+        "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
+        "\"persons\":%u,"
+        "\"occupancy\":\"%s\","
+        "\"posture\":\"%s\","
+        "\"proximity\":\"%s\","
+        "\"occ_mask\":%u"
         "%s"
       "}",
       canary::cfg::get().device_id, DEVICE_TYPE,
@@ -267,6 +283,11 @@ static void publish_event_json(
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
       snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
+      (unsigned)snap.person_count,
+      canary::vision::optical::occupancy_name(snap.person_count),
+      canary::vision::optical::posture_name(snap.posture),
+      canary::vision::optical::proximity_name(snap.proximity),
+      (unsigned)snap.voxel_mask,
       sig_env
     );
   }
