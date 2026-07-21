@@ -717,14 +717,15 @@ async function onBackup() {
 
 function renderPicker() {
   const card = el("section", "flash-card flash-picker");
-  card.append(el("h3", null, "Choose the firmware to install"));
+  card.append(el("h3", null, "Install firmware — one click"));
 
   const matches = core.productsForChip(state.catalog, state.chip);
   const info = core.chipInfo(state.catalog, state.chip) || {};
   card.append(el("p", "muted",
-    `Installing firmware over USB is what “flashing” means — same thing, two ` +
-    `words. Only firmware built for your ${info.label || state.chip} is shown ` +
-    `— the flasher won’t offer an image meant for a different board.`));
+    `Pick your firmware below and press Install this. That's the whole job — ` +
+    `we back the board up first, write the new firmware, and check every byte ` +
+    `landed, all on their own. Only firmware built for your ` +
+    `${info.label || state.chip} is shown, so you can't pick a wrong one.`));
 
   const manifestState = el("div", "flash-manifest-state");
   manifestState.id = "flash-manifest-state";
@@ -768,7 +769,7 @@ function renderPicker() {
 
   // Advanced: local file, erase toggle, skip-backup, restore.
   const adv = el("details", "flash-advanced");
-  adv.append(el("summary", null, "Advanced"));
+  adv.append(el("summary", null, "Advanced options — you can skip all of this"));
   const local = el("div", "flash-local");
   local.append(el("p", "muted",
     "Install a firmware file from your computer (a .bin you built, or one for " +
@@ -1907,53 +1908,132 @@ function phaseMonitor(port, opts = {}) {
     "(or: hold BOOT, tap RESET, release BOOT)."));
 
   // — wire it up —
-  const mon = { alive: true, port: null, reader: null, writer: null, manualBaud: false, session: 0 };
+  //
+  // A PERSISTENT console. ESP32-S3 boards run native USB, so a reset (or the
+  // firmware rebooting itself) makes the chip vanish and re-enumerate as a
+  // fresh USB device — the old port handle goes dead. We never leave the user
+  // staring at a frozen "connected" screen: when bytes stop we say so plainly
+  // and grab the board again automatically the moment it reappears (the
+  // `serial` connect event), and a one-tap reconnect is always in reach.
+  const mon = {
+    alive: true, port: null, reader: null, writer: null,
+    manualBaud: false, session: 0, everByted: false,
+    lastPort: null, forced: null, reopenSame: false, waiting: null,
+  };
   let celebrated = !opts.celebrate;
+  let quietTimer = null;
+
+  function setStatus(t) { status.textContent = t; }
 
   function send(text) {
     if (!mon.writer || !text) return;
     mon.writer.write(new TextEncoder().encode(text)).catch(() => {});
   }
 
+  // A reconnect button that lives right under the status line — hidden while
+  // the stream is healthy, shown (persistently) whenever we're waiting.
+  const reconnectBtn = el("button", "ghost small flash-hidden", "reconnect the board →");
+  reconnectBtn.addEventListener("click", async () => {
+    let np;
+    try { np = await navigator.serial.requestPort(); } catch { return; }
+    reconnectBtn.classList.add("flash-hidden");
+    mon.everByted = false;
+    if (mon.waiting) { mon.waiting(np); }              // we were waiting → use it now
+    else { mon.forced = np; mon.session++; await stopStreams(); }  // interrupt & switch
+  });
+  status.after(reconnectBtn);
+
   async function stopStreams() {
+    if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
     try { mon.reader && await mon.reader.cancel(); } catch {}
     try { mon.reader && mon.reader.releaseLock(); } catch {}
     try { mon.writer && mon.writer.releaseLock(); } catch {}
     mon.reader = mon.writer = null;
     try { mon.port && await mon.port.close(); } catch {}
+    mon.port = null;
   }
 
-  // One open-read session at a given baud. Resolves "garbage" if the first
-  // stretch of output doesn't decode as text (wrong baud), "ended" otherwise.
+  // Re-find a granted port (no user gesture needed — only requestPort() is
+  // gesture-gated; getPorts()/open() are not). Prefer the same board.
+  async function reacquire() {
+    try {
+      const ports = await navigator.serial.getPorts();
+      if (!ports.length) return null;
+      if (mon.lastPort && ports.includes(mon.lastPort)) return mon.lastPort;
+      return ports[0];
+    } catch { return null; }
+  }
+
+  // Resolve once the board is physically back: the `connect` event fires on
+  // re-enumeration; a slow poll confirms by actually opening the port (a
+  // granted-but-unplugged port still shows up in getPorts(), so we must test).
+  function waitForPort(msg) {
+    setStatus(msg);
+    reconnectBtn.classList.remove("flash-hidden");
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (p) => {
+        if (settled || !mon.alive) return;
+        settled = true; clearInterval(poll);
+        navigator.serial.removeEventListener("connect", tryGrant);
+        mon.waiting = null; resolve(p);
+      };
+      const tryGrant = async () => {
+        if (settled) return;
+        const p = await reacquire();
+        if (!p) return;
+        try { await p.open({ baudRate: Number(baudSel.value) }); await p.close(); finish(p); } catch {}
+      };
+      const poll = setInterval(tryGrant, 1000);
+      navigator.serial.addEventListener("connect", tryGrant);
+      mon.waiting = finish;   // the reconnect button hands us a port directly
+      tryGrant();
+    });
+  }
+
+  // One open-read session at a given baud. Returns "garbage" (wrong baud),
+  // "ended" (stream closed), or "error" (port went away).
   async function pumpOnce(p, baud) {
     const mySession = ++mon.session;
     await p.open({ baudRate: baud });
-    mon.port = p;
+    mon.port = mon.lastPort = p;
     try { mon.writer = p.writable.getWriter(); } catch {}
     mon.reader = p.readable.getReader();
-    status.textContent = `Connected at ${baud} — the board is talking. Press a command, or h for its menu.`;
+    reconnectBtn.classList.add("flash-hidden");
+    setStatus(`Connected at ${baud} — the board is talking. Press a command, or h for its menu.`);
+    // If nothing arrives soon, explain why (many builds stay silent until
+    // asked) — but keep the connection; don't tear it down.
+    if (quietTimer) clearTimeout(quietTimer);
+    if (!mon.everByted) quietTimer = setTimeout(() => {
+      if (!mon.everByted && mon.alive)
+        setStatus("Connected, but quiet so far — many builds only speak when asked: press h for the menu. (If the board just reset, I'll reconnect on my own.)");
+    }, 4000);
     const dec = new TextDecoder();
-    let buf = "", sample = "", judged = false;
-    while (mon.alive && mySession === mon.session) {
-      const { value, done: fin } = await mon.reader.read();
-      if (fin) break;
-      const text = dec.decode(value, { stream: true });
-      if (!judged) {
-        sample = (sample + text).slice(0, 600);
-        if (core.looksLikeGarbage(sample)) {
-          if (!mon.manualBaud) { await stopStreams(); return "garbage"; }
-          judged = true; // user chose this baud on purpose; show it raw
-        } else if (sample.length >= 600) judged = true;
+    let buf = con.textContent || "", sample = "", judged = false;
+    try {
+      while (mon.alive && mySession === mon.session) {
+        const { value, done: fin } = await mon.reader.read();
+        if (fin) return "ended";
+        mon.everByted = true;
+        if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
+        const text = dec.decode(value, { stream: true });
+        if (!judged) {
+          sample = (sample + text).slice(0, 600);
+          if (core.looksLikeGarbage(sample)) {
+            if (!mon.manualBaud) { await stopStreams(); return "garbage"; }
+            judged = true; // user chose this baud on purpose; show it raw
+          } else if (sample.length >= 600) judged = true;
+        }
+        buf = (buf + text).slice(-16000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
+          celebrated = true;
+          setStatus("✓ It’s talking — your Canary is alive.");
+          confettiBurst();
+        }
       }
-      buf = (buf + text).slice(-16000);
-      con.textContent = buf;
-      con.scrollTop = con.scrollHeight;
-      if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
-        celebrated = true;
-        status.textContent = "✓ It’s talking — your Canary is alive.";
-        confettiBurst();
-      }
-    }
+    } catch { return "error"; }
     return "ended";
   }
 
@@ -1965,55 +2045,65 @@ function phaseMonitor(port, opts = {}) {
     for (;;) {
       tried.add(baud);
       const verdict = await pumpOnce(p, baud);
-      if (verdict !== "garbage" || !mon.alive) return;
+      if (verdict !== "garbage" || !mon.alive) return verdict;
       const next = core.CONSOLE_BAUDS.find((b) => !tried.has(b));
       if (!next) {
-        status.textContent = "None of the usual speeds decoded as clean text — showing it raw at " + defaultBaud + ".";
+        setStatus("None of the usual speeds decoded as clean text — showing it raw at " + defaultBaud + ".");
         mon.manualBaud = true; // stop re-judging
         baudSel.value = String(defaultBaud);
-        await pumpOnce(p, defaultBaud);
-        return;
+        return await pumpOnce(p, defaultBaud);
       }
-      status.textContent = `That didn’t look like text at ${baud} — trying ${next}…`;
+      setStatus(`That didn’t look like text at ${baud} — trying ${next}…`);
       con.textContent = "";
       baudSel.value = String(next);
       baud = next;
     }
   }
 
+  // The supervisor: keep the console alive across resets & re-enumerations.
+  async function supervise(initialPort) {
+    let p = initialPort;
+    while (mon.alive) {
+      if (mon.forced) { p = mon.forced; mon.forced = null; }
+      if (!p) p = await waitForPort("Board reset — reconnecting automatically… (normal for these chips)");
+      if (!mon.alive || !p) return;
+      reconnectBtn.classList.add("flash-hidden");
+      try { await pump(p); } catch {}
+      if (!mon.alive) return;
+      await stopStreams();
+      p = mon.reopenSame ? p : null;   // a deliberate baud change keeps the same port
+      mon.reopenSame = false;
+      await sleep(150);
+    }
+  }
+
+  // A USB unplug / re-enumeration of the CURRENT port: cancel the read so the
+  // supervisor drops straight into reconnect instead of hanging.
+  const onDisconnect = () => {
+    if (!mon.alive) return;
+    mon.session++;
+    try { mon.reader && mon.reader.cancel(); } catch {}
+  };
+  navigator.serial.addEventListener("disconnect", onDisconnect);
+
   baudSel.addEventListener("change", async () => {
     mon.manualBaud = true;
-    const p = mon.port || port;
-    await stopStreams();
+    mon.everByted = false;
+    mon.reopenSame = true;   // same port, new baud — no "reset" detour
+    mon.session++;
     con.textContent = "";
-    try { await pumpOnce(p, Number(baudSel.value)); } catch {}
+    await stopStreams();     // cancels the blocked read so supervise reopens now
   });
 
   done.addEventListener("click", async () => {
     mon.alive = false;
+    if (mon.waiting) mon.waiting(null);
+    navigator.serial.removeEventListener("disconnect", onDisconnect);
     await stopStreams();
     setPhase(phaseConnect());
   });
 
-  (async () => {
-    try {
-      if (!port) throw new Error("no port");
-      await pump(port);
-    } catch (e) {
-      if (!mon.alive) return;
-      // Native-USB boards re-enumerate after reset — offer a fresh pick.
-      status.textContent = "The board reconnected as a new USB device (normal for these chips).";
-      const b = el("button", "ghost small", "pick it again to keep watching →");
-      b.addEventListener("click", async () => {
-        b.remove();
-        try {
-          const np = await navigator.serial.requestPort();
-          await pump(np);
-        } catch {}
-      });
-      status.after(b);
-    }
-  })();
+  supervise(port);
 
   return box;
 }
