@@ -50,8 +50,13 @@ below as *unproven on hardware until a bench pass says otherwise*.
 
 ## 1. Evidence vault — the highest-value latent capability
 
-**Status:** Built, complete, `FEATURE_TIME_MACHINE_PERSIST 0`
-(`configs/canary-display/dash/config.h:43`, "bench-gated (like CHIME)").
+**Status:** Built, complete, **now compile-verified in CI**, default
+`FEATURE_TIME_MACHINE_PERSIST 0` (`configs/canary-display/dash/config.h:44`,
+"bench-gated like CHIME"). The dedicated `canary-display-dash-vault` PlatformIO
+env sets the flag so CI builds the full LittleFS + ArduinoJson persistence body
+against the real toolchain — same pattern as `-rs485` / `-can` — while the
+default dash / playground / emulator builds stay byte-identical. One bench soak
+(below) is the last gate before the default flag flips on.
 
 The dash already carries the whole durable-history layer. The event sink
 (`src/fleet/journal_instance.cpp`) builds a `JournalRecord` — which holds the
@@ -70,16 +75,23 @@ a black-box recorder for the household. Note the dash **verifies but never signs
 (`src/trust.cpp` does Ed25519 verify + TOFU pinning only), so the vault stores
 proof, it never mints it — which keeps the never-overclaim rule intact.
 
-**Activation (bench):**
-1. Add `LittleFS` to `lib_deps` in `firmware/envs/platformio/canary-display.ini`
-   and to the arduino-cli lib install step in `.github/workflows/firmware.yml`.
-2. Confirm the dash partition table has a `spiffs`/LittleFS data partition (if
-   absent, `LittleFS.begin(formatOnFail=true)` fails **safe** → RAM-only, so this
-   is non-fatal but non-functional until the partition exists).
-3. Flip `FEATURE_TIME_MACHINE_PERSIST 1` for the dash flavor.
-4. Bench-validate: trigger events, power-cycle, confirm the journal reloads;
-   watch flash wear over a soak. Then the emulator `dist/*.js` must be rebuilt
-   (`canary-local/emulator/build.sh all`) so the wasm byte-drift gate passes.
+**Activation — most of it is now done in-repo:**
+1. ~~Add `LittleFS` to `lib_deps`~~ — **not needed:** `LittleFS` ships with the
+   arduino-esp32 framework (built-in include), and `ArduinoJson` is already a
+   dash `lib_dep` (`mqtt_mgr.cpp` uses it). The `canary-display-dash-vault` env
+   carries no extra deps.
+2. ~~Confirm the partition~~ — **confirmed:** the stock `default_16MB.csv` the
+   dash already builds against carries a ~3 MB `spiffs` data partition, which is
+   what `LittleFS` mounts. If it were ever absent, `LittleFS.begin(formatOnFail=
+   true)` fails **safe** → RAM-only (non-fatal, just non-functional).
+3. **Flip `FEATURE_TIME_MACHINE_PERSIST 1` for the dash flavor** — this is the
+   only remaining code change, and it is now **byte-neutral to the emulator**:
+   `journal_store.cpp` is additionally gated `!defined(__EMSCRIPTEN__)`, so the
+   wasm build (which compiles `src/fleet/*.cpp`) always sees the no-op stubs and
+   the `dist/*.js` byte-drift gate stays green with **no rebuild**.
+4. **Bench-validate** (the real gate, needs hardware): trigger events,
+   power-cycle, confirm the journal reloads; watch flash wear over a soak. Then
+   flip the default flag on and move this row to **Driven**.
 
 **Do not** enable microSD for this — flash is the right medium (a removable card
 is pull-and-walk-away tamperable; internal flash isn't).
@@ -284,10 +296,11 @@ every activation above:
 
 **Bottom line:** the board is a full industrial witness gateway. We're driving
 the display, touch, isolated IO (now in the runtime on the 4.3B), and the radios.
-The value left on the table is: **turn on the evidence vault**, **bench-validate
-the field-I/O polarity and the RS485/Modbus + CAN/TWAI drivers (all built, the
-buses off, field-I/O 4.3B-only)**, and **verify the RTC/battery silicon** — in
-that order. The recurring theme: the code is largely written; a bench session on
+The value left on the table is: **turn on the evidence vault** (now compile-
+verified in CI via `canary-display-dash-vault` — one power-cycle bench soak from
+Driven), **bench-validate the field-I/O polarity and the RS485/Modbus + CAN/TWAI
+drivers (all built, the buses off, field-I/O 4.3B-only)**, and **verify the
+RTC/battery silicon** — in that order. The recurring theme: the code is largely written; a bench session on
 real 4.3B hardware is now the gating step for most of it —
 [`board_43b_activation_bench.md`](./board_43b_activation_bench.md) is the
 per-capability checklist for that session (wiring, flag, pass signal, and the
