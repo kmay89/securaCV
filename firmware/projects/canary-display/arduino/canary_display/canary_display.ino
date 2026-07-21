@@ -69,6 +69,9 @@
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 #include "field_io.h"   // 4.3B isolated DI/DO -> events + siren
 #endif
+#if defined(FEATURE_RTC) && FEATURE_RTC
+#include "rtc.h"        // PCF8563 trusted time (probe -> seed/mirror)
+#endif
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
 #include "fleet_link.h"
 #endif
@@ -836,6 +839,13 @@ void setup() {
   }
 #endif
 
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Trusted time: if a PCF8563 is populated on the shared I2C bus, seed the
+  // clock from it now (so timestamps are trustworthy before/without SNTP); the
+  // loop mirrors NTP back to it once the network gives a real wall time.
+  canary::io::rtc_begin();
+#endif
+
   // The display's own web page — live mirror, help, master settings.
   // Started AFTER provisioning (the portal owned :80 during setup) and
   // independent of the panel: a display with broken glass still mirrors.
@@ -1061,6 +1071,11 @@ void loop() {
   // Poll the isolated contacts into events and drive the siren output. Cheap
   // and self-throttled; 4.3B only.
   canary::io::field_io_loop(now);
+#endif
+
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Mirror NTP back to the PCF8563 once the clock is real. Self-throttled.
+  canary::io::rtc_loop(now);
 #endif
 
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK

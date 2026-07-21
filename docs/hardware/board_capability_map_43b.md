@@ -34,7 +34,7 @@ row cites the file that backs the claim.
 | **RS485 / Modbus RTU** (A/B terminal) | ✅ | **Built · bench-gated** | Integrate alarm panels, access control, HVAC/energy meters |
 | **CAN / TWAI** (H/L terminal) | ✅ | **Built · bench-gated** | Vehicle & industrial witness (gate/barrier, CANopen) |
 | **microSD** (TF slot) | ✅ | **Staged (CS blocker)** | Bulk local archive — see the CH422G-CS note |
-| **Battery-backed RTC** (trusted time) | ❓ verify | **Staged / verify** | Trustworthy timestamps when NTP is blocked |
+| **Battery-backed RTC** (trusted time) | ❓ verify | **Built · bench-gated** | Trustworthy timestamps when NTP is blocked — runtime-probing layer, compile-verified (`-rtc` env) |
 | **Battery operation** (CS8501 charge/boost) | ❓ verify | **Staged / verify** | "Cut the power, the Canary keeps witnessing" |
 | ESP-NOW peer mesh | ✅ (radio) | **Absent** | Router-independent fleet link + cross-signing |
 | Camera / microphone | ❌ by design | **Absent (intentional)** | *Not a gap* — "it shows, it doesn't watch" |
@@ -243,10 +243,19 @@ needs eyes on the physical board.
 
 - **RTC → trusted time.** Time comes from SNTP today (`FEATURE_SNTP`). For a
   cryptographic witness, NTP-only time is a weakness: block or spoof NTP and every
-  signed timestamp is suspect. If a PCF85063/PCF8563 is populated on the I²C bus,
-  add a **runtime-probing** RTC layer (use it if it ACKs, else SNTP — fail-safe,
-  behind `FEATURE_RTC 0`) so timestamps stay trustworthy offline. The watch
-  flavor already has PCF8563 wiring to crib from (`pins_watch.h:72-114`).
+  signed timestamp is suspect. The **runtime-probing** RTC layer now exists
+  (`FEATURE_RTC 0`, compile-verified by `canary-display-dash-rtc`): the pure core
+  `include/canary/io/rtc_pcf.h` (BCD + civil↔days epoch math + the voltage-low
+  validity gate, host-tested against libc `timegm` in `test_rtc_pcf.cpp`) and the
+  gated runtime `src/io/rtc.cpp`, which **probes 0x51 on the shared I²C bus** and
+  uses the RTC only if it ACKs with a reliable time — else SNTP, unchanged. On
+  boot it seeds the clock from the RTC before the network is up; the loop mirrors
+  NTP back once a real wall time arrives. By design it does **not** require
+  `HAS_RTC` (both 4.3B headers declare it 0), so it is honest whether or not the
+  silicon is populated. Byte-neutral to the emulator (`src/io/rtc.cpp` is empty
+  without the flag). The watch's `pins.h:72-114` documents the same PCF8563 at
+  `0x51`. **Bench-pending:** confirm the RTC silicon + address on a real 4.3B,
+  then flip `FEATURE_RTC` on and update `HAS_RTC`.
 - **Battery.** If the CS8501 is populated, the dash can run and log through a
   power cut and record the outage itself — a strong security property. **Do not
   invent the ADC/sense pin**; confirm it on the board before writing any monitor.
@@ -309,7 +318,9 @@ The value left on the table is: **turn on the evidence vault** (now compile-
 verified in CI via `canary-display-dash-vault` — one power-cycle bench soak from
 Driven), **bench-validate the field-I/O polarity and the RS485/Modbus + CAN/TWAI
 drivers (all built, the buses off, field-I/O 4.3B-only)**, and **verify the
-RTC/battery silicon** — in that order. The recurring theme: the code is largely written; a bench session on
+RTC/battery silicon** (the RTC trusted-time layer is now built + compile-verified
+via `-rtc`; a bench check of the silicon/address is the last step before it goes
+live) — in that order. The recurring theme: the code is largely written; a bench session on
 real 4.3B hardware is now the gating step for most of it —
 [`board_43b_activation_bench.md`](./board_43b_activation_bench.md) is the
 per-capability checklist for that session (wiring, flag, pass signal, and the
