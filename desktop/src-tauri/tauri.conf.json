@@ -60,7 +60,7 @@
       "endpoints": [
         "https://github.com/kmay89/securaCV/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_TAURI_SIGNER_PUBLIC_KEY"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3NDJCRThGRUVDQ0IzQkIKUldTN3M4enVqNzVDZHpnejBGeE0yQUg3T1RFZ3dBS0x4ckpGUTIyRU9Ea3FyaG9ZSGJXSGhmVTcK"
     }
   }
 }
