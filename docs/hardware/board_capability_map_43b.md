@@ -288,4 +288,7 @@ The value left on the table is: **turn on the evidence vault**, **bench-validate
 the field-I/O polarity and the RS485/Modbus + CAN/TWAI drivers (all built, the
 buses off, field-I/O 4.3B-only)**, and **verify the RTC/battery silicon** — in
 that order. The recurring theme: the code is largely written; a bench session on
-real 4.3B hardware is now the gating step for most of it.
+real 4.3B hardware is now the gating step for most of it —
+[`board_43b_activation_bench.md`](./board_43b_activation_bench.md) is the
+per-capability checklist for that session (wiring, flag, pass signal, and the
+`VERIFY` note each pass retires).
