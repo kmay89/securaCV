@@ -44,7 +44,7 @@
       background: linear-gradient(180deg, var(--surface-2), #101012); padding: 0 16px;
       max-height: 0; opacity: 0; overflow: hidden;
       transition: max-height .5s ease, opacity .5s ease, padding .5s ease; }
-    .payoff.show { max-height: 240px; opacity: 1; padding: 16px; }
+    .payoff.show { max-height: 800px; opacity: 1; padding: 16px; }
     .payoff h3 { margin: 0; font-size: 15px; }
     .payoff .claim { margin: 10px 0 0; font-family: ui-monospace, "SF Mono", Menlo, monospace;
       font-size: 12.5px; color: var(--canary); background: #0a0a0c; border: 1px solid var(--edge);
@@ -99,6 +99,7 @@
     <p class="fineprint">
       <a href="house.html">← the whole house</a> ·
       <a href="index.html">the family</a> ·
+      <a href="https://securacv.com">securacv.com ↗</a> ·
       works offline · nothing here phones anywhere
     </p>
   </header>
@@ -202,7 +203,7 @@
       <ul id="feed-list" aria-live="polite"></ul>
     </div>
 
-    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. More scenes — the camera that keeps its pixels, the WiFi field, the breathing wave — are coming.</p>
+    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html#quorum">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. More scenes — the camera that keeps its pixels, the WiFi field, the breathing wave — are coming.</p>
   </main>
 
   <footer>
@@ -219,16 +220,21 @@
       var $ = function (id) { return document.getElementById(id); };
       var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-      // ── real crypto, in the same canonical family the firmware signs ──
-      // trust.cpp rebuilds "securacv-canary-sig|v1|…" before Ed25519::verify, and
-      // emulator/web/emu-shell.js SimWitness signs the exact same string. The
-      // signature you see below is generated in your browser — not decoration.
+      // ── real crypto, over the real canary-sense canonical ──
+      // The claim below is signed in your browser with Ed25519 over the byte-exact
+      // canonical string the canary-sense firmware signs and Home Assistant
+      // re-derives to verify — the real "securacv-canary-sig|v1|sense|…" format
+      // (see firmware/common/identity/device_signature.cpp build_sense_canonical
+      // and custom_components/securacv/signature.py build_sense_event_canonical).
+      // Only the chokepoint's coarse vocabulary is signed: event, presence state,
+      // 0/1/2+ occupant bucket, near/mid/far band, 10-minute uptime bucket. This
+      // is real, not decoration — but it's a demo key, not a provisioned device.
       var te = new TextEncoder();
       function b64url(b) { return btoa(String.fromCharCode.apply(null, b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
       function hex(b) { var o = ""; for (var i = 0; i < b.length; i++) o += b[i].toString(16).padStart(2, "0"); return o; }
       async function sha256Hex(s) { return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", te.encode(s)))); }
 
-      var W = { key: null, pubHex: null, fp: null, id: "canary-quiet-room", chainLen: 247, latestHash: null, sig: null };
+      var W = { key: null, pubHex: null, fp: null, id: "sense-quiet-room", seq: 3, uptime: 1200, sig: null };
       var cryptoOK = null; // null=unknown; true/false after ensureKeys()
 
       async function ensureKeys() {
@@ -241,15 +247,16 @@
         } catch (e) { cryptoOK = false; }
         return cryptoOK;
       }
-      function canonical(c, h) {
-        return "securacv-canary-sig|v1|presence|" + W.id + "|occupants=" + c.occupants + "|range_m=" + c.range_m + "|" + h;
+      // securacv-canary-sig|v1|sense|<id>|<seq>|<event>|<presence>|<occupants>|<band>|<uptime>
+      function canonical(c) {
+        return "securacv-canary-sig|v1|sense|" + W.id + "|" + W.seq + "|" +
+          c.event + "|" + c.presence + "|" + c.occupants + "|" + c.band + "|" + W.uptime;
       }
       async function signClaim(c) {
-        W.latestHash = await sha256Hex(W.id + ":" + W.chainLen + ":demo");
-        W.sig = new Uint8Array(await crypto.subtle.sign("Ed25519", W.key.privateKey, te.encode(canonical(c, W.latestHash))));
+        W.sig = new Uint8Array(await crypto.subtle.sign("Ed25519", W.key.privateKey, te.encode(canonical(c))));
       }
       async function verifyClaim(c) {
-        return crypto.subtle.verify("Ed25519", W.key.publicKey, W.sig, te.encode(canonical(c, W.latestHash)));
+        return crypto.subtle.verify("Ed25519", W.key.publicKey, W.sig, te.encode(canonical(c)));
       }
       ensureKeys(); // warm the key up so it's ready by the time the scene trips
 
@@ -262,7 +269,7 @@
           room: "a quiet room",
           title: "Someone is here. Never who.",
           desc: "A 60 GHz radar witness on the wall feels a body enter — range and motion, nothing more. Watch what it does, watch what it says — then try to forge what it said.",
-          claimObj: { occupants: 1, range_m: 2.4 },
+          claimObj: { event: "presence_detected", presence: "present", occupants: "1", band: "near", displayOcc: 1, displayRange: 2.4 },
           available: true,
         },
         { id: "vision", n: 2, tab: "Pixels stay put", available: false },
@@ -270,7 +277,7 @@
         { id: "breath", n: 4, tab: "The breathing wave", available: false },
       ];
       var scene = SCENES[0];
-      function claimText(c) { return "presence/detected  { occupants: " + c.occupants + ", range_m: " + c.range_m + " }"; }
+      function claimText(c) { return "presence/detected  { occupants: " + c.displayOcc + ", range_m: " + c.displayRange + " }"; }
 
       // ── build the scene tabs (the "one of many" model, made visible) ──
       var tabs = $("scene-tabs");
@@ -320,7 +327,8 @@
       }
 
       async function tamper() {
-        liveClaim = { occupants: 2, range_m: 1.2 };        // rewrite the record by hand
+        // rewrite the record by hand: claim two-plus people, at mid range
+        liveClaim = { event: "occupancy_changed", presence: "present", occupants: "2+", band: "mid", displayOcc: 2, displayRange: 1.2 };
         $("payoff-claim").textContent = claimText(liveClaim);
         paintVerdict(await verifyClaim(liveClaim));          // old sig vs. new bytes → false
         feedLine("record altered by hand → " + claimText(liveClaim), "feed-sys");
@@ -329,7 +337,7 @@
         forge.dataset.state = "tampered";
       }
       async function restore() {
-        liveClaim = { occupants: scene.claimObj.occupants, range_m: scene.claimObj.range_m };
+        liveClaim = Object.assign({}, scene.claimObj);
         $("payoff-claim").textContent = claimText(liveClaim);
         paintVerdict(await verifyClaim(liveClaim));
         feedLine("true record restored", "feed-sys");
@@ -380,7 +388,7 @@
         at(2450, async function () {
           marker.classList.add("tripped");
           chip.classList.add("show");
-          liveClaim = { occupants: scene.claimObj.occupants, range_m: scene.claimObj.range_m };
+          liveClaim = Object.assign({}, scene.claimObj);
           $("payoff-claim").textContent = claimText(liveClaim);
           feedLine(claimText(liveClaim), "feed-witness");
           at(400, function () { payoff.classList.add("show"); });
