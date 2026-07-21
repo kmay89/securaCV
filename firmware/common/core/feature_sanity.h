@@ -42,6 +42,10 @@
   #error "FEATURE_RS485=1 but this board has no RS485 transceiver (HAS_CAN_RS485=0). Disable FEATURE_RS485 in your config, or select a board with the RS485/CAN terminal (e.g. waveshare-esp32s3-lcd43b; see firmware/boards/boards.json)."
 #endif
 
+#if defined(FEATURE_CAN) && FEATURE_CAN && defined(HAS_CAN_RS485) && !HAS_CAN_RS485
+  #error "FEATURE_CAN=1 but this board has no CAN/TWAI transceiver (HAS_CAN_RS485=0). Disable FEATURE_CAN in your config, or select a board with the RS485/CAN terminal (e.g. waveshare-esp32s3-lcd43b; see firmware/boards/boards.json)."
+#endif
+
 // ─── Camera ─────────────────────────────────────────────────────────────
 
 #if defined(FEATURE_CAMERA_PEEK) && FEATURE_CAMERA_PEEK && defined(HAS_CAMERA) && !HAS_CAMERA

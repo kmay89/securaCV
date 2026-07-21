@@ -752,6 +752,21 @@ jobs:
           /tmp/modbus_rtu | tee /tmp/modbus_rtu.log
           grep -q "ALL .* PASSED" /tmp/modbus_rtu.log
 
+      - name: Build + run canary-display CAN frame host test
+        # The CAN 2.0 frame model — id-width/DLC validity, SocketCAN-style
+        # acceptance filtering, and the ASCII log formatter — lives in the pure
+        # core (canary/io/can_frame.h) so it is host-verified without a board.
+        # The TWAI transport itself is compile-checked by the
+        # canary-display-dash-can PlatformIO env.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_can_frame.cpp \
+              -o /tmp/can_frame
+          /tmp/can_frame | tee /tmp/can_frame.log
+          grep -q "ALL .* PASSED" /tmp/can_frame.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
