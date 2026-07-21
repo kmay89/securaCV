@@ -36,6 +36,12 @@
   #error "FEATURE_SD_STORAGE=1 but this board has no SD slot (HAS_SD_CARD=0). Disable FEATURE_SD_STORAGE in your configs/<app>/<config>/config.h, or select a board with an SD slot (see firmware/boards/boards.json)."
 #endif
 
+// ─── Fieldbus ───────────────────────────────────────────────────────────
+
+#if defined(FEATURE_RS485) && FEATURE_RS485 && defined(HAS_CAN_RS485) && !HAS_CAN_RS485
+  #error "FEATURE_RS485=1 but this board has no RS485 transceiver (HAS_CAN_RS485=0). Disable FEATURE_RS485 in your config, or select a board with the RS485/CAN terminal (e.g. waveshare-esp32s3-lcd43b; see firmware/boards/boards.json)."
+#endif
+
 // ─── Camera ─────────────────────────────────────────────────────────────
 
 #if defined(FEATURE_CAMERA_PEEK) && FEATURE_CAMERA_PEEK && defined(HAS_CAMERA) && !HAS_CAMERA

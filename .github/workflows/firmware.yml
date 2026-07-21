@@ -737,6 +737,21 @@ jobs:
             firmware/canary/lib/securacv_thermal_watchdog/src/securacv_thermal_watchdog.cpp \
             -I firmware/canary/lib/securacv_thermal_watchdog/src
 
+      - name: Build + run canary-display Modbus RTU host test
+        # The RS485/Modbus master's framing + CRC-16/MODBUS live in the pure
+        # core (canary/io/modbus_rtu.h) so every byte on the 4.3B A/B terminal
+        # is host-verified without a board. Anchored on the catalogued
+        # CRC-16/MODBUS check value 0x4B37 plus build/parse roundtrips,
+        # exception decoding, and CRC/addr/func/capacity rejection cases.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_modbus_rtu.cpp \
+              -o /tmp/modbus_rtu
+          /tmp/modbus_rtu | tee /tmp/modbus_rtu.log
+          grep -q "ALL .* PASSED" /tmp/modbus_rtu.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown

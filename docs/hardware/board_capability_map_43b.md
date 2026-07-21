@@ -31,7 +31,7 @@ row cites the file that backs the claim.
 | BLE (passive NimBLE scan) | ✅ | **Driven** | Off-grid "Chirp" fallback |
 | **Evidence vault** (proof-carrying journal → flash) | ✅ | **Built · bench-gated** | Signed event log survives a network cut |
 | Chime engine (LEDC tone) | ⚠️ pad unpopulated on B | **Built · bench-gated** | Audible alert **via DO**, not onboard piezo |
-| **RS485 / Modbus RTU** (A/B terminal) | ✅ | **Staged (no driver)** | Integrate alarm panels, access control, HVAC/energy meters |
+| **RS485 / Modbus RTU** (A/B terminal) | ✅ | **Built · bench-gated** | Integrate alarm panels, access control, HVAC/energy meters |
 | **CAN / TWAI** (H/L terminal) | ✅ | **Staged (no driver)** | Vehicle & industrial witness (gate/barrier, CANopen) |
 | **microSD** (TF slot) | ✅ | **Staged (CS blocker)** | Bulk local archive — see the CH422G-CS note |
 | **Battery-backed RTC** (trusted time) | ❓ verify | **Staged / verify** | Trustworthy timestamps when NTP is blocked |
@@ -110,26 +110,36 @@ pulse, reusing the existing expander helpers. Bench-validate optocoupler polarit
 
 ## 3. RS485 / Modbus RTU — genuinely net-new, highest integration payoff
 
-**Status:** Staged. Pins declared (`pins.h`, TX=GPIO44 / RX=GPIO43, 9600 default);
-**no UART/Modbus driver exists** — the playground pin tracker renders it literally
-as *"open · shares console"*.
+**Status:** Built · bench-gated (`FEATURE_RS485 0`). Pins declared in `pins.h`
+(TX=GPIO44 / RX=GPIO43, 9600 default, **auto-direction** transceiver — no DE pin).
+
+**Shipped in this build (compile-verified, bench-pending):**
+- `include/canary/io/modbus_rtu.h` — a pure, allocation-free Modbus RTU master
+  core: CRC-16/MODBUS, request builders (read holding 0x03 / input 0x04, write
+  single 0x06), and a response parser with exception decode. No Arduino deps.
+- `tests_host/test_modbus_rtu.cpp` — host test anchored on the catalogued
+  CRC-16/MODBUS check value `0x4B37`, plus build/parse roundtrips and CRC / addr
+  / func / capacity / exception rejection cases. Run by the "Modbus RTU host
+  test" step in `firmware.yml`.
+- `src/io/rs485.{h,cpp}` — thin `Serial1` transport (auto-direction, bounded
+  request→response wait) behind `FEATURE_RS485`; the whole TU is empty without
+  the flag, so the default/emulator builds stay byte-identical.
+- `canary-display-dash-rs485` PlatformIO env (in `flavors.json` build_envs) so
+  CI compiles the gated driver against the real toolchain.
 
 **Why it matters:** RS485/Modbus is the lingua franca of building security and
-industrial gear. A driver turns the dash into a **gateway**: read alarm panels,
+industrial gear. This turns the dash into a **gateway**: read alarm panels,
 access-control controllers, energy/HVAC meters, and re-witness their state into
-the signed log. This is the single biggest expansion of the addressable use-case.
+the signed log. The single biggest expansion of the addressable use-case.
 
 **Constraint:** GPIO43/44 are **shared with the CH343 USB-UART console**, so
-RS485 and console logging are mutually exclusive — the driver must own that
-trade (a `FEATURE_RS485` build that routes logs to USB-CDC only).
+RS485 and console logging are mutually exclusive — the `FEATURE_RS485` build
+keeps logging on the native USB CDC.
 
-**Build shape (recommended):** a pure, host-testable `modbus_rtu` core (CRC-16,
-frame build/parse, register map — no Arduino deps, testable exactly like
-`playground-sim.js`), a thin `Serial1`+DE driver behind `FEATURE_RS485 0`
-(no-op stubs so it always links), a dedicated `canary-display-dash-rs485` build
-env so CI **compiles** it while the default/emulator build stays byte-identical
-(the dist-drift-safe pattern used for `canary-display-dash-b`), and a matching
-playground station once bench-validated. Lands **compile-verified, bench-pending**.
+**Remaining to go live:** bench-validate TX/RX orientation + bus timing against a
+real Modbus slave (VERIFY-tagged in `pins.h`), then wire a Modbus register-map
+into the fleet event pipeline and add a matching playground station (which also
+needs an emulator `dist/*.js` rebuild). Until then it ships **off**.
 
 ---
 
@@ -248,5 +258,5 @@ every activation above:
 **Bottom line:** the board is a full industrial witness gateway. We're driving
 the display, touch, isolated IO (bench), and the radios. The value left on the
 table is: **turn on the evidence vault**, **promote DI/DO into the witness
-runtime**, **write the RS485/Modbus + CAN drivers**, and **verify the RTC/battery
-silicon** — in that order.
+runtime**, **bench-validate the RS485/Modbus driver (now built, off) and write
+the CAN driver**, and **verify the RTC/battery silicon** — in that order.

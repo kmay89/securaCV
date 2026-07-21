@@ -33,7 +33,7 @@
   {
     "name": "canary-display",
     "dir": "firmware/projects/canary-display",
-    "build_envs": ["canary-display-watch", "canary-display-dash", "canary-display-playground", "canary-display-dash-b"],
+    "build_envs": ["canary-display-watch", "canary-display-dash", "canary-display-playground", "canary-display-dash-b", "canary-display-dash-rs485"],
     "check_env": "canary-display-watch",
     "pre_step": "secrets_header",
     "size_guard": {
