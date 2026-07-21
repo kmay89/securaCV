@@ -101,6 +101,35 @@ static void test_randomart_walk() {
   CHECK(randomart_glyph(200) == 'E'); // clamped, never out of bounds
 }
 
+// Trailing-space-insensitive compare: the row is always RANDOMART_W wide, so we
+// pin the significant (non-trailing-space) prefix and the fixed width.
+static std::string rstrip(const std::string& s) {
+  size_t e = s.size();
+  while (e > 0 && s[e - 1] == ' ') --e;
+  return s.substr(0, e);
+}
+
+static void test_randomart_golden() {
+  // The GOLDEN vector the website pins in tests/randomart.test.mjs. Key = the
+  // 32 bytes 0x00..0x1f. If this shape changes here, the browser-drawn randomart
+  // (js/randomart.js) stops matching what the device draws — the whole trust
+  // handshake breaks — so both repos assert this identical output.
+  uint8_t key[32];
+  for (int i = 0; i < 32; ++i) key[i] = (uint8_t)i;
+  uint8_t f[RANDOMART_H][RANDOMART_W];
+  randomart_field(key, 32, f);
+
+  static const char* const prefix[RANDOMART_H] = {
+    "^^O@@E.", "@@O++..", "o+.. ..", "       .", "        S", "", "", "", ""
+  };
+  for (int y = 0; y < RANDOMART_H; ++y) {
+    char row[RANDOMART_W + 1];
+    randomart_row(f, y, row);
+    CHECK(std::strlen(row) == (size_t)RANDOMART_W);   // always the full width
+    CHECK(rstrip(row) == prefix[y]);                  // ...and the exact shape
+  }
+}
+
 static void test_randomart_all_zero() {
   // All-zero bytes: every step is up-left → the bishop clamps into the top-left
   // corner. Start stays centred; End lands at (0,0).
@@ -296,6 +325,7 @@ static void test_logo_is_single_sourced() {
 int main() {
   test_welcome_card();
   test_logo_is_single_sourced();
+  test_randomart_golden();
   test_randomart_walk();
   test_randomart_all_zero();
   test_ascii_tier_is_safe();
