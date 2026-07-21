@@ -13,7 +13,7 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "binaries/espflash",
+          "name": "espflash",
           "sidecar": true,
           "args": true
         }
