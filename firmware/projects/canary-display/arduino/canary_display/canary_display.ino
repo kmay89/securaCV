@@ -66,6 +66,9 @@
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
 #include "chirp_scan.h"
 #endif
+#if defined(FEATURE_RS485) && FEATURE_RS485
+#include "rs485.h"
+#endif
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
 #include "fleet_link.h"
 #endif
@@ -846,6 +849,13 @@ void setup() {
   canary::fleet::journal_begin();
 #endif
 
+#if defined(FEATURE_RS485) && FEATURE_RS485
+  // RS485 / Modbus RTU bring-up (canary-display-dash-rs485 env only). Owns
+  // Serial1 on the A/B terminal (GPIO43/44, shared with the CH343 console —
+  // this build keeps logging on native USB CDC). Bench-pending.
+  canary::io::rs485_begin(RS485_BAUD_DEFAULT);
+#endif
+
 #if defined(FEATURE_CARE) && FEATURE_CARE
   // Care wave: restore the learned rhythm baseline from NVS (mutes re-apply
   // later, from care_loop, once SNTP gives both clocks).
@@ -1036,6 +1046,12 @@ void loop() {
   // too, passive BLE bursts keep tamper/liveness flowing to the glass. The
   // module itself stops scanning the moment the broker is back.
   canary::net::chirp_scan_loop(now, !broker, canary::net::wifi_connected());
+#endif
+
+#if defined(FEATURE_RS485) && FEATURE_RS485
+  // Gentle bench heartbeat: poll a probe register and log the reply, so the
+  // RS485 transport has a live caller in this build.
+  canary::io::rs485_loop(now);
 #endif
 
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
