@@ -46,8 +46,10 @@ npx --yes esbuild src/kiri/run/worker.js  --bundle --format=esm --platform=brows
 npx --yes esbuild src/kiri/run/minion.js  --bundle --format=esm --platform=browser --outfile="$dest/minion.js"
 
 echo "→ copying FDM WASM + license"
-cp -v src/wasm/kiri-geo.wasm "$dest/" 2>/dev/null || echo "  (kiri-geo.wasm not found — path moved? check src/wasm)"
-cp -v src/wasm/kiri-ani.wasm "$dest/" 2>/dev/null || true
+# kiri-geo.wasm is the FDM geometry kernel — without it slicing dies in the
+# browser, so a missing file must fail the vendor, not ship a broken bundle.
+cp -v src/wasm/kiri-geo.wasm "$dest/" || { echo "✗ kiri-geo.wasm not found — path moved? check src/wasm" >&2; exit 1; }
+cp -v src/wasm/kiri-ani.wasm "$dest/" 2>/dev/null || true   # animation only — optional for FDM time
 cp -v LICENSE "$dest/LICENSE"
 
 # ── enforce the offline promise ────────────────────────────────────────────
