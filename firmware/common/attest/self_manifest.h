@@ -1,0 +1,159 @@
+/*
+ * SecuraCV — the device self-manifest (host-testable, no Arduino).
+ *
+ * One machine-readable line the Canary emits on request ('j' over USB serial,
+ * and — later — a BLE characteristic): a compact JSON object that describes the
+ * device to a program instead of a human. It is the device's *live* source of
+ * truth, and it is deliberately public-only:
+ *
+ *   board, firmware+git, protocol, device id, the 32-byte Ed25519 PUBLIC key
+ *   (hex), its fingerprint, the chain head, seq/boots, self-test health, the
+ *   tamper flag, the enabled feature set, and the help URL.
+ *
+ * No private key, no secret, nothing that isn't already printed on the trust
+ * card. Its whole reason to exist is that a *browser* can read it over WebSerial
+ * and then (a) draw the SAME drunken-bishop randomart from the pubkey — so you
+ * can eyeball that the shape on your screen matches the shape on your device,
+ * with no vendor in the loop — and (b) render exactly the tools THIS unit has,
+ * instead of guessing from a static catalog.
+ *
+ * Pure string composition into a caller buffer (no heap, no ArduinoJson, no
+ * Arduino types) so the exact bytes are proven in host tests and the schema
+ * can't drift out from under the website. Compiles hosted for tests_host with
+ * -Wall -Wextra -Werror.
+ *
+ * Copyright (c) 2026 ERRERlabs / Karl May
+ * License: Apache-2.0
+ */
+#ifndef SECURACV_SELF_MANIFEST_H
+#define SECURACV_SELF_MANIFEST_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+namespace manifest {
+
+// Bump the minor when adding fields (additive), the major on a breaking change.
+// The website pins this exact string so a breaking change fails CI loudly.
+inline constexpr const char* SCHEMA = "securacv.canary.manifest/v1";
+
+// Everything the device knows about itself, as plain pointers/values the caller
+// fills from live state. Hex fields are lower-case, NUL-terminated, exactly as
+// long as their byte count implies (pubkey = 64, fp = 16, chain_head = 64).
+struct Facts {
+  const char* board;          // "canary", "canary-vision", ...
+  const char* firmware;       // "2.2.0"
+  const char* git;            // "abc1234" or "not-embedded"
+  const char* protocol;       // "pwk:v0.3.0"
+  const char* device_id;      // "canary-7fA3"
+  const char* pubkey_hex;     // 64 hex chars — the randomart source of truth
+  const char* pubkey_fp_hex;  // 16 hex chars
+  const char* chain_head_hex; // 64 hex chars
+  uint32_t seq;
+  uint32_t boots;
+  int health;                 // 0..100, or <0 = unknown → emitted as null
+  bool tamper;
+  const char* const* features; // enabled feature short-names
+  size_t feature_count;
+  const char* help_url;       // "https://securacv.com/canary"
+};
+
+// ── a bounded writer: appends until it would overflow, then latches !ok ──────
+namespace detail {
+struct Writer {
+  char* p;
+  size_t left;   // bytes remaining INCLUDING the terminating NUL
+  bool ok;
+
+  void raw(char c) {
+    if (!ok) return;
+    if (left <= 1) { ok = false; return; }  // keep room for NUL
+    *p++ = c;
+    --left;
+  }
+  void raw(const char* s) {
+    if (!s) return;
+    while (*s) raw(*s++);
+  }
+  // A JSON string value with escaping (defensive: device_id etc. are ASCII in
+  // practice, but never trust an input into a wire format).
+  void str(const char* s) {
+    raw('"');
+    for (const char* c = s ? s : ""; *c; ++c) {
+      unsigned char u = (unsigned char)*c;
+      switch (u) {
+        case '"':  raw('\\'); raw('"');  break;
+        case '\\': raw('\\'); raw('\\'); break;
+        case '\b': raw('\\'); raw('b');  break;
+        case '\f': raw('\\'); raw('f');  break;
+        case '\n': raw('\\'); raw('n');  break;
+        case '\r': raw('\\'); raw('r');  break;
+        case '\t': raw('\\'); raw('t');  break;
+        default:
+          if (u < 0x20) {                  // other control chars → \u00XX
+            static const char hexd[] = "0123456789abcdef";
+            raw('\\'); raw('u'); raw('0'); raw('0');
+            raw(hexd[(u >> 4) & 0xF]); raw(hexd[u & 0xF]);
+          } else {
+            raw((char)u);
+          }
+      }
+    }
+    raw('"');
+  }
+  void u32(uint32_t v) {
+    char b[11]; int n = 0;
+    if (v == 0) { raw('0'); return; }
+    while (v && n < (int)sizeof b) { b[n++] = (char)('0' + (v % 10)); v /= 10; }
+    while (n) raw(b[--n]);
+  }
+  // A quoted "key": prefix, with the leading comma for all but the first pair.
+  void key(const char* k, bool first) {
+    if (!first) raw(',');
+    str(k);
+    raw(':');
+  }
+};
+}  // namespace detail
+
+// Build the one-line manifest into `out` (NUL-terminated). Returns the number
+// of bytes written (excluding the NUL), or 0 if it didn't fit — the caller then
+// emits an explicit error rather than a truncated, unparseable object.
+inline size_t build(const Facts& f, char* out, size_t cap) {
+  if (!out || cap == 0) return 0;
+  detail::Writer w{out, cap, true};
+
+  w.raw('{');
+  w.key("schema", true);        w.str(SCHEMA);
+  w.key("board", false);        w.str(f.board ? f.board : "");
+  w.key("firmware", false);     w.str(f.firmware ? f.firmware : "");
+  w.key("git", false);          w.str(f.git ? f.git : "");
+  w.key("protocol", false);     w.str(f.protocol ? f.protocol : "");
+  w.key("device_id", false);    w.str(f.device_id ? f.device_id : "");
+  w.key("pubkey", false);       w.str(f.pubkey_hex ? f.pubkey_hex : "");
+  w.key("pubkey_fp", false);    w.str(f.pubkey_fp_hex ? f.pubkey_fp_hex : "");
+  w.key("chain_head", false);   w.str(f.chain_head_hex ? f.chain_head_hex : "");
+  w.key("seq", false);          w.u32(f.seq);
+  w.key("boots", false);        w.u32(f.boots);
+  w.key("health", false);
+  if (f.health < 0) w.raw("null");
+  else { int h = f.health > 100 ? 100 : f.health; w.u32((uint32_t)h); }
+  w.key("tamper", false);       w.raw(f.tamper ? "true" : "false");
+  w.key("features", false);
+  w.raw('[');
+  for (size_t i = 0; i < f.feature_count; ++i) {
+    if (i) w.raw(',');
+    w.str(f.features[i] ? f.features[i] : "");
+  }
+  w.raw(']');
+  w.key("help", false);         w.str(f.help_url ? f.help_url : "");
+  w.raw('}');
+
+  if (!w.ok) { out[0] = '\0'; return 0; }
+  *w.p = '\0';
+  return cap - w.left;
+}
+
+}  // namespace manifest
+
+#endif  // SECURACV_SELF_MANIFEST_H
