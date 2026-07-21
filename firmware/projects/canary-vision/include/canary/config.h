@@ -23,6 +23,19 @@
 #define FEATURE_FLEET_BEACON 1
 #endif
 
+// -------------------- Fleet-link roster scanner (BLE) --------------------
+// The RX twin of the beacon (src/net/fleet_roster_scan.cpp): a low-duty passive
+// BLE scan that hears the OTHER Canaries' presence beacons + chirps and keeps a
+// shared fleet roster (last-heartbeat + battery/health/chain), so every Canary
+// — not just the display — tracks its siblings. Default ON; guarded so CI can
+// flip it OFF per board with -DFEATURE_FLEET_ROSTER=0 if the OTA-slot size
+// guard vetoes the added scan path. The module + its call sites compile out
+// when 0. (The scanner shares NimBLE with the beacon; enabling it without the
+// beacon is fine, but the pair is the intended configuration.)
+#ifndef FEATURE_FLEET_ROSTER
+#define FEATURE_FLEET_ROSTER 1
+#endif
+
 // -------------------- Identity --------------------
 // Canonical device type: lowercase, hyphenated — must match HA's
 // DEVICE_TYPE_MODALITY map and the mDNS `dt` TXT key. (HA canonicalises

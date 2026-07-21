@@ -34,10 +34,12 @@
 
 #include "ble_scout.h"
 #include "ble_scan.h"
+#include "fleet_roster_feed.h"   // second consumer of this scan: the fleet roster
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <NimBLEScan.h>
+#include <string>
 
 namespace ble_scout {
 
@@ -65,7 +67,19 @@ class ScoutScanCallbacks : public NimBLEScanCallbacks {
      * stays consistent. */
     const uint8_t* mac  = device->getAddress().getBase()->val;
     const int8_t   rssi = (int8_t)device->getRSSI();
-    ble_scout_on_advert(mac, rssi, millis());
+    const uint32_t now  = millis();
+    ble_scout_on_advert(mac, rssi, now);
+
+    /* Second consumer, same advert: offer the manufacturer data to the fleet
+     * roster. A fleet-link presence beacon / Chirp is parsed + tabled there;
+     * anything else (the paired phones/watches above) is ignored. The roster
+     * never sees a raw MAC — only the self-reported fingerprint suffix on the
+     * wire. */
+    if (device->haveManufacturerData()) {
+      const std::string m = device->getManufacturerData();
+      fleet_roster_feed::on_advert(
+          reinterpret_cast<const uint8_t*>(m.data()), m.size(), rssi, now);
+    }
   }
   void onScanEnd(const NimBLEScanResults& /*results*/, int /*reason*/) override {
     /* Continuous mode: NimBLE will auto-restart. */

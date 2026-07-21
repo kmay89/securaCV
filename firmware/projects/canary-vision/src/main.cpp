@@ -34,6 +34,9 @@
 #if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
 #include "canary/net/fleet_beacon_adv.h"  // advertise-only BLE presence beacon
 #endif
+#if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
+#include "canary/net/fleet_roster_scan.h" // RX twin: track the other Canaries
+#endif
 #include "canary/vision/vision_mgr.h"
 #include "canary/state/presence_fsm.h"
 
@@ -508,6 +511,15 @@ void loop() {
   // ~5 s). Placed before the broker/WiFi early-returns below so it keeps
   // advertising through an MQTT outage — that broker-free reach is the point.
   canary::net::fleet_beacon_tick(canary::ms_now());
+#endif
+
+#if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
+  // Low-duty passive scan that hears the OTHER Canaries and keeps this
+  // witness's own fleet roster (last-heartbeat + status). Broker-independent
+  // like the beacon; also before the early-returns so it keeps tracking peers
+  // through an MQTT/WiFi outage (continuous scan when fully off-grid).
+  canary::net::fleet_roster_scan_tick(canary::ms_now(),
+                                      canary::net::wifi_connected());
 #endif
 
   if (!canary::net::mqtt_connected()) {
