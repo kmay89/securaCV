@@ -23,7 +23,9 @@
 // Vendoring the engine is a deliberate, documented step — see
 // assets/vendor/kiri/README.md and tools/vendor_kiri.sh. Kiri:Moto is a
 // build-from-source app, not a single-file library, so its bundle is added by
-// that step, not committed casually.
+// that step, not committed casually. Its slicing pool also needs
+// SharedArrayBuffer (a cross-origin-isolated page), so if the engine loads but
+// the page isn't isolated, the slice throws and we fall back — same as absent.
 
 import { MACHINE, MATERIALS, DEFAULT_SETTINGS } from "./print-guide.js";
 
