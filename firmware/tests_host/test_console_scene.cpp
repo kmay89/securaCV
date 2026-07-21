@@ -283,9 +283,9 @@ static void test_logo_is_single_sourced() {
   Renderer rt{collect, &tc, caps_ascii()};
   welcome_card(rw, "canary-7fA3", "https://securacv.com/canary");
   trust_card(rt, sample(KEY_A, 8));
-  for (const char* row : CANARY_LOGO) {
-    CHECK(wc.s.find(row) != std::string::npos);
-    CHECK(tc.s.find(row) != std::string::npos);
+  for (const char* logo_row : CANARY_LOGO) {
+    CHECK(wc.s.find(logo_row) != std::string::npos);
+    CHECK(tc.s.find(logo_row) != std::string::npos);
   }
   // The canonical bird is exactly these three 5-wide rows.
   CHECK(std::string(CANARY_LOGO[0]) == ",___,");

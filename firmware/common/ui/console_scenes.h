@@ -43,7 +43,7 @@ static const int TRUST_INNER = 52;  // interior columns; total width 54
 // and the site it sends you to (securacv.com/canary) show the identical bird.
 // Each line is 7-bit and exactly 5 columns wide, so the three stack in a clean
 // vertical column at any centre. Change it here and every scene follows.
-static const char* const CANARY_LOGO[3] = { ",___,", "(o.o)", "/)_/)" };
+inline constexpr const char* const CANARY_LOGO[3] = { ",___,", "(o.o)", "/)_/)" };
 
 // Draw the logo centred in the panel interior, moss-green (renders on every
 // terminal; colour is a bonus, never the meaning).
