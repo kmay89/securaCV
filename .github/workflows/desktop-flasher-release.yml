@@ -120,19 +120,21 @@ jobs:
 
       # ── the bundled flash engine ───────────────────────────────────────────
       # Fetch the prebuilt espflash for each arch and drop it where Tauri looks
-      # for a sidecar: binaries/espflash-<target-triple>. On macOS we lipo the
-      # two arches into one universal binary so a single .app runs on Apple
-      # Silicon and Intel alike. Falls back to `cargo install` if the release
-      # asset naming ever changes, so the pipeline can't silently break.
+      # for a sidecar: binaries/espflash-<target-triple>. A universal macOS build
+      # needs ALL THREE: the per-arch sidecars (aarch64 + x86_64) while it
+      # compiles each slice, AND a lipo'd universal one at bundle time. Falls
+      # back to `cargo install` if the release asset naming ever changes, so the
+      # pipeline can't silently break.
       - name: Bundle espflash sidecar (macOS universal)
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
           set -euo pipefail
           base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
-          mkdir -p desktop/src-tauri/binaries
+          bin=desktop/src-tauri/binaries
+          mkdir -p "$bin"
           fetch() {
-            local triple="$1" out="$2"
+            local triple="$1" out="$bin/espflash-$1"
             if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
               rm -rf ex && unzip -q e.zip -d ex
               cp "$(find ex -type f -name espflash | head -n1)" "$out"
@@ -143,11 +145,13 @@ jobs:
             fi
             chmod +x "$out"
           }
-          fetch aarch64-apple-darwin espflash-arm64
-          fetch x86_64-apple-darwin espflash-x64
-          lipo -create -output desktop/src-tauri/binaries/espflash-universal-apple-darwin espflash-arm64 espflash-x64
-          chmod +x desktop/src-tauri/binaries/espflash-universal-apple-darwin
-          file desktop/src-tauri/binaries/espflash-universal-apple-darwin
+          fetch aarch64-apple-darwin
+          fetch x86_64-apple-darwin
+          # Universal slice for the bundle step.
+          lipo -create -output "$bin/espflash-universal-apple-darwin" \
+            "$bin/espflash-aarch64-apple-darwin" "$bin/espflash-x86_64-apple-darwin"
+          chmod +x "$bin/espflash-universal-apple-darwin"
+          file "$bin"/espflash-*
 
       - name: Bundle espflash sidecar (Linux x86_64)
         if: matrix.platform == 'ubuntu-22.04'
@@ -193,11 +197,11 @@ jobs:
           else
             echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
             npx --yes @tauri-apps/cli signer generate -w "$RUNNER_TEMP/flasher.key" --password ""
-            {
-              echo "TAURI_SIGNING_PRIVATE_KEY<<KEOF"
-              cat "$RUNNER_TEMP/flasher.key"
-              echo "KEOF"
-            } >> "$GITHUB_ENV"
+            # The Tauri private key is a single base64 line; $(cat) strips the
+            # trailing newline so a plain assignment is safe (a heredoc here
+            # fails when the file lacks a final newline — the closing delimiter
+            # glues onto the key and GitHub can't find it).
+            echo "TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/flasher.key")" >> "$GITHUB_ENV"
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
             python3 -c 'import json,sys; p="src-tauri/tauri.conf.json"; c=json.load(open(p)); c["plugins"]["updater"]["pubkey"]=sys.argv[1].strip(); json.dump(c,open(p,"w"),indent=2); print("patched embedded pubkey for ephemeral build")' "$(cat "$RUNNER_TEMP/flasher.key.pub")"
           fi
