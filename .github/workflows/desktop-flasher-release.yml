@@ -120,20 +120,21 @@ jobs:
 
       # ── the bundled flash engine ───────────────────────────────────────────
       # Fetch the prebuilt espflash for each arch and drop it where Tauri looks
-      # for a sidecar: binaries/espflash-<target-triple>. For a universal macOS
-      # build Tauri compiles each arch separately and needs the PER-ARCH sidecar
-      # (aarch64 + x86_64); it lipos them into the final universal .app itself.
-      # Falls back to `cargo install` if the release asset naming ever changes,
-      # so the pipeline can't silently break.
-      - name: Bundle espflash sidecar (macOS per-arch)
+      # for a sidecar: binaries/espflash-<target-triple>. A universal macOS build
+      # needs ALL THREE: the per-arch sidecars (aarch64 + x86_64) while it
+      # compiles each slice, AND a lipo'd universal one at bundle time. Falls
+      # back to `cargo install` if the release asset naming ever changes, so the
+      # pipeline can't silently break.
+      - name: Bundle espflash sidecar (macOS universal)
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
           set -euo pipefail
           base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
-          mkdir -p desktop/src-tauri/binaries
+          bin=desktop/src-tauri/binaries
+          mkdir -p "$bin"
           fetch() {
-            local triple="$1" out="desktop/src-tauri/binaries/espflash-$1"
+            local triple="$1" out="$bin/espflash-$1"
             if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
               rm -rf ex && unzip -q e.zip -d ex
               cp "$(find ex -type f -name espflash | head -n1)" "$out"
@@ -143,10 +144,14 @@ jobs:
               cp "cargo-$triple/bin/espflash" "$out"
             fi
             chmod +x "$out"
-            file "$out"
           }
           fetch aarch64-apple-darwin
           fetch x86_64-apple-darwin
+          # Universal slice for the bundle step.
+          lipo -create -output "$bin/espflash-universal-apple-darwin" \
+            "$bin/espflash-aarch64-apple-darwin" "$bin/espflash-x86_64-apple-darwin"
+          chmod +x "$bin/espflash-universal-apple-darwin"
+          file "$bin"/espflash-*
 
       - name: Bundle espflash sidecar (Linux x86_64)
         if: matrix.platform == 'ubuntu-22.04'
