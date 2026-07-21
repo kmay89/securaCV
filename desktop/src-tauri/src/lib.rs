@@ -249,10 +249,11 @@ async fn flash(
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     // Unique per-run name so concurrent runs (or a stale file owned by another
-    // user) can't collide. `saturating_duration_since` never panics on a skewed
-    // clock.
+    // user) can't collide. `unwrap_or_default()` keeps it panic-free on a clock
+    // set before the epoch (SystemTime::saturating_duration_since is nightly-only).
     let stamp = std::time::SystemTime::now()
-        .saturating_duration_since(std::time::UNIX_EPOCH)
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("securacv-{safe_id}-{stamp}.bin"));
     std::fs::write(&path, &bytes).map_err(|e| format!("couldn't stage the image: {e}"))?;
