@@ -77,6 +77,44 @@ def bake_round_display(scene):
             _set_color(geom, (0.14, 0.14, 0.16))   # connectors, socket, parts
 
 
+def _pi_colour(name):
+    """Colour a Raspberry Pi 5 solid from the vendor's own name (its STEP carried
+    no colours). The model is exact; only the colour is ours, keyed off the
+    part label so the assignment is honest, not eyeballed geometry."""
+    n = name.lower()
+    if "plate_raspberry" in n or n.startswith("plate"):
+        return (0.05, 0.20, 0.10)                       # FR-4 PCB green
+    if any(k in n for k in ("ethernet", "usb", "hdmi", "rj45", "port", "jack", "shield")):
+        return (0.72, 0.73, 0.76)                       # bright metal shells
+    if any(k in n for k in ("broadcom", "rp1", "controller", "transceiv", "d9whv", "mxl", "pmic", "chip")):
+        return (0.05, 0.05, 0.06)                       # black silicon
+    if any(k in n for k in ("gpio", "header", "connect", "pin", "gold")):
+        return (0.83, 0.67, 0.27)                       # gold header pins
+    return (0.11, 0.11, 0.13)                            # dark passives / default
+
+
+def bake_raspberry_pi(scene):
+    """The Pi 5 STEP carries no per-solid colours and tessellates to ~12k named
+    solids. Colour each by its vendor name (_pi_colour), then concatenate solids
+    that share a colour into ONE mesh per colour, so the committed GLB is a
+    handful of parts (like every other board) instead of 12k draw calls. Returns
+    a fresh scene; transforms are baked into the vertices so the flattened mesh
+    exports identically to how glb.js re-reads it."""
+    buckets = {}
+    for name in list(scene.geometry):
+        g = scene.geometry[name].copy()
+        nodes = scene.graph.geometry_nodes.get(name, [])
+        if nodes:
+            g.apply_transform(scene.graph.get(nodes[0])[0])
+        buckets.setdefault(_pi_colour(name), []).append(g)
+    out = trimesh.Scene()
+    for colour, geoms in buckets.items():
+        m = trimesh.util.concatenate(geoms)
+        _set_color(m, colour)
+        out.add_geometry(m)
+    return out
+
+
 def build_board(cfg):
     src = VENDOR / cfg["source"]
     if not src.exists():
@@ -112,6 +150,8 @@ def build_board(cfg):
 
         if cfg.get("materials") == "round-display":
             bake_round_display(scene)
+        elif cfg.get("materials") == "raspberry-pi":
+            scene = bake_raspberry_pi(scene)
 
         scene.export(str(out))
     finally:

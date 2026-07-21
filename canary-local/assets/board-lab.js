@@ -25,8 +25,8 @@ const GH = "https://github.com/kmay89/securaCV/blob/main/";
 // per-material gloss so metals shine and soldermask stays satin — the same
 // separation the CAD colours imply (money-shot lighting, honest materials).
 // Exported for the Board Room (board-room.js), which stages the same GLBs.
-const METAL = new Set(["#8d8d8d", "#7f8e98", "#5a5a5a", "#ada186", "#a6a6a6", "#c7d3e3", "#8a8a8a"]);
-const GOLD = new Set(["#e7c863", "#e59833"]);
+const METAL = new Set(["#8d8d8d", "#7f8e98", "#5a5a5a", "#ada186", "#a6a6a6", "#c7d3e3", "#8a8a8a", "#b8bac2"]);
+const GOLD = new Set(["#e7c863", "#e59833", "#d4ab45"]);
 const BRIGHT = new Set(["#f6f4e9", "#ebebe5", "#ffffff", "#fefefe", "#fdfdfd"]);
 const LENS = new Set(["#801407", "#471e00", "#392d1d"]);
 export const hexOf = (c) => "#" + c.map((x) => Math.round(x * 255).toString(16).padStart(2, "0")).join("");

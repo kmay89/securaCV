@@ -941,6 +941,71 @@
    "blurb": "The L76K GNSS module (Quectel L76K receiver + ceramic patch antenna) on a XIAO-footprint carrier. In the WAP field build it talks to the XIAO over UART at 9600 baud: the module's TX crosses to the board's RX (D7) and its RX to the board's TX (D6). The patch antenna wants a clear view of the sky \u2014 that is why the WAP goes outdoors.",
    "doc": "https://wiki.seeedstudio.com/Get_Started_with_L76K_GNSS_Module_for_XIAO/",
    "provenance": "Seeed Studio open-hardware CAD (STEP) for the L76K GNSS Module for XIAO \u2014 a Quectel L76K receiver + ceramic patch antenna on a XIAO-footprint carrier. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
+  },
+  "raspberry_pi_5": {
+   "name": "Raspberry Pi 5",
+   "vendor": "Raspberry Pi Ltd",
+   "mpn": "SC1111",
+   "devices": [],
+   "glb": "boards/raspberry_pi_5.glb",
+   "source_step": "boards/vendor/raspberry_pi_5.step.gz",
+   "dims_mm": [
+    89.04,
+    20.84,
+    57.19
+   ],
+   "triangles": 81866,
+   "parts": 7,
+   "materials": [
+    {
+     "color": "#b8bac2",
+     "triangles": 44588
+    },
+    {
+     "color": "#1c1c21",
+     "triangles": 15854
+    },
+    {
+     "color": "#0d0d0f",
+     "triangles": 11864
+    },
+    {
+     "color": "#d4ab45",
+     "triangles": 5396
+    },
+    {
+     "color": "#0d331a",
+     "triangles": 4164
+    }
+   ],
+   "pose": {
+    "rx": 0.5,
+    "ry": 0.7,
+    "dist_factor": 2.2
+   },
+   "pinout": [
+    {
+     "label": "40-pin GPIO",
+     "pin": "2x20",
+     "gpio": "0.1in header",
+     "use": "The Canary hub barely touches this \u2014 the fleet talks over the network, not wires"
+    },
+    {
+     "label": "USB / Ethernet",
+     "pin": "USB-A / RJ45",
+     "gpio": "\u2014",
+     "use": "Power, storage, and the wired network path to the Canaries' broker"
+    },
+    {
+     "label": "Power",
+     "pin": "USB-C",
+     "gpio": "5V/5A",
+     "use": "27 W USB-C PD in"
+    }
+   ],
+   "blurb": "85 x 56 mm. The Raspberry Pi 5 that runs Home Assistant as the fleet's hub \u2014 the Canaries report to it over the network (MQTT), so almost nothing wires to its GPIO. Shown here for completeness: the 40-pin GPIO header, the stacked USB-A / Ethernet cluster, dual micro-HDMI, and the USB-C power in.",
+   "doc": "https://www.raspberrypi.com/documentation/computers/raspberry-pi.html",
+   "provenance": "Raspberry Pi Ltd mechanical CAD (STEP). Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. The STEP carried no per-solid colours, so materials are assigned by the vendor's own part names (PCB green, metal shells on the USB/Ethernet/HDMI shields, gold on the GPIO header, black silicon) \u2014 the shape is the vendor's exact model, only the colour is ours. The Pi 5 is the Home Assistant hub the Canary fleet reports to (docs / homeassistant.html), not a Canary device board \u2014 it lives in the Board Room only, tessellated coarser (tol 0.35 mm) to keep the committed mesh reasonable."
   }
  }
 }

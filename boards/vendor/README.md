@@ -15,6 +15,7 @@ viewer. Nothing here is fetched at runtime — the page ships the derived mesh
 | `seeed_grove_vision_ai_v2.step.gz` | Grove Vision AI V2 (+ stand) | Seeed Studio | 101021040 | [wiki](https://wiki.seeedstudio.com/grove_vision_ai_v2/) |
 | `seeed_round_display_xiao.step.gz` | Round Display for XIAO | Seeed Studio | 104040143 | [wiki](https://wiki.seeedstudio.com/get_start_round_display/) |
 | `quectel_l76k_gnss.step.gz` | L76K GNSS Module for XIAO | Seeed Studio | — | [wiki](https://wiki.seeedstudio.com/Get_Started_with_L76K_GNSS_Module_for_XIAO/) |
+| `raspberry_pi_5.step.gz` | Raspberry Pi 5 (the hub) | Raspberry Pi Ltd | SC1111 | [docs](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html) |
 
 ## Notes
 
@@ -36,6 +37,14 @@ viewer. Nothing here is fetched at runtime — the page ships the derived mesh
   Both are the same Seeed open-hardware board; the plain STEP sits in its own
   coordinate frame (USB-C at +X), so its 14 castellation pads are authored fresh
   against its own mesh.
+- The **Raspberry Pi 5** is the largest source here (~7.5 MB gzipped, the vendor
+  ships a very detailed ~12k-solid STEP). It is the Home Assistant **hub**, not a
+  Canary device board, so it carries no device mapping and lives in the Board
+  Room only. Its STEP has no per-solid colours, so `gen_boards.py`
+  (`materials: "raspberry-pi"`) assigns them from the vendor's own solid names —
+  green PCB, metal USB/Ethernet/HDMI shells, gold GPIO, black silicon — and
+  concatenates by colour so the committed GLB stays a handful of parts. It is
+  tessellated coarser (`tol_linear` 0.35 mm) than the small boards.
 
 ## Licence
 
