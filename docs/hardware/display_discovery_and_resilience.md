@@ -106,7 +106,8 @@ diagnostics and **never** set the `Verified` trust badge.
 > behavior (beacon discoverability, the GATT connect, and the peer address
 > type on connect) needs a bench smoke-test on real XIAO ESP32-S3 hardware
 > before it ships in a signed release. `FEATURE_FLEET_LINK=0` cleanly disables
-> the central role if a build needs presence-only.
+> the central role if a build needs presence-only. The exact bench gate is
+> [`fleet_link_bench_checklist.md`](./fleet_link_bench_checklist.md).
 
 ## 4. Failure ladder — what breaks, what keeps working, what the user sees
 
