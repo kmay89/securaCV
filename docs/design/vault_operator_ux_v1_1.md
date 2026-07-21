@@ -182,6 +182,11 @@ pub trait KeyStore {
     /// `unwrap_vault_secret(...) -> [u8;32]` would, defeats that property; a
     /// strict backend MAY instead expose `open_envelope` below and never return
     /// key material at all.)
+    ///
+    /// NOTE: this is a *symmetric* unwrap (ChaCha20-Poly1305 under the 32-byte
+    /// master key), so only a symmetric-capable backend — file, HSM, or TPM — can
+    /// perform it in-store. A signing-only PIV/PKCS#11 token backs `sign_device`
+    /// but NOT this (see the §5.1 signing-vs-symmetric rule).
     fn unwrap_envelope_dek(&self, wrapped_dek: &WrappedKey) -> Result<Zeroizing<[u8; 32]>>;
 
     /// Strictest form: perform the AEAD open entirely in-store, returning the
@@ -224,6 +229,23 @@ Design rules for the trait:
 - **Trustee keys and the device key are separate concerns.** A deployment can put
   the host device key on a PKCS#11 token (or a TPM if it has one) while trustees
   use their own tokens, or mix file + hardware during migration.
+- **Signing keys ≠ the symmetric master key — a PIV token can't hold the master.**
+  Device-identity and trustee keys are *asymmetric* (Ed25519 signing), which is
+  exactly what a PIV / PKCS#11 token does — the token signs, the key never leaves.
+  But the vault **master key is a 32-byte *symmetric* secret** that unwraps the DEK
+  via ChaCha20-Poly1305 (`wrap_dek` / `unwrap_dek`, `src/vault/crypto.rs`), and a
+  YubiKey-PIV PKCS#11 module performs *only* asymmetric private-key operations —
+  it cannot hold or unwrap a symmetric key in-token. So the master key has **three
+  honest options**, and only the third puts it in a plug-in token:
+  1. **File-backed (default)** — the master stays a `0600` file; tokens still
+     hardware-back the *signing* keys. Recommended baseline.
+  2. **HSM / TPM with symmetric unwrap** — an HSM (or a TPM, where present) *can*
+     hold the symmetric key and unwrap the DEK in-hardware. `keystore-pkcs11`
+     against an HSM, or `keystore-tpm`.
+  3. **Re-wrap the DEK to an *asymmetric* token key** (RSA-OAEP / ECDH to a PIV
+     slot) so a PIV token can unwrap it — but this is a **VLT2 wrap-format change
+     and therefore new crypto**, explicitly *outside* the "no new crypto" default
+     path and tracked as an opt-in (open decision #1).
 
 ### 5.2 Setup & enrollment UX (CLI-first)
 
@@ -321,6 +343,11 @@ seed*, and trustee keys live. No TPM is guaranteed: most Raspberry Pis have none
 some x86 hosts expose an fTPM. So the realistic backing is a **PKCS#11 token the
 operator plugs in** — a YubiKey (PIV), a smartcard, or an HSM — with the **file
 backend as the honest default**. `keystore-tpm` stays optional, use-it-if-present.
+Note the split from §5.1: a plug-in **PIV/smartcard token hardware-backs the
+*asymmetric signing* keys** (device identity, trustee approvals), but the
+**symmetric vault master key** cannot live in such a token — it stays file-backed
+unless you have an HSM/TPM with symmetric unwrap, or opt into an asymmetric-rewrap
+of the DEK format (new crypto; open decision #1).
 
 **The Canary device (Seeed XIAO ESP32-S3)** — where the device's *own* Ed25519
 identity lives (`docs/device_trust.md`: generated on first boot from
@@ -412,9 +439,12 @@ with zero crypto risk; the hardware phases are gated on physical validation.
 ### Phase 2 — `KeyStore` trait + host PKCS#11 hardware
 - Introduce the `KeyStore` trait; refactor the file path behind it **behavior-
   identically** (regression-tested against current byte layout).
-- `keystore-pkcs11` backend: host device signing key + vault master secret held on
-  a plugged-in token (YubiKey PIV / smartcard / HSM). `keystore-tpm` is optional,
-  built only for hosts that have a TPM — **not the required path** (§5.5).
+- `keystore-pkcs11` backend for the **signing keys** (host device identity +
+  trustee keys — asymmetric, which is all a PIV/smartcard token does). The
+  **symmetric vault master key stays file-backed by default**; putting it in
+  hardware needs an HSM/TPM with symmetric unwrap, *not* a PIV token (§5.1 rule +
+  open decision #1). `keystore-tpm` is optional, built only for hosts that have a
+  TPM — **not the required path** (§5.5).
 - Wire `doctor` to report the live backend; add `vault.keystore` config.
 - **Est.:** ~2–3 weeks. **Depends on:** Phase 1; **a PKCS#11 token to validate on.**
 - **Device side (parallel, firmware track):** the ESP32-S3 identity is hardened by
@@ -458,12 +488,16 @@ with zero crypto risk; the hardware phases are gated on physical validation.
 
 These change what gets built; I'd like your calls before writing code.
 
-1. **Which host hardware backing first?** We have **no guaranteed TPM and no
-   secure element** (§5.5), so the realistic options are **PKCS#11 token** (a
-   plugged-in YubiKey PIV / smartcard / HSM — my lean for the host device key) vs.
-   **file default + hardware only for trustees** vs. **TPM only where a host
-   happens to have one**. My lean: **PKCS#11 token for the host key, trustee
-   tokens second**; TPM as an opportunistic extra.
+1. **Which host hardware backing first — and how to custody the *symmetric*
+   master key?** We have **no guaranteed TPM and no secure element** (§5.5).
+   - *Signing keys (asymmetric):* my lean is **PKCS#11 token for the host device
+     key, trustee tokens second**; TPM as an opportunistic extra where present.
+   - *Vault master key (symmetric):* a PIV token **can't** hold it, so choose
+     **(i)** keep it file-backed (default; tokens still back the signing keys) —
+     *my lean*; **(ii)** require an HSM/TPM with symmetric unwrap; or **(iii)**
+     re-wrap the DEK to an asymmetric token key (RSA-OAEP/ECDH) so a PIV token can
+     unwrap it — a deliberate **VLT2 wrap-format change = new crypto**, outside the
+     "no new crypto" default. (§5.1 rule.)
 2. **CLI-first or web-first?** I propose CLI-first (Phase 1 CLI, wizard in Phase
    4) because the CLI is the source of truth and needs no browser to validate. If
    the primary operator persona is non-technical, we could pull the web wizard
@@ -505,8 +539,8 @@ the honest fallback):
 
 | Key | v1 (today) | v1.1 target (hardware backend selected) |
 |-----|-----------|------------------------------------------|
-| Vault master key (host) | `master.key`, `0600` | Wrapped by a PKCS#11 token; DEK unwrapped in-token (TPM if the host has one) |
-| Host device signing key | Seed-derived from config | PKCS#11-token-held, non-extractable; pinned pubkey |
+| Vault master key (host, **symmetric**) | `master.key`, `0600` | **File-backed by default** (a PIV token can't hold a symmetric key); HSM/TPM with symmetric unwrap where available, or opt-in asymmetric-rewrap of the DEK (new crypto) — decision #1 |
+| Host device signing key (**asymmetric**) | Seed-derived from config | PKCS#11-token-held, non-extractable; pinned pubkey |
 | Trustee signing keys | Hex file / browser seed | PIV/PKCS#11 token per trustee (independently held) |
 | **ESP32-S3 device identity** (separate; §5.5) | Ed25519 in NVS (software) | Ed25519 protected at rest via eFuse + flash encryption + Secure Boot v2 (option (a)) |
 | DB encryption key | `SECURACV_DB_KEY_SEED`, rotatable | Unchanged (already rotatable) |
