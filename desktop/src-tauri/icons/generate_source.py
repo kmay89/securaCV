@@ -19,7 +19,7 @@ MASCOT = os.path.normpath(os.path.join(HERE, "../../../brands/logo_main.png"))
 
 N = 1024
 RADIUS = 224            # squircle corner radius
-PAD_FRAC = 0.14         # mascot inset from the badge edge
+PAD_FRAC = 0.06         # mascot inset from the badge edge
 
 # Brand palette (from the site theme): ink navy + canary.
 INK_TOP = (18, 27, 51)     # #121b33
@@ -52,7 +52,7 @@ def main():
     # Soft canary glow behind where the mascot sits (adds depth/warmth).
     glow = Image.new("RGBA", (N, N), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    gd.ellipse([N * 0.20, N * 0.14, N * 0.80, N * 0.74], fill=CANARY + (70,))
+    gd.ellipse([N * 0.14, N * 0.10, N * 0.86, N * 0.82], fill=CANARY + (70,))
     glow = glow.filter(ImageFilter.GaussianBlur(90))
     badge = Image.alpha_composite(badge, glow)
 
