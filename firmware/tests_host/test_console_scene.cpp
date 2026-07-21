@@ -254,7 +254,28 @@ static void test_wake_full_tier_lights_up() {
   CHECK(sk.s.find("\xe2\x94\x8c") != std::string::npos); // ┌ Unicode border
 }
 
+static void test_welcome_card() {
+  // ASCII tier: escape-free, aligned, and it points at the help site + is warm.
+  Sink sk;
+  Renderer r{collect, &sk, caps_ascii()};
+  welcome_card(r, "canary-7fA3", "https://securacv.com/canary");
+  for (unsigned char c : sk.s) { CHECK(c != 0x1b); CHECK(c < 0x80); }
+  auto lines = split_crlf(sk.s);
+  size_t w = 0;
+  for (auto& ln : lines) { if (ln.empty()) continue; if (!w) w = ln.size(); CHECK(ln.size() == w); }
+  CHECK(w == (size_t)(TRUST_INNER + 2));
+  CHECK(sk.s.find("https://securacv.com/canary") != std::string::npos); // leads somewhere
+  CHECK(sk.s.find("canary-7fA3") != std::string::npos);
+  CHECK(sk.s.find("Canary") != std::string::npos);
+  // A null device id / url must not crash and still shows a default URL.
+  Sink sk2; Renderer r2{collect, &sk2, caps_full(90, 30)};
+  welcome_card(r2, nullptr, nullptr);
+  CHECK(sk2.s.find("securacv.com/canary") != std::string::npos);
+  CHECK(sk2.s.find("\x1b[") != std::string::npos); // colour at the confirmed tier
+}
+
 int main() {
+  test_welcome_card();
   test_randomart_walk();
   test_randomart_all_zero();
   test_ascii_tier_is_safe();
