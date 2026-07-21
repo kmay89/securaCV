@@ -282,7 +282,7 @@
     13.0,
     30.0
    ],
-   "blurb": "wide-input supply + (board silkscreen: 6-56V)"
+   "blurb": "wide-input supply + (6-36V)"
   }
  },
  "groups": [
@@ -325,7 +325,7 @@
   },
   {
    "id": "pwr",
-   "label": "6-56V",
+   "label": "6-36V",
    "members": [
     "VOUT",
     "GND_PWR",
@@ -822,9 +822,9 @@
    "note": "dedicated transceiver (if not using CAN)"
   },
   {
-   "name": "VIN 6-56V",
+   "name": "VIN 6-36V",
    "status": "reserved",
-   "note": "wide-input supply (rear silkscreen)"
+   "note": "wide-input supply"
   },
   {
    "name": "LCD x21",

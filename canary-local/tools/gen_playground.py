@@ -94,7 +94,7 @@ def main() -> None:
     # edge of the BACK face, in this fixed left→right order, with the group
     # legend printed under it:
     #
-    #   [ Isolated I/O            ][RS485][ CAN ][   I2C    ][   6-56V   ]
+    #   [ Isolated I/O            ][RS485][ CAN ][   I2C    ][   6-36V   ]
     #     DI1 DI0 GND DI-COM DO1 DO0  A  B   H  L   SCL SDA GND  VOUT GND VIN
     #
     # Frame: the enclosure lies with its BIG faces in the X–Z plane, +Y up.
@@ -125,7 +125,7 @@ def main() -> None:
         ("GND_I2C", "GND", "gnd", "i2c", {"blurb": "I2C header ground"}),
         ("VOUT", "VOUT", "vout", "pwr", {"blurb": "sensor-header supply out (3V3/5V, per your sensor)"}),
         ("GND_PWR", "GND", "gnd", "pwr", {"blurb": "power ground"}),
-        ("VIN", "VIN", "5v", "pwr", {"blurb": "wide-input supply + (board silkscreen: 6-56V)"}),
+        ("VIN", "VIN", "5v", "pwr", {"blurb": "wide-input supply + (6-36V)"}),
     ]
     terminals = {}
     for i, (tid, label, net, group, extra) in enumerate(ORDER):
@@ -138,7 +138,7 @@ def main() -> None:
         {"id": "rs485", "label": "RS485", "members": ["RS485_A", "RS485_B"]},
         {"id": "can", "label": "CAN", "members": ["CAN_H", "CAN_L"]},
         {"id": "i2c", "label": "I2C", "members": ["SCL", "SDA", "GND_I2C"]},
-        {"id": "pwr", "label": "6-56V", "members": ["VOUT", "GND_PWR", "VIN"]},
+        {"id": "pwr", "label": "6-36V", "members": ["VOUT", "GND_PWR", "VIN"]},
     ]
 
     # ── Bring-up code snippets — ports of playground.cpp, with the pin facts
@@ -413,7 +413,7 @@ def main() -> None:
         {"name": "VOUT", "status": "open", "note": "sensor-header supply"},
         {"name": "RS485 44/43", "status": "reserved", "note": "shares the USB-UART console pins"},
         {"name": "CAN 15/16", "status": "open", "note": "dedicated transceiver (if not using CAN)"},
-        {"name": "VIN 6-56V", "status": "reserved", "note": "wide-input supply (rear silkscreen)"},
+        {"name": "VIN 6-36V", "status": "reserved", "note": "wide-input supply"},
         {"name": "LCD x21", "status": "reserved", "note": "RGB565 panel — consumed"},
         {"name": "Touch INT 4", "status": "reserved", "note": "GT911"},
         {"name": "USB 19/20", "status": "reserved", "note": "native USB CDC"},
