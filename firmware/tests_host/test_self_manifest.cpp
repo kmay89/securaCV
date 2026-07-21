@@ -33,6 +33,10 @@ static bool has(const std::string& s, const char* sub) {
 static const char* const kFeatures[] = { "sd_storage", "wifi_ap", "gnss",
                                          "ble_status", "console_theme" };
 
+static const manifest::Cmd kCmds[] = {
+  { 'i', "identity" }, { 'j', "manifest" }, { 'l', "identity-banner" }
+};
+
 static manifest::Facts sample() {
   manifest::Facts f{};
   f.board = "canary";
@@ -49,6 +53,8 @@ static manifest::Facts sample() {
   f.tamper = false;
   f.features = kFeatures;
   f.feature_count = sizeof(kFeatures) / sizeof(kFeatures[0]);
+  f.commands = kCmds;
+  f.command_count = sizeof(kCmds) / sizeof(kCmds[0]);
   f.help_url = "https://securacv.com/canary";
   return f;
 }
@@ -82,6 +88,18 @@ static void test_shape_and_keys() {
   CHECK(has(s, "\"tamper\":false"));
   CHECK(has(s, "\"health\":100"));
   CHECK(has(s, "\"features\":[\"sd_storage\",\"wifi_ap\",\"gnss\",\"ble_status\",\"console_theme\"]"));
+  // The live command set — each as {"key","name"} — so the app shows exactly
+  // what THIS unit answers.
+  CHECK(has(s, "\"commands\":[{\"key\":\"i\",\"name\":\"identity\"},{\"key\":\"j\",\"name\":\"manifest\"},{\"key\":\"l\",\"name\":\"identity-banner\"}]"));
+}
+
+// ── an empty command set renders [] (a stripped/production image is valid) ───
+static void test_no_commands() {
+  char buf[1024];
+  manifest::Facts f = sample();
+  f.commands = nullptr; f.command_count = 0;
+  manifest::build(f, buf, sizeof buf);
+  CHECK(has(std::string(buf), "\"commands\":[]"));
 }
 
 // ── unknown health is JSON null, tamper flips to a bare true ─────────────────
@@ -161,6 +179,7 @@ static void test_bounded_no_overflow() {
 
 int main() {
   test_shape_and_keys();
+  test_no_commands();
   test_unknown_health_and_tamper();
   test_escaping();
   test_no_features();

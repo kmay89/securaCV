@@ -37,6 +37,13 @@ namespace manifest {
 // The website pins this exact string so a breaking change fails CI loudly.
 inline constexpr const char* SCHEMA = "securacv.canary.manifest/v1";
 
+// One interactive command the device answers, for the commands[] array. Key is
+// a single serial character; name is the short registry label ("identity").
+struct Cmd {
+  char key;
+  const char* name;
+};
+
 // Everything the device knows about itself, as plain pointers/values the caller
 // fills from live state. Hex fields are lower-case, NUL-terminated, exactly as
 // long as their byte count implies (pubkey = 64, fp = 16, chain_head = 64).
@@ -55,6 +62,8 @@ struct Facts {
   bool tamper;
   const char* const* features; // enabled feature short-names
   size_t feature_count;
+  const Cmd* commands;        // the interactive keys THIS image answers
+  size_t command_count;
   const char* help_url;       // "https://securacv.com/canary"
 };
 
@@ -144,6 +153,17 @@ inline size_t build(const Facts& f, char* out, size_t cap) {
   for (size_t i = 0; i < f.feature_count; ++i) {
     if (i) w.raw(',');
     w.str(f.features[i] ? f.features[i] : "");
+  }
+  w.raw(']');
+  w.key("commands", false);
+  w.raw('[');
+  for (size_t i = 0; i < f.command_count; ++i) {
+    if (i) w.raw(',');
+    char keybuf[2] = { f.commands[i].key, '\0' };
+    w.raw('{');
+    w.key("key", true);  w.str(keybuf);
+    w.key("name", false); w.str(f.commands[i].name ? f.commands[i].name : "");
+    w.raw('}');
   }
   w.raw(']');
   w.key("help", false);         w.str(f.help_url ? f.help_url : "");

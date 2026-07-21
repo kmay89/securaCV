@@ -2380,6 +2380,17 @@ static void emit_self_manifest() {
   if (diag_get_selftest(&st)) health = (int)st.health_score;   // last score; no fresh run
 #endif
 
+  // The interactive keys THIS image answers — straight from the one command
+  // registry (kConsoleCommands), so the manifest can't list a key the device
+  // doesn't actually handle.
+  manifest::Cmd cmds[kConsoleCommandCount + 1];
+  size_t nc = 0;
+  for (size_t i = 0; i < kConsoleCommandCount; ++i) {
+    cmds[nc].key = kConsoleCommands[i].key;
+    cmds[nc].name = kConsoleCommands[i].name;
+    nc++;
+  }
+
   manifest::Facts f{};
   f.board          = DEVICE_TYPE;
   f.firmware       = FIRMWARE_VERSION;
@@ -2395,9 +2406,11 @@ static void emit_self_manifest() {
   f.tamper         = dev.tamper_active;
   f.features       = feats;
   f.feature_count  = nf;
+  f.commands       = cmds;
+  f.command_count  = nc;
   f.help_url       = SECURACV_HELP_URL_BASE;
 
-  static char buf[1280];
+  static char buf[1600];
   size_t n = manifest::build(f, buf, sizeof buf);
   Serial.println();
   if (n) Serial.println(buf);
