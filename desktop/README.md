@@ -32,7 +32,7 @@ Rust-first.
 | Serial | `serialport` crate | OS-native port enumeration |
 | Front-end | plain HTML/CSS/JS in `src/` | no build step, mirrors the Lab's look |
 | Self-update | `tauri-plugin-updater` | checks GitHub releases, one-click update |
-| Catalog | `src-tauri/resources/flash.json` | a copy of `canary-local/devices/flash.json`; the chip guard works offline |
+| Catalog | `canary-local/devices/flash.json` | embedded fresh every build by `build.rs` (via `OUT_DIR`) — no committed copy to drift; the chip guard works offline |
 
 The Rust commands live in `src-tauri/src/lib.rs`: `load_catalog`, `list_ports`,
 `detect_chip`, `fetch_manifest`, `flash`, `check_update`, `install_update`.
@@ -44,9 +44,10 @@ desktop/
 ├── src/                     # front-end (index.html, styles.css, app.js)
 └── src-tauri/
     ├── src/                 # main.rs, lib.rs (the flashing backend)
-    ├── resources/flash.json # bundled catalog + chip guard
+    ├── build.rs             # embeds canary-local/devices/flash.json fresh each build
     ├── binaries/            # espflash sidecars (CI-populated, git-ignored)
     ├── icons/               # source.png + generator (set built by CI)
+    ├── dmg/                 # branded installer-window background + generator
     ├── capabilities/        # Tauri permission scopes
     └── tauri.conf.json
 ```

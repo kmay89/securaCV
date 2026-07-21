@@ -25,10 +25,10 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
 // The flasher catalog is baked in at compile time so the app can list every
-// Canary and enforce the chip guard with zero network — the same
-// `canary-local/devices/flash.json` the website ships, copied into resources
-// and kept honest by CI (see the drift check in the release workflow).
-const EMBEDDED_CATALOG: &str = include_str!("../resources/flash.json");
+// Canary and enforce the chip guard with zero network. build.rs copies the ONE
+// canonical `canary-local/devices/flash.json` into OUT_DIR on every build, so
+// this embed can never drift from the website/firmware source of truth.
+const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.json"));
 
 // The one sidecar we ship. Must match the `externalBin` entry in
 // tauri.conf.json and the scope `name` in capabilities/default.json.

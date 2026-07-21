@@ -8,37 +8,55 @@ Every build is **universal**: the same download runs natively on Apple Silicon
 
 ---
 
-## macOS — the one-time "let me in" step
+## macOS — getting past the safety warning (one time)
 
-Because this app isn't distributed through the App Store, macOS quarantines it
-on first download (it does this to *everything* downloaded from the web). Clear
-the quarantine flag once and it launches like any other app forever after.
+Because this app doesn't come from the App Store, macOS **quarantines** it on
+first download and shows a warning — it does this to *everything* from the web,
+signed or not. You'll see one of these the first time you open it:
 
-When you open the `.dmg`, the window itself walks you through this — drag the
-Canary into Applications, and the first-open note is printed right there.
+> *"SecuraCV Flasher" can't be opened because Apple cannot check it for
+> malicious software.*
+>
+> — or, on some Macs —
+>
+> *"SecuraCV Flasher" is damaged and can't be opened.*
 
-### The magic one-liner (recommended)
+Neither means anything is wrong with the app — it's just the missing Apple
+notarization. Clear it **once** and it launches normally forever after. When
+you open the `.dmg`, the window shows these same steps; here they are in full.
+
+### Option A — the one-liner (works on every macOS version)
 
 1. Open the `.dmg` and drag **SecuraCV Flasher** into **Applications**.
-2. Open **Terminal** and paste this, then press return:
+2. Open **Terminal** (⌘-Space, type "Terminal"), paste this line, press return:
 
    ```sh
    xattr -dr com.apple.quarantine "/Applications/SecuraCV Flasher.app"
    ```
 
-3. Launch it from Applications (or Spotlight). Done — it never asks again.
+3. Launch it from Applications or Spotlight. Done — no more warnings, ever.
 
-That command doesn't grant anything scary: it removes the "downloaded from the
-internet" tag Apple stamps on the file. It works identically on Apple Silicon
-and Intel.
+That command isn't granting anything risky: it removes the "downloaded from the
+internet" tag Apple stamps on the file. Identical on Apple Silicon and Intel.
 
-### No-Terminal alternative
+### Option B — no Terminal
 
-If you'd rather not touch Terminal: **right-click** (or Control-click) the app
-in Applications → **Open** → **Open** again in the dialog. macOS remembers the
-exception after that first time. On macOS 15 (Sequoia) you may instead need
-**System Settings → Privacy & Security → Open Anyway** right after the first
-launch attempt.
+**macOS 14 (Sonoma) and earlier:**
+1. In **Applications**, **right-click** (or Control-click) **SecuraCV Flasher**.
+2. Choose **Open**, then **Open** again in the dialog.
+3. It's remembered — double-click normally from now on.
+
+**macOS 15 (Sequoia) and later** — Apple removed the right-click shortcut, so:
+1. **Double-click** the app once. You'll get the "cannot check it" warning —
+   click **Done** (do *not* click "Move to Trash").
+2. Open  **System Settings → Privacy & Security**, scroll to the **Security**
+   section. You'll see *""SecuraCV Flasher" was blocked…"* with an
+   **Open Anyway** button — click it.
+3. Confirm with **Open Anyway** and authenticate (Touch ID / password).
+4. It's remembered from then on.
+
+> If you ever see *"is damaged and can't be opened"*, that's the same
+> quarantine flag being strict — **Option A** clears it directly.
 
 > **Why the extra step at all?** Skipping it would mean paying Apple's $99/yr
 > Developer Program and notarizing every release. The app is fully open source
