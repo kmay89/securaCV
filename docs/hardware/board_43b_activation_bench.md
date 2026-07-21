@@ -158,12 +158,18 @@ needs eyes on the actual board.
   An RTC (e.g. PCF85063 at 0x51) will show up at its address.
 - Inspect the board for a coin-cell holder + the CS8501 charger IC.
 
-**Then, either way, make the map honest:**
-- If present: set `HAS_RTC 1` / `HAS_BATTERY 1`, add a runtime-probing RTC layer
-  (use it if it ACKs on I²C, else SNTP — fail-safe) so timestamps stay trustworthy
-  offline, and update the map's §6.
-- If absent: leave the flags at 0 and update the map's §6 to state it was
-  bench-confirmed absent (turn the "❓ verify" into a settled fact).
+**The RTC layer is already built** (`include/canary/io/rtc_pcf.h` core +
+`src/io/rtc.cpp` runtime, compile-verified by `canary-display-dash-rtc`,
+host-tested in `test_rtc_pcf.cpp`). It is **runtime-probing**, so it needs no
+`HAS_RTC` change to work — it asks 0x51 and uses the RTC only if it ACKs with a
+reliable time, else SNTP. So the only remaining steps are:
+- If present: flip `FEATURE_RTC 1` for the dash, confirm at bench that the clock
+  seeds from the RTC on boot and mirrors NTP back (watch the `[RTC]` log lines),
+  set `HAS_RTC 1`, and move the map's §6 row to Driven.
+- If absent: leave `FEATURE_RTC`/`HAS_RTC` at 0 and update the map's §6 to state
+  it was bench-confirmed absent (turn the "❓ verify" into a settled fact).
+- Battery: set `HAS_BATTERY` per the CS8501 inspection. **Do not invent the ADC
+  sense pin** — confirm it on the board first.
 
 **Do not invent the battery ADC/sense pin** — confirm it on the board before
 writing any monitor.
