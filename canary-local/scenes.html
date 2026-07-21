@@ -587,11 +587,13 @@
           $("payoff-claim").textContent = claimText(liveClaim);
           feedLine(claimText(liveClaim), "feed-witness");
           at(400, function () { payoff.classList.add("show"); });
+          // vitals are unsigned wellbeing metadata — show them regardless of
+          // whether this browser can run Ed25519 in-page
+          if (scene.vitalsOn) showVitals(scene.vitalsOn, false);
           var ready = await ensureKeys();
           if (ready) {
             await signClaim(liveClaim);
             paintVerdict(await verifyClaim(liveClaim));
-            if (scene.vitalsOn) showVitals(scene.vitalsOn, false);
             beatBtn.textContent = scene.beat.label;
             beatBtn.className = "beat-btn" + (scene.beat.cls ? " " + scene.beat.cls : "");
             beatBox.hidden = false;
