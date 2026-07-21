@@ -212,6 +212,43 @@ setting alone:
   claim (splash, not submersion, unless it's the field case) is in
   [field_ratings.md](./field_ratings.md).
 
+### Polycarbonate — yes, but only where you truly need it
+
+PC prints these parts, and on paper it's the strongest choice: it tops the shell
+ranking (`PC > PA-CF ≈ ASA > PETG > PLA` in [field_ratings.md](./field_ratings.md)),
+has the highest heat-deflection temperature, and — unfilled — is RF-transparent
+so it's fine for the Sense radome. **But it's a specialist pick, not a default,
+and the reasons are about the print, not the polymer:**
+
+- **It needs an enclosed, hot printer** (bed ~110–120 °C, warm chamber, nozzle
+  ~260–290 °C). The big flat parts here — bases, lids, the doorbell pill, the
+  field-case body — are exactly what **warps** in PC without a chamber, lifting
+  corners and pulling the geometry out of true.
+- **The baked-in fits don't transfer for free.** PC runs hotter and shrinks more
+  than PETG, so the calibrated snap/press/gasket fits need the **fit coupon
+  re-run in PC**, and warping makes them less consistent across a part.
+- **PC is intensely hygroscopic** — more than PETG. Damp PC prints with bubbles
+  and *weak layers*, which defeats the whole reason you reached for it.
+- **Delamination is the catch.** PC is prone to weak interlayer adhesion and
+  cracking if under-heated or over-cooled — and layer adhesion is the exact
+  property you're buying PC for. A poorly-printed PC shell can be **worse** under
+  impact than a well-printed ASA one.
+
+The tell is in this catalog's own design: the **field case** — the one part
+engineered for maximum survival (CER-4: IP67 + drop intent) — specs its shell as
+**ASA or PETG plus a TPU impact boot**, *not* PC. A reliably-printed ASA shell
+with an elastomer taking the hits beats a warped PC shell; PC's material ceiling
+doesn't survive the printability tax on a sealed, drop-tested part.
+
+**So recommend PC narrowly:** for vandal-prone or genuinely high-heat spots that
+need HDT/impact beyond what ASA gives (a closed cabin well past +60 °C), *and*
+only if you have an enclosed printer. Then: prefer a **PC blend** (PC-ABS,
+PC-Max, PolyLite PC) over pure PC — far easier for ~90 % of the benefit — dry it
+hard, print hot with minimal cooling, re-calibrate the coupon, keep gaskets and
+the boot in TPU, and anneal (90 °C) only on **non-fitted** parts (same
+shrinkage-wrecks-fits caveat as PETG). For most people, **ASA already covers
+outdoor, UV and heat and is far easier to print — reach for it first.**
+
 ---
 
 ## 5. Reliability — the boring stuff that saves the print
