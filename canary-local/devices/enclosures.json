@@ -1578,13 +1578,13 @@
       },
       {
        "name": "vm_l",
-       "default": "25.0",
-       "comment": "Grove Vision AI V2 (Y; USB edge down)"
+       "default": "40.0",
+       "comment": "Grove Vision AI V2 long side (Y; USB edge down) — measured"
       },
       {
        "name": "vm_w",
-       "default": "25.0",
-       "comment": "Grove Vision AI V2 (X)"
+       "default": "20.0",
+       "comment": "Grove Vision AI V2 short side (X) — measured (was 25x25: the"
       },
       {
        "name": "xiao_l",

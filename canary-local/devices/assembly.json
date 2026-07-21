@@ -372,6 +372,239 @@
     }
    ]
   },
+  "canary-vision": {
+   "title": "Canary Vision — camera unit (stacked-XIAO, GoPro hinge)",
+   "board": "seeed_grove_vision_ai_v2",
+   "frame": {
+    "rx": -0.42,
+    "ry": 0.62,
+    "pad": 2.5
+   },
+   "assembly_source": "docs/hardware/enclosure/README.md §Assembly (via devices/build.json)",
+   "parts": [
+    {
+     "id": "back",
+     "source": "stl",
+     "file": "canary_vision_enclosure_xiao_indoor_back.stl",
+     "color": "shell2",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      -34
+     ],
+     "step": 0,
+     "name": "Back shell",
+     "class": "shell"
+    },
+    {
+     "id": "board",
+     "source": "board",
+     "board": "seeed_grove_vision_ai_v2",
+     "seated": {
+      "pos": [
+       0,
+       -14.2,
+       12
+      ],
+      "rot": [
+       0,
+       90,
+       90
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      26
+     ],
+     "insert": [
+      0,
+      0,
+      14
+     ],
+     "step": 1,
+     "name": "Grove Vision AI V2 + stacked XIAO",
+     "qty": 1,
+     "ref": "U2"
+    },
+    {
+     "id": "cam",
+     "source": "proc",
+     "part": "camera",
+     "params": {
+      "s": 24,
+      "lens": 10
+     },
+     "seated": {
+      "pos": [
+       0,
+       22.3,
+       18
+      ],
+      "rot": [
+       180,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      40
+     ],
+     "insert": [
+      0,
+      0,
+      16
+     ],
+     "step": 2,
+     "name": "OV5647 camera (Pi-cam v1.3)",
+     "qty": 1,
+     "ref": "CAM1"
+    },
+    {
+     "id": "flex",
+     "source": "proc",
+     "part": "ribbon",
+     "params": {
+      "to": [
+       0,
+       13,
+       3
+      ],
+      "bow": 7,
+      "width": 10
+     },
+     "seated": {
+      "pos": [
+       0,
+       8,
+       15
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      34
+     ],
+     "insert": [
+      0,
+      0,
+      12
+     ],
+     "step": 3,
+     "name": "OV5647 CSI flex (routes to the module)",
+     "class": "internal"
+    },
+    {
+     "id": "front",
+     "source": "stl",
+     "file": "canary_vision_enclosure_xiao_indoor_front.stl",
+     "color": "shell",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       22
+      ],
+      "rot": [
+       180,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      58
+     ],
+     "step": 4,
+     "name": "Front face (lens aperture)"
+    },
+    {
+     "id": "screws",
+     "source": "proc",
+     "part": "screw",
+     "params": {
+      "len": 8
+     },
+     "instances": [
+      [
+       16.5,
+       30.5,
+       22
+      ],
+      [
+       -16.5,
+       30.5,
+       22
+      ],
+      [
+       16.5,
+       -30.5,
+       22
+      ],
+      [
+       -16.5,
+       -30.5,
+       22
+      ]
+     ],
+     "irot": [
+      180,
+      0,
+      0
+     ],
+     "explode": [
+      0,
+      0,
+      74
+     ],
+     "insert": [
+      0,
+      0,
+      10
+     ],
+     "step": 5,
+     "name": "M2 corner screws",
+     "qty": 4
+    }
+   ],
+   "steps": [
+    {
+     "title": "Start with the back shell",
+     "readmeStep": null,
+     "note": "The back shell carries the boards and the mounts; the front face carries the lens. You build into the back, then cap it with the front."
+    },
+    {
+     "title": "Seat the XIAO stack in the module",
+     "readmeStep": 1
+    },
+    {
+     "title": "Screw the OV5647 to the front posts",
+     "readmeStep": 0
+    },
+    {
+     "title": "Route the camera FPC to the module",
+     "readmeStep": 2
+    },
+    {
+     "title": "Close the front",
+     "readmeStep": 4
+    },
+    {
+     "title": "Drive the four corner screws",
+     "readmeStep": 4
+    }
+   ]
+  },
   "canary-display-watch": {
    "title": "Canary Watch Station — drum, stack, snap bezel, cradle",
    "board": "seeed_round_display_xiao",
@@ -767,6 +1000,202 @@
      "title": "Drive the four M2s — snug, diagonal",
      "readmeStep": null,
      "note": "Last and outermost: from the back, through the counterbores, into the corner lobes outside the panel cavity. Diagonal order, then a final quarter-turn."
+    }
+   ]
+  },
+  "canary-sense": {
+   "title": "Canary Sense — mmWave radome (MR60BHA2 + stacked XIAO)",
+   "board": null,
+   "frame": {
+    "rx": -0.42,
+    "ry": 0.6,
+    "pad": 2.4
+   },
+   "assembly_source": "docs/hardware/enclosure/canary_sense_enclosure.scad (v0.1 — steps authored here; no vendor CAD for the radar carrier, so the boards are BOM-sized stand-ins)",
+   "parts": [
+    {
+     "id": "back",
+     "source": "stl",
+     "file": "canary_sense_back.stl",
+     "color": "shell2",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      -34
+     ],
+     "step": 0,
+     "name": "Back shell",
+     "class": "shell"
+    },
+    {
+     "id": "radar",
+     "source": "proc",
+     "part": "pcb",
+     "params": {
+      "w": 36,
+      "h": 44,
+      "t": 1.2
+     },
+     "seated": {
+      "pos": [
+       0,
+       -3.7,
+       14.5
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      24
+     ],
+     "insert": [
+      0,
+      0,
+      12
+     ],
+     "step": 1,
+     "name": "MR60BHA2 radar carrier (antenna toward the radome)"
+    },
+    {
+     "id": "xiao",
+     "source": "proc",
+     "part": "pcb",
+     "params": {
+      "w": 21,
+      "h": 17.5,
+      "t": 1.2
+     },
+     "seated": {
+      "pos": [
+       0,
+       -14,
+       4
+      ],
+      "rot": [
+       0,
+       0,
+       -90
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      -14
+     ],
+     "insert": [
+      0,
+      0,
+      -8
+     ],
+     "step": 2,
+     "name": "XIAO ESP32-C6 — seats in the carrier socket, USB to the bottom wall"
+    },
+    {
+     "id": "front",
+     "source": "stl",
+     "file": "canary_sense_front.stl",
+     "color": "shell",
+     "seated": {
+      "pos": [
+       0,
+       0,
+       20.5
+      ],
+      "rot": [
+       180,
+       0,
+       0
+      ]
+     },
+     "explode": [
+      0,
+      0,
+      52
+     ],
+     "step": 3,
+     "name": "Radome front (thin mmWave window)"
+    },
+    {
+     "id": "screws",
+     "source": "proc",
+     "part": "screw",
+     "params": {
+      "len": 8
+     },
+     "instances": [
+      [
+       23,
+       22,
+       20.5
+      ],
+      [
+       -23,
+       22,
+       20.5
+      ],
+      [
+       23,
+       -22,
+       20.5
+      ],
+      [
+       -23,
+       -22,
+       20.5
+      ]
+     ],
+     "irot": [
+      180,
+      0,
+      0
+     ],
+     "explode": [
+      0,
+      0,
+      68
+     ],
+     "insert": [
+      0,
+      0,
+      10
+     ],
+     "step": 4,
+     "name": "M2 corner screws",
+     "qty": 4
+    }
+   ],
+   "steps": [
+    {
+     "title": "Start with the back shell",
+     "readmeStep": null,
+     "note": "The back shell carries the radar stack and the GoPro hinge; the front is the thin mmWave radome. Build into the back, then cap it."
+    },
+    {
+     "title": "Seat the radar carrier",
+     "readmeStep": null,
+     "note": "The MR60BHA2 carrier drops onto the rails with its 60 GHz antenna facing the radome window — nothing (ribs, labels, gaskets) may cross that zone or it scatters the beam."
+    },
+    {
+     "title": "Click the XIAO into the carrier socket",
+     "readmeStep": null,
+     "note": "The XIAO ESP32-C6 seats in the carrier's socket beneath the board (zero wiring), USB-C aligned to the bottom-wall opening."
+    },
+    {
+     "title": "Close the radome front",
+     "readmeStep": null,
+     "note": "The front's lip nests into the back; keep the antenna air-gap clear (the window sits a few mm off the AiP package)."
+    },
+    {
+     "title": "Drive the four corner screws",
+     "readmeStep": null,
+     "note": "Last and outermost — through the front corners into the back posts. Snug, not cranked, into printed posts."
     }
    ]
   }
