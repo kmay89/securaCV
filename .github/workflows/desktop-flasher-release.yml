@@ -68,7 +68,10 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF_NAME}"; publish=true
           elif [[ "${{ github.event.inputs.dry_run }}" == "false" ]]; then
-            tag="flasher-v0.0.0-dev.${{ github.run_number }}"; publish=true
+            # Publish the app's actual version (from tauri.conf.json), so the
+            # "Run workflow" button cuts a real release, not a dev stub.
+            ver=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+            tag="flasher-v${ver}"; publish=true
           else
             tag=""; publish=false
           fi
