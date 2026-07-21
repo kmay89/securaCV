@@ -230,6 +230,46 @@ def main() -> None:
         f"}}"
     )
 
+    rs485_code = (
+        "// RS485 · Modbus RTU probe — read holding register 0 of slave 1.\n"
+        "// Uses the pure core canary/io/modbus_rtu.h (CRC + framing).\n"
+        "#include <Arduino.h>\n"
+        "#include \"canary/io/modbus_rtu.h\"\n"
+        "namespace mb = canary::io::modbus;\n\n"
+        "void rs485_probe() {\n"
+        "  Serial1.begin(9600, SERIAL_8N1, RS485_PIN_RX, RS485_PIN_TX);\n"
+        "  uint8_t req[8];\n"
+        "  size_t n = mb::build_read_holding(1, 0, 1, req, sizeof(req));\n"
+        "  Serial1.write(req, n); Serial1.flush();          // A/B, auto-dir\n"
+        "  uint8_t resp[16]; size_t got = 0;\n"
+        "  uint32_t deadline = millis() + 300;\n"
+        "  while (got < 7 && (int32_t)(deadline - millis()) > 0)\n"
+        "    while (Serial1.available()) resp[got++] = Serial1.read();\n"
+        "  uint16_t reg[1];\n"
+        "  if (mb::parse_registers(resp, got, 1, mb::FN_READ_HOLDING, reg, 1) == 1)\n"
+        "    Serial.printf(\"slave 1 reg0 = %u\\n\", reg[0]);\n"
+        "}"
+    )
+
+    can_code = (
+        "// CAN · TWAI — send one test frame; received frames are drained.\n"
+        "// Uses the pure core canary/io/can_frame.h + ESP-IDF TWAI.\n"
+        "#include <driver/twai.h>\n\n"
+        "void can_begin() {\n"
+        "  auto g = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_PIN_TX,\n"
+        "                                       (gpio_num_t)CAN_PIN_RX, TWAI_MODE_NORMAL);\n"
+        "  auto t = TWAI_TIMING_CONFIG_500KBITS();\n"
+        "  auto f = TWAI_FILTER_CONFIG_ACCEPT_ALL();\n"
+        "  twai_driver_install(&g, &t, &f); twai_start();   // H/L, 500 kbit/s\n"
+        "}\n"
+        "void can_send() {\n"
+        "  twai_message_t m = {};\n"
+        "  m.identifier = 0x100; m.data_length_code = 8;\n"
+        "  for (int i = 0; i < 8; i++) m.data[i] = 0xC0 + i;\n"
+        "  twai_transmit(&m, pdMS_TO_TICKS(50));\n"
+        "}"
+    )
+
     census_code = (
         f"// I2C census — scan the shared 8/9 bus (playground.cpp census()).\n"
         f"#include <Wire.h>\n\n"
@@ -385,6 +425,48 @@ def main() -> None:
             "expect": ["pads=0x", "preset="],
         },
         {
+            "id": "rs485", "title": "RS485", "where": "A/B",
+            "signal": "rs485", "dir": "bus", "kind": "bus",
+            "peripheral": {"name": "Modbus RTU device", "part": "rs485",
+                           "blurb": "The industrial serial bus. One A/B pair daisy-chains up to 32 devices - energy meters, PLCs, VFDs, HVAC controllers, alarm panels - which you poll by address and read/write numbered registers."},
+            "port": None,
+            "wires": [["RS485_A", "rs485"], ["RS485_B", "rs485"]],
+            "instructions": (
+                "RS485 - the industrial serial bus. One A/B pair\n"
+                "daisy-chains up to 32 devices on two wires: energy\n"
+                "meters, PLCs, VFDs, HVAC controllers, alarm panels.\n"
+                "1. A -> A, B -> B (share a ground reference).\n"
+                "2. Match the line: 9600 8N1 here (Modbus RTU).\n"
+                "3. 120 ohm terminators on long runs, both ends.\n"
+                "PROBE reads holding register 0 of slave 1 and shows\n"
+                "the value. Shares GPIO44/43 with the USB console."),
+            "code": {"rs485": rs485_code},
+            "stimulus": [{"id": "probe", "label": "Probe (read reg 0)", "action": "rs485:probe"},
+                         {"id": "quiet", "label": "No device", "action": "rs485:quiet"}],
+            "expect": ["slave=1 reg=0 val=", "reply=none"],
+        },
+        {
+            "id": "can", "title": "CAN bus", "where": "H/L",
+            "signal": "can", "dir": "bus", "kind": "bus",
+            "peripheral": {"name": "CAN 2.0 node", "part": "can",
+                           "blurb": "The vehicle & automation bus. Two wires (H/L), multi-master, every node hears every frame - cars (OBD-II/J1939), CANopen building gear, gate/barrier controllers, fleet telematics."},
+            "port": None,
+            "wires": [["CAN_H", "can"], ["CAN_L", "can"]],
+            "instructions": (
+                "CAN 2.0 / TWAI - the vehicle & automation bus. Two\n"
+                "wires (H/L), multi-master, every node hears every\n"
+                "frame: cars (OBD-II / J1939), CANopen building gear,\n"
+                "gate / barrier controllers, fleet telematics.\n"
+                "1. H -> H, L -> L. 120 ohm at BOTH bus ends.\n"
+                "2. Match the bit rate: 500 kbit/s here.\n"
+                "SEND FRAME transmits one test frame; received frames\n"
+                "are counted and logged. Dedicated transceiver."),
+            "code": {"can": can_code},
+            "stimulus": [{"id": "send", "label": "Send test frame", "action": "can:send"},
+                         {"id": "rx", "label": "Node replies", "action": "can:rx"}],
+            "expect": ["tx id=", "rx id="],
+        },
+        {
             "id": "census", "title": "I2C census", "where": "bus",
             "signal": "bus", "dir": "i2c", "kind": "info",
             "peripheral": None,
@@ -411,8 +493,8 @@ def main() -> None:
         {"name": "DO1 strobe", "status": "open", "note": "open-drain out (OD1)"},
         {"name": f"I2C {sda}/{scl}", "status": "shared", "note": "sensor header — shared with GT911 + CH422G"},
         {"name": "VOUT", "status": "open", "note": "sensor-header supply"},
-        {"name": "RS485 44/43", "status": "reserved", "note": "shares the USB-UART console pins"},
-        {"name": "CAN 15/16", "status": "open", "note": "dedicated transceiver (if not using CAN)"},
+        {"name": "RS485 44/43", "status": "shared", "note": "Modbus RTU station - shares the USB-UART console"},
+        {"name": "CAN 15/16", "status": "open", "note": "CAN/TWAI station - dedicated transceiver, 500 kbit/s"},
         {"name": "VIN 6-36V", "status": "reserved", "note": "wide-input supply"},
         {"name": "LCD x21", "status": "reserved", "note": "RGB565 panel — consumed"},
         {"name": "Touch INT 4", "status": "reserved", "note": "GT911"},
