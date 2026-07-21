@@ -78,6 +78,13 @@ TESTCON_BIN = $(BUILD_DIR)/test_test_console
 SCENE_HDRS = ../common/ui/randomart.h ../common/ui/console_theme.h ../common/ui/console_scenes.h ../common/ui/console_wake.h
 SCENE_BIN = $(BUILD_DIR)/test_console_scene
 
+# Device self-manifest (common/attest/self_manifest.h): the machine-readable
+# JSON the device emits on 'j' and the website parses over WebSerial. Pins the
+# schema + every key, proves string escaping, and that the bounded writer never
+# overflows or emits truncated JSON. Pure header, no Arduino deps.
+MANIFEST_HDR = ../common/attest/self_manifest.h
+MANIFEST_BIN = $(BUILD_DIR)/test_self_manifest
+
 .PHONY: all run clean
 all: run
 
@@ -108,7 +115,10 @@ $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 $(SCENE_BIN): test_console_scene.cpp $(SCENE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_console_scene.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(SCENE_BIN)
+$(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_self_manifest.cpp -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(SCENE_BIN) $(MANIFEST_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -117,6 +127,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
 	./$(SCENE_BIN)
+	./$(MANIFEST_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

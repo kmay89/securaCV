@@ -101,6 +101,35 @@ static void test_randomart_walk() {
   CHECK(randomart_glyph(200) == 'E'); // clamped, never out of bounds
 }
 
+// Trailing-space-insensitive compare: the row is always RANDOMART_W wide, so we
+// pin the significant (non-trailing-space) prefix and the fixed width.
+static std::string rstrip(const std::string& s) {
+  size_t e = s.size();
+  while (e > 0 && s[e - 1] == ' ') --e;
+  return s.substr(0, e);
+}
+
+static void test_randomart_golden() {
+  // The GOLDEN vector the website pins in tests/randomart.test.mjs. Key = the
+  // 32 bytes 0x00..0x1f. If this shape changes here, the browser-drawn randomart
+  // (js/randomart.js) stops matching what the device draws — the whole trust
+  // handshake breaks — so both repos assert this identical output.
+  uint8_t key[32];
+  for (int i = 0; i < 32; ++i) key[i] = (uint8_t)i;
+  uint8_t f[RANDOMART_H][RANDOMART_W];
+  randomart_field(key, 32, f);
+
+  static const char* const prefix[RANDOMART_H] = {
+    "^^O@@E.", "@@O++..", "o+.. ..", "       .", "        S", "", "", "", ""
+  };
+  for (int y = 0; y < RANDOMART_H; ++y) {
+    char row[RANDOMART_W + 1];
+    randomart_row(f, y, row);
+    CHECK(std::strlen(row) == (size_t)RANDOMART_W);   // always the full width
+    CHECK(rstrip(row) == prefix[y]);                  // ...and the exact shape
+  }
+}
+
 static void test_randomart_all_zero() {
   // All-zero bytes: every step is up-left → the bishop clamps into the top-left
   // corner. Start stays centred; End lands at (0,0).
@@ -274,8 +303,29 @@ static void test_welcome_card() {
   CHECK(sk2.s.find("\x1b[") != std::string::npos); // colour at the confirmed tier
 }
 
+static void test_logo_is_single_sourced() {
+  // The Canary logo is ONE silhouette across every scene (and matches the site).
+  // Render both cards and assert each logo row appears in both — so nobody can
+  // quietly re-draw a different bird in one place and let them drift apart.
+  Sink wc, tc;
+  Renderer rw{collect, &wc, caps_ascii()};
+  Renderer rt{collect, &tc, caps_ascii()};
+  welcome_card(rw, "canary-7fA3", "https://securacv.com/canary");
+  trust_card(rt, sample(KEY_A, 8));
+  for (const char* logo_row : CANARY_LOGO) {
+    CHECK(wc.s.find(logo_row) != std::string::npos);
+    CHECK(tc.s.find(logo_row) != std::string::npos);
+  }
+  // The canonical bird is exactly these three 5-wide rows.
+  CHECK(std::string(CANARY_LOGO[0]) == ",___,");
+  CHECK(std::string(CANARY_LOGO[1]) == "(o.o)");
+  CHECK(std::string(CANARY_LOGO[2]) == "/)_/)");
+}
+
 int main() {
   test_welcome_card();
+  test_logo_is_single_sourced();
+  test_randomart_golden();
   test_randomart_walk();
   test_randomart_all_zero();
   test_ascii_tier_is_safe();

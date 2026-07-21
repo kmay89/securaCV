@@ -134,6 +134,11 @@ static_assert(sizeof(csi_features_t) == 36,
 // Used by the read-only 't' run-all command below.
 #include "health/test_console.h"
 
+// Pure, host-tested device self-manifest builder: the machine-readable JSON the
+// 'j' command emits (public-only) so a browser can read this unit over WebSerial
+// — draw the same randomart from the pubkey, and show exactly the tools it has.
+#include "attest/self_manifest.h"
+
 #if FEATURE_CONSOLE_THEME
 // Pure, host-tested console scene engine: the 'l' identity banner (key
 // fingerprint as randomart). ASCII-safe by default; see docs/design/serial_console_theming.md.
@@ -2088,6 +2093,7 @@ static void mqtt_publish_sensing_update() {
 // (reboot, onboarding launch) are not part of this diagnostic contract.
 static const testcon::Command kConsoleCommands[] = {
   { 'i', "identity",     testcon::Tier::Diag, false, false, false },
+  { 'j', "manifest",     testcon::Tier::Diag, false, false, false },
   { 's', "status",       testcon::Tier::Diag, false, false, false },
   { 'g', "gps",          testcon::Tier::Diag, false, false, false },
   { 'b', "battery",      testcon::Tier::Diag, false, false, false },
@@ -2281,6 +2287,136 @@ static void run_wake() {
 #endif  // FEATURE_DIAGNOSTICS
 #endif  // FEATURE_CONSOLE_THEME
 
+// 'j' — the machine-readable self-manifest: a compact JSON line describing this
+// unit to a *program* (public info only — the same facts as the trust card,
+// plus the enabled feature set). A browser reads it over WebSerial to draw the
+// matching randomart from the pubkey and show exactly the tools this device
+// has. Read-only, leaks no secret (Tier::Diag). Always available.
+static void emit_self_manifest() {
+  DeviceIdentity& dev = witness_get_device();
+
+  char pk[65], fp[17], ch[65];
+  for (int i = 0; i < 32; ++i) snprintf(pk + i * 2, 3, "%02x", dev.pubkey[i]);
+  for (int i = 0; i < 8;  ++i) snprintf(fp + i * 2, 3, "%02x", dev.pubkey_fp[i]);
+  for (int i = 0; i < 32; ++i) snprintf(ch + i * 2, 3, "%02x", dev.chain_head[i]);
+
+  // Enabled capabilities — the compile-time FEATURE_* flags ARE the source of
+  // truth, so the manifest can never claim a feature the image doesn't carry.
+  const char* feats[40];
+  size_t nf = 0;
+  #define CV_ADD_FEAT(name) do { \
+      if (nf < sizeof(feats) / sizeof(feats[0])) feats[nf++] = (name); } while (0)
+#if FEATURE_SD_STORAGE
+  CV_ADD_FEAT("sd_storage");
+#endif
+#if FEATURE_WIFI_AP
+  CV_ADD_FEAT("wifi_ap");
+#endif
+#if FEATURE_HTTP_SERVER
+  CV_ADD_FEAT("http_server");
+#endif
+#if FEATURE_CAMERA_PEEK
+  CV_ADD_FEAT("camera_peek");
+#endif
+#if FEATURE_GNSS
+  CV_ADD_FEAT("gnss");
+#endif
+#if FEATURE_WATCHDOG
+  CV_ADD_FEAT("watchdog");
+#endif
+#if FEATURE_OTA_UPDATE
+  CV_ADD_FEAT("ota");
+#endif
+#if FEATURE_OTA_PULL
+  CV_ADD_FEAT("ota_pull");
+#endif
+#if FEATURE_HA_MQTT
+  CV_ADD_FEAT("mqtt");
+#endif
+#if FEATURE_MESH_NETWORK
+  CV_ADD_FEAT("mesh");
+#endif
+#if FEATURE_BLE
+  CV_ADD_FEAT("ble");
+#endif
+#if FEATURE_BLE_STATUS
+  CV_ADD_FEAT("ble_status");
+#endif
+#if FEATURE_CSI
+  CV_ADD_FEAT("csi");
+#endif
+#if FEATURE_VISION_DETECT
+  CV_ADD_FEAT("vision");
+#endif
+#if FEATURE_POWER_MONITOR
+  CV_ADD_FEAT("power_monitor");
+#endif
+#if FEATURE_POWER_POLICY
+  CV_ADD_FEAT("power_policy");
+#endif
+#if FEATURE_THERMAL_WATCHDOG
+  CV_ADD_FEAT("thermal_watchdog");
+#endif
+#if FEATURE_DIAGNOSTICS
+  CV_ADD_FEAT("diagnostics");
+#endif
+#if FEATURE_DATA_MGMT
+  CV_ADD_FEAT("data_mgmt");
+#endif
+#if FEATURE_SETUP_WIZARD
+  CV_ADD_FEAT("setup_wizard");
+#endif
+#if FEATURE_USB_ONBOARD
+  CV_ADD_FEAT("usb_onboard");
+#endif
+#if FEATURE_CONSOLE_THEME
+  CV_ADD_FEAT("console_theme");
+#endif
+  #undef CV_ADD_FEAT
+
+  int health = -1;
+#if FEATURE_DIAGNOSTICS
+  selftest_report_t st;
+  if (diag_get_selftest(&st)) health = (int)st.health_score;   // last score; no fresh run
+#endif
+
+  // The interactive keys THIS image answers — straight from the one command
+  // registry (kConsoleCommands), so the manifest can't list a key the device
+  // doesn't actually handle.
+  manifest::Cmd cmds[kConsoleCommandCount + 1];
+  size_t nc = 0;
+  for (size_t i = 0; i < kConsoleCommandCount; ++i) {
+    cmds[nc].key = kConsoleCommands[i].key;
+    cmds[nc].name = kConsoleCommands[i].name;
+    nc++;
+  }
+
+  manifest::Facts f{};
+  f.board          = DEVICE_TYPE;
+  f.firmware       = FIRMWARE_VERSION;
+  f.git            = FIRMWARE_GIT_HASH;
+  f.protocol       = PROTOCOL_VERSION;
+  f.device_id      = dev.device_id;
+  f.pubkey_hex     = pk;
+  f.pubkey_fp_hex  = fp;
+  f.chain_head_hex = ch;
+  f.seq            = dev.seq;
+  f.boots          = dev.boot_count;
+  f.health         = health;
+  f.tamper         = dev.tamper_active;
+  f.features       = feats;
+  f.feature_count  = nf;
+  f.commands       = cmds;
+  f.command_count  = nc;
+  f.help_url       = SECURACV_HELP_URL_BASE;
+
+  static char buf[1600];
+  size_t n = manifest::build(f, buf, sizeof buf);
+  Serial.println();
+  if (n) Serial.println(buf);
+  else   Serial.println("{\"error\":\"manifest overflow\"}");
+}
+
 static void handle_serial_commands() {
   if (!Serial.available()) return;
 
@@ -2292,6 +2428,7 @@ static void handle_serial_commands() {
       Serial.println("\n=== Commands ===");
       Serial.println("  h - This help");
       Serial.println("  i - Device identity");
+      Serial.println("  j - Self-manifest (machine-readable JSON for the app)");
       Serial.println("  s - Status");
       Serial.println("  g - GPS info");
 #if FEATURE_DATA_MGMT
@@ -2341,6 +2478,11 @@ static void handle_serial_commands() {
       Serial.println("\n");
       break;
     }
+
+    case 'j':
+    case 'J':
+      emit_self_manifest();
+      break;
 
     case 's':
     case 'S':
