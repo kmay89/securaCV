@@ -986,3 +986,178 @@ export function throughput(bytes, ms) {
   const kbps = bytes / 1024 / (ms / 1000);
   return `${kbps.toFixed(0)} KB/s`;
 }
+
+// ── self-healing: connect/flash baud ladder ─────────────────────────────────
+// The flash transfer speed to try, fastest first. esptool syncs the ROM at
+// romBaudrate (115200) and only then switches to one of these; flaky cables,
+// unpowered hubs, and long USB runs choke at the top speed but work fine a
+// rung down. The connect flow walks this on failure so "it won't flash" heals
+// itself instead of dead-ending. (Distinct from CONSOLE_BAUDS, which is the
+// read-only monitor's guess-the-log-speed list.)
+export const FLASH_BAUDS = [921600, 460800, 230400, 115200];
+
+// ── self-healing: turn a boot log into a diagnosis + fix ────────────────────
+// After a flash the device boots and prints to serial. A handful of fatal
+// signatures have specific, actionable fixes — surface those instead of raw
+// text. Returns the most-severe match as {signature, means, fix, action} or
+// null. `action` is a machine hint the UI maps to a one-click recovery:
+// "clean-install" (reflash with a full erase) or "power" (not a reflash — a
+// power/cable problem the user must fix). Ordered most-specific first.
+const BOOT_SIGNATURES = [
+  {
+    signature: "brownout",
+    test: /brownout detector was triggered|\bBROWNOUT_RST\b|rst:0x[0-9a-f]+ \(BROWNOUT/i,
+    means: "The board browned out — it isn’t getting enough power to boot.",
+    fix: "This isn’t the firmware. Use a different USB port (straight into the " +
+      "computer, not a hub), or a powered hub, and a shorter good-quality data " +
+      "cable. Then reconnect.",
+    action: "power",
+  },
+  {
+    signature: "panic",
+    test: /guru meditation|backtrace:|panic'?ed|abort\(\) was called|assert failed/i,
+    means: "The new firmware crashed as it started up.",
+    fix: "A clean install usually clears this — it wipes stale settings a previous " +
+      "firmware may have left behind. Reconnect and choose “clean install”.",
+    action: "clean-install",
+  },
+  {
+    signature: "no-app",
+    test: /invalid header: 0x|no bootable app partitions|ota_data partition|not found any bootable/i,
+    means: "The bootloader couldn’t find a complete, valid app to run.",
+    fix: "Reconnect and flash again with a full erase (clean install) so a whole " +
+      "image is laid down from scratch.",
+    action: "clean-install",
+  },
+  {
+    signature: "flash-error",
+    test: /flash read err|checksum failed|corrupt|e \(\d+\) esp_image/i,
+    means: "The board had trouble reading its own flash.",
+    fix: "Reseat the cable and do a clean install. If it keeps happening across " +
+      "several boards, that one’s flash chip may be failing.",
+    action: "clean-install",
+  },
+];
+
+export function diagnoseBootLog(text) {
+  const t = String(text || "");
+  if (t.length < 8) return null;
+  for (const s of BOOT_SIGNATURES) {
+    if (s.test.test(t)) {
+      return { signature: s.signature, means: s.means, fix: s.fix, action: s.action };
+    }
+  }
+  return null;
+}
+
+// ── self-healing: USB-UART bridge detection (driver hints) ──────────────────
+// The XIAO boards use the ESP32's native USB (VID 0x303A) — no driver needed.
+// A couple of variants (and clones) use a USB-serial bridge chip that needs an
+// OS driver on Windows/older macOS; when the board is one of those and the port
+// won't open, point at the exact driver instead of a mystifying "nothing
+// happened". Returns {name, driverUrl, note} for a known bridge, else null
+// (native USB or unknown → no driver to chase).
+const USB_BRIDGES = {
+  0x10c4: { name: "Silicon Labs CP210x", driverUrl: "https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" },
+  0x1a86: { name: "WCH CH340/CH343", driverUrl: "https://www.wch-ic.com/downloads/CH341SER_EXE.html" },
+  0x0403: { name: "FTDI FT232", driverUrl: "https://ftdichip.com/drivers/vcp-drivers/" },
+};
+const NATIVE_USB_VENDORS = new Set([0x303a]); // Espressif native USB-Serial/JTAG
+
+export function usbBridgeInfo(usbVendorId, usbProductId) {
+  if (usbVendorId == null) return null;
+  if (NATIVE_USB_VENDORS.has(usbVendorId)) return null;
+  const b = USB_BRIDGES[usbVendorId];
+  if (!b) return null;
+  return {
+    name: b.name,
+    driverUrl: b.driverUrl,
+    note: `This board talks over a ${b.name} USB-serial chip. If it won’t connect, ` +
+      `install that chip’s driver (Windows and older macOS need it), then reconnect.`,
+    vid: usbVendorId,
+    pid: usbProductId == null ? null : usbProductId,
+  };
+}
+
+// ── post-flash proof: the device's own signed self-manifest ─────────────────
+// After flashing, the firmware answers the `j` console command with ONE JSON
+// line — the self-manifest (docs/design/self_star_roadmap.md, schema
+// securacv.canary.manifest/v1): board, firmware, pubkey + fingerprint, health,
+// tamper, seq/boots. Reading it back proves the flash worked end-to-end from
+// the board's own mouth — the same self-verify securacv.com/canary does.
+// Extract + parse the manifest object from a noisy serial buffer; returns the
+// object or null. Tolerant of boot-log text before/after the line.
+const MANIFEST_SCHEMA_PREFIX = "securacv.canary.manifest/";
+
+function matchBrace(s, start) {
+  // Index of the `}` closing the `{` at `start`, string-aware so nested
+  // objects (commands[]) and braces inside strings don't fool it.
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") { if (--depth === 0) return i; }
+  }
+  return -1;
+}
+
+export function parseSelfManifest(text) {
+  const t = String(text || "");
+  const marker = t.indexOf('"' + MANIFEST_SCHEMA_PREFIX);
+  if (marker < 0) return null;
+  const start = t.lastIndexOf("{", marker);
+  if (start < 0) return null;
+  const end = matchBrace(t, start);
+  if (end < 0) return null;
+  try {
+    const obj = JSON.parse(t.slice(start, end + 1));
+    if (obj && typeof obj.schema === "string" && obj.schema.startsWith(MANIFEST_SCHEMA_PREFIX)) {
+      return obj;
+    }
+  } catch { /* partial line — wait for more bytes */ }
+  return null;
+}
+
+// Group a hex fingerprint into readable byte pairs (aa:bb:cc…), capped.
+export function formatFingerprint(hex, maxBytes = 8) {
+  const h = String(hex || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+  if (!h) return "";
+  const pairs = h.match(/.{1,2}/g) || [];
+  const shown = pairs.slice(0, maxBytes).join(":");
+  return pairs.length > maxBytes ? shown + "…" : shown;
+}
+
+// ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
+// One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
+// Public-only by construction: it takes a plain object of already-safe facts
+// (no WiFi credentials, no keys) and formats them. Pure + testable.
+export function buildDiagnosticReport(info = {}) {
+  const lines = ["SecuraCV flasher diagnostic", "==========================="];
+  const add = (label, val) => {
+    if (val === undefined || val === null || val === "") return;
+    lines.push(`${label}: ${val}`);
+  };
+  add("when", info.when);
+  add("browser", info.browser);
+  add("platform", info.platform);
+  add("web serial", info.webSerial === undefined ? undefined : (info.webSerial ? "yes" : "no"));
+  add("firmware train", info.catalogVersion);
+  add("chip", info.chipDesc || info.chip);
+  add("MAC", info.mac);
+  add("flash size", info.flashBytes ? formatBytes(info.flashBytes) : undefined);
+  add("USB device", info.usb);
+  add("chosen product", info.product);
+  add("connected baud", info.baud);
+  add("stage", info.stage);
+  add("error", info.error);
+  if (info.logTail) {
+    lines.push("--- last serial output ---");
+    lines.push(String(info.logTail).split("\n").slice(-12).join("\n"));
+  }
+  return lines.join("\n") + "\n";
+}

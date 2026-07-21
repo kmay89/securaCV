@@ -53,6 +53,50 @@ bridge), there is usually **no driver to install** — the single biggest
 "it won't connect" support cause simply isn't present. A USB-C **data** cable
 (not charge-only) is the one requirement.
 
+## Self-healing (never get stuck)
+
+The flasher tries to fix the common failures before asking the user to:
+
+- **Baud ladder** — connecting tries the fast transfer speed, then steps down
+  (921600 → 460800 → 230400 → 115200) automatically. Flaky cables, unpowered
+  hubs, and long USB runs sync fine but choke the high-speed transfer; stepping
+  down heals it silently instead of dead-ending. (`FLASH_BAUDS`.)
+- **Boot-log diagnosis** — the serial monitor watches the boot log for fatal
+  signatures (brownout, `Guru Meditation`, no bootable app, flash-read errors)
+  and turns each into a plain-language cause + fix, rather than raw panic text.
+  (`diagnoseBootLog`.)
+- **Failure escalation** — a failed install offers the next self-heal step
+  inline: **Clean install (full erase)** reconnects straight into the rescue
+  flow (which also restores a safety copy if one was taken).
+- **Bridge-chip driver hints** — for the non-native-USB variant, the flasher
+  reads the port's USB VID/PID and links the exact driver (CP210x / CH340 /
+  FTDI) *only* when the board actually uses that bridge. (`usbBridgeInfo`.)
+- **"Copy a diagnostic report"** — every stuck screen offers one click to copy
+  a paste-able report (browser, OS, chip, MAC, baud, error, log tail) for
+  Discussions. Public-only by construction — never WiFi credentials or keys.
+  (`buildDiagnosticReport`.)
+
+These sit on top of what was already there: automatic pre-flash backup,
+auto-reconnect across native-USB re-enumeration, chunked reads with per-chunk
+retry, and a manual rescue flow.
+
+The baud ladder heals *write-time* failures too, not just connect: a flaky
+cable can sync at 921600 but time out mid-transfer, so a failed install lowers
+the baud ceiling a rung and the retry writes at the gentler speed (reset for a
+fresh board). And the "Clean install" escalation carries the product you were
+installing into the rescue, so it can't default to the wrong firmware.
+
+## Post-flash proof
+
+"Watch it boot & prove itself →" doesn't just stream the log — it asks the
+running firmware for its **signed self-manifest** (`j`, schema
+`securacv.canary.manifest/v1`) and shows a verified-identity card: board,
+firmware version, **key fingerprint**, health, and boot count, read straight
+from the board over the cable. It's the flash proven from the device's own
+mouth — the same self-verify [`securacv.com/canary`](self_star_roadmap.md) does
+— and it never leaves the page. Variants without a serial console simply don't
+show the card (the boot log still streams). (`parseSelfManifest`.)
+
 ## How it fits the release system
 
 ```
