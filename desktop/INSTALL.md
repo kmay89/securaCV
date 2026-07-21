@@ -14,6 +14,9 @@ Because this app isn't distributed through the App Store, macOS quarantines it
 on first download (it does this to *everything* downloaded from the web). Clear
 the quarantine flag once and it launches like any other app forever after.
 
+When you open the `.dmg`, the window itself walks you through this — drag the
+Canary into Applications, and the first-open note is printed right there.
+
 ### The magic one-liner (recommended)
 
 1. Open the `.dmg` and drag **SecuraCV Flasher** into **Applications**.
