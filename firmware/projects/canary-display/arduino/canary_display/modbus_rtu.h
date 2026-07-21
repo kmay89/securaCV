@@ -52,11 +52,18 @@ enum Status : int {
 // + 2 CRC. A Modbus RTU frame is capped at 256 bytes by the spec.
 constexpr size_t MAX_ADU = 256;
 
+// The Modbus spec caps a single read (0x03/0x04) at 125 registers (0x7D): the
+// response is 5 + 2*count bytes, so 125 -> 255 bytes, the most that fits in one
+// RTU frame. Bounding count here is what stops an over-long read from asking for
+// a response the transport can never fully receive (a silent timeout).
+constexpr uint16_t MAX_READ_REGS = 125;
+
 // ── CRC-16/MODBUS ──────────────────────────────────────────────────────────
 // Bitwise (table-free) so the header stays tiny and dependency-free; a bench
 // poll is nowhere near hot enough to want a 512-byte table.
 inline uint16_t crc16(const uint8_t* data, size_t len) {
   uint16_t crc = 0xFFFF;
+  if (data == nullptr) return crc;  // empty/absent buffer -> init value
   for (size_t i = 0; i < len; i++) {
     crc ^= data[i];
     for (int b = 0; b < 8; b++) {
@@ -93,10 +100,13 @@ inline bool crc_ok(const uint8_t* frame, size_t len) {
 // Each writes a complete ADU (header + CRC) into `out` (needs >= 8 bytes) and
 // returns its length, or 0 if `cap` is too small.
 
-// Read `count` holding (0x03) or input (0x04) registers from `start`.
+// Read `count` holding (0x03) or input (0x04) registers from `start`. Returns 0
+// if `out` is null/undersized or `count` is outside the spec's 1..125 range —
+// the latter guard is what keeps a response inside one RTU frame (MAX_ADU).
 inline size_t build_read(uint8_t fn, uint8_t slave, uint16_t start,
                          uint16_t count, uint8_t* out, size_t cap) {
-  if (cap < 8) return 0;
+  if (out == nullptr || cap < 8) return 0;
+  if (count == 0 || count > MAX_READ_REGS) return 0;
   out[0] = slave;
   out[1] = fn;
   out[2] = static_cast<uint8_t>(start >> 8);
@@ -119,7 +129,7 @@ inline size_t build_read_input(uint8_t slave, uint16_t start, uint16_t count,
 // Write a single holding register (0x06).
 inline size_t build_write_single(uint8_t slave, uint16_t reg, uint16_t value,
                                   uint8_t* out, size_t cap) {
-  if (cap < 8) return 0;
+  if (out == nullptr || cap < 8) return 0;
   out[0] = slave;
   out[1] = FN_WRITE_SINGLE;
   out[2] = static_cast<uint8_t>(reg >> 8);
@@ -164,6 +174,7 @@ inline int parse_registers(const uint8_t* frame, size_t len, uint8_t expect_slav
 
   const size_t n = byte_count / 2;
   if (n > regs_cap) return ERR_CAPACITY;
+  if (n > 0 && regs == nullptr) return ERR_CAPACITY;  // caller buffer contract
   for (size_t i = 0; i < n; i++) {
     regs[i] = static_cast<uint16_t>((frame[3 + i * 2] << 8) | frame[3 + i * 2 + 1]);
   }

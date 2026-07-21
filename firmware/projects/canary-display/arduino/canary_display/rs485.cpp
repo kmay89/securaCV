@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 
+#include "pins.h"  // RS485_PIN_TX/RX, RS485_BAUD_DEFAULT (board -I path)
 #include "rs485.h"
 #include "modbus_rtu.h"
 #include "log.h"
@@ -55,7 +56,13 @@ bool rs485_ready() { return s_ready; }
 int rs485_read_holding(uint8_t slave, uint16_t start, uint16_t count,
                        uint16_t* regs, size_t cap, uint32_t timeout_ms) {
   if (!s_ready) return RS485_ERR_NOT_READY;
-  if (count == 0 || count > cap) return RS485_ERR_ARG;
+  // Guard the register buffer and keep the reply inside our resp[] buffer: the
+  // core bounds count to MAX_READ_REGS, but check here too so a bad count fails
+  // fast rather than as a silent timeout.
+  if (regs == nullptr || count == 0 || count > cap ||
+      mb::read_response_len(count) > mb::MAX_ADU) {
+    return RS485_ERR_ARG;
+  }
 
   uint8_t req[mb::MAX_ADU];
   const size_t req_len =
@@ -71,8 +78,12 @@ int rs485_read_holding(uint8_t slave, uint16_t start, uint16_t count,
   size_t got = 0;
   const uint32_t deadline = millis() + timeout_ms;
   while (got < want && (int32_t)(deadline - millis()) > 0) {
-    while (Serial1.available() && got < sizeof(resp)) {
-      resp[got++] = (uint8_t)Serial1.read();
+    if (Serial1.available()) {
+      while (Serial1.available() && got < sizeof(resp)) {
+        resp[got++] = (uint8_t)Serial1.read();
+      }
+    } else {
+      delay(1);  // yield to the scheduler — never busy-spin (task watchdog)
     }
   }
   if (got < want) return RS485_ERR_TIMEOUT;

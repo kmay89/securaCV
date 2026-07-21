@@ -83,6 +83,22 @@ static void test_build_capacity_guard() {
   uint8_t tiny[4];
   CHECK(mb::build_read_holding(1, 0, 1, tiny, sizeof(tiny)) == 0,
         "builder refuses an undersized buffer");
+  uint8_t out[mb::MAX_ADU];
+  CHECK(mb::build_read_holding(1, 0, 1, nullptr, sizeof(out)) == 0,
+        "builder refuses a null buffer");
+}
+
+static void test_build_count_bounds() {
+  uint8_t out[mb::MAX_ADU];
+  CHECK(mb::build_read_holding(1, 0, 0, out, sizeof(out)) == 0,
+        "count 0 rejected");
+  CHECK(mb::build_read_holding(1, 0, mb::MAX_READ_REGS, out, sizeof(out)) == 8,
+        "count == MAX_READ_REGS (125) accepted");
+  CHECK(mb::build_read_holding(1, 0, mb::MAX_READ_REGS + 1, out, sizeof(out)) == 0,
+        "count > 125 rejected (would overflow one RTU frame)");
+  // The largest allowed read still fits in one ADU.
+  CHECK(mb::read_response_len(mb::MAX_READ_REGS) <= mb::MAX_ADU,
+        "max read response fits in MAX_ADU");
 }
 
 static void test_response_len() {
@@ -167,6 +183,7 @@ int main() {
   test_build_read_holding();
   test_build_read_input_and_write();
   test_build_capacity_guard();
+  test_build_count_bounds();
   test_response_len();
   test_parse_valid();
   test_parse_rejects();

@@ -51,18 +51,6 @@
 #define FEATURE_DEVMODE 0
 #endif
 
-// FEATURE_RS485 compiles the RS485 / Modbus RTU master transport (canary/io/
-// rs485.*, framing in canary/io/modbus_rtu.h) for the 4.3B A/B terminal. Off
-// everywhere by default; the canary-display-dash-rs485 env sets it via -D so CI
-// compiles it while the default/emulator builds stay byte-identical. It shares
-// GPIO43/44 with the CH343 USB-UART console, so an enabling build keeps logging
-// on the native USB CDC. Bench-pending: TX/RX orientation is VERIFY-tagged in
-// pins.h. (Like the playground/devmode guards, this is a -D flag; the fallback
-// here is for main.cpp, which includes this composition header.)
-#ifndef FEATURE_RS485
-#define FEATURE_RS485 0
-#endif
-
 // NOTE: the "compile the peripheral bench" guard and the dev-mode NVS latch are
 // written out INLINE at each use site, NOT as macros here — the playground and
 // settings translation units include the flavor <config.h>, not this

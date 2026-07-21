@@ -45,8 +45,9 @@ int rs485_read_holding(uint8_t slave, uint16_t start, uint16_t count,
                        uint16_t* regs, size_t cap, uint32_t timeout_ms);
 
 // Optional bench heartbeat: periodically polls a probe register and logs the
-// result, so the RS485 build has a live caller. No-op until rs485_begin() runs.
-// `now` is millis(); safe to call every loop.
+// result. Provided for a future setup()/loop() wiring once the bus is
+// bench-validated (kept out of the shipping loop for now). No-op until
+// rs485_begin() runs. `now` is millis(); safe to call every loop.
 void rs485_loop(uint32_t now);
 
 }  // namespace io
