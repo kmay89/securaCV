@@ -132,6 +132,9 @@
 #ifndef USB_ONBOARD_AUTOLAUNCH
   #define USB_ONBOARD_AUTOLAUNCH   0   // Hands-off auto-open of the help page a few seconds after plug-in, with NO button press. This is genuine HID auto-typing (BadUSB-shaped) — leave OFF unless you accept that; the frictionless defaults are the START-HERE drive file + a one-tap BOOT press.
 #endif
+#ifndef FEATURE_TEST_CONSOLE
+  #define FEATURE_TEST_CONSOLE     0   // Serial DEMO/MUTATE test commands (camera peek, mic beep, BLE advertise, pairing…). OFF in every shipping image: the console's 't' run-all is read-only (Tier::Diag) and always available, but the powerful demo/mutating commands are dev/test-only and never in a production binary (security + flash). See docs/design/test_console.md.
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

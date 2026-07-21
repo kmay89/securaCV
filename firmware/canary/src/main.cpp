@@ -130,6 +130,10 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_usb_onboard.h"
 #endif
 
+// Pure, board-agnostic test-console policy + BLE bring-up ladder (no deps).
+// Used by the read-only 't' run-all command below.
+#include "health/test_console.h"
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -2071,6 +2075,7 @@ static void handle_serial_commands() {
       Serial.println("  v - Recovery guide");
       Serial.println("  k - Unseal guide");
 #endif
+      Serial.println("  t - Run all tests (self-test + feature health + Bluetooth)");
       Serial.println("  x - Reboot");
       Serial.println();
       break;
@@ -2289,6 +2294,52 @@ static void handle_serial_commands() {
       usb_onboard::print_unseal_guide();
       break;
 #endif
+
+    // 't' — "run all tests": read-only diagnostics only (testcon::Tier::Diag),
+    // so it is safe even on a production image. It prints public status, never
+    // secret material, and mutates nothing. The demo/mutating tiers live behind
+    // FEATURE_TEST_CONSOLE + a physical confirm (see docs/design/test_console.md).
+    case 't':
+    case 'T': {
+      Serial.println("\n=== Run all tests (read-only) ===");
+#if FEATURE_DIAGNOSTICS
+      diag_run_selftest();
+      selftest_report_t st;
+      if (diag_get_selftest(&st)) {
+        Serial.printf("  Self-test : %u/%u probes · %u%% health\n",
+                      st.passed_count, st.total_count, st.health_score);
+      }
+#else
+      Serial.println("  Self-test : diagnostics not compiled in");
+#endif
+      Serial.printf("  SD card   : %s\n", storage_is_mounted() ? "mounted" : "absent");
+#if FEATURE_GNSS
+      Serial.printf("  GPS       : %s\n", s_gps.getFix().valid ? "fix" : "no fix");
+#endif
+#if FEATURE_POWER_MONITOR
+      { power_state_t pw; Serial.printf("  Battery   : %s\n",
+          power_get_state(&pw) ? "monitored" : "n/a"); }
+#endif
+#if FEATURE_HA_MQTT
+      Serial.printf("  MQTT      : %s\n", mqtt_connected() ? "connected" : "offline");
+#endif
+      // Bluetooth ladder — say exactly which rung it reached (and why, if down).
+      {
+        testcon::BleObs o{};
+#if FEATURE_BLE_STATUS
+        o.compiled_in = true; o.stack_up = true; o.service_up = true;
+        o.advertising = true; o.connected = ble_status_is_connected();
+        o.exchanged = false;
+#else
+        o.compiled_in = false;   // dev/release images ship BLE off ([env:full] only)
+#endif
+        testcon::BleStage bs = testcon::ble_stage(o);
+        Serial.printf("  Bluetooth : %s\n", testcon::ble_stage_label(bs));
+        Serial.printf("              %s\n", testcon::ble_hint(bs));
+      }
+      Serial.println();
+      break;
+    }
 
     case 'x':
     case 'X':
