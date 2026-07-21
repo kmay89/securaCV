@@ -754,3 +754,60 @@ test("validateCatalog passes the shipped catalog and flags real breakage", async
   const badProd = JSON.parse(JSON.stringify(catalog)); delete badProd.products[0].chip;
   assert.ok(validateCatalog(badProd).some((e) => /missing chip/.test(e)));
 });
+
+// ── self-healing: baud ladder, boot-log diagnosis, bridge detect, report ────
+test("FLASH_BAUDS: fastest-first ladder, distinct from the console list", async () => {
+  const { FLASH_BAUDS } = await core();
+  assert.deepStrictEqual(FLASH_BAUDS, [921600, 460800, 230400, 115200]);
+  // strictly descending — the connect flow steps down on failure
+  for (let i = 1; i < FLASH_BAUDS.length; i++) assert.ok(FLASH_BAUDS[i] < FLASH_BAUDS[i - 1]);
+});
+
+test("diagnoseBootLog: maps fatal signatures to fixes, else null", async () => {
+  const { diagnoseBootLog } = await core();
+  assert.strictEqual(diagnoseBootLog(""), null);
+  assert.strictEqual(diagnoseBootLog("Hello canary chirp, booting normally"), null);
+
+  const brown = diagnoseBootLog("rst:0x10 (RTCWDT_RTC_RST)\nBrownout detector was triggered\n");
+  assert.strictEqual(brown.signature, "brownout");
+  assert.strictEqual(brown.action, "power"); // NOT a reflash — a power problem
+
+  const panic = diagnoseBootLog("Guru Meditation Error: Core 0 panic'ed\nBacktrace: 0x400...");
+  assert.strictEqual(panic.signature, "panic");
+  assert.strictEqual(panic.action, "clean-install");
+
+  const noapp = diagnoseBootLog("invalid header: 0xffffffff\nno bootable app partitions");
+  assert.strictEqual(noapp.signature, "no-app");
+  assert.strictEqual(noapp.action, "clean-install");
+
+  // every diagnosis carries human means + fix text
+  for (const d of [brown, panic, noapp]) { assert.ok(d.means && d.fix); }
+});
+
+test("usbBridgeInfo: native USB → null, bridge chips → driver link", async () => {
+  const { usbBridgeInfo } = await core();
+  assert.strictEqual(usbBridgeInfo(0x303a, 0x1001), null); // Espressif native USB
+  assert.strictEqual(usbBridgeInfo(null, null), null);
+  assert.strictEqual(usbBridgeInfo(0xbeef, 0x1), null);    // unknown → no driver to chase
+  const cp = usbBridgeInfo(0x10c4, 0xea60);
+  assert.ok(cp && /CP210x/.test(cp.name) && /silabs\.com/.test(cp.driverUrl));
+  const ch = usbBridgeInfo(0x1a86, 0x7523);
+  assert.ok(ch && /CH340/.test(ch.name) && /wch/.test(ch.driverUrl));
+});
+
+test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", async () => {
+  const { buildDiagnosticReport } = await core();
+  const r = buildDiagnosticReport({
+    browser: "Chrome", webSerial: true, chip: "ESP32-S3", mac: "AA:BB",
+    baud: 460800, error: "timed out", product: "canary-wap",
+    logTail: "line1\nline2\nBrownout detector was triggered",
+  });
+  assert.ok(r.includes("SecuraCV flasher diagnostic"));
+  assert.ok(r.includes("web serial: yes") && r.includes("connected baud: 460800"));
+  assert.ok(r.includes("chip: ESP32-S3") && r.includes("error: timed out"));
+  assert.ok(r.includes("Brownout")); // log tail included
+  // empty/missing fields are omitted, not rendered as blanks
+  assert.ok(!/platform:/.test(r) && !/flash size:/.test(r));
+  // never leaks a field we didn't pass (e.g. wifi/keys aren't inputs at all)
+  assert.ok(!/password|ssid|pubkey/i.test(r));
+});

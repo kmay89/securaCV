@@ -488,16 +488,45 @@ async function onConnect() {
   setPhase(box);
   const nudgeTimer = setTimeout(() => nudge.classList.remove("flash-hidden"), 6000);
 
-  const transport = new Transport(port, false);
-  const esploader = new ESPLoader({
-    transport,
-    baudrate: state.catalog.flash_baud || 921600,
-    romBaudrate: state.catalog.console_baud || 115200,
-    terminal: makeTerminal(),
-  });
+  // The USB identity, read once — used for a driver hint if it won't connect.
+  state.portInfo = (port.getInfo && port.getInfo()) || {};
+
+  // Baud ladder: try the fast speed, and step down automatically on failure.
+  // esptool syncs the ROM at 115200 and only then switches to the flash speed;
+  // flaky cables, unpowered hubs, and long USB runs sync fine but choke the
+  // high-speed transfer. Walking down heals "it won't connect" silently
+  // instead of dead-ending.
+  const top = state.catalog.flash_baud || core.FLASH_BAUDS[0];
+  const baudList = [top, ...core.FLASH_BAUDS.filter((b) => b !== top)];
+  let esploader = null, transport = null, lastErr = null;
+  for (let i = 0; i < baudList.length; i++) {
+    const baud = baudList[i];
+    if (i > 0) detail.textContent = `Trying a gentler speed (${baud})…`;
+    transport = new Transport(port, false);
+    esploader = new ESPLoader({
+      transport, baudrate: baud,
+      romBaudrate: state.catalog.console_baud || 115200,
+      terminal: makeTerminal(),
+    });
+    try {
+      state.chipDesc = await esploader.main();
+      state.usedBaud = baud;
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      esploader = null;
+      try { await transport.disconnect(); } catch {}
+    }
+  }
+  clearTimeout(nudgeTimer);
+  if (!esploader) {
+    state.busy = false;
+    setPhase(connectFailed(lastErr || new Error("could not connect"), state.portInfo));
+    return;
+  }
 
   try {
-    state.chipDesc = await esploader.main();
     state.chip = esploader.chip.CHIP_NAME;
     // A stalled read should fail fast and retry (we read in small chunks),
     // not sit out esptool-js's default 100 s silence window per packet.
@@ -508,20 +537,21 @@ async function onConnect() {
       state.flashBytes = kb ? kb * 1024 : null;
     } catch { state.flashBytes = null; }
     state.session = { port, transport, esploader };
-    clearTimeout(nudgeTimer);
     state.busy = false;
+    // Escalation from a failed install: reconnect, then jump straight to the
+    // clean-install rescue flow the user asked for.
+    if (state.resumeRescue) { state.resumeRescue = false; setPhase(phaseRescue()); return; }
     await readCurrentFirmware();     // best-effort; never throws out
     ensureManifest();                // kick off (async) manifest load
     setPhase(phaseConnected());
   } catch (e) {
-    clearTimeout(nudgeTimer);
     state.busy = false;
     try { await transport.disconnect(); } catch {}
-    setPhase(connectFailed(e));
+    setPhase(connectFailed(e, state.portInfo));
   }
 }
 
-function connectFailed(e) {
+function connectFailed(e, pinfo) {
   const v = core.classifyFlashError(e);
   const box = errorBox(
     v.title || "Couldn’t reach the board",
@@ -535,9 +565,13 @@ function connectFailed(e) {
     box.append(downloadModeSteps());
     box.append(el("p", "muted", "Then click “Try again”."));
   }
+  // If it's a bridge-chip board that may be missing its driver, link it.
+  appendDriverHint(box, pinfo || state.portInfo);
+  const row = el("div", "flash-row");
   const retry = el("button", "primary", "Try again");
   retry.addEventListener("click", () => setPhase(phaseConnect()));
-  box.append(retry);
+  row.append(retry, diagnosticReportButton(() => ({ stage: "connect", error: String(e && e.message ? e.message : e) })));
+  box.append(row);
   const raw = el("details", "flash-rawerr");
   raw.append(el("summary", null, "Technical details"));
   raw.append(el("pre", null, String(e && e.message ? e.message : e)));
@@ -553,6 +587,70 @@ function makeTerminal() {
     writeLine(data) { if (logSink) { logSink.textContent += data + "\n"; logSink.scrollTop = logSink.scrollHeight; } },
     write(data) { if (logSink) { logSink.textContent += data; logSink.scrollTop = logSink.scrollHeight; } },
   };
+}
+
+// ── self-healing: the "I'm stuck" escape hatch ──────────────────────────────
+// One click turns a stuck moment into a paste-able report for Discussions.
+// Public-only by construction (buildDiagnosticReport takes safe facts only —
+// never WiFi credentials or keys).
+const hex4 = (n) => (n == null ? null : "0x" + n.toString(16).padStart(4, "0"));
+
+function gatherDiagnostics(extra = {}) {
+  const b = core.detectBrowser(navigator.userAgent || "", navigator.maxTouchPoints || 0);
+  const pi = state.portInfo || {};
+  let usb;
+  if (pi.usbVendorId != null) {
+    const bridge = core.usbBridgeInfo(pi.usbVendorId, pi.usbProductId);
+    usb = `${hex4(pi.usbVendorId)}:${hex4(pi.usbProductId) || "?"} ` +
+      (bridge ? `(${bridge.name})` : "(native USB)");
+  }
+  let logTail;
+  try { logTail = (logSink && logSink.textContent) || undefined; } catch {}
+  return core.buildDiagnosticReport({
+    browser: b.label,
+    platform: navigator.platform || undefined,
+    webSerial: "serial" in navigator,
+    catalogVersion: state.catalog && state.catalog.fw_train,
+    chip: state.chip,
+    chipDesc: state.chipDesc,
+    mac: state.mac ? core.formatMac(state.mac) : undefined,
+    flashBytes: state.flashBytes || undefined,
+    usb,
+    baud: state.usedBaud,
+    logTail,
+    ...extra,
+  });
+}
+
+function diagnosticReportButton(extra) {
+  const btn = el("button", "ghost small flash-report-btn", "Copy a diagnostic report");
+  btn.addEventListener("click", async () => {
+    const report = gatherDiagnostics(typeof extra === "function" ? extra() : (extra || {}));
+    try {
+      await navigator.clipboard.writeText(report);
+      btn.textContent = "Copied ✓ — paste it into a Discussion for help";
+    } catch {
+      // No clipboard permission — show it to select by hand.
+      const ta = el("textarea", "flash-report-ta");
+      ta.value = report; ta.readOnly = true; ta.rows = 12;
+      btn.replaceWith(ta); ta.focus(); ta.select();
+    }
+  });
+  return btn;
+}
+
+// Add a bridge-chip driver hint to an error card when the board uses a
+// USB-serial bridge that may be missing its OS driver (native-USB boards
+// return null → nothing shown).
+function appendDriverHint(box, pinfo) {
+  const bridge = pinfo && core.usbBridgeInfo(pinfo.usbVendorId, pinfo.usbProductId);
+  if (!bridge) return;
+  const d = el("p", "flash-note flash-note-soft");
+  d.append(document.createTextNode(bridge.note + " "));
+  const a = el("a", "start-link", `Get the ${bridge.name} driver →`);
+  a.href = bridge.driverUrl; a.target = "_blank"; a.rel = "noopener noreferrer";
+  d.append(a);
+  box.append(d);
 }
 
 // ── chunked flash reads (the stall fix) ─────────────────────────────────────
@@ -1263,6 +1361,19 @@ function flashError(e, opts) {
     setPhase(phaseConnect());
   });
   row.append(retry);
+  // Escalate: if a plain install failed, offer a full-erase clean install as
+  // the next self-heal step (reconnect → the rescue flow, which also restores
+  // a backup if one exists). Skip when we're already erasing/rescuing.
+  if (!opts.rescue && !opts.eraseAll) {
+    const clean = el("button", "ghost", "Clean install (full erase) →");
+    clean.addEventListener("click", async () => {
+      await onDisconnect(true);
+      state.resumeRescue = true;
+      setPhase(phaseConnect());
+    });
+    row.append(clean);
+  }
+  row.append(diagnosticReportButton(() => ({ stage: "install", error: msg })));
   box.append(row);
   const raw = el("details", "flash-rawerr");
   raw.append(el("summary", null, "Technical details"));
@@ -1867,6 +1978,24 @@ function phaseMonitor(port, opts = {}) {
   const con = el("pre", "flash-console flash-console-tall");
   box.append(con);
 
+  // Boot-log diagnosis: when a fatal signature scrolls past (brownout, panic,
+  // no bootable app…), translate it into a plain-language cause + fix instead
+  // of leaving the user to read raw panic text. Informational — the fix text
+  // says what to do, and the "back to the flasher" button below re-flashes.
+  const diagPanel = el("div", "flash-diag flash-hidden");
+  box.append(diagPanel);
+  let diagnosedSig = null;
+  function maybeDiagnose(text) {
+    const d = core.diagnoseBootLog(text);
+    if (!d || d.signature === diagnosedSig) return;
+    diagnosedSig = d.signature;
+    diagPanel.innerHTML = "";
+    diagPanel.classList.remove("flash-hidden");
+    diagPanel.append(el("div", "flash-diag-emoji", d.action === "power" ? "🔌" : "🩺"));
+    diagPanel.append(el("h3", null, d.means));
+    diagPanel.append(el("p", "muted", d.fix));
+  }
+
   const chips = el("div", "flash-mon-chips");
   MONITOR_CMDS.forEach(([ch, label]) => {
     const b = el("button", "ghost small", `${label} (${ch})`);
@@ -2039,6 +2168,7 @@ function phaseMonitor(port, opts = {}) {
           setStatus("✓ It’s talking — your Canary is alive.");
           confettiBurst();
         }
+        maybeDiagnose(buf);   // fatal signature → plain-language cause + fix
       }
     } catch { return "error"; }
     return "ended";
