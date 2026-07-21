@@ -1,0 +1,218 @@
+name: Desktop Flasher — build & release
+
+# Builds the native SecuraCV Flasher (Tauri) and publishes a GitHub release
+# with a universal macOS .dmg, Linux .AppImage/.deb, and the self-update
+# manifest. This is the "generates itself" half of the app: tag a version and
+# the installers appear, signed, on the release page.
+#
+#   • push a tag `flasher-v0.1.0`     → build + publish a release
+#   • Actions ▸ Run workflow (default) → build only, artifacts on the run
+#   • Run workflow with dry_run=false  → build + publish a dev release
+
+on:
+  push:
+    tags:
+      - "flasher-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only, don't publish a release"
+        type: boolean
+        default: true
+
+concurrency:
+  group: desktop-flasher-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # esptool's Rust sibling. Pinned so a board is only ever written by a flash
+  # engine we chose on purpose. Bump deliberately.
+  ESPFLASH_VERSION: "3.3.0"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+            rust-targets: ""
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide whether to publish
+        id: plan
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event.inputs.dry_run }}" == "false" ]]; then
+            echo "tag=flasher-v0.0.0-dev.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libssl-dev \
+            libudev-dev \
+            pkg-config \
+            build-essential \
+            file wget curl unzip
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Tauri CLI
+        working-directory: desktop
+        run: npm install
+
+      # ── the bundled flash engine ───────────────────────────────────────────
+      # Fetch the prebuilt espflash for each arch and drop it where Tauri looks
+      # for a sidecar: binaries/espflash-<target-triple>. On macOS we lipo the
+      # two arches into one universal binary so a single .app runs on Apple
+      # Silicon and Intel alike. Falls back to `cargo install` if the release
+      # asset naming ever changes, so the pipeline can't silently break.
+      - name: Bundle espflash sidecar (macOS universal)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
+          mkdir -p desktop/src-tauri/binaries
+          fetch() {
+            local triple="$1" out="$2"
+            if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+              rm -rf ex && unzip -q e.zip -d ex
+              cp "$(find ex -type f -name espflash | head -n1)" "$out"
+            else
+              echo "prebuilt for $triple not found; cargo install fallback"
+              cargo install espflash --version "$ESPFLASH_VERSION" --locked --target "$triple" --root "cargo-$triple"
+              cp "cargo-$triple/bin/espflash" "$out"
+            fi
+            chmod +x "$out"
+          }
+          fetch aarch64-apple-darwin espflash-arm64
+          fetch x86_64-apple-darwin espflash-x64
+          lipo -create -output desktop/src-tauri/binaries/espflash-universal-apple-darwin espflash-arm64 espflash-x64
+          chmod +x desktop/src-tauri/binaries/espflash-universal-apple-darwin
+          file desktop/src-tauri/binaries/espflash-universal-apple-darwin
+
+      - name: Bundle espflash sidecar (Linux x86_64)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/esp-rs/espflash/releases/download/v${ESPFLASH_VERSION}"
+          triple="x86_64-unknown-linux-gnu"
+          out="desktop/src-tauri/binaries/espflash-$triple"
+          mkdir -p desktop/src-tauri/binaries
+          if curl -fL "$base/espflash-$triple.zip" -o e.zip 2>/dev/null; then
+            unzip -q e.zip -d ex
+            cp "$(find ex -type f -name espflash | head -n1)" "$out"
+          else
+            cargo install espflash --version "$ESPFLASH_VERSION" --locked --root cargo-linux
+            cp cargo-linux/bin/espflash "$out"
+          fi
+          chmod +x "$out"
+          file "$out"
+
+      # ── app icons ──────────────────────────────────────────────────────────
+      - name: Generate app icons
+        working-directory: desktop
+        # source.png is committed; regenerate it so the icon stays reproducible,
+        # then let the Tauri CLI derive the .icns/.ico/png set the bundler needs.
+        run: |
+          ( cd src-tauri/icons && python3 generate_source.py )
+          npx --yes @tauri-apps/cli icon src-tauri/icons/source.png
+
+      # ── signing key for self-update ────────────────────────────────────────
+      # If the repo has a persistent signing key, use it (self-update works
+      # across releases). If not, mint an ephemeral one so the build still
+      # succeeds and produces valid installers — and patch the app's embedded
+      # public key to match, so that build is internally consistent.
+      - name: Ensure updater signing key
+        working-directory: desktop
+        shell: bash
+        env:
+          SECRET_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SECRET_KEY:-}" ]; then
+            echo "Using repository signing key."
+          else
+            echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
+            npx --yes @tauri-apps/cli signer generate -w "$RUNNER_TEMP/flasher.key" --password ""
+            {
+              echo "TAURI_SIGNING_PRIVATE_KEY<<KEOF"
+              cat "$RUNNER_TEMP/flasher.key"
+              echo "KEOF"
+            } >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
+            python3 -c 'import json,sys; p="src-tauri/tauri.conf.json"; c=json.load(open(p)); c["plugins"]["updater"]["pubkey"]=sys.argv[1].strip(); json.dump(c,open(p,"w"),indent=2); print("patched embedded pubkey for ephemeral build")' "$(cat "$RUNNER_TEMP/flasher.key.pub")"
+          fi
+
+      - name: Build & release
+        id: tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY || secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          tagName: ${{ steps.plan.outputs.tag }}
+          releaseName: "SecuraCV Flasher __VERSION__"
+          releaseBody: |
+            The SecuraCV Lab as a native app — flash a Canary with no browser and no terminal.
+
+            **macOS:** it isn't from the App Store, so first launch needs one command —
+            see the install steps in `desktop/INSTALL.md`. Universal build: one download
+            for Apple Silicon and Intel.
+
+            **Linux:** grab the `.AppImage` (self-updating) or the `.deb`.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      - name: Upload build artifacts (dry run)
+        if: steps.plan.outputs.publish == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flasher-${{ matrix.platform }}
+          if-no-files-found: warn
+          path: |
+            desktop/src-tauri/target/**/release/bundle/**/*.dmg
+            desktop/src-tauri/target/**/release/bundle/**/*.app
+            desktop/src-tauri/target/**/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/**/release/bundle/**/*.deb
