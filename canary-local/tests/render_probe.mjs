@@ -15,7 +15,7 @@
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, dirname, resolve } from "node:path";
+import { extname, join, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -42,7 +42,8 @@ const server = createServer(async (req, res) => {
   }
   try {
     const file = join(ROOT, path);
-    if (!resolve(file).startsWith(ROOT)) throw new Error("outside root");
+    const rp = resolve(file);
+    if (rp !== ROOT && !rp.startsWith(ROOT + sep)) throw new Error("outside root");
     const body = await readFile(file);
     res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
     res.end(body);
