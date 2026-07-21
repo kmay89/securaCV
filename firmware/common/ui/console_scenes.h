@@ -39,6 +39,22 @@ struct TrustInfo {
 
 static const int TRUST_INNER = 52;  // interior columns; total width 54
 
+// THE Canary logo — one silhouette, single-sourced, so the device you plug in
+// and the site it sends you to (securacv.com/canary) show the identical bird.
+// Each line is 7-bit and exactly 5 columns wide, so the three stack in a clean
+// vertical column at any centre. Change it here and every scene follows.
+static const char* const CANARY_LOGO[3] = { ",___,", "(o.o)", "/)_/)" };
+
+// Draw the logo centred in the panel interior, moss-green (renders on every
+// terminal; colour is a bonus, never the meaning).
+inline void draw_canary(const Renderer& r, int inner) {
+  char line[128];
+  for (int i = 0; i < 3; ++i) {
+    center_into(line, sizeof line, CANARY_LOGO[i], inner - 2);
+    row(r, inner, COL_MOSS, line);
+  }
+}
+
 // The title block + verifiable identity, drawn as one framed panel.
 inline void trust_card(const Renderer& r, const TrustInfo& t) {
   const int inner = TRUST_INNER;
@@ -46,12 +62,7 @@ inline void trust_card(const Renderer& r, const TrustInfo& t) {
 
   hrule(r, "SecuraCV  -  Canary witness", inner, 0);
 
-  // A tiny 7-bit canary (renders on every terminal), centred + moss-green.
-  static const char* const art[3] = { " ,_,", "(o.o)", "/) )\\" };
-  for (int i = 0; i < 3; ++i) {
-    center_into(line, sizeof line, art[i], inner - 2);
-    row(r, inner, COL_MOSS, line);
-  }
+  draw_canary(r, inner);  // the shared logo (see CANARY_LOGO)
   row_blank(r, inner);
 
   // Identity — plain rows.
@@ -116,23 +127,21 @@ inline void welcome_card(const Renderer& r, const char* device_id,
   char line[128];
 
   hrule(r, "Hi, I'm your Canary!", inner, 0);
-  static const char* const art[3] = { " ,___,", "(o.o) chirp!", "/)_/)" };
-  for (int i = 0; i < 3; ++i) {
-    center_into(line, sizeof line, art[i], inner - 2);
-    row(r, inner, COL_MOSS, line);
-  }
+  draw_canary(r, inner);                       // the shared logo (see CANARY_LOGO)
+  center_into(line, sizeof line, "chirp!", inner - 2);
+  row(r, inner, COL_MOSS, line);               // a little hello, centred under the bird
   row_blank(r, inner);
-  row(r, inner, COL_NONE, "I make tamper-proof records of what I see, so");
-  row(r, inner, COL_NONE, "nobody can change the story later.");
+  row(r, inner, COL_NONE, "I make tamper-proof records of what I see -");
+  row(r, inner, COL_NONE, "so nobody can change the story later.");
   row_blank(r, inner);
-  row(r, inner, COL_TEXT, "See everything I can do:");
-  rowf(r, inner, COL_BRAND, "  %s", help_url ? help_url : "securacv.com/canary");
-  if (device_id && *device_id) {
-    row_blank(r, inner);
-    rowf(r, inner, COL_DIM, "  (that's me: %s)", device_id);
-  }
+  // The one thing to do, made obvious with an arrow — works for a first-timer.
+  row(r, inner, COL_TEXT, "New here? Everything I do, explained:");
+  rowf(r, inner, COL_BRAND, "  -> %s", help_url ? help_url : "securacv.com/canary");
+  if (device_id && *device_id)
+    rowf(r, inner, COL_DIM, "     (that's me: %s)", device_id);
   row_blank(r, inner);
-  row(r, inner, COL_DIM, "Press h for commands, or l for my ID card.");
+  // ...and a few keys for the curious and the devs, on one tidy line.
+  row(r, inner, COL_DIM, "Or press a key:  h help   l ID card   t self-test");
   hrule(r, "", inner, 2);
 }
 

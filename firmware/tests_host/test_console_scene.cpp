@@ -274,8 +274,28 @@ static void test_welcome_card() {
   CHECK(sk2.s.find("\x1b[") != std::string::npos); // colour at the confirmed tier
 }
 
+static void test_logo_is_single_sourced() {
+  // The Canary logo is ONE silhouette across every scene (and matches the site).
+  // Render both cards and assert each logo row appears in both — so nobody can
+  // quietly re-draw a different bird in one place and let them drift apart.
+  Sink wc, tc;
+  Renderer rw{collect, &wc, caps_ascii()};
+  Renderer rt{collect, &tc, caps_ascii()};
+  welcome_card(rw, "canary-7fA3", "https://securacv.com/canary");
+  trust_card(rt, sample(KEY_A, 8));
+  for (const char* row : CANARY_LOGO) {
+    CHECK(wc.s.find(row) != std::string::npos);
+    CHECK(tc.s.find(row) != std::string::npos);
+  }
+  // The canonical bird is exactly these three 5-wide rows.
+  CHECK(std::string(CANARY_LOGO[0]) == ",___,");
+  CHECK(std::string(CANARY_LOGO[1]) == "(o.o)");
+  CHECK(std::string(CANARY_LOGO[2]) == "/)_/)");
+}
+
 int main() {
   test_welcome_card();
+  test_logo_is_single_sourced();
   test_randomart_walk();
   test_randomart_all_zero();
   test_ascii_tier_is_safe();
