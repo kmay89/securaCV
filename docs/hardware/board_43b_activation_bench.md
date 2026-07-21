@@ -122,27 +122,27 @@ flow cleanly; if your bus runs another standard rate, change `CAN_BITRATE_DEFAUL
 
 ## 4. Evidence vault (flash persistence)
 
-Built and complete (`src/fleet/journal_store.cpp`), held off by
+Built and complete (`src/fleet/journal_store.cpp`), **compile-verified in CI**
+by the `canary-display-dash-vault` env, held off in the default build by
 `FEATURE_TIME_MACHINE_PERSIST 0` in
 [`configs/canary-display/dash/config.h`](../../firmware/configs/canary-display/dash/config.h).
 
-**Activate:**
-1. Add `LittleFS` to `lib_deps` for the display envs in `canary-display.ini`
-   (and to the arduino-cli lib install step in `.github/workflows/firmware.yml`).
-2. Confirm the partition table has a `spiffs`/LittleFS data partition. If absent,
-   `LittleFS.begin(formatOnFail=true)` fails **safe** (RAM-only) — add a data
-   partition to get real persistence.
-3. Flip `FEATURE_TIME_MACHINE_PERSIST 1`.
+**Already done in-repo (no bench action needed):**
+- **Deps:** none to add — `LittleFS` ships with the arduino-esp32 framework and
+  `ArduinoJson` is already a dash `lib_dep`. The vault env carries no extra deps.
+- **Partition:** the stock `default_16MB.csv` the dash builds against already has
+  a ~3 MB `spiffs` data partition (what `LittleFS` mounts). If it were ever
+  absent, `LittleFS.begin(formatOnFail=true)` fails **safe** (RAM-only).
+- **Emulator:** resolved. `journal_store.cpp` is gated `!defined(__EMSCRIPTEN__)`,
+  so the wasm build always selects the no-op stubs and the `canary-local` dist
+  gate stays green **with no rebuild**, even after the flag is flipped.
 
-**⚠ Emulator caveat:** the emulator's dash build compiles `src/fleet/*` with the
-dash config, so enabling this flag makes it try to compile `LittleFS` under
-emscripten. Either keep the LittleFS body gated so the emulator shim path stays
-selected, or the `canary-local` wasm build/dist gate will break — sort this
-before flipping the flag, and rebuild `canary-local/emulator/dist/*.js` (needs
-`emcc`) if the wasm changes.
-
-**Pass:** trigger a few events, power-cycle, and confirm the journal reloads
-(the proof-carrying `chain_raw` survives). Soak-watch flash wear.
+**Activate (one code change + one bench pass):**
+1. Flip `FEATURE_TIME_MACHINE_PERSIST 1` in the dash config (byte-neutral to the
+   emulator, per above).
+2. **Pass:** trigger a few events, power-cycle, and confirm the journal reloads
+   (the proof-carrying `chain_raw` survives). Soak-watch flash wear. Then move
+   the capability-map row to **Driven**.
 
 ---
 

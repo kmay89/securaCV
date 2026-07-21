@@ -1,15 +1,22 @@
 // LittleFS persistence for the time-machine journal (spec §7).
 //
-// Gated by FEATURE_TIME_MACHINE_PERSIST — off by default, flipped on after a
-// flash-write validation at bench (like FEATURE_CHIME). The whole LittleFS +
-// JSON body is behind the gate because the bundled LittleFS library isn't on
-// the default PlatformIO include path here; enabling persistence at bench may
-// need `LittleFS` added to the env's lib_deps (see the bench runbook §F7).
+// Gated by FEATURE_TIME_MACHINE_PERSIST — off in the default build, flipped on
+// after a flash-write validation at bench (like FEATURE_CHIME). CI compile-
+// verifies the LittleFS + JSON body via the dedicated `canary-display-dash-vault`
+// env (which sets the flag) while the default dash / playground builds stay
+// byte-identical (this TU is inert no-op stubs without the flag).
+//
+// The `!defined(__EMSCRIPTEN__)` clause keeps the emulator safe: the wasm build
+// compiles src/fleet/*.cpp (this file included) but has no LittleFS/flash, so
+// even with the flag on it falls to the no-op stubs — flipping the flag never
+// perturbs the wasm dist. LittleFS ships with the arduino-esp32 framework;
+// ArduinoJson is already a dash lib_dep (see the bench runbook §F7).
 #include "canary/fleet/journal_store.h"
 
 #include "canary/config.h"
 
-#if defined(FEATURE_TIME_MACHINE_PERSIST) && FEATURE_TIME_MACHINE_PERSIST
+#if defined(FEATURE_TIME_MACHINE_PERSIST) && FEATURE_TIME_MACHINE_PERSIST && \
+    !defined(__EMSCRIPTEN__)
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -87,7 +94,8 @@ void rewrite_from_ring() {
 }  // namespace
 
 bool journal_store_init() {
-#if defined(FEATURE_TIME_MACHINE_PERSIST) && FEATURE_TIME_MACHINE_PERSIST
+#if defined(FEATURE_TIME_MACHINE_PERSIST) && FEATURE_TIME_MACHINE_PERSIST && \
+    !defined(__EMSCRIPTEN__)
   // format-on-fail is safe: LittleFS only ever touches its own `spiffs` data
   // partition, never the app/OTA slots.
   if (!LittleFS.begin(/*formatOnFail=*/true)) {

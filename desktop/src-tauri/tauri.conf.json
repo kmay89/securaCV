@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SecuraCV Flasher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.securacv.flasher",
   "build": {
     "frontendDist": "../src",
@@ -45,8 +45,8 @@
       "dmg": {
         "background": "dmg/background.png",
         "windowSize": { "width": 660, "height": 460 },
-        "appPosition": { "x": 175, "y": 205 },
-        "applicationFolderPosition": { "x": 485, "y": 205 }
+        "appPosition": { "x": 175, "y": 225 },
+        "applicationFolderPosition": { "x": 485, "y": 225 }
       }
     },
     "linux": {

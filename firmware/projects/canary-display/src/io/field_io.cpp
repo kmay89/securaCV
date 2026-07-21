@@ -9,6 +9,7 @@
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <config.h>
 #include <string.h>
 
@@ -47,6 +48,14 @@ uint32_t s_next_poll_ms = 0;
 fio::Debounce s_di0, s_di1;
 fio::SirenController s_siren;
 bool s_siren_driving = false;
+bool s_armed = false;  // opt-in: the siren stays silent until the user arms it
+
+// Siren-arm persistence. Its own NVS namespace/key (not the glass settings
+// blob) keeps this field-I/O concern self-contained on the 4.3B — no versioned
+// blob migration, and nothing leaks into the watch/plain-dash/emulator builds
+// that don't compile this TU.
+constexpr const char* ARM_NS  = "scv-field";
+constexpr const char* ARM_KEY = "siren_arm";
 
 // A contact just went active -> report it as an UNSIGNED local event.
 void report_contact(const char* event_name, uint32_t now) {
@@ -61,8 +70,28 @@ void field_io_begin(const char* self_id) {
   s_di1 = fio::Debounce{};
   s_siren = fio::SirenController{};
   s_siren_driving = false;
+  // Restore the household's arm choice (default disarmed if never set / no NVS).
+  Preferences p;
+  if (p.begin(ARM_NS, /*readOnly=*/true)) {
+    s_armed = p.getBool(ARM_KEY, false);
+    p.end();
+  } else {
+    s_armed = false;
+  }
   s_next_poll_ms = 0;
   s_ready = true;
+}
+
+bool field_io_armed() { return s_armed; }
+
+void field_io_set_armed(bool armed) {
+  s_armed = armed;
+  Preferences p;
+  if (p.begin(ARM_NS, /*readOnly=*/false)) {
+    p.putBool(ARM_KEY, armed);
+    p.end();
+  }
+  log_line("FIELD", armed ? "siren armed" : "siren disarmed");
 }
 
 void field_io_loop(uint32_t now) {
@@ -83,10 +112,13 @@ void field_io_loop(uint32_t now) {
   // A failed read reports nothing (expander_read_inputs is fail-closed) — a bus
   // glitch must never manufacture a contact edge.
 
-  // ── Output: drive DO0 as a siren while the fleet stands in an unacked alert.
+  // ── Output: drive DO0 as a siren while the fleet stands in an unacked alert
+  // AND the user has armed it. Disarmed, the alert still shows/journals; only
+  // the physical output stays silent (field_io_logic treats !armed as resolved).
   const bool alerting = (int)the_fleet().worst(now) >= (int)Sev::Alert;
   const bool acked = the_fleet().ack_active(now);
-  const bool drive = s_siren.update(now, alerting, acked, SIREN_MAX_ON_MS);
+  const bool drive =
+      s_siren.update(now, alerting, acked, SIREN_MAX_ON_MS, s_armed);
   if (drive != s_siren_driving) {  // only touch the bus on a change
     canary::hal::expander_od_set(ISO_OUT_BIT_DO0, /*sink=*/drive);
     s_siren_driving = drive;
