@@ -44,6 +44,26 @@ REPO_SLUG = "kmay89/securaCV"
 RELEASE_LATEST = f"https://github.com/{REPO_SLUG}/releases/latest/download"
 MANIFEST_URL = f"{RELEASE_LATEST}/manifest-flash.json"
 
+# The Ed25519 release public key the device pins, single-sourced so the browser
+# flasher verifies signatures against the SAME key (docs/firmware_ota.md).
+OTA_KEY_HEADER = REPO / "firmware/common/ota/src/ota_release_key.h"
+
+
+def read_release_pubkey() -> str:
+    """Extract SECURACV_OTA_RELEASE_PUBKEY[32] from the firmware header as hex.
+
+    Returns 64 hex chars (all-zero if the signing ceremony hasn't happened —
+    the flasher treats that as unprovisioned and verifies by checksum only).
+    """
+    text = OTA_KEY_HEADER.read_text(encoding="utf-8") if OTA_KEY_HEADER.exists() else ""
+    m = re.search(r"SECURACV_OTA_RELEASE_PUBKEY\[32\]\s*=\s*\{(.*?)\}", text, re.S)
+    if not m:
+        return "00" * 32
+    bytes_ = re.findall(r"0x([0-9a-fA-F]{2})", m.group(1))
+    if len(bytes_) != 32:
+        return "00" * 32
+    return "".join(b.lower() for b in bytes_)
+
 # esptool's chip identity strings (ESPLoader.chip.CHIP_NAME), keyed by the
 # PlatformIO board id. This is the ONE place board→silicon is spelled out.
 BOARD_CHIP = {
@@ -308,6 +328,11 @@ def main() -> None:
         "repo": REPO_SLUG,
         "release_latest": RELEASE_LATEST,
         "manifest_url": MANIFEST_URL,
+        # The pinned Ed25519 release public key (from the firmware header) so
+        # the flasher verifies image signatures against the same key the device
+        # does. All-zero until the signing ceremony → flasher falls back to
+        # checksum-only and says so.
+        "release_pubkey": read_release_pubkey(),
         "flash_baud": 921600,
         "console_baud": 115200,
         "chips": {c: CHIP_INFO[c] for c in sorted(chips_used)},

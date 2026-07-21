@@ -382,7 +382,8 @@ jobs:
             --repo "${{ github.repository }}" \
             --tag "${{ github.ref_name }}" \
             --out-dir /tmp/release \
-            --notes "$NOTES"
+            --notes "$NOTES" \
+            --signing-key /tmp/releaser.pem
           # sha256sums.txt was written by the assemble step BEFORE these assets
           # existed; regenerate it so the advertised checksum set covers the
           # factory images and manifest-flash.json too (nothing published here
