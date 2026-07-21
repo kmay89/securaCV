@@ -24,8 +24,8 @@ row cites the file that backs the claim.
 | 4.3" RGB565 800×480 panel | ✅ | **Driven** | The glass itself |
 | GT911 5-pt cap touch | ✅ | **Driven** | Tap = wake, long-press = acknowledge |
 | CH422G I²C IO expander | ✅ | **Driven** | Owns panel control + isolated field IO |
-| 2× isolated digital **inputs** (DI0/DI1) | ✅ | **Driven (bench only)** | Wire in a real PIR / reed / tamper switch → **signed event** |
-| 2× isolated open-drain **outputs** (DO0/DO1, ≤450 mA) | ✅ | **Driven (bench only)** | Drive a siren/strobe/door-strike — the dash can *act*, not just watch |
+| 2× isolated digital **inputs** (DI0/DI1) | ✅ | **Driven (runtime, 4.3B)** | Wire in a real PIR / reed / tamper switch → **unsigned local event** (the dash can't sign) |
+| 2× isolated open-drain **outputs** (DO0/DO1, ≤450 mA) | ✅ | **Driven (runtime, 4.3B)** | DO0 sirens on an unacked alert — the dash can *act*, not just watch |
 | I²C sensor header (VEML7700 / BH1750 / VL53L0X / MPR121) | ✅ | **Driven (bench only)** | Ambient light, ToF beam-gap, cap-touch coupons |
 | WiFi / MQTT / mDNS / OTA / web mirror | ✅ | **Driven** | Fleet ingest + self-heal |
 | BLE (passive NimBLE scan) | ✅ | **Driven** | Off-grid "Chirp" fallback |
@@ -86,25 +86,35 @@ is pull-and-walk-away tamperable; internal flash isn't).
 
 ---
 
-## 2. Isolated DI/DO — promote from bench to the witness runtime
+## 2. Isolated DI/DO — promoted into the witness runtime (4.3B)
 
-**Status:** Driven, but only inside the dev playground
-(`src/playground/playground.cpp` via `expander_read_inputs()` /
-`expander_od_set()` in `src/hal/display_dash.cpp:166-204`). The production
-witness runtime never reads DI or drives DO.
+**Status:** Driven in the production runtime (gated on `HAS_ISOLATED_IO`, so 4.3B
+only), not just the dev playground.
 
-**Why it matters:** these are the board's cheapest, already-working superpower.
-- **DI0 / DI1** (optocoupled, 5–36 V): wire a PIR, a door/window reed, or a
-  case-tamper switch and it becomes a first-class **signed event** in the same
-  chain as the camera Canaries — the dash stops being read-only.
-- **DO0 / DO1** (≤450 mA open-drain): drive a local **siren, strobe, or door
-  strike**. The dash gains an *actuation* voice (local alarm on Tier-1 event, or
-  a relay for a maglock) instead of only showing.
+**Crucial provenance correction:** an earlier draft of this doc said a DI contact
+becomes a "signed event." **It cannot** — the dash has *no signing identity*. It
+verifies others' Ed25519 chains and TOFU-pins their keys (`src/trust.cpp`) but
+holds no private key and never calls the signer; its own MQTT health payload
+says so in plain text ("a display has no witness key"). So a contact read is an
+honestly **UNSIGNED local event** (`signed_flag=false`), on the same footing as
+the fleet model's `on_chirp`/`on_beacon` observations — never a forged witness.
 
-**Activation:** add a small production subsystem (gated, e.g. `FEATURE_FIELD_IO`)
-that maps DI edges → `fleet.on_event(...)` and Tier-1 escalations → a bounded DO
-pulse, reusing the existing expander helpers. Bench-validate optocoupler polarity
-(the `pins.h` DO polarity is VERIFY-tagged) before trusting the actuation path.
+**Shipped in this build (`src/io/field_io.cpp`, `field_io_logic.h`):**
+- **DI0 / DI1** (optocoupled, active-LOW, fail-closed read): a debounced edge →
+  `the_fleet().on_event(self_id, "door_contact"/"tamper_contact", signed_flag=false)`.
+  `tamper_contact` classifies as `Sev::Tamper` (can sound the siren); `door_contact`
+  as `Sev::Notice`. Shows on-glass and journals, with no forged provenance.
+- **DO0** (≤450 mA open-drain): a bounded **siren** — driven while the fleet's
+  worst severity is an unacked alert, released on ack/all-clear, and hard-capped
+  at 5 min so a standing alert can't blare forever (re-arms on clear/ack). The
+  debounce + bounded-siren decisions are the host-tested pure core.
+- Wired into `main.cpp` setup/loop behind `HAS_ISOLATED_IO`; byte-neutral to the
+  emulator (its dash build uses the non-B pins, which don't declare the flag).
+
+**Remaining to go live:** bench-validate the optocoupler DI polarity and the DO
+sink polarity (both VERIFY-tagged in `pins.h`) on real hardware, and confirm the
+input-poll's brief expander direction-flip causes no backlight flicker. An opt-in
+on-glass "arm siren" toggle is a natural follow-up.
 
 ---
 
@@ -273,7 +283,9 @@ every activation above:
    to then it lands as compile-verified, bench-pending firmware.
 
 **Bottom line:** the board is a full industrial witness gateway. We're driving
-the display, touch, isolated IO (bench), and the radios. The value left on the
-table is: **turn on the evidence vault**, **promote DI/DO into the witness
-runtime**, **bench-validate the RS485/Modbus and CAN/TWAI drivers (both now
-built, off)**, and **verify the RTC/battery silicon** — in that order.
+the display, touch, isolated IO (now in the runtime on the 4.3B), and the radios.
+The value left on the table is: **turn on the evidence vault**, **bench-validate
+the field-I/O polarity and the RS485/Modbus + CAN/TWAI drivers (all built, the
+buses off, field-I/O 4.3B-only)**, and **verify the RTC/battery silicon** — in
+that order. The recurring theme: the code is largely written; a bench session on
+real 4.3B hardware is now the gating step for most of it.

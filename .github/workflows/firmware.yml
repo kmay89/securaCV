@@ -767,6 +767,23 @@ jobs:
           /tmp/can_frame | tee /tmp/can_frame.log
           grep -q "ALL .* PASSED" /tmp/can_frame.log
 
+      - name: Build + run canary-display field-I/O logic host test
+        # The isolated DI/DO promotion's two testable decisions — input
+        # debounce (reject contact bounce / bus glitches) and the bounded siren
+        # controller (drive only while a real unacked alert stands, capped so it
+        # can't blare forever) — live in the pure core (canary/io/field_io_logic.h)
+        # and are verified without a board. The runtime that reads the CH422G and
+        # reports UNSIGNED local contact events is compile-checked by the
+        # canary-display-dash-b env (HAS_ISOLATED_IO).
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_field_io.cpp \
+              -o /tmp/field_io
+          /tmp/field_io | tee /tmp/field_io.log
+          grep -q "ALL .* PASSED" /tmp/field_io.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
