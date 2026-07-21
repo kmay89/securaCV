@@ -143,6 +143,10 @@ function renderProducts() {
   }
   $("pick-sub").textContent = `Images built for your ${state.chip}:`;
 
+  // Preserve any current selection: the manifest loads async and triggers a
+  // second render, which would otherwise wipe out what the user just picked.
+  const selectedId = state.product ? state.product.id : null;
+
   matches.forEach((p) => {
     const ver =
       state.manifest &&
@@ -150,10 +154,11 @@ function renderProducts() {
       state.manifest.products[p.id] &&
       state.manifest.products[p.id].version;
 
+    const isSelected = p.id === selectedId;
     const row = document.createElement("label");
-    row.className = "product";
+    row.className = "product" + (isSelected ? " selected" : "");
     row.innerHTML = `
-      <input type="radio" name="product" value="${p.id}">
+      <input type="radio" name="product" value="${p.id}"${isSelected ? " checked" : ""}>
       <span>
         <span class="p-name">${esc(p.name)}<span class="chip-badge">${esc(p.chip)}</span></span>
         <span class="p-tag">${esc(p.tagline || "")}</span>
@@ -171,6 +176,10 @@ function renderProducts() {
       onProductChosen(p, ver);
     });
     list.appendChild(row);
+
+    // If this row is the restored selection, re-sync the flash button — the
+    // version may have just arrived with the manifest.
+    if (isSelected) onProductChosen(p, ver);
   });
 }
 

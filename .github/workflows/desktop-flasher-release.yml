@@ -24,6 +24,11 @@ concurrency:
   group: desktop-flasher-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default; the build job elevates to contents: write
+# because it publishes the release and uploads the installers.
+permissions:
+  contents: read
+
 env:
   # esptool's Rust sibling. Pinned so a board is only ever written by a flash
   # engine we chose on purpose. Bump deliberately.
@@ -42,6 +47,16 @@ jobs:
             args: ""
             rust-targets: ""
     runs-on: ${{ matrix.platform }}
+
+    # tauri-action creates the GitHub release and uploads the installers.
+    permissions:
+      contents: write
+
+    # Signing vars default from repo secrets; the "Ensure updater signing key"
+    # step overrides them (via $GITHUB_ENV) when it mints an ephemeral key.
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
@@ -83,7 +98,7 @@ jobs:
           targets: ${{ matrix.rust-targets }}
 
       - name: Cache cargo
-        uses: swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
 
@@ -186,8 +201,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY || secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # TAURI_SIGNING_PRIVATE_KEY / _PASSWORD come from job-level env
+          # (repo secrets, or the ephemeral key written to $GITHUB_ENV above).
         with:
           projectPath: desktop
           tagName: ${{ steps.plan.outputs.tag }}

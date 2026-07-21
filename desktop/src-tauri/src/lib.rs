@@ -143,15 +143,24 @@ async fn run_sidecar_capture(app: &AppHandle, args: Vec<String>) -> Result<(i32,
 /// wrong image" guard: the UI only offers products whose `chip` matches.
 #[tauri::command]
 async fn detect_chip(app: AppHandle, port: String) -> Result<String, String> {
-    let (_code, out) = run_sidecar_capture(
+    let (code, out) = run_sidecar_capture(
         &app,
         vec!["board-info".into(), "--port".into(), port],
     )
     .await?;
+    // Check the exit code before parsing: a *failed* board-info can still print
+    // a chip name in its error text, which would otherwise read as a false
+    // positive detection.
+    if code != 0 {
+        return Err(format!(
+            "couldn't read the chip (espflash exit {code}). Put the board in download mode (hold BOOT, tap RESET, release BOOT) and try again.\n\nespflash said:\n{}",
+            out.trim()
+        ));
+    }
     match canonical_chip(&out) {
         Some(chip) => Ok(chip.to_string()),
         None => Err(format!(
-            "couldn't read the chip. Put the board in download mode (hold BOOT, tap RESET, release BOOT) and try again.\n\nespflash said:\n{}",
+            "couldn't recognize the chip from espflash's output:\n{}",
             out.trim()
         )),
     }
@@ -163,6 +172,7 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<String, String> {
 async fn fetch_manifest(manifest_url: String) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Flasher")
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client
@@ -215,8 +225,12 @@ async fn flash(
     // 2) Download it to a temp file. reqwest verifies TLS; GitHub serves the
     //    asset from the signed release the CI published.
     emit(&app, format!("→ downloading {factory_url}"));
+    // The image is a few MB; guard the connect so a dead network fails fast,
+    // but give the transfer itself generous headroom on a slow link.
     let client = reqwest::Client::builder()
         .user_agent("SecuraCV-Flasher")
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
     let bytes = client
@@ -234,8 +248,24 @@ async fn flash(
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let path = std::env::temp_dir().join(format!("securacv-{safe_id}.bin"));
+    // Unique per-run name so concurrent runs (or a stale file owned by another
+    // user) can't collide. `saturating_duration_since` never panics on a skewed
+    // clock.
+    let stamp = std::time::SystemTime::now()
+        .saturating_duration_since(std::time::UNIX_EPOCH)
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("securacv-{safe_id}-{stamp}.bin"));
     std::fs::write(&path, &bytes).map_err(|e| format!("couldn't stage the image: {e}"))?;
+
+    // RAII cleanup: the staged image is removed on every exit path — including an
+    // early return if the sidecar fails to start below.
+    struct TempFileGuard(std::path::PathBuf);
+    impl Drop for TempFileGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _guard = TempFileGuard(path.clone());
     emit(
         &app,
         format!("→ {} bytes staged, writing to the board…", bytes.len()),
@@ -278,7 +308,7 @@ async fn flash(
             _ => {}
         }
     }
-    let _ = std::fs::remove_file(&path);
+    // (the staged image is removed by TempFileGuard on scope exit)
 
     if code == 0 {
         emit(&app, "✓ done — the Canary is rebooting into its new firmware.".into());
