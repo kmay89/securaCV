@@ -78,6 +78,30 @@ test("materialForPart: gaskets force TPU regardless of shell choice", async () =
   assert.strictEqual(materialForPart({ material: "PETG / ASA (PLA indoors)" }, "PETG"), "PETG");
 });
 
+test("partsCost sums required vs optional from BOM rows", async () => {
+  const { partsCost } = await import("../assets/print-guide.js");
+  const rows = [
+    { usd: 14.9, qty: "1", required: true },
+    { usd: 8.5, qty: "1", required: true },
+    { usd: 3.5, qty: "1", required: true },
+    { usd: 2, qty: "4", required: false },       // qty>1 optional
+    { usd: "n/a", qty: "1", required: true },     // unpriced → skipped
+  ];
+  const c = partsCost(rows);
+  assert.ok(Math.abs(c.required - 26.9) < 1e-9, `required=${c.required}`);
+  assert.ok(Math.abs(c.optional - 8) < 1e-9, `optional=${c.optional}`);
+  assert.strictEqual(c.count, 3);
+  assert.deepStrictEqual(partsCost(undefined), { required: 0, optional: 0, count: 0 });
+});
+
+test("tco: Canary is one-time, cloud accrues subscription", async () => {
+  const { tco, CLOUD_CAM } = await import("../assets/print-guide.js");
+  const t = tco({ unitCost: 45, years: 3 });
+  assert.strictEqual(t.canary, 45);
+  assert.strictEqual(t.cloud, CLOUD_CAM.hardware + CLOUD_CAM.monthly * 36); // 40 + 288
+  assert.ok(t.cloud > t.canary, "cloud TCO exceeds a one-time Canary over 3y");
+});
+
 test("slicerConfigIni: importable config matches the shown settings", async () => {
   const { slicerConfigIni } = await import("../assets/print-guide.js");
   const petg = slicerConfigIni({ material: "PETG" });
