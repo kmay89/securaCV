@@ -620,8 +620,12 @@ export function buildEnclosureLab(encData, deviceId) {
         const a = document.createElement("a");
         a.href = url;
         a.download = `securacv-canary-${lab.shellMaterial.toLowerCase()}-${LAYER_MM}mm.ini`;
+        // append + async revoke: Firefox/Safari need the anchor in the DOM and
+        // the object URL alive until the download has actually kicked off.
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 100);
       });
       dlRow.append(cfgBtn, el("span", "muted est-slice-note",
         "for PrusaSlicer / OrcaSlicer / SuperSlicer (import as a config). " +
