@@ -13,6 +13,16 @@
 // configs/canary-vision/<flavor>/config.h.
 #include <config.h>
 
+// -------------------- Fleet-link presence beacon (BLE) --------------------
+// Advertise-only NimBLE presence beacon (src/net/fleet_beacon_adv.cpp) so a
+// canary-display finds this witness directly over BLE — no broker, no shared
+// WiFi. Default ON; guarded so CI can flip it OFF per board with
+// -DFEATURE_FLEET_BEACON=0 if the OTA-slot size guard (0x140000) vetoes the
+// added NimBLE stack. The whole module + its call sites compile out when 0.
+#ifndef FEATURE_FLEET_BEACON
+#define FEATURE_FLEET_BEACON 1
+#endif
+
 // -------------------- Identity --------------------
 // Canonical device type: lowercase, hyphenated — must match HA's
 // DEVICE_TYPE_MODALITY map and the mDNS `dt` TXT key. (HA canonicalises
