@@ -13,6 +13,8 @@
 #include <esp_heap_caps.h>
 
 #include "chirp_scan.h"
+#include "ble_gate.h"       // shared BLE heap gate (chirp + fleet-link)
+#include "beacon_parse.h"   // fleet-link presence beacon wire format
 #include "fleet_instance.h"
 #include "log.h"
 
@@ -23,28 +25,24 @@ namespace {
 constexpr uint32_t BURST_MS  = 4000;   // scan window
 constexpr uint32_t PERIOD_MS = 20000;  // burst cadence while broker down
 
-// Minimum internal, DMA-capable SRAM headroom before standing the BT controller
-// up. With WiFi already associated the two contend for the internal heap the
-// controller draws from (PSRAM cannot back it), and starting it when that pool
-// is thin is what logged "BLE_INIT: Malloc failed" and tripped the interrupt
-// watchdog (the emi.c assert on the controller task) into a reboot loop. These
-// mirror the WAP's host-tested guard (bt_defaults.h; firmware/LESSONS_LEARNED):
-// the controller's largest single init allocation is ~30 KB contiguous — 0x7800,
-// the very size in the "BLE assert emi.c 164 ... 00007800" panic — and the whole
-// stack costs ~55-65 KB, so require a 48 KB contiguous block AND 96 KB total
-// free, both measured on the INTERNAL|DMA pool. Below this we skip the burst:
-// the off-grid chirp is the expendable radio decision (chirp_scan.h); a live
-// glass beats a boot-looping one.
-constexpr size_t BLE_MIN_FREE_BLOCK = 48 * 1024;
-constexpr size_t BLE_MIN_TOTAL_FREE = 96 * 1024;
+// BLE controller heap gate lives in ble_gate.h now (ble_heap_ok()), shared
+// with the fleet-link GATT path; the rationale comment moved there too.
 
+// One queued advert from the NimBLE task to the main loop. A chirp (17-byte
+// mfg) and a fleet-link presence beacon (11-byte mfg) share this ring,
+// discriminated by `kind`; a Beacon carries a decoded BeaconStatus payload.
 struct ChirpMsg {
-  char fp4[5];
-  uint8_t type;
+  enum class Kind : uint8_t { Chirp, Beacon };
+  Kind    kind = Kind::Chirp;
+  char    fp4[5];
+  uint8_t type;                                  // chirp type (Chirp only)
+  canary::fleet::BeaconStatus payload{};         // decoded status (Beacon only)
+  bool    have_status = false;                    // Beacon: payload valid
 };
 
-// Tiny SPSC ring, NimBLE task -> main loop.
-constexpr int QCAP = 8;
+// Tiny SPSC ring, NimBLE task -> main loop. Sized a touch larger now that
+// beacons share it with chirps (a fully off-grid display sees both continuously).
+constexpr int QCAP = 12;
 ChirpMsg s_q[QCAP];
 volatile int s_q_head = 0;
 volatile int s_q_tail = 0;
@@ -58,6 +56,16 @@ uint32_t s_seen = 0;
 
 // Shared advert parser — the callback API differs between NimBLE majors,
 // the payload handling must not.
+void enqueue(const ChirpMsg& msg) {
+  portENTER_CRITICAL(&s_q_mux);
+  const int next = (s_q_head + 1) % QCAP;
+  if (next != s_q_tail) {  // full ring drops newest — adverts repeat anyway
+    s_q[s_q_head] = msg;
+    s_q_head = next;
+  }
+  portEXIT_CRITICAL(&s_q_mux);
+}
+
 void handle_advert(const NimBLEAdvertisedDevice* d) {
   if (!d) return;
   // NimBLE 1.4.x's accessors aren't const-qualified (2.x fixed that), so the
@@ -65,28 +73,38 @@ void handle_advert(const NimBLEAdvertisedDevice* d) {
   NimBLEAdvertisedDevice* dev = const_cast<NimBLEAdvertisedDevice*>(d);
   if (!dev->haveManufacturerData()) return;
   const std::string m = dev->getManufacturerData();
-  if (m.size() != 17) return;
   const uint8_t* p = reinterpret_cast<const uint8_t*>(m.data());
-  if (p[0] != 0xFF || p[1] != 0xFF) return;   // company id 0xFFFF (LE)
-  const uint8_t type = p[2];
-  if (type < 0x01 || type > 0x05) return;
 
-  ChirpMsg msg;
-  static const char H[] = "0123456789abcdef";
-  msg.fp4[0] = H[(p[15] >> 4) & 0xF];
-  msg.fp4[1] = H[p[15] & 0xF];
-  msg.fp4[2] = H[(p[16] >> 4) & 0xF];
-  msg.fp4[3] = H[p[16] & 0xF];
-  msg.fp4[4] = '\0';
-  msg.type = type;
+  // Chirp (17-byte mfg, type 0x01..0x05) — spec §6, unchanged.
+  if (m.size() == 17) {
+    if (p[0] != 0xFF || p[1] != 0xFF) return;   // company id 0xFFFF (LE)
+    const uint8_t type = p[2];
+    if (type < 0x01 || type > 0x05) return;
 
-  portENTER_CRITICAL(&s_q_mux);
-  const int next = (s_q_head + 1) % QCAP;
-  if (next != s_q_tail) {  // full ring drops newest — bursts repeat anyway
-    s_q[s_q_head] = msg;
-    s_q_head = next;
+    ChirpMsg msg;
+    msg.kind = ChirpMsg::Kind::Chirp;
+    static const char H[] = "0123456789abcdef";
+    msg.fp4[0] = H[(p[15] >> 4) & 0xF];
+    msg.fp4[1] = H[p[15] & 0xF];
+    msg.fp4[2] = H[(p[16] >> 4) & 0xF];
+    msg.fp4[3] = H[p[16] & 0xF];
+    msg.fp4[4] = '\0';
+    msg.type = type;
+    enqueue(msg);
+    return;
   }
-  portEXIT_CRITICAL(&s_q_mux);
+
+  // Fleet-link presence beacon (11-byte mfg, type 0x10) — the direct,
+  // broker-free channel. beacon_parse.h validates size/company/type/version;
+  // a mismatch (or a chirp-sized blob above) is silently ignored.
+  if (m.size() == BEACON_MFG_LEN) {
+    ChirpMsg msg;
+    msg.kind = ChirpMsg::Kind::Beacon;
+    if (!beacon_fp4_from_mfg(p, m.size(), msg.fp4)) return;
+    msg.have_status = beacon_parse_status(p, m.size(), msg.payload);
+    enqueue(msg);
+    return;
+  }
 }
 
 // NimBLE's scan-callback API split with its 2.x major, which tracks the
@@ -119,13 +137,10 @@ bool ble_up() {
   if (s_ble_failed) return false;
 
   // Preventive heap gate: never call into the BT controller without a
-  // comfortable internal DMA-capable margin (see BLE_MIN_* above). A thin pool
-  // here is the normal state mid-WiFi-reconnect, so this is a skip-and-retry,
-  // not a failure — re-check next window, when memory may have recovered.
-  if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) <
-          BLE_MIN_FREE_BLOCK ||
-      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) <
-          BLE_MIN_TOTAL_FREE) {
+  // comfortable internal DMA-capable margin (ble_gate.h). A thin pool here is
+  // the normal state mid-WiFi-reconnect, so this is a skip-and-retry, not a
+  // failure — re-check next window, when memory may have recovered.
+  if (!ble_heap_ok()) {
     return false;
   }
 
@@ -166,8 +181,10 @@ bool ble_up() {
 
 }  // namespace
 
-void chirp_scan_loop(uint32_t now_ms, bool broker_down) {
-  // Drain whatever a burst captured (cheap, every pass).
+void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up) {
+  // Drain whatever a scan captured (cheap, every pass). Branch on kind: a
+  // chirp feeds on_chirp (unchanged); a beacon feeds on_beacon with its
+  // decoded status. Both are unsigned/coarse, so neither touches the badge.
   for (;;) {
     ChirpMsg msg;
     bool have = false;
@@ -180,7 +197,12 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down) {
     portEXIT_CRITICAL(&s_q_mux);
     if (!have) break;
     s_seen++;
-    canary::fleet::the_fleet().on_chirp(msg.fp4, msg.type, now_ms);
+    if (msg.kind == ChirpMsg::Kind::Beacon) {
+      canary::fleet::the_fleet().on_beacon(msg.fp4, msg.payload, msg.have_status,
+                                           now_ms);
+    } else {
+      canary::fleet::the_fleet().on_chirp(msg.fp4, msg.type, now_ms);
+    }
   }
 
   if (!broker_down) {
@@ -191,24 +213,36 @@ void chirp_scan_loop(uint32_t now_ms, bool broker_down) {
     return;
   }
 
-  if (s_scanning) return;
-  if ((int32_t)(now_ms - s_next_burst_ms) < 0) return;
+  // Broker down. Two regimes:
+  //  - WiFi also down (fully off-grid): the beacon/chirp is the ONLY channel
+  //    left and there's no WiFi to coexist with, so run a CONTINUOUS passive
+  //    scan (duration 0) rather than duty-cycling — nothing is lost between
+  //    bursts.
+  //  - WiFi up (broker unreachable but associated): keep today's 4 s / 20 s
+  //    bursts so BLE and WiFi don't fight over the shared 2.4 GHz radio.
+  const bool continuous = !wifi_up;
 
-  // Schedule the next window up front so a skipped burst — heap gate not met,
+  if (s_scanning) return;
+  if (!continuous && (int32_t)(now_ms - s_next_burst_ms) < 0) return;
+
+  // Schedule the next window up front so a skipped attempt — heap gate not met,
   // or the stack disabled for this boot — waits a full period instead of
   // re-probing the heap (or re-initializing a failing radio) every loop pass.
   s_next_burst_ms = now_ms + PERIOD_MS;
   if (!ble_up()) return;
 
   s_scanning = true;
-  // Async burst. NimBLE 1.x start() takes seconds + an end callback; 2.x
-  // takes milliseconds + is_continue, with onScanEnd clearing the flag.
+  // Async scan. NimBLE 1.x start() takes seconds + an end callback; 2.x takes
+  // milliseconds + is_continue, with onScanEnd clearing the flag. Duration 0
+  // means "scan until stopped" on both majors (continuous, fully-off-grid).
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
-  if (!NimBLEDevice::getScan()->start(BURST_MS, /*is_continue=*/false)) {
+  const uint32_t dur_ms = continuous ? 0 : BURST_MS;
+  if (!NimBLEDevice::getScan()->start(dur_ms, /*is_continue=*/false)) {
     s_scanning = false;
   }
 #else
-  if (!NimBLEDevice::getScan()->start(BURST_MS / 1000, scan_ended, false)) {
+  const uint32_t dur_s = continuous ? 0 : (BURST_MS / 1000);
+  if (!NimBLEDevice::getScan()->start(dur_s, scan_ended, false)) {
     s_scanning = false;
   }
 #endif

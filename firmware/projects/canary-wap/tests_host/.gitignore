@@ -15,3 +15,4 @@ test_audio_cadence
 test_device_pseudonym_common
 test_gps_coarsen
 test_csi_features
+test_fleet_beacon

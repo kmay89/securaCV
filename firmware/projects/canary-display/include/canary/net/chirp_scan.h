@@ -21,7 +21,13 @@ namespace canary::net {
 
 // Lazy: the BLE stack initializes on the first broker-down burst, not at
 // boot — a healthy display never pays for the radio.
-void chirp_scan_loop(uint32_t now_ms, bool broker_down);
+//
+// wifi_up selects the scan regime while the broker is down: false (fully
+// off-grid, no home WiFi either) runs a CONTINUOUS passive scan since the BLE
+// beacon/chirp is the only channel left and nothing contends for the radio;
+// true (broker unreachable but still on WiFi) keeps the 4 s / 20 s bursts so
+// BLE and WiFi don't fight over the shared 2.4 GHz radio.
+void chirp_scan_loop(uint32_t now_ms, bool broker_down, bool wifi_up);
 
 // Diagnostics: chirps parsed since boot.
 uint32_t chirp_scan_count();

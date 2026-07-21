@@ -183,9 +183,17 @@ bool discovery_find_broker(char* host_out, size_t host_cap,
 
 // ── chirp_scan contract ─────────────────────────────────────────────────
 // Off-grid BLE fallback: scenario wave 2 (documented in the architecture
-// README). Today it reports honestly that no radio is scanning.
-void chirp_scan_loop(uint32_t, bool) {}
+// README). Today it reports honestly that no radio is scanning. The third
+// arg (wifi_up) picks continuous vs bursty scan on silicon; no radio here.
+void chirp_scan_loop(uint32_t, bool, bool) {}
 uint32_t chirp_scan_count() { return 0; }
+
+// ── fleet_link contract (direct BLE GATT pull, FEATURE_FLEET_LINK) ───────
+// On silicon this opens a NimBLE central to a nearby WAP's status service.
+// The emulator has no radio, so these are honest no-ops.
+void fleet_link_loop(uint32_t, bool, bool) {}
+void fleet_link_request(const char*) {}
+uint32_t fleet_link_count() { return 0; }
 
 // ── glass_web contract (the on-device phone mirror, PR #903) ────────────
 // On silicon this serves the display's own page (live mirror + 3D model +

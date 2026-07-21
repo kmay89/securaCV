@@ -1099,3 +1099,30 @@ jobs:
         run: |
           chmod +x firmware/scripts/microcopy_lint.sh
           firmware/scripts/microcopy_lint.sh
+
+  # ──────────────────────────────────────────────────────────────────
+  # Fleet-link host tests (direct BLE presence beacon / GATT pull)
+  #
+  # The pure wire-format + fleet-model logic behind the broker-free
+  # "fleet link" compiles standalone (no NimBLE/Arduino): fleet_beacon.h
+  # on the WAP builds the exact 11-byte manufacturer blob the display's
+  # beacon_parse.h decodes, and FleetModel::on_beacon ingests it. These
+  # round-trip both sides so a future edit can't silently break the
+  # contract. Mirrors the mesh-scout-host-tests job.
+  # ──────────────────────────────────────────────────────────────────
+  fleet-link-host-tests:
+    name: Fleet-Link Host Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build + run WAP fleet-beacon builder host test
+        run: |
+          set -euo pipefail
+          make -C firmware/projects/canary-wap/tests_host test_fleet_beacon
+          firmware/projects/canary-wap/tests_host/test_fleet_beacon
+
+      - name: Build + run display beacon-parse + fleet-model host tests
+        run: |
+          set -euo pipefail
+          make -C firmware/projects/canary-display/tests_host

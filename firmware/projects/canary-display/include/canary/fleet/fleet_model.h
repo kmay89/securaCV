@@ -49,6 +49,22 @@ enum class Link : uint8_t {
   Offline,     // broker said so (retained LWT "offline")
 };
 
+// Decoded fleet-link presence beacon status (canary/net/beacon_parse.h fills
+// this from the 11-byte manufacturer blob). Pure values, no wire types — so
+// the model stays dependency-free and host-testable. battery_pct/health carry
+// their own "present" flags because the wire uses 0xFF as an unknown sentinel.
+struct BeaconStatus {
+  int16_t  battery_pct = -1;
+  bool     battery_present = false;
+  int16_t  health = -1;
+  bool     health_present = false;
+  uint32_t chain_seq = 0;     // low 16 bits of the WAP's chain height
+  bool     chain_present = false;
+  bool     mic_muted = false;
+  bool     degraded = false;
+  bool     tamper = false;
+};
+
 struct Witness {
   bool     used = false;
   char     id[48] = {0};
@@ -70,6 +86,18 @@ struct Witness {
   // Liveness
   Link     link = Link::Unknown;
   uint32_t last_seen_ms = 0;      // any topic activity from this device
+
+  // Direct fleet-link (BLE presence beacon / GATT status) surface. Coarse and
+  // UNSIGNED like a chirp, so these feed liveness + diagnostics but never
+  // trust (badge is never set from a beacon). ble_health is the WAP's own
+  // 0..100 self-report; last_beacon_ms/seen_via_ble mark that we heard it
+  // directly over BLE (no broker, no home WiFi).
+  uint8_t  ble_health = 0;
+  bool     ble_health_present = false;
+  bool     ble_mic_muted = false;
+  bool     ble_degraded = false;
+  uint32_t last_beacon_ms = 0;
+  bool     seen_via_ble = false;
 
   // Last event (edge-triggered attention with per-severity decay)
   char     last_event[40] = {0};
@@ -306,6 +334,70 @@ class FleetModel {
     w->has_event = true;
     w->event_sev = sev;
     push_event(w->id, name, sev, false, now);
+  }
+
+  // Beacon ingest (fleet link): a direct BLE presence beacon from a WAP —
+  // coarse and UNSIGNED, same trust rules as on_chirp (badge untouched, "via
+  // ble" liveness). fp4 = 4 hex chars (the beacon's 2-byte fingerprint
+  // suffix); an unknown suffix becomes a pseudo witness "SCV-XXXX", retired
+  // by on_chain once a real identity claims the suffix (same as on_chirp's
+  // ghosts). When have_status the beacon's battery/health/chain/mic/degraded
+  // fields are stored; tamper rides the same 60 s edge-dedupe as a chirp so a
+  // CONTINUOUS beacon can't spam the log or re-cancel acks.
+  void on_beacon(const char fp4[5], const BeaconStatus& s, bool have_status,
+                 uint32_t now) {
+    Witness* w = nullptr;
+    for (int i = 0; i < MAX_DEVICES; i++) {
+      if (slots_[i].used && fp_suffix_match(slots_[i].fp, fp4)) { w = &slots_[i]; break; }
+    }
+    if (!w) {
+      char pseudo[12];
+      pseudo[0] = 'S'; pseudo[1] = 'C'; pseudo[2] = 'V'; pseudo[3] = '-';
+      for (int i = 0; i < 4; i++) pseudo[4 + i] = fp4[i];
+      pseudo[8] = '\0';
+      w = upsert(pseudo);
+      if (!w) return;
+    }
+    w->last_seen_ms = now;
+    w->last_beacon_ms = now;
+    if (!w->seen_via_ble) dirty_ = true;
+    w->seen_via_ble = true;
+    if (w->link != Link::Online) dirty_ = true;
+    w->link = Link::Online;
+
+    if (have_status) {
+      if (s.battery_present && s.battery_pct >= 0) {
+        w->battery_pct = s.battery_pct;
+        w->battery_present = true;
+      }
+      if (s.health_present && s.health >= 0) {
+        w->ble_health = (uint8_t)(s.health > 100 ? 100 : s.health);
+        w->ble_health_present = true;
+      }
+      if (s.chain_present) {
+        // Only the low 16 bits of the WAP's chain height ride the beacon; keep
+        // it as a diagnostics surface (chain_length), NEVER as trust — the
+        // badge stays exactly where the signed chain-verify path left it.
+        w->chain_length = s.chain_seq;
+      }
+      w->ble_mic_muted = s.mic_muted;
+      w->ble_degraded  = s.degraded;
+      dirty_ = true;
+    }
+
+    // Tamper: edge-dedupe identical to on_chirp ("tamper (ble)", Sev::Tamper).
+    if (have_status && s.tamper) {
+      const char* name = "tamper (ble)";
+      if (str_eq(w->last_event, name) &&
+          (int32_t)(now - w->last_event_ms) < 60000) {
+        return;
+      }
+      copy_str(w->last_event, sizeof(w->last_event), name);
+      w->last_event_ms = now;
+      w->has_event = true;
+      w->event_sev = Sev::Tamper;
+      push_event(w->id, name, Sev::Tamper, false, now);
+    }
   }
 
   void on_chain(const char* id, uint32_t length, Badge verdict, uint32_t now,

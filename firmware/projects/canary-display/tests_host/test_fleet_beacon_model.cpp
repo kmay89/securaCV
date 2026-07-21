@@ -1,0 +1,123 @@
+// Host-side test for FleetModel::on_beacon — the fleet-link ingest. Drives the
+// dependency-free template directly (no Arduino/NimBLE), asserting the same
+// non-trust rules the passive beacon + GATT pull rely on: suffix-match an
+// existing witness, pseudo-create an unknown one, stamp liveness/seen_via_ble,
+// store battery/health/chain, leave the trust badge untouched, and dedupe
+// tamper on a 60 s edge like a chirp.
+
+#include "canary/fleet/fleet_model.h"
+
+#include <cstdio>
+#include <cstring>
+
+using namespace canary::fleet;
+
+static int g_failures = 0;
+#define CHECK(cond, msg)                                            \
+  do {                                                             \
+    if (!(cond)) { printf("FAIL: %s\n", (msg)); ++g_failures; }   \
+    else         { printf("ok:   %s\n", (msg)); }                 \
+  } while (0)
+
+using Model = FleetModel<8, 32>;
+
+// Find a witness by id (linear over the visible slots).
+static const Witness* find(const Model& m, const char* id) {
+  for (int i = 0; i < m.count(); i++) {
+    const Witness* w = m.at(i);
+    if (w && strcmp(w->id, id) == 0) return w;
+  }
+  return nullptr;
+}
+
+static BeaconStatus mk_status(int batt, int health, uint32_t chain, bool tamper) {
+  BeaconStatus s;
+  if (batt >= 0)   { s.battery_pct = (int16_t)batt; s.battery_present = true; }
+  if (health >= 0) { s.health = (int16_t)health;    s.health_present = true; }
+  s.chain_seq = chain; s.chain_present = true;
+  s.tamper = tamper;
+  return s;
+}
+
+int main() {
+  // ── Unknown suffix -> pseudo witness "SCV-XXXX" ──────────────────────
+  {
+    Model m;
+    BeaconStatus s = mk_status(80, 90, 1234, false);
+    m.on_beacon("dead", s, /*have_status=*/true, /*now=*/1000);
+    const Witness* w = find(m, "SCV-dead");
+    CHECK(w != nullptr, "pseudo-creates SCV-dead for an unknown suffix");
+    if (w) {
+      CHECK(w->seen_via_ble, "sets seen_via_ble");
+      CHECK(w->link == Link::Online, "sets link Online (liveness)");
+      CHECK(w->last_seen_ms == 1000 && w->last_beacon_ms == 1000,
+            "stamps last_seen_ms + last_beacon_ms");
+      CHECK(w->battery_present && w->battery_pct == 80, "stores battery");
+      CHECK(w->ble_health_present && w->ble_health == 90, "stores ble_health");
+      CHECK(w->chain_length == 1234, "stores chain -> chain_length");
+      CHECK(w->badge == Badge::Unknown, "badge untouched on a pseudo witness");
+    }
+  }
+
+  // ── Suffix-match an existing (signed) witness; badge untouched ───────
+  {
+    Model m;
+    // A real, verified witness with a 16-hex fingerprint ending "6677".
+    m.on_chain("canary_kitchen", 42, Badge::Verified, /*now=*/500,
+               nullptr, 0, "0011223344556677");
+    const int before = m.count();
+
+    BeaconStatus s = mk_status(55, 60, 99, false);
+    m.on_beacon("6677", s, true, /*now=*/2000);
+
+    CHECK(m.count() == before, "suffix-match does NOT create a second witness");
+    const Witness* w = find(m, "canary_kitchen");
+    CHECK(w != nullptr, "matched the existing witness by fp suffix");
+    if (w) {
+      CHECK(w->seen_via_ble && w->last_beacon_ms == 2000, "beacon updates the match");
+      CHECK(w->battery_present && w->battery_pct == 55, "beacon battery stored on match");
+      CHECK(w->ble_health == 60 && w->ble_health_present, "beacon health stored on match");
+      CHECK(w->chain_length == 99, "beacon chain overwrites chain_length");
+      CHECK(w->badge == Badge::Verified, "badge stays Verified (never set by beacon)");
+    }
+  }
+
+  // ── have_status=false: liveness only, no stored status ───────────────
+  {
+    Model m;
+    BeaconStatus s;  // ignored
+    m.on_beacon("beef", s, /*have_status=*/false, /*now=*/300);
+    const Witness* w = find(m, "SCV-beef");
+    CHECK(w != nullptr, "liveness-only beacon still creates the witness");
+    if (w) {
+      CHECK(w->link == Link::Online && w->seen_via_ble, "liveness set without status");
+      CHECK(!w->battery_present, "no battery stored when have_status=false");
+      CHECK(w->chain_length == 0, "no chain stored when have_status=false");
+    }
+  }
+
+  // ── Tamper rides a 60 s edge-dedupe, like a chirp ────────────────────
+  {
+    Model m;
+    BeaconStatus t = mk_status(-1, -1, 0, /*tamper=*/true);
+
+    m.on_beacon("f00d", t, true, /*now=*/10000);
+    CHECK(m.events_count() == 1, "first tamper (ble) pushes an event");
+    CHECK(m.worst(10000) == Sev::Tamper, "tamper raises fleet severity");
+
+    m.on_beacon("f00d", t, true, /*now=*/10000 + 30000);   // < 60 s later
+    CHECK(m.events_count() == 1, "repeat tamper within 60 s is deduped");
+
+    m.on_beacon("f00d", t, true, /*now=*/10000 + 61000);   // > 60 s later
+    CHECK(m.events_count() == 2, "tamper after 60 s pushes a fresh event");
+
+    // The event log names it "tamper (ble)".
+    const EventRow* e = m.event_at(0);
+    CHECK(e && strcmp(e->name, "tamper (ble)") == 0, "event named 'tamper (ble)'");
+    CHECK(e && e->sev == Sev::Tamper, "event severity is Tamper");
+    CHECK(e && e->signed_flag == false, "beacon tamper event is unsigned");
+  }
+
+  printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);
+  return g_failures == 0 ? 0 : 1;
+}

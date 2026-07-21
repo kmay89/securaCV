@@ -66,6 +66,9 @@
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
 #include "canary/net/chirp_scan.h"
 #endif
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+#include "canary/net/fleet_link.h"
+#endif
 #if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
 #include "canary/net/provision.h"
 #endif
@@ -527,6 +530,14 @@ static void handle_touch(uint32_t now) {
     if (was_awake) {
       g_page = (g_page + 1) % canary::ui::glance_page_count();
       g_page_touched_ms = now;
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+      // Tapping to a witness detail page queues an off-grid GATT status pull
+      // for that WAP (no-op online; the loop only acts while broker-down).
+      if (g_page >= 1 && g_page <= fleet.count()) {
+        const auto* w = fleet.at(g_page - 1);
+        if (w && w->fp[0]) canary::net::fleet_link_request(w->fp);
+      }
+#endif
     } else {
       // Glance-first wake: waking from the dark always lands on the one
       // big fact (the halo hero), never mid-rotation on a detail page —
@@ -539,6 +550,15 @@ static void handle_touch(uint32_t now) {
     // proof sheet; a tap on an open sheet closes it.
     if (was_awake && g_display_ok) {
       canary::ui::dash_ui_handle_tap(g_touch_x, g_touch_y);
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+      // A lit tap on a witness card queues an off-grid GATT status pull for
+      // that WAP (no-op online; the loop only acts while broker-down).
+      const int fl_card = canary::ui::dash_ui_card_at(g_touch_x, g_touch_y);
+      if (fl_card >= 0) {
+        const auto* w = fleet.at(fl_card);
+        if (w && w->fp[0]) canary::net::fleet_link_request(w->fp);
+      }
+#endif
     }
 #endif
     fleet.mark_dirty();
@@ -1015,7 +1035,15 @@ void loop() {
   // Off-grid fallback (spec §6): while the broker is dark and WiFi may be
   // too, passive BLE bursts keep tamper/liveness flowing to the glass. The
   // module itself stops scanning the moment the broker is back.
-  canary::net::chirp_scan_loop(now, !broker);
+  canary::net::chirp_scan_loop(now, !broker, canary::net::wifi_connected());
+#endif
+
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+  // Layer 3: on-demand GATT pull of a WAP's live status (a display tap queues
+  // the request via fleet_link_request; this drives the bounded connect+read
+  // while off-grid). Runs after the passive listener so it can stop that scan
+  // before driving the shared radio as a central.
+  canary::net::fleet_link_loop(now, !broker, canary::net::wifi_connected());
 #endif
 
   // Time machine v1 (spec §7): keep the model's wall-hour current so new

@@ -25,6 +25,7 @@
 #if FEATURE_BLE && FEATURE_BLE_CHIRP
 
 #include <NimBLEDevice.h>
+#include "ble_opera.h"   // restore re-applies the fleet-link presence beacon
 
 namespace ble_chirp {
 
@@ -104,10 +105,16 @@ static void restoreOperaAdvertising() {
 
     pAdvertising->stop();
 
-    // Restore Opera service advertising with correct SCV-XXXX device name
-    // (Previously used NimBLEDevice::getAddress() which leaked the raw MAC address)
-    pAdvertising->addServiceUUID(SCV_SERVICE_UUID);
-    pAdvertising->setName(g_operaDeviceName);
+    // Restore the fleet-link presence BEACON (manufacturer data on the primary
+    // advert; SCV UUID + "SCV-XXXX" name on the scan response) rather than the
+    // legacy UUID advert — a chirp must not permanently drop the beacon a
+    // display relies on. refreshBeacon() has its own legacy-advert fallback,
+    // but if Opera is compiled out (stub returns false) keep the old restore
+    // so the device is never left un-advertised.
+    if (!ble_opera::refreshBeacon()) {
+        pAdvertising->addServiceUUID(SCV_SERVICE_UUID);
+        pAdvertising->setName(g_operaDeviceName);
+    }
     pAdvertising->start();
 }
 
