@@ -39,6 +39,7 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`display_settings.md`](./display_settings.md) | On-glass settings — what's adjustable without an app. |
 | [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md) | Discovery & resilience — finding sensors, surviving outages. |
 | [`fleet_link_bench_checklist.md`](./fleet_link_bench_checklist.md) | Fleet link — hardware bench smoke-test gate for the direct BLE presence/GATT channel. |
+| [`canary_wap_wifi.md`](./canary_wap_wifi.md) | How the Canary WAP's WiFi works — the AP→STA link + provisioning, single-radio coexistence, and WiFi *as a sensor* (CSI presence + probe-request counting). |
 | [`display_bench_bringup.md`](./display_bench_bringup.md) | Display bench bring-up — from bare board to a beating face. |
 | [`dev_playground_43b.md`](./dev_playground_43b.md) | **Dev playground (bench mode)** — the Waveshare 4.3B as a safe guided peripheral test bench: doorbell/intrusion/light/cap-touch/ToF/beam-gap stations, the PG1 comms standard, and the fully-loaded pin tracker. |
 | [`board_capability_map_43b.md`](./board_capability_map_43b.md) | **Board capability map (4.3B)** — an honest, cited ledger of every capability the dash board can do vs. what the firmware drives today, and for each unused one the exact feature gate + bench step to activate it (evidence vault, isolated DI/DO, RS485/Modbus, CAN, microSD, RTC/battery). |
