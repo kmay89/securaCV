@@ -44,20 +44,21 @@
       "vendor": "Seeed Studio",
       "mpn": "101021040",
       "source": "seeed_grove_vision_ai_v2.step.gz",
-      "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter and a posed OV5647 camera. The generator drops the mount parts AND the loose camera by name (mounting_plate, camera_mounting_shroud, adapter, rpi cam) — the camera rides a flex and is posed per-device by the models, not welded to the board. Verify Seeed's licence terms before external redistribution.",
+      "provenance": "Seeed Studio CAD (STEP) supplied with a printable stand + camera shroud + adapter and a posed OV5647 camera. The generator strips all of that so only the board remains: the loose camera drops by name (rpi cam), and the printed stand/mount drops by a Y-plane cut (drop_below_y) — merge_primitives fuses the stand's solids into unnamed material buckets, so a name match can't reach them, but the stand sits entirely below the board with a clean air gap. The OV5647 rides a flex and is posed per-device by the models, not welded to the board. Verify Seeed's licence terms before external redistribution.",
       "doc": "https://wiki.seeedstudio.com/grove_vision_ai_v2/",
       "tol_linear": 0.05,
       "tol_angular": 0.3,
       "merge_primitives": true,
       "drop": ["mounting_plate", "camera_mounting_shroud", "adapter", "shroud", "rpi cam"],
+      "drop_below_y": 3.5,
       "materials": "step",
       "pose": { "rx": 0.5, "ry": 2.35, "dist_factor": 2.6 },
-      "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU) with a XIAO host stacked on its socket. Talks to the host over I2C on the Grove connector; the OV5647 camera hangs on the CSI flex and is placed by each device model (it is not rigid to the board). Mount parts and the loose camera from the source assembly are filtered out.",
+      "blurb": "Himax WiseEye2 HX6538 (Arm Cortex-M55 + Ethos-U55 NPU) that runs the vision model on-board and hands the host only labels + boxes over I2C (address 0x62) — no pixels cross the wire. A XIAO seats in the module's XIAO-footprint socket (I2C + UART, zero wiring) and runs canary-vision; the module's own USB-C is the model/SenseCraft port, the XIAO's USB-C is the firmware port. The OV5647 rides the CSI flex and is posed per-device by the models (it is not rigid to the board). The vendor demo stand + loose camera from the source assembly are stripped, leaving just the module.",
       "pinout": [
-        { "label": "Grove I2C", "pin": "SDA / SCL", "gpio": "varies by host", "use": "Sensor bus to the host — the GPIOs depend on the host board: DevKit-C3 4/5, XIAO-C3 6/7 (D4/D5), XIAO-S3 5/6 (D4/D5)." },
-        { "label": "Camera", "pin": "CSI FPC", "gpio": "—", "use": "OV5647 / OV-series over the flex", "anchor": [-17.8, 6.3, 4.0] },
-        { "label": "USB-C", "pin": "—", "gpio": "—", "use": "Model flashing (SenseCraft), power" },
-        { "label": "Power", "pin": "VCC / GND", "gpio": "—", "use": "3V3 / 5 V from the Grove cable" }
+        { "label": "Grove I2C", "pin": "SDA / SCL", "gpio": "varies by host", "use": "Result bus (labels/boxes, addr 0x62) on the 4-pin Grove port — GND · VCC · SDA(white) · SCL(yellow). Host GPIOs: DevKit-C3 4/5, XIAO-C3 6/7 (D4/D5), XIAO-S3 5/6 (D4/D5). The 4-pin Grove connector isn't discretely modeled in the vendor demo-stand STEP, so this row stays table-only." },
+        { "label": "Camera", "pin": "CSI FPC", "gpio": "—", "use": "OV5647 / OV-series camera ribbon into the wide flat FPC connector on the module's edge", "anchor": [-18.3, 5.8, 4.0] },
+        { "label": "USB-C (model port)", "pin": "—", "gpio": "—", "use": "The module's own USB-C: load/preview the AI model in SenseCraft and update Himax firmware. Cannot see the ESP32 — that's the XIAO's port.", "anchor": [-20.6, 6.3, 3.0] },
+        { "label": "Power", "pin": "VCC / GND", "gpio": "—", "use": "3V3 / 5 V from the Grove cable or the XIAO socket rail" }
       ]
     },
     {

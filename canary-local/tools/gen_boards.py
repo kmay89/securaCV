@@ -28,6 +28,7 @@ import subprocess
 from pathlib import Path
 
 import cascadio
+import numpy as np
 import trimesh
 from trimesh.visual import TextureVisuals
 from trimesh.visual.material import PBRMaterial
@@ -42,6 +43,23 @@ FACTS = REPO / "canary-local" / "tools" / "glb_facts.mjs"
 
 def _set_color(geom, rgb):
     geom.visual = TextureVisuals(material=PBRMaterial(baseColorFactor=[*rgb, 1.0]))
+
+
+def _drop_below_y(scene, y_mm):
+    """Strip any solid whose highest point sits below y_mm (raw tessellated
+    millimetres, +Y up). This catches a vendor demo stand/mount that
+    `merge_primitives` fuses into unnamed material buckets — the name-based
+    `drop` can't see those (the merge promotes a SolidWorks feature name over
+    the part name), but the printed stand sits entirely under the board, with a
+    clean air gap above it, so a Y-plane cut removes it and nothing else. The
+    board's own components all live above the cut. World Y = node transform ×
+    vertices × 1000 (the GLB is in metres; the page's glb.js scales the same)."""
+    for name in list(scene.geometry):
+        nodes = scene.graph.geometry_nodes.get(name, [])
+        T = scene.graph.get(nodes[0])[0] if nodes else np.eye(4)
+        v = trimesh.transform_points(scene.geometry[name].vertices, T) * 1000.0
+        if v[:, 1].max() < y_mm:
+            scene.delete_geometry(name)
 
 
 def bake_round_display(scene):
@@ -88,6 +106,9 @@ def build_board(cfg):
             for name in list(scene.geometry):
                 if any(d in name.lower() for d in drop):
                     scene.delete_geometry(name)
+
+        if cfg.get("drop_below_y") is not None and hasattr(scene, "geometry"):
+            _drop_below_y(scene, cfg["drop_below_y"])
 
         if cfg.get("materials") == "round-display":
             bake_round_display(scene)
