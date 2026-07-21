@@ -59,7 +59,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Decide whether to publish
         id: plan
@@ -113,7 +113,7 @@ jobs:
           workspaces: desktop/src-tauri -> target
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -211,7 +211,7 @@ jobs:
 
       - name: Build & release
         id: tauri
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # TAURI_SIGNING_PRIVATE_KEY / _PASSWORD come from job-level env
@@ -235,7 +235,7 @@ jobs:
 
       - name: Upload build artifacts (dry run)
         if: steps.plan.outputs.publish == 'false'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flasher-${{ matrix.platform }}
           if-no-files-found: warn

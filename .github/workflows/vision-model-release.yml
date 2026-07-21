@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v7
         if: steps.tag.outputs.skip != '1'
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: steps.tag.outputs.skip != '1'
         with:
           python-version: "3.11"
