@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### supply-chain — signed build provenance on release artifacts
+
+- **Every published firmware binary and browser-flasher factory image now
+  carries SLSA build provenance.** `firmware-release.yml` and
+  `flasher-release.yml` sign an in-toto provenance attestation over every
+  `.bin`, manifest, and checksum file via GitHub's OIDC identity
+  (`actions/attest-build-provenance`), record it in the Sigstore **Rekor public
+  transparency log**, and attach an offline-verifiable
+  `provenance-*.sigstore.jsonl` bundle to each release. Anyone can now confirm a
+  download was built from the open source, in the open —
+  `gh attestation verify <file> --repo kmay89/securaCV` — a *public* check that
+  complements the device-checked Ed25519 OTA signature and `sha256sums.txt`.
+- **Honest about reproducibility.** New `docs/supply_chain_transparency.md`
+  gives the verify recipes (online + air-gapped) and states plainly that full
+  bit-for-bit reproducibility isn't guaranteed on the ESP32 toolchain yet —
+  provenance is the guarantee we can make *and verify* today, with hermetic
+  builds on the roadmap.
+
 ### canary-display — Canary Cards on the glass (radar witnesses get type-aware cards)
 
 - **The display firmware learns the Canary Cards kinds.** A card-bearing

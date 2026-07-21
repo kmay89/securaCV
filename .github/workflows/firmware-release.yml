@@ -32,6 +32,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write      # OIDC identity used to sign the build-provenance attestation
+  attestations: write  # upload the signed provenance to this repo's attestation store
 
 jobs:
   build-sign-release:
@@ -391,6 +393,31 @@ jobs:
           (cd /tmp/release && sha256sum ./*.bin ./*.json > sha256sums.txt)
           ls -la /tmp/release/*-factory.bin /tmp/release/manifest-flash.json || true
 
+      - name: Attest build provenance (SLSA) for the published artifacts
+        # Sign an in-toto provenance statement binding every published .bin /
+        # manifest / checksum to THIS workflow run + commit via GitHub's OIDC
+        # identity, and log it to the Sigstore Rekor public transparency log.
+        # This complements — doesn't replace — the two integrity checks already
+        # here: the Ed25519 OTA signature devices verify, and sha256sums.txt.
+        # What it adds is a public, tamper-evident record of *who built what,
+        # from which commit, in which workflow* — verifiable by anyone with
+        #   gh attestation verify <file> --repo ${{ github.repository }}
+        # See docs/supply_chain_transparency.md.
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            /tmp/release/*.bin
+            /tmp/release/*.json
+            /tmp/release/sha256sums.txt
+
+      - name: Stage the provenance bundle for offline verification
+        # Ship the Sigstore bundle as a release asset too, so an air-gapped user
+        # can verify provenance with no network (--bundle instead of --repo):
+        #   gh attestation verify <file> \
+        #     --bundle provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "/tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -416,6 +443,7 @@ jobs:
             /tmp/release/manifest-canary-sense-wellbeing.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt
+            /tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl
 
       # The dev channel's stable address. Only the MANIFESTS are mirrored —
       # each manifest's binary URL points at the real fw-v*-dev.* tag's

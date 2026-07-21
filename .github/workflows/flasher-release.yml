@@ -29,6 +29,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write      # OIDC identity used to sign the build-provenance attestation
+  attestations: write  # upload the signed provenance to this repo's attestation store
 
 jobs:
   factory-images:
@@ -174,6 +176,23 @@ jobs:
           ( cd /tmp/release && { sha256sum manifest-flash.json; sha256sum ./*-factory.bin 2>/dev/null || true; } > flasher-sha256sums.txt )
           ls -la /tmp/release
 
+      - name: Attest build provenance (SLSA) for the factory images
+        # Same public, tamper-evident provenance as firmware-release.yml, for the
+        # out-of-band flasher path: bind each factory image + manifest-flash.json
+        # to this run + commit via OIDC, logged to the Sigstore Rekor transparency
+        # log. Verify with `gh attestation verify <file> --repo ${{ github.repository }}`.
+        # See docs/supply_chain_transparency.md.
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            /tmp/release/*-factory.bin
+            /tmp/release/manifest-flash.json
+            /tmp/release/flasher-sha256sums.txt
+
+      - name: Stage the provenance bundle for offline verification
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "/tmp/release/provenance-flasher-${{ steps.tag.outputs.version }}.sigstore.jsonl"
+
       - name: Attach to the release
         # Adds/updates the flasher assets on the tag's release, creating the
         # release if it doesn't exist yet (the pre-key path). Existing release
@@ -185,3 +204,4 @@ jobs:
             /tmp/release/*-factory.bin
             /tmp/release/manifest-flash.json
             /tmp/release/flasher-sha256sums.txt
+            /tmp/release/provenance-flasher-${{ steps.tag.outputs.version }}.sigstore.jsonl
