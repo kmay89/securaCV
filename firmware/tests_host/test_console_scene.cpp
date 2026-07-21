@@ -22,6 +22,7 @@
 #include "ui/randomart.h"
 #include "ui/console_theme.h"
 #include "ui/console_scenes.h"
+#include "ui/console_wake.h"
 
 using namespace scene;
 
@@ -186,6 +187,73 @@ static void test_tamper_is_worded() {
   CHECK(sk.s.find("TAMPER") != std::string::npos);
 }
 
+// ── the animated wake: real per-probe reveal, robust in both tiers ──────────
+static const WakeProbe kProbes[10] = {
+  {"NVS read/write", ProbeState::Pass, 12}, {"Free heap", ProbeState::Pass, 1},
+  {"PSRAM", ProbeState::Pass, 3},           {"Device keys", ProbeState::Pass, 40},
+  {"SD card", ProbeState::Fail, 5},         {"Wi-Fi radio", ProbeState::Pass, 8},
+  {"Die temp", ProbeState::Pass, 2},        {"Uptime clock", ProbeState::Pass, 1},
+  {"Watchdog", ProbeState::Pass, 1},        {"Witness chain", ProbeState::Pass, 30},
+};
+
+static void test_wake_markers_carry_words() {
+  // Every state has a distinct, ASCII, meaning-bearing marker (not colour only).
+  CHECK(std::string(probe_marker(ProbeState::Pending)) == "[..]");
+  CHECK(std::string(probe_marker(ProbeState::Running)) == "[~~]");
+  CHECK(std::string(probe_marker(ProbeState::Pass)) == "[OK]");
+  CHECK(std::string(probe_marker(ProbeState::Fail)) == "[!!]");
+}
+
+static void test_wake_ascii_tier_is_safe_and_aligned() {
+  Sink sk;
+  Renderer r{collect, &sk, caps_ascii()};
+  wake_frame(r, TRUST_INNER, kProbes, 10, 90, /*done=*/true);
+  for (unsigned char c : sk.s) { CHECK(c != 0x1b); CHECK(c < 0x80); }
+  auto lines = split_crlf(sk.s);
+  size_t w = 0;
+  for (auto& ln : lines) { if (ln.empty()) continue; if (!w) w = ln.size(); CHECK(ln.size() == w); }
+  CHECK(w == (size_t)(TRUST_INNER + 2));
+  // real per-probe truth is shown: the failing SD probe reads [!!], others [OK].
+  CHECK(sk.s.find("[!!] SD card") != std::string::npos);
+  CHECK(sk.s.find("[OK] NVS read/write") != std::string::npos);
+  CHECK(sk.s.find("90%") != std::string::npos);
+  CHECK(sk.s.find("9/10 probes passed") != std::string::npos);
+}
+
+static void test_wake_running_frame_does_not_spoil_score() {
+  Sink sk;
+  Renderer r{collect, &sk, caps_ascii()};
+  WakeProbe p[10];
+  for (int i = 0; i < 10; ++i) { p[i] = kProbes[i]; p[i].state = ProbeState::Pending; }
+  wake_frame(r, TRUST_INNER, p, 10, 90, /*done=*/false);
+  CHECK(sk.s.find("checking") != std::string::npos);
+  CHECK(sk.s.find("0/10 reported") != std::string::npos);
+  CHECK(sk.s.find("probes passed") == std::string::npos); // final score hidden until done
+}
+
+static void test_wake_cursor_control_is_gated() {
+  // ANSI tier: cursor moves are emitted; ASCII tier: nothing (can't reposition).
+  { Sink sk; Renderer r{collect, &sk, caps_full(90, 30)};
+    cursor_up(r, 13); hide_cursor(r); show_cursor(r);
+    CHECK(sk.s.find("\x1b[13A") != std::string::npos);
+    CHECK(sk.s.find("\x1b[?25l") != std::string::npos);
+    CHECK(sk.s.find("\x1b[?25h") != std::string::npos); }
+  { Sink sk; Renderer r{collect, &sk, caps_ascii()};
+    cursor_up(r, 13); hide_cursor(r); show_cursor(r);
+    CHECK(sk.s.empty()); }
+  // Height accounts for top rule + n probes + status + bottom rule.
+  CHECK(wake_height(10) == 13);
+}
+
+static void test_wake_full_tier_lights_up() {
+  Sink sk;
+  Renderer r{collect, &sk, caps_full(100, 40)};
+  wake_frame(r, TRUST_INNER, kProbes, 10, 90, true);
+  CHECK(sk.s.find("\x1b[") != std::string::npos);        // colour/escapes
+  CHECK(sk.s.find("\x1b[0m") != std::string::npos);      // resets
+  CHECK(sk.s.find("\xe2\x94\x8c") != std::string::npos); // ┌ Unicode border
+}
+
 int main() {
   test_randomart_walk();
   test_randomart_all_zero();
@@ -193,6 +261,11 @@ int main() {
   test_full_tier_lights_up();
   test_health_has_a_word_not_just_colour();
   test_tamper_is_worded();
+  test_wake_markers_carry_words();
+  test_wake_ascii_tier_is_safe_and_aligned();
+  test_wake_running_frame_does_not_spoil_score();
+  test_wake_cursor_control_is_gated();
+  test_wake_full_tier_lights_up();
 
   if (g_failures == 0) { std::printf("PASS test_console_scene (all assertions)\n"); return 0; }
   std::printf("FAILED: %d assertion(s)\n", g_failures);
