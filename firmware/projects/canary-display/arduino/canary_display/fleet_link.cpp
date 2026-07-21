@@ -130,10 +130,14 @@ bool read_u32le(NimBLERemoteService* svc, const char* uuid, uint32_t& out) {
   return true;
 }
 
-// Scan briefly for the WAP advertising fp4; on a hit, copy its address string.
-// Returns true when found. Uses the same manufacturer-data beacon parse the
-// passive listener uses so the address always ties back to the fingerprint.
-bool find_target_addr(const char* fp4, char addr_out[18]) {
+// Scan briefly for the WAP advertising fp4; on a hit, hand back its
+// NimBLEAddress. Returns true when found. Uses the same manufacturer-data
+// beacon parse the passive listener uses so the address always ties back to
+// the fingerprint. We keep the NimBLEAddress object (NOT a string) so the
+// BLE address TYPE (public vs. random) survives to connect() — ESP32
+// peripherals advertise random static addresses, and reconstructing them as
+// BLE_ADDR_PUBLIC makes the connection fail.
+bool find_target_addr(const char* fp4, NimBLEAddress& addr_out) {
   NimBLEScan* scan = NimBLEDevice::getScan();
   if (!scan) return false;
   scan->setActiveScan(true);   // we need the scan response (name/uuid) too
@@ -147,9 +151,15 @@ bool find_target_addr(const char* fp4, char addr_out[18]) {
 #endif
   const int n = (int)res.getCount();
   for (int i = 0; i < n; i++) {
-    const NimBLEAdvertisedDevice* cd = res.getDevice(i);
-    if (!cd) continue;
-    NimBLEAdvertisedDevice* d = const_cast<NimBLEAdvertisedDevice*>(cd);
+    // NimBLE 2.x getResults returns a const pointer; 1.4.x returns the device
+    // by value. Normalise to a usable object either way.
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    const NimBLEAdvertisedDevice* d = res.getDevice(i);
+    if (!d) continue;
+#else
+    NimBLEAdvertisedDevice dev = res.getDevice(i);
+    NimBLEAdvertisedDevice* d = &dev;
+#endif
     if (!d->haveManufacturerData()) continue;
     const std::string m = d->getManufacturerData();
     char seen[5];
@@ -158,9 +168,7 @@ bool find_target_addr(const char* fp4, char addr_out[18]) {
       continue;
     }
     if (strncmp(seen, fp4, 4) != 0) continue;
-    const std::string a = d->getAddress().toString();
-    strncpy(addr_out, a.c_str(), 17);
-    addr_out[17] = '\0';
+    addr_out = d->getAddress();   // preserves the address type
     scan->clearResults();
     return true;
   }
@@ -169,8 +177,9 @@ bool find_target_addr(const char* fp4, char addr_out[18]) {
 }
 
 // Connect to addr, read the status service, feed the model. Returns true on a
-// successful, TOFU-approved read.
-bool pull_status(const char* fp4, const char* addr, uint32_t now) {
+// successful, TOFU-approved read. Takes the NimBLEAddress by value/ref so the
+// address type is preserved through to connect().
+bool pull_status(const char* fp4, const NimBLEAddress& addr, uint32_t now) {
   NimBLEClient* client = NimBLEDevice::createClient();
   if (!client) return false;
 
@@ -180,8 +189,7 @@ bool pull_status(const char* fp4, const char* addr, uint32_t now) {
   client->setConnectTimeout((uint8_t)(CONNECT_TMO_MS / 1000));  // 1.x: seconds
 #endif
 
-  NimBLEAddress target(addr, BLE_ADDR_PUBLIC);
-  bool ok = client->connect(target);
+  bool ok = client->connect(addr);
   if (!ok) {
     NimBLEDevice::deleteClient(client);
     return false;
@@ -261,10 +269,10 @@ void fleet_link_loop(uint32_t now, bool broker_down, bool /*wifi_up*/) {
   NimBLEScan* scan = NimBLEDevice::getScan();
   if (scan) scan->stop();
 
-  char addr[18] = {0};
+  NimBLEAddress addr;
   if (!find_target_addr(fp4, addr)) return;   // not in range this window
 
-  if (!tofu_ok(fp4, addr)) {
+  if (!tofu_ok(fp4, addr.toString().c_str())) {
     log_line("FLEETLINK", "ble identity mismatch - status refused");
     return;
   }
