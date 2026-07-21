@@ -365,14 +365,35 @@ def main() -> None:
 GUIDE = REPO / "docs/hardware/grove_vision_ai_v2_guide.md"
 
 
+WE2_CORE = CANARY_LOCAL / "assets/we2-core.js"
+
+
+def we2_engine_fact(name: str) -> str:
+    """Read a WE2 constant straight out of the engine so the catalog can't
+    disagree with the code that does the burning. we2-core.js is the ONE
+    place these live; the offline test (tests/we2.test.js) re-ties the two."""
+    src = WE2_CORE.read_text(encoding="utf-8")
+    m = re.search(rf"\b{name}\s*:\s*(0x[0-9a-fA-F]+|\d+)", src)
+    if not m:
+        sys.exit(f"gen_flash.py: ERROR: WE2.{name} not found in {WE2_CORE.name} "
+                 "— the flasher engine moved; the catalog can't be built without it.")
+    return m.group(1)
+
+
 def we2_module_block() -> dict:
+    # The burn address is the engine's, verbatim — never a second literal that
+    # could drift from what we2-core.js actually writes to.
+    model_addr = we2_engine_fact("MODEL_ADDR")
+    baud = int(we2_engine_fact("BAUD"))
+    usb_vid = we2_engine_fact("USB_VID")
+    usb_pid = we2_engine_fact("USB_PID")
     return {
         "name": "Grove Vision AI V2 — the Vision’s camera module",
         "chip": "Himax HX6538 (WiseEye2) · Ethos-U55 NPU · CH343 USB-serial",
-        "usb_vid": "0x1a86",
-        "usb_pid": "0x55d3",
-        "baud": 921600,
-        "model_addr": "0x400000",
+        "usb_vid": usb_vid,
+        "usb_pid": usb_pid,
+        "baud": baud,
+        "model_addr": model_addr,
         "manifest_url": f"{RELEASE_LATEST}/manifest-vision-model.json",
         "model": {
             "name": "Person Detection",
