@@ -44,7 +44,7 @@ struct VisionSample {
   // Derived from ALL qualifying boxes this frame (coarse, non-identifying).
   // These populate the live/telemetry tier only; the signed witness record
   // is unchanged (occupants stays binary until a spec PR — Invariant VI).
-  uint8_t   person_count = 0;                  // # boxes matching target & score
+  uint8_t   person_count = 0;                  // internal: coarsened to the occupancy bucket at publish; NEVER emitted raw
   Posture   posture      = Posture::Unknown;   // from the primary box aspect ratio
   Proximity proximity    = Proximity::Unknown; // from the primary box area fraction
   uint16_t  voxel_mask   = 0;                  // occupied 3x3 cells: bit (r*cols + c)
@@ -62,7 +62,7 @@ struct StateSnapshot {
   BBox bbox;
 
   // Coarse optical extras (live/telemetry tier — not part of the signed record)
-  uint8_t   person_count = 0;
+  uint8_t   person_count = 0;   // internal: coarsened to the occupancy bucket at publish; NEVER emitted raw
   Posture   posture      = Posture::Unknown;
   Proximity proximity    = Proximity::Unknown;
   uint16_t  voxel_mask   = 0;

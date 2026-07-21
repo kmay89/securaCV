@@ -280,7 +280,6 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
            "\"confidence\":%d,"
            "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
            "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
-           "\"persons\":%u,"
            "\"occupancy\":\"%s\","
            "\"posture\":\"%s\","
            "\"proximity\":\"%s\","
@@ -297,7 +296,6 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
            (int)s.confidence,
            (unsigned)s.voxel.rows, (unsigned)s.voxel.cols, s.voxel.r, s.voxel.c,
            s.bbox.x, s.bbox.y, s.bbox.w, s.bbox.h,
-           (unsigned)s.person_count,
            canary::vision::optical::occupancy_name(s.person_count),
            canary::vision::optical::posture_name(s.posture),
            canary::vision::optical::proximity_name(s.proximity),

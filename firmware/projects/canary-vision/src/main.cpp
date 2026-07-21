@@ -220,7 +220,6 @@ static void publish_event_json(
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
         "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
-        "\"persons\":%u,"
         "\"occupancy\":\"%s\","
         "\"posture\":\"%s\","
         "\"proximity\":\"%s\","
@@ -239,7 +238,6 @@ static void publish_event_json(
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
       snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
-      (unsigned)snap.person_count,
       canary::vision::optical::occupancy_name(snap.person_count),
       canary::vision::optical::posture_name(snap.posture),
       canary::vision::optical::proximity_name(snap.proximity),
@@ -264,7 +262,6 @@ static void publish_event_json(
         "\"confidence\":%d,"
         "\"voxel\":{\"rows\":%u,\"cols\":%u,\"r\":%d,\"c\":%d},"
         "\"bbox\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},"
-        "\"persons\":%u,"
         "\"occupancy\":\"%s\","
         "\"posture\":\"%s\","
         "\"proximity\":\"%s\","
@@ -283,7 +280,6 @@ static void publish_event_json(
       snap.confidence,
       snap.voxel.rows, snap.voxel.cols, snap.voxel.r, snap.voxel.c,
       snap.bbox.x, snap.bbox.y, snap.bbox.w, snap.bbox.h,
-      (unsigned)snap.person_count,
       canary::vision::optical::occupancy_name(snap.person_count),
       canary::vision::optical::posture_name(snap.posture),
       canary::vision::optical::proximity_name(snap.proximity),
