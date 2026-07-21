@@ -23,6 +23,13 @@ BEACON_PARSE_SRC = test_beacon_parse.cpp
 MODEL_BIN     = test_fleet_beacon_model
 MODEL_SOURCES = test_fleet_beacon_model.cpp ../src/fleet/fleet_model.cpp
 
+# Canary Cards firmware builder (canary/fleet/fleet_cards.h): the type-aware
+# widget layer the glass renders for a canary-sense witness. Pinned to the
+# schema (docs/standard/CANARY_CARDS.md) and to parity with the JS reference
+# renderer (canary-local/assets/canary-cards.js). Pure logic, no LVGL.
+CARDS_BIN     = test_fleet_cards
+CARDS_SOURCES = test_fleet_cards.cpp ../src/fleet/fleet_cards.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -32,9 +39,13 @@ $(BEACON_PARSE_BIN): $(BEACON_PARSE_SRC)
 $(MODEL_BIN): $(MODEL_SOURCES)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(MODEL_SOURCES)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN)
+$(CARDS_BIN): $(CARDS_SOURCES)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(CARDS_SOURCES)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
+	./$(CARDS_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN)
