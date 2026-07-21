@@ -246,6 +246,8 @@ jobs:
         run: node canary-local/tests/senselab_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs
+      - name: Kiri probe — print estimate + watch-it-print + slice bridge (fail-closed)
+        run: node canary-local/tests/kiri_slice_probe.mjs
       - name: Build both flavors from THIS tree
         run: |
           cd canary-local/emulator
