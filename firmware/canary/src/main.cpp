@@ -134,6 +134,21 @@ static_assert(sizeof(csi_features_t) == 36,
 // Used by the read-only 't' run-all command below.
 #include "health/test_console.h"
 
+// Pure, host-tested device self-manifest builder: the machine-readable JSON the
+// 'j' command emits (public-only) so a browser can read this unit over WebSerial
+// — draw the same randomart from the pubkey, and show exactly the tools it has.
+#include "attest/self_manifest.h"
+
+#if FEATURE_CONSOLE_THEME
+// Pure, host-tested console scene engine: the 'l' identity banner (key
+// fingerprint as randomart). ASCII-safe by default; see docs/design/serial_console_theming.md.
+#include "ui/randomart.h"
+#include "ui/console_theme.h"
+#include "ui/console_scenes.h"
+#include "ui/console_wake.h"
+static void print_boot_welcome();   // the friendly char-box hello on connect
+#endif
+
 // Optional ESP-IDF provenance APIs for the 'f' fingerprint command. Guarded by
 // __has_include so a toolchain without them still builds — the fields just show
 // "unknown" (the same defensive pattern main.cpp uses for <esp_random.h>).
@@ -1335,6 +1350,12 @@ void setup() {
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
   Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
+#if FEATURE_CONSOLE_THEME
+  // The warm hello: the canary greets whoever just plugged in and points them
+  // to the site that explains everything. Boot already succeeded (FR-8) — this
+  // only prints; ASCII-safe, no terminal probe at boot.
+  print_boot_welcome();
+#endif
   Serial.println();
 }
 
@@ -2072,6 +2093,7 @@ static void mqtt_publish_sensing_update() {
 // (reboot, onboarding launch) are not part of this diagnostic contract.
 static const testcon::Command kConsoleCommands[] = {
   { 'i', "identity",     testcon::Tier::Diag, false, false, false },
+  { 'j', "manifest",     testcon::Tier::Diag, false, false, false },
   { 's', "status",       testcon::Tier::Diag, false, false, false },
   { 'g', "gps",          testcon::Tier::Diag, false, false, false },
   { 'b', "battery",      testcon::Tier::Diag, false, false, false },
@@ -2082,6 +2104,12 @@ static const testcon::Command kConsoleCommands[] = {
   { 'f', "fingerprint",  testcon::Tier::Diag, false, false, false },
   { 'e', "explain-boot", testcon::Tier::Diag, false, false, false },
   { 'w', "tamper-log",   testcon::Tier::Diag, false, false, false },
+#if FEATURE_CONSOLE_THEME
+  { 'l', "identity-banner", testcon::Tier::Diag, false, false, false },
+#if FEATURE_DIAGNOSTICS
+  { 'a', "wake-selftest",   testcon::Tier::Diag, false, false, false },
+#endif
+#endif
 };
 static const size_t kConsoleCommandCount =
     sizeof(kConsoleCommands) / sizeof(kConsoleCommands[0]);
@@ -2132,6 +2160,263 @@ static size_t read_line_arg(char* buf, size_t cap) {
   return len;
 }
 
+#if FEATURE_CONSOLE_THEME
+// The scene engine composes text and pushes it here one chunk at a time.
+static void theme_emit(void*, const char* s) { Serial.print(s); }
+
+// The boot hello — the canary greeting whoever just plugged in, and the one URL
+// that explains everything. ASCII-safe (no probe at boot; the terminal may not
+// be attached yet). Forward-declared up top so setup() can call it.
+static void print_boot_welcome() {
+  scene::Renderer r{theme_emit, nullptr, scene::caps_ascii()};
+  Serial.print("\r\n");
+  scene::welcome_card(r, witness_get_device().device_id, SECURACV_HELP_URL_BASE);
+}
+
+// Probe the terminal ONCE before drawing: emit a cursor-position report request
+// (ESC[6n) and see if it answers with ESC[row;colR. An answer ⇒ the terminal
+// speaks ANSI ⇒ we light up colour + Unicode. Silence (a dumb monitor — or our
+// own flasher's garbage-averse parser) ⇒ we stay on the 7-bit ASCII floor, so
+// the banner never turns into escape-code garbage. Bounded to ~200 ms.
+static scene::Caps console_probe() {
+  while (Serial.available()) Serial.read();          // clear pending input
+  Serial.print("\x1b[6n");
+  uint32_t deadline = millis() + 200;
+  bool ansi = false;
+  while (millis() < deadline) {
+    while (Serial.available()) {
+      if ((char)Serial.read() == 'R') { ansi = true; deadline = 0; break; }
+    }
+    if (deadline == 0) break;
+  }
+  return ansi ? scene::caps_full(80, 24) : scene::caps_ascii();
+}
+
+// 'l' — the identity banner: the device's verifiable trust card, with its
+// public-key fingerprint drawn as drunken-bishop randomart. Read-only.
+// Build the trust card from live device state and render it via `r` (whose caps
+// were already chosen — by a fresh probe, or reused from the wake sequence).
+static void render_trust_card(const scene::Renderer& r) {
+  DeviceIdentity& dev = witness_get_device();
+  char fp[17];
+  for (int i = 0; i < 8; ++i) snprintf(fp + i * 2, 3, "%02x", dev.pubkey_fp[i]);
+  char ch[9];
+  for (int i = 0; i < 4; ++i) snprintf(ch + i * 2, 3, "%02x", dev.chain_head[i]);
+  int health = -1;
+#if FEATURE_DIAGNOSTICS
+  selftest_report_t st;
+  if (diag_get_selftest(&st)) health = (int)st.health_score;
+#endif
+  scene::TrustInfo t{};
+  t.device_id = dev.device_id;
+  t.firmware = FIRMWARE_VERSION;
+  t.git = FIRMWARE_GIT_HASH;
+  t.built = __DATE__;
+  t.chain_head_hex = ch;
+  t.key_fp_hex = fp;
+  t.seq = dev.seq;
+  t.boots = dev.boot_count;
+  t.health = health;
+  t.tamper = dev.tamper_active;
+  t.key_bytes = dev.pubkey;
+  t.key_len = 32;
+
+  Serial.print("\r\n");
+  scene::trust_card(r, t);
+}
+
+static void show_identity_banner() {
+  scene::Renderer r{theme_emit, nullptr, console_probe()};
+  render_trust_card(r);
+}
+
+#if FEATURE_DIAGNOSTICS
+// 'a' — the animated wake: the 10 self-test probes light up [..] -> [OK]/[!!]
+// as they report (real per-probe results), then it settles into the identity
+// card. On a confirmed ANSI terminal the fixed-height block repaints in place;
+// on the plain ASCII floor there's no cursor control, so it prints the finished
+// checklist once. Press any key to skip the reveal. Read-only (Tier::Diag).
+static void run_wake() {
+  scene::Caps caps = console_probe();
+  scene::Renderer r{theme_emit, nullptr, caps};
+  Serial.print("\r\nWaking - running self-test...\r\n");
+  diag_run_selftest();                 // the real run (~2-5s), fills the report
+  selftest_report_t st;
+  if (!diag_get_selftest(&st)) { render_trust_card(r); return; }
+
+  int n = st.total_count;
+  if (n > SELFTEST_COUNT) n = SELFTEST_COUNT;
+  scene::WakeProbe probes[SELFTEST_COUNT];
+  for (int i = 0; i < n; ++i) {
+    probes[i].label = st.tests[i].name;
+    probes[i].state = scene::ProbeState::Pending;
+    probes[i].ms = st.tests[i].duration_ms;
+  }
+
+  if (!caps.ansi) {
+    // ASCII floor: no cursor control — reveal all and print the block once.
+    for (int i = 0; i < n; ++i)
+      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
+                                           : scene::ProbeState::Fail;
+    scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
+  } else {
+    scene::hide_cursor(r);
+    scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, false);
+    bool skipped = false;
+    for (int i = 0; i < n && !skipped; ++i) {
+      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
+                                           : scene::ProbeState::Fail;
+      scene::cursor_up(r, scene::wake_height(n));
+      scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, i == n - 1);
+      uint32_t until = millis() + 180;
+      while (millis() < until) {
+        if (Serial.available()) { Serial.read(); skipped = true; break; }
+      }
+    }
+    if (skipped) {
+      for (int j = 0; j < n; ++j)
+        probes[j].state = st.tests[j].passed ? scene::ProbeState::Pass
+                                             : scene::ProbeState::Fail;
+      scene::cursor_up(r, scene::wake_height(n));
+      scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
+    }
+    scene::show_cursor(r);
+  }
+  render_trust_card(r);
+}
+#endif  // FEATURE_DIAGNOSTICS
+#endif  // FEATURE_CONSOLE_THEME
+
+// 'j' — the machine-readable self-manifest: a compact JSON line describing this
+// unit to a *program* (public info only — the same facts as the trust card,
+// plus the enabled feature set). A browser reads it over WebSerial to draw the
+// matching randomart from the pubkey and show exactly the tools this device
+// has. Read-only, leaks no secret (Tier::Diag). Always available.
+static void emit_self_manifest() {
+  DeviceIdentity& dev = witness_get_device();
+
+  char pk[65], fp[17], ch[65];
+  for (int i = 0; i < 32; ++i) snprintf(pk + i * 2, 3, "%02x", dev.pubkey[i]);
+  for (int i = 0; i < 8;  ++i) snprintf(fp + i * 2, 3, "%02x", dev.pubkey_fp[i]);
+  for (int i = 0; i < 32; ++i) snprintf(ch + i * 2, 3, "%02x", dev.chain_head[i]);
+
+  // Enabled capabilities — the compile-time FEATURE_* flags ARE the source of
+  // truth, so the manifest can never claim a feature the image doesn't carry.
+  const char* feats[40];
+  size_t nf = 0;
+  #define CV_ADD_FEAT(name) do { \
+      if (nf < sizeof(feats) / sizeof(feats[0])) feats[nf++] = (name); } while (0)
+#if FEATURE_SD_STORAGE
+  CV_ADD_FEAT("sd_storage");
+#endif
+#if FEATURE_WIFI_AP
+  CV_ADD_FEAT("wifi_ap");
+#endif
+#if FEATURE_HTTP_SERVER
+  CV_ADD_FEAT("http_server");
+#endif
+#if FEATURE_CAMERA_PEEK
+  CV_ADD_FEAT("camera_peek");
+#endif
+#if FEATURE_GNSS
+  CV_ADD_FEAT("gnss");
+#endif
+#if FEATURE_WATCHDOG
+  CV_ADD_FEAT("watchdog");
+#endif
+#if FEATURE_OTA_UPDATE
+  CV_ADD_FEAT("ota");
+#endif
+#if FEATURE_OTA_PULL
+  CV_ADD_FEAT("ota_pull");
+#endif
+#if FEATURE_HA_MQTT
+  CV_ADD_FEAT("mqtt");
+#endif
+#if FEATURE_MESH_NETWORK
+  CV_ADD_FEAT("mesh");
+#endif
+#if FEATURE_BLE
+  CV_ADD_FEAT("ble");
+#endif
+#if FEATURE_BLE_STATUS
+  CV_ADD_FEAT("ble_status");
+#endif
+#if FEATURE_CSI
+  CV_ADD_FEAT("csi");
+#endif
+#if FEATURE_VISION_DETECT
+  CV_ADD_FEAT("vision");
+#endif
+#if FEATURE_POWER_MONITOR
+  CV_ADD_FEAT("power_monitor");
+#endif
+#if FEATURE_POWER_POLICY
+  CV_ADD_FEAT("power_policy");
+#endif
+#if FEATURE_THERMAL_WATCHDOG
+  CV_ADD_FEAT("thermal_watchdog");
+#endif
+#if FEATURE_DIAGNOSTICS
+  CV_ADD_FEAT("diagnostics");
+#endif
+#if FEATURE_DATA_MGMT
+  CV_ADD_FEAT("data_mgmt");
+#endif
+#if FEATURE_SETUP_WIZARD
+  CV_ADD_FEAT("setup_wizard");
+#endif
+#if FEATURE_USB_ONBOARD
+  CV_ADD_FEAT("usb_onboard");
+#endif
+#if FEATURE_CONSOLE_THEME
+  CV_ADD_FEAT("console_theme");
+#endif
+  #undef CV_ADD_FEAT
+
+  int health = -1;
+#if FEATURE_DIAGNOSTICS
+  selftest_report_t st;
+  if (diag_get_selftest(&st)) health = (int)st.health_score;   // last score; no fresh run
+#endif
+
+  // The interactive keys THIS image answers — straight from the one command
+  // registry (kConsoleCommands), so the manifest can't list a key the device
+  // doesn't actually handle.
+  manifest::Cmd cmds[kConsoleCommandCount + 1];
+  size_t nc = 0;
+  for (size_t i = 0; i < kConsoleCommandCount; ++i) {
+    cmds[nc].key = kConsoleCommands[i].key;
+    cmds[nc].name = kConsoleCommands[i].name;
+    nc++;
+  }
+
+  manifest::Facts f{};
+  f.board          = DEVICE_TYPE;
+  f.firmware       = FIRMWARE_VERSION;
+  f.git            = FIRMWARE_GIT_HASH;
+  f.protocol       = PROTOCOL_VERSION;
+  f.device_id      = dev.device_id;
+  f.pubkey_hex     = pk;
+  f.pubkey_fp_hex  = fp;
+  f.chain_head_hex = ch;
+  f.seq            = dev.seq;
+  f.boots          = dev.boot_count;
+  f.health         = health;
+  f.tamper         = dev.tamper_active;
+  f.features       = feats;
+  f.feature_count  = nf;
+  f.commands       = cmds;
+  f.command_count  = nc;
+  f.help_url       = SECURACV_HELP_URL_BASE;
+
+  static char buf[1600];
+  size_t n = manifest::build(f, buf, sizeof buf);
+  Serial.println();
+  if (n) Serial.println(buf);
+  else   Serial.println("{\"error\":\"manifest overflow\"}");
+}
+
 static void handle_serial_commands() {
   if (!Serial.available()) return;
 
@@ -2143,6 +2428,7 @@ static void handle_serial_commands() {
       Serial.println("\n=== Commands ===");
       Serial.println("  h - This help");
       Serial.println("  i - Device identity");
+      Serial.println("  j - Self-manifest (machine-readable JSON for the app)");
       Serial.println("  s - Status");
       Serial.println("  g - GPS info");
 #if FEATURE_DATA_MGMT
@@ -2168,6 +2454,12 @@ static void handle_serial_commands() {
       Serial.println("  k - Unseal guide");
 #endif
       Serial.println("  t - Run all tests (self-test + feature health + Bluetooth)");
+#if FEATURE_CONSOLE_THEME
+      Serial.println("  l - Identity banner (key fingerprint as randomart)");
+#if FEATURE_DIAGNOSTICS
+      Serial.println("  a - Animated wake (watch the self-test run live)");
+#endif
+#endif
       Serial.println("  c - Attest chain (sign a nonce + chain head: c <nonce>)");
       Serial.println("  f - Fingerprint / provenance (version, secure-boot, keys)");
       Serial.println("  e - Explain last boot (reset reason + recent faults)");
@@ -2186,6 +2478,11 @@ static void handle_serial_commands() {
       Serial.println("\n");
       break;
     }
+
+    case 'j':
+    case 'J':
+      emit_self_manifest();
+      break;
 
     case 's':
     case 'S':
@@ -2580,6 +2877,21 @@ static void handle_serial_commands() {
       Serial.println();
       break;
     }
+
+#if FEATURE_CONSOLE_THEME
+    // 'l' — the identity banner: verifiable trust card + key-fingerprint
+    // randomart. Read-only; ASCII-safe unless the terminal answers the probe.
+    case 'l':
+    case 'L':
+      show_identity_banner();
+      break;
+#if FEATURE_DIAGNOSTICS
+    case 'a':
+    case 'A':
+      run_wake();
+      break;
+#endif
+#endif
 
     case 'x':
     case 'X':

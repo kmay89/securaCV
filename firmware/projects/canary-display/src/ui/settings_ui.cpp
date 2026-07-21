@@ -11,6 +11,9 @@
 #include <lvgl.h>
 #include <stdio.h>
 #include <time.h>
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+#include <Preferences.h>   // the dev-mode latch (Settings -> "dev mode" -> reboot)
+#endif
 
 #include "canary/ui/settings_ui.h"
 #include "canary/ui/commission_ui.h"
@@ -18,6 +21,10 @@
 #include "canary/ui/character.h"
 #include "canary/glass_settings.h"
 #include "canary/hal/display.h"
+#include "pins.h"                    // HAS_ISOLATED_IO (board -I path)
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+#include "canary/io/field_io.h"      // siren arm/disarm — 4.3B isolated output
+#endif
 
 namespace canary::ui {
 
@@ -49,6 +56,9 @@ enum class Page {
   EditHours,
   EditLook,
   EditScreen,
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  EditSiren,   // 4.3B: arm/disarm the isolated siren output (DO0)
+#endif
   EditStyle,   // the Character ring picker
   CalIntro,    // watch only — the black-point wizard
   CalDescend,
@@ -57,6 +67,9 @@ enum class Page {
   CalWarn,
   CalDone,
   ResetConfirm,
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+  DevConfirm,   // dash + FEATURE_DEVMODE: reboot into the peripheral bench
+#endif
 };
 
 // Tap-zone ids. Zones are the built objects themselves — hit-testing reads
@@ -65,6 +78,12 @@ enum : int {
   IT_BACK = 1,
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
   IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  IT_ROW_SIREN,
+#endif
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+  IT_ROW_DEV,
+#endif
   IT_MINUS, IT_PLUS, IT_OPT_A, IT_OPT_B, IT_PEEK, IT_GO,
   IT_YES, IT_NO,
 };
@@ -78,7 +97,13 @@ lv_obj_t* s_prev = nullptr;   // the face to return to
 lv_obj_t* s_scr = nullptr;    // our own screen while open
 lv_obj_t* s_host = nullptr;   // content parent (screen on watch, sheet on dash)
 Page s_page = Page::Root;
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+// The 4.3B dash root can carry both the dev-mode row and the siren row on top
+// of the shared rows, each two objects (name+value) — 16 clears the worst case.
+Item s_items[16];
+#else
 Item s_items[12];
+#endif
 int s_item_n = 0;
 bool s_owns_backlight = false;
 uint32_t s_last_touch_ms = 0;
@@ -294,6 +319,12 @@ void build_root() {
   y += step;
   mk_row(y, "style", character_name(active_character()), IT_ROW_STYLE);
   y += step;
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // 4.3B only: arm the wired siren (DO0). Disarmed by default — opt-in.
+  mk_row(y, "siren", canary::io::field_io_armed() ? "armed" : "off",
+         IT_ROW_SIREN);
+  y += step;
+#endif
 #ifdef CD_FLAVOR_WATCH
   mk_row(y, "find the black point", nullptr, IT_ROW_CAL);
   y += step;
@@ -303,6 +334,11 @@ void build_root() {
   y += step;
 #endif
   mk_row(y, "reset", nullptr, IT_ROW_RESET);
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+  // The 4.3B dash doubles as a bench: reboot into the peripheral test suite.
+  y += step;
+  mk_row(y, "dev mode", "bench", IT_ROW_DEV);
+#endif
 }
 
 void build_edit_day() {
@@ -392,6 +428,26 @@ void build_edit_screen() {
   lv_label_set_text(cap, "an alert always lights the glass");
   lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
 }
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+// Siren arming (4.3B): one decision, two options — same shape as "night look".
+// The alert always shows on the glass; this only governs the wired output, so
+// the caption says so plainly (silence must never be mistaken for safety).
+void build_edit_siren() {
+  mk_back("siren");
+  const bool armed = canary::io::field_io_armed();
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "armed", armed ? "on" : nullptr, IT_OPT_A, armed);
+  y += ROW_H;
+  mk_row(y, "silent", !armed ? "on" : nullptr, IT_OPT_B, !armed);
+  y += ROW_H;
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap,
+                    "drives the wired siren on an unacked\n"
+                    "alert - the glass shows it either way");
+  lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
+}
+#endif
 
 // The Character picker (display_character.md §7): a flip-through, not a
 // swatch grid. The screen IS the preview — by the time this builds, the
@@ -560,6 +616,25 @@ void build_reset_confirm() {
   add_item(no, IT_NO);
 }
 
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+void build_dev_confirm() {
+  mk_back("dev mode");
+  lv_obj_t* body = mk_label(s_host, font_body(), col_text());
+  lv_label_set_text(body,
+      "Enter dev mode?\nReboots into the peripheral\nbench - no fleet, no network.");
+  lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(body, LV_ALIGN_CENTER, 0, -26);
+  lv_obj_t* yes = mk_label(s_host, font_body(), col_signed());
+  lv_label_set_text(yes, "enter");
+  lv_obj_align(yes, LV_ALIGN_CENTER, -52, 44);
+  add_item(yes, IT_YES);
+  lv_obj_t* no = mk_label(s_host, font_body(), col_muted());
+  lv_label_set_text(no, "stay");
+  lv_obj_align(no, LV_ALIGN_CENTER, 52, 44);
+  add_item(no, IT_NO);
+}
+#endif
+
 void build(Page pg) {
   clear_host();
   set_owns_backlight(false);
@@ -571,6 +646,9 @@ void build(Page pg) {
     case Page::EditHours:    build_edit_hours(); break;
     case Page::EditLook:     build_edit_look(); break;
     case Page::EditScreen:   build_edit_screen(); break;
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+    case Page::EditSiren:    build_edit_siren(); break;
+#endif
     case Page::EditStyle:    build_edit_style(); break;
     case Page::CalIntro:     build_cal_intro(); break;
     case Page::CalDescend:   build_cal_descend(); break;
@@ -579,6 +657,9 @@ void build(Page pg) {
     case Page::CalWarn:      build_cal_warn(); break;
     case Page::CalDone:      build_cal_done(); break;
     case Page::ResetConfirm: build_reset_confirm(); break;
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+    case Page::DevConfirm:   build_dev_confirm(); break;
+#endif
   }
 }
 
@@ -660,6 +741,9 @@ void dispatch(int id) {
         case IT_ROW_HOURS:  s_hours_sel = 0; build(Page::EditHours); return;
         case IT_ROW_LOOK:   build(Page::EditLook); return;
         case IT_ROW_SCREEN: build(Page::EditScreen); return;
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+        case IT_ROW_SIREN:  build(Page::EditSiren); return;
+#endif
         case IT_ROW_STYLE:  build(Page::EditStyle); return;
         case IT_ROW_CAL:    build(Page::CalIntro); return;
         case IT_ROW_RESET:  build(Page::ResetConfirm); return;
@@ -667,6 +751,11 @@ void dispatch(int id) {
           close_instant();
           commission_ui_open();
           return;
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+        case IT_ROW_DEV:
+          build(Page::DevConfirm);
+          return;
+#endif
       }
       return;
 
@@ -709,6 +798,18 @@ void dispatch(int id) {
         build(Page::EditScreen);
       }
       return;
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+    case Page::EditSiren:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_OPT_A || id == IT_OPT_B) {
+        // Landing IS choosing (like night look): persist the arm state to NVS
+        // through field_io, then rebuild so the row reflects it immediately.
+        canary::io::field_io_set_armed(id == IT_OPT_A);
+        build(Page::EditSiren);
+      }
+      return;
+#endif
 
     case Page::EditStyle:
       if (id == IT_BACK) { build(Page::Root); return; }
@@ -791,6 +892,26 @@ void dispatch(int id) {
       }
       build(Page::Root);
       return;
+
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+    case Page::DevConfirm:
+      if (id == IT_YES) {
+        // Latch dev mode for the NEXT boot, then reboot into the bench. It
+        // comes up network-silent (main.cpp reads this latch and skips
+        // WiFi/MQTT/OTA); the bench's own "exit dev mode" clears it and
+        // reboots back to the fleet face.
+        Preferences p;
+        if (p.begin("securacv", /*readOnly=*/false)) {
+          p.putBool("devmode", true);
+          p.end();
+        }
+        delay(60);
+        ESP.restart();   // does not return
+        return;
+      }
+      build(Page::Root);  // "stay" / back
+      return;
+#endif
   }
 }
 

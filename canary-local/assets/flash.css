@@ -468,3 +468,26 @@ button.flash-map-key:hover { color: var(--text); }
   background: #08090b; min-height: 120px; display: flex; align-items: center; justify-content: center; }
 .we2-preview-cv { display: block; max-width: 100%; image-rendering: pixelated; }
 @media (max-width: 700px) { .we2-src { grid-template-columns: 1fr; } }
+
+/* ── self-healing: boot-log diagnosis panel + diagnostic report ──────────── */
+.flash-diag {
+  border: 1px solid var(--warn, #fb8c00);
+  background: rgba(251, 140, 0, 0.08);
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0;
+}
+.flash-diag-emoji { font-size: 22px; line-height: 1; }
+.flash-diag h3 { margin: 4px 0 4px; font-size: 15px; }
+.flash-report-btn { white-space: nowrap; }
+.flash-report-ta {
+  width: 100%; margin-top: 8px; font: 12px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  background: #08080a; color: #b9c7b9; border: 1px solid var(--edge, #262626);
+  border-radius: 10px; padding: 10px; resize: vertical;
+}
+
+/* ── post-flash proof: verified-identity card ────────────────────────────── */
+.flash-identity {
+  border: 1px solid rgba(3, 169, 244, 0.4);
+  background: rgba(3, 169, 244, 0.06);
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0;
+}
+.flash-identity-head { font-weight: 640; font-size: 15px; color: #bfe6fb; margin-bottom: 6px; }

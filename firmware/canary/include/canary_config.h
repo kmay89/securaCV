@@ -135,6 +135,9 @@
 #ifndef FEATURE_TEST_CONSOLE
   #define FEATURE_TEST_CONSOLE     0   // Serial DEMO/MUTATE test commands (camera peek, mic beep, BLE advertise, pairing…). OFF in every shipping image: the console's 't' run-all is read-only (Tier::Diag) and always available, but the powerful demo/mutating commands are dev/test-only and never in a production binary (security + flash). See docs/design/test_console.md.
 #endif
+#ifndef FEATURE_CONSOLE_THEME
+  #define FEATURE_CONSOLE_THEME    1   // The themed serial console: the 'l' identity banner (device fingerprint as drunken-bishop randomart) via the host-tested scene engine (common/ui/*). Safe by default — probes the terminal (ESC[6n) and stays 7-bit ASCII unless it answers, so it never becomes garbage. Small flash cost (pure header composition); compile out if the budget is tight. See docs/design/serial_console_theming.md.
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // DEBUG FLAG DEFAULTS

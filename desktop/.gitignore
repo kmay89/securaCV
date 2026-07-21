@@ -1,0 +1,20 @@
+# Rust build output
+src-tauri/target/
+src-tauri/gen/
+
+# Node
+node_modules/
+
+# Sidecars — CI downloads these per-platform (binaries/espflash-<triple>)
+src-tauri/binaries/espflash-*
+
+# Generated icon set — CI runs `tauri icon` from icons/source.png.
+# The source PNG and its generator ARE tracked; the derived files are not.
+src-tauri/icons/*.png
+src-tauri/icons/*.icns
+src-tauri/icons/*.ico
+!src-tauri/icons/source.png
+
+# Signing keys — never commit these
+*.key
+*.key.pub

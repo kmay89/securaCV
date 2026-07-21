@@ -11056,6 +11056,37 @@ void loop() {
   ble_status::update();
   #endif
 
+  // Feed live status into the fleet-link presence beacon (ble_opera applies it
+  // on its periodic refresh, and the chirp-restore path re-applies it too).
+  // Fail-safe: sources without a value keep their unknown sentinels (battery
+  // -1 -> 0xFF, flags default 0). Health has no 0..100 source on the WAP yet
+  // (ble_status omits it likewise), so it rides as unknown (0xFF). tamper /
+  // alert_active have no cheap WAP-side getter today — left 0 (follow-up).
+  #if FEATURE_BLE && FEATURE_BLE_OPERA
+  {
+    uint8_t beacon_flags = 0;
+    int beacon_battery = -1;
+    int beacon_health  = -1;
+    #if FEATURE_POWER_MONITOR
+    {
+      PowerState pwr;
+      if (power_monitor::get_state(&pwr)) {
+        beacon_battery = (pwr.soc_pct > 100) ? 100 : (int)pwr.soc_pct;
+      }
+    }
+    #endif
+    #if FEATURE_ACOUSTIC_EVENTS
+    if (audio_is_muted()) beacon_flags |= FLEET_BEACON_FLAG_MIC_MUTED;
+    #endif
+    #if FEATURE_SYS_MONITOR
+    if (sys_monitor::get_degrade_level() != sys_monitor::DEGRADE_NONE)
+      beacon_flags |= FLEET_BEACON_FLAG_DEGRADED;
+    #endif
+    if (WiFi.isConnected()) beacon_flags |= FLEET_BEACON_FLAG_ON_WIFI_STA;
+    ble_opera::setBeaconStatus(beacon_flags, beacon_battery, beacon_health);
+  }
+  #endif
+
   // Update BLE Discovery (Opera/Chirp/Nearby)
   #if FEATURE_BLE
   if (ble_manager::isAvailable()) {

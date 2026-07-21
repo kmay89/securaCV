@@ -66,6 +66,18 @@
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
 #include "chirp_scan.h"
 #endif
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+#include "field_io.h"   // 4.3B isolated DI/DO -> events + siren
+#endif
+#if defined(FEATURE_RTC) && FEATURE_RTC
+#include "rtc.h"        // PCF8563 trusted time (probe -> seed/mirror)
+#endif
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+#include "espnow_peer.h"  // router-independent peer presence (rx-only)
+#endif
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+#include "fleet_link.h"
+#endif
 #if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
 #include "provision.h"
 #endif
@@ -81,8 +93,13 @@
 #include "chime.h"
 #include "core_compat.h"
 #include "glass_settings.h"
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
 #include "playground.h"
+#include <Preferences.h>
+// True once this boot handed the device to the peripheral bench (dedicated
+// bench env, or the dev-mode NVS latch set from Settings). Keeps loop() on the
+// bench path without re-reading NVS every pass.
+static bool s_devmode_active = false;
 #endif
 
 #include <lvgl.h>
@@ -522,6 +539,14 @@ static void handle_touch(uint32_t now) {
     if (was_awake) {
       g_page = (g_page + 1) % canary::ui::glance_page_count();
       g_page_touched_ms = now;
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+      // Tapping to a witness detail page queues an off-grid GATT status pull
+      // for that WAP (no-op online; the loop only acts while broker-down).
+      if (g_page >= 1 && g_page <= fleet.count()) {
+        const auto* w = fleet.at(g_page - 1);
+        if (w && w->fp[0]) canary::net::fleet_link_request(w->fp);
+      }
+#endif
     } else {
       // Glance-first wake: waking from the dark always lands on the one
       // big fact (the halo hero), never mid-rotation on a detail page —
@@ -534,6 +559,15 @@ static void handle_touch(uint32_t now) {
     // proof sheet; a tap on an open sheet closes it.
     if (was_awake && g_display_ok) {
       canary::ui::dash_ui_handle_tap(g_touch_x, g_touch_y);
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+      // A lit tap on a witness card queues an off-grid GATT status pull for
+      // that WAP (no-op online; the loop only acts while broker-down).
+      const int fl_card = canary::ui::dash_ui_card_at(g_touch_x, g_touch_y);
+      if (fl_card >= 0) {
+        const auto* w = fleet.at(fl_card);
+        if (w && w->fp[0]) canary::net::fleet_link_request(w->fp);
+      }
+#endif
     }
 #endif
     fleet.mark_dirty();
@@ -666,14 +700,34 @@ void setup() {
   boot_scene_banner(&bi);
   boot_scene_hardware(&bi);
 
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
-  // Dev playground (docs/hardware/dev_playground_43b.md): the guided
-  // peripheral bench mode owns the device from here. Everything below —
-  // WiFi, MQTT, OTA, discovery, provisioning, watchdog — is deliberately
-  // never initialized: a bench unit can't join the fleet, phone home, or
-  // take an update by accident.
-  canary::playground::playground_setup();
-  return;
+#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
+  // Peripheral bench (docs/hardware/dev_playground_43b.md): the guided test
+  // suite owns the device from here. Enter it when EITHER this is the dedicated
+  // bench build (FEATURE_PLAYGROUND) or the shipped firmware's dev-mode latch
+  // was set from Settings -> "dev mode" (FEATURE_DEVMODE + NVS). Everything
+  // below — WiFi, MQTT, OTA, discovery, provisioning, watchdog — is
+  // deliberately never initialized, so a bench/dev unit can't join the fleet,
+  // phone home, or take an update by accident.
+  {
+    bool enter_bench = false;
+  #if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+    enter_bench = true;                 // dedicated bench env: always the bench
+  #endif
+  #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+    if (!enter_bench) {                 // shipped firmware: only if the latch is set
+      Preferences p;
+      if (p.begin("securacv", /*readOnly=*/true)) {
+        enter_bench = p.getBool("devmode", false);
+        p.end();
+      }
+    }
+  #endif
+    if (enter_bench) {
+      s_devmode_active = true;
+      canary::playground::playground_setup();
+      return;
+    }
+  }
 #endif
 
   // Display-specific boot scene.
@@ -788,6 +842,20 @@ void setup() {
   }
 #endif
 
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Trusted time: if a PCF8563 is populated on the shared I2C bus, seed the
+  // clock from it now (so timestamps are trustworthy before/without SNTP); the
+  // loop mirrors NTP back to it once the network gives a real wall time.
+  canary::io::rtc_begin();
+#endif
+
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  // Router-independent peer presence: bring up the ESP-NOW listener now that the
+  // WiFi driver is started. Receive-only — the dash observes peer beacons off
+  // the raw channel when the AP/broker is down; it never transmits or signs.
+  canary::net::espnow_begin();
+#endif
+
   // The display's own web page — live mirror, help, master settings.
   // Started AFTER provisioning (the portal owned :80 during setup) and
   // independent of the panel: a display with broken glass still mirrors.
@@ -805,6 +873,12 @@ void setup() {
   // Care wave: restore the learned rhythm baseline from NVS (mutes re-apply
   // later, from care_loop, once SNTP gives both clocks).
   canary::care::care_begin();
+#endif
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // 4.3B field I/O: isolated contacts -> unsigned local events, siren on
+  // unacked alerts. Reports under this dash's own id; never signs.
+  canary::io::field_io_begin(canary::cfg::get().device_id);
 #endif
 
   // Seed the heap-health snapshot so the first status publish carries real
@@ -877,9 +951,11 @@ void setup() {
 }
 
 void loop() {
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
-  canary::playground::playground_loop();
-  return;
+#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
+  if (s_devmode_active) {
+    canary::playground::playground_loop();
+    return;
+  }
 #endif
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
@@ -988,7 +1064,42 @@ void loop() {
   // Off-grid fallback (spec §6): while the broker is dark and WiFi may be
   // too, passive BLE bursts keep tamper/liveness flowing to the glass. The
   // module itself stops scanning the moment the broker is back.
-  canary::net::chirp_scan_loop(now, !broker);
+  canary::net::chirp_scan_loop(now, !broker, canary::net::wifi_connected());
+#endif
+
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  // Drain any peer presence beacons the ESP-NOW listener captured into the
+  // fleet model (unsigned observation, same footing as the BLE beacon).
+  canary::net::espnow_loop(now);
+#endif
+
+#if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+  // Broker-less fleet enumeration (WiFi analog of the BLE presence beacon):
+  // once every device is on the home WiFi, browse the fleet's mDNS adverts
+  // directly and show every nearby Canary even with NO broker/Home Assistant.
+  // Gated on the broker being DOWN — when it's up, MQTT is the richer source,
+  // so skip the mDNS enumeration to avoid churn. Self-rate-limits (~20 s) and
+  // only actually queries when due; the query blocks ~3 s inside ESPmDNS.
+  if (!broker) canary::net::discovery_scan_witnesses(now);
+#endif
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // Poll the isolated contacts into events and drive the siren output. Cheap
+  // and self-throttled; 4.3B only.
+  canary::io::field_io_loop(now);
+#endif
+
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Mirror NTP back to the PCF8563 once the clock is real. Self-throttled.
+  canary::io::rtc_loop(now);
+#endif
+
+#if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
+  // Layer 3: on-demand GATT pull of a WAP's live status (a display tap queues
+  // the request via fleet_link_request; this drives the bounded connect+read
+  // while off-grid). Runs after the passive listener so it can stop that scan
+  // before driving the shared radio as a central.
+  canary::net::fleet_link_loop(now, !broker, canary::net::wifi_connected());
 #endif
 
   // Time machine v1 (spec §7): keep the model's wall-hour current so new

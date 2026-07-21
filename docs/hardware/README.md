@@ -13,6 +13,7 @@ optional.
 | [`esp32s3_power_battery_guide.md`](./esp32s3_power_battery_guide.md) | **Power & battery guide** — supply/cable requirements, consumption estimates per firmware power mode, battery chemistry/sizing across temperatures and environments, wiring pitfalls, and the battery health/lifetime telemetry reference. |
 | [`canary_vision_getting_started.md`](./canary_vision_getting_started.md) | **Canary Vision getting started** — one clean path from unboxing to a working witness: assemble, load the model, flash, HA discovery, dashboard, and aiming with the boxes-only Aim camera card. |
 | [`grove_vision_ai_v2_guide.md`](./grove_vision_ai_v2_guide.md) | **Grove Vision AI V2 device guide** — the two USB-C ports explained, Grove I2C port pinouts per host board, loading the initial AI model via SenseCraft, bootloader recovery, and the SSCMA protocol reference. |
+| [`we2_module_flasher_bench_test.md`](./we2_module_flasher_bench_test.md) | **WE2 module flasher bench smoke-test** — the first-hardware gate for the Lab's own module flasher: connect the module port, burn the pinned model, prove it with the AT handshake + live preview, with pass/fail criteria and the Vela-compat fallback. Run once on a real module before calling the flasher production-ready. |
 | [`acoustic_alarm_bench_test.md`](./acoustic_alarm_bench_test.md) | Bench test for the audible chirp — does the alarm actually alarm. |
 | [`canary_qr_onboarding.md`](./canary_qr_onboarding.md) | QR onboarding — a new Canary joins by looking at the display's screen. |
 | [`csi_sensing_guide.md`](./csi_sensing_guide.md) | WiFi CSI sensing on the bench — hardware-side setup and validation. |
@@ -38,8 +39,13 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`display_onboarding.md`](./display_onboarding.md) | On-glass onboarding flows. |
 | [`display_settings.md`](./display_settings.md) | On-glass settings — what's adjustable without an app. |
 | [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md) | Discovery & resilience — finding sensors, surviving outages. |
+| [`fleet_link_bench_checklist.md`](./fleet_link_bench_checklist.md) | Fleet link — hardware bench smoke-test gate for the direct BLE presence/GATT channel. |
+| [`canary_wap_wifi.md`](./canary_wap_wifi.md) | How the Canary WAP's WiFi works — the AP→STA link + provisioning, single-radio coexistence, and WiFi *as a sensor* (CSI presence + probe-request counting). |
 | [`display_bench_bringup.md`](./display_bench_bringup.md) | Display bench bring-up — from bare board to a beating face. |
-| [`dev_playground_43b.md`](./dev_playground_43b.md) | **Dev playground (bench mode)** — the Waveshare 4.3B as a safe guided peripheral test bench: doorbell/intrusion/light/cap-touch/ToF/beam-gap stations, the PG1 comms standard, and the fully-loaded pin tracker. |
+| [`dev_playground_43b.md`](./dev_playground_43b.md) | **Dev playground (bench mode)** — the Waveshare 4.3B as a safe guided peripheral test bench: doorbell/intrusion/light/cap-touch/ToF/beam-gap plus RS485·Modbus and CAN·TWAI stations, the PG1 comms standard, and the fully-loaded pin tracker. |
+| [`dev_playground_todo.md`](./dev_playground_todo.md) | **Dev playground — TODO & maintainer handoff** — where every piece of the drift-lock chain lives (firmware ↔ generator ↔ json ↔ sim ↔ test ↔ website carry), the exact ritual to add a station, the gotchas, and the next-station + bench-activation TODO. Start here to continue the playground. |
+| [`board_capability_map_43b.md`](./board_capability_map_43b.md) | **Board capability map (4.3B)** — an honest, cited ledger of every capability the dash board can do vs. what the firmware drives today, and for each unused one the exact feature gate + bench step to activate it (evidence vault, isolated DI/DO, RS485/Modbus, CAN, microSD, RTC/battery). |
+| [`board_43b_activation_bench.md`](./board_43b_activation_bench.md) | **4.3B peripheral activation bench checklist** — the executable companion to the capability map: per capability (field I/O, RS485/Modbus, CAN/TWAI, evidence vault, RTC/battery), the exact wiring, build/flag, pass signal (the `[FIELD]`/`[RS485]`/`[CAN]` log lines), and the honesty-correction/`VERIFY` note each pass retires. |
 | [`display_research.md`](./display_research.md) | Display hardware research notes. |
 
 The CSVs use a flat, RoHS-style schema:

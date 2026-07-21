@@ -19,7 +19,9 @@ screws per case. Then:
    every part below.
 2. **Pick your case** from the [variant gallery](#pick-your-variant) —
    released variants have committed STLs; slice and print (flat, open side
-   up, no supports — ever).
+   up, no supports — ever). New to slicing these? The
+   [PETG Cura guide](./printing_petg_cura.md) has a settings sheet and a
+   one-click profile.
 3. **Fit your boards** — every case uses the same snap-clip cradles: boards
    press in, no screws. Each device section below has its assembly steps.
 4. **Mount it** — print the wall bracket / plate for your case, or print a
@@ -34,6 +36,8 @@ before printing — material choice and the gasket option matter out there.
 - [The complete file map](#the-complete-file-map) — every file, one line each
 - [Pick your variant](#pick-your-variant) — gallery with previews + 3D viewers
 - [Engineering & materials](#engineering--materials-security-build) — durability, materials, thermal kit, finish
+- [Best-practice printing tips](./printing_best_practices.md) — the *why* behind a good print: strength, fit, finish, durability (slicer-agnostic)
+- [Printing in PETG — Cura guide](./printing_petg_cura.md) — reasoned settings sheet, per-model cheat-sheet, importable profile
 - [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - Device deep-dives: [WAP](#canary-wap--enclosure-v07) · [Vision](#canary-vision--enclosure-v02) · [Doorbell](#canary-vision--doorbell-v01) · [Sense radome](#canary-sense--radome-enclosure-v01)
 
@@ -239,7 +243,13 @@ label gets ~90 % of the consumer look for ~0 % extra work.
 5 top/bottom layers, **30 % gyroid** infill, ~30 % infill/perimeter overlap,
 +5–10 °C over the material's default for interlayer adhesion, minimal cooling
 on ASA/PC. Anneal PETG/PC parts (65 °C / 90 °C, 1 h, supported flat) for a
-further ~20 % creep and stiffness margin if you have an oven.
+further ~20 % creep and stiffness margin if you have an oven. For the full
+reasoning — every Cura setting with its *why*, a per-model orientation
+cheat-sheet, PETG stringing/sealing notes, and a one-click importable profile —
+see [**Printing in PETG — Cura guide**](./printing_petg_cura.md) (with a
+one-click [importable Cura profile](./profiles/README.md)). For the reasoning
+behind it all — where strength comes from, fits, finish, durability — see
+[**Best-practice printing tips**](./printing_best_practices.md).
 
 **Mass budget** (solid-volume upper bounds from the rendered STLs; PETG at
 1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 12 g/pair, WAP battery
@@ -772,6 +782,8 @@ exits the bottom wall (`xiao_usb_z` — measure the seated stack).
 > check the radome window lands over the antenna array.
 
 ## Links
+- [Best-practice printing tips](./printing_best_practices.md) — the *why*: strength, fit, finish, durability (slicer-agnostic)
+- [Printing in PETG — Cura guide](./printing_petg_cura.md) — settings sheet, per-model cheat-sheet, importable profile
 - [Field & environmental ratings](./field_ratings.md) — hardware limits, the CER ladder, home test protocols
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance
 - [Canary Sense design doc](../../canary_sense_mr60bha2_design.md) — the radar witness this houses

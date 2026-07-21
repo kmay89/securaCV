@@ -39,6 +39,7 @@
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
 #define FEATURE_CHIME               0   // piezo unpopulated; engine compiled (spec 5)
 #define FEATURE_CHIRP_SCAN          1   // off-grid BLE chirp fallback (spec 6)
+#define FEATURE_FLEET_LINK          1   // off-grid BLE GATT pull of WAP status (spec 6)
 #define FEATURE_TIME_MACHINE        1   // proof-carrying event journal + history UI (spec 7)
 #define FEATURE_TIME_MACHINE_PERSIST 0  // LittleFS durability; bench-gated (like CHIME)
 #define FEATURE_ONBOARDING          1   // first-boot SoftAP wizard + on-glass guide

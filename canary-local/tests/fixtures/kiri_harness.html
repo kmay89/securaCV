@@ -1,0 +1,33 @@
+<!doctype html>
+<!--
+  canary-local/tests/fixtures/kiri_harness.html — isolated mount for the
+  enclosure print guide, so kiri_slice_probe.mjs can drive the estimate card +
+  slice bridge in a real browser without walking the whole app's navigation.
+  <base href="/canary-local/"> makes every relative URL the module uses
+  (../docs, assets/, devices/, enclosures/preview) resolve exactly as on a real
+  canary-local page.
+-->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <base href="/canary-local/" />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+  <title>kiri slice harness</title>
+  <style>body { margin: 0; background: #0b0b0d; color: #eee; } #mount { padding: 16px; }</style>
+</head>
+<body>
+  <div id="mount"></div>
+  <script type="module">
+    import { buildEnclosureLab } from "./assets/enclosure-lab.js";
+    try {
+      const enc = await (await fetch("devices/enclosures.json")).json();
+      const build = await (await fetch("devices/build.json")).json();
+      const lab = buildEnclosureLab(enc, "canary-wap", build); // WAP: committed STLs + priced BOM
+      document.getElementById("mount").append(lab);
+      window.__harnessReady = true;
+    } catch (e) {
+      window.__harnessError = String(e);
+    }
+  </script>
+</body>
+</html>

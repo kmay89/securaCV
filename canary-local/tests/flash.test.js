@@ -725,6 +725,21 @@ test("preferredProductId reads a safe product hint from the query string", async
   }
 });
 
+test("recommendedProduct leads with the flagship for the detected chip", async () => {
+  const { recommendedProduct, productsForChip } = await core();
+  // First catalog match per chip — the flagship, by authoring order.
+  for (const chip of ["ESP32-S3", "ESP32-C3", "ESP32-C6"]) {
+    const rec = recommendedProduct(catalog, chip);
+    assert.ok(rec, `no recommendation for ${chip}`);
+    assert.strictEqual(rec, productsForChip(catalog, chip)[0]);
+    assert.strictEqual(rec.chip, chip, "recommendation must fit the chip");
+  }
+  // The S3 flagship is the all-rounder Canary, not a variant.
+  assert.strictEqual(recommendedProduct(catalog, "ESP32-S3").id, "securacv-canary");
+  // Unknown silicon → no recommendation (the picker shows its empty state).
+  assert.strictEqual(recommendedProduct(catalog, "ESP32-Q9"), null);
+});
+
 // ── catalog guard: a malformed catalog degrades, never crashes the page ──────
 test("validateCatalog passes the shipped catalog and flags real breakage", async () => {
   const { validateCatalog } = await core();
@@ -738,4 +753,147 @@ test("validateCatalog passes the shipped catalog and flags real breakage", async
   // A product missing the chip the guard needs.
   const badProd = JSON.parse(JSON.stringify(catalog)); delete badProd.products[0].chip;
   assert.ok(validateCatalog(badProd).some((e) => /missing chip/.test(e)));
+});
+
+// ── self-healing: baud ladder, boot-log diagnosis, bridge detect, report ────
+test("FLASH_BAUDS: fastest-first ladder, distinct from the console list", async () => {
+  const { FLASH_BAUDS } = await core();
+  assert.deepStrictEqual(FLASH_BAUDS, [921600, 460800, 230400, 115200]);
+  // strictly descending — the connect flow steps down on failure
+  for (let i = 1; i < FLASH_BAUDS.length; i++) assert.ok(FLASH_BAUDS[i] < FLASH_BAUDS[i - 1]);
+});
+
+test("diagnoseBootLog: maps fatal signatures to fixes, else null", async () => {
+  const { diagnoseBootLog } = await core();
+  assert.strictEqual(diagnoseBootLog(""), null);
+  assert.strictEqual(diagnoseBootLog("Hello canary chirp, booting normally"), null);
+
+  const brown = diagnoseBootLog("rst:0x10 (RTCWDT_RTC_RST)\nBrownout detector was triggered\n");
+  assert.strictEqual(brown.signature, "brownout");
+  assert.strictEqual(brown.action, "power"); // NOT a reflash — a power problem
+
+  const panic = diagnoseBootLog("Guru Meditation Error: Core 0 panic'ed\nBacktrace: 0x400...");
+  assert.strictEqual(panic.signature, "panic");
+  assert.strictEqual(panic.action, "clean-install");
+
+  const noapp = diagnoseBootLog("invalid header: 0xffffffff\nno bootable app partitions");
+  assert.strictEqual(noapp.signature, "no-app");
+  assert.strictEqual(noapp.action, "clean-install");
+
+  // every diagnosis carries human means + fix text
+  for (const d of [brown, panic, noapp]) { assert.ok(d.means && d.fix); }
+});
+
+test("usbBridgeInfo: native USB → null, bridge chips → driver link", async () => {
+  const { usbBridgeInfo } = await core();
+  assert.strictEqual(usbBridgeInfo(0x303a, 0x1001), null); // Espressif native USB
+  assert.strictEqual(usbBridgeInfo(null, null), null);
+  assert.strictEqual(usbBridgeInfo(0xbeef, 0x1), null);    // unknown → no driver to chase
+  const cp = usbBridgeInfo(0x10c4, 0xea60);
+  assert.ok(cp && /CP210x/.test(cp.name) && /silabs\.com/.test(cp.driverUrl));
+  const ch = usbBridgeInfo(0x1a86, 0x7523);
+  assert.ok(ch && /CH340/.test(ch.name) && /wch/.test(ch.driverUrl));
+});
+
+test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", async () => {
+  const { buildDiagnosticReport } = await core();
+  const r = buildDiagnosticReport({
+    browser: "Chrome", webSerial: true, chip: "ESP32-S3", mac: "AA:BB",
+    baud: 460800, error: "timed out", product: "canary-wap",
+    logTail: "line1\nline2\nBrownout detector was triggered",
+  });
+  assert.ok(r.includes("SecuraCV flasher diagnostic"));
+  assert.ok(r.includes("web serial: yes") && r.includes("connected baud: 460800"));
+  assert.ok(r.includes("chip: ESP32-S3") && r.includes("error: timed out"));
+  assert.ok(r.includes("Brownout")); // log tail included
+  // empty/missing fields are omitted, not rendered as blanks
+  assert.ok(!/platform:/.test(r) && !/flash size:/.test(r));
+  // never leaks a field we didn't pass (e.g. wifi/keys aren't inputs at all)
+  assert.ok(!/password|ssid|pubkey/i.test(r));
+});
+
+// ── post-flash proof: self-manifest read-back ───────────────────────────────
+test("parseSelfManifest: extracts the signed manifest from a noisy boot log", async () => {
+  const { parseSelfManifest, formatFingerprint } = await core();
+  const m = {
+    schema: "securacv.canary.manifest/v1", board: "xiao-esp32s3", firmware: "2.3.0-wap",
+    git: "abc1234", pubkey: "00112233", pubkey_fp: "aabbccddeeff0011", health: 100,
+    tamper: false, seq: 5, boots: 12,
+    features: ["ota", "ble"], commands: [{ key: "j", name: "self-manifest" }, { key: "h", name: "help" }],
+  };
+  // Real serial output: boot spam, then the JSON line, then more spam.
+  const buf = "rst:0x1 (POWERON)\nSecuraCV canary booting\n" + JSON.stringify(m) + "\nchirp\n";
+  const got = parseSelfManifest(buf);
+  assert.ok(got, "should find the manifest");
+  assert.strictEqual(got.firmware, "2.3.0-wap");
+  assert.strictEqual(got.pubkey_fp, "aabbccddeeff0011");
+  assert.strictEqual(got.health, 100);
+  // nested braces in commands[] must not fool the brace matcher
+  assert.strictEqual(got.commands.length, 2);
+  // no manifest present → null; partial line → null (waits for more bytes)
+  assert.strictEqual(parseSelfManifest("just boot text, no json"), null);
+  assert.strictEqual(parseSelfManifest('{"schema":"securacv.canary.manifest/v1","board":"xia'), null);
+  // a JSON object that isn't the manifest schema → null
+  assert.strictEqual(parseSelfManifest('{"schema":"something.else/v1"}'), null);
+  // fingerprint formatting
+  assert.strictEqual(formatFingerprint("aabbccddeeff0011"), "aa:bb:cc:dd:ee:ff:00:11");
+  assert.strictEqual(formatFingerprint("aabbccddeeff00112233"), "aa:bb:cc:dd:ee:ff:00:11…");
+  assert.strictEqual(formatFingerprint(""), "");
+});
+
+// ── release signature verification (in-browser, pinned key) ─────────────────
+const nodeCrypto = require("node:crypto");
+function makeSignedImage() {
+  const { publicKey, privateKey } = nodeCrypto.generateKeyPairSync("ed25519");
+  const pubHex = publicKey.export({ type: "spki", format: "der" }).subarray(-32).toString("hex");
+  const image = Buffer.from("SecuraCV factory image bytes — test");
+  const sha = nodeCrypto.createHash("sha256").update(image).digest();
+  const msg = Buffer.concat([Buffer.from(new Uint32Array([image.length]).buffer), sha]); // uint32_le||sha256
+  const sigHex = nodeCrypto.sign(null, msg, privateKey).toString("hex");
+  return { pubHex, sigHex, size: image.length, sha: new Uint8Array(sha) };
+}
+
+test("verifyImageSignature: accepts a genuine signature, rejects tampering", async () => {
+  const { verifyImageSignature, ed25519Message, isRealPubkey, hexToBytes } = await core();
+  const { pubHex, sigHex, size, sha } = makeSignedImage();
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size, sha), true);
+  // wrong size, flipped signature byte, wrong hash, wrong key → all false
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size + 1, sha), false);
+  const flipped = hexToBytes(sigHex); flipped[0] ^= 1;
+  assert.strictEqual(await verifyImageSignature(Buffer.from(flipped).toString("hex"), pubHex, size, sha), false);
+  const otherSha = new Uint8Array(sha); otherSha[5] ^= 0xff;
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size, otherSha), false);
+  // the all-zero placeholder key never verifies (unprovisioned) — checksum-only
+  assert.strictEqual(isRealPubkey("00".repeat(32)), false);
+  assert.strictEqual(await verifyImageSignature(sigHex, "00".repeat(32), size, sha), false);
+  // no signature / malformed → false (caller falls back, doesn't crash)
+  assert.strictEqual(await verifyImageSignature("", pubHex, size, sha), false);
+  // message layout is exactly uint32_le(size) || sha256
+  const m = ed25519Message(0x04030201, sha);
+  assert.deepStrictEqual(Array.from(m.subarray(0, 4)), [0x01, 0x02, 0x03, 0x04]);
+  assert.strictEqual(m.length, 36);
+});
+
+test("manifestEntry passes the signature + key id through", async () => {
+  const { manifestEntry } = await core();
+  const m = goodManifest();
+  m.products["securacv-canary-wap"].signature = "ab".repeat(64);
+  m.products["securacv-canary-wap"].signing_key_id = "0011223344556677";
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  const e = manifestEntry(m, wap, "ESP32-S3");
+  assert.strictEqual(e.signature, "ab".repeat(64));
+  assert.strictEqual(e.signingKeyId, "0011223344556677");
+});
+
+test("imageVerificationPolicy: fail-closed once a real key is pinned", async () => {
+  const { imageVerificationPolicy } = await core();
+  // Real key + signature → must verify.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: true, selfHosted: false }), "verify");
+  // Real key + official manifest + NO signature → REFUSE (the P1 hole).
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false }), "require-signature");
+  // Real key + self-hosted manifest without a signature → user opted in → checksum-only.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "checksum-only");
+  // No key yet (pre-ceremony) → checksum-only regardless.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: false }), "checksum-only");
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: true, selfHosted: false }), "checksum-only");
 });

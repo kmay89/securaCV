@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SecuraCV Flasher</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="update-banner" class="banner hidden" role="status">
+    <span id="update-text">An update is ready.</span>
+    <button id="update-btn" class="btn btn-small">Update &amp; relaunch</button>
+    <button id="update-dismiss" class="link-btn">Later</button>
+  </div>
+
+  <header class="hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="40" height="40">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Flash a Canary</h1>
+      <p class="lede">No browser, no terminal. Plug it in and go — the flashing
+        engine is built in. You can't pick the wrong image, and you can't
+        brick the board.</p>
+    </div>
+  </header>
+
+  <main>
+    <!-- Live connection status — always on, updates itself (no Connect button) -->
+    <div id="conn" class="connbar" role="status" aria-live="polite">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-text">Scanning for a Canary…</span>
+      <select id="port-select" class="select hidden" aria-label="Serial port"></select>
+      <button id="recheck" class="link-btn hidden">re-read chip</button>
+    </div>
+
+    <!-- Step 1 — plug in (detection is automatic) -->
+    <section class="card" id="step-detect">
+      <div class="step-head"><span class="step-n">1</span><h2>Plug in your Canary</h2></div>
+      <p class="muted">Connect it over USB-C with a <em>data</em> cable. It's picked up
+        automatically — the status bar above tracks it live, no button to press.</p>
+      <details id="download-mode" class="hint hidden">
+        <summary>Found, but not identified?</summary>
+        <p>Put it in <strong>download mode</strong>: hold <kbd>BOOT</kbd> (B),
+          tap <kbd>RESET</kbd> (R), then let go of BOOT — it'll be read automatically.
+          Leave download mode later with a tap of RESET.</p>
+      </details>
+    </section>
+
+    <!-- Step 2 — pick firmware -->
+    <section class="card disabled" id="step-pick">
+      <div class="step-head"><span class="step-n">2</span><h2>Pick the firmware</h2></div>
+      <p class="muted" id="pick-sub">We'll only show images built for your board's chip.</p>
+      <div id="product-list" class="product-list"></div>
+    </section>
+
+    <!-- Step 3 — flash -->
+    <section class="card disabled" id="step-flash">
+      <div class="step-head"><span class="step-n">3</span><h2>Flash it</h2></div>
+      <div class="row">
+        <button id="flash-btn" class="btn btn-primary" disabled>Flash my Canary</button>
+        <span id="flash-target" class="muted"></span>
+      </div>
+      <pre id="console" class="console hidden" aria-live="polite"></pre>
+      <p id="flash-result" class="status"></p>
+    </section>
+  </main>
+
+  <footer class="fineprint">
+    <p>
+      Images come from the project's <strong>signed</strong> GitHub releases.
+      The flashing engine is
+      <span class="mono">espflash</span>, bundled — nothing is fetched from a
+      CDN. <a href="#" data-open="https://github.com/kmay89/securaCV">source</a> ·
+      <a href="#" data-open="https://securacv.com/lab">the Lab on the web</a>
+      <span id="version-tag" class="version"></span>
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -82,8 +82,8 @@ jobs:
     name: page logic tests (committed artifacts)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Node tests (shipped source, repo convention)
@@ -94,6 +94,8 @@ jobs:
           node --test canary-local/tests/workshop.test.js
           node --test canary-local/tests/boards.test.js
           node --test canary-local/tests/assembly.test.js
+          node --test canary-local/tests/print_estimate.test.js
+          node --test canary-local/tests/slicer.test.js
           node --test canary-local/tests/boardroom.test.js
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/wap.test.js
@@ -200,8 +202,8 @@ jobs:
     name: firmware → wasm → boots in a browser
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: SHA-256 shim vectors (FIPS 180-4)
@@ -216,7 +218,7 @@ jobs:
           sudo apt-get install -y emscripten
           emcc --version | head -1
       - name: Cache third-party sources
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
@@ -244,6 +246,8 @@ jobs:
         run: node canary-local/tests/senselab_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs
+      - name: Kiri probe — print estimate + watch-it-print + slice bridge (fail-closed)
+        run: node canary-local/tests/kiri_slice_probe.mjs
       - name: Build both flavors from THIS tree
         run: |
           cd canary-local/emulator

@@ -16,6 +16,8 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 
 const core = () => import("../assets/we2-core.js");
 
@@ -269,4 +271,43 @@ test("modelInfoJson names exactly what we flash (person, one class)", async () =
   assert.deepStrictEqual(info.classes, ["person"]);
   assert.match(info.name, /Person Detection/);
   assert.strictEqual(info.sha256.length, 64);
+});
+
+// ── anti-rot: the catalog, the engine, and the release pipeline agree ───────
+// The burn address, USB ids and baud live in exactly one place — we2-core.js.
+// gen_flash.py copies them into flash.json (drift-gated in canary-local.yml)
+// and the release workflow reads flash.json to stamp the manifest. This test
+// slams the door on a hand-edit of flash.json that diverges from the engine:
+// if these disagree, the flasher would burn to an address the manifest never
+// promised. It also guards the address the workflow greps for.
+test("flash.json we2_module mirrors the engine's own constants", async () => {
+  const { WE2 } = await core();
+  const flash = JSON.parse(readFileSync(join(__dirname, "..", "devices", "flash.json"), "utf8"));
+  const m = flash.we2_module;
+  assert.ok(m, "flash.json lost its we2_module block");
+  const asHex = (n) => "0x" + n.toString(16);
+  assert.strictEqual(m.model_addr, asHex(WE2.MODEL_ADDR), "catalog burn address ≠ engine MODEL_ADDR");
+  assert.strictEqual(m.baud, WE2.BAUD, "catalog baud ≠ engine BAUD");
+  assert.strictEqual(m.usb_vid, asHex(WE2.USB_VID), "catalog USB vid ≠ engine USB_VID");
+  assert.strictEqual(m.usb_pid, asHex(WE2.USB_PID), "catalog USB pid ≠ engine USB_PID");
+  // the erase pass must clear the very slot we then burn (Seeed's flasher does)
+  assert.ok(WE2.ERASE_SLOTS.includes(WE2.MODEL_ADDR), "MODEL_ADDR not among ERASE_SLOTS");
+  // the flasher fetches the pinned model from the LATEST release, always
+  assert.match(m.manifest_url, /\/releases\/latest\/download\/manifest-vision-model\.json$/);
+});
+
+// The workflow that stamps the manifest must read the burn address FROM
+// flash.json (single source), not hardcode a second copy. Grep the workflow
+// so a future edit that reintroduces a literal 0x… address is caught here.
+test("the model-release workflow reads the burn address from flash.json", () => {
+  const wf = readFileSync(
+    join(__dirname, "..", "..", ".github", "workflows", "vision-model-release.yml"), "utf8");
+  assert.match(wf, /flash\.json/, "workflow must derive the burn address from flash.json");
+  assert.match(wf, /we2_module/, "workflow must read the we2_module block");
+  // no stray hardcoded burn address (0x400000) outside a comment line
+  for (const line of wf.split("\n")) {
+    const code = line.split("#")[0];
+    assert.ok(!/0x400000/.test(code),
+      "workflow hardcodes 0x400000 — read it from flash.json instead: " + line.trim());
+  }
 });

@@ -1,10 +1,15 @@
 # Vision Model Asset — the pinned brain for the browser module-flasher.
 #
 # Builds the Grove Vision AI V2 person-detection model asset +
-# manifest-vision-model.json for an EXISTING fw-v* release tag and attaches
-# them, exactly the way flasher-release.yml handles the ESP32 factory images:
-# manual (workflow_dispatch), rebuildable per tag, trust = SHA-256 +
-# same-origin manifest (docs/browser_flasher.md § Trust model).
+# manifest-vision-model.json for an fw-v* release and attaches them, exactly
+# the way flasher-release.yml handles the ESP32 factory images: trust =
+# SHA-256 + same-origin manifest (docs/browser_flasher.md § Trust model).
+#
+# Anti-rot: this fires AUTOMATICALLY on every published release, so the
+# flasher's `releases/latest/download/manifest-vision-model.json` never 404s
+# for a fresh release — the model rides the firmware train without anyone
+# remembering to press a button. workflow_dispatch stays for rebuilds /
+# pre-key publishing (attach to an existing tag on demand).
 #
 # Provenance & license: the source model is Seeed's SSCMA model zoo
 # "Person Detection (Swift-YOLO 192)" — MIT licensed, redistributable with
@@ -13,10 +18,17 @@
 # ethos-u-vela (the same compiler Seeed's deployment guide uses), and pin
 # the result to the release so the flasher can say exactly what it burns.
 # If Seeed publishes a ready Vela artifact, it is preferred over compiling.
+#
+# The burn address is NOT written here — it is read from the committed
+# canary-local/devices/flash.json (which gen_flash.py sources from
+# assets/we2-core.js, the engine that actually does the burning), so the
+# manifest can never promise an address the flasher won't use.
 
 name: Vision Model Asset
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -39,62 +51,126 @@ jobs:
       - name: Resolve the target tag
         id: tag
         env:
-          TAG: ${{ inputs.tag }}
+          # workflow_dispatch supplies inputs.tag; a release event supplies
+          # the tag name. A non-fw-v* release (should there ever be one) is
+          # skipped, not failed, so this trigger never blocks other releases.
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
           case "$TAG" in
             fw-v*) ;;
-            *) echo "::error::expected a fw-v* tag, got '$TAG'"; exit 1 ;;
+            *)
+              if [ "${{ github.event_name }}" = "release" ]; then
+                echo "::notice::release '$TAG' is not an fw-v* tag — skipping model asset"
+                echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0
+              fi
+              echo "::error::expected a fw-v* tag, got '$TAG'"; exit 1 ;;
           esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#fw-v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
+        if: steps.tag.outputs.skip != '1'
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
+        if: steps.tag.outputs.skip != '1'
         with:
           python-version: "3.11"
 
+      - name: Read the burn address from the committed catalog (single source)
+        id: flashaddr
+        if: steps.tag.outputs.skip != '1'
+        run: |
+          # flash.json ← gen_flash.py ← assets/we2-core.js (the engine that
+          # actually writes the flash). One source; the manifest can't disagree.
+          ADDR=$(python3 -c "import json;print(json.load(open('canary-local/devices/flash.json'))['we2_module']['model_addr'])")
+          case "$ADDR" in 0x*) ;; *) echo "::error::flash.json we2_module.model_addr not a 0x address: '$ADDR'"; exit 1 ;; esac
+          echo "flash_addr=$ADDR" >> "$GITHUB_OUTPUT"
+          echo "burn address (from flash.json ← we2-core.js): $ADDR"
+
       - name: Fetch the source model (MIT — Seeed SSCMA model zoo)
+        if: steps.tag.outputs.skip != '1'
         run: |
           mkdir -p /tmp/model
           cd /tmp/model
-          # Prefer a vendor-published Vela artifact if one exists…
-          if curl -fsSL -o model_vela.tflite "$ZOO_BASE/${MODEL_STEM}_vela.tflite"; then
-            echo "vendor Vela artifact found — using it verbatim"
-            echo "VELA_SOURCE=vendor" >> "$GITHUB_ENV"
-          else
-            echo "no vendor Vela artifact — fetching INT8 TFLite to compile"
-            curl -fsSL -o model_int8.tflite "$ZOO_BASE/${MODEL_STEM}.tflite"
-            echo "VELA_SOURCE=compiled" >> "$GITHUB_ENV"
-          fi
+          # Always the SSCMA Swift-YOLO 192 INT8 person model — the one the
+          # canary-vision firmware's output decoding expects. (Himax ships a
+          # pre-compiled vela person model too, but it's a DIFFERENT network
+          # with a different I/O layout, so we never substitute it.)
+          curl -fsSL -o model_int8.tflite "$ZOO_BASE/${MODEL_STEM}.tflite"
           ls -la
 
-      - name: Compile for the Ethos-U55 (ethos-u-vela)
-        if: env.VELA_SOURCE == 'compiled'
+      - name: Compile for the Ethos-U55 (ethos-u-vela · Himax config, mandatory)
+        if: steps.tag.outputs.skip != '1'
         run: |
+          set -euo pipefail
           pip install --quiet ethos-u-vela
           cd /tmp/model
-          # The WE2's NPU is an Ethos-U55/64-MAC configuration. Prefer Himax's
-          # own vela config when reachable; fall back to the accelerator flag
-          # alone (valid command streams either way — the config tunes memory
-          # placement/estimates, not correctness).
-          if curl -fsSL -o himax_vela.ini \
-              https://raw.githubusercontent.com/HimaxWiseEyePlus/ML_FVP_EVALUATION/main/vela/himax_vela.ini; then
-            vela --accelerator-config ethos-u55-64 \
-                 --config himax_vela.ini \
-                 --system-config My_Sys_Cfg --memory-mode My_Mem_Mode \
-                 --output-dir . model_int8.tflite || \
-            vela --accelerator-config ethos-u55-64 --output-dir . model_int8.tflite
-          else
-            vela --accelerator-config ethos-u55-64 --output-dir . model_int8.tflite
-          fi
+          # The HX6538's NPU is an Ethos-U55 in its 64-MAC configuration at
+          # 400 MHz (Himax: "we only release models that pass himax_vela.ini,
+          # Ethos-U55 64 MACS"). The exact memory layout below is Himax's own
+          # vela config (My_Sys_Cfg / My_Mem_Mode_Parent), vendored verbatim
+          # here so a release never depends on an upstream URL — and never
+          # silently falls back to an accelerator-only compile with a
+          # different memory placement than the module expects.
+          #   source: HimaxWiseEyePlus/ML_FVP_EVALUATION vela/himax_vela.ini
+          #           (== Seeed-Studio/ModelAssistant tools/vela_config.ini)
+          cat > himax_vela.ini <<'INI'
+          ; Himax WiseEye2 (HX6538) Ethos-U55 64-MAC vela config — vendored
+          ; verbatim from HimaxWiseEyePlus/ML_FVP_EVALUATION vela/himax_vela.ini
+          [System_Config.My_Sys_Cfg]
+          core_clock=400e6
+          axi0_port=Sram
+          axi1_port=OffChipFlash
+          Sram_clock_scale=1.0
+          Sram_burst_length=32
+          Sram_read_latency=16
+          Sram_write_latency=16
+          Dram_clock_scale=0.75
+          Dram_burst_length=128
+          Dram_read_latency=500
+          Dram_write_latency=250
+          OnChipFlash_clock_scale=0.25
+          OffChipFlash_clock_scale=0.015625
+          OffChipFlash_burst_length=32
+          OffChipFlash_read_latency=64
+          OffChipFlash_write_latency=64
+          [Memory_Mode.My_Mem_Mode_Parent]
+          const_mem_area=Axi1
+          arena_mem_area=Axi0
+          cache_mem_area=Axi0
+          INI
+          # Mandatory: match SSCMA/Himax's own invocation exactly. No fallback —
+          # if this errors, the release fails rather than shipping a model with
+          # a memory layout the module wasn't tuned for.
+          vela --accelerator-config ethos-u55-64 \
+               --config himax_vela.ini \
+               --system-config My_Sys_Cfg \
+               --memory-mode My_Mem_Mode_Parent \
+               --output-dir . model_int8.tflite
           mv model_int8_vela.tflite model_vela.tflite
+          # Belt: the compiled artifact must actually carry an Ethos-U command
+          # stream and keep the 1x192x192x3 person input — else fail loudly.
+          python3 - <<'PY'
+          import struct, sys
+          b = open("model_vela.tflite", "rb").read()
+          if b[4:8] != b"TFL3":
+              sys.exit("::error::compiled model is not a TFLite flatbuffer")
+          if b"ethos_u_command_stream" not in b and b"ethos-u" not in b:
+              sys.exit("::error::compiled model has no Ethos-U command stream — vela did not target the NPU")
+          def i32(o): return struct.unpack_from("<i", b, o)[0]
+          if not any([i32(o+4*k) for k in range(4)] == [1,192,192,3] for o in range(0, len(b)-16, 4)):
+              sys.exit("::error::compiled model input is not 1x192x192x3 — wrong source model")
+          print("vela OK — Ethos-U55 64-MAC command stream, 1x192x192x3 input")
+          PY
+          echo "VELA_SOURCE=himax-config" >> "$GITHUB_ENV"
           ls -la
 
       - name: Build manifest-vision-model.json + checksums
+        if: steps.tag.outputs.skip != '1'
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           TAG: ${{ steps.tag.outputs.tag }}
+          FLASH_ADDR: ${{ steps.flashaddr.outputs.flash_addr }}
         run: |
           cd /tmp/model
           test -s model_vela.tflite || { echo "::error::no model artifact produced"; exit 1; }
@@ -106,6 +182,7 @@ jobs:
           import json, os, sys
           asset, size, sha = sys.argv[1], int(sys.argv[2]), sys.argv[3]
           tag = os.environ["TAG"]; version = os.environ["VERSION"]
+          flash_addr = os.environ["FLASH_ADDR"]  # from flash.json ← we2-core.js
           repo = os.environ.get("GITHUB_REPOSITORY", "kmay89/securaCV")
           json.dump({
               "$doc": "Pinned Grove Vision AI V2 model for the browser module-flasher. "
@@ -117,9 +194,17 @@ jobs:
                   "url": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
                   "size": size,
                   "sha256": sha,
-                  "flash_addr": "0x400000",
+                  "flash_addr": flash_addr,
                   "arch": "Swift-YOLO (tiny) 192x192x3 INT8, Vela-compiled for Ethos-U55",
-                  "vela_source": os.environ.get("VELA_SOURCE", "compiled"),
+                  # How it was compiled, on the record — so the manifest can be
+                  # audited and the freshness job can insist it stays honest.
+                  "vela_source": os.environ.get("VELA_SOURCE", "unknown"),
+                  "vela": {
+                      "accelerator": "ethos-u55-64",
+                      "system_config": "My_Sys_Cfg",
+                      "memory_mode": "My_Mem_Mode_Parent",
+                      "config": "Himax himax_vela.ini (vendored in vision-model-release.yml)",
+                  },
               },
               "license": "MIT — Seeed SSCMA model zoo (person detection); "
                          "redistributed with attribution, see NOTICE in the repo",
@@ -130,6 +215,7 @@ jobs:
           cat manifest-vision-model.json
 
       - name: Attach to the release (create if missing, clobber if rebuilt)
+        if: steps.tag.outputs.skip != '1'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}

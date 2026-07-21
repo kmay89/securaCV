@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>The Canary House — Scenes · canary.local</title>
-  <meta name="description" content="Zoom into the Canary House one room at a time. Each scene shows a single witness doing the one honest thing it does — and the one small signed claim that's all it ever says. Scene 1: presence. Someone is here, never who." />
+  <meta name="description" content="Zoom into the Canary House one room at a time. Each scene shows a single witness doing the one honest thing it does — and the one small signed claim that's all it ever says. Scene 1: presence, someone is here, never who. Scene 2: vision, a person, never a picture." />
   <link rel="stylesheet" href="assets/canary-local.css" />
   <link rel="stylesheet" href="assets/house.css?v=3" />
   <style>
@@ -30,7 +30,7 @@
     .scene-stage { position: relative; }
     #scene-svg { display: block; width: 100%; height: auto; }
 
-    /* the in-scene "someone is here" chip, drawn in SVG so it tracks the room */
+    /* the in-scene chip ("someone is here" / "a person"), drawn in SVG so it tracks the room */
     .scene-chip { opacity: 0; }
     .scene-chip.show { animation: sceneChip 3.4s ease-out forwards; }
     .scene-chip rect { fill: rgba(10,10,12,.92); stroke: rgba(255,212,79,.6); stroke-width: 1; }
@@ -44,7 +44,7 @@
       background: linear-gradient(180deg, var(--surface-2), #101012); padding: 0 16px;
       max-height: 0; opacity: 0; overflow: hidden;
       transition: max-height .5s ease, opacity .5s ease, padding .5s ease; }
-    .payoff.show { max-height: 240px; opacity: 1; padding: 16px; }
+    .payoff.show { max-height: 900px; opacity: 1; padding: 16px; }
     .payoff h3 { margin: 0; font-size: 15px; }
     .payoff .claim { margin: 10px 0 0; font-family: ui-monospace, "SF Mono", Menlo, monospace;
       font-size: 12.5px; color: var(--canary); background: #0a0a0c; border: 1px solid var(--edge);
@@ -63,13 +63,26 @@
     .sig-status.bad { color: #ff8f8f; border-color: rgba(255,143,143,.55); background: rgba(255,143,143,.10); }
     .sig-val { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: var(--faint);
       word-break: break-word; }
-    /* the "try to forge it" beat */
-    .forge { display: flex; align-items: center; gap: 12px; margin: 12px 0 0; flex-wrap: wrap; }
-    .forge-btn { appearance: none; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
+
+    /* the interactive "beat" — forge it (presence) / grab the picture (vision) */
+    .beat { display: flex; align-items: center; gap: 12px; margin: 12px 0 0; flex-wrap: wrap; }
+    .beat-btn { appearance: none; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
       border: 1px solid rgba(255,143,143,.5); background: rgba(255,143,143,.07); color: #ffb0b0;
       border-radius: 999px; padding: 5px 13px; }
-    .forge-btn:hover { background: rgba(255,143,143,.13); }
-    .forge-note { color: var(--muted); font-size: 12.5px; }
+    .beat-btn:hover { background: rgba(255,143,143,.13); }
+    .beat-btn.grab { border-color: rgba(255,212,79,.55); background: rgba(255,212,79,.08); color: var(--canary); }
+    .beat-btn.grab:hover { background: rgba(255,212,79,.14); }
+    .beat-note { color: var(--muted); font-size: 12.5px; }
+
+    /* the vision "grab the picture" packet reveal */
+    .wire { margin: 10px 0 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+      color: var(--muted); background: #0a0a0c; border: 1px dashed var(--edge); border-radius: 8px;
+      padding: 10px 12px; white-space: pre; overflow-x: auto; }
+
+    /* the breathing scene's wellbeing readout (published, unsigned metadata) */
+    .vitals { margin: 9px 0 0; font-size: 13px; color: #8fd3a8; }
+    .vitals.off { color: var(--faint); }
+    .vitals b { color: var(--text); font-weight: 600; }
 
     @media (prefers-reduced-motion: reduce) {
       .scene-chip.show { animation: none; opacity: 1; }
@@ -99,6 +112,7 @@
     <p class="fineprint">
       <a href="house.html">← the whole house</a> ·
       <a href="index.html">the family</a> ·
+      <a href="https://securacv.com">securacv.com ↗</a> ·
       works offline · nothing here phones anywhere
     </p>
   </header>
@@ -114,7 +128,7 @@
 
     <div id="stage" class="house-stage scene-stage">
       <svg id="scene-svg" viewBox="0 0 680 470" role="img" aria-labelledby="scene-svg-title">
-        <title id="scene-svg-title">An isometric room; a witness on the wall senses a visitor and emits a signed presence claim.</title>
+        <title id="scene-svg-title">An isometric room; a witness on the wall senses a visitor and emits a signed claim.</title>
 
         <!-- floor -->
         <polygon class="slab" points="340,160 600,295 340,430 80,295" fill="#0d0f13"/>
@@ -132,18 +146,36 @@
         <polygon class="wall" points="340,160 600,295 600,175 340,40" fill="#171a20"/>
         <!-- doorway on the front-right edge -->
         <polygon points="470,362 520,388 520,318 470,292" fill="#0a0b0e" stroke="#23262c" stroke-width="1"/>
-        <rect class="doorlight" x="0" y="0" width="0" height="0" fill="none"/>
         <line x1="470" y1="362" x2="470" y2="292" stroke="#2a2e35" stroke-width="1.5"/>
 
         <!-- room label -->
         <text class="room-label" x="120" y="300" fill="#4a4a4a" font-size="12"
           font-family="-apple-system, Segoe UI, sans-serif" id="room-label">a quiet room</text>
 
-        <!-- the sensing field (radar), emanating from the marker into the room -->
-        <g class="field field-radar" id="field" aria-hidden="true">
+        <!-- Scene 1 field: radar ripples from the marker -->
+        <g class="field field-radar" id="field-radar" aria-hidden="true">
           <circle class="ripple" cx="500" cy="150" r="70" fill="none" stroke="#c9a4f0" stroke-width="1.4"/>
           <circle class="ripple" cx="500" cy="150" r="110" fill="none" stroke="#c9a4f0" stroke-width="1.2" style="animation-delay:1.3s"/>
           <circle class="ripple" cx="500" cy="150" r="150" fill="none" stroke="#c9a4f0" stroke-width="1" style="animation-delay:2.6s"/>
+        </g>
+        <!-- Scene 2 field: a camera view-cone (light from the lens), hidden until vision is active -->
+        <g class="field field-vision" id="field-vision" aria-hidden="true" style="display:none">
+          <polygon class="cone" points="490,156 512,158 430,392 250,320" fill="url(#coneFill)"/>
+          <line x1="500" y1="157" x2="250" y2="320" stroke="rgba(255,212,79,0.26)" stroke-width="1"/>
+          <line x1="500" y1="157" x2="430" y2="392" stroke="rgba(255,212,79,0.26)" stroke-width="1"/>
+        </g>
+        <!-- Scene 3 field: the Wi-Fi field — nested fan arcs bathing the room from the AP -->
+        <g class="field field-wifi" id="field-wifi" aria-hidden="true" style="display:none">
+          <path class="cone" d="M 490.5 204 A 55 55 0 0 1 446 160" fill="none" stroke="#ffd44f" stroke-width="1.6"/>
+          <path class="cone" d="M 484 239 A 90 90 0 0 1 411 166" fill="none" stroke="#ffd44f" stroke-width="1.3" style="animation-delay:.5s"/>
+          <path class="cone" d="M 478 273 A 125 125 0 0 1 377 172" fill="none" stroke="#ffd44f" stroke-width="1.05" style="animation-delay:1s"/>
+        </g>
+        <!-- Scene 4 field: the breathing wave — a slow sine, rising and falling like a chest -->
+        <g class="field field-breath" id="field-breath" aria-hidden="true" style="display:none">
+          <path class="cone" d="M 190 300 q 24 -24 48 0 t 48 0 t 48 0 t 48 0 t 48 0" fill="none"
+            stroke="#8fd3a8" stroke-width="1.8" stroke-linecap="round"/>
+          <path class="cone" d="M 214 322 q 24 -18 48 0 t 48 0 t 48 0 t 48 0" fill="none"
+            stroke="#8fd3a8" stroke-width="1.2" opacity="0.55" style="animation-delay:1.2s"/>
         </g>
 
         <!-- the visitor (starts at the door, hidden until the scene plays) -->
@@ -155,18 +187,21 @@
           </g>
         </g>
 
-        <!-- the witness marker, high on the back-right wall -->
+        <!-- the witness marker, high on the back-right wall (glyph swaps per scene) -->
         <g class="marker" id="marker" transform="translate(500,150)">
           <ellipse class="marker-shadow" cx="0" cy="17" rx="13" ry="4.5"/>
           <circle class="marker-pulse" cx="0" cy="0" r="12"/>
           <circle class="marker-body" cx="0" cy="0" r="11"/>
-          <path class="marker-glyph" d="M -5 4 A 6 6 0 0 1 5 4 M -8.5 6 A 9.5 9.5 0 0 1 8.5 6 M 0 4.5 v -1"/>
+          <path class="marker-glyph glyph-radar" d="M -5 4 A 6 6 0 0 1 5 4 M -8.5 6 A 9.5 9.5 0 0 1 8.5 6 M 0 4.5 v -1"/>
+          <path class="marker-glyph glyph-vision" d="M -6 -4 h12 v8 h-12 z M 3 0.5 a 2.6 2.6 0 1 0 0.01 0" style="display:none"/>
+          <path class="marker-glyph glyph-wifi" d="M -6 2 q6 -8 12 0 M -3.2 4 q3.2 -4.4 6.4 0 M 0 5.5 v 0.5" style="display:none"/>
+          <path class="marker-glyph glyph-breath" d="M -7 1 q2.3 -7 4.6 0 q2.3 7 4.6 0 q2.3 -7 4.6 0" style="display:none"/>
         </g>
 
-        <!-- the "someone is here" chip, revealed on the trip -->
+        <!-- the scene chip, revealed on the trip (text set per scene) -->
         <g class="scene-chip" id="chip" transform="translate(340,250)">
           <rect x="-64" y="-16" width="128" height="26" rx="13"/>
-          <text x="0" y="2" text-anchor="middle">someone is here</text>
+          <text x="0" y="2" text-anchor="middle" id="chip-text">someone is here</text>
         </g>
 
         <defs>
@@ -174,13 +209,17 @@
             <stop offset="0%" stop-color="rgba(201,164,240,0.10)"/>
             <stop offset="100%" stop-color="rgba(201,164,240,0)"/>
           </radialGradient>
+          <radialGradient id="coneFill" cx="50%" cy="8%" r="95%">
+            <stop offset="0%" stop-color="rgba(255,212,79,0.15)"/>
+            <stop offset="100%" stop-color="rgba(255,212,79,0)"/>
+          </radialGradient>
         </defs>
       </svg>
     </div>
 
     <div class="scene-controls">
       <button id="play-btn" class="walk-btn">▶ play the scene</button>
-      <div class="legend" aria-hidden="true"><span><i class="perch-dot dot-radar"></i> 60&nbsp;GHz radar · presence only</span></div>
+      <div class="legend" aria-hidden="true"><span id="legend-txt"><i class="perch-dot dot-radar"></i> 60&nbsp;GHz radar · presence only</span></div>
     </div>
 
     <div class="payoff" id="payoff" aria-live="polite">
@@ -190,10 +229,12 @@
         <span class="sig-status" id="sig-status">checking…</span>
         <code class="sig-val" id="sig-val"></code>
       </div>
-      <p class="never"><b>No camera. No picture. No name.</b> The radar can resolve <em>that</em> someone is there and never <em>who</em> — identity is impossible by construction, not by promise. And the one small claim it does emit is <em>signed</em> — so you can trust the record without trusting us.</p>
-      <div class="forge" id="forge" hidden>
-        <button class="forge-btn" id="forge-btn" type="button">⚠ try to forge it</button>
-        <span class="forge-note" id="forge-note"></span>
+      <p class="vitals" id="vitals" hidden></p>
+      <p class="never" id="never">—</p>
+      <pre class="wire" id="wire" hidden></pre>
+      <div class="beat" id="beat" hidden>
+        <button class="beat-btn" id="beat-btn" type="button">⚠ try to forge it</button>
+        <span class="beat-note" id="beat-note"></span>
       </div>
     </div>
 
@@ -202,7 +243,7 @@
       <ul id="feed-list" aria-live="polite"></ul>
     </div>
 
-    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. More scenes — the camera that keeps its pixels, the WiFi field, the breathing wave — are coming.</p>
+    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html#quorum">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. That's all four witnesses of the house, up close — presence, pixels, the WiFi field, and the breathing wave. Each does one honest thing, and signs one small claim for it.</p>
   </main>
 
   <footer>
@@ -219,16 +260,21 @@
       var $ = function (id) { return document.getElementById(id); };
       var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-      // ── real crypto, in the same canonical family the firmware signs ──
-      // trust.cpp rebuilds "securacv-canary-sig|v1|…" before Ed25519::verify, and
-      // emulator/web/emu-shell.js SimWitness signs the exact same string. The
-      // signature you see below is generated in your browser — not decoration.
+      // ── real crypto, over the real canary-witness canonicals ──
+      // Every claim below is signed in your browser with Ed25519 over the
+      // byte-exact canonical string the firmware signs and Home Assistant
+      // re-derives to verify (device_signature.cpp / signature.py). Two real
+      // families, each carrying only coarse scalars — never pixels, never a
+      // face, never packet contents:
+      //   · sense  — radar + camera witnesses (build_sense_canonical)
+      //   · event  — Wi-Fi / CSI witness (build_event_canonical)
+      // Real, not decoration — but a demo key, not a provisioned device.
       var te = new TextEncoder();
       function b64url(b) { return btoa(String.fromCharCode.apply(null, b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
       function hex(b) { var o = ""; for (var i = 0; i < b.length; i++) o += b[i].toString(16).padStart(2, "0"); return o; }
       async function sha256Hex(s) { return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", te.encode(s)))); }
 
-      var W = { key: null, pubHex: null, fp: null, id: "canary-quiet-room", chainLen: 247, latestHash: null, sig: null };
+      var W = { key: null, pubHex: null, fp: null, id: "sense-quiet-room", seq: 3, uptime: 1200, sig: null };
       var cryptoOK = null; // null=unknown; true/false after ensureKeys()
 
       async function ensureKeys() {
@@ -241,56 +287,134 @@
         } catch (e) { cryptoOK = false; }
         return cryptoOK;
       }
-      function canonical(c, h) {
-        return "securacv-canary-sig|v1|presence|" + W.id + "|occupants=" + c.occupants + "|range_m=" + c.range_m + "|" + h;
+      // securacv-canary-sig|v1|sense|<id>|<seq>|<event>|<presence>|<occupants>|<band>|<uptime>
+      function senseCanon(c) {
+        return "securacv-canary-sig|v1|sense|" + W.id + "|" + W.seq + "|" +
+          c.event + "|" + c.presence + "|" + c.occupants + "|" + c.band + "|" + W.uptime;
+      }
+      // securacv-canary-sig|v1|event|<id>|<event_id>|<state>|<category>|<privacy>|<motion>|<breathing>|<bpm>
+      function eventCanon(c) {
+        return "securacv-canary-sig|v1|event|" + W.id + "|" + c.event_id + "|" +
+          c.state + "|" + c.category + "|" + c.privacy + "|" + c.motion + "|" + c.breathing + "|" + c.bpm;
       }
       async function signClaim(c) {
-        W.latestHash = await sha256Hex(W.id + ":" + W.chainLen + ":demo");
-        W.sig = new Uint8Array(await crypto.subtle.sign("Ed25519", W.key.privateKey, te.encode(canonical(c, W.latestHash))));
+        W.sig = new Uint8Array(await crypto.subtle.sign("Ed25519", W.key.privateKey, te.encode(scene.canonical(c))));
       }
       async function verifyClaim(c) {
-        return crypto.subtle.verify("Ed25519", W.key.publicKey, W.sig, te.encode(canonical(c, W.latestHash)));
+        return crypto.subtle.verify("Ed25519", W.key.publicKey, W.sig, te.encode(scene.canonical(c)));
       }
       ensureKeys(); // warm the key up so it's ready by the time the scene trips
 
-      // ── the scene model: one entry per scene; only the first is built today ──
+      // ── the scene model: each entry is self-contained; adding 3–4 is data ──
       var SCENES = [
         {
-          id: "presence",
-          n: 1,
-          tab: "Presence",
+          id: "presence", n: 1, tab: "Presence", available: true,
+          deviceId: "sense-quiet-room", seq: 3,
           room: "a quiet room",
+          field: "radar", glyph: "radar",
+          legend: '<i class="perch-dot dot-radar"></i> 60&nbsp;GHz radar · presence only',
+          chip: "someone is here",
+          armed: "scene armed — radar live, room empty",
           title: "Someone is here. Never who.",
-          desc: "A 60 GHz radar witness on the wall feels a body enter — range and motion, nothing more. Watch what it does, watch what it says — then try to forge what it said.",
-          claimObj: { occupants: 1, range_m: 2.4 },
-          available: true,
+          desc: "A 60 GHz radar witness on the wall feels a body enter — range and motion, nothing more. Watch what it does, watch what it says — then try to forge what it said.",
+          never: '<b>No camera. No picture. No name.</b> The radar can resolve <em>that</em> someone is there and never <em>who</em> — identity is impossible by construction, not by promise. And the one small claim it does emit is <em>signed</em> — so you can trust the record without trusting us.',
+          claim: { event: "presence_detected", presence: "present", occupants: "1", band: "near", displayOcc: 1, displayRange: 2.4 },
+          canonical: senseCanon,
+          display: function (c) { return "presence/detected  { occupants: " + c.displayOcc + ", range_m: " + c.displayRange + " }"; },
+          beat: { kind: "forge", label: "⚠ try to forge it", altLabel: "↺ restore the true record", cls: "",
+            note: "The bytes changed; the signature didn't. Anyone can catch it — no server needed." },
+          forged: { event: "occupancy_changed", presence: "present", occupants: "2+", band: "mid", displayOcc: 2, displayRange: 1.2 },
         },
-        { id: "vision", n: 2, tab: "Pixels stay put", available: false },
-        { id: "wifi", n: 3, tab: "The WiFi field", available: false },
-        { id: "breath", n: 4, tab: "The breathing wave", available: false },
+        {
+          id: "vision", n: 2, tab: "Pixels stay put", available: true,
+          deviceId: "vision-front-hall", seq: 5,
+          room: "the front hall",
+          field: "vision", glyph: "vision",
+          legend: '<i class="perch-dot dot-camera"></i> on-device camera · a label, never a frame',
+          chip: "a person",
+          armed: "scene armed — camera live, hall empty",
+          title: "A person. Never a picture.",
+          desc: "An on-device camera sees a shape move in and classifies it right there on the lens module — person, at some confidence. The pixels are graded and thrown away before the host ever sees them; only a label leaves. Watch what it says, then try to grab the picture.",
+          never: '<b>No image. No face. No box you could un-blur.</b> The frame is classified inside the camera module and discarded; the host only ever gets a word and a number. The claim is <em>signed</em> the same way the radar\'s is — same canonical, same key — so you can trust <em>that</em> a person was seen without there being any picture <em>of</em> them.',
+          claim: { event: "presence_started", presence: "present", occupants: "1", band: "unknown", conf: 0.94, displayOcc: 1 },
+          canonical: senseCanon,
+          display: function (c) { return 'presence_started  { occupants: ' + c.displayOcc + ', range: "unknown" }'; },
+          beat: { kind: "grab", label: "🔍 try to grab the picture", altLabel: "↺ close the packet", cls: "grab",
+            note: "That's the whole packet — a word, a score, a box in coordinates. Not one pixel.",
+            feed: "opened the packet — no image inside" },
+          packet: function () {
+            return "topic  securacv/" + W.id + "/events\n{\n" +
+              '  "event":     "presence_started",\n' +
+              '  "presence":  "present",\n' +
+              '  "occupants": "1",\n' +
+              '  "range":     "unknown",\n' +
+              '  "conf":      0.94,\n' +
+              '  "bbox":      [88, 40, 44, 120],\n' +
+              '  "sig":       "ed25519:' + (W.sig ? b64url(W.sig).slice(0, 16) : "…") + '…"\n}';
+          },
+        },
+        {
+          id: "wifi", n: 3, tab: "The WiFi field", available: true,
+          deviceId: "wap-living-room", seq: 12,
+          room: "the living room",
+          field: "wifi", glyph: "wifi",
+          legend: '<i class="perch-dot dot-wifi"></i> Wi-Fi CSI · presence in the field, never the traffic',
+          chip: "the field bends",
+          armed: "scene armed — Wi-Fi field steady, room empty",
+          title: "The room's radio bends. It never reads.",
+          desc: "The access point already floods the room with Wi-Fi. A body walking in bends that field — and the witness reads only the shape of the bend, never a byte of what the radio carries. Watch what it says, then try to read the traffic.",
+          never: '<b>No packets. No MACs. No SSIDs.</b> Wi-Fi sensing here is channel-state only — how the room\'s radio distorts around a body. It can\'t and doesn\'t inspect what any device is sending; the claim it signs is a handful of scalars, nothing that could name a person or a device — and it\'s <em>signed</em>, same key, same open canonical as the rest.',
+          claim: { event_id: 12, state: "present", category: "event", privacy: "p1", motion: 71, breathing: 0, bpm: 0 },
+          canonical: eventCanon,
+          display: function (c) { return 'presence  { state: "' + c.state + '", motion: ' + c.motion + ' }'; },
+          beat: { kind: "grab", label: "📡 try to read the traffic", altLabel: "↺ close the packet", cls: "grab",
+            note: "Just scalars from the field's shape — a presence flag, a motion score, a privacy tier. No MACs, no SSIDs, not one packet. It never reads what the Wi-Fi carries, only how a body bends it.",
+            feed: "opened the packet — no traffic inside" },
+          packet: function () {
+            return "topic  securacv/" + W.id + "/events\n{\n" +
+              '  "event_id":  12,\n' +
+              '  "state":     "present",\n' +
+              '  "category":  "event",\n' +
+              '  "privacy":   "p1",\n' +
+              '  "motion":    71,\n' +
+              '  "breathing": 0,\n' +
+              '  "bpm":       0,\n' +
+              '  "sig":       "ed25519:' + (W.sig ? b64url(W.sig).slice(0, 16) : "…") + '…"\n}';
+          },
+        },
+        {
+          id: "breath", n: 4, tab: "The breathing wave", available: true,
+          deviceId: "sense-bedside", seq: 8,
+          room: "the bedside",
+          field: "breath", glyph: "breath",
+          legend: '<i class="perch-dot dot-breath"></i> 60&nbsp;GHz radar · wellbeing, one person, up close',
+          chip: "still here, breathing",
+          armed: "scene armed — radar live, bedside empty",
+          title: "Still breathing. Never watched.",
+          desc: "The same 60 GHz radar, up close and still, can feel a chest rise and fall — a breathing rate, even a pulse — for exactly one person within about a metre. No camera, no mic. Watch what it says, then let a second person walk in.",
+          never: '<b>Wellbeing, not medical — and only for one.</b> Vitals are hard-suppressed unless exactly one target is in range; multi-person BPM attribution is a line the design refuses to cross. It reads a chest through radio, never a face or a voice, and signs only the coarse record — the breath and heart numbers ride along unsigned, and vanish the moment they can\'t be trusted.',
+          claim: { event: "presence_started", presence: "present", occupants: "1", band: "near" },
+          suppressed: { event: "occupancy_changed", presence: "present", occupants: "2+", band: "near" },
+          canonical: senseCanon,
+          display: function (c) { return c.event + '  { occupants: ' + c.occupants + ', range: "near" }'; },
+          vitalsOn: 'wellbeing · <b>breathing locked</b> · ~14 breaths/min · ~62 bpm',
+          vitalsOff: 'wellbeing · <b>suppressed</b> — vitals need a single target',
+          beat: { kind: "policy", label: "👥 add another person", altLabel: "↺ just one person again", cls: "",
+            note: "Two people in range. The lock drops and the numbers go null — by construction. It won't put a heartbeat on anyone in a crowd." },
+        },
       ];
       var scene = SCENES[0];
-      function claimText(c) { return "presence/detected  { occupants: " + c.occupants + ", range_m: " + c.range_m + " }"; }
+      function claimText(c) { return scene.display(c); }
 
-      // ── build the scene tabs (the "one of many" model, made visible) ──
-      var tabs = $("scene-tabs");
-      SCENES.forEach(function (s) {
-        var b = document.createElement("button");
-        b.className = "scene-tab" + (s.available ? "" : " soon") + (s === scene ? " on" : "");
-        b.type = "button";
-        b.innerHTML = '<span class="n">' + s.n + '</span>' + s.tab +
-          (s.available ? "" : ' <span class="tag">soon</span>');
-        if (!s.available) b.disabled = true;
-        tabs.appendChild(b);
-      });
-
-      // paint the active scene's copy
-      $("scene-title").textContent = scene.title;
-      $("scene-desc").textContent = scene.desc;
-      $("room-label").textContent = scene.room;
+      // ── element handles ──
+      var tabs = $("scene-tabs"), feed = $("feed-list");
+      var marker = $("marker"), visitor = $("visitor"), chip = $("chip"),
+          payoff = $("payoff"), playBtn = $("play-btn"), wire = $("wire");
+      var sigRow = $("sig-row"), sigStatus = $("sig-status"), sigVal = $("sig-val"),
+          beatBox = $("beat"), beatBtn = $("beat-btn"), beatNote = $("beat-note"), vitals = $("vitals");
+      var liveClaim = null; // the record currently on screen (may be tampered)
 
       // ── the witness feed ──
-      var feed = $("feed-list");
       function feedLine(text, kind) {
         var li = document.createElement("li");
         li.className = "feed-item" + (kind ? " " + kind : "");
@@ -298,12 +422,45 @@
         feed.insertBefore(li, feed.firstChild);
         while (feed.children.length > 6) feed.removeChild(feed.lastChild);
       }
-      feedLine("scene armed — radar live, room empty", "feed-sys");
 
-      // ── the signature row + the "try to forge it" beat ──
-      var sigRow = $("sig-row"), sigStatus = $("sig-status"), sigVal = $("sig-val"),
-          forge = $("forge"), forgeBtn = $("forge-btn"), forgeNote = $("forge-note");
-      var liveClaim = null; // the record currently on screen (may be tampered)
+      // ── build the scene tabs (the "one of many" model, made visible) ──
+      SCENES.forEach(function (s) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "scene-tab" + (s.available ? "" : " soon");
+        b.innerHTML = '<span class="n">' + s.n + '</span>' + s.tab +
+          (s.available ? "" : ' <span class="tag">soon</span>');
+        if (!s.available) { b.disabled = true; }
+        else { b.addEventListener("click", function () { selectScene(s); }); }
+        s._tab = b;
+        tabs.appendChild(b);
+      });
+
+      // ── switch to a scene: paint copy, swap the room's field + glyph, reset ──
+      function svgShow(el, show) { el.style.display = show ? "" : "none"; } // SVG: [hidden] is unreliable; use display
+      function selectScene(s) {
+        scene = s;
+        W.id = s.deviceId; W.seq = s.seq;
+        SCENES.forEach(function (o) { if (o._tab) o._tab.classList.toggle("on", o === s); });
+        $("scene-title").textContent = s.title;
+        $("scene-desc").textContent = s.desc;
+        $("room-label").textContent = s.room;
+        $("chip-text").textContent = s.chip;
+        $("legend-txt").innerHTML = s.legend;
+        $("never").innerHTML = s.never;
+        // SVG elements have no `.hidden` IDL property — toggle the attribute
+        svgShow($("field-radar"), s.field === "radar");
+        svgShow($("field-vision"), s.field === "vision");
+        svgShow($("field-wifi"), s.field === "wifi");
+        svgShow($("field-breath"), s.field === "breath");
+        svgShow(marker.querySelector(".glyph-radar"), s.glyph === "radar");
+        svgShow(marker.querySelector(".glyph-vision"), s.glyph === "vision");
+        svgShow(marker.querySelector(".glyph-wifi"), s.glyph === "wifi");
+        svgShow(marker.querySelector(".glyph-breath"), s.glyph === "breath");
+        feed.innerHTML = "";
+        feedLine(s.armed, "feed-sys");
+        reset();
+      }
 
       function paintVerdict(ok) {
         sigRow.hidden = false;
@@ -311,7 +468,7 @@
           sigStatus.className = "sig-status";
           sigStatus.textContent = "ⓘ signed on the device";
           sigVal.textContent = "(this browser can't run Ed25519 in-page — on one that can, the claim is signed and verified live)";
-          forge.hidden = true;
+          beatBox.hidden = true;
           return;
         }
         sigVal.textContent = "ed25519:" + b64url(W.sig).slice(0, 12) + "…  · key " + W.fp;
@@ -319,31 +476,75 @@
         sigStatus.textContent = ok ? "✓ verified" : "✗ forged — signature doesn't match";
       }
 
-      async function tamper() {
-        liveClaim = { occupants: 2, range_m: 1.2 };        // rewrite the record by hand
-        $("payoff-claim").textContent = claimText(liveClaim);
-        paintVerdict(await verifyClaim(liveClaim));          // old sig vs. new bytes → false
-        feedLine("record altered by hand → " + claimText(liveClaim), "feed-sys");
-        forgeNote.textContent = "The bytes changed; the signature didn't. Anyone can catch it — no server needed.";
-        forgeBtn.textContent = "↺ restore the true record";
-        forge.dataset.state = "tampered";
+      function showVitals(htmlText, off) {
+        if (!htmlText) { vitals.hidden = true; return; }
+        vitals.hidden = false;
+        vitals.className = "vitals" + (off ? " off" : "");
+        vitals.innerHTML = htmlText;
       }
-      async function restore() {
-        liveClaim = { occupants: scene.claimObj.occupants, range_m: scene.claimObj.range_m };
-        $("payoff-claim").textContent = claimText(liveClaim);
-        paintVerdict(await verifyClaim(liveClaim));
-        feedLine("true record restored", "feed-sys");
-        forgeNote.textContent = "";
-        forgeBtn.textContent = "⚠ try to forge it";
-        forge.dataset.state = "";
-      }
-      forgeBtn.addEventListener("click", function () {
-        if (forge.dataset.state === "tampered") restore(); else tamper();
+
+      // ── the interactive beat, dispatched per scene ──
+      var BEATS = {
+        // forge (radar): rewrite the record and watch verification fail
+        forge: {
+          async on() {
+            liveClaim = Object.assign({}, scene.forged);
+            $("payoff-claim").textContent = claimText(liveClaim);
+            paintVerdict(await verifyClaim(liveClaim));   // old sig vs. new bytes → false
+            feedLine("record altered by hand → " + claimText(liveClaim), "feed-sys");
+            beatNote.textContent = scene.beat.note;
+          },
+          async off() {
+            liveClaim = Object.assign({}, scene.claim);
+            $("payoff-claim").textContent = claimText(liveClaim);
+            paintVerdict(await verifyClaim(liveClaim));
+            feedLine("true record restored", "feed-sys");
+            beatNote.textContent = "";
+          },
+        },
+        // grab (camera / Wi-Fi): open the whole packet and find the feared thing
+        // (a picture, network traffic) simply isn't in it
+        grab: {
+          async on() {
+            wire.textContent = scene.packet();
+            wire.hidden = false;
+            beatNote.textContent = scene.beat.note;
+            feedLine(scene.beat.feed, "feed-sys");
+          },
+          async off() { wire.hidden = true; beatNote.textContent = ""; },
+        },
+        // policy (breathing): a second person walks in — the device honestly
+        // re-signs occupants:2+ and the vitals suppress. Both records verify;
+        // the point is what it *won't* report, not a broken signature.
+        policy: {
+          async on() {
+            liveClaim = Object.assign({}, scene.suppressed);
+            $("payoff-claim").textContent = claimText(liveClaim);
+            await signClaim(liveClaim);                    // a real, new signed record
+            paintVerdict(await verifyClaim(liveClaim));     // still ✓ — honestly signed
+            showVitals(scene.vitalsOff, true);
+            feedLine("second target in range → vitals suppressed", "feed-sys");
+            beatNote.textContent = scene.beat.note;
+          },
+          async off() {
+            liveClaim = Object.assign({}, scene.claim);
+            $("payoff-claim").textContent = claimText(liveClaim);
+            await signClaim(liveClaim);
+            paintVerdict(await verifyClaim(liveClaim));
+            showVitals(scene.vitalsOn, false);
+            feedLine("single target — breathing lock re-acquired", "feed-sys");
+            beatNote.textContent = "";
+          },
+        },
+      };
+
+      beatBtn.addEventListener("click", async function () {
+        var b = BEATS[scene.beat.kind];
+        if (beatBox.dataset.state === "on") { await b.off(); beatBtn.textContent = scene.beat.label; beatBox.dataset.state = ""; }
+        else { await b.on(); beatBtn.textContent = scene.beat.altLabel; beatBox.dataset.state = "on"; }
       });
 
       // ── play the scene ──
-      var marker = $("marker"), visitor = $("visitor"), chip = $("chip"),
-          payoff = $("payoff"), playBtn = $("play-btn");
       var timers = [];
       function clearTimers() { timers.forEach(clearTimeout); timers = []; }
       function at(ms, fn) { timers.push(setTimeout(fn, ms)); }
@@ -355,21 +556,23 @@
         chip.classList.remove("show");
         payoff.classList.remove("show");
         sigRow.hidden = true;
-        forge.hidden = true;
-        forge.dataset.state = "";
-        forgeBtn.textContent = "⚠ try to forge it";
-        forgeNote.textContent = "";
+        beatBox.hidden = true;
+        beatBox.dataset.state = "";
+        wire.hidden = true;
+        vitals.hidden = true;
+        beatNote.textContent = "";
         liveClaim = null;
         visitor.classList.add("hidden");
         moveVisitor(492, 352);
         visitor.style.transition = "none";
+        playBtn.disabled = false;
+        playBtn.textContent = "▶ play the scene";
       }
 
       function play() {
         reset();
         playBtn.disabled = true;
         playBtn.textContent = "▶ playing…";
-        // enter
         at(60, function () {
           visitor.classList.remove("hidden");
           visitor.style.transition = reduce ? "none" : "transform 1.2s ease-in-out";
@@ -380,16 +583,20 @@
         at(2450, async function () {
           marker.classList.add("tripped");
           chip.classList.add("show");
-          liveClaim = { occupants: scene.claimObj.occupants, range_m: scene.claimObj.range_m };
+          liveClaim = Object.assign({}, scene.claim);
           $("payoff-claim").textContent = claimText(liveClaim);
           feedLine(claimText(liveClaim), "feed-witness");
           at(400, function () { payoff.classList.add("show"); });
-          // real signing fills the verdict in — independent of the animation clock
+          // vitals are unsigned wellbeing metadata — show them regardless of
+          // whether this browser can run Ed25519 in-page
+          if (scene.vitalsOn) showVitals(scene.vitalsOn, false);
           var ready = await ensureKeys();
           if (ready) {
             await signClaim(liveClaim);
             paintVerdict(await verifyClaim(liveClaim));
-            forge.hidden = false;
+            beatBtn.textContent = scene.beat.label;
+            beatBtn.className = "beat-btn" + (scene.beat.cls ? " " + scene.beat.cls : "");
+            beatBox.hidden = false;
             feedLine("claim signed  ✓", "feed-sys");
           } else {
             paintVerdict(false); // graceful "signed on the device" note
@@ -403,7 +610,7 @@
       }
 
       playBtn.addEventListener("click", play);
-      reset();
+      selectScene(SCENES[0]);
     })();
   </script>
 </body>

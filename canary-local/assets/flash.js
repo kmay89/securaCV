@@ -488,16 +488,50 @@ async function onConnect() {
   setPhase(box);
   const nudgeTimer = setTimeout(() => nudge.classList.remove("flash-hidden"), 6000);
 
-  const transport = new Transport(port, false);
-  const esploader = new ESPLoader({
-    transport,
-    baudrate: state.catalog.flash_baud || 921600,
-    romBaudrate: state.catalog.console_baud || 115200,
-    terminal: makeTerminal(),
-  });
+  // The USB identity, read once — used for a driver hint if it won't connect.
+  state.portInfo = (port.getInfo && port.getInfo()) || {};
+
+  // Baud ladder: try the fast speed, and step down automatically on failure.
+  // esptool syncs the ROM at 115200 and only then switches to the flash speed;
+  // flaky cables, unpowered hubs, and long USB runs sync fine but choke the
+  // high-speed transfer. Walking down heals "it won't connect" silently
+  // instead of dead-ending.
+  const top = state.catalog.flash_baud || core.FLASH_BAUDS[0];
+  // Start at the ceiling — lowered a rung by any prior write-time failure so
+  // the retry's large transfer runs at a gentler speed — and step down. Keep
+  // the slowest rung so the list is never empty.
+  const ceil = state.baudCeiling || top;
+  const baudList = [top, ...core.FLASH_BAUDS.filter((b) => b !== top)].filter((b) => b <= ceil);
+  if (!baudList.length) baudList.push(core.FLASH_BAUDS[core.FLASH_BAUDS.length - 1]);
+  let esploader = null, transport = null, lastErr = null;
+  for (let i = 0; i < baudList.length; i++) {
+    const baud = baudList[i];
+    if (i > 0) detail.textContent = `Trying a gentler speed (${baud})…`;
+    transport = new Transport(port, false);
+    esploader = new ESPLoader({
+      transport, baudrate: baud,
+      romBaudrate: state.catalog.console_baud || 115200,
+      terminal: makeTerminal(),
+    });
+    try {
+      state.chipDesc = await esploader.main();
+      state.usedBaud = baud;
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      esploader = null;
+      try { await transport.disconnect(); } catch {}
+    }
+  }
+  clearTimeout(nudgeTimer);
+  if (!esploader) {
+    state.busy = false;
+    setPhase(connectFailed(lastErr || new Error("could not connect"), state.portInfo));
+    return;
+  }
 
   try {
-    state.chipDesc = await esploader.main();
     state.chip = esploader.chip.CHIP_NAME;
     // A stalled read should fail fast and retry (we read in small chunks),
     // not sit out esptool-js's default 100 s silence window per packet.
@@ -508,20 +542,21 @@ async function onConnect() {
       state.flashBytes = kb ? kb * 1024 : null;
     } catch { state.flashBytes = null; }
     state.session = { port, transport, esploader };
-    clearTimeout(nudgeTimer);
     state.busy = false;
+    // Escalation from a failed install: reconnect, then jump straight to the
+    // clean-install rescue flow the user asked for.
+    if (state.resumeRescue) { state.resumeRescue = false; setPhase(phaseRescue()); return; }
     await readCurrentFirmware();     // best-effort; never throws out
     ensureManifest();                // kick off (async) manifest load
     setPhase(phaseConnected());
   } catch (e) {
-    clearTimeout(nudgeTimer);
     state.busy = false;
     try { await transport.disconnect(); } catch {}
-    setPhase(connectFailed(e));
+    setPhase(connectFailed(e, state.portInfo));
   }
 }
 
-function connectFailed(e) {
+function connectFailed(e, pinfo) {
   const v = core.classifyFlashError(e);
   const box = errorBox(
     v.title || "Couldn’t reach the board",
@@ -535,9 +570,13 @@ function connectFailed(e) {
     box.append(downloadModeSteps());
     box.append(el("p", "muted", "Then click “Try again”."));
   }
+  // If it's a bridge-chip board that may be missing its driver, link it.
+  appendDriverHint(box, pinfo || state.portInfo);
+  const row = el("div", "flash-row");
   const retry = el("button", "primary", "Try again");
   retry.addEventListener("click", () => setPhase(phaseConnect()));
-  box.append(retry);
+  row.append(retry, diagnosticReportButton(() => ({ stage: "connect", error: String(e && e.message ? e.message : e) })));
+  box.append(row);
   const raw = el("details", "flash-rawerr");
   raw.append(el("summary", null, "Technical details"));
   raw.append(el("pre", null, String(e && e.message ? e.message : e)));
@@ -553,6 +592,70 @@ function makeTerminal() {
     writeLine(data) { if (logSink) { logSink.textContent += data + "\n"; logSink.scrollTop = logSink.scrollHeight; } },
     write(data) { if (logSink) { logSink.textContent += data; logSink.scrollTop = logSink.scrollHeight; } },
   };
+}
+
+// ── self-healing: the "I'm stuck" escape hatch ──────────────────────────────
+// One click turns a stuck moment into a paste-able report for Discussions.
+// Public-only by construction (buildDiagnosticReport takes safe facts only —
+// never WiFi credentials or keys).
+const hex4 = (n) => (n == null ? null : "0x" + n.toString(16).padStart(4, "0"));
+
+function gatherDiagnostics(extra = {}) {
+  const b = core.detectBrowser(navigator.userAgent || "", navigator.maxTouchPoints || 0);
+  const pi = state.portInfo || {};
+  let usb;
+  if (pi.usbVendorId != null) {
+    const bridge = core.usbBridgeInfo(pi.usbVendorId, pi.usbProductId);
+    usb = `${hex4(pi.usbVendorId)}:${hex4(pi.usbProductId) || "?"} ` +
+      (bridge ? `(${bridge.name})` : "(native USB)");
+  }
+  let logTail;
+  try { logTail = (logSink && logSink.textContent) || undefined; } catch {}
+  return core.buildDiagnosticReport({
+    browser: b.label,
+    platform: navigator.platform || undefined,
+    webSerial: "serial" in navigator,
+    catalogVersion: state.catalog && state.catalog.fw_train,
+    chip: state.chip,
+    chipDesc: state.chipDesc,
+    mac: state.mac ? core.formatMac(state.mac) : undefined,
+    flashBytes: state.flashBytes || undefined,
+    usb,
+    baud: state.usedBaud,
+    logTail,
+    ...extra,
+  });
+}
+
+function diagnosticReportButton(extra) {
+  const btn = el("button", "ghost small flash-report-btn", "Copy a diagnostic report");
+  btn.addEventListener("click", async () => {
+    const report = gatherDiagnostics(typeof extra === "function" ? extra() : (extra || {}));
+    try {
+      await navigator.clipboard.writeText(report);
+      btn.textContent = "Copied ✓ — paste it into a Discussion for help";
+    } catch {
+      // No clipboard permission — show it to select by hand.
+      const ta = el("textarea", "flash-report-ta");
+      ta.value = report; ta.readOnly = true; ta.rows = 12;
+      btn.replaceWith(ta); ta.focus(); ta.select();
+    }
+  });
+  return btn;
+}
+
+// Add a bridge-chip driver hint to an error card when the board uses a
+// USB-serial bridge that may be missing its OS driver (native-USB boards
+// return null → nothing shown).
+function appendDriverHint(box, pinfo) {
+  const bridge = pinfo && core.usbBridgeInfo(pinfo.usbVendorId, pinfo.usbProductId);
+  if (!bridge) return;
+  const d = el("p", "flash-note flash-note-soft");
+  d.append(document.createTextNode(bridge.note + " "));
+  const a = el("a", "start-link", `Get the ${bridge.name} driver →`);
+  a.href = bridge.driverUrl; a.target = "_blank"; a.rel = "noopener noreferrer";
+  d.append(a);
+  box.append(d);
 }
 
 // ── chunked flash reads (the stall fix) ─────────────────────────────────────
@@ -717,24 +820,29 @@ async function onBackup() {
 
 function renderPicker() {
   const card = el("section", "flash-card flash-picker");
-  card.append(el("h3", null, "Choose the firmware to install"));
+  card.append(el("h3", null, "Install firmware — one click"));
 
   const matches = core.productsForChip(state.catalog, state.chip);
   const info = core.chipInfo(state.catalog, state.chip) || {};
   card.append(el("p", "muted",
-    `Installing firmware over USB is what “flashing” means — same thing, two ` +
-    `words. Only firmware built for your ${info.label || state.chip} is shown ` +
-    `— the flasher won’t offer an image meant for a different board.`));
+    `Pick your firmware below and press Install this. That's the whole job — ` +
+    `we back the board up first, write the new firmware, and check every byte ` +
+    `landed, all on their own. Only firmware built for your ` +
+    `${info.label || state.chip} is shown, so you can't pick a wrong one.`));
 
   const manifestState = el("div", "flash-manifest-state");
   manifestState.id = "flash-manifest-state";
   card.append(manifestState);
 
-  // Arrived from the checkup page with a board already in mind (?product=…)?
-  // Lead with just that one — the chip guard still limits the set, so this only
-  // ever narrows within what's valid, never widens it.
+  // By default the flasher figures out what to install: it leads with ONE
+  // product — the one asked for via ?product=… (arriving from /checkup), or, if
+  // none, the recommended default for the detected chip. The chip guard still
+  // limits the set, so this only ever narrows within what's valid. The full
+  // list is one click away for the curious / for developers.
   const preferredId = core.preferredProductId(location.search);
-  const focus = preferredId ? matches.find((p) => p.id === preferredId) : null;
+  const explicit = preferredId ? matches.find((p) => p.id === preferredId) : null;
+  const focus = explicit || core.recommendedProduct(state.catalog, state.chip);
+  const isRecommendation = !explicit && !!focus;
 
   const list = el("div", "flash-products");
   const rows = matches.map((p) => { const r = productRow(p); list.append(r); return r; });
@@ -746,8 +854,11 @@ function renderPicker() {
     // still fills every version; one click reveals them.
     rows.forEach((r) => { if (r.dataset.id !== focus.id) r.style.display = "none"; });
     const note = el("p", "fineprint flash-focus-note");
-    note.append(document.createTextNode(`Showing ${focus.name} — the firmware you picked. `));
-    const more = el("button", "ghost small", `show the other ${matches.length - 1} for this chip`);
+    note.append(el("span", null, isRecommendation
+      ? `🪄 Recommended for your ${info.label || state.chip}: ${focus.name}. `
+      : `Showing ${focus.name} — the firmware you picked. `));
+    const more = el("button", "ghost small",
+      `show all ${matches.length} for this chip (developer)`);
     more.addEventListener("click", () => { rows.forEach((r) => { r.style.display = ""; }); note.remove(); });
     note.append(more);
     card.append(note);
@@ -768,7 +879,7 @@ function renderPicker() {
 
   // Advanced: local file, erase toggle, skip-backup, restore.
   const adv = el("details", "flash-advanced");
-  adv.append(el("summary", null, "Advanced"));
+  adv.append(el("summary", null, "Advanced options — you can skip all of this"));
   const local = el("div", "flash-local");
   local.append(el("p", "muted",
     "Install a firmware file from your computer (a .bin you built, or one for " +
@@ -954,7 +1065,15 @@ function phaseConfirm(product, entry) {
   sum.append(fact("Firmware", `${product.name} · v${entry.version}`));
   sum.append(fact("For chip", entry.chipFamily));
   sum.append(fact("Size", core.formatBytes(entry.size)));
-  sum.append(fact("Verified by", "SHA-256 before · chip MD5 after"));
+  const vpolicy = core.imageVerificationPolicy({
+    keyReal: core.isRealPubkey(state.catalog.release_pubkey),
+    hasSignature: !!entry.signature,
+    selfHosted: !!state.manifestOverride,
+  });
+  sum.append(fact("Verified by",
+    vpolicy === "verify" ? "Ed25519 signature + SHA-256 · chip MD5 after"
+      : vpolicy === "require-signature" ? "⚠ unsigned build — this will be refused"
+        : "SHA-256 before · chip MD5 after"));
   box.append(sum);
 
   const willBackup = state.flashBytes && !skipBackup && !haveBackupForThisBoard();
@@ -1126,7 +1245,7 @@ async function startFlash(opts) {
     }
 
     // 1) Obtain the image bytes.
-    let bytes, shaHex = null, shaSigned = false;
+    let bytes, shaHex = null, shaSigned = false, sigVerified = false, sigChecked = false;
     if (opts.localBytes) {
       bytes = opts.localBytes;
       // Fingerprint the local file too, so the receipts can name exactly
@@ -1151,6 +1270,32 @@ async function startFlash(opts) {
       }
       shaHex = got.toLowerCase();
       shaSigned = true;
+      // 2b) Fail closed: once a REAL release key is pinned, an official manifest
+      // MUST carry a valid Ed25519 signature. Verifying only "if a signature is
+      // present" would let a tampered manifest strip the signature and re-point
+      // an updated SHA-256 at a malicious image — the exact substitution this
+      // check exists to stop. (imageVerificationPolicy encodes the fail-closed
+      // rule; checksum-only is reserved for pre-key and self-hosted manifests.)
+      const policy = core.imageVerificationPolicy({
+        keyReal: core.isRealPubkey(state.catalog.release_pubkey),
+        hasSignature: !!opts.entry.signature,
+        selfHosted: !!state.manifestOverride,
+      });
+      if (policy === "require-signature") {
+        throw new Error("This official release is missing its Ed25519 signature, but a " +
+          "signing key is in force — refusing to flash it. A stripped signature can mean " +
+          "a tampered release manifest. Nothing was written.");
+      } else if (policy === "verify") {
+        sigChecked = true;
+        sigVerified = await core.verifyImageSignature(
+          opts.entry.signature, state.catalog.release_pubkey,
+          bytes.length, new Uint8Array(digest));
+        if (!sigVerified) {
+          throw new Error("This image isn’t signed by the SecuraCV release key — " +
+            "refusing to flash it. Nothing was written. (To flash a build you " +
+            "trust anyway, use Advanced → flash a local file.)");
+        }
+      }
     }
     imageBytesRef.bytes = bytes;
     state.lastImage = bytes; // lets the done card replay the tour with real hex
@@ -1222,10 +1367,19 @@ async function startFlash(opts) {
     try { await esploader.after("hard_reset"); } catch {}
 
     state.busy = false;
+    state.baudCeiling = null; // this speed worked — don't carry a cap forward
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
-      shaHex, shaSigned, bytesWritten: bytes.length, wifiSsid, wifi: null }));
+      shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length, wifiSsid, wifi: null }));
   } catch (e) {
     state.busy = false;
+    // Self-heal write-time failures too: a flaky cable can sync at 921600 but
+    // time out mid-write. Lower the baud ceiling a rung so the retry's connect
+    // ladder writes at a gentler speed (the ladder alone only covers connect).
+    const k = core.classifyFlashError(e).kind;
+    if (state.usedBaud && ["not-in-download", "read-stall", "device-lost", "unknown"].includes(k)) {
+      const lower = core.FLASH_BAUDS.find((b) => b < state.usedBaud);
+      if (lower) state.baudCeiling = lower;
+    }
     setPhase(flashError(e, opts));
   }
 }
@@ -1255,6 +1409,22 @@ function flashError(e, opts) {
     setPhase(phaseConnect());
   });
   row.append(retry);
+  // Escalate: if a plain install failed, offer a full-erase clean install as
+  // the next self-heal step (reconnect → the rescue flow, which also restores
+  // a backup if one exists). Skip when we're already erasing/rescuing.
+  if (!opts.rescue && !opts.eraseAll) {
+    const clean = el("button", "ghost", "Clean install (full erase) →");
+    clean.addEventListener("click", async () => {
+      await onDisconnect(true);
+      state.resumeRescue = true;
+      // Carry the product being installed so the rescue can't default to the
+      // wrong firmware (the reconnect clears the read-back identity).
+      state.resumeRescuePrefer = opts.product || null;
+      setPhase(phaseConnect());
+    });
+    row.append(clean);
+  }
+  row.append(diagnosticReportButton(() => ({ stage: "install", error: msg })));
   box.append(row);
   const raw = el("details", "flash-rawerr");
   raw.append(el("summary", null, "Technical details"));
@@ -1342,6 +1512,17 @@ function phaseDone(opts) {
       list.append(el("p", "fineprint", opts.shaSigned
         ? "Computed in your browser from the downloaded bytes and matched against the fingerprint published in the signed release — before anything was written. You can recompute it yourself: download the same release asset and run sha256sum."
         : "Computed in your browser from your local file, so you can pin down exactly what was written. We can't vouch for a personal file's origin — that part is on you."));
+      if (opts.sigChecked) {
+        list.append(reportRow("Ed25519 release signature", el("span", "flash-check", "✓ verified"), "ok"));
+        list.append(el("p", "fineprint",
+          "Verified in your browser against the release public key pinned in this " +
+          "page — the same key the device checks. A swapped or tampered image would " +
+          "have been refused before a single byte was written."));
+      } else if (opts.shaSigned) {
+        list.append(el("p", "fineprint",
+          "This release isn't Ed25519-signed yet (the signing-key ceremony hasn't " +
+          "happened), so it was verified by checksum only."));
+      }
     }
     if (opts.bytesWritten) {
       list.append(reportRow("Written and read back",
@@ -1361,8 +1542,8 @@ function phaseDone(opts) {
   }
 
   const row = el("div", "flash-row");
-  const watch = el("button", "primary", "Watch it boot →");
-  watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true }));
+  const watch = el("button", "primary", "Watch it boot & prove itself →");
+  watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
   const again = el("button", "ghost", "Set up another board");
   again.addEventListener("click", () => onDisconnect().then(() => setPhase(phaseConnect())));
   const tour = el("button", "ghost", "replay the layers tour");
@@ -1396,7 +1577,13 @@ function phaseRescue() {
     "fetches the latest signed image for the silicon in hand."));
 
   const matches = core.productsForChip(state.catalog, state.chip);
-  const preferred = core.pickRescueProduct(
+  // A clean-install escalation from a failed flash carries the product the user
+  // was installing — state.current is cleared by the reconnect, so without this
+  // a WAP / Vision rescue would silently default to plain canary. Consume it.
+  const carried = (state.resumeRescuePrefer &&
+    matches.find((p) => p.id === state.resumeRescuePrefer.id)) || null;
+  state.resumeRescuePrefer = null;
+  const preferred = carried || core.pickRescueProduct(
     state.catalog, state.chip, state.current && state.current.projectName);
 
   let chosen = preferred || matches[0] || null;
@@ -1417,7 +1604,9 @@ function phaseRescue() {
     });
     box.append(list);
     if (preferred) box.append(el("p", "fineprint",
-      `${preferred.name} is pre-selected because that’s what the board says it was running.`));
+      carried
+        ? `${preferred.name} is pre-selected — it’s the firmware you were installing.`
+        : `${preferred.name} is pre-selected because that’s what the board says it was running.`));
   } else if (chosen) {
     box.append(el("p", "flash-current", `Firmware: ${chosen.name} — ${chosen.tagline}`));
   }
@@ -1828,8 +2017,8 @@ function renderReport(r) {
 // full menu). We reboot the board out of download mode, reopen the port at
 // console baud, and give the user a live console with a send box.
 const MONITOR_CMDS = [
-  ["h", "help"], ["i", "identity"], ["s", "status"], ["t", "time"],
-  ["w", "wifi"], ["m", "system"], ["b", "battery"],
+  ["h", "help"], ["j", "self-manifest"], ["i", "identity"], ["s", "status"],
+  ["t", "time"], ["w", "wifi"], ["m", "system"], ["b", "battery"],
 ];
 
 async function openMonitor(opts = {}) {
@@ -1858,6 +2047,59 @@ function phaseMonitor(port, opts = {}) {
 
   const con = el("pre", "flash-console flash-console-tall");
   box.append(con);
+
+  // Boot-log diagnosis: when a fatal signature scrolls past (brownout, panic,
+  // no bootable app…), translate it into a plain-language cause + fix instead
+  // of leaving the user to read raw panic text. Informational — the fix text
+  // says what to do, and the "back to the flasher" button below re-flashes.
+  const diagPanel = el("div", "flash-diag flash-hidden");
+  box.append(diagPanel);
+  let diagnosedSig = null;
+  function maybeDiagnose(text) {
+    const d = core.diagnoseBootLog(text);
+    if (!d || d.signature === diagnosedSig) return;
+    diagnosedSig = d.signature;
+    diagPanel.innerHTML = "";
+    diagPanel.classList.remove("flash-hidden");
+    diagPanel.append(el("div", "flash-diag-emoji", d.action === "power" ? "🔌" : "🩺"));
+    diagPanel.append(el("h3", null, d.means));
+    diagPanel.append(el("p", "muted", d.fix));
+  }
+
+  // Post-flash proof: when the firmware answers `j` with its signed
+  // self-manifest, render a verified-identity card — the flash proven from the
+  // board's own mouth (the same self-verify as securacv.com/canary).
+  const idCard = el("div", "flash-identity flash-hidden");
+  box.append(idCard);
+  let identityShown = false;
+  function maybeIdentity(text) {
+    if (identityShown) return;
+    const m = core.parseSelfManifest(text);
+    if (!m) return;
+    identityShown = true;
+    const signed = !!(m.pubkey || m.pubkey_fp);
+    idCard.innerHTML = "";
+    idCard.classList.remove("flash-hidden");
+    idCard.append(el("div", "flash-identity-head",
+      (signed ? "✓ " : "") + "Your Canary just proved itself"));
+    const facts = el("div", "flash-facts");
+    if (m.board) facts.append(fact("board", m.board));
+    if (m.firmware) facts.append(fact("firmware", m.firmware));
+    const fp = core.formatFingerprint(m.pubkey_fp || m.pubkey);
+    if (fp) facts.append(fact("key fingerprint", fp));
+    if (typeof m.health === "number") facts.append(fact("health", `${m.health}/100`));
+    if (typeof m.boots === "number") facts.append(fact("boots", String(m.boots)));
+    idCard.append(facts);
+    if (m.tamper) {
+      idCard.append(el("p", "flash-note flash-note-soft",
+        "⚠ The board reports a tamper flag — expected if you’ve opened it; look into it if not."));
+    }
+    idCard.append(el("p", "fineprint", signed
+      ? "Read straight from the running firmware over the cable — the same signed " +
+        "identity securacv.com/canary shows. Nothing was sent anywhere."
+      : "Read from the running firmware over the cable."));
+    setStatus("✓ Identity confirmed — it’s running and answering.");
+  }
 
   const chips = el("div", "flash-mon-chips");
   MONITOR_CMDS.forEach(([ch, label]) => {
@@ -1907,53 +2149,142 @@ function phaseMonitor(port, opts = {}) {
     "(or: hold BOOT, tap RESET, release BOOT)."));
 
   // — wire it up —
-  const mon = { alive: true, port: null, reader: null, writer: null, manualBaud: false, session: 0 };
+  //
+  // A PERSISTENT console. ESP32-S3 boards run native USB, so a reset (or the
+  // firmware rebooting itself) makes the chip vanish and re-enumerate as a
+  // fresh USB device — the old port handle goes dead. We never leave the user
+  // staring at a frozen "connected" screen: when bytes stop we say so plainly
+  // and grab the board again automatically the moment it reappears (the
+  // `serial` connect event), and a one-tap reconnect is always in reach.
+  const mon = {
+    alive: true, port: null, reader: null, writer: null,
+    manualBaud: false, session: 0, everByted: false,
+    lastPort: null, forced: null, reopenSame: false, waiting: null,
+  };
   let celebrated = !opts.celebrate;
+  let quietTimer = null;
+
+  function setStatus(t) { status.textContent = t; }
 
   function send(text) {
     if (!mon.writer || !text) return;
     mon.writer.write(new TextEncoder().encode(text)).catch(() => {});
   }
 
+  // A reconnect button that lives right under the status line — hidden while
+  // the stream is healthy, shown (persistently) whenever we're waiting.
+  const reconnectBtn = el("button", "ghost small flash-hidden", "reconnect the board →");
+  reconnectBtn.addEventListener("click", async () => {
+    let np;
+    try { np = await navigator.serial.requestPort(); } catch { return; }
+    reconnectBtn.classList.add("flash-hidden");
+    mon.everByted = false;
+    if (mon.waiting) { mon.waiting(np); }              // we were waiting → use it now
+    else { mon.forced = np; mon.session++; await stopStreams(); }  // interrupt & switch
+  });
+  status.after(reconnectBtn);
+
   async function stopStreams() {
+    if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
     try { mon.reader && await mon.reader.cancel(); } catch {}
     try { mon.reader && mon.reader.releaseLock(); } catch {}
     try { mon.writer && mon.writer.releaseLock(); } catch {}
     mon.reader = mon.writer = null;
     try { mon.port && await mon.port.close(); } catch {}
+    mon.port = null;
   }
 
-  // One open-read session at a given baud. Resolves "garbage" if the first
-  // stretch of output doesn't decode as text (wrong baud), "ended" otherwise.
+  // Re-find a granted port (no user gesture needed — only requestPort() is
+  // gesture-gated; getPorts()/open() are not). Prefer the same board.
+  async function reacquire() {
+    try {
+      const ports = await navigator.serial.getPorts();
+      if (!ports.length) return null;
+      if (mon.lastPort && ports.includes(mon.lastPort)) return mon.lastPort;
+      return ports[0];
+    } catch { return null; }
+  }
+
+  // Resolve once the board is physically back: the `connect` event fires on
+  // re-enumeration; a slow poll confirms by actually opening the port (a
+  // granted-but-unplugged port still shows up in getPorts(), so we must test).
+  function waitForPort(msg) {
+    setStatus(msg);
+    reconnectBtn.classList.remove("flash-hidden");
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (p) => {
+        if (settled || !mon.alive) return;
+        settled = true; clearInterval(poll);
+        navigator.serial.removeEventListener("connect", tryGrant);
+        mon.waiting = null; resolve(p);
+      };
+      const tryGrant = async () => {
+        if (settled) return;
+        const p = await reacquire();
+        if (!p) return;
+        try { await p.open({ baudRate: Number(baudSel.value) }); await p.close(); finish(p); } catch {}
+      };
+      const poll = setInterval(tryGrant, 1000);
+      navigator.serial.addEventListener("connect", tryGrant);
+      mon.waiting = finish;   // the reconnect button hands us a port directly
+      tryGrant();
+    });
+  }
+
+  // One open-read session at a given baud. Returns "garbage" (wrong baud),
+  // "ended" (stream closed), or "error" (port went away).
   async function pumpOnce(p, baud) {
     const mySession = ++mon.session;
     await p.open({ baudRate: baud });
-    mon.port = p;
+    mon.port = mon.lastPort = p;
     try { mon.writer = p.writable.getWriter(); } catch {}
     mon.reader = p.readable.getReader();
-    status.textContent = `Connected at ${baud} — the board is talking. Press a command, or h for its menu.`;
-    const dec = new TextDecoder();
-    let buf = "", sample = "", judged = false;
-    while (mon.alive && mySession === mon.session) {
-      const { value, done: fin } = await mon.reader.read();
-      if (fin) break;
-      const text = dec.decode(value, { stream: true });
-      if (!judged) {
-        sample = (sample + text).slice(0, 600);
-        if (core.looksLikeGarbage(sample)) {
-          if (!mon.manualBaud) { await stopStreams(); return "garbage"; }
-          judged = true; // user chose this baud on purpose; show it raw
-        } else if (sample.length >= 600) judged = true;
-      }
-      buf = (buf + text).slice(-16000);
-      con.textContent = buf;
-      con.scrollTop = con.scrollHeight;
-      if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
-        celebrated = true;
-        status.textContent = "✓ It’s talking — your Canary is alive.";
-        confettiBurst();
-      }
+    reconnectBtn.classList.add("flash-hidden");
+    setStatus(`Connected at ${baud} — the board is talking. Press a command, or h for its menu.`);
+    // Post-flash proof: ask the firmware to prove its signed identity (`j`).
+    // Read-only and harmless; sent twice in case the first lands mid-boot.
+    if (opts.proveIdentity && !mon.askedManifest) {
+      mon.askedManifest = true;
+      const ask = () => { if (mon.alive && !identityShown) send("j\n"); };
+      setTimeout(ask, 600);
+      setTimeout(ask, 2000);
     }
+    // If nothing arrives soon, explain why (many builds stay silent until
+    // asked) — but keep the connection; don't tear it down.
+    if (quietTimer) clearTimeout(quietTimer);
+    if (!mon.everByted) quietTimer = setTimeout(() => {
+      if (!mon.everByted && mon.alive)
+        setStatus("Connected, but quiet so far — many builds only speak when asked: press h for the menu. (If the board just reset, I'll reconnect on my own.)");
+    }, 4000);
+    const dec = new TextDecoder();
+    let buf = con.textContent || "", sample = "", judged = false;
+    try {
+      while (mon.alive && mySession === mon.session) {
+        const { value, done: fin } = await mon.reader.read();
+        if (fin) return "ended";
+        mon.everByted = true;
+        if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
+        const text = dec.decode(value, { stream: true });
+        if (!judged) {
+          sample = (sample + text).slice(0, 600);
+          if (core.looksLikeGarbage(sample)) {
+            if (!mon.manualBaud) { await stopStreams(); return "garbage"; }
+            judged = true; // user chose this baud on purpose; show it raw
+          } else if (sample.length >= 600) judged = true;
+        }
+        buf = (buf + text).slice(-16000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        if (!celebrated && /securacv|canary|chirp|witness|boot/i.test(buf)) {
+          celebrated = true;
+          setStatus("✓ It’s talking — your Canary is alive.");
+          confettiBurst();
+        }
+        maybeDiagnose(buf);   // fatal signature → plain-language cause + fix
+        maybeIdentity(buf);   // `j` self-manifest → verified-identity card
+      }
+    } catch { return "error"; }
     return "ended";
   }
 
@@ -1965,55 +2296,65 @@ function phaseMonitor(port, opts = {}) {
     for (;;) {
       tried.add(baud);
       const verdict = await pumpOnce(p, baud);
-      if (verdict !== "garbage" || !mon.alive) return;
+      if (verdict !== "garbage" || !mon.alive) return verdict;
       const next = core.CONSOLE_BAUDS.find((b) => !tried.has(b));
       if (!next) {
-        status.textContent = "None of the usual speeds decoded as clean text — showing it raw at " + defaultBaud + ".";
+        setStatus("None of the usual speeds decoded as clean text — showing it raw at " + defaultBaud + ".");
         mon.manualBaud = true; // stop re-judging
         baudSel.value = String(defaultBaud);
-        await pumpOnce(p, defaultBaud);
-        return;
+        return await pumpOnce(p, defaultBaud);
       }
-      status.textContent = `That didn’t look like text at ${baud} — trying ${next}…`;
+      setStatus(`That didn’t look like text at ${baud} — trying ${next}…`);
       con.textContent = "";
       baudSel.value = String(next);
       baud = next;
     }
   }
 
+  // The supervisor: keep the console alive across resets & re-enumerations.
+  async function supervise(initialPort) {
+    let p = initialPort;
+    while (mon.alive) {
+      if (mon.forced) { p = mon.forced; mon.forced = null; }
+      if (!p) p = await waitForPort("Board reset — reconnecting automatically… (normal for these chips)");
+      if (!mon.alive || !p) return;
+      reconnectBtn.classList.add("flash-hidden");
+      try { await pump(p); } catch {}
+      if (!mon.alive) return;
+      await stopStreams();
+      p = mon.reopenSame ? p : null;   // a deliberate baud change keeps the same port
+      mon.reopenSame = false;
+      await sleep(150);
+    }
+  }
+
+  // A USB unplug / re-enumeration of the CURRENT port: cancel the read so the
+  // supervisor drops straight into reconnect instead of hanging.
+  const onDisconnect = () => {
+    if (!mon.alive) return;
+    mon.session++;
+    try { mon.reader && mon.reader.cancel(); } catch {}
+  };
+  navigator.serial.addEventListener("disconnect", onDisconnect);
+
   baudSel.addEventListener("change", async () => {
     mon.manualBaud = true;
-    const p = mon.port || port;
-    await stopStreams();
+    mon.everByted = false;
+    mon.reopenSame = true;   // same port, new baud — no "reset" detour
+    mon.session++;
     con.textContent = "";
-    try { await pumpOnce(p, Number(baudSel.value)); } catch {}
+    await stopStreams();     // cancels the blocked read so supervise reopens now
   });
 
   done.addEventListener("click", async () => {
     mon.alive = false;
+    if (mon.waiting) mon.waiting(null);
+    navigator.serial.removeEventListener("disconnect", onDisconnect);
     await stopStreams();
     setPhase(phaseConnect());
   });
 
-  (async () => {
-    try {
-      if (!port) throw new Error("no port");
-      await pump(port);
-    } catch (e) {
-      if (!mon.alive) return;
-      // Native-USB boards re-enumerate after reset — offer a fresh pick.
-      status.textContent = "The board reconnected as a new USB device (normal for these chips).";
-      const b = el("button", "ghost small", "pick it again to keep watching →");
-      b.addEventListener("click", async () => {
-        b.remove();
-        try {
-          const np = await navigator.serial.requestPort();
-          await pump(np);
-        } catch {}
-      });
-      status.after(b);
-    }
-  })();
+  supervise(port);
 
   return box;
 }
@@ -2388,7 +2729,10 @@ async function onDisconnect(silent) {
   state.chip = state.mac = state.flashBytes = state.current = null;
   state.report = null;
   state.busy = false;
-  if (!silent) { /* caller decides next phase */ }
+  // A fresh board (non-silent) starts from the top baud again; a silent
+  // disconnect (retry / clean-install escalation) keeps any lowered ceiling so
+  // the retry writes at the gentler speed that a write-time failure implied.
+  if (!silent) { state.baudCeiling = null; /* caller decides next phase */ }
 }
 
 // ── helpers: downloads, stamps, confetti ────────────────────────────────────

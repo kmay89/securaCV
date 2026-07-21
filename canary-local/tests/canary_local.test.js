@@ -131,3 +131,59 @@ test("fw_train matches the firmware tree's CANARY_FW_VERSION", () => {
   assert.ok(m, "version.h parses");
   assert.strictEqual(reg.fw_train, m[1]);
 });
+
+// ── the filament finish system (finishes.js) ───────────────────────────────
+test("finishes: a curated two-tone set, Canary the bold default", async () => {
+  const { FINISHES, activeFinish, setFinish } = await import("../assets/finishes.js");
+  assert.ok(FINISHES.length >= 3, "at least Canary/Walnut/Graphite");
+  assert.strictEqual(activeFinish().id, "canary", "Canary is the default (no storage in Node)");
+  for (const f of FINISHES) {
+    for (const k of ["shell", "shell2", "gasket", "beacon"])
+      assert.ok(Array.isArray(f[k]) && f[k].length === 3, `${f.id}.${k} is an RGB triple`);
+    assert.match(f.swatch, /^#[0-9a-f]{6}$/i, `${f.id} has a hex swatch`);
+    // two-tone: the secondary is a genuinely different (darker) shade
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    assert.ok(lum(f.shell2) < lum(f.shell) + 0.02, `${f.id}: secondary is not lighter than the body`);
+  }
+  // setting a finish is sticky and idempotent
+  assert.strictEqual(setFinish("walnut").id, "walnut");
+  assert.strictEqual(activeFinish().id, "walnut");
+  assert.strictEqual(setFinish("nope").id, "walnut", "unknown id is ignored");
+  setFinish("canary"); // restore for any later import consumers
+});
+
+test("finishes: finishColor cross-fades only filament roles, functional parts pass through", async () => {
+  const { finishColor, setFinish, FINISHES } = await import("../assets/finishes.js");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const canary = FINISHES.find((f) => f.id === "canary");
+  setFinish("canary");
+  await sleep(1650); // let any in-flight cross-fade settle (fadeDur 1500)
+  // a settled finish returns the exact role colour; unknown roles pass through
+  assert.deepStrictEqual(finishColor("shell"), canary.shell);
+  assert.deepStrictEqual(finishColor("beacon"), canary.beacon);
+  assert.strictEqual(finishColor("glass"), null, "non-filament role is untouched");
+  assert.strictEqual(finishColor(null), null);
+  // a fresh pick begins from the previous colour — the first frame of the
+  // cross-fade is at (or extremely close to) where it was, not a hard jump
+  const graphite = FINISHES.find((f) => f.id === "graphite");
+  setFinish("graphite");
+  const first = finishColor("shell");
+  const dToOld = Math.hypot(...first.map((v, i) => v - canary.shell[i]));
+  const dToNew = Math.hypot(...first.map((v, i) => v - graphite.shell[i]));
+  assert.ok(dToOld < dToNew, "the fade starts nearer the outgoing colour than the incoming one");
+  setFinish("canary");
+});
+
+test("finishes: the showcase cycles then stops for good on a manual pick", async () => {
+  const { startFinishShowcase, stopFinishShowcase, showcaseRunning, setFinish } =
+    await import("../assets/finishes.js");
+  assert.strictEqual(showcaseRunning(), false, "not running at rest");
+  startFinishShowcase();
+  assert.strictEqual(showcaseRunning(), true, "starts");
+  setFinish("walnut");                 // a manual pick ends the showcase
+  assert.strictEqual(showcaseRunning(), false, "a pick stops it");
+  startFinishShowcase();
+  stopFinishShowcase();                 // and it can be stopped directly
+  assert.strictEqual(showcaseRunning(), false);
+  setFinish("canary");
+});

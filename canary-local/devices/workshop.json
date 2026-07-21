@@ -889,6 +889,10 @@
        "on": true,
        "note": "off-grid BLE chirp fallback (spec 6)"
       },
+      "FEATURE_FLEET_LINK": {
+       "on": true,
+       "note": "off-grid BLE GATT pull of WAP status (spec 6)"
+      },
       "FEATURE_TIME_MACHINE": {
        "on": true,
        "note": "proof-carrying event journal + history UI (spec 7)"
@@ -1050,6 +1054,10 @@
       "FEATURE_CHIRP_SCAN": {
        "on": true,
        "note": "off-grid BLE chirp fallback (spec 6)"
+      },
+      "FEATURE_FLEET_LINK": {
+       "on": true,
+       "note": "off-grid BLE GATT pull of WAP status (spec 6)"
       },
       "FEATURE_TIME_MACHINE": {
        "on": true,

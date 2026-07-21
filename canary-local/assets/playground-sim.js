@@ -116,9 +116,24 @@ function freshState() {
     light: { found: false, addr: 0, lux: 0 },
     tof: { found: false, valid: false, mm: 0, trip_mm: 100, trips: 0, tripped: false },
     pad: { found: false, touched_bits: 0, preset: 0, events: 0 },
+    rs485: { ready: false, polls: 0, replies: 0, last_val: 0, last_ok: false },
+    can: { ready: false, tx: 0, rx: 0, last_id: 0 },
     bus: { count: 0, addrs: [] },
     display_ok: true,
   };
+}
+
+// Match can_frame.h format_frame(): a stable ASCII line for a standard/extended
+// classic-CAN frame. Used by the CAN station's rx log so the sim EVT text is
+// byte-identical to the firmware's.
+function canFormatFrame(f) {
+  const idHex = f.extended
+    ? "0x" + (f.id >>> 0).toString(16).toUpperCase().padStart(8, "0")
+    : "0x" + (f.id & 0x7ff).toString(16).toUpperCase().padStart(3, "0");
+  const head = `id=${idHex} ext=${f.extended ? 1 : 0} rtr=${f.rtr ? 1 : 0} dlc=${f.dlc}`;
+  if (f.rtr) return head + " remote";
+  const bytes = f.data.slice(0, f.dlc).map((b) => hex(b, 2).slice(2)).join(" ");
+  return head + " data=" + bytes;
 }
 
 // ============================================================================
@@ -302,6 +317,44 @@ export class PlaygroundSim {
     if (has(SENSORS.vl53l0x)) out.push(...this.attach("tof", now));
     if (has(SENSORS.mpr121)) out.push(...this.attach("pad", now));
     return out;
+  }
+
+  // ── RS485 · Modbus RTU: probe holding register 0 of slave 1 ─────────────
+  // Ports action_rs485_probe(): a virtual slave answers with a deterministic,
+  // ramping register value; `rs485ProbeQuiet` models an empty bus (no reply).
+  rs485Probe(now) {
+    this.g.rs485.ready = true;
+    this.g.rs485.polls++;
+    const v = (1000 + this.g.rs485.replies * 10) & 0xffff; // ramps per reply
+    this.g.rs485.replies++;
+    this.g.rs485.last_val = v;
+    this.g.rs485.last_ok = true;
+    return [this._emit(now, "rs485", `slave=1 reg=0 val=${v} crc=ok`)];
+  }
+
+  rs485ProbeQuiet(now) {
+    this.g.rs485.ready = true;
+    this.g.rs485.polls++;
+    this.g.rs485.last_ok = false;
+    return [this._emit(now, "rs485", "slave=1 reply=none")];
+  }
+
+  // ── CAN · TWAI: send a test frame / receive one from another node ───────
+  // Ports action_can_send() (tx id=0x100 dlc=8) and the loop's can_drain()
+  // (a received frame logged via the can_frame.h formatter).
+  canSend(now) {
+    this.g.can.ready = true;
+    this.g.can.tx++;
+    return [this._emit(now, "can", "tx id=0x100 dlc=8 ok")];
+  }
+
+  canReceive(now) {
+    this.g.can.ready = true;
+    this.g.can.rx++;
+    const f = { id: 0x101, extended: false, rtr: false, dlc: 8,
+                data: [0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7] };
+    this.g.can.last_id = f.id;
+    return [this._emit(now, "can", `rx ${canFormatFrame(f)}`)];
   }
 
   // ── Bounded-output safety: release any DO past its deadline ─────────────

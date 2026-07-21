@@ -15,6 +15,8 @@
 // the floating product. Tuned for the Apple-product-page look while
 // staying a single zero-dependency file.
 
+import { activeFinish, finishColor } from "./finishes.js";
+
 // ── tiny mat4 ───────────────────────────────────────────────────────────
 export const M4 = {
   ident: () => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
@@ -549,11 +551,15 @@ export class DeviceScene {
 
   addMesh(builder, { color = [0.5, 0.5, 0.5], gloss = 0.2, metal = 0, screen = false,
                      model = M4.ident(), lines = false, unlit = false,
-                     clippable = false, minZ = 0 } = {}) {
+                     clippable = false, minZ = 0, role = null } = {}) {
     const gl = this.gl;
     const part = {
       model,
       color,
+      // role-tagged filament parts ("shell"/"shell2"/"gasket"/"beacon") read
+      // their live colour from the active finish each frame, so a finish swap
+      // or the ambient showcase cross-fades them with no geometry rebuild.
+      role,
       gloss,
       metal,
       screen,
@@ -746,7 +752,7 @@ export class DeviceScene {
 
     for (const p of this.parts) {
       gl.uniformMatrix4fv(this.u.uModel, false, M4.mul(spin, p.model));
-      gl.uniform3fv(this.u.uColor, p.color);
+      gl.uniform3fv(this.u.uColor, (p.role && finishColor(p.role)) || p.color);
       gl.uniform1f(this.u.uGloss, p.gloss);
       gl.uniform1f(this.u.uMetal, p.metal || 0);
       gl.uniform1f(this.u.uUseTex, p.screen ? 1 : 0);
@@ -803,16 +809,15 @@ export class DeviceScene {
 }
 
 // ── device bodies (dimensions: docs/hardware/enclosure/*.scad) ──────────
-const SHELL = [0.16, 0.17, 0.19];      // matte printed shell (graphite)
-const SHELL_LIGHT = [0.90, 0.87, 0.80]; // bone/eggshell variant
-const CANARY = [1.0, 0.83, 0.31];       // #FFD44F feather yellow
+// Printed-shell colours come from the active finish (finishes.js); only the
+// functional non-filament parts (glass, lens, solar, radome) stay literal.
 const GLASS_EDGE = [0.05, 0.05, 0.06];
 
-export function buildWatchStation(scene, { light = true } = {}) {
+export function buildWatchStation(scene) {
   // canary_watch_station.scad: drum Ø52, drum_h≈14.8, bezel 7 (Σ≈21.8),
   // aperture Ø34, stand tilt 25°.
   scene.clearParts();
-  const shell = light ? SHELL_LIGHT : SHELL;
+  const f = activeFinish();
   const drum = cylinder(26, 14.8, 72);
   const bezel = cylinder(26, 7, 72, 17);
   const glassRing = cylinder(17.4, 1.2, 72, 17);
@@ -821,34 +826,34 @@ export function buildWatchStation(scene, { light = true } = {}) {
   const lean = M4.rotX(-tilt);
 
   const at = (m, dz) => M4.mul(lean, M4.mul(m, M4.translate(0, 0, dz)));
-  scene.addMesh(drum, { color: shell, gloss: 0.22, model: at(M4.ident(), -3.6) });
-  scene.addMesh(bezel, { color: shell, gloss: 0.3, model: at(M4.ident(), 7.4) });
+  scene.addMesh(drum, { color: f.shell, role: "shell", gloss: 0.22, model: at(M4.ident(), -3.6) });
+  scene.addMesh(bezel, { color: f.shell, role: "shell", gloss: 0.3, model: at(M4.ident(), 7.4) });
   scene.addMesh(glassRing, { color: GLASS_EDGE, gloss: 0.75, model: at(M4.ident(), 10.4) });
   scene.addMesh(screen, { screen: true, model: at(M4.ident(), 11.05) });
-  // stand wedge, its pocket under the leaning drum
+  // stand wedge (secondary finish), its pocket under the leaning drum
   const st = wedge(64, 47, 26);
   scene.addMesh(st, {
-    color: shell, gloss: 0.18,
+    color: f.shell2, role: "shell2", gloss: 0.18,
     model: M4.mul(M4.translate(0, -30, 2), M4.ident()),
   });
     scene.setContactShadow({ y: -32, rx: 48, rz: 36, alpha: 0.32 });
   scene.dist = 165;
 }
 
-export function buildDash(scene, { light = true } = {}) {
+export function buildDash(scene) {
   // canary_dash_display.scad: shell 113.7 × 73.6 × 16.0 (frame 13.6 +
   // back 2.4), view window 101.3 × 61.2, r_out 5, stand 25°.
   scene.clearParts();
-  const shell = light ? SHELL_LIGHT : SHELL;
+  const f = activeFinish();
   const tiltM = M4.rotX((-25 * Math.PI) / 180);
   const body = roundedBox(113.7, 73.6, 16, 5);
   const glass = screenPlane(101.3, 61.2, false);
   const bezl = roundedBox(104.5, 64.4, 1.4, 2.4);
-  scene.addMesh(body, { color: shell, gloss: 0.22, model: tiltM });
+  scene.addMesh(body, { color: f.shell, role: "shell", gloss: 0.22, model: tiltM });
   scene.addMesh(bezl, { color: GLASS_EDGE, gloss: 0.7, model: M4.mul(tiltM, M4.translate(0, 0, 7.6)) });
   scene.addMesh(glass, { screen: true, model: M4.mul(tiltM, M4.translate(0, 0, 8.45)) });
   const st = wedge(120, 78, 40);
-  scene.addMesh(st, { color: shell, gloss: 0.18, model: M4.translate(0, -48, -6) });
+  scene.addMesh(st, { color: f.shell2, role: "shell2", gloss: 0.18, model: M4.translate(0, -48, -6) });
     scene.setContactShadow({ y: -50, rx: 80, rz: 56, alpha: 0.32 });
   scene.dist = 260;
 }
@@ -857,50 +862,55 @@ export function buildDash(scene, { light = true } = {}) {
 // family member gets a card. Dimensions from canary_*_enclosure.scad.
 export function buildVision(scene) {
   scene.clearParts();
+  const f = activeFinish();
   const body = roundedBox(46, 46, 22, 6);
   const lensBarrel = cylinder(9, 6, 48);
   const lensGlass = cylinder(6.5, 1.5, 48);
-  scene.addMesh(body, { color: SHELL_LIGHT, gloss: 0.25 });
+  scene.addMesh(body, { color: f.shell, role: "shell", gloss: 0.25 });
   scene.addMesh(lensBarrel, { color: [0.1, 0.1, 0.11], gloss: 0.5, model: M4.translate(0, 6, 12) });
   scene.addMesh(lensGlass, { color: [0.02, 0.03, 0.05], gloss: 0.95, model: M4.translate(0, 6, 15.4) });
   const led = cylinder(1.6, 1.2, 24);
-  scene.addMesh(led, { color: CANARY, gloss: 0.9, model: M4.translate(12, -12, 11.6) });
+  scene.addMesh(led, { color: f.beacon, role: "beacon", gloss: 0.9, model: M4.translate(12, -12, 11.6) });
     scene.setContactShadow({ y: -26, rx: 34, rz: 27, alpha: 0.30 });
   scene.dist = 130;
 }
 
 export function buildWap(scene) {
   scene.clearParts();
+  const f = activeFinish();
   const body = roundedBox(58, 38, 20, 5);
-  scene.addMesh(body, { color: SHELL_LIGHT, gloss: 0.25 });
-  // vent slots implied by darker inset panel
+  scene.addMesh(body, { color: f.shell, role: "shell", gloss: 0.25 });
+  // vent slots implied by a recessed secondary-finish inset panel
   const inset = roundedBox(44, 24, 1.4, 3);
-  scene.addMesh(inset, { color: [0.35, 0.36, 0.38], gloss: 0.15, model: M4.translate(0, 0, 10) });
+  scene.addMesh(inset, { color: f.shell2, role: "shell2", gloss: 0.15, model: M4.translate(0, 0, 10) });
   const led = cylinder(1.6, 1.4, 24);
-  scene.addMesh(led, { color: CANARY, gloss: 0.9, model: M4.translate(20, 11, 10.2) });
+  scene.addMesh(led, { color: f.beacon, role: "beacon", gloss: 0.9, model: M4.translate(20, 11, 10.2) });
     scene.setContactShadow({ y: -22, rx: 40, rz: 27, alpha: 0.30 });
   scene.dist = 135;
 }
 
 export function buildSense(scene) {
   scene.clearParts();
+  const f = activeFinish();
   // radar radome: soft rounded puck standing on edge
   const body = cylinder(24, 16, 64);
-  scene.addMesh(body, { color: SHELL_LIGHT, gloss: 0.3 });
+  scene.addMesh(body, { color: f.shell, role: "shell", gloss: 0.3 });
+  // the radome cap prints in the secondary finish (radar-transparent PETG)
   const dome = cylinder(19, 2.5, 64);
-  scene.addMesh(dome, { color: [0.82, 0.79, 0.72], gloss: 0.45, model: M4.translate(0, 0, 9) });
+  scene.addMesh(dome, { color: f.shell2, role: "shell2", gloss: 0.45, model: M4.translate(0, 0, 9) });
   const led = cylinder(1.4, 1.4, 24);
-  scene.addMesh(led, { color: CANARY, gloss: 0.9, model: M4.translate(0, -17, 8.4) });
+  scene.addMesh(led, { color: f.beacon, role: "beacon", gloss: 0.9, model: M4.translate(0, -17, 8.4) });
     scene.setContactShadow({ y: -27, rx: 32, rz: 26, alpha: 0.30 });
   scene.dist = 120;
 }
 
 export function buildFenceGuard(scene) {
   scene.clearParts();
+  const f = activeFinish();
   // concept body: sealed slab (XIAO ESP32S3 + Wio-SX1262 stack inside),
   // fence-clamp lip on the back, stub antenna up top, solar sliver lid
   const body = roundedBox(46, 62, 22, 5);
-  scene.addMesh(body, { color: SHELL_LIGHT, gloss: 0.25 });
+  scene.addMesh(body, { color: f.shell, role: "shell", gloss: 0.25 });
   const solar = roundedBox(38, 40, 2.2, 2);
   scene.addMesh(solar, { color: [0.16, 0.2, 0.26], gloss: 0.6, model: M4.translate(0, 8, 11.2) });
   const antenna = cylinder(2.2, 26, 24);
@@ -909,7 +919,7 @@ export function buildFenceGuard(scene) {
     model: M4.mul(M4.translate(0, 38, 0), M4.rotX(Math.PI / 2)),
   });
   const clamp = roundedBox(12, 46, 6, 2);
-  scene.addMesh(clamp, { color: [0.3, 0.31, 0.33], gloss: 0.2, model: M4.translate(0, 0, -13) });
+  scene.addMesh(clamp, { color: f.shell2, role: "shell2", gloss: 0.2, model: M4.translate(0, 0, -13) });
   const led = cylinder(1.4, 1.4, 24);
   scene.addMesh(led, { color: [0.44, 0.84, 0.76], gloss: 0.9, model: M4.translate(16, -24, 11.2) });
     scene.setContactShadow({ y: -34, rx: 34, rz: 26, alpha: 0.30 });
