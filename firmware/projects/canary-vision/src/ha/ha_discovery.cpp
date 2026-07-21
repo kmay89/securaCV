@@ -123,6 +123,60 @@ void publish_discovery(PubSubClient& mqtt, const Topics& topics) {
     publish_cfg(mqtt, t, p);
   }
 
+  // Occupancy — coarse count bucket (none/one/two/several). Deliberately NOT
+  // an exact running tally, so it can't become a per-household occupancy
+  // history (free-signals §5, §7).
+  {
+    char t[192], p[768];
+    topic_for("sensor", "occupancy", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Occupancy\","
+             "\"unique_id\":\"%s_occupancy\","
+             "\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.occupancy | default('unknown') }}\","
+             "\"icon\":\"mdi:account-group\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.state, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
+  // Posture — coarse upright/ambiguous/horizontal from the bounding-box aspect
+  // ratio (not a skeleton). Advisory, physics-not-politics.
+  {
+    char t[192], p[768];
+    topic_for("sensor", "posture", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Posture\","
+             "\"unique_id\":\"%s_posture\","
+             "\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.posture | default('unknown') }}\","
+             "\"icon\":\"mdi:human\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.state, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
+  // Proximity — coarse far/mid/near from the bounding-box area fraction.
+  {
+    char t[192], p[768];
+    topic_for("sensor", "proximity", t, sizeof(t));
+    snprintf(p, sizeof(p),
+             "{"
+             "\"name\":\"Proximity\","
+             "\"unique_id\":\"%s_proximity\","
+             "\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.proximity | default('unknown') }}\","
+             "\"icon\":\"mdi:map-marker-distance\","
+             "%s,%s"
+             "}",
+             DEVICE_ID, topics.state, availObj, devObj);
+    publish_cfg(mqtt, t, p);
+  }
+
   // Last event
   {
     char t[192], p[768];

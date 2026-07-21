@@ -362,6 +362,77 @@ Canary must be able to say:
 
 ---
 
+### 3.9 Optical Coarse Signals (Vision)
+
+**Hardware Source**: Grove Vision AI V2 (Himax HX6538). Person-detection model
+runs on the module's NPU; the ESP32 host receives **boxes only** (class, score,
+x, y, w, h) over I2C — never pixels. These signals are derived on the host from
+box **geometry**, coarsened, and never exported at finer resolution.
+
+**What is observed**:
+
+| Signal | Description | Derivation | Update Rate |
+|--------|-------------|------------|-------------|
+| `occupancy_bucket` | Coarse count of people in view | `# boxes ≥ score_min` → `none / one / two / several` | ~10 Hz |
+| `posture` | Coarse body orientation | primary box **aspect ratio** → `upright / ambiguous / horizontal` | ~10 Hz |
+| `proximity` | Coarse distance band | primary box **area fraction** → `far / mid / near` | ~10 Hz |
+| `zone_occupancy_mask` | Which coarse cells are occupied | each box centre → 3×3 voxel grid bit | ~10 Hz |
+
+**What this means**:
+
+- *How many* people are present (coarsely), *what coarse posture* the nearest
+  one holds, *how near* they are, and *which coarse cells* of the scene are
+  occupied — all from bounding-box geometry alone.
+
+**What it MUST NOT mean**:
+
+- *Who* is present, or any stable identity
+- Gait, body proportions, or any biometric (a bbox is not a skeleton)
+- An exact, timestamped occupancy history of the household
+- A trajectory or path (only coarse, current-frame cell occupancy is allowed)
+
+**Constraints**:
+
+1. **Ordinals only in signals.** Exported/advisory signals carry the coarse
+   classes above — never a coordinate, aspect angle, area, or distance.
+2. **`posture` is a proxy, and advisory.** It is a bbox-aspect heuristic
+   (Invariant D, Human-in-the-Loop), phrased physically (`horizontal`, never
+   `collapsed`; Invariant E). "ambiguous" is the honest middle (sitting,
+   crouching, bending).
+3. **`occupancy_bucket` is a bucket, never a running tally** — so it cannot be
+   aggregated into a per-household occupancy history (§5, §7).
+4. **Raw box coordinates stay ephemeral.** The `bbox`/`voxel` fields on the
+   live/aim telemetry topics are non-sealed and exist for aiming and dashboards;
+   they are never written to the signed witness record.
+
+**Relationship to the sealed record (Invariant VI)**:
+
+These are **live/advisory** signals. Promoting any of them into the signed
+witness vocabulary — e.g. a sustained `posture_horizontal` (fall/collapse)
+claim, or replacing the binary `occupants` field with a coarse count — is a
+change to the sealed event vocabulary and therefore requires a spec PR first.
+Until then, the signed record is unchanged. (See
+[`docs/strategy/14-pose-estimation-v2-ai.md`](../docs/strategy/14-pose-estimation-v2-ai.md)
+— the bbox-aspect posture path is the current-model way to reach the same
+fall/collapse signal without a pose model or keypoints.)
+
+**Allowed Event Phrasing**:
+
+```json
+{"occupancy": "two", "posture": "upright", "proximity": "mid"}
+{"posture": "horizontal", "proximity": "near"}
+```
+
+**Forbidden Event Phrasing**:
+
+```json
+{"person_id": "tall_male_adult", "height_cm": 178}
+{"event": "person_collapsed", "who": "resident_2"}
+{"track": [[3,1],[3,2],[2,2]], "gait_signature": "..."}
+```
+
+---
+
 ## 4. Signal Fusion Model
 
 ### 4.1 Layered Confidence
