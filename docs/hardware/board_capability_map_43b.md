@@ -32,7 +32,7 @@ row cites the file that backs the claim.
 | **Evidence vault** (proof-carrying journal → flash) | ✅ | **Built · bench-gated** | Signed event log survives a network cut |
 | Chime engine (LEDC tone) | ⚠️ pad unpopulated on B | **Built · bench-gated** | Audible alert **via DO**, not onboard piezo |
 | **RS485 / Modbus RTU** (A/B terminal) | ✅ | **Built · bench-gated** | Integrate alarm panels, access control, HVAC/energy meters |
-| **CAN / TWAI** (H/L terminal) | ✅ | **Staged (no driver)** | Vehicle & industrial witness (gate/barrier, CANopen) |
+| **CAN / TWAI** (H/L terminal) | ✅ | **Built · bench-gated** | Vehicle & industrial witness (gate/barrier, CANopen) |
 | **microSD** (TF slot) | ✅ | **Staged (CS blocker)** | Bulk local archive — see the CH422G-CS note |
 | **Battery-backed RTC** (trusted time) | ❓ verify | **Staged / verify** | Trustworthy timestamps when NTP is blocked |
 | **Battery operation** (CS8501 charge/boost) | ❓ verify | **Staged / verify** | "Cut the power, the Canary keeps witnessing" |
@@ -145,18 +145,35 @@ needs an emulator `dist/*.js` rebuild). Until then it ships **off**.
 
 ## 4. CAN / TWAI — vehicle & industrial witness
 
-**Status:** Staged. Pins declared (`pins.h`, TX=GPIO15 / RX=GPIO16, **dedicated
-transceiver** — unlike the plain 4.3 there's no USB mux, and there's an on-board
-120 Ω terminator jumper). No `twai_` driver in the display project (TWAI is used
-only in `canary-wap`).
+**Status:** Built · bench-gated (`FEATURE_CAN 0`). Pins declared in `pins.h`
+(TX=GPIO15 / RX=GPIO16, **dedicated transceiver** — unlike the plain 4.3 there's
+no USB mux — plus a jumper-selectable on-board 120 Ω terminator, OFF by default;
+default bit rate `CAN_BITRATE_DEFAULT` 500 kbit/s).
+
+**Shipped in this build (compile-verified, bench-pending):**
+- `include/canary/io/can_frame.h` — a pure CAN 2.0 (ISO 11898-1) frame core: the
+  `Frame` struct, id-width validity (11-bit base / 29-bit extended), DLC ≤ 8,
+  standard-bitrate validity, SocketCAN-style acceptance filtering
+  (`(rx & mask) == (want & mask)`), and a bounded ASCII log formatter. No Arduino.
+- `tests_host/test_can_frame.cpp` — host test of every rule above (id ranges,
+  DLC bounds, filter mask cases, exact formatter output, buffer guards). Run by
+  the "CAN frame host test" step in `firmware.yml`.
+- `src/io/can_bus.{h,cpp}` — thin ESP-IDF **TWAI** transport on the H/L terminal
+  (`twai_driver_install`/`twai_start`, bounded `twai_transmit`/`twai_receive`,
+  frame ⇄ `twai_message_t` conversion, accept-all filter, normal mode) behind
+  `FEATURE_CAN`; the whole TU is empty without the flag, so the default/emulator
+  builds stay byte-identical.
+- `canary-display-dash-can` PlatformIO env (in `flavors.json` build_envs) so CI
+  compiles the gated driver — including `<driver/twai.h>` — against the toolchain.
 
 **Why it matters:** a Canary that witnesses a **vehicle gate/barrier controller,
 fleet telematics, or CANopen building automation** — a tamper-proof CAN event
-log. Lower priority than RS485 for the security use-case, but the transceiver is
-free and dedicated, so it's pure upside.
+log. The transceiver is free and dedicated, so it's pure upside.
 
-**Build shape:** ESP-IDF `twai_*` driver behind `FEATURE_CAN 0`, same
-gated + dedicated-build-env + bench-pending pattern as RS485.
+**Remaining to go live:** bench-validate TX/RX orientation, bit timing, and the
+terminator jumper against a real bus, then wire received frames into the fleet
+event pipeline and add a matching playground station (needs an emulator dist
+rebuild). Until then it ships **off**.
 
 ---
 
@@ -258,5 +275,5 @@ every activation above:
 **Bottom line:** the board is a full industrial witness gateway. We're driving
 the display, touch, isolated IO (bench), and the radios. The value left on the
 table is: **turn on the evidence vault**, **promote DI/DO into the witness
-runtime**, **bench-validate the RS485/Modbus driver (now built, off) and write
-the CAN driver**, and **verify the RTC/battery silicon** — in that order.
+runtime**, **bench-validate the RS485/Modbus and CAN/TWAI drivers (both now
+built, off)**, and **verify the RTC/battery silicon** — in that order.
