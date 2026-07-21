@@ -181,6 +181,11 @@ bool discovery_find_broker(char* host_out, size_t host_cap,
   return true;
 }
 
+// Broker-free mDNS fleet enumeration: on silicon this browses _securacv._tcp
+// and feeds witnesses straight into the fleet. The emulator has no LAN to
+// browse, so it's an honest no-op.
+void discovery_scan_witnesses(uint32_t) {}
+
 // ── chirp_scan contract ─────────────────────────────────────────────────
 // Off-grid BLE fallback: scenario wave 2 (documented in the architecture
 // README). Today it reports honestly that no radio is scanning. The third
