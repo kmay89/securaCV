@@ -214,15 +214,15 @@ setting alone:
 
 ### Polycarbonate — yes, but only where you truly need it
 
-PC prints these parts, and on paper it's the strongest choice: it tops the shell
-ranking (`PC > PA-CF ≈ ASA > PETG > PLA` in [field_ratings.md](./field_ratings.md)),
+You can print these parts in PC, and on paper it's the strongest choice: it tops
+the shell ranking (`PC > PA-CF ≈ ASA > PETG > PLA` in [field_ratings.md](./field_ratings.md)),
 has the highest heat-deflection temperature, and — unfilled — is RF-transparent
 so it's fine for the Sense radome. **But it's a specialist pick, not a default,
 and the reasons are about the print, not the polymer:**
 
 - **It needs an enclosed, hot printer** (bed ~110–120 °C, warm chamber, nozzle
   ~260–290 °C). The big flat parts here — bases, lids, the doorbell pill, the
-  field-case body — are exactly what **warps** in PC without a chamber, lifting
+  field-case body — are exactly what **warp** in PC without a chamber, lifting
   corners and pulling the geometry out of true.
 - **The baked-in fits don't transfer for free.** PC runs hotter and shrinks more
   than PETG, so the calibrated snap/press/gasket fits need the **fit coupon
@@ -240,7 +240,7 @@ engineered for maximum survival (CER-4: IP67 + drop intent) — specs its shell 
 with an elastomer taking the hits beats a warped PC shell; PC's material ceiling
 doesn't survive the printability tax on a sealed, drop-tested part.
 
-**So recommend PC narrowly:** for vandal-prone or genuinely high-heat spots that
+**So use PC narrowly:** for vandal-prone or genuinely high-heat spots that
 need HDT/impact beyond what ASA gives (a closed cabin well past +60 °C), *and*
 only if you have an enclosed printer. Then: prefer a **PC blend** (PC-ABS,
 PC-Max, PolyLite PC) over pure PC — far easier for ~90 % of the benefit — dry it
