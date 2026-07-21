@@ -245,7 +245,8 @@ on ASA/PC. Anneal PETG/PC parts (65 °C / 90 °C, 1 h, supported flat) for a
 further ~20 % creep and stiffness margin if you have an oven. For the full
 reasoning — every Cura setting with its *why*, a per-model orientation
 cheat-sheet, PETG stringing/sealing notes, and a one-click importable profile —
-see [**Printing in PETG — Cura guide**](./printing_petg_cura.md).
+see [**Printing in PETG — Cura guide**](./printing_petg_cura.md) (with a
+one-click [importable Cura profile](./profiles/README.md)).
 
 **Mass budget** (solid-volume upper bounds from the rendered STLs; PETG at
 1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 12 g/pair, WAP battery
