@@ -77,6 +77,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [USB onboarding (design)](design/usb_onboard.md) — "plug me in": consented HID help-launch, read-only drive, guided recovery/unsealing
 - [Serial test console (design)](design/test_console.md) — run tests over serial safely: read-only `t`, tiered demo/mutate gating, the BLE bring-up ladder
 - [Themed serial console (design)](design/serial_console_theming.md) — the `l` identity banner: key fingerprint as drunken-bishop randomart, capability-probed, ASCII-safe by default
+- [Self-* roadmap (design)](design/self_star_roadmap.md) — "plug it in and it proves itself": what shipped (self-manifest `j`, randomart handshake, self-repair) + coming-soon TODOs (fleet map, boot safe-mode / A/B rollback)
 - [Browser flasher](browser_flasher.md) — flash a blank board from Chrome over USB, no toolchain
 - [Secure provisioning](secure_provisioning.md) — how a device earns its keys
 - [Device settings access](canary_settings_access_validation.md) — who may change what, verified
