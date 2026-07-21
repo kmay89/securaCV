@@ -81,8 +81,13 @@
 #include "canary/hal/chime.h"
 #include "canary/hal/core_compat.h"
 #include "canary/glass_settings.h"
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+#if CD_PLAYGROUND_BUILD
 #include "canary/playground/playground.h"
+#include <Preferences.h>
+// True once this boot handed the device to the peripheral bench (dedicated
+// bench env, or the dev-mode NVS latch set from Settings). Keeps loop() on the
+// bench path without re-reading NVS every pass.
+static bool s_devmode_active = false;
 #endif
 
 #include <lvgl.h>
@@ -666,14 +671,34 @@ void setup() {
   boot_scene_banner(&bi);
   boot_scene_hardware(&bi);
 
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
-  // Dev playground (docs/hardware/dev_playground_43b.md): the guided
-  // peripheral bench mode owns the device from here. Everything below —
-  // WiFi, MQTT, OTA, discovery, provisioning, watchdog — is deliberately
-  // never initialized: a bench unit can't join the fleet, phone home, or
-  // take an update by accident.
-  canary::playground::playground_setup();
-  return;
+#if CD_PLAYGROUND_BUILD
+  // Peripheral bench (docs/hardware/dev_playground_43b.md): the guided test
+  // suite owns the device from here. Enter it when EITHER this is the dedicated
+  // bench build (FEATURE_PLAYGROUND) or the shipped firmware's dev-mode latch
+  // was set from Settings -> "dev mode" (FEATURE_DEVMODE + NVS). Everything
+  // below — WiFi, MQTT, OTA, discovery, provisioning, watchdog — is
+  // deliberately never initialized, so a bench/dev unit can't join the fleet,
+  // phone home, or take an update by accident.
+  {
+    bool enter_bench = false;
+  #if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+    enter_bench = true;                 // dedicated bench env: always the bench
+  #endif
+  #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+    if (!enter_bench) {                 // shipped firmware: only if the latch is set
+      Preferences p;
+      if (p.begin(CD_DEVMODE_NVS_NS, /*readOnly=*/true)) {
+        enter_bench = p.getBool(CD_DEVMODE_NVS_KEY, false);
+        p.end();
+      }
+    }
+  #endif
+    if (enter_bench) {
+      s_devmode_active = true;
+      canary::playground::playground_setup();
+      return;
+    }
+  }
 #endif
 
   // Display-specific boot scene.
@@ -877,9 +902,11 @@ void setup() {
 }
 
 void loop() {
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
-  canary::playground::playground_loop();
-  return;
+#if CD_PLAYGROUND_BUILD
+  if (s_devmode_active) {
+    canary::playground::playground_loop();
+    return;
+  }
 #endif
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG

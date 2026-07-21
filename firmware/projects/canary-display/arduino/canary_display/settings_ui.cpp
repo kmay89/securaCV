@@ -11,6 +11,9 @@
 #include <lvgl.h>
 #include <stdio.h>
 #include <time.h>
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+#include <Preferences.h>   // the dev-mode latch (Settings -> "dev mode" -> reboot)
+#endif
 
 #include "settings_ui.h"
 #include "commission_ui.h"
@@ -57,6 +60,7 @@ enum class Page {
   CalWarn,
   CalDone,
   ResetConfirm,
+  DevConfirm,   // dash + FEATURE_DEVMODE: reboot into the peripheral bench
 };
 
 // Tap-zone ids. Zones are the built objects themselves — hit-testing reads
@@ -64,7 +68,7 @@ enum class Page {
 enum : int {
   IT_BACK = 1,
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
-  IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
+  IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD, IT_ROW_DEV,
   IT_MINUS, IT_PLUS, IT_OPT_A, IT_OPT_B, IT_PEEK, IT_GO,
   IT_YES, IT_NO,
 };
@@ -303,6 +307,11 @@ void build_root() {
   y += step;
 #endif
   mk_row(y, "reset", nullptr, IT_ROW_RESET);
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+  // The 4.3B dash doubles as a bench: reboot into the peripheral test suite.
+  y += step;
+  mk_row(y, "dev mode", "bench", IT_ROW_DEV);
+#endif
 }
 
 void build_edit_day() {
@@ -560,6 +569,25 @@ void build_reset_confirm() {
   add_item(no, IT_NO);
 }
 
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+void build_dev_confirm() {
+  mk_back("dev mode");
+  lv_obj_t* body = mk_label(s_host, font_body(), col_text());
+  lv_label_set_text(body,
+      "Enter dev mode?\nReboots into the peripheral\nbench — no fleet, no network.");
+  lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(body, LV_ALIGN_CENTER, 0, -26);
+  lv_obj_t* yes = mk_label(s_host, font_body(), col_signed());
+  lv_label_set_text(yes, "enter");
+  lv_obj_align(yes, LV_ALIGN_CENTER, -52, 44);
+  add_item(yes, IT_YES);
+  lv_obj_t* no = mk_label(s_host, font_body(), col_muted());
+  lv_label_set_text(no, "stay");
+  lv_obj_align(no, LV_ALIGN_CENTER, 52, 44);
+  add_item(no, IT_NO);
+}
+#endif
+
 void build(Page pg) {
   clear_host();
   set_owns_backlight(false);
@@ -579,6 +607,11 @@ void build(Page pg) {
     case Page::CalWarn:      build_cal_warn(); break;
     case Page::CalDone:      build_cal_done(); break;
     case Page::ResetConfirm: build_reset_confirm(); break;
+    case Page::DevConfirm:
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+      build_dev_confirm();
+#endif
+      break;
   }
 }
 
@@ -667,6 +700,11 @@ void dispatch(int id) {
           close_instant();
           commission_ui_open();
           return;
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+        case IT_ROW_DEV:
+          build(Page::DevConfirm);
+          return;
+#endif
       }
       return;
 
@@ -790,6 +828,26 @@ void dispatch(int id) {
         restyle_open_surface();
       }
       build(Page::Root);
+      return;
+
+    case Page::DevConfirm:
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+      if (id == IT_YES) {
+        // Latch dev mode for the NEXT boot, then reboot into the bench. It
+        // comes up network-silent (main.cpp reads this latch and skips
+        // WiFi/MQTT/OTA); the bench's own "exit dev mode" clears it and
+        // reboots back to the fleet face.
+        Preferences p;
+        if (p.begin(CD_DEVMODE_NVS_NS, /*readOnly=*/false)) {
+          p.putBool(CD_DEVMODE_NVS_KEY, true);
+          p.end();
+        }
+        delay(60);
+        ESP.restart();   // does not return
+        return;
+      }
+#endif
+      build(Page::Root);  // "stay" / back
       return;
   }
 }

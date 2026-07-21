@@ -39,6 +39,32 @@
 #define FEATURE_PLAYGROUND 0
 #endif
 
+// FEATURE_DEVMODE keeps that same peripheral test suite in the SHIPPED 4.3B
+// dash firmware, reachable on-glass from Settings -> "dev mode": it sets an NVS
+// flag and reboots into the very same network-silent playground, and an
+// on-glass "exit dev mode" clears the flag and reboots back to the fleet face.
+// So one binary is BOTH a fleet witness and a bench/test device — without ever
+// letting the bench UI coexist with a live network stack. Off by default; the
+// canary-display-dash-b env sets it. 4.3B (isolated DI/DO) only, exactly like
+// FEATURE_PLAYGROUND — feature_sanity enforces the board contract.
+#ifndef FEATURE_DEVMODE
+#define FEATURE_DEVMODE 0
+#endif
+
+// The peripheral bench (playground) code is compiled whenever EITHER the
+// dedicated bench flavor (FEATURE_PLAYGROUND) or the in-firmware dev mode
+// (FEATURE_DEVMODE) is on. Both are dash + 4.3B only.
+#if (defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || \
+    (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE)
+#define CD_PLAYGROUND_BUILD 1
+#else
+#define CD_PLAYGROUND_BUILD 0
+#endif
+
+// NVS namespace/key the dev-mode latch lives in (shared "securacv" store).
+#define CD_DEVMODE_NVS_NS  "securacv"
+#define CD_DEVMODE_NVS_KEY "devmode"
+
 // -------------------- Identity --------------------
 static constexpr const char* DEVICE_TYPE   = CD_DEVICE_TYPE;
 static constexpr const char* DEVICE_ID     = CD_DEVICE_ID;  // first-boot seed only
