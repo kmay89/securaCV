@@ -162,6 +162,14 @@
 
 #define DEVICE_TYPE           "canary"
 #define FIRMWARE_VERSION      "2.2.0"
+
+// Optional build-time provenance for the 'f' fingerprint command. CI/PlatformIO
+// can inject the short commit with -DFIRMWARE_GIT_HASH=\"abc1234\"; when it
+// isn't injected the build timestamp (__DATE__/__TIME__) still identifies the
+// image, so the field degrades honestly rather than lying.
+#ifndef FIRMWARE_GIT_HASH
+#define FIRMWARE_GIT_HASH     "not-embedded"
+#endif
 #define RULESET_ID            "securacv:canary:v1.0"
 #define PROTOCOL_VERSION      "pwk:v0.3.0"
 #define CHAIN_ALGORITHM       "sha256-domain-sep"

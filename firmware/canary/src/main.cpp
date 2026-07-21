@@ -134,6 +134,29 @@ static_assert(sizeof(csi_features_t) == 36,
 // Used by the read-only 't' run-all command below.
 #include "health/test_console.h"
 
+// Optional ESP-IDF provenance APIs for the 'f' fingerprint command. Guarded by
+// __has_include so a toolchain without them still builds — the fields just show
+// "unknown" (the same defensive pattern main.cpp uses for <esp_random.h>).
+#if __has_include(<esp_ota_ops.h>)
+#include <esp_ota_ops.h>
+#define HAVE_OTA_PARTITION 1
+#endif
+#if __has_include(<esp_secure_boot.h>)
+#include <esp_secure_boot.h>
+#define HAVE_SECURE_BOOT 1
+#endif
+#if __has_include(<esp_flash_encrypt.h>)
+#include <esp_flash_encrypt.h>
+#define HAVE_FLASH_ENCRYPT 1
+#endif
+// esp_random() for the 'c' attestation's device-generated nonce fallback. Only
+// conditionally pulled in above (under FEATURE_OTA_PULL), so include it here too
+// whenever it exists — the header guard makes the double-include a no-op.
+#if __has_include(<esp_random.h>)
+#include <esp_random.h>
+#define HAVE_ESP_RANDOM 1
+#endif
+
 /* All five sensing sources feed a single aggregator. The header is
  * include-guarded, so one unconditional include is the right shape;
  * sensing_init() is also idempotent so each feature block can call it
@@ -2040,6 +2063,75 @@ static void mqtt_publish_sensing_update() {
 // SERIAL COMMANDS
 // ════════════════════════════════════════════════════════════════════════════
 
+// The diagnostic-console catalog, declared as data so the security TIER of every
+// command we expose is auditable by testcon::table_is_safe() (host-tested in CI)
+// rather than implicit in the switch below. Everything here is Tier::Diag —
+// read-only, mutates nothing, leaks no secret — so it is safe even on a
+// production image. Mutating/demo commands live behind FEATURE_TEST_CONSOLE and
+// a physical confirm (docs/design/test_console.md); legacy operational keys
+// (reboot, onboarding launch) are not part of this diagnostic contract.
+static const testcon::Command kConsoleCommands[] = {
+  { 'i', "identity",     testcon::Tier::Diag, false, false, false },
+  { 's', "status",       testcon::Tier::Diag, false, false, false },
+  { 'g', "gps",          testcon::Tier::Diag, false, false, false },
+  { 'b', "battery",      testcon::Tier::Diag, false, false, false },
+  { 'd', "diagnostics",  testcon::Tier::Diag, false, false, false },
+  { 'm', "mqtt",         testcon::Tier::Diag, false, false, false },
+  { 't', "run-tests",    testcon::Tier::Diag, false, false, false },
+  { 'c', "attest",       testcon::Tier::Diag, false, false, false },
+  { 'f', "fingerprint",  testcon::Tier::Diag, false, false, false },
+  { 'e', "explain-boot", testcon::Tier::Diag, false, false, false },
+  { 'w', "tamper-log",   testcon::Tier::Diag, false, false, false },
+};
+static const size_t kConsoleCommandCount =
+    sizeof(kConsoleCommands) / sizeof(kConsoleCommands[0]);
+
+// Map the ESP reset cause onto the host-testable testcon::ResetReason so the
+// labelling logic lives in the pure header (and is proven in CI).
+static testcon::ResetReason map_reset_reason(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return testcon::ResetReason::PowerOn;
+    case ESP_RST_SW:        return testcon::ResetReason::Software;
+    case ESP_RST_PANIC:     return testcon::ResetReason::Panic;
+    case ESP_RST_INT_WDT:   return testcon::ResetReason::IntWdt;
+    case ESP_RST_TASK_WDT:  return testcon::ResetReason::TaskWdt;
+    case ESP_RST_WDT:       return testcon::ResetReason::Watchdog;
+    case ESP_RST_BROWNOUT:  return testcon::ResetReason::BrownOut;
+    case ESP_RST_DEEPSLEEP: return testcon::ResetReason::DeepSleep;
+    case ESP_RST_SDIO:      return testcon::ResetReason::Sdio;
+    case ESP_RST_UNKNOWN:   return testcon::ResetReason::Unknown;
+    default:                return testcon::ResetReason::Other;
+  }
+}
+
+static void print_hex(const uint8_t* b, size_t n) {
+  for (size_t i = 0; i < n; ++i) Serial.printf("%02x", b[i]);
+}
+
+// Read the rest of the current serial line (after the command char) as an
+// optional argument — used for the challenger nonce of the 'c' command. Trims
+// surrounding whitespace/CR/LF. Returns the length copied into buf (NUL-term).
+static size_t read_line_arg(char* buf, size_t cap) {
+  size_t n = 0;
+  uint32_t deadline = millis() + 60;   // brief settle for the line to arrive
+  while (millis() < deadline && n + 1 < cap) {
+    while (Serial.available() && n + 1 < cap) {
+      char c = (char)Serial.read();
+      if (c == '\n' || c == '\r') { deadline = 0; break; }   // end of line
+      buf[n++] = c;
+      deadline = millis() + 20;
+    }
+    if (deadline == 0) break;
+  }
+  // trim leading/trailing spaces
+  size_t start = 0; while (start < n && buf[start] == ' ') start++;
+  size_t end = n;   while (end > start && buf[end - 1] == ' ') end--;
+  size_t len = end - start;
+  if (start > 0) memmove(buf, buf + start, len);
+  buf[len] = '\0';
+  return len;
+}
+
 static void handle_serial_commands() {
   if (!Serial.available()) return;
 
@@ -2076,6 +2168,10 @@ static void handle_serial_commands() {
       Serial.println("  k - Unseal guide");
 #endif
       Serial.println("  t - Run all tests (self-test + feature health + Bluetooth)");
+      Serial.println("  c - Attest chain (sign a nonce + chain head: c <nonce>)");
+      Serial.println("  f - Fingerprint / provenance (version, secure-boot, keys)");
+      Serial.println("  e - Explain last boot (reset reason + recent faults)");
+      Serial.println("  w - Tamper log (passive detections, read-only)");
       Serial.println("  x - Reboot");
       Serial.println();
       break;
@@ -2337,6 +2433,150 @@ static void handle_serial_commands() {
         Serial.printf("  Bluetooth : %s\n", testcon::ble_stage_label(bs));
         Serial.printf("              %s\n", testcon::ble_hint(bs));
       }
+      Serial.println();
+      break;
+    }
+
+    // 'c' — chain attestation. Signs "SECURACV-ATTEST-v1 || nonce || chain_head
+    // || seq || boot_count" with the DEVICE key so anyone can verify offline
+    // against the pinned public key that the witness log hasn't been rewritten.
+    // It is Tier::Diag: read-only, mutates nothing, and — crucially — the fixed
+    // domain prefix (testcon::attest_build_message) means the signature can
+    // never be replayed as a chain entry or an OTA approval, so this is an
+    // attestation channel, not a signing oracle. Never prints the private key.
+    case 'c':
+    case 'C': {
+      DeviceIdentity& dev = witness_get_device();
+      char arg[80];
+      size_t got = read_line_arg(arg, sizeof(arg));
+      uint8_t nonce[32];
+      size_t nlen = 0;
+      bool device_nonce = false;
+      if (got > 0) {
+        nlen = got > sizeof(nonce) ? sizeof(nonce) : got;
+        memcpy(nonce, arg, nlen);
+      } else {
+        // No challenger nonce supplied. Generate one so the signature is still
+        // fresh, but say so — a real remote challenge should pass its own.
+#if HAVE_ESP_RANDOM
+        for (size_t i = 0; i < 16; ++i) nonce[i] = (uint8_t)esp_random();
+        nlen = 16;
+        device_nonce = true;
+#endif
+      }
+      uint8_t msg[128];
+      size_t mlen = testcon::attest_build_message(msg, sizeof(msg), nonce, nlen,
+                                                  dev.chain_head, dev.seq,
+                                                  dev.boot_count);
+      if (mlen == 0) { Serial.println("\nattest: message buffer too small"); break; }
+      uint8_t sig[64];
+      crypto_sign(dev.privkey, dev.pubkey, msg, mlen, sig);
+
+      Serial.println("\n=== Chain attestation ===");
+      Serial.printf("  Device    : %s\n", dev.device_id);
+      Serial.print("  Pubkey    : ");   print_hex(dev.pubkey, 32);     Serial.println();
+      Serial.print("  ChainHead : ");   print_hex(dev.chain_head, 32); Serial.println();
+      Serial.printf("  Seq/Boot  : %lu / %lu\n",
+                    (unsigned long)dev.seq, (unsigned long)dev.boot_count);
+      Serial.printf("  Domain    : %s\n", testcon::ATTEST_DOMAIN);
+      Serial.print("  Nonce     : ");    print_hex(nonce, nlen);
+      Serial.printf("%s\n", device_nonce ? "  (device-generated — pass your own: c <nonce>)" : "");
+      Serial.print("  Signature : ");    print_hex(sig, 64);           Serial.println();
+      Serial.println("  Verify offline: ed25519(pubkey, DOMAIN||nonce||head||"
+                     "seq_le32||boot_le32) — matches only this device + head.");
+      Serial.println();
+      break;
+    }
+
+    // 'f' — provenance / fingerprint card: "is this the device + build it claims?"
+    case 'f':
+    case 'F': {
+      DeviceIdentity& dev = witness_get_device();
+      Serial.println("\n=== Provenance / fingerprint ===");
+      Serial.printf("  Firmware  : %s\n", FIRMWARE_VERSION);
+      Serial.printf("  Git       : %s\n", FIRMWARE_GIT_HASH);
+      Serial.printf("  Built     : %s %s\n", __DATE__, __TIME__);
+      Serial.print("  Key FP    : ");   print_hex(dev.pubkey_fp, 8);   Serial.println();
+      Serial.printf("  Boot/Seq  : %lu / %lu\n",
+                    (unsigned long)dev.boot_count, (unsigned long)dev.seq);
+#if HAVE_OTA_PARTITION
+      { const esp_partition_t* run = esp_ota_get_running_partition();
+        Serial.printf("  Partition : %s\n", run ? run->label : "unknown"); }
+#endif
+#if HAVE_SECURE_BOOT
+      Serial.printf("  SecureBoot: %s\n", esp_secure_boot_enabled() ? "ENABLED" : "off");
+#endif
+#if HAVE_FLASH_ENCRYPT
+      Serial.printf("  FlashEnc  : %s\n", esp_flash_encryption_enabled() ? "ENABLED" : "off");
+#endif
+      Serial.printf("  Console   : %u diag cmds · policy %s\n",
+                    (unsigned)kConsoleCommandCount,
+                    testcon::table_is_safe(kConsoleCommands, kConsoleCommandCount)
+                        ? "SAFE" : "UNSAFE");
+      Serial.println();
+      break;
+    }
+
+    // 'e' — explain the last boot: why did it reset, and what has gone wrong
+    // recently. Read-only introspection of the reset cause + health ring.
+    case 'e':
+    case 'E': {
+      Serial.println("\n=== Last boot / recent faults ===");
+      testcon::ResetReason rr = map_reset_reason(esp_reset_reason());
+      Serial.printf("  Reset     : %s%s\n", testcon::reset_reason_label(rr),
+                    testcon::reset_reason_is_fault(rr) ? "  ⚠" : "");
+      Serial.printf("  Boot #    : %lu\n", (unsigned long)witness_get_device().boot_count);
+#if FEATURE_DIAGNOSTICS
+      Serial.printf("  Degrade   : %s\n",
+                    testcon::degrade_level_label((uint8_t)diag_get_degrade_level()));
+#endif
+      // Most-recent-first walk of the health ring (mirrors the /api/logs order).
+      const size_t RING = 100;   // HEALTH_LOG_RING_SIZE (securacv_witness.cpp)
+      HealthLogRingEntry* ring = witness_get_health_log_ring();
+      size_t count = witness_get_health_log_count();
+      size_t head = witness_get_health_log_head();
+      Serial.println("  Recent events:");
+      size_t shown = 0;
+      for (size_t i = 0; i < count && shown < 6; ++i) {
+        size_t idx = (head + RING - 1 - i) % RING;
+        HealthLogRingEntry& ev = ring[idx];
+        Serial.printf("    [%s] %s%s%s\n", log_level_name(ev.level), ev.message,
+                      ev.detail[0] ? " — " : "", ev.detail[0] ? ev.detail : "");
+        shown++;
+      }
+      if (shown == 0) Serial.println("    (none logged this session)");
+      Serial.println();
+      break;
+    }
+
+    // 'w' — passive tamper log. Read-only: shows the device-level tamper counter
+    // and the last-seen time of each passive detector. Never actuates anything.
+    case 'w':
+    case 'W': {
+      DeviceIdentity& dev = witness_get_device();
+      Serial.println("\n=== Tamper log (passive, read-only) ===");
+      Serial.printf("  State     : %s\n", dev.tamper_active ? "ACTIVE ⚠" : "clear");
+      Serial.printf("  Count     : %lu total\n", (unsigned long)dev.tamper_count);
+#if FEATURE_CSI || FEATURE_ACOUSTIC_EVENTS || FEATURE_TOUCH || FEATURE_IR_RMT || FEATURE_TEMP_TAMPER
+      { sensing_state_t s;
+        sensing_snapshot(&s);
+        uint32_t now = millis();
+        auto ago = [now](uint32_t ms) { return ms ? (unsigned long)((now - ms) / 1000) : 0UL; };
+        if (s.last_touch_event_ms)
+          Serial.printf("  Enclosure : touch/tamper %lus ago (conf %u)\n",
+                        ago(s.last_touch_event_ms), s.last_touch_event_conf);
+        if (s.last_temp_drift_ms)
+          Serial.printf("  Temp drift: %lus ago (conf %u)\n",
+                        ago(s.last_temp_drift_ms), s.last_temp_drift_conf);
+        if (s.last_vision_event_ms)
+          Serial.printf("  Vision    : event %lus ago (conf %u)\n",
+                        ago(s.last_vision_event_ms), s.last_vision_confidence);
+        if (!s.last_touch_event_ms && !s.last_temp_drift_ms && !s.last_vision_event_ms)
+          Serial.println("  Detectors : no passive events this session");
+      }
+#else
+      Serial.println("  Detectors : none compiled in this build");
+#endif
       Serial.println();
       break;
     }

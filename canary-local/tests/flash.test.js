@@ -671,3 +671,71 @@ test("formatters", async () => {
   assert.strictEqual(formatBytes(1572864), "1.50 MB");
   assert.strictEqual(formatMac("a1:b2:c3:d4:e5:f6"), "A1:B2:C3:D4:E5:F6");
 });
+
+// ── error classification: the right cause → the right fix ───────────────────
+test("classifyFlashError maps the real Web Serial / esptool failures to advice", async () => {
+  const { classifyFlashError } = await core();
+  const kindOf = (m) => classifyFlashError(new Error(m)).kind;
+
+  // Port held by another program/tab — the most common real failure.
+  assert.strictEqual(kindOf("Failed to open serial port."), "port-busy");
+  assert.strictEqual(kindOf("The port is already open"), "port-busy");
+  // Cable pulled / device vanished.
+  assert.strictEqual(kindOf("The device has been lost."), "device-lost");
+  assert.strictEqual(kindOf("A network error occurred (NetworkError)."), "device-lost");
+  // OS permission / driver.
+  assert.strictEqual(kindOf("Access denied to the serial port"), "permission");
+  // Integrity beats the generic network case.
+  assert.strictEqual(kindOf("Downloaded image failed its checksum — refusing to flash it."), "integrity");
+  // Download / release problem.
+  assert.strictEqual(kindOf("download failed (HTTP 404)"), "download");
+  // Not in download mode.
+  assert.strictEqual(kindOf("Timed out waiting for packet header"), "not-in-download");
+  assert.strictEqual(kindOf("Invalid head of packet (0x00)"), "not-in-download");
+  // Our chunked reader gave up.
+  assert.strictEqual(kindOf("short read at 0x1a0000"), "read-stall");
+  // Unknown → generic, but still actionable + no hijacked title.
+  const u = classifyFlashError(new Error("kernel panic in the toaster"));
+  assert.strictEqual(u.kind, "unknown");
+  assert.strictEqual(u.title, null);
+  // Every verdict carries a non-empty hint.
+  for (const m of ["Failed to open serial port", "device has been lost", "access denied",
+    "checksum", "download failed", "timed out", "short read", "??"]) {
+    assert.ok(classifyFlashError(new Error(m)).hint.length > 0, `no hint for "${m}"`);
+  }
+  // Robust to junk input.
+  assert.strictEqual(classifyFlashError(null).kind, "unknown");
+  assert.strictEqual(classifyFlashError("just a string").kind, "unknown");
+});
+
+// ── deep-link focus: /checkup → flash.html?product=… ────────────────────────
+test("preferredProductId reads a safe product hint from the query string", async () => {
+  const { preferredProductId } = await core();
+  assert.strictEqual(preferredProductId("?product=securacv-canary"), "securacv-canary");
+  assert.strictEqual(preferredProductId("?foo=1&product=securacv-canary-sense"), "securacv-canary-sense");
+  assert.strictEqual(preferredProductId(""), null);
+  assert.strictEqual(preferredProductId("?other=x"), null);
+  // Reject anything that isn't a plain id (no injection into DOM ids / selectors).
+  assert.strictEqual(preferredProductId("?product=../../etc"), null);
+  assert.strictEqual(preferredProductId("?product=a b"), null);
+  // Every id the /checkup selector can send resolves to a real catalog product,
+  // so the deep-link never lands on nothing.
+  for (const p of catalog.products) {
+    assert.strictEqual(preferredProductId("?product=" + p.id), p.id);
+  }
+});
+
+// ── catalog guard: a malformed catalog degrades, never crashes the page ──────
+test("validateCatalog passes the shipped catalog and flags real breakage", async () => {
+  const { validateCatalog } = await core();
+  assert.deepStrictEqual(validateCatalog(catalog), [], "the shipped flash.json must validate");
+
+  assert.ok(validateCatalog(null).length, "null is rejected");
+  assert.ok(validateCatalog({}).length, "empty object is rejected");
+  // Missing the safety-strip copy renderReassurance reads.
+  const noBrick = JSON.parse(JSON.stringify(catalog)); delete noBrick.no_brick;
+  assert.ok(validateCatalog(noBrick).some((e) => /no_brick/.test(e)));
+  // A product missing the chip the guard needs.
+  const badProd = JSON.parse(JSON.stringify(catalog)); delete badProd.products[0].chip;
+  assert.ok(validateCatalog(badProd).some((e) => /missing chip/.test(e)));
+});

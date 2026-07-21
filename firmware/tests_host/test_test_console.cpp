@@ -15,6 +15,8 @@
  */
 
 #include <cstdio>
+#include <cstring>
+#include <cstdint>
 
 #include "health/test_console.h"
 
@@ -35,6 +37,10 @@ static const Command TABLE[] = {
   { 's', "status",          Tier::Diag,   false,  false, false },
   { 't', "run all tests",   Tier::Diag,   false,  false, false },
   { 'i', "identity (pub)",  Tier::Diag,   false,  false, false },
+  { 'c', "attest chain",    Tier::Diag,   false,  false, false },
+  { 'f', "fingerprint",     Tier::Diag,   false,  false, false },
+  { 'e', "explain boot",    Tier::Diag,   false,  false, false },
+  { 'w', "tamper log",      Tier::Diag,   false,  false, false },
   { 'B', "BLE advertise",   Tier::Demo,   false,  false, false },
   { 'P', "camera peek",     Tier::Demo,   false,  false, false },
   { 'M', "mic beep",        Tier::Demo,   false,  false, false },
@@ -126,6 +132,63 @@ static void test_ble_hints_and_ok() {
   CHECK(!ble_stage_ok(BleStage::NoService));
 }
 
+// ── chain attestation ('c') — the domain separation that makes it safe ───────
+
+static void test_attest_domain_separation() {
+  uint8_t head[32]; for (int i = 0; i < 32; ++i) head[i] = (uint8_t)i;
+  const uint8_t nonce[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+  uint8_t msg[128];
+
+  size_t n = attest_build_message(msg, sizeof(msg), nonce, sizeof(nonce), head, 7, 3);
+  CHECK(n == attest_message_size(sizeof(nonce)));
+  CHECK(n > 0);
+
+  // 1. The message ALWAYS begins with the versioned domain tag — this is what
+  //    stops the signature being replayable as a chain entry or OTA approval.
+  const size_t dlen = sizeof(ATTEST_DOMAIN) - 1;
+  CHECK(std::memcmp(msg, ATTEST_DOMAIN, dlen) == 0);
+
+  // 2. Layout after the tag is nonce || head || seq_le32 || boot_le32.
+  CHECK(std::memcmp(msg + dlen, nonce, sizeof(nonce)) == 0);
+  CHECK(std::memcmp(msg + dlen + sizeof(nonce), head, 32) == 0);
+  const uint8_t* tail = msg + dlen + sizeof(nonce) + 32;
+  CHECK(tail[0] == 7 && tail[1] == 0 && tail[2] == 0 && tail[3] == 0);   // seq=7 LE
+  CHECK(tail[4] == 3 && tail[5] == 0 && tail[6] == 0 && tail[7] == 0);   // boot=3 LE
+
+  // 3. A different head, nonce, seq, or boot => a different signed message
+  //    (so an attestation is bound to THIS device state, not fungible).
+  uint8_t msg2[128];
+  uint8_t head2[32]; for (int i = 0; i < 32; ++i) head2[i] = (uint8_t)(i + 1);
+  size_t n2 = attest_build_message(msg2, sizeof(msg2), nonce, sizeof(nonce), head2, 7, 3);
+  CHECK(n2 == n && std::memcmp(msg, msg2, n) != 0);
+  size_t n3 = attest_build_message(msg2, sizeof(msg2), nonce, sizeof(nonce), head, 8, 3);
+  CHECK(n3 == n && std::memcmp(msg, msg2, n) != 0);
+
+  // 4. Fail closed: a buffer too small returns 0 and writes no partial message.
+  CHECK(attest_build_message(msg, dlen /*too small*/, nonce, sizeof(nonce), head, 7, 3) == 0);
+  // 5. A non-null nonce_len with a null pointer is rejected.
+  CHECK(attest_build_message(msg, sizeof(msg), nullptr, 4, head, 7, 3) == 0);
+  // 6. An empty nonce is valid (device-generated fallback path uses one too).
+  CHECK(attest_build_message(msg, sizeof(msg), nullptr, 0, head, 7, 3) ==
+        attest_message_size(0));
+}
+
+static void test_boot_and_degrade_labels() {
+  // Fault classification: crashes/watchdogs/brownout are faults; normal boots aren't.
+  CHECK(reset_reason_is_fault(ResetReason::Panic));
+  CHECK(reset_reason_is_fault(ResetReason::BrownOut));
+  CHECK(reset_reason_is_fault(ResetReason::TaskWdt));
+  CHECK(!reset_reason_is_fault(ResetReason::PowerOn));
+  CHECK(!reset_reason_is_fault(ResetReason::DeepSleep));
+  // Every reason + degrade level yields a non-empty label.
+  ResetReason rs[] = { ResetReason::Unknown, ResetReason::PowerOn, ResetReason::Software,
+                       ResetReason::Panic, ResetReason::IntWdt, ResetReason::TaskWdt,
+                       ResetReason::BrownOut, ResetReason::DeepSleep, ResetReason::Watchdog,
+                       ResetReason::Sdio, ResetReason::Other };
+  for (ResetReason r : rs) CHECK(reset_reason_label(r)[0] != '\0');
+  for (uint8_t l = 0; l <= 3; ++l) CHECK(degrade_level_label(l)[0] != '\0');
+}
+
 int main() {
   test_table_is_safe();
   test_production_exposes_only_readonly_diag();
@@ -134,6 +197,8 @@ int main() {
   test_demo_dev_only();
   test_ble_ladder_stages();
   test_ble_hints_and_ok();
+  test_attest_domain_separation();
+  test_boot_and_degrade_labels();
 
   if (g_failures == 0) { std::printf("PASS test_test_console (all assertions)\n"); return 0; }
   std::printf("FAILED: %d assertion(s)\n", g_failures);
