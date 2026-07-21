@@ -373,22 +373,29 @@ ATECC608 / SE050 in the BOM; no `esp_ds` / `esp_hmac` in the firmware today). It
   on the C6 / H2 / P4). Our identity is Ed25519, so the S3 can protect an Ed25519
   key *at rest* but cannot do *non-extractable Ed25519 signing*.
 
-**The Ed25519 fork for the device** (open decision #7):
-- **(a) Ed25519, protected at rest** — flash-encryption + eFuse + secure boot.
-  Keeps the entire existing signing scheme; the key can't be dumped off a locked
-  device. **Recommended baseline** — largely already tooled in
-  `secure_provisioning.md`.
-- **(b) Add an RSA identity via the DS peripheral** — true non-extractable
-  signing, but RSA ≠ our Ed25519 format, so it's a *second, parallel* attestation
-  identity, not a drop-in for event signatures.
-- **(c) External secure element** (ATECC608 = NIST P-256 — still not Ed25519) — a
-  format change *plus* a board respin; skip unless a customer requires it.
+**The Ed25519 fork for the device — DECIDED (decision #7): (a) + (b)-optional.**
+- **(a) Ed25519, protected at rest — the path.** Flash-encryption + eFuse +
+  Secure Boot v2 + JTAG-off. Keeps the entire existing signing scheme; the key
+  can't be dumped off a locked device. Largely already tooled in
+  `secure_provisioning.md` (Phase 2). This is opt-in *per device* — burning eFuses
+  is irreversible, so it's the recommended production-lockdown step, not forced on
+  dev units; the software-Ed25519-in-NVS default stays for development.
+- **(b) RSA attestation identity via the DS peripheral — OPTIONAL add-on.**
+  Feature-gated, off by default. Gives true non-extractable *hardware* signing,
+  but RSA ≠ our Ed25519 format, so it's a *second, parallel* identity — for device
+  attestation / authorizing the seal-escrow — and **never replaces** the Ed25519
+  event/chain signatures. Shipped only where a deployment wants a "this is
+  genuinely this silicon" proof.
+- **(c) External secure element** (ATECC608 = NIST P-256 — still not Ed25519) —
+  **dropped.** A format change *plus* a board respin, no Ed25519 support anyway.
 
 The firmware seam for this already exists as a sketch — the `securacv_crypto_hal_t`
 HAL in `docs/openipc_architecture_learnings.md` ("swap software Ed25519 for
 hardware later, change one HAL impl") — and `docs/review/01-flag-report.md` (P3)
 already lists "add hardware-backed keys (Secure Element/eFuse)." So the device
-side is a **firmware provisioning + HAL** task, not new kernel crypto.
+side is a **firmware provisioning + HAL** task, not new kernel crypto: (a) is
+mostly wiring + burning existing tooling; (b) is a bounded, optional
+`esp_ds`/`esp_hmac` HAL implementation behind a build flag.
 
 ---
 
@@ -447,11 +454,13 @@ with zero crypto risk; the hardware phases are gated on physical validation.
   TPM — **not the required path** (§5.5).
 - Wire `doctor` to report the live backend; add `vault.keystore` config.
 - **Est.:** ~2–3 weeks. **Depends on:** Phase 1; **a PKCS#11 token to validate on.**
-- **Device side (parallel, firmware track):** the ESP32-S3 identity is hardened by
-  *burning* `secure_provisioning.md` Phase 2 (eFuse + flash encryption + Secure
-  Boot v2), plus optionally routing signing through a crypto-HAL — see §5.5 and
-  open decision #7. This is firmware provisioning, not kernel crypto, and shares
-  no code with the host `KeyStore`.
+- **Device side (parallel, firmware track — decision #7: (a) + (b)-optional):**
+  path **(a)** hardens the ESP32-S3 Ed25519 identity *at rest* by burning
+  `secure_provisioning.md` Phase 2 (eFuse + flash encryption + Secure Boot v2 +
+  JTAG-off), opt-in per device; path **(b)** is an *optional*, feature-gated
+  `esp_ds`/`esp_hmac` crypto-HAL that adds a non-extractable RSA **attestation**
+  identity (never replaces Ed25519 signatures). Firmware provisioning + HAL, not
+  kernel crypto — shares no code with the host `KeyStore`.
 
 ### Phase 3 — Trustee hardware tokens
 - **Trustee-credential decision (must settle first).** Today a trustee is a bare
@@ -521,14 +530,15 @@ These change what gets built; I'd like your calls before writing code.
    a credential-bearing schema so generic FIDO2/WebAuthn keys work too (a
    versioned change to the quorum format)? My lean: **Ed25519-only for v1.1**,
    revisit WebAuthn later. (See §7 Phase 3.)
-7. **ESP32-S3 device identity — how far to harden (§5.5).** The XIAO has no secure
-   element and no hardware Ed25519 signing, so pick: **(a)** Ed25519 protected at
-   rest (eFuse + flash encryption + Secure Boot v2 — keeps the existing signing
-   scheme; mostly already tooled) — *my lean*; **(b)** additionally an RSA
-   attestation identity via the DS peripheral (true non-extractable signing, but a
-   second key/format); or **(c)** an external secure element (board respin, still
-   not Ed25519). Also: do we commit to *burning* Phase 2 provisioning for v1.1, or
-   keep it documented-but-optional?
+7. **ESP32-S3 device identity — how far to harden (§5.5). ✅ RESOLVED: (a) + (b)
+   optional.** The device path is **(a) Ed25519 protected at rest** (eFuse + flash
+   encryption + Secure Boot v2 + JTAG-off — keeps the existing signing scheme,
+   mostly already tooled), with **(b) an RSA attestation identity via the DS
+   peripheral as an optional, feature-gated add-on** (non-extractable hardware
+   signing, never replacing the Ed25519 event signatures). **(c)** external secure
+   element is **dropped**. Phase-2 provisioning stays **opt-in per device** (eFuse
+   burns are irreversible) — the software-Ed25519 default remains for dev; locking
+   down is the recommended production step, not forced.
 
 ---
 
@@ -542,7 +552,7 @@ the honest fallback):
 | Vault master key (host, **symmetric**) | `master.key`, `0600` | **File-backed by default** (a PIV token can't hold a symmetric key); HSM/TPM with symmetric unwrap where available, or opt-in asymmetric-rewrap of the DEK (new crypto) — decision #1 |
 | Host device signing key (**asymmetric**) | Seed-derived from config | PKCS#11-token-held, non-extractable; pinned pubkey |
 | Trustee signing keys | Hex file / browser seed | PIV/PKCS#11 token per trustee (independently held) |
-| **ESP32-S3 device identity** (separate; §5.5) | Ed25519 in NVS (software) | Ed25519 protected at rest via eFuse + flash encryption + Secure Boot v2 (option (a)) |
+| **ESP32-S3 device identity** (separate; §5.5) | Ed25519 in NVS (software) | (a) Ed25519 protected at rest via eFuse + flash encryption + Secure Boot v2 *(opt-in per device)*; (b) optional RSA attestation identity via the DS peripheral *(feature-gated, non-extractable, never replaces Ed25519)* |
 | DB encryption key | `SECURACV_DB_KEY_SEED`, rotatable | Unchanged (already rotatable) |
 | Break-glass token nonce | Single-use, burned pre-cleartext | Unchanged |
 
