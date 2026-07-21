@@ -32,5 +32,15 @@ void field_io_begin(const char* self_id);
 // millis(); safe (and cheap) to call every loop pass — it self-throttles.
 void field_io_loop(uint32_t now);
 
+// Siren arming (opt-in). Disarmed by default: an unacked alert still shows on
+// the glass and lands in the journal, but the isolated output (DO0) stays
+// silent until the user arms it from Settings. This is deliberately safe — the
+// DO sink polarity is VERIFY-tagged in pins.h, so a mis-wired output never
+// drives until someone opts in on real hardware. The flag persists in NVS, so a
+// reboot keeps the household's choice. `field_io_armed()` reflects the current
+// state for the settings row; both are no-ops unless HAS_ISOLATED_IO.
+void field_io_set_armed(bool armed);
+bool field_io_armed();
+
 }  // namespace io
 }  // namespace canary
