@@ -3,9 +3,11 @@
 // Everything here is pure and testable (tests/flash.test.js runs it under
 // `node --test`, the repo convention): the chip guard, the ESP32 image
 // parsers that let the page read what firmware is *currently* on a board,
-// the release-manifest resolution, and the byte<->binary-string glue
-// esptool-js needs. No DOM, no Web Serial, no esptool import — flash.js owns
-// all of that and imports this.
+// the release-manifest resolution, the release-signature verification, and the
+// byte<->binary-string glue esptool-js needs. No DOM, no Web Serial, no
+// esptool import — flash.js owns all of that and imports this.
+
+import * as ed25519 from "./vendor/ed25519/ed25519.mjs";
 
 // ── chip guard ───────────────────────────────────────────────────────────
 // esptool reports chips as "ESP32-S3", "ESP32-C3", "ESP32-C6", "ESP32", …;
@@ -168,7 +170,53 @@ export function manifestEntry(manifest, product, detected) {
       `${detected} is connected — refusing (chip mismatch)` };
   }
   return { version: e.version, factory: e.factory, sha256: String(e.sha256 || "").toLowerCase(),
-    size: e.size, chipFamily: e.chipFamily, releaseNotes: e.release_notes, product };
+    size: e.size, chipFamily: e.chipFamily, releaseNotes: e.release_notes,
+    signature: e.signature || null, signingKeyId: e.signing_key_id || null, product };
+}
+
+// ── release signature verification (in-browser, pinned key) ─────────────────
+// The OTA channel refuses any image whose Ed25519 signature doesn't match a
+// pinned key; this brings the same proof to the USB channel, so a
+// swapped-but-checksummed image (a compromised release/host) is caught here
+// too. The public key is single-sourced from the firmware's
+// ota_release_key.h into flash.json (gen_flash.py); an all-zero key means the
+// signing ceremony hasn't happened yet → verification is skipped and the page
+// says so honestly (checksum-only).
+export function hexToBytes(hex) {
+  const h = String(hex || "").replace(/[^0-9a-fA-F]/g, "");
+  const out = new Uint8Array(h.length >> 1);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+  return out;
+}
+
+// The exact message the release signs: uint32_le(size) || sha256(image).
+// Mirrors firmware/scripts/ota_release.py signed_message() and the device's
+// firmware/common/ota verify — one scheme across every channel.
+export function ed25519Message(size, sha256Bytes) {
+  const m = new Uint8Array(36);
+  new DataView(m.buffer).setUint32(0, size >>> 0, true);
+  m.set(sha256Bytes.subarray(0, 32), 4);
+  return m;
+}
+
+// Is the pinned release key real, or the all-zero placeholder (unprovisioned)?
+export function isRealPubkey(pubkeyHex) {
+  const p = hexToBytes(pubkeyHex);
+  return p.length === 32 && !p.every((b) => b === 0);
+}
+
+// Verify a firmware image's Ed25519 release signature against the pinned public
+// key. Returns true ONLY on a genuine verification; anything missing/malformed
+// (no signature, placeholder key, wrong lengths) returns false so the caller
+// can decide (refuse vs. fall back to checksum-only with an honest note).
+export async function verifyImageSignature(signatureHex, pubkeyHex, size, sha256Bytes) {
+  const sig = hexToBytes(signatureHex);
+  if (sig.length !== 64 || !isRealPubkey(pubkeyHex) || !sha256Bytes || sha256Bytes.length < 32) {
+    return false;
+  }
+  try {
+    return await ed25519.verifyAsync(sig, ed25519Message(size, sha256Bytes), hexToBytes(pubkeyHex));
+  } catch { return false; }
 }
 
 // Resolve the `?manifest=<url>` override for self-hosted / air-gapped use.

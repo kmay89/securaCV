@@ -754,3 +754,47 @@ test("validateCatalog passes the shipped catalog and flags real breakage", async
   const badProd = JSON.parse(JSON.stringify(catalog)); delete badProd.products[0].chip;
   assert.ok(validateCatalog(badProd).some((e) => /missing chip/.test(e)));
 });
+
+// ── release signature verification (in-browser, pinned key) ─────────────────
+const nodeCrypto = require("node:crypto");
+function makeSignedImage() {
+  const { publicKey, privateKey } = nodeCrypto.generateKeyPairSync("ed25519");
+  const pubHex = publicKey.export({ type: "spki", format: "der" }).subarray(-32).toString("hex");
+  const image = Buffer.from("SecuraCV factory image bytes — test");
+  const sha = nodeCrypto.createHash("sha256").update(image).digest();
+  const msg = Buffer.concat([Buffer.from(new Uint32Array([image.length]).buffer), sha]); // uint32_le||sha256
+  const sigHex = nodeCrypto.sign(null, msg, privateKey).toString("hex");
+  return { pubHex, sigHex, size: image.length, sha: new Uint8Array(sha) };
+}
+
+test("verifyImageSignature: accepts a genuine signature, rejects tampering", async () => {
+  const { verifyImageSignature, ed25519Message, isRealPubkey, hexToBytes } = await core();
+  const { pubHex, sigHex, size, sha } = makeSignedImage();
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size, sha), true);
+  // wrong size, flipped signature byte, wrong hash, wrong key → all false
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size + 1, sha), false);
+  const flipped = hexToBytes(sigHex); flipped[0] ^= 1;
+  assert.strictEqual(await verifyImageSignature(Buffer.from(flipped).toString("hex"), pubHex, size, sha), false);
+  const otherSha = new Uint8Array(sha); otherSha[5] ^= 0xff;
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size, otherSha), false);
+  // the all-zero placeholder key never verifies (unprovisioned) — checksum-only
+  assert.strictEqual(isRealPubkey("00".repeat(32)), false);
+  assert.strictEqual(await verifyImageSignature(sigHex, "00".repeat(32), size, sha), false);
+  // no signature / malformed → false (caller falls back, doesn't crash)
+  assert.strictEqual(await verifyImageSignature("", pubHex, size, sha), false);
+  // message layout is exactly uint32_le(size) || sha256
+  const m = ed25519Message(0x04030201, sha);
+  assert.deepStrictEqual(Array.from(m.subarray(0, 4)), [0x01, 0x02, 0x03, 0x04]);
+  assert.strictEqual(m.length, 36);
+});
+
+test("manifestEntry passes the signature + key id through", async () => {
+  const { manifestEntry } = await core();
+  const m = goodManifest();
+  m.products["securacv-canary-wap"].signature = "ab".repeat(64);
+  m.products["securacv-canary-wap"].signing_key_id = "0011223344556677";
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  const e = manifestEntry(m, wap, "ESP32-S3");
+  assert.strictEqual(e.signature, "ab".repeat(64));
+  assert.strictEqual(e.signingKeyId, "0011223344556677");
+});
