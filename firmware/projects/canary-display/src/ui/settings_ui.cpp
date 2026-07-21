@@ -574,7 +574,7 @@ void build_dev_confirm() {
   mk_back("dev mode");
   lv_obj_t* body = mk_label(s_host, font_body(), col_text());
   lv_label_set_text(body,
-      "Enter dev mode?\nReboots into the peripheral\nbench — no fleet, no network.");
+      "Enter dev mode?\nReboots into the peripheral\nbench - no fleet, no network.");
   lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(body, LV_ALIGN_CENTER, 0, -26);
   lv_obj_t* yes = mk_label(s_host, font_body(), col_signed());
