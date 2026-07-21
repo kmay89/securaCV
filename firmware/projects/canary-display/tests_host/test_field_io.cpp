@@ -80,12 +80,28 @@ static void test_siren_bounded_max_on() {
   CHECK(s.update(1400, true, false, MAX) == true, "new alert after clear re-arms");
 }
 
+static void test_siren_disarmed_stays_silent() {
+  fio::SirenController s;
+  const uint32_t MAX = 1000;
+  // A real unacked alert, but the siren is DISARMED: never drives the output.
+  CHECK(s.update(10, /*alerting=*/true, /*acked=*/false, MAX, /*armed=*/false)
+            == false, "disarmed: no drive on unacked alert");
+  CHECK(s.update(20, true, false, MAX, false) == false, "disarmed: still silent");
+  // Arming mid-episode lets the standing alert sound (it re-armed while silent).
+  CHECK(s.update(30, true, false, MAX, /*armed=*/true) == true,
+        "armed: the standing alert now drives");
+  // Disarming again releases immediately.
+  CHECK(s.update(40, true, false, MAX, /*armed=*/false) == false,
+        "disarmed again: release at once");
+}
+
 int main() {
   test_debounce_needs_persistence();
   test_debounce_rejects_glitch();
   test_debounce_need_zero_treated_as_one();
   test_siren_drives_only_on_unacked_alert();
   test_siren_bounded_max_on();
+  test_siren_disarmed_stays_silent();
 
   if (g_fail == 0) {
     std::printf("ALL FIELD IO TESTS PASSED\n");

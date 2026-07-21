@@ -123,10 +123,19 @@ the fleet model's `on_chirp`/`on_beacon` observations — never a forged witness
 - Wired into `main.cpp` setup/loop behind `HAS_ISOLATED_IO`; byte-neutral to the
   emulator (its dash build uses the non-B pins, which don't declare the flag).
 
+**Opt-in siren arming (shipped):** the on-glass **Settings → siren** toggle
+(`src/ui/settings_ui.cpp`, `HAS_ISOLATED_IO`-gated) arms/disarms the DO0 siren,
+**disarmed by default** and NVS-persisted (`field_io_set_armed` / `field_io_armed`,
+own `scv-field` key — no glass-blob migration). Disarmed, an unacked alert still
+shows on the glass and lands in the journal; only the physical output stays
+silent — which is also the safe posture while the DO sink polarity is unproven.
+The pure `SirenController::update` takes `armed` and treats `!armed` as resolved,
+host-tested in `test_field_io.cpp`. Byte-neutral to the emulator (no
+`HAS_ISOLATED_IO` there).
+
 **Remaining to go live:** bench-validate the optocoupler DI polarity and the DO
 sink polarity (both VERIFY-tagged in `pins.h`) on real hardware, and confirm the
-input-poll's brief expander direction-flip causes no backlight flicker. An opt-in
-on-glass "arm siren" toggle is a natural follow-up.
+input-poll's brief expander direction-flip causes no backlight flicker.
 
 ---
 

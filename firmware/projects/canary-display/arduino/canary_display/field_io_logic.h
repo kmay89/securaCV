@@ -55,6 +55,11 @@ struct Debounce {
 // alert can't hold a physical output on forever). It re-arms only once the alert
 // clears or is acked — so a *fresh* alert can sound again, but the same standing
 // one can't re-trigger without human acknowledgement.
+//
+// `armed` is the user's opt-in: a disarmed siren behaves exactly like a resolved
+// alert (never drives, always re-armed), so the on-glass toggle can hold the
+// physical output silent while the alert still shows and journals. Defaulted true
+// so the pure host tests and any armed-by-policy caller read unchanged.
 struct SirenController {
   bool on = false;
   bool capped = false;
@@ -62,8 +67,9 @@ struct SirenController {
 
   // `alerting` = fleet worst severity is at/above the alert threshold.
   // Returns true if the output should conduct this tick.
-  bool update(uint32_t now, bool alerting, bool acked, uint32_t max_on_ms) {
-    if (acked || !alerting) {  // resolved -> release and re-arm
+  bool update(uint32_t now, bool alerting, bool acked, uint32_t max_on_ms,
+              bool armed = true) {
+    if (!armed || acked || !alerting) {  // disarmed/resolved -> release, re-arm
       on = false;
       capped = false;
       return false;
