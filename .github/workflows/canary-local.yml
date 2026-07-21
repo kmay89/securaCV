@@ -95,6 +95,7 @@ jobs:
           node --test canary-local/tests/boards.test.js
           node --test canary-local/tests/assembly.test.js
           node --test canary-local/tests/print_estimate.test.js
+          node --test canary-local/tests/slicer.test.js
           node --test canary-local/tests/boardroom.test.js
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/wap.test.js

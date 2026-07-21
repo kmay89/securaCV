@@ -29,6 +29,7 @@ import {
   MACHINE,
   ELECTRICITY_DEFAULT,
 } from "./print-guide.js";
+import { sliceSeconds, slicerAvailable } from "./slicer.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -204,7 +205,9 @@ export function buildEnclosureLab(encData, deviceId) {
         // Compute the print geometry once, here, from the same mesh the viewer
         // renders — the estimate is measured off exactly what you see.
         const geom = { volume: meshVolume(mesh), area: meshArea(mesh), height: bbox.size[2] };
-        metas.push({ part, mesh, bbox, triangles, geom });
+        // keep the raw STL bytes so the optional real slicer can run without
+        // a refetch (parseSTL doesn't consume the buffer); small parts only.
+        metas.push({ part, mesh, bbox, triangles, geom, stlBuffer: buf });
       } catch {
         metas.push(null);
       }
@@ -465,13 +468,74 @@ export function buildEnclosureLab(encData, deviceId) {
       b.append(el("b", null, v), el("i", null, l));
       return b;
     };
+    const timeTile = big(fmtDuration(est.total.timeS), `print time (est) · ${fmtDuration(est.total.timeLowS)}–${fmtDuration(est.total.timeHighS)}`);
+    const energyTile = big(`${est.total.energyKWh.toFixed(2)} kWh`, `energy · ${speedup}× in the replay`);
+    const costTile = big(`$${est.total.cost.toFixed(2)}`, `to print · $${est.total.filamentCost.toFixed(2)} plastic + $${est.total.energyCost.toFixed(2)} power`, "est-cost");
     totals.append(
-      big(fmtDuration(est.total.timeS), `print time · ${fmtDuration(est.total.timeLowS)}–${fmtDuration(est.total.timeHighS)}`),
+      timeTile,
       big(`${est.total.grams.toFixed(0)} g`, `filament · ${est.total.lengthM.toFixed(1)} m`),
-      big(`${est.total.energyKWh.toFixed(2)} kWh`, `energy · ${speedup}× in the replay`),
-      big(`$${est.total.cost.toFixed(2)}`, `to print · $${est.total.filamentCost.toFixed(2)} plastic + $${est.total.energyCost.toFixed(2)} power`, "est-cost"),
+      energyTile,
+      costTile,
     );
     card.append(totals);
+
+    // ── optional: hand the ONE soft number (time) to a real slicer ──
+    // Present always; it upgrades the estimated time to a true toolpath time
+    // IFF the Kiri:Moto engine is vendored (assets/vendor/kiri). Offline and
+    // fail-closed: if it isn't there, or anything goes wrong, the estimate
+    // stands and the note says so.
+    const setTile = (tile, v, l) => {
+      tile.querySelector("b").textContent = v;
+      tile.querySelector("i").textContent = l;
+    };
+    const sliceRow = el("div", "est-slice");
+    const sliceBtn = el("button", "est-slice-btn", "⚡ slice for exact time");
+    const sliceNote = el("span", "muted est-slice-note");
+    sliceRow.append(sliceBtn, sliceNote);
+    card.append(sliceRow);
+    sliceBtn.addEventListener("click", async () => {
+      sliceBtn.disabled = true;
+      sliceNote.textContent = "slicing…";
+      try {
+        if (!(await slicerAvailable())) {
+          sliceNote.textContent =
+            "Kiri:Moto engine isn't vendored yet — showing the model estimate. " +
+            "Vendor it with tools/vendor_kiri.sh (see assets/vendor/kiri).";
+          sliceBtn.disabled = false;
+          return;
+        }
+        let totalS = 0, sliced = 0;
+        for (let i = 0; i < lab.metas.length; i++) {
+          const m = lab.metas[i];
+          const t = await sliceSeconds(m.stlBuffer, {
+            material: materialForPart(m.part, lab.shellMaterial),
+            machine: MACHINE,
+          });
+          if (t) { totalS += t; sliced++; }
+          else { totalS += est.rows[i].est.timeS; } // this part fell back
+        }
+        if (!sliced) {
+          sliceNote.textContent = "slicer returned nothing usable — keeping the estimate.";
+          sliceBtn.disabled = false;
+          return;
+        }
+        const p = MACHINE.power;
+        const avgW = p.bed_w + p.hotend_w + p.motors_electronics_w;
+        const energyKWh = (avgW * totalS / 3600 + lab.metas.length * MACHINE.heatup_wh) / 1000;
+        const energyCost = energyKWh * lab.electricity;
+        setTile(timeTile, fmtDuration(totalS), "print time · sliced by Kiri:Moto");
+        setTile(energyTile, `${energyKWh.toFixed(2)} kWh`, "energy · from sliced time");
+        setTile(costTile, `$${(est.total.filamentCost + energyCost).toFixed(2)}`,
+          `to print · $${est.total.filamentCost.toFixed(2)} plastic + $${energyCost.toFixed(2)} power`);
+        sliceBtn.textContent = "✔ sliced";
+        sliceNote.textContent = sliced === lab.metas.length
+          ? "true toolpath time · Kiri:Moto (vendored)"
+          : `${sliced}/${lab.metas.length} parts sliced; the rest kept the estimate`;
+      } catch {
+        sliceNote.textContent = "slice failed — keeping the estimate.";
+        sliceBtn.disabled = false;
+      }
+    });
 
     // per-part breakdown
     const tbl = el("table", "est-table");
@@ -498,8 +562,9 @@ export function buildEnclosureLab(encData, deviceId) {
       "README mass budget, so the grams are checkable, not guessed. Modelled: " +
       "print time and energy are a transparent physical model for your rig " +
       "(volumetric flow → time; average duty-cycle power → energy), carrying " +
-      "the ± band shown. This is a guide, not a slicer — it plans no toolpath; " +
-      "slice in your slicer for exact figures."));
+      "the ± band shown. For a true toolpath time, hit ⚡ slice for exact time — " +
+      "it hands the geometry to a vendored, offline Kiri:Moto and upgrades the " +
+      "time in place; until that engine is vendored, the estimate stands."));
 
     // hand off to the bench: the print's done, now build it
     stage2.hidden = true;
