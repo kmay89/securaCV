@@ -1,6 +1,6 @@
 // ============================================================================
 //  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.2
-//  Stack: OV5647 camera (Pi-cam v1.3 form) + Grove Vision AI V2 (25 x 25)
+//  Stack: OV5647 camera (Pi-cam v1.3 form) + Grove Vision AI V2 (40 x 20)
 //         + a selectable HOST:
 //    host = "xiao"   — XIAO ESP32-C3/S3 seated in the module's stacking
 //                      socket (recommended; zero wiring — device guide §3).
@@ -63,8 +63,9 @@ m_style  = _pre(mount_style, "hinge", "both");
 host     = "xiao"; // ["xiao","devkit"]  stacked XIAO (recommended) or Grove-cabled DevKitM-1
 dk_l     = 39.0;   // ESP32-C3-DevKitM-1 length (Y, USB end down) — devkit host
 dk_w     = 25.4;   // DevKitM-1 width (X)
-vm_l     = 25.0;   // Grove Vision AI V2 (Y; USB edge down)
-vm_w     = 25.0;   // Grove Vision AI V2 (X)
+vm_l     = 40.0;   // Grove Vision AI V2 long side (Y; USB edge down) — measured
+vm_w     = 20.0;   // Grove Vision AI V2 short side (X) — measured (was 25x25: the
+                   // module is the Grove 1x2 form, not a square — same fix as the doorbell)
 xiao_l   = 21.0;   // stacked XIAO (Y) — xiao host
 xiao_w   = 17.5;   // stacked XIAO (X)
 stack_sock_h = 11.5; // module underside -> XIAO underside when seated (socket + headers) — MEASURE

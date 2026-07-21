@@ -27,7 +27,7 @@
 // it IS (source/proc) and what it is called. Classes:
 //   support · internal · shell · seal · fastener · external
 const FASTENER_PROCS = new Set(["screw", "insert"]);
-const INTERNAL_PROCS = new Set(["lipo", "magnet", "lightPipe", "disc", "vent", "pcb", "lcdPanel"]);
+const INTERNAL_PROCS = new Set(["lipo", "magnet", "lightPipe", "disc", "vent", "pcb", "lcdPanel", "ribbon", "camera"]);
 
 export function classifyPart(p) {
   if (p.class) return p.class;
