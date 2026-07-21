@@ -1047,6 +1047,16 @@ void loop() {
   canary::net::chirp_scan_loop(now, !broker, canary::net::wifi_connected());
 #endif
 
+#if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+  // Broker-less fleet enumeration (WiFi analog of the BLE presence beacon):
+  // once every device is on the home WiFi, browse the fleet's mDNS adverts
+  // directly and show every nearby Canary even with NO broker/Home Assistant.
+  // Gated on the broker being DOWN — when it's up, MQTT is the richer source,
+  // so skip the mDNS enumeration to avoid churn. Self-rate-limits (~20 s) and
+  // only actually queries when due; the query blocks ~3 s inside ESPmDNS.
+  if (!broker) canary::net::discovery_scan_witnesses(now);
+#endif
+
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
   // Poll the isolated contacts into events and drive the siren output. Cheap
   // and self-throttled; 4.3B only.

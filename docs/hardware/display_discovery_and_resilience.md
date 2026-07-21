@@ -109,6 +109,24 @@ diagnostics and **never** set the `Verified` trust badge.
 > the central role if a build needs presence-only. The exact bench gate is
 > [`fleet_link_bench_checklist.md`](./fleet_link_bench_checklist.md).
 
+## 3.2 Direct mDNS fleet enumeration — no broker (the WiFi middle path)
+
+Between "MQTT with a broker" (§2/§3, richest) and "direct BLE" (§3.1, no WiFi
+at all) sits a WiFi path that needs **no broker**. Every witness firmware
+(canary-wap / canary / vision / sense) already advertises `_securacv._tcp` with
+identity TXT (`device_id`, `name`, `dt`, `role=witness`; §3). The display now
+**enumerates those adverts directly** (`discovery_scan_witnesses`) and drops
+each Canary into its fleet — real device id, name, and type — with no MQTT
+broker or Home Assistant. It runs **only while the broker is down** (MQTT is the
+richer source when present), self-rate-limits (~20 s; the mDNS query blocks
+~3 s), and — because mDNS TXT is **unauthenticated LAN input** — feeds
+seen+named liveness only, **never the `Verified` badge** (same trust posture as
+the broker gossip). Gated by `FEATURE_MDNS_DISCOVERY`.
+
+Net: plug every Canary into the home WiFi and a display finds them all, three
+ways in order of richness — **MQTT** (with a broker) → **direct mDNS on the LAN**
+(this, no broker) → **direct BLE** (§3.1, no WiFi at all).
+
 ## 4. Failure ladder — what breaks, what keeps working, what the user sees
 
 | Scenario | Canaries | Displays | Recovery |
