@@ -66,15 +66,22 @@ jobs:
         shell: bash
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+            tag="${GITHUB_REF_NAME}"; publish=true
           elif [[ "${{ github.event.inputs.dry_run }}" == "false" ]]; then
-            echo "tag=flasher-v0.0.0-dev.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+            tag="flasher-v0.0.0-dev.${{ github.run_number }}"; publish=true
           else
-            echo "tag=" >> "$GITHUB_OUTPUT"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
+            tag=""; publish=false
           fi
+          # Mark as a pre-release when the version (after the `flasher-v` prefix)
+          # carries a suffix like -rc.1 / -dev.N — so first/test builds don't
+          # look like a blessed stable release.
+          ver="${tag#flasher-v}"
+          if [[ "$ver" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          {
+            echo "tag=${tag}"
+            echo "publish=${publish}"
+            echo "prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -215,7 +222,7 @@ jobs:
 
             **Linux:** grab the `.AppImage` (self-updating) or the `.deb`.
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ steps.plan.outputs.prerelease }}
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
