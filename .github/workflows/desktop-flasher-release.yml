@@ -193,11 +193,11 @@ jobs:
           else
             echo "::warning::No TAURI_SIGNING_PRIVATE_KEY secret set — minting an EPHEMERAL key so this build succeeds. Cross-release self-update needs a persistent key; see desktop/INSTALL.md."
             npx --yes @tauri-apps/cli signer generate -w "$RUNNER_TEMP/flasher.key" --password ""
-            {
-              echo "TAURI_SIGNING_PRIVATE_KEY<<KEOF"
-              cat "$RUNNER_TEMP/flasher.key"
-              echo "KEOF"
-            } >> "$GITHUB_ENV"
+            # The Tauri private key is a single base64 line; $(cat) strips the
+            # trailing newline so a plain assignment is safe (a heredoc here
+            # fails when the file lacks a final newline — the closing delimiter
+            # glues onto the key and GitHub can't find it).
+            echo "TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/flasher.key")" >> "$GITHUB_ENV"
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
             python3 -c 'import json,sys; p="src-tauri/tauri.conf.json"; c=json.load(open(p)); c["plugins"]["updater"]["pubkey"]=sys.argv[1].strip(); json.dump(c,open(p,"w"),indent=2); print("patched embedded pubkey for ephemeral build")' "$(cat "$RUNNER_TEMP/flasher.key.pub")"
           fi
