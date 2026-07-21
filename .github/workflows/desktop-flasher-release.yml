@@ -164,11 +164,10 @@ jobs:
       # ── app icons ──────────────────────────────────────────────────────────
       - name: Generate app icons
         working-directory: desktop
-        # source.png is committed; regenerate it so the icon stays reproducible,
-        # then let the Tauri CLI derive the .icns/.ico/png set the bundler needs.
-        run: |
-          ( cd src-tauri/icons && python3 generate_source.py )
-          npx --yes @tauri-apps/cli icon src-tauri/icons/source.png
+        # source.png (the branded Canary mascot badge) is committed; derive the
+        # .icns/.ico/png set the bundler needs from it. Regenerating the source
+        # itself needs Pillow + the brand asset, so it's done offline, not in CI.
+        run: npx --yes @tauri-apps/cli icon src-tauri/icons/source.png
 
       # ── signing key for self-update ────────────────────────────────────────
       # If the repo has a persistent signing key, use it (self-update works

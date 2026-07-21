@@ -90,7 +90,7 @@ $99/yr; everything else stays the same.
 cd desktop
 npm install
 # put an espflash binary at src-tauri/binaries/espflash-<your-target-triple>
-python3 src-tauri/icons/generate_source.py && npx @tauri-apps/cli icon src-tauri/icons/source.png
+npx @tauri-apps/cli icon src-tauri/icons/source.png   # source.png is committed
 npm run dev
 ```
 
