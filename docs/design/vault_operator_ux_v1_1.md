@@ -33,11 +33,12 @@ core:
 
 This RFC proposes closing both gaps in four phases: a **setup/enrollment UX**
 layered on the crypto that already exists (Phase 1, zero new crypto), then a
-feature-gated **`KeyStore`** abstraction with a **TPM** backend for the device
-keys (Phase 2), **hardware tokens for trustees** (Phase 3), and a **guided web
-wizard + docs + drills** (Phase 4). Phase 1 is the lowest-hanging, highest-value
-fruit; the hardware phases need physical devices to validate and are the reason
-this is v1.1, not v1.
+feature-gated **`KeyStore`** abstraction whose realistic hardware backing is a
+**plugged-in PKCS#11 token** on the host and the **ESP32-S3's own on-die security
+block** on the device — **not a TPM** (§5.5) (Phase 2), **hardware tokens for
+trustees** (Phase 3), and a **guided web wizard + docs + drills** (Phase 4).
+Phase 1 is the lowest-hanging, highest-value fruit; the hardware phases need
+physical devices to validate and are the reason this is v1.1, not v1.
 
 This matches the roadmap, which already carves this out:
 `docs/v1-roadmap.md` lists *"Encrypted-vault setup UX + hardware-backed keys
@@ -116,9 +117,12 @@ returns nothing: there is no hardware-key abstraction anywhere yet.
 - **P2 — No hardware-backed keys.** Confidentiality of sealed evidence and the
   authority to sign as the device both rest on plaintext files. Invariant V
   asks that "vault confidentiality … rely on **distinct, device-local key
-  material**"; a `0600` file technically satisfies "device-local" but a TPM or
-  secure element is the honest form of that promise, and trustee hardware tokens
-  are the honest form of "**independently controlled** principals or devices."
+  material**"; a `0600` file technically satisfies "device-local," but the honest
+  form of that promise is key material a plugged-in **PKCS#11 token** (host) or
+  the **ESP32-S3's own eFuse / flash-encryption / DS peripheral** (device) holds —
+  **we have no TPM and no discrete secure element** (§5.5). Trustee hardware
+  tokens are likewise the honest form of "**independently controlled** principals
+  or devices."
 
 ---
 
@@ -129,15 +133,16 @@ returns nothing: there is no hardware-key abstraction anywhere yet.
   quorum vault without hand-editing key files.
 - Trustee enrollment that captures a public key into policy through a ceremony,
   not a copy-paste of hex.
-- A `KeyStore` seam so private keys *can* live in a TPM / secure element / HSM /
-  hardware token, with the file backend as the unchanged default.
+- A `KeyStore` seam so private keys *can* live in the hardware we actually have —
+  a plugged-in PKCS#11 token / smartcard / HSM on the host, the ESP32-S3's on-die
+  security block on the device — with the file backend as the unchanged default.
 - Rotation and recovery that are documented and testable, not folklore.
 - **Every invariant preserved** — hardware backing strengthens Invariants I & V;
   it must never weaken them or add a raw-export path.
 
 **Non-goals (for v1.1)**
 - Re-designing the seal/unseal cryptography (done).
-- Remote attestation of the TPM state (future; noted in the roadmap).
+- Remote attestation of device/host state (future; noted in the roadmap).
 - A hosted/cloud trustee service — trustees stay independently controlled and
   local by design (Invariant IV/V).
 - Replacing the CLI: the CLI stays the source of truth; the web wizard is a
@@ -156,8 +161,10 @@ backend hold a non-extractable key.
 
 ```rust
 /// Where a private key lives and how it is used. Implementations may hold
-/// non-extractable key material (TPM, PIV, HSM); callers must not assume the
-/// raw secret is ever available.
+/// non-extractable key material (a PKCS#11 token / smartcard / HSM, or a TPM
+/// where the host has one); callers must not assume the raw secret is ever
+/// available. (This trait is host-side; the ESP32-S3 device identity has its own
+/// firmware seam — see §5.5.)
 pub trait KeyStore {
     /// Sign `msg` with the device identity key, domain-separated by `domain`.
     /// The signature is computed *inside* the store; the private key never
@@ -175,6 +182,11 @@ pub trait KeyStore {
     /// `unwrap_vault_secret(...) -> [u8;32]` would, defeats that property; a
     /// strict backend MAY instead expose `open_envelope` below and never return
     /// key material at all.)
+    ///
+    /// NOTE: this is a *symmetric* unwrap (ChaCha20-Poly1305 under the 32-byte
+    /// master key), so only a symmetric-capable backend — file, HSM, or TPM — can
+    /// perform it in-store. A signing-only PIV/PKCS#11 token backs `sign_device`
+    /// but NOT this (see the §5.1 signing-vs-symmetric rule).
     fn unwrap_envelope_dek(&self, wrapped_dek: &WrappedKey) -> Result<Zeroizing<[u8; 32]>>;
 
     /// Strictest form: perform the AEAD open entirely in-store, returning the
@@ -183,8 +195,8 @@ pub trait KeyStore {
     /// to unwrap-then-decrypt.
     fn open_envelope(&self, envelope: &SealedEnvelope) -> Result<Zeroizing<Vec<u8>>>;
 
-    /// Human-facing description for `doctor` ("file (0600)", "TPM 2.0 @ 0x81..",
-    /// "PKCS#11 slot 0"). Purely informational.
+    /// Human-facing description for `doctor` ("file (0600)", "PKCS#11 slot 0",
+    /// "TPM 2.0 @ 0x81.." where present). Purely informational.
     fn backend_label(&self) -> &str;
 }
 ```
@@ -195,24 +207,45 @@ master key wraps the DEK), so the boundary falls naturally between the two: the
 per-envelope DEK — or nothing, with `open_envelope` — ever reaches process
 memory.
 
-Backends, each behind a cargo feature so the default build is unchanged:
+Backends, each behind a cargo feature so the default build is unchanged. These
+are **host-side** (the witness kernel on a Pi / x86 / container); the *device*
+identity on the ESP32-S3 is a separate seam covered in §5.5. Crucially — **we
+have no TPM guaranteed and no discrete secure element**, so the realistic host
+backing is a token the operator plugs in, not a TPM:
 
 | Backend | Feature | Holds | Notes |
 |---------|---------|-------|-------|
-| **File** (default) | *(always on)* | Today's `master.key` + seed-derived signing key | Behavior-identical to current code; the refactor is a no-op for existing installs. |
-| **TPM 2.0** | `keystore-tpm` | Device signing key + vault master key sealed to the TPM | Primary hardware target for the appliance/Pi/x86 host. Non-extractable, PCR-bindable. |
-| **PKCS#11** | `keystore-pkcs11` | Device or trustee keys on an HSM / smartcard | Covers enterprise HSMs and PIV smartcards via a standard interface. |
+| **File** (default) | *(always on)* | Today's `master.key` + seed-derived signing key | Behavior-identical to current code; the refactor is a no-op for existing installs. **The honest default** (§5.5). |
+| **PKCS#11 token** (security key / smartcard / HSM) | `keystore-pkcs11` | Host device signing key and/or trustee keys | **The realistic host hardware:** a plugged-in YubiKey (PIV), smartcard, or HSM via the standard PKCS#11 interface. Non-extractable in the token. |
+| **TPM 2.0** *(only if the host has one)* | `keystore-tpm` | Host device signing key + vault master key sealed to the TPM | **Optional, not assumed** — most Raspberry Pis have no TPM; some x86 hosts expose an fTPM. Use where present; never the required path. |
 | **PIV / hardware Ed25519 token** | `keystore-fido2` | *Trustee* keys on a YubiKey-class token | For Phase 3 — makes each trustee an independently controlled *device*, exactly what Invariant V's "independently controlled principals or devices" wants. **Caveat:** only token modes that emit a real Ed25519 signature over the `trustee-approval:v2` message plug into the current schema; generic FIDO2/WebAuthn assertions do not (see §7 Phase 3). |
 
 Design rules for the trait:
 - **The default path does not change.** File backend = current bytes, current
   file layout, current `0600`. No migration required for existing vaults.
 - **Trait objects, feature-selected at construction.** `KeyStore` is chosen once
-  at startup from config (`vault.keystore = "file" | "tpm" | "pkcs11"`); the rest
+  at startup from config (`vault.keystore = "file" | "pkcs11" | "tpm"`); the rest
   of the kernel is backend-agnostic.
-- **Trustee keys and the device key are separate concerns.** A deployment can
-  put the device key in a TPM while trustees use FIDO2 tokens, or mix file +
-  hardware during migration.
+- **Trustee keys and the device key are separate concerns.** A deployment can put
+  the host device key on a PKCS#11 token (or a TPM if it has one) while trustees
+  use their own tokens, or mix file + hardware during migration.
+- **Signing keys ≠ the symmetric master key — a PIV token can't hold the master.**
+  Device-identity and trustee keys are *asymmetric* (Ed25519 signing), which is
+  exactly what a PIV / PKCS#11 token does — the token signs, the key never leaves.
+  But the vault **master key is a 32-byte *symmetric* secret** that unwraps the DEK
+  via ChaCha20-Poly1305 (`wrap_dek` / `unwrap_dek`, `src/vault/crypto.rs`), and a
+  YubiKey-PIV PKCS#11 module performs *only* asymmetric private-key operations —
+  it cannot hold or unwrap a symmetric key in-token. So the master key has **three
+  honest options**, and only the third puts it in a plug-in token:
+  1. **File-backed (default)** — the master stays a `0600` file; tokens still
+     hardware-back the *signing* keys. Recommended baseline.
+  2. **HSM / TPM with symmetric unwrap** — an HSM (or a TPM, where present) *can*
+     hold the symmetric key and unwrap the DEK in-hardware. `keystore-pkcs11`
+     against an HSM, or `keystore-tpm`.
+  3. **Re-wrap the DEK to an *asymmetric* token key** (RSA-OAEP / ECDH to a PIV
+     slot) so a PIV token can unwrap it — but this is a **VLT2 wrap-format change
+     and therefore new crypto**, explicitly *outside* the "no new crypto" default
+     path and tracked as an opt-in (open decision #1).
 
 ### 5.2 Setup & enrollment UX (CLI-first)
 
@@ -294,10 +327,68 @@ identity-pinning problem) with the vault-specific rotations:
   the device public key in `device_metadata` and rejects a mismatch, so rotation
   needs identity-rotation support (record the new key, keep the log verifiable
   across the boundary). Hardware backing makes this *more* tractable, not less —
-  a TPM can hold the new key before the old one is retired.
+  a PKCS#11 token can hold the new key before the old one is retired.
 - **Master-key rotation / re-wrap** — with the `KeyStore` seam, rotating the
   vault master secret becomes "unwrap under the old backend, re-wrap under the
-  new," which also *is* the file→TPM migration path.
+  new," which also *is* the file→hardware (PKCS#11 token) migration path.
+
+### 5.5 Hardware reality: no TPM, no secure element — what each platform gives us
+
+The "hardware backend" rows above name *capabilities*, not parts we own. This
+deserves stating plainly, because the keys live in **two different places** and
+**neither has a TPM**:
+
+**Host kernel (Pi / x86 / container)** — where `master.key`, the device *signing
+seed*, and trustee keys live. No TPM is guaranteed: most Raspberry Pis have none;
+some x86 hosts expose an fTPM. So the realistic backing is a **PKCS#11 token the
+operator plugs in** — a YubiKey (PIV), a smartcard, or an HSM — with the **file
+backend as the honest default**. `keystore-tpm` stays optional, use-it-if-present.
+Note the split from §5.1: a plug-in **PIV/smartcard token hardware-backs the
+*asymmetric signing* keys** (device identity, trustee approvals), but the
+**symmetric vault master key** cannot live in such a token — it stays file-backed
+unless you have an HSM/TPM with symmetric unwrap, or opt into an asymmetric-rewrap
+of the DEK format (new crypto; open decision #1).
+
+**The Canary device (Seeed XIAO ESP32-S3)** — where the device's *own* Ed25519
+identity lives (`docs/device_trust.md`: generated on first boot from
+`esp_fill_random`, stored in NVS, signs every MQTT publish). This is a **separate
+key** from the host's, and the XIAO carries **no discrete secure element** (no
+ATECC608 / SE050 in the BOM; no `esp_ds` / `esp_hmac` in the firmware today). Its
+"TPM-equivalent" is the **ESP32-S3's own on-die security block**, which answers
+"secure it" and "sign it" differently:
+
+- **Secure it (protect the key at rest) — already tooled, not yet burned.**
+  `docs/secure_provisioning.md` Phase 2 wraps Espressif's guide: **eFuse +
+  XTS-AES-256 Flash Encryption + NVS encryption** make the NVS Ed25519 key
+  unreadable off-chip; **Secure Boot v2 (RSA-3072)** stops an attacker flashing a
+  key-dumping build; **JTAG disabled via eFuse** closes the debug port. It's
+  irreversible and needs a physical device to validate — which is why it's
+  post-v1. The provisioning kit (`generate_keys.sh`, `provision_canary.sh`,
+  `verify_device.py`) already exists.
+- **Sign it without the key ever entering software — available, unused.** The
+  S3's **HMAC** and **Digital Signature (DS)** peripherals can sign with a private
+  key decrypted *only inside the peripheral* (via a read-protected eFuse key), so
+  the plaintext never reaches CPU RAM. **Caveat: the DS peripheral is RSA-only** —
+  the ESP32-S3 has **no** hardware Ed25519 or ECDSA signing peripheral (those are
+  on the C6 / H2 / P4). Our identity is Ed25519, so the S3 can protect an Ed25519
+  key *at rest* but cannot do *non-extractable Ed25519 signing*.
+
+**The Ed25519 fork for the device** (open decision #7):
+- **(a) Ed25519, protected at rest** — flash-encryption + eFuse + secure boot.
+  Keeps the entire existing signing scheme; the key can't be dumped off a locked
+  device. **Recommended baseline** — largely already tooled in
+  `secure_provisioning.md`.
+- **(b) Add an RSA identity via the DS peripheral** — true non-extractable
+  signing, but RSA ≠ our Ed25519 format, so it's a *second, parallel* attestation
+  identity, not a drop-in for event signatures.
+- **(c) External secure element** (ATECC608 = NIST P-256 — still not Ed25519) — a
+  format change *plus* a board respin; skip unless a customer requires it.
+
+The firmware seam for this already exists as a sketch — the `securacv_crypto_hal_t`
+HAL in `docs/openipc_architecture_learnings.md` ("swap software Ed25519 for
+hardware later, change one HAL impl") — and `docs/review/01-flag-report.md` (P3)
+already lists "add hardware-backed keys (Secure Element/eFuse)." So the device
+side is a **firmware provisioning + HAL** task, not new kernel crypto.
 
 ---
 
@@ -315,9 +406,10 @@ them. Explicit checks:
   distinct-trustee count, the single-use nonce burn, and the immutable receipt
   chain are unchanged. Hardware tokens make trustees *more* independently
   controlled (a physical YubiKey per trustee), directly serving "quorum approvals
-  MUST originate from independently controlled principals or devices." Putting the
-  master key in a TPM is the literal form of "distinct, **device-local** key
-  material."
+  MUST originate from independently controlled principals or devices." Moving the
+  master key onto a plugged-in PKCS#11 token — or the device key into the
+  ESP32-S3's eFuse-locked block — is the literal form of "distinct,
+  **device-local** key material."
 - **Safety properties that must survive every phase:** two-check unseal (token
   validity *and* receipt-outcome check in `vault.unseal`), single-use token burn
   before cleartext, unique-key-per-role (no key does double duty), and — with a
@@ -344,12 +436,22 @@ with zero crypto risk; the hardware phases are gated on physical validation.
 - Tests: a full `init → enroll×m → drill` round-trip in `tests/`; `doctor` red/green cases.
 - **Est.:** ~1–1.5 weeks. **Depends on:** nothing new.
 
-### Phase 2 — `KeyStore` trait + TPM device keys
+### Phase 2 — `KeyStore` trait + host PKCS#11 hardware
 - Introduce the `KeyStore` trait; refactor the file path behind it **behavior-
   identically** (regression-tested against current byte layout).
-- `keystore-tpm` backend: device signing key + vault master key sealed to the TPM.
+- `keystore-pkcs11` backend for the **signing keys** (host device identity +
+  trustee keys — asymmetric, which is all a PIV/smartcard token does). The
+  **symmetric vault master key stays file-backed by default**; putting it in
+  hardware needs an HSM/TPM with symmetric unwrap, *not* a PIV token (§5.1 rule +
+  open decision #1). `keystore-tpm` is optional, built only for hosts that have a
+  TPM — **not the required path** (§5.5).
 - Wire `doctor` to report the live backend; add `vault.keystore` config.
-- **Est.:** ~2–3 weeks. **Depends on:** Phase 1; **a TPM to validate on.**
+- **Est.:** ~2–3 weeks. **Depends on:** Phase 1; **a PKCS#11 token to validate on.**
+- **Device side (parallel, firmware track):** the ESP32-S3 identity is hardened by
+  *burning* `secure_provisioning.md` Phase 2 (eFuse + flash encryption + Secure
+  Boot v2), plus optionally routing signing through a crypto-HAL — see §5.5 and
+  open decision #7. This is firmware provisioning, not kernel crypto, and shares
+  no code with the host `KeyStore`.
 
 ### Phase 3 — Trustee hardware tokens
 - **Trustee-credential decision (must settle first).** Today a trustee is a bare
@@ -386,25 +488,31 @@ with zero crypto risk; the hardware phases are gated on physical validation.
 
 These change what gets built; I'd like your calls before writing code.
 
-1. **Which hardware backend first?** TPM 2.0 (best fit for a Pi/x86 appliance,
-   no extra hardware for the operator) vs. PKCS#11/PIV (enterprise HSMs &
-   smartcards) vs. FIDO2 tokens (cheapest per-trustee, best "independently
-   controlled device" story). My lean: **TPM for the device key first, FIDO2 for
-   trustees second** — but this is yours to weight.
+1. **Which host hardware backing first — and how to custody the *symmetric*
+   master key?** We have **no guaranteed TPM and no secure element** (§5.5).
+   - *Signing keys (asymmetric):* my lean is **PKCS#11 token for the host device
+     key, trustee tokens second**; TPM as an opportunistic extra where present.
+   - *Vault master key (symmetric):* a PIV token **can't** hold it, so choose
+     **(i)** keep it file-backed (default; tokens still back the signing keys) —
+     *my lean*; **(ii)** require an HSM/TPM with symmetric unwrap; or **(iii)**
+     re-wrap the DEK to an asymmetric token key (RSA-OAEP/ECDH) so a PIV token can
+     unwrap it — a deliberate **VLT2 wrap-format change = new crypto**, outside the
+     "no new crypto" default. (§5.1 rule.)
 2. **CLI-first or web-first?** I propose CLI-first (Phase 1 CLI, wizard in Phase
    4) because the CLI is the source of truth and needs no browser to validate. If
    the primary operator persona is non-technical, we could pull the web wizard
    earlier (file-backed) right after Phase 1.
 3. **v1.1 scope cut.** Is v1.1 = *Phase 1 only* (setup UX, still file-backed,
    shippable in ~1.5 weeks and a huge usability jump), or v1.1 = *Phase 1 + 2*
-   (adds TPM, needs hardware)? The roadmap bundles "setup UX + hardware-backed
-   keys" together, but Phase 1 stands alone and I'd argue for shipping it first.
+   (adds host PKCS#11 backing + optional device provisioning, needs hardware)? The
+   roadmap bundles "setup UX + hardware-backed keys" together, but Phase 1 stands
+   alone and I'd argue for shipping it first.
 4. **Security-vs-recovery tradeoff.** Non-extractable hardware keys mean a lost
-   TPM/token = unrecoverable material by design. How much recovery affordance do
-   you want — e.g. an optional sealed off-box backup of the master key (weakens
-   "non-extractable" but saves you from a dead board), or hard "hardware or
-   nothing" (stronger, less forgiving)? This is a values call, not a technical
-   one.
+   token/card (or a burned-out ESP32-S3) = unrecoverable material by design. How
+   much recovery affordance do you want — e.g. an optional sealed off-box backup
+   of the master key (weakens "non-extractable" but saves you from a dead board),
+   or hard "hardware or nothing" (stronger, less forgiving)? This is a values
+   call, not a technical one.
 5. **Do drills belong in CI?** Running a headless drill on every change keeps the
    setup flow honest (our usual drift-gate ethos) but adds a job. Worth it?
 6. **Trustee credential format (Phase 3).** Keep the current Ed25519-only trustee
@@ -413,6 +521,14 @@ These change what gets built; I'd like your calls before writing code.
    a credential-bearing schema so generic FIDO2/WebAuthn keys work too (a
    versioned change to the quorum format)? My lean: **Ed25519-only for v1.1**,
    revisit WebAuthn later. (See §7 Phase 3.)
+7. **ESP32-S3 device identity — how far to harden (§5.5).** The XIAO has no secure
+   element and no hardware Ed25519 signing, so pick: **(a)** Ed25519 protected at
+   rest (eFuse + flash encryption + Secure Boot v2 — keeps the existing signing
+   scheme; mostly already tooled) — *my lean*; **(b)** additionally an RSA
+   attestation identity via the DS peripheral (true non-extractable signing, but a
+   second key/format); or **(c)** an external secure element (board respin, still
+   not Ed25519). Also: do we commit to *burning* Phase 2 provisioning for v1.1, or
+   keep it documented-but-optional?
 
 ---
 
@@ -423,9 +539,10 @@ the honest fallback):
 
 | Key | v1 (today) | v1.1 target (hardware backend selected) |
 |-----|-----------|------------------------------------------|
-| Vault master key | `master.key`, `0600` | Sealed to TPM; unwrap inside device |
-| Device signing key | Seed-derived from config | TPM-held, non-extractable; pinned pubkey |
-| Trustee signing keys | Hex file / browser seed | FIDO2/PIV token per trustee (independently held) |
+| Vault master key (host, **symmetric**) | `master.key`, `0600` | **File-backed by default** (a PIV token can't hold a symmetric key); HSM/TPM with symmetric unwrap where available, or opt-in asymmetric-rewrap of the DEK (new crypto) — decision #1 |
+| Host device signing key (**asymmetric**) | Seed-derived from config | PKCS#11-token-held, non-extractable; pinned pubkey |
+| Trustee signing keys | Hex file / browser seed | PIV/PKCS#11 token per trustee (independently held) |
+| **ESP32-S3 device identity** (separate; §5.5) | Ed25519 in NVS (software) | Ed25519 protected at rest via eFuse + flash encryption + Secure Boot v2 (option (a)) |
 | DB encryption key | `SECURACV_DB_KEY_SEED`, rotatable | Unchanged (already rotatable) |
 | Break-glass token nonce | Single-use, burned pre-cleartext | Unchanged |
 
