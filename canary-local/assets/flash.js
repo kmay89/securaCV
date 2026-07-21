@@ -730,10 +730,27 @@ function renderPicker() {
   manifestState.id = "flash-manifest-state";
   card.append(manifestState);
 
+  // Arrived from the checkup page with a board already in mind (?product=…)?
+  // Lead with just that one — the chip guard still limits the set, so this only
+  // ever narrows within what's valid, never widens it.
+  const preferredId = core.preferredProductId(location.search);
+  const focus = preferredId ? matches.find((p) => p.id === preferredId) : null;
+
   const list = el("div", "flash-products");
-  matches.forEach((p) => list.append(productRow(p)));
+  const rows = matches.map((p) => { const r = productRow(p); list.append(r); return r; });
   if (!matches.length) {
     list.append(el("p", "muted", "No published SecuraCV product targets this chip yet."));
+  }
+  if (focus && matches.length > 1) {
+    // Hide the others, but keep their rows in the DOM so refreshManifestState
+    // still fills every version; one click reveals them.
+    rows.forEach((r) => { if (r.dataset.id !== focus.id) r.style.display = "none"; });
+    const note = el("p", "fineprint flash-focus-note");
+    note.append(document.createTextNode(`Showing ${focus.name} — the firmware you picked. `));
+    const more = el("button", "ghost small", `show the other ${matches.length - 1} for this chip`);
+    more.addEventListener("click", () => { rows.forEach((r) => { r.style.display = ""; }); note.remove(); });
+    note.append(more);
+    card.append(note);
   }
   card.append(list);
   refreshManifestState(); // fills versions/availability once manifest lands

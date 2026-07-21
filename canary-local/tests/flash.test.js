@@ -708,6 +708,23 @@ test("classifyFlashError maps the real Web Serial / esptool failures to advice",
   assert.strictEqual(classifyFlashError("just a string").kind, "unknown");
 });
 
+// ── deep-link focus: /checkup → flash.html?product=… ────────────────────────
+test("preferredProductId reads a safe product hint from the query string", async () => {
+  const { preferredProductId } = await core();
+  assert.strictEqual(preferredProductId("?product=securacv-canary"), "securacv-canary");
+  assert.strictEqual(preferredProductId("?foo=1&product=securacv-canary-sense"), "securacv-canary-sense");
+  assert.strictEqual(preferredProductId(""), null);
+  assert.strictEqual(preferredProductId("?other=x"), null);
+  // Reject anything that isn't a plain id (no injection into DOM ids / selectors).
+  assert.strictEqual(preferredProductId("?product=../../etc"), null);
+  assert.strictEqual(preferredProductId("?product=a b"), null);
+  // Every id the /checkup selector can send resolves to a real catalog product,
+  // so the deep-link never lands on nothing.
+  for (const p of catalog.products) {
+    assert.strictEqual(preferredProductId("?product=" + p.id), p.id);
+  }
+});
+
 // ── catalog guard: a malformed catalog degrades, never crashes the page ──────
 test("validateCatalog passes the shipped catalog and flags real breakage", async () => {
   const { validateCatalog } = await core();

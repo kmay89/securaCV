@@ -98,6 +98,11 @@
     }
   ],
   "downloadBase": "https://github.com/kmay89/securaCV/releases/latest",
+  "flasher": {
+    "url": "https://kmay89.github.io/securaCV/canary-local/flash.html",
+    "productPrefix": "securacv-",
+    "_comment": "The /checkup 'Flash in browser' button deep-links here as flash.html?product=securacv-<id>. Each build_matrix product id maps to the flasher catalog product 'securacv-<id>' in canary-local/devices/flash.json; scripts/lint_build_matrix.py enforces that every mapping resolves, so renaming a flasher product breaks CI instead of the button. Flashing installs the signed RELEASE image for the board (levels are a feature-visibility axis, not separate flasher products) — that keeps it to four curated choices, not a build per level."
+  },
   "provenance": {
     "levels": "firmware/canary/platformio.ini · [env:dev] (~132), [env:release] (~171), [env:full] (~255); base [env] sets -DFEATURE_BLE_STATUS=0 (~66)",
     "featureCatalog": "firmware/canary/platformio.ini per-env -DFEATURE_* + firmware/canary/include/canary_config.h #ifndef defaults (FEATURE_DIAGNOSTICS=1, FEATURE_BLE_STATUS base 0 / full 1, FEATURE_MESH_NETWORK full only, FEATURE_TEST_CONSOLE never set)",

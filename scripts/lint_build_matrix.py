@@ -65,6 +65,7 @@ def main():
     matrix = load_json(FW / "build_matrix.json")
     flavors = load_json(FW / "flavors.json")
     boards = load_json(FW / "boards" / "boards.json")
+    flash_catalog = load_json(ROOT / "canary-local" / "devices" / "flash.json")
     ini_path = FW / "canary" / "platformio.ini"
     cfg_path = FW / "canary" / "include" / "canary_config.h"
     if matrix is None or flavors is None or boards is None:
@@ -138,6 +139,21 @@ def main():
                     if banned in b.get("features", []):
                         err(f"product {p['id']} (flow={p['flow']}) must not list "
                             f"'{banned}' — it's a serial/vision board with no BLE radio in use")
+
+    # ── 2b. flasher deep-link can't rot: every product must resolve to a real
+    #        flasher catalog product (both files live in this repo). ───────────
+    flasher = matrix.get("flasher", {})
+    if not flasher.get("url"):
+        err("build_matrix.json: flasher.url is required for the /checkup Flash button")
+    prefix = flasher.get("productPrefix", "securacv-")
+    if flash_catalog is not None:
+        flash_ids = {p.get("id") for p in flash_catalog.get("products", [])}
+        for p in matrix.get("products", []):
+            want = prefix + p["id"]
+            if want not in flash_ids:
+                err(f"product {p['id']}: flasher catalog has no '{want}' "
+                    f"(canary-local/devices/flash.json) — the Flash-in-browser "
+                    f"deep-link would 404; add it or fix productPrefix")
 
     # ── 3. the matrix must agree with the ini on the BLE/mesh full-only cell ───
     if canary:

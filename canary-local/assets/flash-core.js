@@ -831,6 +831,18 @@ export function classifyFlashError(err) {
       "mode (hold BOOT, tap RESET, release BOOT), and retry." };
 }
 
+// ── deep-link focus (arriving from the website's /checkup selector) ─────────
+// The /checkup "Flash in browser" button links here as ?product=<id>. We honour
+// it only as a FOCUS hint — the picker still shows just the products the
+// detected chip can take (the chip guard always wins), and if the requested id
+// is among them we lead with that one instead of a wall of options. A bad/absent
+// param simply means "show the normal list". Pure + tested.
+export function preferredProductId(search) {
+  let v;
+  try { v = new URLSearchParams(search || "").get("product"); } catch { return null; }
+  return v && /^[a-z0-9-]+$/i.test(v) ? v : null;
+}
+
 // ── catalog shape guard ─────────────────────────────────────────────────────
 // flash.js reads specific fields off devices/flash.json the moment it loads
 // (no_brick.points, recovery[], products[].chip for the chip guard). A valid-
