@@ -13,6 +13,8 @@
 #   · the asset's SHA-256 matches the manifest byte for byte (the pin holds)
 #   · it is a real TFLite (TFL3) Vela command stream for the Ethos-U55
 #     (ethos_u_command_stream present — not an un-compiled passthrough)
+#   · it was compiled with Himax's own Ethos-U55 64-MAC config, not a silent
+#     accelerator-only fallback (manifest vela_source == "himax-config")
 #   · the input tensor is 1×192×192×3 (the Swift-YOLO 192 person model)
 #   · the manifest's flash_addr equals the committed catalog's burn address
 #     (flash.json ← we2-core.js), so the pin and the flasher can't diverge
@@ -86,6 +88,14 @@ jobs:
           )
           if not has_shape:
               fails.append("input tensor is not 1x192x192x3 — not the person Swift-YOLO 192 model")
+
+          # 3b. compiled with Himax's own config, not a silent fallback
+          if man.get("vela_source") != "himax-config":
+              fails.append(f"vela_source is {man.get('vela_source')!r}, not 'himax-config' "
+                           "— the model was not compiled with Himax's Ethos-U55 config")
+          vela = man.get("vela") or {}
+          if vela.get("accelerator") != "ethos-u55-64" or vela.get("memory_mode") != "My_Mem_Mode_Parent":
+              fails.append(f"vela params drifted from the WE2 target: {vela}")
 
           # 4. the pin address equals the flasher's own burn address
           if str(man.get("flash_addr", "")).lower() != str(catalog.get("model_addr", "")).lower():

@@ -21,3 +21,8 @@ Seeed Studio SSCMA model zoo and is licensed under the MIT License:
 SecuraCV redistributes it (Vela-compiled for the module's Ethos-U55 NPU)
 unmodified in behavior, pinned by SHA-256 to each release
 (manifest-vision-model.json).
+
+The Ethos-U55 Vela configuration used to compile it (My_Sys_Cfg /
+My_Mem_Mode_Parent, Ethos-U55 64-MAC at 400 MHz) is Himax's own toolchain
+config, vendored verbatim in .github/workflows/vision-model-release.yml:
+  https://github.com/HimaxWiseEyePlus/ML_FVP_EVALUATION (vela/himax_vela.ini)
