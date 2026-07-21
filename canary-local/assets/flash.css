@@ -483,3 +483,11 @@ button.flash-map-key:hover { color: var(--text); }
   background: #08080a; color: #b9c7b9; border: 1px solid var(--edge, #262626);
   border-radius: 10px; padding: 10px; resize: vertical;
 }
+
+/* ── post-flash proof: verified-identity card ────────────────────────────── */
+.flash-identity {
+  border: 1px solid rgba(3, 169, 244, 0.4);
+  background: rgba(3, 169, 244, 0.06);
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0;
+}
+.flash-identity-head { font-weight: 640; font-size: 15px; color: #bfe6fb; margin-bottom: 6px; }

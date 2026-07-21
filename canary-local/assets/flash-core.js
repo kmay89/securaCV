@@ -1014,6 +1014,59 @@ export function usbBridgeInfo(usbVendorId, usbProductId) {
   };
 }
 
+// ── post-flash proof: the device's own signed self-manifest ─────────────────
+// After flashing, the firmware answers the `j` console command with ONE JSON
+// line — the self-manifest (docs/design/self_star_roadmap.md, schema
+// securacv.canary.manifest/v1): board, firmware, pubkey + fingerprint, health,
+// tamper, seq/boots. Reading it back proves the flash worked end-to-end from
+// the board's own mouth — the same self-verify securacv.com/canary does.
+// Extract + parse the manifest object from a noisy serial buffer; returns the
+// object or null. Tolerant of boot-log text before/after the line.
+const MANIFEST_SCHEMA_PREFIX = "securacv.canary.manifest/";
+
+function matchBrace(s, start) {
+  // Index of the `}` closing the `{` at `start`, string-aware so nested
+  // objects (commands[]) and braces inside strings don't fool it.
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") { if (--depth === 0) return i; }
+  }
+  return -1;
+}
+
+export function parseSelfManifest(text) {
+  const t = String(text || "");
+  const marker = t.indexOf('"' + MANIFEST_SCHEMA_PREFIX);
+  if (marker < 0) return null;
+  const start = t.lastIndexOf("{", marker);
+  if (start < 0) return null;
+  const end = matchBrace(t, start);
+  if (end < 0) return null;
+  try {
+    const obj = JSON.parse(t.slice(start, end + 1));
+    if (obj && typeof obj.schema === "string" && obj.schema.startsWith(MANIFEST_SCHEMA_PREFIX)) {
+      return obj;
+    }
+  } catch { /* partial line — wait for more bytes */ }
+  return null;
+}
+
+// Group a hex fingerprint into readable byte pairs (aa:bb:cc…), capped.
+export function formatFingerprint(hex, maxBytes = 8) {
+  const h = String(hex || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+  if (!h) return "";
+  const pairs = h.match(/.{1,2}/g) || [];
+  const shown = pairs.slice(0, maxBytes).join(":");
+  return pairs.length > maxBytes ? shown + "…" : shown;
+}
+
 // ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
 // One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
 // Public-only by construction: it takes a plain object of already-safe facts

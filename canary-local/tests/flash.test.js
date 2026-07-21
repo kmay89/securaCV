@@ -811,3 +811,32 @@ test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", asy
   // never leaks a field we didn't pass (e.g. wifi/keys aren't inputs at all)
   assert.ok(!/password|ssid|pubkey/i.test(r));
 });
+
+// ── post-flash proof: self-manifest read-back ───────────────────────────────
+test("parseSelfManifest: extracts the signed manifest from a noisy boot log", async () => {
+  const { parseSelfManifest, formatFingerprint } = await core();
+  const m = {
+    schema: "securacv.canary.manifest/v1", board: "xiao-esp32s3", firmware: "2.3.0-wap",
+    git: "abc1234", pubkey: "00112233", pubkey_fp: "aabbccddeeff0011", health: 100,
+    tamper: false, seq: 5, boots: 12,
+    features: ["ota", "ble"], commands: [{ key: "j", name: "self-manifest" }, { key: "h", name: "help" }],
+  };
+  // Real serial output: boot spam, then the JSON line, then more spam.
+  const buf = "rst:0x1 (POWERON)\nSecuraCV canary booting\n" + JSON.stringify(m) + "\nchirp\n";
+  const got = parseSelfManifest(buf);
+  assert.ok(got, "should find the manifest");
+  assert.strictEqual(got.firmware, "2.3.0-wap");
+  assert.strictEqual(got.pubkey_fp, "aabbccddeeff0011");
+  assert.strictEqual(got.health, 100);
+  // nested braces in commands[] must not fool the brace matcher
+  assert.strictEqual(got.commands.length, 2);
+  // no manifest present → null; partial line → null (waits for more bytes)
+  assert.strictEqual(parseSelfManifest("just boot text, no json"), null);
+  assert.strictEqual(parseSelfManifest('{"schema":"securacv.canary.manifest/v1","board":"xia'), null);
+  // a JSON object that isn't the manifest schema → null
+  assert.strictEqual(parseSelfManifest('{"schema":"something.else/v1"}'), null);
+  // fingerprint formatting
+  assert.strictEqual(formatFingerprint("aabbccddeeff0011"), "aa:bb:cc:dd:ee:ff:00:11");
+  assert.strictEqual(formatFingerprint("aabbccddeeff00112233"), "aa:bb:cc:dd:ee:ff:00:11…");
+  assert.strictEqual(formatFingerprint(""), "");
+});

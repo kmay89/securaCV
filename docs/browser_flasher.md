@@ -80,6 +80,23 @@ These sit on top of what was already there: automatic pre-flash backup,
 auto-reconnect across native-USB re-enumeration, chunked reads with per-chunk
 retry, and a manual rescue flow.
 
+The baud ladder heals *write-time* failures too, not just connect: a flaky
+cable can sync at 921600 but time out mid-transfer, so a failed install lowers
+the baud ceiling a rung and the retry writes at the gentler speed (reset for a
+fresh board). And the "Clean install" escalation carries the product you were
+installing into the rescue, so it can't default to the wrong firmware.
+
+## Post-flash proof
+
+"Watch it boot & prove itself →" doesn't just stream the log — it asks the
+running firmware for its **signed self-manifest** (`j`, schema
+`securacv.canary.manifest/v1`) and shows a verified-identity card: board,
+firmware version, **key fingerprint**, health, and boot count, read straight
+from the board over the cable. It's the flash proven from the device's own
+mouth — the same self-verify [`securacv.com/canary`](self_star_roadmap.md) does
+— and it never leaves the page. Variants without a serial console simply don't
+show the card (the boot log still streams). (`parseSelfManifest`.)
+
 ## How it fits the release system
 
 ```
