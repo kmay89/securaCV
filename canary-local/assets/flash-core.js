@@ -205,6 +205,23 @@ export function isRealPubkey(pubkeyHex) {
   return p.length === 32 && !p.every((b) => b === 0);
 }
 
+// How a DOWNLOADED (manifest) image must be verified — fail-closed by design.
+// Once a real release key is pinned, an official manifest MUST carry a valid
+// signature: verifying only "if a signature happens to be present" would let a
+// tampered manifest strip the signature and re-point an updated SHA-256 at a
+// malicious image (the exact substitution the signature check exists to stop).
+// Returns:
+//   "verify"            — real key + signature present → must verify (refuse on fail)
+//   "require-signature" — real key, official manifest, NO signature → refuse
+//   "checksum-only"     — no key yet (pre-ceremony), or a self-hosted manifest
+//                         the user explicitly pointed at (?manifest=)
+// Local files (Advanced) never reach here — they're fingerprinted, not verified.
+export function imageVerificationPolicy({ keyReal, hasSignature, selfHosted }) {
+  if (!keyReal) return "checksum-only";
+  if (hasSignature) return "verify";
+  return selfHosted ? "checksum-only" : "require-signature";
+}
+
 // Verify a firmware image's Ed25519 release signature against the pinned public
 // key. Returns true ONLY on a genuine verification; anything missing/malformed
 // (no signature, placeholder key, wrong lengths) returns false so the caller

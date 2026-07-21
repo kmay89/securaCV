@@ -798,3 +798,16 @@ test("manifestEntry passes the signature + key id through", async () => {
   assert.strictEqual(e.signature, "ab".repeat(64));
   assert.strictEqual(e.signingKeyId, "0011223344556677");
 });
+
+test("imageVerificationPolicy: fail-closed once a real key is pinned", async () => {
+  const { imageVerificationPolicy } = await core();
+  // Real key + signature → must verify.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: true, selfHosted: false }), "verify");
+  // Real key + official manifest + NO signature → REFUSE (the P1 hole).
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false }), "require-signature");
+  // Real key + self-hosted manifest without a signature → user opted in → checksum-only.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "checksum-only");
+  // No key yet (pre-ceremony) → checksum-only regardless.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: false }), "checksum-only");
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: true, selfHosted: false }), "checksum-only");
+});

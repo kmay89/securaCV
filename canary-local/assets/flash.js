@@ -962,10 +962,15 @@ function phaseConfirm(product, entry) {
   sum.append(fact("Firmware", `${product.name} · v${entry.version}`));
   sum.append(fact("For chip", entry.chipFamily));
   sum.append(fact("Size", core.formatBytes(entry.size)));
+  const vpolicy = core.imageVerificationPolicy({
+    keyReal: core.isRealPubkey(state.catalog.release_pubkey),
+    hasSignature: !!entry.signature,
+    selfHosted: !!state.manifestOverride,
+  });
   sum.append(fact("Verified by",
-    (entry.signature && core.isRealPubkey(state.catalog.release_pubkey))
-      ? "Ed25519 signature + SHA-256 · chip MD5 after"
-      : "SHA-256 before · chip MD5 after"));
+    vpolicy === "verify" ? "Ed25519 signature + SHA-256 · chip MD5 after"
+      : vpolicy === "require-signature" ? "⚠ unsigned build — this will be refused"
+        : "SHA-256 before · chip MD5 after"));
   box.append(sum);
 
   const willBackup = state.flashBytes && !skipBackup && !haveBackupForThisBoard();
@@ -1162,11 +1167,22 @@ async function startFlash(opts) {
       }
       shaHex = got.toLowerCase();
       shaSigned = true;
-      // 2b) Beyond the checksum: when the release carries an Ed25519 signature
-      // and the pinned key is provisioned, verify it in-browser — the same
-      // proof the device does, so a swapped-but-checksummed image (a
-      // compromised release or host) is refused on the USB channel too.
-      if (opts.entry.signature && core.isRealPubkey(state.catalog.release_pubkey)) {
+      // 2b) Fail closed: once a REAL release key is pinned, an official manifest
+      // MUST carry a valid Ed25519 signature. Verifying only "if a signature is
+      // present" would let a tampered manifest strip the signature and re-point
+      // an updated SHA-256 at a malicious image — the exact substitution this
+      // check exists to stop. (imageVerificationPolicy encodes the fail-closed
+      // rule; checksum-only is reserved for pre-key and self-hosted manifests.)
+      const policy = core.imageVerificationPolicy({
+        keyReal: core.isRealPubkey(state.catalog.release_pubkey),
+        hasSignature: !!opts.entry.signature,
+        selfHosted: !!state.manifestOverride,
+      });
+      if (policy === "require-signature") {
+        throw new Error("This official release is missing its Ed25519 signature, but a " +
+          "signing key is in force — refusing to flash it. A stripped signature can mean " +
+          "a tampered release manifest. Nothing was written.");
+      } else if (policy === "verify") {
         sigChecked = true;
         sigVerified = await core.verifyImageSignature(
           opts.entry.signature, state.catalog.release_pubkey,
