@@ -12,6 +12,7 @@ import { parseSTL } from "./stl.js";
 import { parseGLB } from "./glb.js";
 import { Assembly, PARTS, M } from "./assembly.js";
 import { validateDevice, itemize, fmtDims, fmtLen, UNIT_MODES } from "./assembly-rules.js";
+import { activeFinish } from "./finishes.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -77,7 +78,11 @@ export function buildAssemblyLab(asmData, buildData, deviceId) {
   obs.observe(cv);
 
   (async () => {
-    const pal = asmData.palette || {};
+    // the shell/shell2/gasket tokens resolve to the ACTIVE finish (the
+    // printed parts follow whatever filament the gallery is showing); any
+    // other named token falls back to assembly.json's own palette
+    const fin = activeFinish();
+    const pal = { ...(asmData.palette || {}), shell: fin.shell, shell2: fin.shell2, gasket: fin.gasket };
     const colorOf = (c) => (Array.isArray(c) ? c : pal[c]) || [0.5, 0.5, 0.5];
 
     // raw-frame bbox of a resolved part (STL/board: the parse; proc: its
