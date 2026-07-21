@@ -71,6 +71,13 @@ USBONB_BIN = $(BUILD_DIR)/test_usb_onboard_logic
 TESTCON_HDR = ../common/health/test_console.h
 TESTCON_BIN = $(BUILD_DIR)/test_test_console
 
+# Console scene engine (common/ui/*.h): proves the drunken-bishop randomart is a
+# faithful, deterministic, bounded walk, and — the anti-fragile guarantee — that
+# the ASCII tier never emits an escape or non-7-bit byte and every framed line
+# aligns to the same width. Pure headers, no Arduino deps.
+SCENE_HDRS = ../common/ui/randomart.h ../common/ui/console_theme.h ../common/ui/console_scenes.h
+SCENE_BIN = $(BUILD_DIR)/test_console_scene
+
 .PHONY: all run clean
 all: run
 
@@ -98,7 +105,10 @@ $(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
 $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_test_console.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN)
+$(SCENE_BIN): test_console_scene.cpp $(SCENE_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_console_scene.cpp -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(SCENE_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -106,6 +116,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WITSTORE_BIN)
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
+	./$(SCENE_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)

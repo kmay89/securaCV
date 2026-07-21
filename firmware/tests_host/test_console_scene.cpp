@@ -1,0 +1,200 @@
+/* Host tests for the console scene engine + randomart (firmware/common/ui).
+ *
+ * Proves the two properties that make a themed serial console safe rather than
+ * fragile:
+ *   1. RANDOMART is a faithful, deterministic drunken-bishop walk — the trust
+ *      centrepiece must be stable and bounded.
+ *   2. The ASCII tier NEVER emits an escape byte or a non-7-bit byte, and every
+ *      framed line aligns to the same width — so on an unknown terminal the
+ *      banner degrades to clean text instead of `^[[..m` garbage (which our own
+ *      flasher would flag as wrong-baud).
+ *
+ * Build & run (CI firmware host tests):
+ *   g++ -std=c++17 -Wall -Wextra -Werror -I ../common \
+ *       test_console_scene.cpp -o /tmp/t && /tmp/t
+ */
+#include <cstdio>
+#include <cstring>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "ui/randomart.h"
+#include "ui/console_theme.h"
+#include "ui/console_scenes.h"
+
+using namespace scene;
+
+static int g_failures = 0;
+#define CHECK(cond)                                                      \
+  do {                                                                   \
+    if (!(cond)) {                                                       \
+      std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+      g_failures++;                                                      \
+    }                                                                    \
+  } while (0)
+
+// ── a sink that collects into a std::string ─────────────────────────────────
+struct Sink { std::string s; };
+static void collect(void* ctx, const char* str) { ((Sink*)ctx)->s += str; }
+
+static std::vector<std::string> split_crlf(const std::string& s) {
+  std::vector<std::string> out;
+  size_t i = 0;
+  while (i < s.size()) {
+    size_t j = s.find("\r\n", i);
+    if (j == std::string::npos) { out.push_back(s.substr(i)); break; }
+    out.push_back(s.substr(i, j - i));
+    i = j + 2;
+  }
+  return out;
+}
+
+static const uint8_t KEY_A[8] = { 0x9b, 0x2c, 0xff, 0x01, 0x44, 0xa0, 0x7e, 0x33 };
+static const uint8_t KEY_B[8] = { 0x9b, 0x2c, 0xff, 0x01, 0x44, 0xa0, 0x7e, 0x32 }; // 1 bit diff
+
+static TrustInfo sample(const uint8_t* key, size_t len) {
+  TrustInfo t{};
+  t.device_id = "canary-7fA3";
+  t.firmware = "2.2.0";
+  t.git = "abc1234";
+  t.built = "2026-07-21";
+  t.chain_head_hex = "3f9ac10b";
+  t.key_fp_hex = "9b2cff0144a07e33";
+  t.seq = 41; t.boots = 12; t.health = 100; t.tamper = false;
+  t.key_bytes = key; t.key_len = len;
+  return t;
+}
+
+// ── randomart ────────────────────────────────────────────────────────────────
+static void test_randomart_walk() {
+  uint8_t f1[RANDOMART_H][RANDOMART_W], f2[RANDOMART_H][RANDOMART_W];
+  randomart_field(KEY_A, 8, f1);
+  randomart_field(KEY_A, 8, f2);
+  // Deterministic.
+  CHECK(memcmp(f1, f2, sizeof f1) == 0);
+
+  // Start marker at the centre; End marker exists exactly once elsewhere-or-not.
+  CHECK(f1[RANDOMART_H / 2][RANDOMART_W / 2] == (uint8_t)(RANDOMART_LEN - 1)); // 'S'
+  int ends = 0, starts = 0;
+  for (int y = 0; y < RANDOMART_H; ++y)
+    for (int x = 0; x < RANDOMART_W; ++x) {
+      if (f1[y][x] == (uint8_t)RANDOMART_LEN) ends++;
+      if (f1[y][x] == (uint8_t)(RANDOMART_LEN - 1)) starts++;
+      // every value maps into the ramp
+      CHECK(randomart_glyph(f1[y][x]) != '\0');
+    }
+  CHECK(starts == 1);
+  CHECK(ends == 1);
+
+  // A one-bit change in the key visibly changes the art.
+  uint8_t fb[RANDOMART_H][RANDOMART_W];
+  randomart_field(KEY_B, 8, fb);
+  CHECK(memcmp(f1, fb, sizeof f1) != 0);
+
+  // Glyph ramp: 0=space, 1='.', markers 'S'/'E'.
+  CHECK(randomart_glyph(0) == ' ');
+  CHECK(randomart_glyph(1) == '.');
+  CHECK(randomart_glyph(RANDOMART_LEN - 1) == 'S');
+  CHECK(randomart_glyph(RANDOMART_LEN) == 'E');
+  CHECK(randomart_glyph(200) == 'E'); // clamped, never out of bounds
+}
+
+static void test_randomart_all_zero() {
+  // All-zero bytes: every step is up-left → the bishop clamps into the top-left
+  // corner. Start stays centred; End lands at (0,0).
+  uint8_t z[16]; memset(z, 0, sizeof z);
+  uint8_t f[RANDOMART_H][RANDOMART_W];
+  randomart_field(z, sizeof z, f);
+  CHECK(f[RANDOMART_H / 2][RANDOMART_W / 2] == (uint8_t)(RANDOMART_LEN - 1)); // 'S' centre
+  CHECK(f[0][0] == (uint8_t)RANDOMART_LEN);                                   // 'E' corner
+  // Empty input is safe and degenerate: with no walk, start == end == centre,
+  // so the End marker (written last) sits on the centre. Just must not crash.
+  uint8_t f0[RANDOMART_H][RANDOMART_W];
+  randomart_field(nullptr, 0, f0);
+  CHECK(f0[RANDOMART_H / 2][RANDOMART_W / 2] == (uint8_t)RANDOMART_LEN); // 'E'
+}
+
+// ── the ASCII tier is escape-free, 7-bit, and width-aligned ──────────────────
+static void test_ascii_tier_is_safe() {
+  Sink sk;
+  Renderer r{collect, &sk, caps_ascii()};
+  TrustInfo t = sample(KEY_A, 8);
+  trust_card(r, t);
+
+  // 1. No ESC byte, and every byte is 7-bit ASCII (no UTF-8 borders leaked).
+  for (unsigned char c : sk.s) {
+    CHECK(c != 0x1b);
+    CHECK(c < 0x80);
+  }
+  // 2. Every framed line is the same visible width (content is ASCII → bytes ==
+  //    columns, so string length is the width).
+  auto lines = split_crlf(sk.s);
+  size_t w = 0;
+  for (auto& ln : lines) {
+    if (ln.empty()) continue;
+    if (!w) w = ln.size();
+    CHECK(ln.size() == w);
+  }
+  CHECK(w == (size_t)(TRUST_INNER + 2)); // 54
+  // 3. The identity actually appears.
+  CHECK(sk.s.find("canary-7fA3") != std::string::npos);
+  CHECK(sk.s.find("9b2cff0144a07e33") != std::string::npos);
+  CHECK(sk.s.find("3f9ac10b") != std::string::npos);
+  CHECK(sk.s.find("2.2.0") != std::string::npos);
+  // 4. ASCII borders, not Unicode.
+  CHECK(sk.s.find('+') != std::string::npos);
+  CHECK(sk.s.find("\xe2\x94\x8c") == std::string::npos); // no ┌
+  // 5. The randomart Start marker is present.
+  CHECK(sk.s.find('S') != std::string::npos);
+}
+
+// ── the full tier does light up (colour + Unicode) ──────────────────────────
+static void test_full_tier_lights_up() {
+  Sink sk;
+  Renderer r{collect, &sk, caps_full(100, 40)};
+  TrustInfo t = sample(KEY_A, 8);
+  trust_card(r, t);
+  CHECK(sk.s.find("\x1b[") != std::string::npos);          // has SGR/escapes
+  CHECK(sk.s.find("\xe2\x94\x8c") != std::string::npos);   // has ┌ (Unicode border)
+  CHECK(sk.s.find("\x1b[0m") != std::string::npos);        // resets colour
+  CHECK(sk.s.find("canary-7fA3") != std::string::npos);
+  // Cursor is never left hidden by a static scene.
+  CHECK(sk.s.find("\x1b[?25l") == std::string::npos);
+}
+
+// ── health colours carry a word too (WCAG 1.4.1) ────────────────────────────
+static void test_health_has_a_word_not_just_colour() {
+  for (int h : {100, 70, -1}) {
+    Sink sk;
+    Renderer r{collect, &sk, caps_full(90, 30)};
+    TrustInfo t = sample(KEY_A, 8);
+    t.health = h;
+    trust_card(r, t);
+    const char* word = h < 0 ? "unknown" : (h >= 100 ? "nominal" : "degraded");
+    CHECK(sk.s.find(word) != std::string::npos);
+  }
+}
+
+// ── the tamper state is loud in text, not colour alone ──────────────────────
+static void test_tamper_is_worded() {
+  Sink sk;
+  Renderer r{collect, &sk, caps_ascii()};
+  TrustInfo t = sample(KEY_A, 8);
+  t.tamper = true;
+  trust_card(r, t);
+  CHECK(sk.s.find("TAMPER") != std::string::npos);
+}
+
+int main() {
+  test_randomart_walk();
+  test_randomart_all_zero();
+  test_ascii_tier_is_safe();
+  test_full_tier_lights_up();
+  test_health_has_a_word_not_just_colour();
+  test_tamper_is_worded();
+
+  if (g_failures == 0) { std::printf("PASS test_console_scene (all assertions)\n"); return 0; }
+  std::printf("FAILED: %d assertion(s)\n", g_failures);
+  return 1;
+}
