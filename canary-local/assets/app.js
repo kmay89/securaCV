@@ -8,7 +8,7 @@
 // setup path. Everything works offline; nothing phones anywhere.
 
 import { DeviceScene, BUILDERS } from "./scene3d.js";
-import { buildFinishPicker, onFinishChange } from "./finishes.js";
+import { buildFinishPicker, startFinishShowcase, hasUserChoice } from "./finishes.js";
 import { fmtLen, UNIT_MODES } from "./assembly-rules.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { buildEnclosureLab } from "./enclosure-lab.js";
@@ -60,8 +60,13 @@ async function main() {
   $("#fw-train").textContent = `firmware train ${state.registry.fw_train}`;
   mountFinishPicker();
   renderCards();
-  // repaint every live scene when the filament finish changes
-  onFinishChange(repaintFinish);
+  // The models cross-fade to the active finish live (role-tagged shell parts
+  // read it per-frame — no rebuild). On a first visit, run the ambient
+  // showcase: a slow, calm cycle through the palette that demos customisation
+  // until the visitor picks a swatch. Honour a saved choice and reduced motion.
+  if (!hasUserChoice() && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    startFinishShowcase();
+  }
   // Deep link from the chooser: index.html#<device-id> opens its sheet.
   const target = decodeURIComponent(location.hash.slice(1));
   const dev = state.registry.devices.find((d) => d.id === target);
@@ -76,21 +81,6 @@ function mountFinishPicker() {
   bar.append(el("span", "finish-bar-cap", "Finish"), buildFinishPicker());
   const fine = hero.querySelector(".fineprint");
   hero.insertBefore(bar, fine || null);
-}
-
-// re-run every card builder (+ real-shape upgrade) and the open sheet's hero
-// scene, so a filament swap re-lines the whole gallery live. The builders and
-// upgradeRealShape both read the active finish, so this is just a rebuild.
-function repaintFinish() {
-  for (const { scene, dev } of state.cards.values()) {
-    (BUILDERS[dev.id] || BUILDERS["canary-wap"])(scene);
-    upgradeRealShape(scene, dev.id);
-  }
-  const sh = state.sheet;
-  if (sh?.scene && sh.dev) {
-    (BUILDERS[sh.dev.id] || BUILDERS["canary-wap"])(sh.scene);
-    upgradeRealShape(sh.scene, sh.dev.id);
-  }
 }
 
 function renderCards() {
