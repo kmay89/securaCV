@@ -60,7 +60,9 @@ enum class Page {
   CalWarn,
   CalDone,
   ResetConfirm,
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
   DevConfirm,   // dash + FEATURE_DEVMODE: reboot into the peripheral bench
+#endif
 };
 
 // Tap-zone ids. Zones are the built objects themselves — hit-testing reads
@@ -68,7 +70,10 @@ enum class Page {
 enum : int {
   IT_BACK = 1,
   IT_ROW_DAY, IT_ROW_NIGHT, IT_ROW_HOURS, IT_ROW_LOOK, IT_ROW_SCREEN,
-  IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD, IT_ROW_DEV,
+  IT_ROW_STYLE, IT_ROW_CAL, IT_ROW_RESET, IT_ROW_ADD,
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+  IT_ROW_DEV,
+#endif
   IT_MINUS, IT_PLUS, IT_OPT_A, IT_OPT_B, IT_PEEK, IT_GO,
   IT_YES, IT_NO,
 };
@@ -607,11 +612,9 @@ void build(Page pg) {
     case Page::CalWarn:      build_cal_warn(); break;
     case Page::CalDone:      build_cal_done(); break;
     case Page::ResetConfirm: build_reset_confirm(); break;
-    case Page::DevConfirm:
 #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-      build_dev_confirm();
+    case Page::DevConfirm:   build_dev_confirm(); break;
 #endif
-      break;
   }
 }
 
@@ -830,25 +833,25 @@ void dispatch(int id) {
       build(Page::Root);
       return;
 
-    case Page::DevConfirm:
 #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+    case Page::DevConfirm:
       if (id == IT_YES) {
         // Latch dev mode for the NEXT boot, then reboot into the bench. It
         // comes up network-silent (main.cpp reads this latch and skips
         // WiFi/MQTT/OTA); the bench's own "exit dev mode" clears it and
         // reboots back to the fleet face.
         Preferences p;
-        if (p.begin(CD_DEVMODE_NVS_NS, /*readOnly=*/false)) {
-          p.putBool(CD_DEVMODE_NVS_KEY, true);
+        if (p.begin("securacv", /*readOnly=*/false)) {
+          p.putBool("devmode", true);
           p.end();
         }
         delay(60);
         ESP.restart();   // does not return
         return;
       }
-#endif
       build(Page::Root);  // "stay" / back
       return;
+#endif
   }
 }
 

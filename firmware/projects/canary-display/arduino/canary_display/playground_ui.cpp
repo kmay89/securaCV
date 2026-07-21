@@ -9,7 +9,7 @@
 // engines it bypasses. Dual-major LVGL: sticks to the v8/v9-stable API
 // subset (objects, labels, styles) — no widgets, no indev.
 #include "flavor_config.h"
-#if CD_PLAYGROUND_BUILD && defined(CD_FLAVOR_DASH)  // FEATURE_PLAYGROUND or FEATURE_DEVMODE
+#if (((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))) && defined(CD_FLAVOR_DASH)
 
 #include <Arduino.h>
 #include <lvgl.h>
@@ -564,4 +564,4 @@ void playground_ui_handle_tap(int16_t x, int16_t y) {
 
 }  // namespace canary::playground
 
-#endif  // CD_PLAYGROUND_BUILD && CD_FLAVOR_DASH
+#endif  // (FEATURE_PLAYGROUND || FEATURE_DEVMODE) && CD_FLAVOR_DASH

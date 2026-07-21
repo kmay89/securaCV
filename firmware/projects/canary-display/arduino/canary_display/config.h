@@ -51,19 +51,14 @@
 #define FEATURE_DEVMODE 0
 #endif
 
-// The peripheral bench (playground) code is compiled whenever EITHER the
-// dedicated bench flavor (FEATURE_PLAYGROUND) or the in-firmware dev mode
-// (FEATURE_DEVMODE) is on. Both are dash + 4.3B only.
-#if (defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || \
-    (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE)
-#define CD_PLAYGROUND_BUILD 1
-#else
-#define CD_PLAYGROUND_BUILD 0
-#endif
-
-// NVS namespace/key the dev-mode latch lives in (shared "securacv" store).
-#define CD_DEVMODE_NVS_NS  "securacv"
-#define CD_DEVMODE_NVS_KEY "devmode"
+// NOTE: the "compile the peripheral bench" guard and the dev-mode NVS latch are
+// written out INLINE at each use site, NOT as macros here — the playground and
+// settings translation units include the flavor <config.h>, not this
+// composition header, so a macro defined here wouldn't be visible to them (and
+// the linker would silently drop the bench). The guard everywhere is:
+//     ((FEATURE_PLAYGROUND) || (FEATURE_DEVMODE)) [&& CD_FLAVOR_DASH]
+// — both are -D command-line flags, so they resolve in every TU — and the latch
+// is Preferences("securacv").{get,put}Bool("devmode", ...).
 
 // -------------------- Identity --------------------
 static constexpr const char* DEVICE_TYPE   = CD_DEVICE_TYPE;

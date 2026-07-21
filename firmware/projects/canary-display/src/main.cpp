@@ -81,7 +81,7 @@
 #include "canary/hal/chime.h"
 #include "canary/hal/core_compat.h"
 #include "canary/glass_settings.h"
-#if CD_PLAYGROUND_BUILD
+#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
 #include "canary/playground/playground.h"
 #include <Preferences.h>
 // True once this boot handed the device to the peripheral bench (dedicated
@@ -671,7 +671,7 @@ void setup() {
   boot_scene_banner(&bi);
   boot_scene_hardware(&bi);
 
-#if CD_PLAYGROUND_BUILD
+#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
   // Peripheral bench (docs/hardware/dev_playground_43b.md): the guided test
   // suite owns the device from here. Enter it when EITHER this is the dedicated
   // bench build (FEATURE_PLAYGROUND) or the shipped firmware's dev-mode latch
@@ -687,8 +687,8 @@ void setup() {
   #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
     if (!enter_bench) {                 // shipped firmware: only if the latch is set
       Preferences p;
-      if (p.begin(CD_DEVMODE_NVS_NS, /*readOnly=*/true)) {
-        enter_bench = p.getBool(CD_DEVMODE_NVS_KEY, false);
+      if (p.begin("securacv", /*readOnly=*/true)) {
+        enter_bench = p.getBool("devmode", false);
         p.end();
       }
     }
@@ -902,7 +902,7 @@ void setup() {
 }
 
 void loop() {
-#if CD_PLAYGROUND_BUILD
+#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
   if (s_devmode_active) {
     canary::playground::playground_loop();
     return;

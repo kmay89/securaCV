@@ -15,7 +15,7 @@
 //     drive is bounded: pulses are 1.5 s, latches auto-release after 30 s.
 //   - No network stack runs in this mode (main.cpp never initializes it).
 #include "flavor_config.h"
-#if CD_PLAYGROUND_BUILD && defined(CD_FLAVOR_DASH)  // FEATURE_PLAYGROUND or FEATURE_DEVMODE
+#if (((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))) && defined(CD_FLAVOR_DASH)
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -463,8 +463,8 @@ void playground_loop() {
       do_drive(0, false);
       do_drive(1, false);
       Preferences p;
-      if (p.begin(CD_DEVMODE_NVS_NS, /*readOnly=*/false)) {
-        p.putBool(CD_DEVMODE_NVS_KEY, false);
+      if (p.begin("securacv", /*readOnly=*/false)) {
+        p.putBool("devmode", false);
         p.end();
       }
       delay(60);
@@ -568,4 +568,4 @@ void playground_loop() {
 
 }  // namespace canary::playground
 
-#endif  // CD_PLAYGROUND_BUILD && CD_FLAVOR_DASH
+#endif  // (FEATURE_PLAYGROUND || FEATURE_DEVMODE) && CD_FLAVOR_DASH
