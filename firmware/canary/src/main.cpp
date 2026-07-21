@@ -140,6 +140,7 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "ui/randomart.h"
 #include "ui/console_theme.h"
 #include "ui/console_scenes.h"
+#include "ui/console_wake.h"
 #endif
 
 // Optional ESP-IDF provenance APIs for the 'f' fingerprint command. Guarded by
@@ -2092,6 +2093,9 @@ static const testcon::Command kConsoleCommands[] = {
   { 'w', "tamper-log",   testcon::Tier::Diag, false, false, false },
 #if FEATURE_CONSOLE_THEME
   { 'l', "identity-banner", testcon::Tier::Diag, false, false, false },
+#if FEATURE_DIAGNOSTICS
+  { 'a', "wake-selftest",   testcon::Tier::Diag, false, false, false },
+#endif
 #endif
 };
 static const size_t kConsoleCommandCount =
@@ -2168,7 +2172,9 @@ static scene::Caps console_probe() {
 
 // 'l' — the identity banner: the device's verifiable trust card, with its
 // public-key fingerprint drawn as drunken-bishop randomart. Read-only.
-static void show_identity_banner() {
+// Build the trust card from live device state and render it via `r` (whose caps
+// were already chosen — by a fresh probe, or reused from the wake sequence).
+static void render_trust_card(const scene::Renderer& r) {
   DeviceIdentity& dev = witness_get_device();
   char fp[17];
   for (int i = 0; i < 8; ++i) snprintf(fp + i * 2, 3, "%02x", dev.pubkey_fp[i]);
@@ -2193,10 +2199,70 @@ static void show_identity_banner() {
   t.key_bytes = dev.pubkey;
   t.key_len = 32;
 
-  scene::Renderer r{theme_emit, nullptr, console_probe()};
   Serial.print("\r\n");
   scene::trust_card(r, t);
 }
+
+static void show_identity_banner() {
+  scene::Renderer r{theme_emit, nullptr, console_probe()};
+  render_trust_card(r);
+}
+
+#if FEATURE_DIAGNOSTICS
+// 'a' — the animated wake: the 10 self-test probes light up [..] -> [OK]/[!!]
+// as they report (real per-probe results), then it settles into the identity
+// card. On a confirmed ANSI terminal the fixed-height block repaints in place;
+// on the plain ASCII floor there's no cursor control, so it prints the finished
+// checklist once. Press any key to skip the reveal. Read-only (Tier::Diag).
+static void run_wake() {
+  scene::Caps caps = console_probe();
+  scene::Renderer r{theme_emit, nullptr, caps};
+  Serial.print("\r\nWaking - running self-test...\r\n");
+  diag_run_selftest();                 // the real run (~2-5s), fills the report
+  selftest_report_t st;
+  if (!diag_get_selftest(&st)) { render_trust_card(r); return; }
+
+  int n = st.total_count;
+  if (n > SELFTEST_COUNT) n = SELFTEST_COUNT;
+  scene::WakeProbe probes[SELFTEST_COUNT];
+  for (int i = 0; i < n; ++i) {
+    probes[i].label = st.tests[i].name;
+    probes[i].state = scene::ProbeState::Pending;
+    probes[i].ms = st.tests[i].duration_ms;
+  }
+
+  if (!caps.ansi) {
+    // ASCII floor: no cursor control — reveal all and print the block once.
+    for (int i = 0; i < n; ++i)
+      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
+                                           : scene::ProbeState::Fail;
+    scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
+  } else {
+    scene::hide_cursor(r);
+    scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, false);
+    bool skipped = false;
+    for (int i = 0; i < n && !skipped; ++i) {
+      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
+                                           : scene::ProbeState::Fail;
+      scene::cursor_up(r, scene::wake_height(n));
+      scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, i == n - 1);
+      uint32_t until = millis() + 180;
+      while (millis() < until) {
+        if (Serial.available()) { Serial.read(); skipped = true; break; }
+      }
+    }
+    if (skipped) {
+      for (int j = 0; j < n; ++j)
+        probes[j].state = st.tests[j].passed ? scene::ProbeState::Pass
+                                             : scene::ProbeState::Fail;
+      scene::cursor_up(r, scene::wake_height(n));
+      scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
+    }
+    scene::show_cursor(r);
+  }
+  render_trust_card(r);
+}
+#endif  // FEATURE_DIAGNOSTICS
 #endif  // FEATURE_CONSOLE_THEME
 
 static void handle_serial_commands() {
@@ -2237,6 +2303,9 @@ static void handle_serial_commands() {
       Serial.println("  t - Run all tests (self-test + feature health + Bluetooth)");
 #if FEATURE_CONSOLE_THEME
       Serial.println("  l - Identity banner (key fingerprint as randomart)");
+#if FEATURE_DIAGNOSTICS
+      Serial.println("  a - Animated wake (watch the self-test run live)");
+#endif
 #endif
       Serial.println("  c - Attest chain (sign a nonce + chain head: c <nonce>)");
       Serial.println("  f - Fingerprint / provenance (version, secure-boot, keys)");
@@ -2658,6 +2727,12 @@ static void handle_serial_commands() {
     case 'L':
       show_identity_banner();
       break;
+#if FEATURE_DIAGNOSTICS
+    case 'a':
+    case 'A':
+      run_wake();
+      break;
+#endif
 #endif
 
     case 'x':

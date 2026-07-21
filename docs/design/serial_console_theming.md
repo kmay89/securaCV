@@ -101,6 +101,7 @@ A pure, host-testable engine with a thin serial adapter — the same shape as
 | `firmware/common/ui/randomart.h` | The drunken-bishop walk (pure, deterministic, bounded). Hash-agnostic; we feed it the public key. |
 | `firmware/common/ui/console_theme.h` | `Caps` (the capability tier) + `Renderer` (colour/border primitives, gated) + panel primitives (`hrule`, `row`, `center_into`). |
 | `firmware/common/ui/console_scenes.h` | The `trust_card` scene, composed from the above. |
+| `firmware/common/ui/console_wake.h` | The animated-wake frames + gated cursor-control helpers (the `a` command). |
 | `firmware/tests_host/test_console_scene.cpp` | Proves the randomart walk and the ASCII-tier safety + alignment invariants. |
 | `firmware/canary/src/main.cpp` | The `l` command: `console_probe()` → build `TrustInfo` from `witness_get_device()` → `trust_card`. |
 
@@ -117,19 +118,44 @@ over the **MD5** raw digest; we run the identical walk over the **device public
 key** bytes and document that as our fixed convention (the algorithm is
 hash-agnostic given a fixed input string).
 
-## Phase 2 (designed, gated): the animated wake
+## Phase 2 (implemented): the animated wake — `a`
 
-Per the Flipper Zero lesson — its serial CLI banner is *static and robust*; the
-animation lives on the LCD — we keep the serial path's default static and
-correct, and add animation only as a Tier-1, skippable bonus:
+The animation with a job. The `a` command runs the real self-test and reveals
+its ten probes one at a time — `[..] -> [OK]` / `[!!]` with each probe's real
+name + duration — then settles into the identity card. The animation **is** the
+health check, not filler.
 
-- A short "wake" where the self-test's 10 probes light `[ ]→[·]→[✓]` as they run,
-  so the animation **is** the health check, then freezes on the trust card.
-- Rendered by a bounded cell-framebuffer with **diff redraw** (only changed cells
-  emit a cursor-move + glyph — the notcurses/tcell technique), staying inside the
-  ~11.5 KB/s budget at 115200; relative `ESC[nA` + overwrite, never `ESC[2J`.
-- "Press any key to skip"; always converges to the same static end frame so a
+```
++- self-test  (running) -----------------------------+       +- self-test  (complete) ----------------+
+| [OK] NVS read/write                           12ms |       | [OK] NVS read/write               12ms |
+| [OK] Device keys                              40ms |  ...  | [!!] SD card                       5ms |
+| [..] SD card                                       |  -->  | [OK] Wi-Fi radio                   8ms |
+| [~~] Wi-Fi radio                                   |       |  ...                                   |
+| Health    checking...   4/10 reported              |       | Health    90%   9/10 probes passed     |
++----------------------------------------------------+       +----------------------------------------+
+```
+
+Per the Flipper Zero lesson — its serial banner is *static and robust*; the
+animation lives on the LCD — the serial default stays static, and the reveal is
+a **Tier-1, skippable bonus** that degrades cleanly:
+
+- **Confirmed ANSI:** the fixed-height block repaints in place after each probe
+  (`ESC[nA` move-up + overwrite; every row is a fixed width so nothing needs
+  clearing and nothing tears — research strategy #1, well inside the ~11.5 KB/s
+  budget at 115200). Cursor hidden during the reveal, always restored.
+- **ASCII floor:** no cursor control, so it reveals all results and prints the
+  finished checklist **once** — same content, zero escapes.
+- **Press any key to skip:** any RX byte reveals the rest and jumps to the final
+  frame; the sequence always converges to the same static end-state, so a
   scrollback capture is clean.
+- The running frame **never shows the final score** (only "N/10 reported"), so
+  the reveal isn't spoiled — the score appears only on the completed frame.
+
+Pure composition in `firmware/common/ui/console_wake.h`; timing / skip /
+`diag_run_selftest()` live in `main.cpp:run_wake()`. Host-tested: ASCII tier
+escape-free + width-aligned, cursor control emitted only at the ANSI tier,
+markers carry words (`OK`/`!!`, never colour alone), and the running frame hides
+the score.
 
 ## Open-source lineage / licences
 

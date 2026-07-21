@@ -75,7 +75,7 @@ TESTCON_BIN = $(BUILD_DIR)/test_test_console
 # faithful, deterministic, bounded walk, and — the anti-fragile guarantee — that
 # the ASCII tier never emits an escape or non-7-bit byte and every framed line
 # aligns to the same width. Pure headers, no Arduino deps.
-SCENE_HDRS = ../common/ui/randomart.h ../common/ui/console_theme.h ../common/ui/console_scenes.h
+SCENE_HDRS = ../common/ui/randomart.h ../common/ui/console_theme.h ../common/ui/console_scenes.h ../common/ui/console_wake.h
 SCENE_BIN = $(BUILD_DIR)/test_console_scene
 
 .PHONY: all run clean
