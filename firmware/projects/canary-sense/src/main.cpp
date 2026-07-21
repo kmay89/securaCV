@@ -42,6 +42,9 @@
 #include "canary/net/mdns_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+#include "canary/net/fleet_beacon_adv.h"  // advertise-only BLE presence beacon
+#endif
 #include <esp_random.h>  // esp_random() for reconnect jitter
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
@@ -501,6 +504,14 @@ void setup() {
   // non-fatal — MQTT/HA never depends on it.
   canary::net::mdns_init();
 
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+  // Fleet-link BLE presence beacon: WiFi STA is up (they coexist on the C6
+  // shared radio) and the witness fingerprint was established above, so a
+  // canary-display can find this witness directly over BLE — broker-free and
+  // WiFi-free. Fail-safe: a stack that can't come up degrades to a no-op.
+  canary::net::fleet_beacon_begin(canary::ms_now());
+#endif
+
   // Seed the heap-health snapshot so the first status publish carries real
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
@@ -621,6 +632,13 @@ void loop() {
   canary::net::wifi_loop(now);
   canary::net::mdns_loop(now);  // drain deferred re-announce (event task latches only)
   canary::diag::loop(now);
+
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+  // Refresh the BLE presence beacon every pass (internally rate-limited to
+  // ~5 s). Placed before the broker early-return below so it keeps advertising
+  // through an MQTT outage — that broker-free reach is the point.
+  canary::net::fleet_beacon_tick(now);
+#endif
 
   // Bounded, backoff-scheduled broker supervision: while the broker is
   // unreachable the witness keeps sensing (we already drove the FSMs above)

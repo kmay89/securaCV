@@ -440,6 +440,18 @@ jobs:
           chmod +x firmware/scripts/check_boot_sync.sh
           firmware/scripts/check_boot_sync.sh
 
+      - name: Verify fleet-link beacon header copies match the canonical wire format
+        # The fleet-link presence beacon (fleet_beacon.h) is a byte-exact BLE
+        # contract shared across firmwares: canonical at
+        # firmware/common/fleet_link/ (included directly by the canary PIO build
+        # via -I, and host-tested there) and committed byte-identical next to the
+        # canary-wap Arduino sketch. If the copies diverge, a canary and a
+        # canary-display silently stop understanding each other's beacon with no
+        # compile error — this guard catches the drift in either direction.
+        run: |
+          chmod +x firmware/scripts/check_fleet_beacon_sync.sh
+          firmware/scripts/check_fleet_beacon_sync.sh
+
       - name: Verify OTA engine copies in the canary-wap + canary-display sketch dirs match canonical source
         # The signed pull-OTA engine is canonical at firmware/common/ota/src/
         # and committed byte-identical next to BOTH Arduino sketches (canary-wap
@@ -1162,6 +1174,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Build + run canonical fleet-beacon builder host test
+        # Round-trips the builder/parser from the CANONICAL header
+        # (firmware/common/fleet_link/fleet_beacon.h) — the single source of
+        # truth the canary PIO build includes directly. check_fleet_beacon_sync.sh
+        # keeps the canary-wap copy byte-identical, so this run covers both.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/common/fleet_link \
+              firmware/common/fleet_link/test_fleet_beacon.cpp \
+              -o /tmp/canonical_fleet_beacon
+          /tmp/canonical_fleet_beacon | tee /tmp/canonical_fleet_beacon.log
+          grep -q "ALL PASS" /tmp/canonical_fleet_beacon.log
 
       - name: Build + run WAP fleet-beacon builder host test
         run: |
