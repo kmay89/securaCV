@@ -171,6 +171,38 @@ per-device anti-replay: the USB path can still install any *validly signed*
 release (including an older one) — that's deliberate, it's the recovery
 channel.
 
+### Page & engine integrity (CSP + Subresource-Integrity)
+
+The three anchors above authenticate the *firmware*. They assume the flasher's
+own code is honest — so a second layer hardens the page itself, the way a
+world-class installer guards its own supply chain.
+
+- **A strict Content-Security-Policy** (a `<meta http-equiv>` in `flash.html`,
+  since GitHub Pages can't set response headers). `default-src 'none'` denies
+  everything by default; `script-src 'self'` / `style-src 'self'` allow only
+  this site's own code with **no inline and no `eval`** — the vendored engines
+  use neither (verified in CI), so the policy needs no `'unsafe-*'` escape.
+  `base-uri`, `object-src`, and `form-action` are `'none'`: no `<base>` rewrite
+  of the relative asset paths, no plugins, no form posts. `connect-src` is
+  narrowed to `'self'` + our signed release host and its asset CDN, so not even
+  a first-party bug could beam your backup or MAC to a third party. (`http:`
+  stays allowed there **only** to preserve the documented plain-HTTP LAN /
+  air-gapped manifest override; it is inert on the hosted HTTPS Lab, where
+  mixed-content blocking already forbids `http` fetches.)
+- **Subresource-Integrity on the vendored modules.** An inline import map pins
+  the SHA-384 of each vendored third-party module — esptool-js, md5, ed25519,
+  qrcode — so a tampered engine simply won't load: the browser refuses a hash
+  mismatch (proven by a Chromium probe that flips a byte and watches the module
+  get rejected). First-party app code is same-origin, already constrained by
+  `script-src 'self'`, and changes too often to hash by hand, so it's left
+  unpinned by design. Enforced on Chromium ≥ 127 — which the flasher already
+  requires for Web Serial; older engines ignore the hashes and load the same
+  same-origin modules, so nothing breaks.
+- **Drift-gated, like the rest.** `tests/flash.test.js` recomputes every SRI
+  hash from the real vendored bytes, and the CSP's import-map hash from the
+  map's own text, and walks the flasher's module graph so a *new, unpinned*
+  vendored import fails CI. The hashes can't silently rot or be skipped.
+
 ## Going live (owner steps)
 
 Everything is built; the official images light up when a release is cut:
@@ -227,7 +259,7 @@ offline posture the OTA engine also offers.
 
 | Path | Role |
 |---|---|
-| `canary-local/flash.html` | the page shell (hero + `<main>` + module script) |
+| `canary-local/flash.html` | the page shell (hero + `<main>` + module script); carries the strict CSP + the SRI import map |
 | `canary-local/assets/flash.js` | the renderer + esptool-js glue (the theatre) |
 | `canary-local/assets/flash-core.js` | DOM-free core: chip guard, image parsers, manifest logic (tested) |
 | `canary-local/assets/flash.css` | styles, on the Lab's design tokens |
@@ -243,8 +275,10 @@ offline posture the OTA engine also offers.
 ## Testing
 
 - **Logic:** `node --test canary-local/tests/flash.test.js` — chip guard,
-  partition-table + `esp_app_desc` parsers, manifest validation, and the
-  byte↔binary-string glue (with high-byte round-trips).
+  partition-table + `esp_app_desc` parsers, manifest validation, the
+  byte↔binary-string glue (with high-byte round-trips), and the CSP + SRI
+  drift gate (recomputes every vendored hash + the import-map hash, and fails
+  if a vendored import isn't pinned).
 - **Drift:** CI runs `gen_flash.py` and diffs `flash.json`; a board change in
   firmware that isn't regenerated is a red X.
 - **Bench (real board):** plug into Chrome, flash a variant, pull the cable

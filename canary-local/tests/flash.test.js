@@ -897,3 +897,101 @@ test("imageVerificationPolicy: fail-closed once a real key is pinned", async () 
   assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: false }), "checksum-only");
   assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: true, selfHosted: false }), "checksum-only");
 });
+
+// ── supply-chain hardening: CSP + Subresource-Integrity on the flasher page ──
+// flash.html ships a strict Content-Security-Policy (only same-origin, vendored
+// code runs) and an import map carrying SRI hashes for the vendored third-party
+// modules. These are the drift gate: they recompute every hash from the real
+// bytes, so a vendored bump, an edited policy, or a new *unpinned* vendored
+// import fails CI instead of silently shipping.
+const { createHash } = require("node:crypto");
+const { dirname, relative, resolve } = require("node:path");
+
+const FLASH_HTML = readFileSync(join(ROOT, "flash.html"), "utf8");
+
+function cspContent(html) {
+  const m = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/);
+  return m ? m[1] : null;
+}
+function importmapText(html) {
+  const m = html.match(/<script type="importmap">([\s\S]*?)<\/script>/);
+  return m ? m[1] : null;
+}
+
+test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
+  const csp = cspContent(FLASH_HTML);
+  assert.ok(csp, "no CSP <meta> in flash.html");
+  // Deny-all baseline; scripts + styles are same-origin only.
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/);
+  assert.match(csp, /style-src 'self'/);
+  // No <base> rewrite of our relative asset paths, no plugins, no form posts.
+  assert.match(csp, /base-uri 'none'/);
+  assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /form-action 'none'/);
+  // Firmware fetches: our release host + its asset CDN, plus 'self' for the
+  // catalog / a same-origin manifest. No open wildcard host.
+  assert.match(csp, /connect-src[^;]*'self'/);
+  assert.match(csp, /connect-src[^;]*https:\/\/github\.com/);
+  assert.match(csp, /connect-src[^;]*https:\/\/\*\.githubusercontent\.com/);
+  // The whole point is defeated if inline/eval sneaks back in.
+  assert.doesNotMatch(csp, /'unsafe-inline'/);
+  assert.doesNotMatch(csp, /'unsafe-eval'/);
+  assert.doesNotMatch(csp, /'wasm-unsafe-eval'/);
+});
+
+test("flash.html: the CSP 'sha256-…' matches the inline import map's bytes", () => {
+  const csp = cspContent(FLASH_HTML);
+  const text = importmapText(FLASH_HTML);
+  assert.ok(text, "no import map in flash.html");
+  const want = "sha256-" + createHash("sha256").update(text, "utf8").digest("base64");
+  assert.ok(csp.includes("'" + want + "'"),
+    `CSP script-src must pin the import map with '${want}' (recompute if you edited the map)`);
+});
+
+test("flash.html: SRI hashes match the real vendored module bytes", () => {
+  const map = JSON.parse(importmapText(FLASH_HTML)).integrity;
+  assert.ok(map && Object.keys(map).length >= 4, "expected an integrity map for the vendored modules");
+  for (const [rel, pinned] of Object.entries(map)) {
+    const algo = pinned.split("-")[0];
+    assert.ok(["sha256", "sha384", "sha512"].includes(algo), `${rel}: unexpected SRI algorithm "${algo}"`);
+    const actual = algo + "-" + createHash(algo).update(readFileSync(join(ROOT, rel))).digest("base64");
+    assert.strictEqual(actual, pinned, `${rel}: SRI hash is stale — recompute it from the vendored file`);
+  }
+});
+
+test("flash.html: every vendored module the flasher imports is pinned", () => {
+  // Walk the flasher's module graph from its entry point and collect every
+  // ./vendor/* import. The set must equal the integrity map — a newly added
+  // unpinned vendored dependency (or a stale pin) fails right here.
+  const map = JSON.parse(importmapText(FLASH_HTML)).integrity;
+  const seen = new Set();
+  const vendored = new Set();
+  const queue = [join(ROOT, "assets/flash.js")];
+  const PATTERNS = [
+    /\bfrom\s*["']([^"']+)["']/g,               // import … from "x"
+    /\bimport\s*\(\s*["']([^"']+)["']/g,        // import("x")  — dynamic
+    /(?:^|[;{}\s])import\s+["']([^"']+)["']/g,  // import "x"   — side-effect
+  ];
+  while (queue.length) {
+    const file = queue.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let src;
+    try { src = readFileSync(file, "utf8"); } catch { continue; }
+    for (const re of PATTERNS) {
+      for (const m of src.matchAll(re)) {
+        const spec = m[1];
+        if (!spec.startsWith(".")) continue; // the flasher has no bare specifiers
+        const rel = relative(ROOT, resolve(dirname(file), spec)).split("\\").join("/");
+        if (rel.startsWith("assets/vendor/")) vendored.add(rel);
+        else if (/\.m?js$/.test(rel)) queue.push(join(ROOT, rel)); // first-party: recurse
+      }
+    }
+  }
+  // Import-map integrity keys are URL-like ("./assets/…") so the browser
+  // resolves and matches them; compare against the graph on the bare path.
+  const norm = (s) => s.replace(/^\.\//, "");
+  assert.deepStrictEqual([...vendored].map(norm).sort(), Object.keys(map).map(norm).sort(),
+    "the flasher's vendored imports and the SRI integrity map have drifted apart");
+});
