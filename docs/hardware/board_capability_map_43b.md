@@ -1,0 +1,252 @@
+# Board capability map — Waveshare ESP32-S3-Touch-LCD-4.3B
+
+**What this is:** a single, honest ledger of everything the `canary-display`
+dash board (Waveshare **ESP32-S3-Touch-LCD-4.3B**) can physically do, what the
+firmware drives today, and — for every capability we are *not* yet using — the
+exact gate to flip and bench step to validate it. It exists so we never leave a
+hardware capability on the table by forgetting it was there, and never *claim*
+one we haven't validated. It complements `dev_playground_43b.md` (the bench
+tool) and `esp32s3_power_battery_guide.md` (power).
+
+The honesty rule that governs this board still governs this document: a
+capability is **Driven** only if code actually exercises it; **Built · bench-gated**
+if the code exists but a `FEATURE_*` flag holds it off pending hardware
+validation; **Staged** if pins/flags are declared but no driver exists; and
+**Absent** if the silicon isn't populated. Nothing here is aspirational — each
+row cites the file that backs the claim.
+
+---
+
+## Status at a glance
+
+| Capability | Silicon | Status | Product value for a witness/Canary dash |
+|---|---|---|---|
+| 4.3" RGB565 800×480 panel | ✅ | **Driven** | The glass itself |
+| GT911 5-pt cap touch | ✅ | **Driven** | Tap = wake, long-press = acknowledge |
+| CH422G I²C IO expander | ✅ | **Driven** | Owns panel control + isolated field IO |
+| 2× isolated digital **inputs** (DI0/DI1) | ✅ | **Driven (bench only)** | Wire in a real PIR / reed / tamper switch → **signed event** |
+| 2× isolated open-drain **outputs** (DO0/DO1, ≤450 mA) | ✅ | **Driven (bench only)** | Drive a siren/strobe/door-strike — the dash can *act*, not just watch |
+| I²C sensor header (VEML7700 / BH1750 / VL53L0X / MPR121) | ✅ | **Driven (bench only)** | Ambient light, ToF beam-gap, cap-touch coupons |
+| WiFi / MQTT / mDNS / OTA / web mirror | ✅ | **Driven** | Fleet ingest + self-heal |
+| BLE (passive NimBLE scan) | ✅ | **Driven** | Off-grid "Chirp" fallback |
+| **Evidence vault** (proof-carrying journal → flash) | ✅ | **Built · bench-gated** | Signed event log survives a network cut |
+| Chime engine (LEDC tone) | ⚠️ pad unpopulated on B | **Built · bench-gated** | Audible alert **via DO**, not onboard piezo |
+| **RS485 / Modbus RTU** (A/B terminal) | ✅ | **Staged (no driver)** | Integrate alarm panels, access control, HVAC/energy meters |
+| **CAN / TWAI** (H/L terminal) | ✅ | **Staged (no driver)** | Vehicle & industrial witness (gate/barrier, CANopen) |
+| **microSD** (TF slot) | ✅ | **Staged (CS blocker)** | Bulk local archive — see the CH422G-CS note |
+| **Battery-backed RTC** (trusted time) | ❓ verify | **Staged / verify** | Trustworthy timestamps when NTP is blocked |
+| **Battery operation** (CS8501 charge/boost) | ❓ verify | **Staged / verify** | "Cut the power, the Canary keeps witnessing" |
+| ESP-NOW peer mesh | ✅ (radio) | **Absent** | Router-independent fleet link + cross-signing |
+| Camera / microphone | ❌ by design | **Absent (intentional)** | *Not a gap* — "it shows, it doesn't watch" |
+| Backlight PWM dimming | ❌ (CH422G on/off) | **Absent (hardware)** | Night = dark theme + backlight off |
+
+Board contract, PSRAM, and every pin fact:
+`firmware/boards/waveshare-esp32s3-lcd43b/pins/pins.h`. That header is
+**compile-verified, not yet bench-validated** (`pins.h:20-23`) — RGB timings,
+CH422G bits, and RS485/DO polarity carry VERIFY tags. Treat every ❓/Staged row
+below as *unproven on hardware until a bench pass says otherwise*.
+
+---
+
+## 1. Evidence vault — the highest-value latent capability
+
+**Status:** Built, complete, `FEATURE_TIME_MACHINE_PERSIST 0`
+(`configs/canary-display/dash/config.h:43`, "bench-gated (like CHIME)").
+
+The dash already carries the whole durable-history layer. The event sink
+(`src/fleet/journal_instance.cpp`) builds a `JournalRecord` — which holds the
+**verbatim signed `chain_raw` payload** (`include/canary/fleet/journal.h`), so an
+event stays re-provable years later — coarsens the timestamp to a 10-minute
+bucket (metadata minimization), and calls `journal_store_append()`. The LittleFS
+backend (`src/fleet/journal_store.cpp`) is a finished JSONL store with byte-budget
+compaction (`CD_JOURNAL_MAX_BYTES = 96 KB`). It is off only because (a) the flag
+is bench-gated and (b) `LittleFS` isn't in the env's `lib_deps` yet.
+
+**Why it matters:** securaCV's entire thesis is a tamper-evident, hash-chained
+log. Today that log lives only in RAM on the dash (`FleetModel` ring) and
+evaporates on reboot / power loss. Enabling the vault gives the dash a durable,
+power-loss-surviving local archive of the fleet's *already-signed* chain heads —
+a black-box recorder for the household. Note the dash **verifies but never signs**
+(`src/trust.cpp` does Ed25519 verify + TOFU pinning only), so the vault stores
+proof, it never mints it — which keeps the never-overclaim rule intact.
+
+**Activation (bench):**
+1. Add `LittleFS` to `lib_deps` in `firmware/envs/platformio/canary-display.ini`
+   and to the arduino-cli lib install step in `.github/workflows/firmware.yml`.
+2. Confirm the dash partition table has a `spiffs`/LittleFS data partition (if
+   absent, `LittleFS.begin(formatOnFail=true)` fails **safe** → RAM-only, so this
+   is non-fatal but non-functional until the partition exists).
+3. Flip `FEATURE_TIME_MACHINE_PERSIST 1` for the dash flavor.
+4. Bench-validate: trigger events, power-cycle, confirm the journal reloads;
+   watch flash wear over a soak. Then the emulator `dist/*.js` must be rebuilt
+   (`canary-local/emulator/build.sh all`) so the wasm byte-drift gate passes.
+
+**Do not** enable microSD for this — flash is the right medium (a removable card
+is pull-and-walk-away tamperable; internal flash isn't).
+
+---
+
+## 2. Isolated DI/DO — promote from bench to the witness runtime
+
+**Status:** Driven, but only inside the dev playground
+(`src/playground/playground.cpp` via `expander_read_inputs()` /
+`expander_od_set()` in `src/hal/display_dash.cpp:166-204`). The production
+witness runtime never reads DI or drives DO.
+
+**Why it matters:** these are the board's cheapest, already-working superpower.
+- **DI0 / DI1** (optocoupled, 5–36 V): wire a PIR, a door/window reed, or a
+  case-tamper switch and it becomes a first-class **signed event** in the same
+  chain as the camera Canaries — the dash stops being read-only.
+- **DO0 / DO1** (≤450 mA open-drain): drive a local **siren, strobe, or door
+  strike**. The dash gains an *actuation* voice (local alarm on Tier-1 event, or
+  a relay for a maglock) instead of only showing.
+
+**Activation:** add a small production subsystem (gated, e.g. `FEATURE_FIELD_IO`)
+that maps DI edges → `fleet.on_event(...)` and Tier-1 escalations → a bounded DO
+pulse, reusing the existing expander helpers. Bench-validate optocoupler polarity
+(the `pins.h` DO polarity is VERIFY-tagged) before trusting the actuation path.
+
+---
+
+## 3. RS485 / Modbus RTU — genuinely net-new, highest integration payoff
+
+**Status:** Staged. Pins declared (`pins.h`, TX=GPIO44 / RX=GPIO43, 9600 default);
+**no UART/Modbus driver exists** — the playground pin tracker renders it literally
+as *"open · shares console"*.
+
+**Why it matters:** RS485/Modbus is the lingua franca of building security and
+industrial gear. A driver turns the dash into a **gateway**: read alarm panels,
+access-control controllers, energy/HVAC meters, and re-witness their state into
+the signed log. This is the single biggest expansion of the addressable use-case.
+
+**Constraint:** GPIO43/44 are **shared with the CH343 USB-UART console**, so
+RS485 and console logging are mutually exclusive — the driver must own that
+trade (a `FEATURE_RS485` build that routes logs to USB-CDC only).
+
+**Build shape (recommended):** a pure, host-testable `modbus_rtu` core (CRC-16,
+frame build/parse, register map — no Arduino deps, testable exactly like
+`playground-sim.js`), a thin `Serial1`+DE driver behind `FEATURE_RS485 0`
+(no-op stubs so it always links), a dedicated `canary-display-dash-rs485` build
+env so CI **compiles** it while the default/emulator build stays byte-identical
+(the dist-drift-safe pattern used for `canary-display-dash-b`), and a matching
+playground station once bench-validated. Lands **compile-verified, bench-pending**.
+
+---
+
+## 4. CAN / TWAI — vehicle & industrial witness
+
+**Status:** Staged. Pins declared (`pins.h`, TX=GPIO15 / RX=GPIO16, **dedicated
+transceiver** — unlike the plain 4.3 there's no USB mux, and there's an on-board
+120 Ω terminator jumper). No `twai_` driver in the display project (TWAI is used
+only in `canary-wap`).
+
+**Why it matters:** a Canary that witnesses a **vehicle gate/barrier controller,
+fleet telematics, or CANopen building automation** — a tamper-proof CAN event
+log. Lower priority than RS485 for the security use-case, but the transceiver is
+free and dedicated, so it's pure upside.
+
+**Build shape:** ESP-IDF `twai_*` driver behind `FEATURE_CAN 0`, same
+gated + dedicated-build-env + bench-pending pattern as RS485.
+
+---
+
+## 5. microSD — real, but blocked on a chip-select problem
+
+**Status:** Staged. `HAS_SD_CARD 1`; pins declared (MOSI=11, SCK=12, MISO=13) but
+**`SD_PIN_CS = -1`** — the card's chip-select is on the **CH422G expander (EXIO4)**,
+not a native GPIO. The header explicitly notes this is why the evidence vault
+chose internal flash instead (`include/canary/fleet/journal_store.h:4-7`).
+
+**The blocker:** the stock Arduino `SD.h` / `SdSpiCard` driver toggles CS as a
+GPIO on every SPI transaction; it cannot drive a CS that lives behind an I²C
+expander. Options, in order of preference:
+1. **SdFat with a software-CS callback** that writes `CH422G_ADDR_OUT (0x38)` /
+   `CH422G_BIT_SD_CS (1<<4)` per transaction (reuse the expander-write path in
+   `src/hal/display_dash.cpp`). Watch throughput — an I²C write per CS toggle is
+   slow; SD is best for bulk/occasional writes, not the hot event path.
+2. Keep CS asserted across a burst and frame manually (fragile).
+3. **Don't** — the evidence vault (§1) already meets the "durable local log"
+   need on flash, which is also more tamper-resistant than a removable card.
+
+**Recommendation:** treat SD as a *bulk-archive* stretch goal, not the evidence
+store. If pursued, it needs the WAP-style **background mount worker**
+(`canary-wap/.../hardware_state.h`) so a slow/wedged card can't trip the 30 s dash
+watchdog (`CD_WATCHDOG_TIMEOUT_SEC`).
+
+---
+
+## 6. Trusted time (RTC) & power resilience (battery) — verify on bench first
+
+Both are **potential honesty corrections**, not just features: our header
+declares them absent (`HAS_RTC 0`, `HAS_BATTERY 0`) while Waveshare's published
+spec for the 4.3B lists an onboard RTC + battery holder and a **CS8501**
+Li-ion charge/boost chip. The `pins.h` header is compile-verified only, so this
+needs eyes on the physical board.
+
+- **RTC → trusted time.** Time comes from SNTP today (`FEATURE_SNTP`). For a
+  cryptographic witness, NTP-only time is a weakness: block or spoof NTP and every
+  signed timestamp is suspect. If a PCF85063/PCF8563 is populated on the I²C bus,
+  add a **runtime-probing** RTC layer (use it if it ACKs, else SNTP — fail-safe,
+  behind `FEATURE_RTC 0`) so timestamps stay trustworthy offline. The watch
+  flavor already has PCF8563 wiring to crib from (`pins_watch.h:72-114`).
+- **Battery.** If the CS8501 is populated, the dash can run and log through a
+  power cut and record the outage itself — a strong security property. **Do not
+  invent the ADC/sense pin**; confirm it on the board before writing any monitor.
+
+**Bench step:** scope the I²C census on a real 4.3B (the playground's census
+station already lists every address); an RTC will show up at its address. Inspect
+the board for the battery holder + CS8501. Update `HAS_RTC` / `HAS_BATTERY` and
+this table to match reality either way.
+
+---
+
+## 7. ESP-NOW mesh & fleet cross-signing — resilience upside
+
+**Status:** Absent (no `esp_now` in the display firmware). The radio supports it.
+
+**Why it matters:** an attacker who kills the WiFi AP silences an MQTT-only fleet.
+An ESP-NOW peer link is router-independent, so Canaries keep talking — and can
+**cross-sign each other's chain heads** (witness-the-witness), making tamper
+materially harder. Aligned with the tamper-resistance thesis; larger effort, so
+it sits behind RS485/CAN in priority.
+
+---
+
+## Not gaps — deliberately closed
+
+- **Camera / microphone:** `HAS_CAMERA 0` / `HAS_MICROPHONE 0` by design — the
+  dash *shows, it doesn't watch* ("quiet-room-safe by construction"). Adding
+  either would break a core privacy promise. Leave closed.
+- **Backlight PWM:** the CH422G backlight line is on/off only
+  (`HAS_BACKLIGHT_PWM 0`); night mode is dark-theme + backlight off. Hardware
+  limit, not an omission.
+- **Onboard piezo:** not routed on the B (`BUZZER_PIN -1`); audible feedback is
+  intended through DO0/DO1 driving an external buzzer. The `chime.cpp` engine is
+  compiled but inert on this SKU by design.
+
+---
+
+## How anything here actually ships (the verification reality)
+
+This board has **no local toolchain** in CI-authoring environments — firmware is
+verified through CI + PR review, not a local `pio run`. Two consequences shape
+every activation above:
+
+1. **Feature-gate everything, default 0.** New peripheral code must be byte-neutral
+   to the emulator's wasm build, or it trips the `canary-local` `dist/*.js`
+   byte-drift gate (which needs emcc to regenerate). The proven pattern: gate the
+   code off in the default/emulator build, add a **dedicated build env** that
+   enables it so PlatformIO/arduino-cli **compile-verify** it (as
+   `canary-display-dash-b` did).
+2. **The playground is a drift-locked mirror.** A live demo station in
+   `playground-sim.js` / `playground.json` requires the matching firmware station
+   *in the default build* (`gen_playground.py` regenerates `playground.json` from
+   `pins.h`; `playground.test.js` greps `playground_ui.cpp`). So a capability
+   becomes *visible in the demo* only after it's bench-validated and enabled — up
+   to then it lands as compile-verified, bench-pending firmware.
+
+**Bottom line:** the board is a full industrial witness gateway. We're driving
+the display, touch, isolated IO (bench), and the radios. The value left on the
+table is: **turn on the evidence vault**, **promote DI/DO into the witness
+runtime**, **write the RS485/Modbus + CAN drivers**, and **verify the RTC/battery
+silicon** — in that order.
