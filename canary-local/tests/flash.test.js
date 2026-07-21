@@ -725,6 +725,21 @@ test("preferredProductId reads a safe product hint from the query string", async
   }
 });
 
+test("recommendedProduct leads with the flagship for the detected chip", async () => {
+  const { recommendedProduct, productsForChip } = await core();
+  // First catalog match per chip — the flagship, by authoring order.
+  for (const chip of ["ESP32-S3", "ESP32-C3", "ESP32-C6"]) {
+    const rec = recommendedProduct(catalog, chip);
+    assert.ok(rec, `no recommendation for ${chip}`);
+    assert.strictEqual(rec, productsForChip(catalog, chip)[0]);
+    assert.strictEqual(rec.chip, chip, "recommendation must fit the chip");
+  }
+  // The S3 flagship is the all-rounder Canary, not a variant.
+  assert.strictEqual(recommendedProduct(catalog, "ESP32-S3").id, "securacv-canary");
+  // Unknown silicon → no recommendation (the picker shows its empty state).
+  assert.strictEqual(recommendedProduct(catalog, "ESP32-Q9"), null);
+});
+
 // ── catalog guard: a malformed catalog degrades, never crashes the page ──────
 test("validateCatalog passes the shipped catalog and flags real breakage", async () => {
   const { validateCatalog } = await core();
