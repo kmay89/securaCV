@@ -159,6 +159,12 @@
           <line x1="500" y1="157" x2="250" y2="320" stroke="rgba(255,212,79,0.26)" stroke-width="1"/>
           <line x1="500" y1="157" x2="430" y2="392" stroke="rgba(255,212,79,0.26)" stroke-width="1"/>
         </g>
+        <!-- Scene 3 field: the Wi-Fi field — nested fan arcs bathing the room from the AP -->
+        <g class="field field-wifi" id="field-wifi" aria-hidden="true" style="display:none">
+          <path class="cone" d="M 490.5 204 A 55 55 0 0 1 446 160" fill="none" stroke="#ffd44f" stroke-width="1.6"/>
+          <path class="cone" d="M 484 239 A 90 90 0 0 1 411 166" fill="none" stroke="#ffd44f" stroke-width="1.3" style="animation-delay:.5s"/>
+          <path class="cone" d="M 478 273 A 125 125 0 0 1 377 172" fill="none" stroke="#ffd44f" stroke-width="1.05" style="animation-delay:1s"/>
+        </g>
 
         <!-- the visitor (starts at the door, hidden until the scene plays) -->
         <g class="visitor hidden" id="visitor" transform="translate(492,352)">
@@ -176,6 +182,7 @@
           <circle class="marker-body" cx="0" cy="0" r="11"/>
           <path class="marker-glyph glyph-radar" d="M -5 4 A 6 6 0 0 1 5 4 M -8.5 6 A 9.5 9.5 0 0 1 8.5 6 M 0 4.5 v -1"/>
           <path class="marker-glyph glyph-vision" d="M -6 -4 h12 v8 h-12 z M 3 0.5 a 2.6 2.6 0 1 0 0.01 0" style="display:none"/>
+          <path class="marker-glyph glyph-wifi" d="M -6 2 q6 -8 12 0 M -3.2 4 q3.2 -4.4 6.4 0 M 0 5.5 v 0.5" style="display:none"/>
         </g>
 
         <!-- the scene chip, revealed on the trip (text set per scene) -->
@@ -222,7 +229,7 @@
       <ul id="feed-list" aria-live="polite"></ul>
     </div>
 
-    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html#quorum">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. More scenes — the WiFi field, the breathing wave — are coming.</p>
+    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html#quorum">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. One more scene — the breathing wave — is coming.</p>
   </main>
 
   <footer>
@@ -239,15 +246,14 @@
       var $ = function (id) { return document.getElementById(id); };
       var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-      // ── real crypto, over the real canary-witness canonical ──
+      // ── real crypto, over the real canary-witness canonicals ──
       // Every claim below is signed in your browser with Ed25519 over the
       // byte-exact canonical string the firmware signs and Home Assistant
-      // re-derives to verify — the real "securacv-canary-sig|v1|sense|…" format
-      // (firmware/common/identity/device_signature.cpp build_sense_canonical /
-      // custom_components/securacv/signature.py build_sense_event_canonical).
-      // Both the radar witness and the camera witness sign this same family;
-      // only the coarse vocabulary is signed (event, presence, 0/1/2+ bucket,
-      // range band, 10-minute uptime bucket) — never pixels, never a face.
+      // re-derives to verify (device_signature.cpp / signature.py). Two real
+      // families, each carrying only coarse scalars — never pixels, never a
+      // face, never packet contents:
+      //   · sense  — radar + camera witnesses (build_sense_canonical)
+      //   · event  — Wi-Fi / CSI witness (build_event_canonical)
       // Real, not decoration — but a demo key, not a provisioned device.
       var te = new TextEncoder();
       function b64url(b) { return btoa(String.fromCharCode.apply(null, b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
@@ -268,15 +274,20 @@
         return cryptoOK;
       }
       // securacv-canary-sig|v1|sense|<id>|<seq>|<event>|<presence>|<occupants>|<band>|<uptime>
-      function canonical(c) {
+      function senseCanon(c) {
         return "securacv-canary-sig|v1|sense|" + W.id + "|" + W.seq + "|" +
           c.event + "|" + c.presence + "|" + c.occupants + "|" + c.band + "|" + W.uptime;
       }
+      // securacv-canary-sig|v1|event|<id>|<event_id>|<state>|<category>|<privacy>|<motion>|<breathing>|<bpm>
+      function eventCanon(c) {
+        return "securacv-canary-sig|v1|event|" + W.id + "|" + c.event_id + "|" +
+          c.state + "|" + c.category + "|" + c.privacy + "|" + c.motion + "|" + c.breathing + "|" + c.bpm;
+      }
       async function signClaim(c) {
-        W.sig = new Uint8Array(await crypto.subtle.sign("Ed25519", W.key.privateKey, te.encode(canonical(c))));
+        W.sig = new Uint8Array(await crypto.subtle.sign("Ed25519", W.key.privateKey, te.encode(scene.canonical(c))));
       }
       async function verifyClaim(c) {
-        return crypto.subtle.verify("Ed25519", W.key.publicKey, W.sig, te.encode(canonical(c)));
+        return crypto.subtle.verify("Ed25519", W.key.publicKey, W.sig, te.encode(scene.canonical(c)));
       }
       ensureKeys(); // warm the key up so it's ready by the time the scene trips
 
@@ -294,8 +305,10 @@
           desc: "A 60 GHz radar witness on the wall feels a body enter — range and motion, nothing more. Watch what it does, watch what it says — then try to forge what it said.",
           never: '<b>No camera. No picture. No name.</b> The radar can resolve <em>that</em> someone is there and never <em>who</em> — identity is impossible by construction, not by promise. And the one small claim it does emit is <em>signed</em> — so you can trust the record without trusting us.',
           claim: { event: "presence_detected", presence: "present", occupants: "1", band: "near", displayOcc: 1, displayRange: 2.4 },
+          canonical: senseCanon,
           display: function (c) { return "presence/detected  { occupants: " + c.displayOcc + ", range_m: " + c.displayRange + " }"; },
-          beat: "forge",
+          beat: { kind: "forge", label: "⚠ try to forge it", altLabel: "↺ restore the true record", cls: "",
+            note: "The bytes changed; the signature didn't. Anyone can catch it — no server needed." },
           forged: { event: "occupancy_changed", presence: "present", occupants: "2+", band: "mid", displayOcc: 2, displayRange: 1.2 },
         },
         {
@@ -310,8 +323,11 @@
           desc: "An on-device camera sees a shape move in and classifies it right there on the lens module — person, at some confidence. The pixels are graded and thrown away before the host ever sees them; only a label leaves. Watch what it says, then try to grab the picture.",
           never: '<b>No image. No face. No box you could un-blur.</b> The frame is classified inside the camera module and discarded; the host only ever gets a word and a number. The claim is <em>signed</em> the same way the radar\'s is — same canonical, same key — so you can trust <em>that</em> a person was seen without there being any picture <em>of</em> them.',
           claim: { event: "presence_started", presence: "present", occupants: "1", band: "unknown", conf: 0.94, displayOcc: 1 },
+          canonical: senseCanon,
           display: function (c) { return 'presence_started  { occupants: ' + c.displayOcc + ', range: "unknown" }'; },
-          beat: "grab",
+          beat: { kind: "grab", label: "🔍 try to grab the picture", altLabel: "↺ close the packet", cls: "grab",
+            note: "That's the whole packet — a word, a score, a box in coordinates. Not one pixel.",
+            feed: "opened the packet — no image inside" },
           packet: function () {
             return "topic  securacv/" + W.id + "/events\n{\n" +
               '  "event":     "presence_started",\n' +
@@ -323,7 +339,35 @@
               '  "sig":       "ed25519:' + (W.sig ? b64url(W.sig).slice(0, 16) : "…") + '…"\n}';
           },
         },
-        { id: "wifi", n: 3, tab: "The WiFi field", available: false },
+        {
+          id: "wifi", n: 3, tab: "The WiFi field", available: true,
+          deviceId: "wap-living-room", seq: 12,
+          room: "the living room",
+          field: "wifi", glyph: "wifi",
+          legend: '<i class="perch-dot dot-wifi"></i> Wi-Fi CSI · presence in the field, never the traffic',
+          chip: "the field bends",
+          armed: "scene armed — Wi-Fi field steady, room empty",
+          title: "The room's radio bends. It never reads.",
+          desc: "The access point already floods the room with Wi-Fi. A body walking in bends that field — and the witness reads only the shape of the bend, never a byte of what the radio carries. Watch what it says, then try to read the traffic.",
+          never: '<b>No packets. No MACs. No SSIDs.</b> Wi-Fi sensing here is channel-state only — how the room\'s radio distorts around a body. It can\'t and doesn\'t inspect what any device is sending; the claim it signs is a handful of scalars, nothing that could name a person or a device — and it\'s <em>signed</em>, same key, same open canonical as the rest.',
+          claim: { event_id: 12, state: "present", category: "event", privacy: "p1", motion: 71, breathing: 0, bpm: 0 },
+          canonical: eventCanon,
+          display: function (c) { return 'presence  { state: "' + c.state + '", motion: ' + c.motion + ' }'; },
+          beat: { kind: "grab", label: "📡 try to read the traffic", altLabel: "↺ close the packet", cls: "grab",
+            note: "Just scalars from the field's shape — a presence flag, a motion score, a privacy tier. No MACs, no SSIDs, not one packet. It never reads what the Wi-Fi carries, only how a body bends it.",
+            feed: "opened the packet — no traffic inside" },
+          packet: function () {
+            return "topic  securacv/" + W.id + "/events\n{\n" +
+              '  "event_id":  12,\n' +
+              '  "state":     "present",\n' +
+              '  "category":  "event",\n' +
+              '  "privacy":   "p1",\n' +
+              '  "motion":    71,\n' +
+              '  "breathing": 0,\n' +
+              '  "bpm":       0,\n' +
+              '  "sig":       "ed25519:' + (W.sig ? b64url(W.sig).slice(0, 16) : "…") + '…"\n}';
+          },
+        },
         { id: "breath", n: 4, tab: "The breathing wave", available: false },
       ];
       var scene = SCENES[0];
@@ -374,8 +418,10 @@
         // SVG elements have no `.hidden` IDL property — toggle the attribute
         svgShow($("field-radar"), s.field === "radar");
         svgShow($("field-vision"), s.field === "vision");
+        svgShow($("field-wifi"), s.field === "wifi");
         svgShow(marker.querySelector(".glyph-radar"), s.glyph === "radar");
         svgShow(marker.querySelector(".glyph-vision"), s.glyph === "vision");
+        svgShow(marker.querySelector(".glyph-wifi"), s.glyph === "wifi");
         feed.innerHTML = "";
         feedLine(s.armed, "feed-sys");
         reset();
@@ -397,15 +443,14 @@
 
       // ── the interactive beat, dispatched per scene ──
       var BEATS = {
-        // presence: rewrite the record and watch verification fail
+        // forge (radar): rewrite the record and watch verification fail
         forge: {
-          label: "⚠ try to forge it", altLabel: "↺ restore the true record", cls: "",
           async on() {
             liveClaim = Object.assign({}, scene.forged);
             $("payoff-claim").textContent = claimText(liveClaim);
             paintVerdict(await verifyClaim(liveClaim));   // old sig vs. new bytes → false
             feedLine("record altered by hand → " + claimText(liveClaim), "feed-sys");
-            beatNote.textContent = "The bytes changed; the signature didn't. Anyone can catch it — no server needed.";
+            beatNote.textContent = scene.beat.note;
           },
           async off() {
             liveClaim = Object.assign({}, scene.claim);
@@ -415,23 +460,23 @@
             beatNote.textContent = "";
           },
         },
-        // vision: open the whole packet and find there's no picture in it
+        // grab (camera / Wi-Fi): open the whole packet and find the feared thing
+        // (a picture, network traffic) simply isn't in it
         grab: {
-          label: "🔍 try to grab the picture", altLabel: "↺ close the packet", cls: "grab",
           async on() {
             wire.textContent = scene.packet();
             wire.hidden = false;
-            beatNote.textContent = "That's the whole packet — a word, a score, a box in coordinates. Not one pixel.";
-            feedLine("opened the packet — no image inside", "feed-sys");
+            beatNote.textContent = scene.beat.note;
+            feedLine(scene.beat.feed, "feed-sys");
           },
           async off() { wire.hidden = true; beatNote.textContent = ""; },
         },
       };
 
       beatBtn.addEventListener("click", async function () {
-        var b = BEATS[scene.beat];
-        if (beatBox.dataset.state === "on") { await b.off(); beatBtn.textContent = b.label; beatBox.dataset.state = ""; }
-        else { await b.on(); beatBtn.textContent = b.altLabel; beatBox.dataset.state = "on"; }
+        var b = BEATS[scene.beat.kind];
+        if (beatBox.dataset.state === "on") { await b.off(); beatBtn.textContent = scene.beat.label; beatBox.dataset.state = ""; }
+        else { await b.on(); beatBtn.textContent = scene.beat.altLabel; beatBox.dataset.state = "on"; }
       });
 
       // ── play the scene ──
@@ -480,9 +525,8 @@
           if (ready) {
             await signClaim(liveClaim);
             paintVerdict(await verifyClaim(liveClaim));
-            var b = BEATS[scene.beat];
-            beatBtn.textContent = b.label;
-            beatBtn.className = "beat-btn" + (b.cls ? " " + b.cls : "");
+            beatBtn.textContent = scene.beat.label;
+            beatBtn.className = "beat-btn" + (scene.beat.cls ? " " + scene.beat.cls : "");
             beatBox.hidden = false;
             feedLine("claim signed  ✓", "feed-sys");
           } else {
