@@ -1065,7 +1065,15 @@ function phaseConfirm(product, entry) {
   sum.append(fact("Firmware", `${product.name} · v${entry.version}`));
   sum.append(fact("For chip", entry.chipFamily));
   sum.append(fact("Size", core.formatBytes(entry.size)));
-  sum.append(fact("Verified by", "SHA-256 before · chip MD5 after"));
+  const vpolicy = core.imageVerificationPolicy({
+    keyReal: core.isRealPubkey(state.catalog.release_pubkey),
+    hasSignature: !!entry.signature,
+    selfHosted: !!state.manifestOverride,
+  });
+  sum.append(fact("Verified by",
+    vpolicy === "verify" ? "Ed25519 signature + SHA-256 · chip MD5 after"
+      : vpolicy === "require-signature" ? "⚠ unsigned build — this will be refused"
+        : "SHA-256 before · chip MD5 after"));
   box.append(sum);
 
   const willBackup = state.flashBytes && !skipBackup && !haveBackupForThisBoard();
@@ -1237,7 +1245,7 @@ async function startFlash(opts) {
     }
 
     // 1) Obtain the image bytes.
-    let bytes, shaHex = null, shaSigned = false;
+    let bytes, shaHex = null, shaSigned = false, sigVerified = false, sigChecked = false;
     if (opts.localBytes) {
       bytes = opts.localBytes;
       // Fingerprint the local file too, so the receipts can name exactly
@@ -1262,6 +1270,32 @@ async function startFlash(opts) {
       }
       shaHex = got.toLowerCase();
       shaSigned = true;
+      // 2b) Fail closed: once a REAL release key is pinned, an official manifest
+      // MUST carry a valid Ed25519 signature. Verifying only "if a signature is
+      // present" would let a tampered manifest strip the signature and re-point
+      // an updated SHA-256 at a malicious image — the exact substitution this
+      // check exists to stop. (imageVerificationPolicy encodes the fail-closed
+      // rule; checksum-only is reserved for pre-key and self-hosted manifests.)
+      const policy = core.imageVerificationPolicy({
+        keyReal: core.isRealPubkey(state.catalog.release_pubkey),
+        hasSignature: !!opts.entry.signature,
+        selfHosted: !!state.manifestOverride,
+      });
+      if (policy === "require-signature") {
+        throw new Error("This official release is missing its Ed25519 signature, but a " +
+          "signing key is in force — refusing to flash it. A stripped signature can mean " +
+          "a tampered release manifest. Nothing was written.");
+      } else if (policy === "verify") {
+        sigChecked = true;
+        sigVerified = await core.verifyImageSignature(
+          opts.entry.signature, state.catalog.release_pubkey,
+          bytes.length, new Uint8Array(digest));
+        if (!sigVerified) {
+          throw new Error("This image isn’t signed by the SecuraCV release key — " +
+            "refusing to flash it. Nothing was written. (To flash a build you " +
+            "trust anyway, use Advanced → flash a local file.)");
+        }
+      }
     }
     imageBytesRef.bytes = bytes;
     state.lastImage = bytes; // lets the done card replay the tour with real hex
@@ -1335,7 +1369,7 @@ async function startFlash(opts) {
     state.busy = false;
     state.baudCeiling = null; // this speed worked — don't carry a cap forward
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
-      shaHex, shaSigned, bytesWritten: bytes.length, wifiSsid, wifi: null }));
+      shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length, wifiSsid, wifi: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -1478,6 +1512,17 @@ function phaseDone(opts) {
       list.append(el("p", "fineprint", opts.shaSigned
         ? "Computed in your browser from the downloaded bytes and matched against the fingerprint published in the signed release — before anything was written. You can recompute it yourself: download the same release asset and run sha256sum."
         : "Computed in your browser from your local file, so you can pin down exactly what was written. We can't vouch for a personal file's origin — that part is on you."));
+      if (opts.sigChecked) {
+        list.append(reportRow("Ed25519 release signature", el("span", "flash-check", "✓ verified"), "ok"));
+        list.append(el("p", "fineprint",
+          "Verified in your browser against the release public key pinned in this " +
+          "page — the same key the device checks. A swapped or tampered image would " +
+          "have been refused before a single byte was written."));
+      } else if (opts.shaSigned) {
+        list.append(el("p", "fineprint",
+          "This release isn't Ed25519-signed yet (the signing-key ceremony hasn't " +
+          "happened), so it was verified by checksum only."));
+      }
     }
     if (opts.bytesWritten) {
       list.append(reportRow("Written and read back",
