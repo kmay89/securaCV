@@ -79,6 +79,11 @@
       color: var(--muted); background: #0a0a0c; border: 1px dashed var(--edge); border-radius: 8px;
       padding: 10px 12px; white-space: pre; overflow-x: auto; }
 
+    /* the breathing scene's wellbeing readout (published, unsigned metadata) */
+    .vitals { margin: 9px 0 0; font-size: 13px; color: #8fd3a8; }
+    .vitals.off { color: var(--faint); }
+    .vitals b { color: var(--text); font-weight: 600; }
+
     @media (prefers-reduced-motion: reduce) {
       .scene-chip.show { animation: none; opacity: 1; }
       .payoff { transition: none; }
@@ -165,6 +170,13 @@
           <path class="cone" d="M 484 239 A 90 90 0 0 1 411 166" fill="none" stroke="#ffd44f" stroke-width="1.3" style="animation-delay:.5s"/>
           <path class="cone" d="M 478 273 A 125 125 0 0 1 377 172" fill="none" stroke="#ffd44f" stroke-width="1.05" style="animation-delay:1s"/>
         </g>
+        <!-- Scene 4 field: the breathing wave — a slow sine, rising and falling like a chest -->
+        <g class="field field-breath" id="field-breath" aria-hidden="true" style="display:none">
+          <path class="cone" d="M 190 300 q 24 -24 48 0 t 48 0 t 48 0 t 48 0 t 48 0" fill="none"
+            stroke="#8fd3a8" stroke-width="1.8" stroke-linecap="round"/>
+          <path class="cone" d="M 214 322 q 24 -18 48 0 t 48 0 t 48 0 t 48 0" fill="none"
+            stroke="#8fd3a8" stroke-width="1.2" opacity="0.55" style="animation-delay:1.2s"/>
+        </g>
 
         <!-- the visitor (starts at the door, hidden until the scene plays) -->
         <g class="visitor hidden" id="visitor" transform="translate(492,352)">
@@ -183,6 +195,7 @@
           <path class="marker-glyph glyph-radar" d="M -5 4 A 6 6 0 0 1 5 4 M -8.5 6 A 9.5 9.5 0 0 1 8.5 6 M 0 4.5 v -1"/>
           <path class="marker-glyph glyph-vision" d="M -6 -4 h12 v8 h-12 z M 3 0.5 a 2.6 2.6 0 1 0 0.01 0" style="display:none"/>
           <path class="marker-glyph glyph-wifi" d="M -6 2 q6 -8 12 0 M -3.2 4 q3.2 -4.4 6.4 0 M 0 5.5 v 0.5" style="display:none"/>
+          <path class="marker-glyph glyph-breath" d="M -7 1 q2.3 -7 4.6 0 q2.3 7 4.6 0 q2.3 -7 4.6 0" style="display:none"/>
         </g>
 
         <!-- the scene chip, revealed on the trip (text set per scene) -->
@@ -216,6 +229,7 @@
         <span class="sig-status" id="sig-status">checking…</span>
         <code class="sig-val" id="sig-val"></code>
       </div>
+      <p class="vitals" id="vitals" hidden></p>
       <p class="never" id="never">—</p>
       <pre class="wire" id="wire" hidden></pre>
       <div class="beat" id="beat" hidden>
@@ -229,7 +243,7 @@
       <ul id="feed-list" aria-live="polite"></ul>
     </div>
 
-    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html#quorum">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. One more scene — the breathing wave — is coming.</p>
+    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html#quorum">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. That's all four witnesses of the house, up close — presence, pixels, the WiFi field, and the breathing wave. Each does one honest thing, and signs one small claim for it.</p>
   </main>
 
   <footer>
@@ -368,7 +382,26 @@
               '  "sig":       "ed25519:' + (W.sig ? b64url(W.sig).slice(0, 16) : "…") + '…"\n}';
           },
         },
-        { id: "breath", n: 4, tab: "The breathing wave", available: false },
+        {
+          id: "breath", n: 4, tab: "The breathing wave", available: true,
+          deviceId: "sense-bedside", seq: 8,
+          room: "the bedside",
+          field: "breath", glyph: "breath",
+          legend: '<i class="perch-dot dot-breath"></i> 60&nbsp;GHz radar · wellbeing, one person, up close',
+          chip: "still here, breathing",
+          armed: "scene armed — radar live, bedside empty",
+          title: "Still breathing. Never watched.",
+          desc: "The same 60 GHz radar, up close and still, can feel a chest rise and fall — a breathing rate, even a pulse — for exactly one person within about a metre. No camera, no mic. Watch what it says, then let a second person walk in.",
+          never: '<b>Wellbeing, not medical — and only for one.</b> Vitals are hard-suppressed unless exactly one target is in range; multi-person BPM attribution is a line the design refuses to cross. It reads a chest through radio, never a face or a voice, and signs only the coarse record — the breath and heart numbers ride along unsigned, and vanish the moment they can\'t be trusted.',
+          claim: { event: "presence_started", presence: "present", occupants: "1", band: "near" },
+          suppressed: { event: "occupancy_changed", presence: "present", occupants: "2+", band: "near" },
+          canonical: senseCanon,
+          display: function (c) { return c.event + '  { occupants: ' + c.occupants + ', range: "near" }'; },
+          vitalsOn: 'wellbeing · <b>breathing locked</b> · ~14 breaths/min · ~62 bpm',
+          vitalsOff: 'wellbeing · <b>suppressed</b> — vitals need a single target',
+          beat: { kind: "policy", label: "👥 add another person", altLabel: "↺ just one person again", cls: "",
+            note: "Two people in range. The lock drops and the numbers go null — by construction. It won't put a heartbeat on anyone in a crowd." },
+        },
       ];
       var scene = SCENES[0];
       function claimText(c) { return scene.display(c); }
@@ -378,7 +411,7 @@
       var marker = $("marker"), visitor = $("visitor"), chip = $("chip"),
           payoff = $("payoff"), playBtn = $("play-btn"), wire = $("wire");
       var sigRow = $("sig-row"), sigStatus = $("sig-status"), sigVal = $("sig-val"),
-          beatBox = $("beat"), beatBtn = $("beat-btn"), beatNote = $("beat-note");
+          beatBox = $("beat"), beatBtn = $("beat-btn"), beatNote = $("beat-note"), vitals = $("vitals");
       var liveClaim = null; // the record currently on screen (may be tampered)
 
       // ── the witness feed ──
@@ -419,9 +452,11 @@
         svgShow($("field-radar"), s.field === "radar");
         svgShow($("field-vision"), s.field === "vision");
         svgShow($("field-wifi"), s.field === "wifi");
+        svgShow($("field-breath"), s.field === "breath");
         svgShow(marker.querySelector(".glyph-radar"), s.glyph === "radar");
         svgShow(marker.querySelector(".glyph-vision"), s.glyph === "vision");
         svgShow(marker.querySelector(".glyph-wifi"), s.glyph === "wifi");
+        svgShow(marker.querySelector(".glyph-breath"), s.glyph === "breath");
         feed.innerHTML = "";
         feedLine(s.armed, "feed-sys");
         reset();
@@ -439,6 +474,13 @@
         sigVal.textContent = "ed25519:" + b64url(W.sig).slice(0, 12) + "…  · key " + W.fp;
         sigStatus.className = "sig-status " + (ok ? "ok" : "bad");
         sigStatus.textContent = ok ? "✓ verified" : "✗ forged — signature doesn't match";
+      }
+
+      function showVitals(htmlText, off) {
+        if (!htmlText) { vitals.hidden = true; return; }
+        vitals.hidden = false;
+        vitals.className = "vitals" + (off ? " off" : "");
+        vitals.innerHTML = htmlText;
       }
 
       // ── the interactive beat, dispatched per scene ──
@@ -471,6 +513,29 @@
           },
           async off() { wire.hidden = true; beatNote.textContent = ""; },
         },
+        // policy (breathing): a second person walks in — the device honestly
+        // re-signs occupants:2+ and the vitals suppress. Both records verify;
+        // the point is what it *won't* report, not a broken signature.
+        policy: {
+          async on() {
+            liveClaim = Object.assign({}, scene.suppressed);
+            $("payoff-claim").textContent = claimText(liveClaim);
+            await signClaim(liveClaim);                    // a real, new signed record
+            paintVerdict(await verifyClaim(liveClaim));     // still ✓ — honestly signed
+            showVitals(scene.vitalsOff, true);
+            feedLine("second target in range → vitals suppressed", "feed-sys");
+            beatNote.textContent = scene.beat.note;
+          },
+          async off() {
+            liveClaim = Object.assign({}, scene.claim);
+            $("payoff-claim").textContent = claimText(liveClaim);
+            await signClaim(liveClaim);
+            paintVerdict(await verifyClaim(liveClaim));
+            showVitals(scene.vitalsOn, false);
+            feedLine("single target — breathing lock re-acquired", "feed-sys");
+            beatNote.textContent = "";
+          },
+        },
       };
 
       beatBtn.addEventListener("click", async function () {
@@ -494,6 +559,7 @@
         beatBox.hidden = true;
         beatBox.dataset.state = "";
         wire.hidden = true;
+        vitals.hidden = true;
         beatNote.textContent = "";
         liveClaim = null;
         visitor.classList.add("hidden");
@@ -525,6 +591,7 @@
           if (ready) {
             await signClaim(liveClaim);
             paintVerdict(await verifyClaim(liveClaim));
+            if (scene.vitalsOn) showVitals(scene.vitalsOn, false);
             beatBtn.textContent = scene.beat.label;
             beatBtn.className = "beat-btn" + (scene.beat.cls ? " " + scene.beat.cls : "");
             beatBox.hidden = false;
