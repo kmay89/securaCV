@@ -2,9 +2,16 @@
  "generated_by": "canary-local/tools/gen_boards.py",
  "note": "Vendor board CAD (boards/vendor/*.step) tessellated to a committed GLB by cascadio; geometry facts recomputed from the committed mesh by the page's own loader (tools/glb_facts.mjs \u2192 assets/glb.js). See boards/vendor/README.md for provenance and licence.",
  "device_board": {
-  "canary-wap": "seeed_xiao_esp32s3_sense",
-  "canary-vision": "seeed_grove_vision_ai_v2",
-  "canary-display-watch": "seeed_round_display_xiao"
+  "canary-wap": [
+   "seeed_xiao_esp32s3_sense"
+  ],
+  "canary-vision": [
+   "seeed_grove_vision_ai_v2"
+  ],
+  "canary-display-watch": [
+   "seeed_round_display_xiao",
+   "seeed_xiao_esp32s3"
+  ]
  },
  "boards": {
   "seeed_xiao_esp32s3_sense": {
@@ -491,6 +498,237 @@
    "blurb": "\u00d8 43.0 mm PCB disc (the \u201c39 mm\u201d in marketing copy is the glass), 1.28-in GC9A01 (240x240) with CST816S touch, PCF8563 RTC, microSD and a LiPo charger; it seats a XIAO on its back socket. The backlight on D6/GPIO43 is PWM-dimmable \u2014 that is the bedside night floor.",
    "doc": "https://wiki.seeedstudio.com/get_start_round_display/",
    "provenance": "Seeed Studio CAD (SolidWorks STEP export). This export did not carry per-solid colours through the tessellator, so materials are assigned by geometry (dark PCB + grey glass); the shape is the vendor's exact model. Verify Seeed's licence terms before external redistribution."
+  },
+  "seeed_xiao_esp32s3": {
+   "name": "Seeed XIAO ESP32-S3",
+   "vendor": "Seeed Studio",
+   "mpn": "113991114",
+   "devices": [
+    "canary-display-watch"
+   ],
+   "glb": "boards/seeed_xiao_esp32s3.glb",
+   "source_step": "boards/vendor/seeed_xiao_esp32s3.step.gz",
+   "dims_mm": [
+    22.64,
+    4.42,
+    17.78
+   ],
+   "triangles": 36142,
+   "parts": 9,
+   "materials": [
+    {
+     "color": "#e59833",
+     "triangles": 9364
+    },
+    {
+     "color": "#020202",
+     "triangles": 9225
+    },
+    {
+     "color": "#f6f4e9",
+     "triangles": 6523
+    },
+    {
+     "color": "#121212",
+     "triangles": 6014
+    },
+    {
+     "color": "#5a5a5a",
+     "triangles": 2364
+    },
+    {
+     "color": "#e7c863",
+     "triangles": 2336
+    },
+    {
+     "color": "#0d0d0d",
+     "triangles": 196
+    },
+    {
+     "color": "#7f8e98",
+     "triangles": 96
+    },
+    {
+     "color": "#131313",
+     "triangles": 24
+    }
+   ],
+   "pose": {
+    "rx": 0.6,
+    "ry": 0.7,
+    "dist_factor": 2.7
+   },
+   "pads": {
+    "_comment": "Same 2x7 castellations as the Sense, but this vendor STEP sits in its own frame: USB-C at +X (x=13.8), +Y component side. Pad centres are render-verified against the committed mesh. Names follow the XIAO ESP32-S3 footprint the same way the Sense entry documents its own: D0 sits at the USB end (so the +X pad of each row), and \u2014 this being the identical board to the Sense \u2014 the D0\u2013D6 edge is the one that lands on the Sense's D-row under the same component-up/USB-forward chirality, here the z=-14.4 edge. The z=+2.4 edge carries the 5V/GND/3V3/D10\u2013D7 rail.",
+    "D0": [
+     8.24,
+     0.4,
+     -14.4
+    ],
+    "D1": [
+     5.7,
+     0.4,
+     -14.4
+    ],
+    "D2": [
+     3.16,
+     0.4,
+     -14.4
+    ],
+    "D3": [
+     0.62,
+     0.4,
+     -14.4
+    ],
+    "D4": [
+     -1.92,
+     0.4,
+     -14.4
+    ],
+    "D5": [
+     -4.46,
+     0.4,
+     -14.4
+    ],
+    "D6": [
+     -7.0,
+     0.4,
+     -14.4
+    ],
+    "5V": [
+     8.24,
+     0.4,
+     2.4
+    ],
+    "GND": [
+     5.7,
+     0.4,
+     2.4
+    ],
+    "3V3": [
+     3.16,
+     0.4,
+     2.4
+    ],
+    "D10": [
+     0.62,
+     0.4,
+     2.4
+    ],
+    "D9": [
+     -1.92,
+     0.4,
+     2.4
+    ],
+    "D8": [
+     -4.46,
+     0.4,
+     2.4
+    ],
+    "D7": [
+     -7.0,
+     0.4,
+     2.4
+    ]
+   },
+   "pinout": [
+    {
+     "label": "Display SPI",
+     "pin": "D8 / D9 / D10",
+     "gpio": "GPIO7/8/9",
+     "use": "SCK / MISO / MOSI to the Round Display GC9A01 (through the socket)",
+     "anchors": [
+      [
+       -4.46,
+       0.4,
+       2.4
+      ],
+      [
+       -1.92,
+       0.4,
+       2.4
+      ],
+      [
+       0.62,
+       0.4,
+       2.4
+      ]
+     ]
+    },
+    {
+     "label": "Backlight",
+     "pin": "D6",
+     "gpio": "GPIO43",
+     "use": "PWM-dimmable panel backlight (the bedside night floor)",
+     "anchor": [
+      -7.0,
+      0.4,
+      -14.4
+     ]
+    },
+    {
+     "label": "Touch / RTC I2C",
+     "pin": "D4 / D5",
+     "gpio": "GPIO5/6",
+     "use": "CST816S touch + PCF8563 RTC share the I2C bus",
+     "anchors": [
+      [
+       -1.92,
+       0.4,
+       -14.4
+      ],
+      [
+       -4.46,
+       0.4,
+       -14.4
+      ]
+     ]
+    },
+    {
+     "label": "Chime",
+     "pin": "D3",
+     "gpio": "GPIO4",
+     "status": "planned",
+     "use": "Passive piezo for the future severity-tiered chime \u2014 UNPOPULATED in v0.1 firmware.",
+     "anchor": [
+      0.62,
+      0.4,
+      -14.4
+     ]
+    },
+    {
+     "label": "Battery",
+     "pin": "BAT+ / BAT-",
+     "gpio": "\u2014",
+     "use": "JST-PH LiPo pads on the underside (not modeled as distinct gold in this STEP, so table-only)"
+    },
+    {
+     "label": "Power",
+     "pin": "5V / 3V3 / GND",
+     "gpio": "\u2014",
+     "use": "USB-C 5 V in; 3V3 rail out",
+     "anchors": [
+      [
+       8.24,
+       0.4,
+       2.4
+      ],
+      [
+       3.16,
+       0.4,
+       2.4
+      ],
+      [
+       5.7,
+       0.4,
+       2.4
+      ]
+     ]
+    }
+   ],
+   "blurb": "21 x 17.8 mm. The plain XIAO ESP32-S3 (ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger) with no Sense expansion \u2014 the same 2x7 castellated footprint that seats in the Round Display's socket for the Watch Station. The Watch build (canary-display-watch) runs on this host; the display's SPI/backlight/touch/RTC/microSD all come through the socket.",
+   "doc": "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
+   "provenance": "Seeed Studio open-hardware CAD (STEP) for the plain XIAO ESP32-S3 \u2014 the same base module as the Sense, without the stacked camera/mic daughterboard. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
   }
  }
 }

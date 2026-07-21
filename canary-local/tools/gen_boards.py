@@ -146,10 +146,13 @@ def main():
         print(f"OK {b['id']}: {facts['dims_mm']} mm · {facts['triangles']:,} tris · "
               f"{facts['parts']} parts · {len(facts['materials'])} materials → {rel}")
 
+    # device -> [board_id, ...] in config order (primary board first). A device
+    # can carry more than one board (e.g. the Watch is a plain XIAO stacked in
+    # the Round Display); board-lab.js renders a picker when the list has >1.
     dev_index = {}
     for bid, e in boards.items():
         for d in e["devices"]:
-            dev_index.setdefault(d, bid)
+            dev_index.setdefault(d, []).append(bid)
 
     doc = {
         "generated_by": "canary-local/tools/gen_boards.py",

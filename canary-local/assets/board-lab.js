@@ -51,11 +51,44 @@ export function buildBoardLab(boardsData, deviceId) {
     wrap.append(el("p", "muted", "Board catalog unavailable."));
     return wrap;
   }
-  const bid = boardsData.device_board?.[deviceId];
-  const board = bid && boardsData.boards?.[bid];
-  if (!board) {
+  // device_board maps a device to a LIST of boards (primary first); a Watch is
+  // a plain XIAO stacked in the Round Display, so it carries two. Tolerate the
+  // legacy single-string form too.
+  const mapped = boardsData.device_board?.[deviceId];
+  const bids = (Array.isArray(mapped) ? mapped : mapped ? [mapped] : [])
+    .filter((b) => boardsData.boards?.[b]);
+  if (!bids.length) {
     wrap.append(el("p", "muted",
       "No board modeled for this device yet — the vendor CAD lands here when it's in the repo."));
+    return wrap;
+  }
+
+  // >1 board → a pill picker that swaps the board panel; 1 board → just the panel
+  const panel = el("div", "boardlab-panel");
+  if (bids.length > 1) {
+    const picker = el("div", "board-picker pills");
+    bids.forEach((b, i) => {
+      const pill = el("button", "pill" + (i === 0 ? " on" : ""), boardsData.boards[b].name);
+      pill.addEventListener("click", () => {
+        for (const x of picker.children) x.classList.remove("on");
+        pill.classList.add("on");
+        panel.replaceChildren(renderBoardPanel(boardsData, b));
+      });
+      picker.append(pill);
+    });
+    wrap.append(picker);
+  }
+  panel.append(renderBoardPanel(boardsData, bids[0]));
+  wrap.append(panel);
+  return wrap;
+}
+
+// the board panel for one board id (ribbon → 3D → facts → pinout → links)
+function renderBoardPanel(boardsData, bid) {
+  const wrap = el("div", "boardlab-one");
+  const board = boardsData.boards?.[bid];
+  if (!board) {
+    wrap.append(el("p", "muted", "board unavailable"));
     return wrap;
   }
 

@@ -85,6 +85,40 @@
         { "label": "Storage", "pin": "microSD", "gpio": "—", "use": "Journal / assets", "anchor": [-6.2, -4.2, -11.0] },
         { "label": "Battery", "pin": "JST 1.25", "gpio": "—", "use": "LiPo, onboard charger; verify polarity", "anchor": [-1.7, -3.7, 0] }
       ]
+    },
+    {
+      "id": "seeed_xiao_esp32s3",
+      "devices": ["canary-display-watch"],
+      "name": "Seeed XIAO ESP32-S3",
+      "vendor": "Seeed Studio",
+      "mpn": "113991114",
+      "source": "seeed_xiao_esp32s3.step.gz",
+      "provenance": "Seeed Studio open-hardware CAD (STEP) for the plain XIAO ESP32-S3 — the same base module as the Sense, without the stacked camera/mic daughterboard. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution.",
+      "doc": "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
+      "tol_linear": 0.05,
+      "tol_angular": 0.3,
+      "merge_primitives": true,
+      "drop": [],
+      "materials": "step",
+      "pose": { "rx": 0.6, "ry": 0.7, "dist_factor": 2.7 },
+      "blurb": "21 x 17.8 mm. The plain XIAO ESP32-S3 (ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger) with no Sense expansion — the same 2x7 castellated footprint that seats in the Round Display's socket for the Watch Station. The Watch build (canary-display-watch) runs on this host; the display's SPI/backlight/touch/RTC/microSD all come through the socket.",
+      "pads": {
+        "_comment": "Same 2x7 castellations as the Sense, but this vendor STEP sits in its own frame: USB-C at +X (x=13.8), +Y component side. Pad centres are render-verified against the committed mesh. Names follow the XIAO ESP32-S3 footprint the same way the Sense entry documents its own: D0 sits at the USB end (so the +X pad of each row), and — this being the identical board to the Sense — the D0–D6 edge is the one that lands on the Sense's D-row under the same component-up/USB-forward chirality, here the z=-14.4 edge. The z=+2.4 edge carries the 5V/GND/3V3/D10–D7 rail.",
+        "D0": [8.24, 0.4, -14.4], "D1": [5.7, 0.4, -14.4], "D2": [3.16, 0.4, -14.4],
+        "D3": [0.62, 0.4, -14.4], "D4": [-1.92, 0.4, -14.4], "D5": [-4.46, 0.4, -14.4],
+        "D6": [-7.0, 0.4, -14.4],
+        "5V": [8.24, 0.4, 2.4], "GND": [5.7, 0.4, 2.4], "3V3": [3.16, 0.4, 2.4],
+        "D10": [0.62, 0.4, 2.4], "D9": [-1.92, 0.4, 2.4], "D8": [-4.46, 0.4, 2.4],
+        "D7": [-7.0, 0.4, 2.4]
+      },
+      "pinout": [
+        { "label": "Display SPI", "pin": "D8 / D9 / D10", "gpio": "GPIO7/8/9", "use": "SCK / MISO / MOSI to the Round Display GC9A01 (through the socket)", "anchors": [[-4.46, 0.4, 2.4], [-1.92, 0.4, 2.4], [0.62, 0.4, 2.4]] },
+        { "label": "Backlight", "pin": "D6", "gpio": "GPIO43", "use": "PWM-dimmable panel backlight (the bedside night floor)", "anchor": [-7.0, 0.4, -14.4] },
+        { "label": "Touch / RTC I2C", "pin": "D4 / D5", "gpio": "GPIO5/6", "use": "CST816S touch + PCF8563 RTC share the I2C bus", "anchors": [[-1.92, 0.4, -14.4], [-4.46, 0.4, -14.4]] },
+        { "label": "Chime", "pin": "D3", "gpio": "GPIO4", "status": "planned", "use": "Passive piezo for the future severity-tiered chime — UNPOPULATED in v0.1 firmware.", "anchor": [0.62, 0.4, -14.4] },
+        { "label": "Battery", "pin": "BAT+ / BAT-", "gpio": "—", "use": "JST-PH LiPo pads on the underside (not modeled as distinct gold in this STEP, so table-only)" },
+        { "label": "Power", "pin": "5V / 3V3 / GND", "gpio": "—", "use": "USB-C 5 V in; 3V3 rail out", "anchors": [[8.24, 0.4, 2.4], [3.16, 0.4, 2.4], [5.7, 0.4, 2.4]] }
+      ]
     }
   ]
 }
