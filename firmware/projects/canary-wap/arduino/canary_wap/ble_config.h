@@ -156,6 +156,16 @@ struct NearbyCanary {
     unsigned long lastSeenMs;
     ChirpType lastChirpType;
     uint8_t chainHashPrefix[8];          // First 8 bytes of their chain hash
+
+    // Fleet-link presence beacon (type 0x10) status — the direct, broker-free
+    // channel (fleet_beacon.h). Populated when a beacon is decoded; a status-
+    // less chirp leaves the last known values intact (battery/health persist).
+    bool hasBeaconStatus;                // ever heard a beacon from this peer
+    int16_t batteryPct;                  // 0..100, -1 = unknown
+    int16_t healthPct;                   // 0..100, -1 = unknown
+    uint8_t beaconFlags;                 // FLEET_BEACON_FLAG_* (tamper/degraded/…)
+    uint16_t chainHeightLo;              // low 16 bits of the peer's chain height
+
     bool active;
 };
 
