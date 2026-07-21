@@ -1,0 +1,100 @@
+# Vision Model Freshness — the heartbeat that proves the flasher's pinned
+# model stays real. The module-flasher (canary-local/flash.html) fetches
+# `releases/latest/download/manifest-vision-model.json`, then the model it
+# names, and SHA-256-verifies before burning. This job fetches the exact
+# same URLs on a clock and re-proves every promise the flasher relies on, so
+# a broken release, a mangled upload, or a manifest that outran its asset
+# surfaces here — not on a user's bench with a module on the wire.
+#
+# What it verifies against the LATEST published release (what the flasher
+# actually pulls):
+#   · the manifest is fetchable and well-formed
+#   · the model asset it names downloads
+#   · the asset's SHA-256 matches the manifest byte for byte (the pin holds)
+#   · it is a real TFLite (TFL3) Vela command stream for the Ethos-U55
+#     (ethos_u_command_stream present — not an un-compiled passthrough)
+#   · the input tensor is 1×192×192×3 (the Swift-YOLO 192 person model)
+#   · the manifest's flash_addr equals the committed catalog's burn address
+#     (flash.json ← we2-core.js), so the pin and the flasher can't diverge
+#
+# Fails loudly (Actions surfaces it) if any promise breaks; the fix is to
+# re-run "Vision Model Asset" for the affected tag. Offline consistency
+# (catalog ↔ engine ↔ workflow) is already gated per-PR by
+# tests/we2.test.js — this is the network half that only ages on its own,
+# so it gets its own clock, like homeassistant-freshness.yml.
+
+name: Vision Model Freshness
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC (off the :00 fleet stampede)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify the latest release's pinned model
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch + verify the pinned model (the flasher's own URLs)
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/$REPO/releases/latest/download"
+          echo "Fetching manifest: $base/manifest-vision-model.json"
+          if ! curl -fsSL -o manifest.json "$base/manifest-vision-model.json"; then
+            echo "::error::latest release has no manifest-vision-model.json — the flasher's pinned model would 404. Re-run 'Vision Model Asset' for the latest fw-v* tag."
+            exit 1
+          fi
+          cat manifest.json
+
+          url=$(python3 -c "import json;print(json.load(open('manifest.json'))['model']['url'])")
+          echo "Fetching model: $url"
+          curl -fsSL -o model.tflite "$url" \
+            || { echo "::error::manifest names a model asset that does not download: $url"; exit 1; }
+
+          python3 - << 'PY'
+          import json, hashlib, struct, sys
+          man = json.load(open("manifest.json"))["model"]
+          catalog = json.load(open("canary-local/devices/flash.json"))["we2_module"]
+          b = open("model.tflite", "rb").read()
+          fails = []
+
+          # 1. the pin holds — the very check the flasher runs in the browser
+          got = hashlib.sha256(b).hexdigest()
+          if got != str(man.get("sha256", "")).lower():
+              fails.append(f"sha256 mismatch: manifest {man.get('sha256')} vs asset {got}")
+          if len(b) != int(man.get("size", -1)):
+              fails.append(f"size mismatch: manifest {man.get('size')} vs asset {len(b)}")
+
+          # 2. a real TFLite Vela command stream for the Ethos-U55
+          if b[4:8] != b"TFL3":
+              fails.append("not a TFLite flatbuffer (missing TFL3 magic)")
+          if b"ethos_u_command_stream" not in b and b"ethos-u" not in b:
+              fails.append("no Ethos-U command stream — model is not Vela-compiled for the NPU")
+
+          # 3. the right model: input tensor 1x192x192x3 (Swift-YOLO 192 person)
+          def i32(o): return struct.unpack_from("<i", b, o)[0]
+          has_shape = any(
+              [i32(o + 4 * k) for k in range(4)] == [1, 192, 192, 3]
+              for o in range(0, len(b) - 16, 4)
+          )
+          if not has_shape:
+              fails.append("input tensor is not 1x192x192x3 — not the person Swift-YOLO 192 model")
+
+          # 4. the pin address equals the flasher's own burn address
+          if str(man.get("flash_addr", "")).lower() != str(catalog.get("model_addr", "")).lower():
+              fails.append(f"flash_addr {man.get('flash_addr')} != catalog burn address {catalog.get('model_addr')}")
+
+          if fails:
+              for f in fails:
+                  print(f"::error::{f}")
+              sys.exit(1)
+          print(f"OK — pinned model verified: {man['name']} "
+                f"({len(b)} bytes, sha256 {got[:16]}…, burn {man['flash_addr']})")
+          PY

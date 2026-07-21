@@ -1,10 +1,15 @@
 # Vision Model Asset — the pinned brain for the browser module-flasher.
 #
 # Builds the Grove Vision AI V2 person-detection model asset +
-# manifest-vision-model.json for an EXISTING fw-v* release tag and attaches
-# them, exactly the way flasher-release.yml handles the ESP32 factory images:
-# manual (workflow_dispatch), rebuildable per tag, trust = SHA-256 +
-# same-origin manifest (docs/browser_flasher.md § Trust model).
+# manifest-vision-model.json for an fw-v* release and attaches them, exactly
+# the way flasher-release.yml handles the ESP32 factory images: trust =
+# SHA-256 + same-origin manifest (docs/browser_flasher.md § Trust model).
+#
+# Anti-rot: this fires AUTOMATICALLY on every published release, so the
+# flasher's `releases/latest/download/manifest-vision-model.json` never 404s
+# for a fresh release — the model rides the firmware train without anyone
+# remembering to press a button. workflow_dispatch stays for rebuilds /
+# pre-key publishing (attach to an existing tag on demand).
 #
 # Provenance & license: the source model is Seeed's SSCMA model zoo
 # "Person Detection (Swift-YOLO 192)" — MIT licensed, redistributable with
@@ -13,10 +18,17 @@
 # ethos-u-vela (the same compiler Seeed's deployment guide uses), and pin
 # the result to the release so the flasher can say exactly what it burns.
 # If Seeed publishes a ready Vela artifact, it is preferred over compiling.
+#
+# The burn address is NOT written here — it is read from the committed
+# canary-local/devices/flash.json (which gen_flash.py sources from
+# assets/we2-core.js, the engine that actually does the burning), so the
+# manifest can never promise an address the flasher won't use.
 
 name: Vision Model Asset
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -39,22 +51,44 @@ jobs:
       - name: Resolve the target tag
         id: tag
         env:
-          TAG: ${{ inputs.tag }}
+          # workflow_dispatch supplies inputs.tag; a release event supplies
+          # the tag name. A non-fw-v* release (should there ever be one) is
+          # skipped, not failed, so this trigger never blocks other releases.
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
           case "$TAG" in
             fw-v*) ;;
-            *) echo "::error::expected a fw-v* tag, got '$TAG'"; exit 1 ;;
+            *)
+              if [ "${{ github.event_name }}" = "release" ]; then
+                echo "::notice::release '$TAG' is not an fw-v* tag — skipping model asset"
+                echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0
+              fi
+              echo "::error::expected a fw-v* tag, got '$TAG'"; exit 1 ;;
           esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#fw-v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
+        if: steps.tag.outputs.skip != '1'
 
       - uses: actions/setup-python@v5
+        if: steps.tag.outputs.skip != '1'
         with:
           python-version: "3.11"
 
+      - name: Read the burn address from the committed catalog (single source)
+        id: flashaddr
+        if: steps.tag.outputs.skip != '1'
+        run: |
+          # flash.json ← gen_flash.py ← assets/we2-core.js (the engine that
+          # actually writes the flash). One source; the manifest can't disagree.
+          ADDR=$(python3 -c "import json;print(json.load(open('canary-local/devices/flash.json'))['we2_module']['model_addr'])")
+          case "$ADDR" in 0x*) ;; *) echo "::error::flash.json we2_module.model_addr not a 0x address: '$ADDR'"; exit 1 ;; esac
+          echo "flash_addr=$ADDR" >> "$GITHUB_OUTPUT"
+          echo "burn address (from flash.json ← we2-core.js): $ADDR"
+
       - name: Fetch the source model (MIT — Seeed SSCMA model zoo)
+        if: steps.tag.outputs.skip != '1'
         run: |
           mkdir -p /tmp/model
           cd /tmp/model
@@ -70,7 +104,7 @@ jobs:
           ls -la
 
       - name: Compile for the Ethos-U55 (ethos-u-vela)
-        if: env.VELA_SOURCE == 'compiled'
+        if: steps.tag.outputs.skip != '1' && env.VELA_SOURCE == 'compiled'
         run: |
           pip install --quiet ethos-u-vela
           cd /tmp/model
@@ -92,9 +126,11 @@ jobs:
           ls -la
 
       - name: Build manifest-vision-model.json + checksums
+        if: steps.tag.outputs.skip != '1'
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           TAG: ${{ steps.tag.outputs.tag }}
+          FLASH_ADDR: ${{ steps.flashaddr.outputs.flash_addr }}
         run: |
           cd /tmp/model
           test -s model_vela.tflite || { echo "::error::no model artifact produced"; exit 1; }
@@ -106,6 +142,7 @@ jobs:
           import json, os, sys
           asset, size, sha = sys.argv[1], int(sys.argv[2]), sys.argv[3]
           tag = os.environ["TAG"]; version = os.environ["VERSION"]
+          flash_addr = os.environ["FLASH_ADDR"]  # from flash.json ← we2-core.js
           repo = os.environ.get("GITHUB_REPOSITORY", "kmay89/securaCV")
           json.dump({
               "$doc": "Pinned Grove Vision AI V2 model for the browser module-flasher. "
@@ -117,7 +154,7 @@ jobs:
                   "url": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
                   "size": size,
                   "sha256": sha,
-                  "flash_addr": "0x400000",
+                  "flash_addr": flash_addr,
                   "arch": "Swift-YOLO (tiny) 192x192x3 INT8, Vela-compiled for Ethos-U55",
                   "vela_source": os.environ.get("VELA_SOURCE", "compiled"),
               },
@@ -130,6 +167,7 @@ jobs:
           cat manifest-vision-model.json
 
       - name: Attach to the release (create if missing, clobber if rebuilt)
+        if: steps.tag.outputs.skip != '1'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
