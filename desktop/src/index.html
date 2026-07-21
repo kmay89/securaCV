@@ -33,20 +33,24 @@
   </header>
 
   <main>
-    <!-- Step 1 — find the board -->
+    <!-- Live connection status — always on, updates itself (no Connect button) -->
+    <div id="conn" class="connbar" role="status" aria-live="polite">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-text">Scanning for a Canary…</span>
+      <select id="port-select" class="select hidden" aria-label="Serial port"></select>
+      <button id="recheck" class="link-btn hidden">re-read chip</button>
+    </div>
+
+    <!-- Step 1 — plug in (detection is automatic) -->
     <section class="card" id="step-detect">
       <div class="step-head"><span class="step-n">1</span><h2>Plug in your Canary</h2></div>
-      <p class="muted">Connect it over USB-C with a <em>data</em> cable, then find it.</p>
-      <div class="row">
-        <button id="detect-btn" class="btn btn-primary">Find my Canary</button>
-        <select id="port-select" class="select hidden" aria-label="Serial port"></select>
-      </div>
-      <p id="detect-status" class="status" aria-live="polite"></p>
+      <p class="muted">Connect it over USB-C with a <em>data</em> cable. It's picked up
+        automatically — the status bar above tracks it live, no button to press.</p>
       <details id="download-mode" class="hint hidden">
-        <summary>Not showing up?</summary>
-        <p>Put it in <strong>download mode</strong> by hand: hold <kbd>BOOT</kbd> (B),
-          tap <kbd>RESET</kbd> (R), then let go of BOOT — and find it again. Leave
-          download mode later with a tap of RESET.</p>
+        <summary>Found, but not identified?</summary>
+        <p>Put it in <strong>download mode</strong>: hold <kbd>BOOT</kbd> (B),
+          tap <kbd>RESET</kbd> (R), then let go of BOOT — it'll be read automatically.
+          Leave download mode later with a tap of RESET.</p>
       </details>
     </section>
 

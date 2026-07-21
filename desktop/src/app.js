@@ -3,6 +3,12 @@
 // Plain JS on purpose: no framework, no build step. It talks to the Rust
 // backend through Tauri's global bridge (withGlobalTauri) and never touches
 // Web Serial — the OS-native flashing all happens in Rust.
+//
+// The connection is watched *live*, IDE-style: a background poll enumerates the
+// USB ports every second and a persistent status bar reflects the state —
+// scanning → found → reading chip → connected → (or) unplugged — with no
+// "Connect" button to press. Chip identification (which momentarily talks to the
+// board) runs once per freshly-seen port, not on every poll.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -13,15 +19,19 @@ const openExternal = (url) =>
 
 // Fold case/spacing/hyphens so "ESP32-S3" / "esp32s3" compare equal — the
 // same guard the Rust side and the website use.
-const normChip = (s) =>
-  String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
+const normChip = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
+
+const POLL_MS = 1000;
 
 const state = {
   catalog: null,
   manifest: null,
-  port: null,
-  chip: null,
+  port: null,        // the port we're currently tracking
+  chip: null,        // identified chip for state.port, or null
   product: null,
+  detecting: false,  // a detect_chip call is in flight
+  failedPort: null,  // a port whose chip read failed — don't auto-retry it
+  busy: false,       // a flash is running — pause the watcher
 };
 
 // ── boot ───────────────────────────────────────────────────────────────────
@@ -32,10 +42,9 @@ async function boot() {
     if (state.catalog.fw_train)
       tag.textContent = "· firmware train " + state.catalog.fw_train;
   } catch (e) {
-    setStatus("detect-status", "Couldn't load the catalog: " + e, "err");
+    setConn("failed", "Couldn't load the catalog: " + e);
   }
 
-  // External links open in the real browser, not inside the app.
   document.querySelectorAll("[data-open]").forEach((a) =>
     a.addEventListener("click", (ev) => {
       ev.preventDefault();
@@ -43,90 +52,153 @@ async function boot() {
     })
   );
 
-  $("detect-btn").addEventListener("click", onDetect);
-  $("port-select").addEventListener("change", (e) => {
-    state.port = e.target.value;
-  });
   $("flash-btn").addEventListener("click", onFlash);
   $("update-btn").addEventListener("click", onInstallUpdate);
   $("update-dismiss").addEventListener("click", () =>
     $("update-banner").classList.add("hidden")
   );
+  // Manual re-read: clear any failure and force a fresh identify next tick.
+  $("recheck").addEventListener("click", () => {
+    state.failedPort = null;
+    state.chip = null;
+    pollPorts();
+  });
+  // Switching ports (multiple plugged in) restarts identification for that one.
+  $("port-select").addEventListener("change", (e) => {
+    state.port = e.target.value;
+    state.chip = null;
+    state.failedPort = null;
+    resetSteps();
+    pollPorts();
+  });
 
-  checkForUpdate(); // best-effort, in the background
+  checkForUpdate();     // best-effort, in the background
+  pollPorts();          // first tick now…
+  setInterval(pollPorts, POLL_MS); // …then keep watching
 }
 
-// ── step 1: find the board + detect its chip ────────────────────────────────
-async function onDetect() {
-  const btn = $("detect-btn");
-  btn.disabled = true;
-  setStatus("detect-status", "Looking for your Canary…");
-  $("download-mode").classList.add("hidden");
+// ── the live watcher ─────────────────────────────────────────────────────────
+async function pollPorts() {
+  if (state.busy) return; // don't poke the port mid-flash
 
   let ports;
   try {
     ports = await invoke("list_ports");
-  } catch (e) {
-    setStatus("detect-status", "Serial error: " + e, "err");
-    btn.disabled = false;
-    return;
+  } catch {
+    return; // transient; try again next tick
   }
-
   const usb = ports.filter((p) => p.kind === "usb");
-  const pick = usb.length ? usb : ports;
-  if (!pick.length) {
-    setStatus(
-      "detect-status",
-      "No serial device found. Use a data USB-C cable and replug.",
-      "err"
-    );
-    $("download-mode").classList.remove("hidden");
-    btn.disabled = false;
+  syncPortSelect(usb);
+
+  const candidate = pickCandidate(usb);
+
+  // Nothing connected → reset to the idle "scanning" state.
+  if (!candidate) {
+    if (state.port) onDisconnect();
+    else setConn("idle", "Scanning for a Canary — plug one in over USB-C.");
     return;
   }
 
-  // Show a picker when there's more than one candidate; otherwise auto-pick.
+  // A different port than we were tracking → start fresh on it.
+  if (candidate.name !== state.port) {
+    state.port = candidate.name;
+    state.chip = null;
+    state.failedPort = null;
+    resetSteps();
+  }
+
+  if (state.chip) return;                    // already identified — steady state
+  if (state.detecting) return;               // identify already in flight
+  if (state.failedPort === state.port) {     // failed once; wait for re-read / replug
+    return;
+  }
+  await identify(candidate);
+}
+
+function pickCandidate(usb) {
+  if (!usb.length) return null;
   const sel = $("port-select");
-  sel.innerHTML = "";
-  pick.forEach((p) => {
-    const o = document.createElement("option");
-    o.value = p.name;
-    o.textContent = p.product ? `${p.name} — ${p.product}` : p.name;
-    sel.appendChild(o);
-  });
-  if (pick.length > 1) sel.classList.remove("hidden");
-  state.port = sel.value || pick[0].name;
-
-  setStatus("detect-status", `Reading the chip on ${state.port}…`);
-  try {
-    state.chip = await invoke("detect_chip", { port: state.port });
-  } catch (e) {
-    setStatus("detect-status", String(e), "err");
-    $("download-mode").classList.remove("hidden");
-    btn.disabled = false;
-    return;
+  if (usb.length > 1 && sel.value) {
+    const chosen = usb.find((p) => p.name === sel.value);
+    if (chosen) return chosen;
   }
+  return usb[0];
+}
 
-  setStatus(
-    "detect-status",
-    `Found an ${state.chip} on ${state.port}. ✓`,
-    "ok"
-  );
-  btn.disabled = false;
-  btn.textContent = "Find again";
+// Talk to the board once to read its chip. This is the only step that resets
+// the board; the poll never does it more than once per freshly-seen port.
+async function identify(portInfo) {
+  const port = portInfo.name;
+  const label = portInfo.product ? `${port} (${portInfo.product})` : port;
+  state.detecting = true;
+  setConn("reading", `Found ${label} — reading chip…`);
+  $("download-mode").classList.add("hidden");
+  try {
+    const chip = await invoke("detect_chip", { port });
+    if (port !== state.port) return; // unplugged/switched while we were reading
+    state.chip = chip;
+    setConn("connected", `Connected · ${chip} on ${port}`);
+    $("recheck").classList.remove("hidden");
 
-  // Pull the live release manifest so we can show versions (best-effort).
-  invoke("fetch_manifest", { manifestUrl: state.catalog.manifest_url })
-    .then((m) => {
-      state.manifest = m;
-      renderProducts();
-    })
-    .catch(() => {
-      state.manifest = null;
+    invoke("fetch_manifest", { manifestUrl: state.catalog.manifest_url })
+      .then((m) => {
+        state.manifest = m;
+        renderProducts();
+      })
+      .catch(() => {});
+    renderProducts();
+    enableCard("step-pick");
+  } catch (e) {
+    if (port !== state.port) return;
+    state.failedPort = port;
+    setConn("failed", `Found ${port} — couldn't read the chip. Put it in download mode.`);
+    $("download-mode").classList.remove("hidden");
+    $("recheck").classList.remove("hidden");
+  } finally {
+    state.detecting = false;
+  }
+}
+
+function onDisconnect() {
+  state.port = null;
+  state.chip = null;
+  state.product = null;
+  state.failedPort = null;
+  resetSteps();
+  $("recheck").classList.add("hidden");
+  $("port-select").classList.add("hidden");
+  $("download-mode").classList.add("hidden");
+  setConn("idle", "Scanning for a Canary — plug one in over USB-C.");
+}
+
+function resetSteps() {
+  $("step-pick").classList.add("disabled");
+  $("step-flash").classList.add("disabled");
+  $("product-list").innerHTML = "";
+  $("pick-sub").textContent = "We'll only show images built for your board's chip.";
+  $("flash-btn").disabled = true;
+  $("flash-target").textContent = "";
+  $("console").classList.add("hidden");
+  setStatus("flash-result", "");
+}
+
+let lastPortKey = "";
+function syncPortSelect(usb) {
+  const sel = $("port-select");
+  const key = usb.map((p) => p.name).join("|");
+  if (key !== lastPortKey) {
+    lastPortKey = key;
+    const prev = sel.value;
+    sel.innerHTML = "";
+    usb.forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.name;
+      o.textContent = p.product ? `${p.name} — ${p.product}` : p.name;
+      sel.appendChild(o);
     });
-
-  renderProducts();
-  enableCard("step-pick");
+    if (prev && usb.some((p) => p.name === prev)) sel.value = prev;
+  }
+  sel.classList.toggle("hidden", usb.length <= 1);
 }
 
 // ── step 2: pick a firmware image (chip-guarded) ────────────────────────────
@@ -143,8 +215,6 @@ function renderProducts() {
   }
   $("pick-sub").textContent = `Images built for your ${state.chip}:`;
 
-  // Preserve any current selection: the manifest loads async and triggers a
-  // second render, which would otherwise wipe out what the user just picked.
   const selectedId = state.product ? state.product.id : null;
 
   matches.forEach((p) => {
@@ -168,17 +238,12 @@ function renderProducts() {
       </span>`;
     const radio = row.querySelector("input");
     radio.addEventListener("change", () => {
-      document
-        .querySelectorAll(".product")
-        .forEach((el) => el.classList.remove("selected"));
+      document.querySelectorAll(".product").forEach((el) => el.classList.remove("selected"));
       row.classList.add("selected");
       state.product = p;
       onProductChosen(p, ver);
     });
     list.appendChild(row);
-
-    // If this row is the restored selection, re-sync the flash button — the
-    // version may have just arrived with the manifest.
     if (isSelected) onProductChosen(p, ver);
   });
 }
@@ -186,9 +251,8 @@ function renderProducts() {
 function onProductChosen(p, ver) {
   enableCard("step-flash");
   const btn = $("flash-btn");
-  const hasImage = !!ver;
-  btn.disabled = !hasImage;
-  $("flash-target").textContent = hasImage
+  btn.disabled = !ver;
+  $("flash-target").textContent = ver
     ? `${p.name} → ${state.port}`
     : "No published release for this one yet.";
 }
@@ -202,6 +266,7 @@ async function onFlash() {
   btn.disabled = true;
   btn.textContent = "Flashing…";
   setStatus("flash-result", "");
+  state.busy = true; // pause the watcher so it can't grab the port
 
   const unlisten = await listen("flash:log", (ev) => {
     con.textContent += ev.payload + "\n";
@@ -215,17 +280,17 @@ async function onFlash() {
       manifestUrl: state.catalog.manifest_url,
       baud: state.catalog.flash_baud || 921600,
     });
-    setStatus(
-      "flash-result",
-      "Done — your Canary is booting its new firmware. ✓",
-      "ok"
-    );
+    setStatus("flash-result", "Done — your Canary is booting its new firmware. ✓", "ok");
   } catch (e) {
     setStatus("flash-result", String(e), "err");
   } finally {
     unlisten();
     btn.disabled = false;
     btn.textContent = "Flash my Canary";
+    state.busy = false;
+    // The board reboots after a flash; let the watcher re-sync from scratch.
+    state.chip = null;
+    state.failedPort = null;
   }
 }
 
@@ -259,6 +324,11 @@ async function onInstallUpdate() {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+function setConn(kind, text) {
+  $("conn-dot").className = "dot " + kind;
+  $("conn-text").textContent = text;
+  $("conn").className = "connbar " + kind;
+}
 function setStatus(id, msg, kind) {
   const el = $(id);
   el.textContent = msg;
