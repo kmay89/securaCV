@@ -20,6 +20,14 @@ import {
   segmentsBuilder,
   plateBuilder,
   plateSlabBuilder,
+  meshVolume,
+  meshArea,
+  estimateSet,
+  materialForPart,
+  fmtDuration,
+  MATERIALS,
+  MACHINE,
+  ELECTRICITY_DEFAULT,
 } from "./print-guide.js";
 
 const el = (tag, cls, text) => {
@@ -123,6 +131,9 @@ export function buildEnclosureLab(encData, deviceId) {
     metas: [],             // loaded meshes of the current set
     metaCache: new Map(),  // set.id → metas
     contourPart: null,     // current-layer line part (print mode)
+    shellMaterial: "PETG", // estimate basis for non-gasket parts
+    electricity: ELECTRICITY_DEFAULT,
+    play: null,            // active "watch it print" animation handle, or null
   };
 
   // filament swatches (+ custom)
@@ -160,10 +171,19 @@ export function buildEnclosureLab(encData, deviceId) {
     renderLegend();
   }
 
+  function stopPlay() {
+    if (lab.play) {
+      cancelAnimationFrame(lab.play.raf);
+      lab.play.onStop?.();
+      lab.play = null;
+    }
+  }
+
   bShow.addEventListener("click", () => setMode("showroom"));
   bPrint.addEventListener("click", () => setMode("print"));
   function setMode(m) {
     if (lab.mode === m) return;
+    stopPlay();
     lab.mode = m;
     bShow.classList.toggle("on", m === "showroom");
     bPrint.classList.toggle("on", m === "print");
@@ -181,7 +201,10 @@ export function buildEnclosureLab(encData, deviceId) {
       try {
         const buf = await (await fetch(url)).arrayBuffer();
         const { mesh, bbox, triangles } = parseSTL(buf);
-        metas.push({ part, mesh, bbox, triangles });
+        // Compute the print geometry once, here, from the same mesh the viewer
+        // renders — the estimate is measured off exactly what you see.
+        const geom = { volume: meshVolume(mesh), area: meshArea(mesh), height: bbox.size[2] };
+        metas.push({ part, mesh, bbox, triangles, geom });
       } catch {
         metas.push(null);
       }
@@ -211,6 +234,7 @@ export function buildEnclosureLab(encData, deviceId) {
 
   // ── showroom: parts floating side by side, centered ──
   function renderShowroom() {
+    stopPlay();
     scene.clearParts();
     scene.overhangOn = false;
     scene.clipZ = 1e9;
@@ -235,6 +259,7 @@ export function buildEnclosureLab(encData, deviceId) {
 
   // ── print guide: on the plate, as modeled, scrubbed by layers ──
   function renderPrintGuide(set) {
+    stopPlay();
     scene.clearParts();
     printCtl.innerHTML = "";
     lab.contourParts = [];
@@ -291,9 +316,16 @@ export function buildEnclosureLab(encData, deviceId) {
     scene.rot.x = 0.52;
     scene.home.x = 0.52;
 
-    // ── controls: layer scrub + overhang toggle ──
+    // ── the estimate: measured off these exact meshes ──
+    const est = estimateSet(
+      lab.metas.map((m) => ({ geom: m.geom, part: m.part })),
+      { shellMaterial: lab.shellMaterial, electricity: lab.electricity },
+    );
+
+    // ── controls: layer scrub + watch-it-print + overhang toggle ──
     const layers = Math.max(1, Math.ceil(maxH / LAYER_MM));
     const row = el("div", "print-row");
+    const play = el("button", "print-play", "▶ watch it print");
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "1";
@@ -304,14 +336,37 @@ export function buildEnclosureLab(encData, deviceId) {
     const over = el("label", "over-toggle");
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    over.append(cb, document.createTextNode(" show overhangs (>45°)"));
-    row.append(slider, readout, over);
+    over.append(cb, document.createTextNode(" overhangs >45°"));
+    row.append(play, slider, readout, over);
     printCtl.append(row);
+
+    // Live head-up display: what the bed would read at the current layer —
+    // elapsed vs total (model), plastic laid so far, running cost. The running
+    // figures scale linearly with layer count (a progress indicator, not a
+    // per-layer re-slice); the totals are the full estimate.
+    const hud = el("div", "print-hud");
+    printCtl.append(hud);
+    const setHud = (frac) => {
+      const f = Math.max(0, Math.min(1, frac));
+      hud.innerHTML = "";
+      const stat = (v, l) => {
+        const s = el("span", "phud-stat");
+        s.append(el("b", null, v), el("i", null, l));
+        return s;
+      };
+      hud.append(
+        stat(`${fmtDuration(est.total.timeS * f)} / ${fmtDuration(est.total.timeS)}`, "print time"),
+        stat(`${(est.total.grams * f).toFixed(1)} / ${est.total.grams.toFixed(1)} g`, "filament"),
+        stat(`${(est.total.energyKWh * f).toFixed(3)} kWh`, "energy"),
+        stat(`$${(est.total.cost * f).toFixed(2)} / $${est.total.cost.toFixed(2)}`, "cost so far"),
+      );
+    };
 
     const setLayer = (k) => {
       const h = k * LAYER_MM;
       scene.clipZ = h + 1e-4;
       readout.textContent = `layer ${k}/${layers} · ${h.toFixed(1)} mm`;
+      setHud((k - 1) / Math.max(1, layers - 1));
       // true cross-section at the current layer, one contour per part
       for (const c of lab.contourParts) scene.removePart(c);
       lab.contourParts = [];
@@ -329,15 +384,145 @@ export function buildEnclosureLab(encData, deviceId) {
         }
       }
     };
-    slider.addEventListener("input", () => setLayer(Number(slider.value)));
+    slider.addEventListener("input", () => { stopPlay(); setLayer(Number(slider.value)); });
     cb.addEventListener("change", () => { scene.overhangOn = cb.checked; });
+
+    // ── watch it print: animate the real layer clip over scaled clock time ──
+    // Map the modelled print time onto a watchable clip (~16–42 s) and show
+    // the speed-up honestly. The geometry revealed each frame is the true
+    // cross-section; only the clock is compressed.
+    const watchS = Math.min(42, Math.max(16, est.total.timeS / 120));
+    const speedup = Math.max(1, Math.round(est.total.timeS / watchS));
+    const stage2 = el("div", "print-handoff");   // revealed when the print "finishes"
+    const startPlay = (fromK) => {
+      play.textContent = "❚❚ pause";
+      play.classList.add("on");
+      const t0 = performance.now();
+      const k0 = fromK ?? 1;
+      const tick = () => {
+        const frac = k0 / layers + (performance.now() - t0) / (watchS * 1000);
+        const k = Math.min(layers, Math.max(1, Math.round(frac * layers)));
+        slider.value = String(k);
+        setLayer(k);
+        if (k >= layers) {
+          play.textContent = "✔ printed — replay";
+          play.classList.remove("on");
+          lab.play = null;
+          stage2.hidden = false;
+          return;
+        }
+        lab.play.raf = requestAnimationFrame(tick);
+      };
+      lab.play = { raf: requestAnimationFrame(tick), onStop: () => {
+        play.textContent = "▶ watch it print";
+        play.classList.remove("on");
+      } };
+    };
+    play.addEventListener("click", () => {
+      if (lab.play) { stopPlay(); return; }
+      stage2.hidden = true;
+      const k = Number(slider.value);
+      startPlay(k >= layers ? 1 : k);   // replay from the plate when at the top
+    });
+
     setLayer(layers);
 
-    // settings card (quotes the repo's own guidance)
+    // ── estimate card: measured filament, modelled time/energy, real spend ──
+    const card = el("div", "print-card print-estimate");
+    card.append(el("h4", null, `Print estimate · ${MACHINE.name}`));
+
+    // basis selectors — the estimate is honest only if you can see & change
+    // the assumptions it rests on.
+    const basis = el("div", "est-basis");
+    const matSel = document.createElement("select");
+    matSel.className = "est-sel";
+    for (const id of ["PLA", "PETG", "ASA"]) {
+      const o = document.createElement("option");
+      o.value = id; o.textContent = MATERIALS[id].label;
+      if (id === lab.shellMaterial) o.selected = true;
+      matSel.append(o);
+    }
+    matSel.addEventListener("change", () => { lab.shellMaterial = matSel.value; renderPrintGuide(lab.set); });
+    const elecIn = document.createElement("input");
+    elecIn.type = "number"; elecIn.step = "0.01"; elecIn.min = "0";
+    elecIn.value = String(lab.electricity); elecIn.className = "est-elec";
+    elecIn.addEventListener("change", () => {
+      const v = parseFloat(elecIn.value);
+      if (Number.isFinite(v) && v >= 0) { lab.electricity = v; renderPrintGuide(lab.set); }
+    });
+    const mlabel = el("label", "est-field");
+    mlabel.append(el("span", "muted", "shell plastic"), matSel);
+    const elabel = el("label", "est-field");
+    elabel.append(el("span", "muted", "electricity $/kWh"), elecIn);
+    basis.append(mlabel, elabel,
+      el("span", "muted est-note", "0.4 mm nozzle · 0.2 mm layers · 3 walls · 25% infill"));
+    card.append(basis);
+
+    // headline totals
+    const totals = el("div", "est-totals");
+    const big = (v, l, cls) => {
+      const b = el("div", "est-big" + (cls ? " " + cls : ""));
+      b.append(el("b", null, v), el("i", null, l));
+      return b;
+    };
+    totals.append(
+      big(fmtDuration(est.total.timeS), `print time · ${fmtDuration(est.total.timeLowS)}–${fmtDuration(est.total.timeHighS)}`),
+      big(`${est.total.grams.toFixed(0)} g`, `filament · ${est.total.lengthM.toFixed(1)} m`),
+      big(`${est.total.energyKWh.toFixed(2)} kWh`, `energy · ${speedup}× in the replay`),
+      big(`$${est.total.cost.toFixed(2)}`, `to print · $${est.total.filamentCost.toFixed(2)} plastic + $${est.total.energyCost.toFixed(2)} power`, "est-cost"),
+    );
+    card.append(totals);
+
+    // per-part breakdown
+    const tbl = el("table", "est-table");
+    const thead = el("tr");
+    for (const h of ["part", "material", "filament", "time", "cost"]) thead.append(el("th", null, h));
+    tbl.append(thead);
+    for (const r of est.rows) {
+      const tr = el("tr");
+      tr.append(
+        el("td", null, r.part.name),
+        el("td", null, MATERIALS[r.est.material]?.label || r.est.material),
+        el("td", "num", `${r.est.grams.toFixed(1)} g`),
+        el("td", "num", fmtDuration(r.est.timeS)),
+        el("td", "num", `$${r.est.cost.toFixed(2)}`),
+      );
+      tbl.append(tr);
+    }
+    card.append(tbl);
+
+    // provenance — the whole point: say what's measured vs modelled.
+    card.append(el("p", "muted est-prov",
+      "Measured: filament mass, length and cost come from these STLs' own solid " +
+      "volume × the catalog's documented density — the same method behind the " +
+      "README mass budget, so the grams are checkable, not guessed. Modelled: " +
+      "print time and energy are a transparent physical model for your rig " +
+      "(volumetric flow → time; average duty-cycle power → energy), carrying " +
+      "the ± band shown. This is a guide, not a slicer — it plans no toolpath; " +
+      "slice in your slicer for exact figures."));
+
+    // hand off to the bench: the print's done, now build it
+    stage2.hidden = true;
+    stage2.append(el("span", "muted", "Printed and cooled? Next step:"));
+    const toAsm = el("button", "primary", "stage for assembly →");
+    toAsm.addEventListener("click", () => {
+      // click the sibling "Assemble" tab if this device has a guided build
+      const btn = [...document.querySelectorAll("button.tab")]
+        .find((b) => b.textContent === "Assemble" && b.offsetParent !== null);
+      if (btn) btn.click();
+      else stage2.append(el("span", "muted",
+        " — guided assembly for this device isn't choreographed yet; see the README §Assembly."));
+    });
+    stage2.append(toAsm);
+    card.append(stage2);
+
+    printCtl.append(card);
+
+    // settings card (quotes the repo's own guidance — the how-to-print half)
     const ps = window.__encPrintSettings;
     if (ps) {
-      const card = el("div", "print-card");
-      card.append(el("h4", null, "Best-practice settings (from the catalog)"));
+      const sc = el("div", "print-card");
+      sc.append(el("h4", null, "Best-practice settings (from the catalog)"));
       const dl = el("dl");
       const rowd = (k, v) => { dl.append(el("dt", null, k), el("dd", null, v)); };
       rowd("Material", ps.material);
@@ -345,7 +530,7 @@ export function buildEnclosureLab(encData, deviceId) {
       rowd("Walls", `${ps.walls} perimeters`);
       rowd("Infill", `${ps.infill_pct}%`);
       rowd("Orientation", ps.orientation);
-      card.append(dl);
+      sc.append(dl);
       const notes = el("ul", "print-notes");
       for (const m of lab.metas) {
         const li = el("li");
@@ -353,12 +538,12 @@ export function buildEnclosureLab(encData, deviceId) {
                   document.createTextNode(`${m.part.print_note || "prints flat as modeled"} · ${m.part.material || ""}`));
         notes.append(li);
       }
-      card.append(notes);
-      card.append(el("p", "muted",
-        "A guide, not a slicer: the layer scrub is a true cross-section of " +
-        "this mesh at 0.2 mm; red = faces steeper than 45° that would need " +
-        "support (these parts are designed not to). Source: " + ps.source));
-      printCtl.append(card);
+      sc.append(notes);
+      sc.append(el("p", "muted",
+        "The layer scrub is a true cross-section of this mesh at 0.2 mm; red = " +
+        "faces steeper than 45° that would need support (these parts are " +
+        "designed not to). Source: " + ps.source));
+      printCtl.append(sc);
     }
   }
 
