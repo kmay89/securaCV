@@ -466,6 +466,26 @@
       }
      ],
      "preview": "preview_doorbell.png"
+    },
+    {
+     "id": "combo-witness",
+     "label": "Combo witness",
+     "set": "combo-witness",
+     "contents": "Vision + Sense stacks in one face (lens + radome); radar-confirmed camera events",
+     "status": "in-development",
+     "parts": [
+      {
+       "name": "back",
+       "file": "preview/canary_combo_back.stl",
+       "preview_mesh": true
+      },
+      {
+       "name": "front",
+       "file": "preview/canary_combo_front.stl",
+       "preview_mesh": true
+      }
+     ],
+     "preview": "preview_dev_combo.png"
     }
    ],
    "addons": [
