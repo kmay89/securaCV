@@ -48,13 +48,23 @@ function load(file, base = PREVIEW) {
   return p;
 }
 
+// The finish role a placed part animates with, INFERRED from its colour so a
+// caller can't silently mislabel one: shell2()/shell() return the stable
+// per-finish arrays, so an identity match names the role. Anything else (a
+// literal colour) gets no role and keeps its colour through the showcase.
+function roleFor(color, explicit) {
+  if (explicit !== undefined) return explicit;
+  const f = activeFinish();
+  return color === f.shell2 ? "shell2" : color === f.shell ? "shell" : null;
+}
+
 // Center a mesh on its bbox, then pre-rotate (print → device orientation),
 // then place. Baking center+pre into the model matrix keeps the mesh data
 // shared between cards (the cache holds one copy per file).
-function place(scene, parsed, { pre = M4.ident(), at = M4.ident(), color = shell(), gloss = 0.22 }) {
+function place(scene, parsed, { pre = M4.ident(), at = M4.ident(), color = shell(), gloss = 0.22, role }) {
   const c = parsed.bbox.center;
   const model = M4.mul(at, M4.mul(pre, M4.translate(-c[0], -c[1], -c[2])));
-  scene.addMesh(parsed.mesh, { color, gloss, model });
+  scene.addMesh(parsed.mesh, { color, gloss, model, role: roleFor(color, role) });
 }
 
 const rotXpi = M4.rotX(Math.PI);          // face-down print → face forward
@@ -66,11 +76,11 @@ const standUp = M4.rotX(-Math.PI / 2);    // flat print → upright (z → y)
 //   world = G · T(devicePos − standCenter) · R_device · T(−meshCenter)
 // so every part's seat comes from the SCAD's own cradle geometry, not from
 // per-part hand offsets. G = standUp (print z → screen y) + a vertical trim.
-function seatPart(scene, parsed, { G, D, R = M4.ident(), color = shell(), gloss = 0.22 }) {
+function seatPart(scene, parsed, { G, D, R = M4.ident(), color = shell(), gloss = 0.22, role }) {
   const c = parsed.bbox.center;
   const model = M4.mul(G, M4.mul(M4.translate(D[0], D[1], D[2]),
     M4.mul(R, M4.translate(-c[0], -c[1], -c[2]))));
-  scene.addMesh(parsed.mesh, { color, gloss, model });
+  scene.addMesh(parsed.mesh, { color, gloss, model, role: roleFor(color, role) });
 }
 
 // canary_watch_station.scad (v0.2) — the drum sinks pocket_dep = 11 into the

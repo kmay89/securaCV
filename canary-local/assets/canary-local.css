@@ -1774,5 +1774,18 @@ button.ghost.small.bench-ff { font-size: 12px; }
 .finish-swatch:hover { transform: scale(1.14); }
 .finish-swatch.on { border-color: var(--canary); box-shadow: 0 0 0 2px var(--surface) inset, 0 0 10px rgba(255,212,79,0.35); }
 .finish-swatch:focus-visible { outline: 2px solid var(--canary); outline-offset: 2px; }
-.finish-label { font-size: 13px; color: var(--text); font-weight: 600; min-width: 58px; }
+.finish-label { font-size: 13px; color: var(--text); font-weight: 600; min-width: 58px; transition: color .5s; }
 @media (max-width: 560px) { .finish-bar { flex-wrap: wrap; justify-content: center; } }
+
+/* ambient showcase: the shown swatch wears a slow breathing ring, and the
+   whole picker reads slightly quieter — a hint it's demoing, not committed */
+.finish-picker.cycling .finish-swatch.on { animation: finishPulse 2.9s ease-in-out infinite; }
+.finish-picker.cycling .finish-label { color: var(--muted); }
+.finish-picker.cycling .finish-label::after { content: " · auto"; color: var(--faint); font-weight: 500; }
+@keyframes finishPulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--surface) inset, 0 0 0 0 rgba(255,212,79,0.0); }
+  50%      { box-shadow: 0 0 0 2px var(--surface) inset, 0 0 12px 3px rgba(255,212,79,0.45); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .finish-picker.cycling .finish-swatch.on { animation: none; }
+}
