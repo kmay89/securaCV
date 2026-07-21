@@ -119,6 +119,38 @@
         { "label": "Battery", "pin": "BAT+ / BAT-", "gpio": "—", "use": "JST-PH LiPo pads on the underside (not modeled as distinct gold in this STEP, so table-only)" },
         { "label": "Power", "pin": "5V / 3V3 / GND", "gpio": "—", "use": "USB-C 5 V in; 3V3 rail out", "anchors": [[8.24, 0.4, 2.4], [3.16, 0.4, 2.4], [5.7, 0.4, 2.4]] }
       ]
+    },
+    {
+      "id": "quectel_l76k_gnss",
+      "devices": ["canary-wap"],
+      "name": "L76K GNSS Module for XIAO",
+      "vendor": "Seeed Studio",
+      "mpn": null,
+      "source": "quectel_l76k_gnss.step.gz",
+      "provenance": "Seeed Studio open-hardware CAD (STEP) for the L76K GNSS Module for XIAO — a Quectel L76K receiver + ceramic patch antenna on a XIAO-footprint carrier. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution.",
+      "doc": "https://wiki.seeedstudio.com/Get_Started_with_L76K_GNSS_Module_for_XIAO/",
+      "tol_linear": 0.05,
+      "tol_angular": 0.3,
+      "merge_primitives": true,
+      "drop": [],
+      "materials": "step",
+      "pose": { "rx": 0.5, "ry": 0.7, "dist_factor": 2.6 },
+      "blurb": "The L76K GNSS module (Quectel L76K receiver + ceramic patch antenna) on a XIAO-footprint carrier. In the WAP field build it talks to the XIAO over UART at 9600 baud: the module's TX crosses to the board's RX (D7) and its RX to the board's TX (D6). The patch antenna wants a clear view of the sky — that is why the WAP goes outdoors.",
+      "pads": {
+        "_comment": "The carrier's 2x7 castellations land on the identical XIAO footprint the Sense uses — pin_anchors (#e7c863) puts every pad at the SAME raw-mm coordinate as the committed Sense map (z=+1.76 D-row, z=-13.98 power/D7 row, x -5.88..9.36 at 2.54 mm). So the names transfer verbatim from the Sense's verified map; a XIAO stacked here mates pin-for-pin.",
+        "D0": [-5.88, 0.37, 1.76], "D1": [-3.34, 0.37, 1.76], "D2": [-0.8, 0.37, 1.76],
+        "D3": [1.74, 0.37, 1.76], "D4": [4.28, 0.37, 1.76], "D5": [6.82, 0.37, 1.76],
+        "D6": [9.36, 0.37, 1.76],
+        "5V": [-5.88, 0.37, -13.98], "GND": [-3.34, 0.37, -13.98], "3V3": [-0.8, 0.37, -13.98],
+        "D10": [1.74, 0.37, -13.98], "D9": [4.28, 0.37, -13.98], "D8": [6.82, 0.37, -13.98],
+        "D7": [9.36, 0.37, -13.98]
+      },
+      "pinout": [
+        { "label": "UART", "pin": "TX / RX", "gpio": "9600 baud", "use": "GNSS NMEA out (module TX, on the D7 pad → host RX) / config in (module RX, on the D6 pad → host TX)", "anchors": [[9.36, 0.37, -13.98], [9.36, 0.37, 1.76]] },
+        { "label": "PPS", "pin": "PPS", "gpio": "—", "use": "One-pulse-per-second time strobe (optional) — not broken out to a confidently-identifiable pad in this STEP" },
+        { "label": "Power", "pin": "VCC / GND", "gpio": "—", "use": "3V3 from the host rail", "anchors": [[-0.8, 0.37, -13.98], [-3.34, 0.37, -13.98]] },
+        { "label": "Antenna", "pin": "patch", "gpio": "—", "use": "Ceramic GNSS patch — needs open sky", "anchor": [2.3, 5.75, -33.4] }
+      ]
     }
   ]
 }

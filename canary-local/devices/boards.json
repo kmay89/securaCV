@@ -3,7 +3,8 @@
  "note": "Vendor board CAD (boards/vendor/*.step) tessellated to a committed GLB by cascadio; geometry facts recomputed from the committed mesh by the page's own loader (tools/glb_facts.mjs \u2192 assets/glb.js). See boards/vendor/README.md for provenance and licence.",
  "device_board": {
   "canary-wap": [
-   "seeed_xiao_esp32s3_sense"
+   "seeed_xiao_esp32s3_sense",
+   "quectel_l76k_gnss"
   ],
   "canary-vision": [
    "seeed_grove_vision_ai_v2"
@@ -729,6 +730,217 @@
    "blurb": "21 x 17.8 mm. The plain XIAO ESP32-S3 (ESP32-S3, 8 MB flash / 8 MB PSRAM, onboard LiPo charger) with no Sense expansion \u2014 the same 2x7 castellated footprint that seats in the Round Display's socket for the Watch Station. The Watch build (canary-display-watch) runs on this host; the display's SPI/backlight/touch/RTC/microSD all come through the socket.",
    "doc": "https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/",
    "provenance": "Seeed Studio open-hardware CAD (STEP) for the plain XIAO ESP32-S3 \u2014 the same base module as the Sense, without the stacked camera/mic daughterboard. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
+  },
+  "quectel_l76k_gnss": {
+   "name": "L76K GNSS Module for XIAO",
+   "vendor": "Seeed Studio",
+   "mpn": null,
+   "devices": [
+    "canary-wap"
+   ],
+   "glb": "boards/quectel_l76k_gnss.glb",
+   "source_step": "boards/vendor/quectel_l76k_gnss.step.gz",
+   "dims_mm": [
+    37.29,
+    8.32,
+    48.74
+   ],
+   "triangles": 22861,
+   "parts": 14,
+   "materials": [
+    {
+     "color": "#989898",
+     "triangles": 9434
+    },
+    {
+     "color": "#e7c863",
+     "triangles": 4204
+    },
+    {
+     "color": "#ff9f37",
+     "triangles": 3255
+    },
+    {
+     "color": "#392d1d",
+     "triangles": 1660
+    },
+    {
+     "color": "#ffe070",
+     "triangles": 1235
+    },
+    {
+     "color": "#020202",
+     "triangles": 999
+    },
+    {
+     "color": "#004500",
+     "triangles": 660
+    },
+    {
+     "color": "#ff8847",
+     "triangles": 514
+    },
+    {
+     "color": "#ffffff",
+     "triangles": 270
+    },
+    {
+     "color": "#5a5a5a",
+     "triangles": 164
+    },
+    {
+     "color": "#83807d",
+     "triangles": 152
+    },
+    {
+     "color": "#f6f4e9",
+     "triangles": 149
+    },
+    {
+     "color": "#00ff00",
+     "triangles": 125
+    },
+    {
+     "color": "#ffe7c2",
+     "triangles": 40
+    }
+   ],
+   "pose": {
+    "rx": 0.5,
+    "ry": 0.7,
+    "dist_factor": 2.6
+   },
+   "pads": {
+    "_comment": "The carrier's 2x7 castellations land on the identical XIAO footprint the Sense uses \u2014 pin_anchors (#e7c863) puts every pad at the SAME raw-mm coordinate as the committed Sense map (z=+1.76 D-row, z=-13.98 power/D7 row, x -5.88..9.36 at 2.54 mm). So the names transfer verbatim from the Sense's verified map; a XIAO stacked here mates pin-for-pin.",
+    "D0": [
+     -5.88,
+     0.37,
+     1.76
+    ],
+    "D1": [
+     -3.34,
+     0.37,
+     1.76
+    ],
+    "D2": [
+     -0.8,
+     0.37,
+     1.76
+    ],
+    "D3": [
+     1.74,
+     0.37,
+     1.76
+    ],
+    "D4": [
+     4.28,
+     0.37,
+     1.76
+    ],
+    "D5": [
+     6.82,
+     0.37,
+     1.76
+    ],
+    "D6": [
+     9.36,
+     0.37,
+     1.76
+    ],
+    "5V": [
+     -5.88,
+     0.37,
+     -13.98
+    ],
+    "GND": [
+     -3.34,
+     0.37,
+     -13.98
+    ],
+    "3V3": [
+     -0.8,
+     0.37,
+     -13.98
+    ],
+    "D10": [
+     1.74,
+     0.37,
+     -13.98
+    ],
+    "D9": [
+     4.28,
+     0.37,
+     -13.98
+    ],
+    "D8": [
+     6.82,
+     0.37,
+     -13.98
+    ],
+    "D7": [
+     9.36,
+     0.37,
+     -13.98
+    ]
+   },
+   "pinout": [
+    {
+     "label": "UART",
+     "pin": "TX / RX",
+     "gpio": "9600 baud",
+     "use": "GNSS NMEA out (module TX, on the D7 pad \u2192 host RX) / config in (module RX, on the D6 pad \u2192 host TX)",
+     "anchors": [
+      [
+       9.36,
+       0.37,
+       -13.98
+      ],
+      [
+       9.36,
+       0.37,
+       1.76
+      ]
+     ]
+    },
+    {
+     "label": "PPS",
+     "pin": "PPS",
+     "gpio": "\u2014",
+     "use": "One-pulse-per-second time strobe (optional) \u2014 not broken out to a confidently-identifiable pad in this STEP"
+    },
+    {
+     "label": "Power",
+     "pin": "VCC / GND",
+     "gpio": "\u2014",
+     "use": "3V3 from the host rail",
+     "anchors": [
+      [
+       -0.8,
+       0.37,
+       -13.98
+      ],
+      [
+       -3.34,
+       0.37,
+       -13.98
+      ]
+     ]
+    },
+    {
+     "label": "Antenna",
+     "pin": "patch",
+     "gpio": "\u2014",
+     "use": "Ceramic GNSS patch \u2014 needs open sky",
+     "anchor": [
+      2.3,
+      5.75,
+      -33.4
+     ]
+    }
+   ],
+   "blurb": "The L76K GNSS module (Quectel L76K receiver + ceramic patch antenna) on a XIAO-footprint carrier. In the WAP field build it talks to the XIAO over UART at 9600 baud: the module's TX crosses to the board's RX (D7) and its RX to the board's TX (D6). The patch antenna wants a clear view of the sky \u2014 that is why the WAP goes outdoors.",
+   "doc": "https://wiki.seeedstudio.com/Get_Started_with_L76K_GNSS_Module_for_XIAO/",
+   "provenance": "Seeed Studio open-hardware CAD (STEP) for the L76K GNSS Module for XIAO \u2014 a Quectel L76K receiver + ceramic patch antenna on a XIAO-footprint carrier. Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. Verify Seeed's licence terms before external redistribution."
   }
  }
 }

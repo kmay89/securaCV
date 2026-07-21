@@ -14,6 +14,7 @@ viewer. Nothing here is fetched at runtime — the page ships the derived mesh
 | `seeed_xiao_esp32s3.step.gz` | XIAO ESP32-S3 (plain) | Seeed Studio | 113991114 | [wiki](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/) |
 | `seeed_grove_vision_ai_v2.step.gz` | Grove Vision AI V2 (+ stand) | Seeed Studio | 101021040 | [wiki](https://wiki.seeedstudio.com/grove_vision_ai_v2/) |
 | `seeed_round_display_xiao.step.gz` | Round Display for XIAO | Seeed Studio | 104040143 | [wiki](https://wiki.seeedstudio.com/get_start_round_display/) |
+| `quectel_l76k_gnss.step.gz` | L76K GNSS Module for XIAO | Seeed Studio | — | [wiki](https://wiki.seeedstudio.com/Get_Started_with_L76K_GNSS_Module_for_XIAO/) |
 
 ## Notes
 
