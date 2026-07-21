@@ -1,0 +1,109 @@
+{
+  "_comment": "SINGLE SOURCE OF TRUTH for 'which firmware build includes which feature'. Derived from firmware/canary/platformio.ini (per-env -DFEATURE_* lines) + firmware/canary/include/canary_config.h (the #ifndef defaults) + firmware/flavors.json (which products/envs ship) + firmware/boards/boards.json (board tiers). Pinned by scripts/lint_build_matrix.py (CI) so it can't drift from the real feature flags, and mirrored into the securacv_website onboarding-spec.json (`builds`) so the /checkup firmware-type selector matches what each build actually does. IMPORTANT: only the `canary` (ESP32-S3) product carries dev/release/full LEVELS; the other products are single-level board-specialized builds. FEATURES.md is a human narrative that reports the SUPERSET capability and can lag — trust platformio.ini per level, not the dashboard ticks.",
+  "featureCatalog": {
+    "selftest":  { "label": "Boot self-test",           "flag": "FEATURE_DIAGNOSTICS",     "note": "10-probe self-test; always compiled in." },
+    "peek":      { "label": "Camera PEEK",               "flag": "FEATURE_CAMERA_PEEK",     "note": "On-demand frame capture." },
+    "mic":       { "label": "Mic self-test",             "flag": "FEATURE_ACOUSTIC_EVENTS", "note": "Beep + level meter." },
+    "csi":       { "label": "Motion & breathing (CSI)",  "flag": "FEATURE_CSI",             "note": "Wi-Fi CSI presence / micro-motion." },
+    "gps":       { "label": "GPS fix",                    "flag": "FEATURE_GNSS",            "note": "Coarsened position + sat count." },
+    "thermal":   { "label": "Thermal / die temp",        "flag": "FEATURE_DIAGNOSTICS",     "note": "Die temperature + passive watchdog." },
+    "battery":   { "label": "Battery",                   "flag": "FEATURE_POWER_MONITOR",   "note": "State of charge + charge state." },
+    "mesh":      { "label": "Fleet mesh",                "flag": "FEATURE_MESH_NETWORK",    "note": "Peers + identify pulse. Full build only." },
+    "bluetooth": { "label": "Bluetooth (BLE GATT)",      "flag": "FEATURE_BLE_STATUS",      "note": "NimBLE status service. Full build only — doesn't fit the dev/release OTA slots." }
+  },
+  "levels": {
+    "dev":     "Debug channel: -Og, verbose logs, all sensing on, BLE off. Official esp32 core (2.x), partitions_ota.csv (1.9 MB A/B slots). GitHub prerelease channel.",
+    "release": "Shipping channel: -Os, quiet logs, sensing on, BLE off. Official core (2.x), partitions_ota.csv. This is the image release devices pull (built as release_ha, adds Home Assistant MQTT).",
+    "full":    "Superset / WAP-parity: everything on incl. BLE + mesh + RF/chirp. Requires pioarduino core-3.x + default_8MB.csv (2×3.2 MB) — NimBLE 2.x needs core 3.x and overflows the smaller OTA slots, which is why BLE is full-only."
+  },
+  "products": [
+    {
+      "id": "canary",
+      "name": "Canary · ESP32-S3",
+      "board": "xiao-esp32s3-sense",
+      "mcu": "ESP32-S3",
+      "tier": "verified",
+      "flow": "onboard",
+      "otaProduct": "securacv-canary",
+      "manifestUrl": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary.json",
+      "hasLevels": true,
+      "levels": {
+        "dev": {
+          "env": "dev",
+          "partition": "partitions_ota.csv",
+          "features": ["selftest", "peek", "mic", "csi", "gps", "thermal", "battery"]
+        },
+        "release": {
+          "env": "release_ha",
+          "partition": "partitions_ota.csv",
+          "features": ["selftest", "peek", "mic", "csi", "gps", "thermal", "battery"]
+        },
+        "full": {
+          "env": "full",
+          "partition": "default_8MB.csv",
+          "features": ["selftest", "peek", "mic", "csi", "gps", "thermal", "battery", "mesh", "bluetooth"]
+        }
+      }
+    },
+    {
+      "id": "canary-wap",
+      "name": "Canary WAP",
+      "board": "xiao-esp32s3-sense",
+      "mcu": "ESP32-S3",
+      "tier": "verified",
+      "flow": "evidence",
+      "otaProduct": "securacv-canary-wap",
+      "manifestUrl": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-wap.json",
+      "hasLevels": false,
+      "build": {
+        "env": "canary-wap-default",
+        "partition": "default_8MB.csv",
+        "profile": "full",
+        "features": ["selftest", "peek", "mic", "csi", "gps", "thermal", "battery", "mesh", "bluetooth"]
+      }
+    },
+    {
+      "id": "canary-vision",
+      "name": "Canary Vision",
+      "board": "xiao-esp32c3",
+      "mcu": "ESP32-C3 host + Grove Vision AI V2",
+      "tier": "verified",
+      "flow": "vision",
+      "otaProduct": "securacv-canary-vision",
+      "manifestUrl": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-vision.json",
+      "hasLevels": false,
+      "build": {
+        "env": "canary-vision-xiao-c3",
+        "partition": "default.csv",
+        "features": ["selftest"]
+      },
+      "note": "Camera lives on the Himax co-processor (loaded via SenseCraft), not the ESP host — the canary camera/SD/CSI feature tiles don't apply. USB-Serial console only."
+    },
+    {
+      "id": "canary-sense",
+      "name": "Canary Sense",
+      "board": "xiao-esp32c6-mr60",
+      "mcu": "ESP32-C6 · MR60BHA2 radar",
+      "tier": "compile-tested",
+      "flow": "serial",
+      "otaProduct": "securacv-canary-sense",
+      "manifestUrl": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-sense.json",
+      "hasLevels": false,
+      "build": {
+        "env": "canary-sense-default",
+        "partition": "min_spiffs.csv",
+        "features": ["selftest", "battery", "thermal"]
+      },
+      "note": "60 GHz radar presence board. No camera / SD / CSI / BLE. USB-Serial console only; end-to-end bench validation pending."
+    }
+  ],
+  "downloadBase": "https://github.com/kmay89/securaCV/releases/latest",
+  "provenance": {
+    "levels": "firmware/canary/platformio.ini · [env:dev] (~132), [env:release] (~171), [env:full] (~255); base [env] sets -DFEATURE_BLE_STATUS=0 (~66)",
+    "featureCatalog": "firmware/canary/platformio.ini per-env -DFEATURE_* + firmware/canary/include/canary_config.h #ifndef defaults (FEATURE_DIAGNOSTICS=1, FEATURE_BLE_STATUS base 0 / full 1, FEATURE_MESH_NETWORK full only, FEATURE_TEST_CONSOLE never set)",
+    "products": "firmware/flavors.json (build_envs per product) + firmware/boards/boards.json (board id, mcu, tier, used_by)",
+    "manifests": "firmware/scripts/ota_release.py + docs/firmware_ota.md · per-variant manifest-<product>.json at releases/latest/download/; manifest-index.json lists all products",
+    "flasher": "firmware/scripts/build_flash_manifest.py · *-factory.bin + manifest-flash.json (esp-web-tools format)",
+    "lint": "firmware/scripts/lint_build_matrix.py — pins the load-bearing cells (BLE full-only, TEST_CONSOLE never shipped, DIAGNOSTICS always, sense/vision serial-only) to platformio.ini + canary_config.h"
+  }
+}
