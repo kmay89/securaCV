@@ -44,12 +44,45 @@ The two properties that make this "production-level, not vulnerable":
    lacks a confirm. `command_allowed(cmd, production, confirmed)` gates every
    dispatch. Host-tested.
 
-## Phase 1: the `t` command (read-only, always available)
+## Phase 1: the read-only diagnostic commands (Tier-Diag, always available)
 
-`t` runs `diag_run_selftest()` (the 10-probe boot self-test) and prints a
-read-only health table: self-test score, SD, GPS, battery, MQTT, and the
-**Bluetooth ladder** (below). It's Tier-Diag — safe on any build, mutates
-nothing, leaks nothing.
+All of these are Tier-Diag: safe on any build including production, they mutate
+nothing and leak no secret. They're declared in one auditable table
+(`kConsoleCommands` in `main.cpp`) that `testcon::table_is_safe()` checks, and
+`f` prints that verdict live.
+
+| Key | Command | What it does |
+|-----|---------|--------------|
+| `t` | run all tests | `diag_run_selftest()` (10 probes) + SD/GPS/battery/MQTT + the **Bluetooth ladder** (below). |
+| `c` | **chain attestation** | Signs a challenger nonce + the current chain head with the device key — proof, at the port, that the witness log hasn't been rewritten. See below. |
+| `f` | fingerprint / provenance | Firmware version + git hash + build time, key fingerprint, OTA partition, **secure-boot / flash-encryption** status, boot counter, and the console policy verdict. "Is this the device and build it claims?" |
+| `e` | explain last boot | `esp_reset_reason()` (brownout / panic / watchdog…), degrade level, and the last few health-ring events. Field-debug without a laptop. |
+| `w` | tamper log | The device tamper counter + last-seen time of each passive detector (enclosure/touch, temp-drift, vision-blinding). Read-only; never actuates. |
+
+### `c` — attestation, not a signing oracle
+
+`c` is the command that's unique to a *witness* device, and the one whose safety
+takes real care. It signs
+
+```
+SECURACV-ATTEST-v1 || nonce || chain_head[32] || seq(LE32) || boot_count(LE32)
+```
+
+with the device key and prints the signature + public key, so anyone can verify
+offline against the pinned key that this specific device is at this specific
+chain head. Pass your own nonce (`c <nonce>`) for a fresh challenge; with none,
+the device generates one and says so.
+
+A raw "sign these bytes" command would be a **signing oracle** — an attacker with
+the port could have the device sign a forged chain entry or an OTA approval. The
+safety comes entirely from the **domain-separation prefix**: `SECURACV-ATTEST-v1`
+appears in no other signing context (the witness chain signs
+`compute_chain_hash()` output under `securacv:fw:chain:v1`), so an attestation
+signature can never be replayed as anything else. The prefix + byte layout live
+in the pure `testcon::attest_build_message()` and are pinned by
+`test_attest_domain_separation()` in the host tests, so the separation can't
+silently regress. The command never prints the private key
+(`leaks_secret=false`).
 
 ## Bluetooth: say *which* rung failed
 
@@ -97,7 +130,7 @@ into a production image.
 
 ## Files
 
-- `firmware/common/health/test_console.h` — the tier policy + BLE ladder (pure, host-testable)
-- `firmware/tests_host/test_test_console.cpp` — host tests proving the invariants (CI)
-- `firmware/canary/src/main.cpp` — the read-only `t` command
-- `firmware/canary/include/canary_config.h` — `FEATURE_TEST_CONSOLE` (off by default)
+- `firmware/common/health/test_console.h` — the tier policy, BLE ladder, attestation message builder, and boot/provenance labels (pure, host-testable)
+- `firmware/tests_host/test_test_console.cpp` — host tests proving the invariants incl. attestation domain separation (CI)
+- `firmware/canary/src/main.cpp` — the read-only `t` / `c` / `f` / `e` / `w` commands + the `kConsoleCommands` audit table
+- `firmware/canary/include/canary_config.h` — `FEATURE_TEST_CONSOLE` (off by default) + `FIRMWARE_GIT_HASH` provenance fallback
