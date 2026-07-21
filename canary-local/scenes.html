@@ -55,6 +55,22 @@
     .scene-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 2px 0; }
     .scene-note { color: var(--faint); font-size: 12.5px; margin: 10px 2px 0; }
 
+    /* the live signature row inside the payoff */
+    .sig-row { display: flex; align-items: baseline; gap: 10px; margin: 10px 0 0; flex-wrap: wrap; }
+    .sig-status { font-size: 12.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+      border: 1px solid var(--edge); color: var(--muted); white-space: nowrap; }
+    .sig-status.ok { color: #8fd3a8; border-color: rgba(143,211,168,.5); background: rgba(143,211,168,.08); }
+    .sig-status.bad { color: #ff8f8f; border-color: rgba(255,143,143,.55); background: rgba(255,143,143,.10); }
+    .sig-val { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: var(--faint);
+      word-break: break-word; }
+    /* the "try to forge it" beat */
+    .forge { display: flex; align-items: center; gap: 12px; margin: 12px 0 0; flex-wrap: wrap; }
+    .forge-btn { appearance: none; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
+      border: 1px solid rgba(255,143,143,.5); background: rgba(255,143,143,.07); color: #ffb0b0;
+      border-radius: 999px; padding: 5px 13px; }
+    .forge-btn:hover { background: rgba(255,143,143,.13); }
+    .forge-note { color: var(--muted); font-size: 12.5px; }
+
     @media (prefers-reduced-motion: reduce) {
       .scene-chip.show { animation: none; opacity: 1; }
       .payoff { transition: none; }
@@ -170,7 +186,15 @@
     <div class="payoff" id="payoff" aria-live="polite">
       <h3>That's everything that left the room.</h3>
       <p class="claim" id="payoff-claim">—</p>
-      <p class="never"><b>No camera. No picture. No name.</b> The radar can resolve <em>that</em> someone is there and never <em>who</em> — identity is impossible by construction, not by promise.</p>
+      <div class="sig-row" id="sig-row" hidden>
+        <span class="sig-status" id="sig-status">checking…</span>
+        <code class="sig-val" id="sig-val"></code>
+      </div>
+      <p class="never"><b>No camera. No picture. No name.</b> The radar can resolve <em>that</em> someone is there and never <em>who</em> — identity is impossible by construction, not by promise. And the one small claim it does emit is <em>signed</em> — so you can trust the record without trusting us.</p>
+      <div class="forge" id="forge" hidden>
+        <button class="forge-btn" id="forge-btn" type="button">⚠ try to forge it</button>
+        <span class="forge-note" id="forge-note"></span>
+      </div>
     </div>
 
     <div class="house-feed">
@@ -178,7 +202,7 @@
       <ul id="feed-list" aria-live="polite"></ul>
     </div>
 
-    <p class="scene-note" id="scene-note">One room of the Canary House, up close. More scenes — the camera that keeps its pixels, the WiFi field, the breathing wave — are coming.</p>
+    <p class="scene-note" id="scene-note">That was one signed claim. See the whole hash-chained evidence trail — and <a href="vault.html">break the glass yourself in the Vault</a>, real Ed25519 quorum in your browser. More scenes — the camera that keeps its pixels, the WiFi field, the breathing wave — are coming.</p>
   </main>
 
   <footer>
@@ -195,6 +219,40 @@
       var $ = function (id) { return document.getElementById(id); };
       var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+      // ── real crypto, in the same canonical family the firmware signs ──
+      // trust.cpp rebuilds "securacv-canary-sig|v1|…" before Ed25519::verify, and
+      // emulator/web/emu-shell.js SimWitness signs the exact same string. The
+      // signature you see below is generated in your browser — not decoration.
+      var te = new TextEncoder();
+      function b64url(b) { return btoa(String.fromCharCode.apply(null, b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+      function hex(b) { var o = ""; for (var i = 0; i < b.length; i++) o += b[i].toString(16).padStart(2, "0"); return o; }
+      async function sha256Hex(s) { return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", te.encode(s)))); }
+
+      var W = { key: null, pubHex: null, fp: null, id: "canary-quiet-room", chainLen: 247, latestHash: null, sig: null };
+      var cryptoOK = null; // null=unknown; true/false after ensureKeys()
+
+      async function ensureKeys() {
+        if (cryptoOK !== null) return cryptoOK;
+        try {
+          W.key = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+          W.pubHex = hex(new Uint8Array(await crypto.subtle.exportKey("raw", W.key.publicKey)));
+          W.fp = (await sha256Hex(W.pubHex)).slice(0, 16);
+          cryptoOK = true;
+        } catch (e) { cryptoOK = false; }
+        return cryptoOK;
+      }
+      function canonical(c, h) {
+        return "securacv-canary-sig|v1|presence|" + W.id + "|occupants=" + c.occupants + "|range_m=" + c.range_m + "|" + h;
+      }
+      async function signClaim(c) {
+        W.latestHash = await sha256Hex(W.id + ":" + W.chainLen + ":demo");
+        W.sig = new Uint8Array(await crypto.subtle.sign("Ed25519", W.key.privateKey, te.encode(canonical(c, W.latestHash))));
+      }
+      async function verifyClaim(c) {
+        return crypto.subtle.verify("Ed25519", W.key.publicKey, W.sig, te.encode(canonical(c, W.latestHash)));
+      }
+      ensureKeys(); // warm the key up so it's ready by the time the scene trips
+
       // ── the scene model: one entry per scene; only the first is built today ──
       var SCENES = [
         {
@@ -203,8 +261,8 @@
           tab: "Presence",
           room: "a quiet room",
           title: "Someone is here. Never who.",
-          desc: "A 60 GHz radar witness on the wall feels a body enter — range and motion, nothing more. Watch what it does, then watch what it says.",
-          claim: 'presence/detected  { occupants: 1, range_m: 2.4 }  · sig: ed25519:3af9…c2 ✓',
+          desc: "A 60 GHz radar witness on the wall feels a body enter — range and motion, nothing more. Watch what it does, watch what it says — then try to forge what it said.",
+          claimObj: { occupants: 1, range_m: 2.4 },
           available: true,
         },
         { id: "vision", n: 2, tab: "Pixels stay put", available: false },
@@ -212,6 +270,7 @@
         { id: "breath", n: 4, tab: "The breathing wave", available: false },
       ];
       var scene = SCENES[0];
+      function claimText(c) { return "presence/detected  { occupants: " + c.occupants + ", range_m: " + c.range_m + " }"; }
 
       // ── build the scene tabs (the "one of many" model, made visible) ──
       var tabs = $("scene-tabs");
@@ -241,6 +300,47 @@
       }
       feedLine("scene armed — radar live, room empty", "feed-sys");
 
+      // ── the signature row + the "try to forge it" beat ──
+      var sigRow = $("sig-row"), sigStatus = $("sig-status"), sigVal = $("sig-val"),
+          forge = $("forge"), forgeBtn = $("forge-btn"), forgeNote = $("forge-note");
+      var liveClaim = null; // the record currently on screen (may be tampered)
+
+      function paintVerdict(ok) {
+        sigRow.hidden = false;
+        if (cryptoOK === false) {
+          sigStatus.className = "sig-status";
+          sigStatus.textContent = "ⓘ signed on the device";
+          sigVal.textContent = "(this browser can't run Ed25519 in-page — on one that can, the claim is signed and verified live)";
+          forge.hidden = true;
+          return;
+        }
+        sigVal.textContent = "ed25519:" + b64url(W.sig).slice(0, 12) + "…  · key " + W.fp;
+        sigStatus.className = "sig-status " + (ok ? "ok" : "bad");
+        sigStatus.textContent = ok ? "✓ verified" : "✗ forged — signature doesn't match";
+      }
+
+      async function tamper() {
+        liveClaim = { occupants: 2, range_m: 1.2 };        // rewrite the record by hand
+        $("payoff-claim").textContent = claimText(liveClaim);
+        paintVerdict(await verifyClaim(liveClaim));          // old sig vs. new bytes → false
+        feedLine("record altered by hand → " + claimText(liveClaim), "feed-sys");
+        forgeNote.textContent = "The bytes changed; the signature didn't. Anyone can catch it — no server needed.";
+        forgeBtn.textContent = "↺ restore the true record";
+        forge.dataset.state = "tampered";
+      }
+      async function restore() {
+        liveClaim = { occupants: scene.claimObj.occupants, range_m: scene.claimObj.range_m };
+        $("payoff-claim").textContent = claimText(liveClaim);
+        paintVerdict(await verifyClaim(liveClaim));
+        feedLine("true record restored", "feed-sys");
+        forgeNote.textContent = "";
+        forgeBtn.textContent = "⚠ try to forge it";
+        forge.dataset.state = "";
+      }
+      forgeBtn.addEventListener("click", function () {
+        if (forge.dataset.state === "tampered") restore(); else tamper();
+      });
+
       // ── play the scene ──
       var marker = $("marker"), visitor = $("visitor"), chip = $("chip"),
           payoff = $("payoff"), playBtn = $("play-btn");
@@ -254,6 +354,12 @@
         marker.classList.remove("tripped");
         chip.classList.remove("show");
         payoff.classList.remove("show");
+        sigRow.hidden = true;
+        forge.hidden = true;
+        forge.dataset.state = "";
+        forgeBtn.textContent = "⚠ try to forge it";
+        forgeNote.textContent = "";
+        liveClaim = null;
         visitor.classList.add("hidden");
         moveVisitor(492, 352);
         visitor.style.transition = "none";
@@ -270,13 +376,24 @@
           moveVisitor(430, 320);
         });
         at(1250, function () { moveVisitor(360, 292); });           // into the room
-        // the trip
-        at(2450, function () {
+        // the trip — reveal the claim, then sign it for real a beat later
+        at(2450, async function () {
           marker.classList.add("tripped");
           chip.classList.add("show");
-          $("payoff-claim").textContent = scene.claim;
-          feedLine(scene.claim, "feed-witness");
+          liveClaim = { occupants: scene.claimObj.occupants, range_m: scene.claimObj.range_m };
+          $("payoff-claim").textContent = claimText(liveClaim);
+          feedLine(claimText(liveClaim), "feed-witness");
           at(400, function () { payoff.classList.add("show"); });
+          // real signing fills the verdict in — independent of the animation clock
+          var ready = await ensureKeys();
+          if (ready) {
+            await signClaim(liveClaim);
+            paintVerdict(await verifyClaim(liveClaim));
+            forge.hidden = false;
+            feedLine("claim signed  ✓", "feed-sys");
+          } else {
+            paintVerdict(false); // graceful "signed on the device" note
+          }
         });
         at(2900, function () { moveVisitor(300, 300); });           // settles in
         at(6200, function () {
