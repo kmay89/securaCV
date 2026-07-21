@@ -27,6 +27,7 @@ canary-local/
     stl.js              STL → the same viewer (real printed parts)
     enclosure-lab.js    the parametric catalog, browsable (per-device tab)
     board-room.js       the Board Room: pin-flag overlay + wiring bench
+    playground-sim.js   the Playground: PG1 driver port (DOM-free, tested)
     chooser.js          the needs-matcher UI
     chooser-data.js     questions + candidates + scorer (DOM-free, tested)
     guides.js           tours, fix-it flows, LED/chirp grammars (data)
@@ -36,6 +37,8 @@ canary-local/
     enclosures.json     generated enclosure catalog (variants + .scad params)
     wiring.json         wiring harnesses (builds = permutations; signals
                         named for future live pin emulation — see §4g)
+    playground.json     Waveshare 4.3B peripheral bench (generated from
+                        pins.h + the dev-playground firmware — see §6)
   enclosures/preview/   coarse preview meshes for in-dev designs (rendered
                         by tools/gen_enclosures.py --render; the library's
                         own "committed STLs are print-validated" policy
@@ -732,6 +735,15 @@ Three tiers, no lock-in, one source of truth:
   wiring `signal` names so flags glow and wires pulse when the firmware
   actually drives them (see §4g); the schema already carries
   `signal`/`dir` so this is an emulator-side export plus a subscriber.
+  A first cut of the *live-text* half of this now ships as the
+  **Playground** (`devices/playground.json` + `assets/playground-sim.js`,
+  generated from the Waveshare 4.3B `pins.h` and the dev-playground
+  firmware by `tools/gen_playground.py`, drift-gated by
+  `tests/playground.test.js`): a per-peripheral bring-up bench whose
+  `PG1` serial output is a line-for-line port of the firmware's own
+  playground driver. The website renders it in 3D
+  (`securacv_website/playground.html`); wiring flags/pulses on the
+  emulator GPIO bus remain the follow-up.
 
 ## 7. Building
 
