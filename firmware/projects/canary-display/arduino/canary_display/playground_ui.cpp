@@ -41,7 +41,7 @@ constexpr int16_t W = 800, H = 480;
 constexpr int16_t HDR_H = 42;
 constexpr int16_t TRACK_W = 292;               // pin tracker column
 constexpr int16_t GRID_X = TRACK_W + 8;        // stations area
-constexpr int16_t CARD_W = 244, CARD_H = 100, CARD_GAP = 6;
+constexpr int16_t CARD_W = 244, CARD_H = 80, CARD_GAP = 5;  // 2 x 5 grid
 
 struct Rect {
   int16_t x, y, w, h;
@@ -54,7 +54,7 @@ struct Rect {
 
 enum Station : uint8_t {
   ST_DOORBELL = 0, ST_INTRUSION, ST_CHIME, ST_STROBE,
-  ST_LIGHT, ST_TOF, ST_CAPTOUCH, ST_I2C, ST_COUNT
+  ST_LIGHT, ST_TOF, ST_CAPTOUCH, ST_RS485, ST_CAN, ST_I2C, ST_COUNT
 };
 
 struct StationMeta {
@@ -124,6 +124,26 @@ const StationMeta META[ST_COUNT] = {
      "3. Note preset vs thickness in the bench log -\n"
      "   that pair is the enclosure design input.",
      "SENS: %s", nullptr},
+    {"RS485", "A/B",
+     "RS485 - the industrial serial bus. One A/B pair\n"
+     "daisy-chains up to 32 devices on two wires: energy\n"
+     "meters, PLCs, VFDs, HVAC controllers, alarm panels.\n"
+     "1. A -> A, B -> B (share a ground reference).\n"
+     "2. Match the line: 9600 8N1 here (Modbus RTU).\n"
+     "3. 120 ohm terminators on long runs, both ends.\n"
+     "PROBE reads holding register 0 of slave 1 and shows\n"
+     "the value. Shares GPIO44/43 with the USB console.",
+     "PROBE", nullptr},
+    {"CAN bus", "H/L",
+     "CAN 2.0 / TWAI - the vehicle & automation bus. Two\n"
+     "wires (H/L), multi-master, every node hears every\n"
+     "frame: cars (OBD-II / J1939), CANopen building gear,\n"
+     "gate / barrier controllers, fleet telematics.\n"
+     "1. H -> H, L -> L. 120 ohm at BOTH bus ends.\n"
+     "2. Match the bit rate: 500 kbit/s here.\n"
+     "SEND FRAME transmits one test frame; received frames\n"
+     "are counted and logged. Dedicated transceiver.",
+     "SEND FRAME", nullptr},
     {"I2C census", "bus",
      "Live scan of the shared GPIO8/9 bus (every 3 s).\n"
      "Reserved here: 0x23/0x24/0x26/0x38 = CH422G\n"
@@ -335,11 +355,24 @@ void update_tracker(const PgState& g) {
         set_row(r, LV_SYMBOL_WARNING, c_warn(), "5V dflt · check!", c_warn());
         break;
       case ROW_RS485:
-        set_row(r, LV_SYMBOL_MINUS, c_faint(), "open · shares console",
-                c_faint());
+        if (g.rs485.replies) {
+          snprintf(b, sizeof(b), "RTU · reg0=%u", (unsigned)g.rs485.last_val);
+          set_row(r, LV_SYMBOL_OK, c_ok(), b, c_ok());
+        } else {
+          set_row(r, LV_SYMBOL_MINUS, g.rs485.polls ? c_warn() : c_faint(),
+                  g.rs485.polls ? "no reply · check A/B" : "Modbus · tap to probe",
+                  g.rs485.polls ? c_warn() : c_faint());
+        }
         break;
       case ROW_CAN:
-        set_row(r, LV_SYMBOL_MINUS, c_faint(), "open · future", c_faint());
+        if (g.can.rx) {
+          snprintf(b, sizeof(b), "CAN · rx=%lu", (unsigned long)g.can.rx);
+          set_row(r, LV_SYMBOL_OK, c_ok(), b, c_ok());
+        } else {
+          set_row(r, LV_SYMBOL_MINUS, g.can.tx ? c_warn() : c_faint(),
+                  g.can.tx ? "sent · no rx yet" : "TWAI · tap to send",
+                  g.can.tx ? c_warn() : c_faint());
+        }
         break;
       case ROW_VIN:
         set_row(r, LV_SYMBOL_OK, c_muted(), "power in", c_faint());
@@ -427,6 +460,28 @@ void card_value(int st, const PgState& g, char* out, size_t cap,
         *sub = "not attached";
       }
       break;
+    case ST_RS485:
+      if (g.rs485.last_ok) {
+        snprintf(out, cap, "%u", (unsigned)g.rs485.last_val);
+        *sub = "reg0 · slave 1";
+        *col = c_ok();
+      } else {
+        snprintf(out, cap, "%s", g.rs485.polls ? "?" : "—");
+        *sub = g.rs485.polls ? "no reply" : "tap to probe";
+        *col = g.rs485.polls ? c_warn() : c_text();
+      }
+      break;
+    case ST_CAN:
+      if (g.can.rx) {
+        snprintf(out, cap, "%lu", (unsigned long)g.can.rx);
+        *sub = "frames in";
+        *col = c_ok();
+      } else {
+        snprintf(out, cap, "%s", g.can.tx ? "tx" : "—");
+        *sub = g.can.tx ? "sent · listening" : "tap to send";
+        *col = g.can.tx ? c_warn() : c_text();
+      }
+      break;
     case ST_I2C: {
       int ext = 0;
       for (int i = 0; i < g.bus.count; i++)
@@ -485,7 +540,7 @@ void playground_ui_create() {
     lv_obj_set_pos(s_row_val[r], 140, (int16_t)(y + 2));
   }
 
-  // Station cards, 2 x 4.
+  // Station cards, 2 x 5.
   for (int i = 0; i < ST_COUNT; i++) {
     const int col = i % 2, row = i / 2;
     const int16_t x = (int16_t)(GRID_X + col * (CARD_W + CARD_GAP));
@@ -538,6 +593,8 @@ void playground_ui_handle_tap(int16_t x, int16_t y) {
         case ST_STROBE:   action_do_pulse(1); break;
         case ST_TOF:      action_tof_cycle_trip(); break;
         case ST_CAPTOUCH: action_pad_cycle_preset(); break;
+        case ST_RS485:    action_rs485_probe(); break;
+        case ST_CAN:      action_can_send(); break;
         default: break;
       }
       playground_ui_update(state());

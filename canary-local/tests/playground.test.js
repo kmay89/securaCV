@@ -195,6 +195,29 @@ test("census attaches known sensors and reports the count", async () => {
   assert.ok(!i2cReserved(0x10), "VEML7700 0x10 is not reserved");
 });
 
+test("RS485 probe reads a register; a quiet bus reports no reply", async () => {
+  const { PlaygroundSim } = await importSim();
+  const s = new PlaygroundSim();
+  assert.deepStrictEqual(s.rs485Probe(100),
+    ["PG1 100 EVT rs485 slave=1 reg=0 val=1000 crc=ok"]);
+  assert.strictEqual(s.g.rs485.last_val, 1000);
+  assert.deepStrictEqual(s.rs485Probe(200),
+    ["PG1 200 EVT rs485 slave=1 reg=0 val=1010 crc=ok"]); // ramps per reply
+  assert.deepStrictEqual(s.rs485ProbeQuiet(300),
+    ["PG1 300 EVT rs485 slave=1 reply=none"]);
+  assert.strictEqual(s.g.rs485.last_ok, false);
+});
+
+test("CAN send transmits; a node reply is logged via the frame formatter", async () => {
+  const { PlaygroundSim } = await importSim();
+  const s = new PlaygroundSim();
+  assert.deepStrictEqual(s.canSend(50), ["PG1 50 EVT can tx id=0x100 dlc=8 ok"]);
+  assert.strictEqual(s.g.can.tx, 1);
+  assert.deepStrictEqual(s.canReceive(60),
+    ["PG1 60 EVT can rx id=0x101 ext=0 rtr=0 dlc=8 data=A0 A1 A2 A3 A4 A5 A6 A7"]);
+  assert.strictEqual(s.g.can.rx, 1);
+});
+
 test("SNAP line matches the firmware's field order and formatting", async () => {
   const { PlaygroundSim, helloLine } = await importSim();
   const s = new PlaygroundSim();
