@@ -64,6 +64,13 @@ WITSTORE_BIN  = $(BUILD_DIR)/test_witness_store_common
 USBONB_HDR = ../common/usb/usb_onboard_logic.h
 USBONB_BIN = $(BUILD_DIR)/test_usb_onboard_logic
 
+# Serial test-console security policy (common/health/test_console.h): proves no
+# command leaks secrets, production images expose only read-only diagnostics,
+# mutating commands need a physical confirm — plus the BLE bring-up ladder that
+# turns "Bluetooth doesn't work" into the specific rung that failed.
+TESTCON_HDR = ../common/health/test_console.h
+TESTCON_BIN = $(BUILD_DIR)/test_test_console
+
 .PHONY: all run clean
 all: run
 
@@ -88,13 +95,17 @@ $(WITSTORE_BIN): $(WITSTORE_TEST) $(WITSTORE_HDR) Makefile | $(BUILD_DIR)
 $(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_usb_onboard_logic.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN)
+$(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_test_console.cpp -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
 	./$(WITCHAIN_BIN)
 	./$(WITSTORE_BIN)
 	./$(USBONB_BIN)
+	./$(TESTCON_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)
