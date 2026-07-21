@@ -283,7 +283,7 @@ repackaged mystery roll.
 **Before you buy — what a good supplier tells you:**
 
 - **A stated diameter tolerance.** Reputable 1.75 mm filament is spec'd to
-  **±0.02–0.03 mm**; ±0.05 is loose. This matters *here* specifically — loose
+  **±0.02 to ±0.03 mm**; ±0.05 is loose. This matters *here* specifically — loose
   tolerance swings your flow, and these parts' snap/gasket fits are calibrated,
   so an inconsistent diameter makes them inconsistent too.
 - **A published technical data sheet** (print/bed temp range, sometimes a
@@ -300,10 +300,10 @@ repackaged mystery roll.
 
 - **Moisture is the number-one killer.** PETG is moderately hygroscopic;
   ASA/PC/TPU/nylon far more so. Wet filament flashes to steam at the nozzle:
-  weak layers, stringing, popping/hissing, a hairy surface, and **porous walls
-  that leak** — exactly the failure a sealed Canary can't afford. Signs you're
-  printing wet: hiss/pop while printing, a fuzzy surface, or prints that snap
-  along the layer lines.
+  weak layers, stringing, popping/hissing, a hairy surface, and
+  **porous walls that leak** — exactly the failure a sealed Canary can't afford.
+  Signs you're printing wet: hiss/pop while printing, a fuzzy surface, or prints
+  that snap along the layer lines.
 - **Brittleness with age / bad storage.** Filament left out for months —
   especially in a humid shop — turns brittle and snaps in the feeder. Nylon and
   PC degrade fastest; PLA embrittles too.
@@ -320,10 +320,10 @@ repackaged mystery roll.
   longer), and print PC/nylon straight from a dry box.
 - **A 5-minute quality check on any spool:** measure the diameter with calipers at
   several points (round, and on-tolerance?), and do a bend test — badly aged or
-  wet filament cracks instead of flexing. Then let the **[fit coupon](./canary_fit_coupon.scad)
-  plus a temperature tower double as your per-spool QC**: re-run them whenever you
-  switch brand *or* spool, because tolerance and flow differ between them and
-  that's exactly what your calibrated fits ride on.
+  wet filament cracks instead of flexing. Then let the
+  **[fit coupon](./canary_fit_coupon.scad) plus a temperature tower double as your per-spool QC**:
+  re-run them whenever you switch brand *or* spool, because tolerance and flow
+  differ between them and that's exactly what your calibrated fits ride on.
 
 ---
 
