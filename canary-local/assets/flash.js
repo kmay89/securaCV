@@ -730,11 +730,15 @@ function renderPicker() {
   manifestState.id = "flash-manifest-state";
   card.append(manifestState);
 
-  // Arrived from the checkup page with a board already in mind (?product=…)?
-  // Lead with just that one — the chip guard still limits the set, so this only
-  // ever narrows within what's valid, never widens it.
+  // By default the flasher figures out what to install: it leads with ONE
+  // product — the one asked for via ?product=… (arriving from /checkup), or, if
+  // none, the recommended default for the detected chip. The chip guard still
+  // limits the set, so this only ever narrows within what's valid. The full
+  // list is one click away for the curious / for developers.
   const preferredId = core.preferredProductId(location.search);
-  const focus = preferredId ? matches.find((p) => p.id === preferredId) : null;
+  const explicit = preferredId ? matches.find((p) => p.id === preferredId) : null;
+  const focus = explicit || core.recommendedProduct(state.catalog, state.chip);
+  const isRecommendation = !explicit && !!focus;
 
   const list = el("div", "flash-products");
   const rows = matches.map((p) => { const r = productRow(p); list.append(r); return r; });
@@ -746,8 +750,11 @@ function renderPicker() {
     // still fills every version; one click reveals them.
     rows.forEach((r) => { if (r.dataset.id !== focus.id) r.style.display = "none"; });
     const note = el("p", "fineprint flash-focus-note");
-    note.append(document.createTextNode(`Showing ${focus.name} — the firmware you picked. `));
-    const more = el("button", "ghost small", `show the other ${matches.length - 1} for this chip`);
+    note.append(el("span", null, isRecommendation
+      ? `🪄 Recommended for your ${info.label || state.chip}: ${focus.name}. `
+      : `Showing ${focus.name} — the firmware you picked. `));
+    const more = el("button", "ghost small",
+      `show all ${matches.length} for this chip (developer)`);
     more.addEventListener("click", () => { rows.forEach((r) => { r.style.display = ""; }); note.remove(); });
     note.append(more);
     card.append(note);

@@ -134,6 +134,14 @@ static_assert(sizeof(csi_features_t) == 36,
 // Used by the read-only 't' run-all command below.
 #include "health/test_console.h"
 
+#if FEATURE_CONSOLE_THEME
+// Pure, host-tested console scene engine: the 'l' identity banner (key
+// fingerprint as randomart). ASCII-safe by default; see docs/design/serial_console_theming.md.
+#include "ui/randomart.h"
+#include "ui/console_theme.h"
+#include "ui/console_scenes.h"
+#endif
+
 // Optional ESP-IDF provenance APIs for the 'f' fingerprint command. Guarded by
 // __has_include so a toolchain without them still builds — the fields just show
 // "unknown" (the same defensive pattern main.cpp uses for <esp_random.h>).
@@ -2082,6 +2090,9 @@ static const testcon::Command kConsoleCommands[] = {
   { 'f', "fingerprint",  testcon::Tier::Diag, false, false, false },
   { 'e', "explain-boot", testcon::Tier::Diag, false, false, false },
   { 'w', "tamper-log",   testcon::Tier::Diag, false, false, false },
+#if FEATURE_CONSOLE_THEME
+  { 'l', "identity-banner", testcon::Tier::Diag, false, false, false },
+#endif
 };
 static const size_t kConsoleCommandCount =
     sizeof(kConsoleCommands) / sizeof(kConsoleCommands[0]);
@@ -2132,6 +2143,62 @@ static size_t read_line_arg(char* buf, size_t cap) {
   return len;
 }
 
+#if FEATURE_CONSOLE_THEME
+// The scene engine composes text and pushes it here one chunk at a time.
+static void theme_emit(void*, const char* s) { Serial.print(s); }
+
+// Probe the terminal ONCE before drawing: emit a cursor-position report request
+// (ESC[6n) and see if it answers with ESC[row;colR. An answer ⇒ the terminal
+// speaks ANSI ⇒ we light up colour + Unicode. Silence (a dumb monitor — or our
+// own flasher's garbage-averse parser) ⇒ we stay on the 7-bit ASCII floor, so
+// the banner never turns into escape-code garbage. Bounded to ~200 ms.
+static scene::Caps console_probe() {
+  while (Serial.available()) Serial.read();          // clear pending input
+  Serial.print("\x1b[6n");
+  uint32_t deadline = millis() + 200;
+  bool ansi = false;
+  while (millis() < deadline) {
+    while (Serial.available()) {
+      if ((char)Serial.read() == 'R') { ansi = true; deadline = 0; break; }
+    }
+    if (deadline == 0) break;
+  }
+  return ansi ? scene::caps_full(80, 24) : scene::caps_ascii();
+}
+
+// 'l' — the identity banner: the device's verifiable trust card, with its
+// public-key fingerprint drawn as drunken-bishop randomart. Read-only.
+static void show_identity_banner() {
+  DeviceIdentity& dev = witness_get_device();
+  char fp[17];
+  for (int i = 0; i < 8; ++i) snprintf(fp + i * 2, 3, "%02x", dev.pubkey_fp[i]);
+  char ch[9];
+  for (int i = 0; i < 4; ++i) snprintf(ch + i * 2, 3, "%02x", dev.chain_head[i]);
+  int health = -1;
+#if FEATURE_DIAGNOSTICS
+  selftest_report_t st;
+  if (diag_get_selftest(&st)) health = (int)st.health_score;
+#endif
+  scene::TrustInfo t{};
+  t.device_id = dev.device_id;
+  t.firmware = FIRMWARE_VERSION;
+  t.git = FIRMWARE_GIT_HASH;
+  t.built = __DATE__;
+  t.chain_head_hex = ch;
+  t.key_fp_hex = fp;
+  t.seq = dev.seq;
+  t.boots = dev.boot_count;
+  t.health = health;
+  t.tamper = dev.tamper_active;
+  t.key_bytes = dev.pubkey;
+  t.key_len = 32;
+
+  scene::Renderer r{theme_emit, nullptr, console_probe()};
+  Serial.print("\r\n");
+  scene::trust_card(r, t);
+}
+#endif  // FEATURE_CONSOLE_THEME
+
 static void handle_serial_commands() {
   if (!Serial.available()) return;
 
@@ -2168,6 +2235,9 @@ static void handle_serial_commands() {
       Serial.println("  k - Unseal guide");
 #endif
       Serial.println("  t - Run all tests (self-test + feature health + Bluetooth)");
+#if FEATURE_CONSOLE_THEME
+      Serial.println("  l - Identity banner (key fingerprint as randomart)");
+#endif
       Serial.println("  c - Attest chain (sign a nonce + chain head: c <nonce>)");
       Serial.println("  f - Fingerprint / provenance (version, secure-boot, keys)");
       Serial.println("  e - Explain last boot (reset reason + recent faults)");
@@ -2580,6 +2650,15 @@ static void handle_serial_commands() {
       Serial.println();
       break;
     }
+
+#if FEATURE_CONSOLE_THEME
+    // 'l' — the identity banner: verifiable trust card + key-fingerprint
+    // randomart. Read-only; ASCII-safe unless the terminal answers the probe.
+    case 'l':
+    case 'L':
+      show_identity_banner();
+      break;
+#endif
 
     case 'x':
     case 'X':

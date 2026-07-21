@@ -843,6 +843,15 @@ export function preferredProductId(search) {
   return v && /^[a-z0-9-]+$/i.test(v) ? v : null;
 }
 
+// The product to LEAD WITH when the user hasn't asked for a specific one — so
+// plugging a board in just works instead of presenting a menu. The catalog is
+// authored flagship-first per chip (canary before wap; vision before its
+// variants), so the first product that fits the detected silicon is the honest
+// "recommended for you". null only if nothing targets this chip.
+export function recommendedProduct(catalog, detected) {
+  return productsForChip(catalog, detected)[0] || null;
+}
+
 // ── catalog shape guard ─────────────────────────────────────────────────────
 // flash.js reads specific fields off devices/flash.json the moment it loads
 // (no_brick.points, recovery[], products[].chip for the chip guard). A valid-
