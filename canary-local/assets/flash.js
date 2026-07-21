@@ -51,7 +51,27 @@ const state = {
 };
 
 // ── boot ───────────────────────────────────────────────────────────────────
+// ── global safety net ───────────────────────────────────────────────────────
+// Every KNOWN failure path already renders its own card. This backstops the
+// UNKNOWN ones: a stray unhandled promise rejection or uncaught error that
+// escapes while an operation is in flight would otherwise leave a frozen
+// progress bar. Instead we reset the busy flag and show a friendly, recoverable
+// error card. Idle-time errors are left to surface in the console untouched.
+let safetyNetInstalled = false;
+function installSafetyNet() {
+  if (safetyNetInstalled) return;
+  safetyNetInstalled = true;
+  const onFail = (err) => {
+    if (!state.busy) return;
+    state.busy = false;
+    try { setPhase(flashError(err || new Error("unexpected error"), {})); } catch {}
+  };
+  window.addEventListener("unhandledrejection", (ev) => onFail(ev && ev.reason));
+  window.addEventListener("error", (ev) => onFail(ev && (ev.error || ev.message)));
+}
+
 async function boot() {
+  installSafetyNet();
   const mount = $("#flash");
   mount.innerHTML = "";
 
@@ -61,10 +81,31 @@ async function boot() {
   }
 
   try {
-    state.catalog = await fetch("devices/flash.json").then((r) => r.json());
+    const resp = await fetch("devices/flash.json");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    state.catalog = await resp.json();
   } catch (e) {
     mount.append(errorBox("Couldn’t load the flasher catalog",
       "Reload the page. If it keeps happening, the guided path still works.", true));
+    return;
+  }
+
+  // A valid-JSON-but-malformed catalog would throw mid-render (renderReassurance
+  // reads no_brick.points, the picker reads products[].chip). Catch it here with
+  // a clear message instead of a blank page.
+  const catErrs = core.validateCatalog(state.catalog);
+  if (catErrs.length) {
+    const box = errorBox("The flasher catalog looks incomplete",
+      "The page loaded but its device list didn’t validate, so flashing is paused. " +
+      "Reload; if it persists, the guided path still works.", true);
+    const raw = el("details", "flash-rawerr");
+    raw.append(el("summary", null, "Technical details"));
+    raw.append(el("pre", null, catErrs.join("\n")));
+    box.append(raw);
+    const guide = el("a", "ghost", "Use the guided flash instead →");
+    guide.href = LESSON;
+    box.append(guide);
+    mount.append(box);
     return;
   }
 
@@ -421,14 +462,17 @@ function phaseConnect() {
 }
 
 async function onConnect() {
-  if (state.busy) return;
+  if (state.busy || state.connecting) return;
+  state.connecting = true;   // synchronous guard: a double-click can't open two choosers
   let port;
   try {
     port = await navigator.serial.requestPort();
   } catch (e) {
     // User dismissed the chooser — not an error, just nudge.
+    state.connecting = false;
     return;
   }
+  state.connecting = false;
   state.busy = true;
   const box = el("section", "flash-card flash-working");
   box.append(el("div", "flash-spinner", ""));
@@ -478,12 +522,19 @@ async function onConnect() {
 }
 
 function connectFailed(e) {
+  const v = core.classifyFlashError(e);
   const box = errorBox(
-    "Couldn’t reach the board",
-    "That almost always means it isn’t in download mode yet — no harm done.",
+    v.title || "Couldn’t reach the board",
+    v.kind === "not-in-download" || v.kind === "unknown"
+      ? "That almost always means it isn’t in download mode yet — no harm done."
+      : v.hint,
     false);
-  box.append(downloadModeSteps());
-  box.append(el("p", "muted", "Then click “Try again”."));
+  // For a genuine "not in download mode" show the gesture; for a specific cause
+  // (port busy, permissions, cable) the hint above already says what to do.
+  if (v.kind === "not-in-download" || v.kind === "unknown") {
+    box.append(downloadModeSteps());
+    box.append(el("p", "muted", "Then click “Try again”."));
+  }
   const retry = el("button", "primary", "Try again");
   retry.addEventListener("click", () => setPhase(phaseConnect()));
   box.append(retry);
@@ -1164,15 +1215,21 @@ async function startFlash(opts) {
 
 function flashError(e, opts) {
   const msg = String(e && e.message ? e.message : e);
-  const box = errorBox("The install didn’t complete",
-    "Your board is fine — remember, it can’t be bricked from here. Here’s what to try:", false);
-  const steps = el("ul", "flash-steps");
-  [
-    "Unplug the board, plug it back in, and click Try again.",
-    "If it won’t connect: hold BOOT, tap RESET, release BOOT, then reconnect.",
-    "Use a USB-C data cable (not charge-only).",
-  ].forEach((s) => steps.append(el("li", null, s)));
-  box.append(steps);
+  const v = core.classifyFlashError(e);
+  const box = errorBox(v.title || "The install didn’t complete",
+    "Your board is fine — remember, it can’t be bricked from here. " +
+    (v.kind === "unknown" ? "Here’s what to try:" : v.hint), false);
+  // For a recognized cause the hint above is the fix; for the generic case,
+  // fall back to the classic three-step checklist.
+  if (v.kind === "unknown") {
+    const steps = el("ul", "flash-steps");
+    [
+      "Unplug the board, plug it back in, and click Try again.",
+      "If it won’t connect: hold BOOT, tap RESET, release BOOT, then reconnect.",
+      "Use a USB-C data cable (not charge-only).",
+    ].forEach((s) => steps.append(el("li", null, s)));
+    box.append(steps);
+  }
   const row = el("div", "flash-row");
   const retry = el("button", "primary", "Try again");
   retry.addEventListener("click", async () => {

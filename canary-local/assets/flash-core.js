@@ -763,6 +763,100 @@ export function wifiQrString(ssid, pass) {
     : `WIFI:T:nopass;S:${esc(ssid)};;`;
 }
 
+// ── error classification (turn raw failures into an actionable first line) ──
+// Web Serial + esptool + fetch all throw wildly different messages for the
+// handful of things that actually go wrong at a USB port. Fold them into one
+// verdict so the error cards can say WHAT happened and WHAT to do — instead of
+// only surfacing a raw string under "technical details". Pure + tested; flash.js
+// renders {title, hint} and still keeps the raw message for the curious.
+export function classifyFlashError(err) {
+  const msg = String((err && (err.message || err.name)) || err || "").toLowerCase();
+  const has = (...subs) => subs.some((s) => msg.includes(s));
+
+  // Another program/tab already holds the port (Arduino IDE, PlatformIO
+  // monitor, a second flasher tab). The single most common real failure.
+  if (has("failed to open serial port", "port is already open", "already open",
+          "the port is closed") ||
+      (has("open") && has("access", "busy", "in use")))
+    return { kind: "port-busy", title: "That port is busy",
+      hint: "Another program or browser tab is holding the board. Close the Arduino " +
+        "IDE / PlatformIO serial monitor and any other flasher tab, then unplug, " +
+        "replug, and try again." };
+
+  // Cable pulled or board vanished mid-operation.
+  if (has("device has been lost", "device lost", "no device", "disconnected",
+          "networkerror", "network error", "the device was lost"))
+    return { kind: "device-lost", title: "The board disappeared",
+      hint: "The connection dropped — usually the cable, the port, or the board " +
+        "resetting. Reseat the USB-C cable (a data cable, not charge-only) and " +
+        "reconnect. Nothing was harmed — you can't brick it from here." };
+
+  // OS-level permission / missing driver.
+  if (has("access denied", "permission", "not allowed", "securityerror"))
+    return { kind: "permission", title: "The system wouldn't grant access to the port",
+      hint: "On Linux, add yourself to the dialout group (sudo usermod -aG dialout " +
+        "$USER, then log out and back in); on Windows, install the board's USB-serial " +
+        "driver. Then reconnect." };
+
+  // Integrity failure — checked BEFORE the generic network case so a checksum
+  // message never reads as a download problem.
+  if (has("checksum", "sha-256", "sha256", "md5", "hash mismatch", "failed its"))
+    return { kind: "integrity", title: "The image failed its integrity check",
+      hint: "Nothing was written. The download may have been corrupted, or the signed " +
+        "release is mid-update — wait a moment and try again." };
+
+  // Fetching the image/manifest failed (a network/release issue, not the board).
+  if (has("download failed", "http ", "failed to fetch", "load failed", "fetch"))
+    return { kind: "download", title: "Couldn't download the firmware image",
+      hint: "That's a network or release issue, not your board. Check your connection " +
+        "and try again; if it persists, the signed release may be mid-update. You can " +
+        "also install a local .bin under Advanced." };
+
+  // Board present but not answering the ROM bootloader → not in download mode.
+  if (has("timed out", "timeout", "no serial data", "failed to sync", "sync",
+          "invalid head of packet", "packet content transfer stopped",
+          "wrong boot mode"))
+    return { kind: "not-in-download", title: "The board isn't answering the bootloader",
+      hint: "It's almost certainly not in download mode. Hold BOOT, tap RESET, release " +
+        "BOOT, then reconnect." };
+
+  // Our chunked reader gave up on a region after its retries.
+  if (has("short read", "stalled", "read timeout"))
+    return { kind: "read-stall", title: "A read stalled partway",
+      hint: "Reseat the cable and try again — a shorter, known-good USB-C data cable is " +
+        "the usual fix." };
+
+  return { kind: "unknown", title: null, // caller keeps its own generic title
+    hint: "If this keeps happening: unplug the board, plug it back in, put it in download " +
+      "mode (hold BOOT, tap RESET, release BOOT), and retry." };
+}
+
+// ── catalog shape guard ─────────────────────────────────────────────────────
+// flash.js reads specific fields off devices/flash.json the moment it loads
+// (no_brick.points, recovery[], products[].chip for the chip guard). A valid-
+// JSON-but-malformed catalog would otherwise throw mid-render and leave a blank
+// page. Validate up front and degrade to a clear message instead. Pure + tested.
+export function validateCatalog(cat) {
+  const errs = [];
+  if (!cat || typeof cat !== "object") return ["catalog is not an object"];
+  if (!Array.isArray(cat.products))
+    errs.push("catalog.products must be an array");
+  if (!cat.chips || typeof cat.chips !== "object")
+    errs.push("catalog.chips must be an object");
+  if (!cat.no_brick || !cat.no_brick.headline || !Array.isArray(cat.no_brick.points))
+    errs.push("catalog.no_brick { headline, why, points[] } is required (safety strip)");
+  if (!Array.isArray(cat.recovery))
+    errs.push("catalog.recovery must be an array");
+  (Array.isArray(cat.products) ? cat.products : []).forEach((p, i) => {
+    const who = (p && p.id) || `#${i}`;
+    if (!p || typeof p !== "object") { errs.push(`products[${i}] is not an object`); return; }
+    if (!p.id) errs.push(`products[${i}] missing id`);
+    if (!p.chip) errs.push(`product ${who} missing chip (the chip guard needs it)`);
+    if (!p.name) errs.push(`product ${who} missing name`);
+  });
+  return errs;
+}
+
 // ── esptool-js byte glue ──────────────────────────────────────────────────
 // writeFlash wants each file's `data` as a *binary string* (one char per
 // byte); readFlash hands back a Uint8Array. Keep both conversions here, pure.
