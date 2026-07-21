@@ -24,7 +24,7 @@ bool s_ready = false;
 uint32_t s_next_drain_ms = 0;
 
 constexpr uint32_t DRAIN_EVERY_MS = 1000;   // bench heartbeat cadence
-constexpr uint32_t DRAIN_BUDGET_MS = 5;     // per-frame wait while draining
+constexpr uint32_t DRAIN_BUDGET_MS = 0;     // non-blocking: drain queued frames only
 
 // Map a standard ISO 11898 bit rate to the matching TWAI timing preset. Returns
 // false for anything without a preset, so can_begin() refuses to guess.
@@ -119,8 +119,23 @@ void can_loop(uint32_t now) {
   if ((int32_t)(now - s_next_drain_ms) < 0) return;
   s_next_drain_ms = now + DRAIN_EVERY_MS;
 
-  // Drain whatever arrived since the last tick (bounded so a busy bus can't
-  // monopolize the loop), logging each frame in a stable ASCII form.
+  // Self-heal a bus-off: enough TX errors put the TWAI controller into BUS_OFF,
+  // where it neither sends nor receives until recovery runs (ISO 11898). Drive
+  // recovery across ticks, non-blocking — BUS_OFF: kick off recovery; once the
+  // bus is clean the driver lands in STOPPED: restart it; RECOVERING: wait.
+  twai_status_info_t status;
+  if (twai_get_status_info(&status) == ESP_OK && status.state != TWAI_STATE_RUNNING) {
+    if (status.state == TWAI_STATE_BUS_OFF) {
+      twai_initiate_recovery();
+      log_line("CAN", "bus-off - initiating recovery");
+    } else if (status.state == TWAI_STATE_STOPPED) {
+      if (twai_start() == ESP_OK) log_line("CAN", "recovered - restarted");
+    }
+    return;  // don't drain until the controller is running again
+  }
+
+  // Drain whatever arrived since the last tick (non-blocking, bounded so a busy
+  // bus can't monopolize the loop), logging each frame in a stable ASCII form.
   for (int i = 0; i < 8; i++) {
     can::Frame f;
     if (can_receive(&f, DRAIN_BUDGET_MS) != CAN_OK) break;

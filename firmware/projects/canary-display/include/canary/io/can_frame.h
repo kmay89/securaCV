@@ -76,15 +76,17 @@ inline bool filter_accepts(uint32_t rx_id, uint32_t want_id, uint32_t mask) {
 //   "id=0x0AB ext=0 rtr=0 dlc=3 data=DE AD BE"
 //   "id=0x18FF50E5 ext=1 rtr=1 dlc=8 remote"
 // Returns the length written (excluding the NUL), or 0 if `cap` is too small.
-// Never writes past `cap`; std ids print 3 hex digits, extended ids 8.
+// Never writes past `cap`. std ids print at least 3 hex digits, extended at
+// least 8 — the id is printed RAW (never masked) so an out-of-range/invalid id
+// shows its real value in the log instead of a plausible-looking one.
 inline size_t format_frame(const Frame& f, char* out, size_t cap) {
   if (out == nullptr || cap == 0) return 0;
   int n = f.extended
               ? std::snprintf(out, cap, "id=0x%08lX ext=1 rtr=%d dlc=%u",
-                              (unsigned long)(f.id & EXT_ID_MAX), f.rtr ? 1 : 0,
+                              (unsigned long)f.id, f.rtr ? 1 : 0,
                               (unsigned)f.dlc)
               : std::snprintf(out, cap, "id=0x%03lX ext=0 rtr=%d dlc=%u",
-                              (unsigned long)(f.id & STD_ID_MAX), f.rtr ? 1 : 0,
+                              (unsigned long)f.id, f.rtr ? 1 : 0,
                               (unsigned)f.dlc);
   if (n < 0 || (size_t)n >= cap) return 0;
   size_t len = (size_t)n;

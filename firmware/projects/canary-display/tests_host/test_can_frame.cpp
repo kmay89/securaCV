@@ -115,6 +115,19 @@ static void test_format_extended_and_remote() {
         "zero-length data frame formatted");
 }
 
+static void test_format_raw_id() {
+  // An out-of-range id must be logged RAW (not masked to a plausible value), so
+  // a bug that produces e.g. 0xFFF in a "standard" frame is visible in the log.
+  can::Frame f{};
+  f.id = 0xFFF;  // > 11-bit max; a real bug if seen on a standard frame
+  f.extended = false;
+  f.dlc = 0;
+  char buf[64];
+  can::format_frame(f, buf, sizeof(buf));
+  CHECK(std::strcmp(buf, "id=0xFFF ext=0 rtr=0 dlc=0 data=") == 0,
+        "out-of-range std id shown raw, not masked");
+}
+
 static void test_format_guards() {
   can::Frame f{};
   f.id = 0x123;
@@ -132,6 +145,7 @@ int main() {
   test_filter();
   test_format_data_frame();
   test_format_extended_and_remote();
+  test_format_raw_id();
   test_format_guards();
 
   if (g_fail == 0) {
