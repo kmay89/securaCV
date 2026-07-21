@@ -68,7 +68,10 @@ test("firmware version + identity match the headers and the registry train", () 
   assert.strictEqual(data.device.fw_train, registry.fw_train);
   assert.match(configH, new RegExp('DEVICE_TYPE\\s*=\\s*"' + data.device.device_type + '"'));
   assert.match(configH, new RegExp('DEVICE_ID\\s*=\\s*"' + data.device.id_example + '"'));
-  assert.strictEqual(data.device.board_id, boards.device_board["canary-vision"]);
+  // device_board maps a device to a LIST of boards (primary first)
+  const visionBoards = [].concat(boards.device_board["canary-vision"]);
+  assert.ok(visionBoards.includes(data.device.board_id),
+    `${data.device.board_id} not in canary-vision board mapping (${visionBoards.join(", ")})`);
   assert.ok(boards.boards[data.device.board_id], "board id not in boards.json");
 });
 

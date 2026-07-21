@@ -59,7 +59,11 @@ test("firmware version matches the .ino constant and rides the registry train", 
 
 test("device_type matches the .ino and the board mapping matches boards.json", () => {
   assert.match(ino, new RegExp('DEVICE_TYPE\\s*=\\s*"' + data.device.device_type + '"'));
-  assert.strictEqual(data.device.board_id, boards.device_board["canary-wap"]);
+  // device_board maps a device to a LIST of boards (primary first); the device's
+  // declared board_id must be one of them
+  const wapBoards = [].concat(boards.device_board["canary-wap"]);
+  assert.ok(wapBoards.includes(data.device.board_id),
+    `${data.device.board_id} not in canary-wap board mapping (${wapBoards.join(", ")})`);
   assert.ok(boards.boards[data.device.board_id], "board id not in boards.json");
 });
 
