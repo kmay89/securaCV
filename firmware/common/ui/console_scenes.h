@@ -106,6 +106,36 @@ inline void trust_card(const Renderer& r, const TrustInfo& t) {
   hrule(r, "", inner, 2);
 }
 
+// The friendly hello the device prints on connect: the canary logo speaking in
+// a char box, a one-line explanation, and the ONE thing to do — open the help
+// site. This is first contact; it should feel welcoming and lead somewhere, not
+// dump a spec. ASCII-safe like the rest of the engine.
+inline void welcome_card(const Renderer& r, const char* device_id,
+                         const char* help_url) {
+  const int inner = TRUST_INNER;
+  char line[128];
+
+  hrule(r, "Hi, I'm your Canary!", inner, 0);
+  static const char* const art[3] = { " ,___,", "(o.o) chirp!", "/)_/)" };
+  for (int i = 0; i < 3; ++i) {
+    center_into(line, sizeof line, art[i], inner - 2);
+    row(r, inner, COL_MOSS, line);
+  }
+  row_blank(r, inner);
+  row(r, inner, COL_NONE, "I make tamper-proof records of what I see, so");
+  row(r, inner, COL_NONE, "nobody can change the story later.");
+  row_blank(r, inner);
+  row(r, inner, COL_TEXT, "See everything I can do:");
+  rowf(r, inner, COL_BRAND, "  %s", help_url ? help_url : "securacv.com/canary");
+  if (device_id && *device_id) {
+    row_blank(r, inner);
+    rowf(r, inner, COL_DIM, "  (that's me: %s)", device_id);
+  }
+  row_blank(r, inner);
+  row(r, inner, COL_DIM, "Press h for commands, or l for my ID card.");
+  hrule(r, "", inner, 2);
+}
+
 }  // namespace scene
 
 #endif  // SECURACV_CONSOLE_SCENES_H

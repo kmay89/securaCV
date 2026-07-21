@@ -141,6 +141,7 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "ui/console_theme.h"
 #include "ui/console_scenes.h"
 #include "ui/console_wake.h"
+static void print_boot_welcome();   // the friendly char-box hello on connect
 #endif
 
 // Optional ESP-IDF provenance APIs for the 'f' fingerprint command. Guarded by
@@ -1344,6 +1345,12 @@ void setup() {
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
   Serial.println("║  BOOT: short=info, 5s hold=factory reset                     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
+#if FEATURE_CONSOLE_THEME
+  // The warm hello: the canary greets whoever just plugged in and points them
+  // to the site that explains everything. Boot already succeeded (FR-8) — this
+  // only prints; ASCII-safe, no terminal probe at boot.
+  print_boot_welcome();
+#endif
   Serial.println();
 }
 
@@ -2150,6 +2157,15 @@ static size_t read_line_arg(char* buf, size_t cap) {
 #if FEATURE_CONSOLE_THEME
 // The scene engine composes text and pushes it here one chunk at a time.
 static void theme_emit(void*, const char* s) { Serial.print(s); }
+
+// The boot hello — the canary greeting whoever just plugged in, and the one URL
+// that explains everything. ASCII-safe (no probe at boot; the terminal may not
+// be attached yet). Forward-declared up top so setup() can call it.
+static void print_boot_welcome() {
+  scene::Renderer r{theme_emit, nullptr, scene::caps_ascii()};
+  Serial.print("\r\n");
+  scene::welcome_card(r, witness_get_device().device_id, SECURACV_HELP_URL_BASE);
+}
 
 // Probe the terminal ONCE before drawing: emit a cursor-position report request
 // (ESC[6n) and see if it answers with ESC[row;colR. An answer ⇒ the terminal
