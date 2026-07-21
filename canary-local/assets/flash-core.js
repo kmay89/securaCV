@@ -239,9 +239,15 @@ export async function verifyImageSignature(signatureHex, pubkeyHex, size, sha256
 // Resolve the `?manifest=<url>` override for self-hosted / air-gapped use.
 // Security: an unrestricted override on the public Lab would be a
 // firmware-phishing vector (a crafted link pointing the flasher at a hostile
-// manifest+image). So we accept only a **same-origin** manifest, or one on a
-// **private/LAN/localhost** host — exactly the hosts the OTA engine trusts for
-// plain-HTTP local update servers (docs/firmware_ota.md § transport policy).
+// manifest+image). We accept only a **same-origin** manifest, or one on a
+// **loopback** host (localhost / 127.0.0.1) — a manifest server on the same
+// machine. That is exactly the set the page's Content-Security-Policy can pin
+// (flash.html: connect-src), so the code guard and the CSP agree and no
+// accepted host is silently blocked at the browser layer; loopback also stays
+// reachable from the hosted HTTPS Lab (it's "potentially trustworthy", so not
+// mixed-content-blocked). Broader private/LAN hosts can't be spelled as a
+// static CSP allowlist (there's no private-IP-range syntax), so for those:
+// self-host the manifest same-origin, or use Advanced → flash a local file.
 // Anything else returns null and the flasher falls back to the signed release.
 export function manifestOverrideUrl(search, pageOrigin) {
   let raw;
@@ -251,12 +257,8 @@ export function manifestOverrideUrl(search, pageOrigin) {
   try { u = new URL(raw, pageOrigin); } catch { return null; }
   if (pageOrigin && u.origin === pageOrigin) return u.href; // same-origin: always fine
   const host = u.hostname.toLowerCase();
-  const localName = host === "localhost" ||
-    /\.(local|lan|internal|home\.arpa)$/.test(host);
-  const privateIp =
-    /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) ||
-    /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
-  return (localName || privateIp) ? u.href : null;
+  const loopback = host === "localhost" || host === "127.0.0.1";
+  return loopback ? u.href : null;
 }
 
 // ── chunked flash reads ────────────────────────────────────────────────────
