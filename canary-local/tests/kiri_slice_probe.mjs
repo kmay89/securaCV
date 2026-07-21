@@ -46,7 +46,7 @@ const server = createServer(async (req, res) => {
     if (rel === "/favicon.ico") { res.writeHead(204); return res.end(); }
     const p = resolve(join(ROOT, rel));
     if (p !== ROOT && !p.startsWith(ROOT + sep)) { res.writeHead(403); return res.end(); }
-    const body = await readFile(p.endsWith("/") ? join(p, "index.html") : p);
+    const body = await readFile(rel.endsWith("/") ? join(p, "index.html") : p);
     res.writeHead(200, { "content-type": TYPES[extname(p)] || "application/octet-stream" });
     res.end(body);
   } catch { res.writeHead(404); res.end("not found"); }
