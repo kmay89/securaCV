@@ -123,6 +123,15 @@ CSI_FEAT_SOURCES = test_csi_features.cpp \
 all: run
 
 
+# Fleet-link presence beacon wire format (fleet_beacon.h). Pure header, no
+# NimBLE/Arduino glue — the test includes it directly and round-trips the
+# 9-byte manufacturer payload (type/version/flags, 0xFF-unknown battery/health,
+# little-endian chain_lo, fp bytes) plus the full-blob parser. The display side
+# parses the identical layout (canary-display/include/canary/net/beacon_parse.h).
+FLEET_BEACON_BIN = test_fleet_beacon
+FLEET_BEACON_SRC = test_fleet_beacon.cpp
+
+
 # USB evidence drive core (share-mode state machine + FAT16 staging volume).
 # See docs/design/usb_evidence_drive.md.
 EVDRIVE_BIN = test_evidence_drive_logic
@@ -182,13 +191,16 @@ $(AUDIO_BIN): $(AUDIO_SOURCES)
 $(CSI_FEAT_BIN): $(CSI_FEAT_SOURCES)
 	$(CXX) $(CXXFLAGS) -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES)
 
+$(FLEET_BEACON_BIN): $(FLEET_BEACON_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(FLEET_BEACON_SRC)
+
 $(EVDRIVE_BIN): $(EVDRIVE_SOURCES)
 	$(CXX) $(CXXFLAGS) -o $@ $(EVDRIVE_SOURCES)
 
 $(EVVERIFY_BIN): $(EVVERIFY_SOURCES)
 	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(EVVERIFY_SOURCES) -lcrypto
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -204,8 +216,9 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(GPS_COARSEN_BIN)
 	./$(AUDIO_BIN)
 	./$(CSI_FEAT_BIN)
+	./$(FLEET_BEACON_BIN)
 	./$(EVDRIVE_BIN)
 	./$(EVVERIFY_BIN)
 
 clean:
-	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)
+	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)

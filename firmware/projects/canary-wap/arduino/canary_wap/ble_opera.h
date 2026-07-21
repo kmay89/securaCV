@@ -26,6 +26,7 @@
 
 #include <NimBLEDevice.h>
 #include "log_level.h"
+#include "fleet_beacon.h"
 
 // Forward declarations for witness chain integration
 // These are provided by the main .ino or ble_manager
@@ -54,6 +55,17 @@ static const char* g_deviceIdHash = nullptr;
 static const char* g_firmwareVersion = nullptr;
 static uint32_t* g_chainHeight = nullptr;
 static uint8_t* g_chainHead = nullptr;
+
+// ── Fleet-link presence beacon (continuous manufacturer-data advert) ──
+// Live status fed in by setBeaconStatus(); fp is fixed at init from the
+// device id hash suffix, chain height is read live from *g_chainHeight.
+// See fleet_beacon.h for the authoritative wire contract (11-byte blob,
+// company id 0xFFFF, type 0x10 — disambiguated from the 17-byte chirp by
+// BOTH size and type).
+static uint8_t g_beaconFp[2] = {0, 0};
+static uint8_t g_beaconFlags = 0;
+static int     g_beaconBattery = -1;  // -1 = unknown -> 0xFF on the wire
+static int     g_beaconHealth  = -1;  // -1 = unknown -> 0xFF on the wire
 
 // Last received command (for API visibility)
 static char g_lastCommand[32] = {0};
@@ -162,6 +174,53 @@ static void updateWitnessCharacteristic() {
 }
 
 // ════════════════════════════════════════════════════════════════
+// FLEET-LINK PRESENCE BEACON ADVERT (single (re)build chokepoint)
+// ════════════════════════════════════════════════════════════════
+
+// Build the beacon manufacturer data from live values and set it as the
+// PRIMARY advertisement, moving the 128-bit SCV service UUID + "SCV-XXXX"
+// name into the SCAN RESPONSE (other WAPs active-scan, so they still resolve
+// both — backward compatible). Both init and the chirp-restore path route
+// through here so "restore after a chirp burst" re-applies the beacon, not
+// the old UUID advert.
+//
+// Fail-safe: if the explicit adv-data path fails for any reason, fall back to
+// today's addServiceUUID + setName so the device is NEVER left un-advertised.
+// Returns true when the beacon path took, false when the fallback was used.
+static bool applyBeaconAdvertising() {
+    if (!g_pAdvertising) return false;
+
+    // Payload bytes [2..10]; NimBLE prepends the 2 company-id bytes.
+    uint8_t payload[FLEET_BEACON_PAYLOAD_LEN];
+    uint32_t chain = g_chainHeight ? *g_chainHeight : 0;
+    fleet_beacon_build(payload, g_beaconFlags, g_beaconBattery, g_beaconHealth,
+                       chain, g_beaconFp[0], g_beaconFp[1]);
+
+    // Full manufacturer blob = company id (LE) + payload.
+    uint8_t mfg[FLEET_BEACON_PAYLOAD_LEN + 2];
+    mfg[0] = FLEET_BEACON_COMPANY_ID & 0xFF;
+    mfg[1] = (FLEET_BEACON_COMPANY_ID >> 8) & 0xFF;
+    memcpy(&mfg[2], payload, FLEET_BEACON_PAYLOAD_LEN);
+
+    NimBLEAdvertisementData advData;
+    advData.setManufacturerData(std::string((char*)mfg, sizeof(mfg)));
+
+    NimBLEAdvertisementData scanData;
+    scanData.setName(g_deviceName);
+    scanData.addServiceUUID(SCV_SERVICE_UUID);
+
+    bool ok = g_pAdvertising->setAdvertisementData(advData);
+    ok = g_pAdvertising->setScanResponseData(scanData) && ok;
+    if (!ok) {
+        // Fallback: legacy UUID + name advert (today's behavior).
+        g_pAdvertising->addServiceUUID(SCV_SERVICE_UUID);
+        g_pAdvertising->setName(g_deviceName);
+        return false;
+    }
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════════
 // PUBLIC API
 // ════════════════════════════════════════════════════════════════
 
@@ -180,6 +239,20 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
     } else {
         snprintf(g_deviceName, sizeof(g_deviceName), "%s%s",
                  BLE_DEVICE_NAME_PREFIX, deviceIdHash);
+    }
+
+    // Fleet-link beacon fingerprint: last 2 bytes of the pubkey fingerprint,
+    // parsed from the last 4 hex chars of the device id hash — the same 2
+    // bytes the chirp carries at [15-16] and the "SCV-XXXX" name derives from.
+    g_beaconFp[0] = 0;
+    g_beaconFp[1] = 0;
+    if (hashLen >= 4) {
+        const char* suffix = deviceIdHash + hashLen - 4;
+        char hx[3] = {0};
+        hx[0] = suffix[0]; hx[1] = suffix[1];
+        g_beaconFp[0] = (uint8_t)strtol(hx, nullptr, 16);
+        hx[0] = suffix[2]; hx[1] = suffix[3];
+        g_beaconFp[1] = (uint8_t)strtol(hx, nullptr, 16);
     }
 
     // Create server
@@ -221,11 +294,17 @@ static bool init(const char* deviceIdHash, const char* fwVersion,
     // Start service
     g_pService->start();
 
-    // Configure advertising
+    // Configure advertising. Scan response must be enabled so the SCV service
+    // UUID + name (moved off the primary advert to make room for the beacon
+    // manufacturer data) are still discoverable by active-scanning WAPs.
     g_pAdvertising = NimBLEDevice::getAdvertising();
-    g_pAdvertising->addServiceUUID(SCV_SERVICE_UUID);
-    g_pAdvertising->setName(g_deviceName);
     g_pAdvertising->enableScanResponse(true);
+    if (!applyBeaconAdvertising()) {
+        // applyBeaconAdvertising() already installed the legacy UUID+name
+        // advert as a fallback — the device is advertising, just without the
+        // presence beacon. Log so the failure is visible in the field.
+        Serial.println("[BLE] Opera beacon adv setup failed — legacy UUID advert active");
+    }
 
     Serial.printf("[BLE] Opera initialized — device name: %s\n", g_deviceName);
     return true;
@@ -267,10 +346,30 @@ static void setCommandHandler(CommandHandler handler) {
     g_commandHandler = handler;
 }
 
-// Call periodically to refresh characteristic values
+// Feed live status into the presence beacon. Stored here and applied on the
+// next refreshBeacon()/update(). chain height is read live from the pointer
+// handed to init(); fp is fixed at init. Cheap — safe to call every loop.
+static void setBeaconStatus(uint8_t flags, int battery_pct, int health_pct) {
+    g_beaconFlags   = flags;
+    g_beaconBattery = battery_pct;
+    g_beaconHealth  = health_pct;
+}
+
+// Re-apply the beacon advert with current live values (used by the periodic
+// refresh and by the chirp-restore path). The caller must ensure a chirp
+// burst is not mid-broadcast — ble_manager gates on ble_chirp::isBroadcasting().
+static bool refreshBeacon() {
+    return applyBeaconAdvertising();
+}
+
+// Call periodically to refresh characteristic values AND the live beacon
+// manufacturer data (battery/health/chain/flags change over time). The chirp
+// state machine owns the advert while broadcasting, so ble_manager only calls
+// this when a chirp is not in flight.
 static void update() {
     updateDeviceInfoCharacteristic();
     updateWitnessCharacteristic();
+    applyBeaconAdvertising();
 }
 
 // Temporarily stop advertising (for chirp mode switching)
@@ -293,6 +392,9 @@ namespace ble_opera {
     static inline void setCommandHandler(void (*)(const char*)) {}
     static inline void update() {}
     static inline void* getAdvertising() { return nullptr; }
+    static inline void setBeaconStatus(uint8_t, int, int) {}
+    static inline bool refreshBeacon() { return false; }
+    static inline bool applyBeaconAdvertising() { return false; }
 }
 
 #endif // FEATURE_BLE && FEATURE_BLE_OPERA

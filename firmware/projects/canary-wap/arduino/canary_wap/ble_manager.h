@@ -240,11 +240,22 @@ static void update() {
     #endif
 
     #if FEATURE_BLE_OPERA
-    // Periodically update characteristic values
+    // Periodically refresh characteristic values AND the live presence beacon
+    // (battery/health/chain/flags). Skip while a chirp burst owns the advert —
+    // ble_chirp::update() above restores the beacon when the burst ends, so
+    // clobbering it mid-broadcast would both cut the chirp short and race the
+    // restore. isBroadcasting() is a cheap millis compare.
     static unsigned long lastOperaUpdate = 0;
     if (millis() - lastOperaUpdate > 5000) {
-        ble_opera::update();
-        lastOperaUpdate = millis();
+        #if FEATURE_BLE_CHIRP
+        const bool chirp_owns_advert = ble_chirp::isBroadcasting();
+        #else
+        const bool chirp_owns_advert = false;
+        #endif
+        if (!chirp_owns_advert) {
+            ble_opera::update();
+            lastOperaUpdate = millis();
+        }
     }
     #endif
 }
