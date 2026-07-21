@@ -72,6 +72,9 @@
 #if defined(FEATURE_RTC) && FEATURE_RTC
 #include "rtc.h"        // PCF8563 trusted time (probe -> seed/mirror)
 #endif
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+#include "espnow_peer.h"  // router-independent peer presence (rx-only)
+#endif
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
 #include "fleet_link.h"
 #endif
@@ -846,6 +849,13 @@ void setup() {
   canary::io::rtc_begin();
 #endif
 
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  // Router-independent peer presence: bring up the ESP-NOW listener now that the
+  // WiFi driver is started. Receive-only — the dash observes peer beacons off
+  // the raw channel when the AP/broker is down; it never transmits or signs.
+  canary::net::espnow_begin();
+#endif
+
   // The display's own web page — live mirror, help, master settings.
   // Started AFTER provisioning (the portal owned :80 during setup) and
   // independent of the panel: a display with broken glass still mirrors.
@@ -1055,6 +1065,12 @@ void loop() {
   // too, passive BLE bursts keep tamper/liveness flowing to the glass. The
   // module itself stops scanning the moment the broker is back.
   canary::net::chirp_scan_loop(now, !broker, canary::net::wifi_connected());
+#endif
+
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  // Drain any peer presence beacons the ESP-NOW listener captured into the
+  // fleet model (unsigned observation, same footing as the BLE beacon).
+  canary::net::espnow_loop(now);
 #endif
 
 #if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY

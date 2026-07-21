@@ -36,7 +36,7 @@ row cites the file that backs the claim.
 | **microSD** (TF slot) | ✅ | **Staged (CS blocker)** | Bulk local archive — see the CH422G-CS note |
 | **Battery-backed RTC** (trusted time) | ❓ verify | **Built · bench-gated** | Trustworthy timestamps when NTP is blocked — runtime-probing layer, compile-verified (`-rtc` env) |
 | **Battery operation** (CS8501 charge/boost) | ❓ verify | **Staged / verify** | "Cut the power, the Canary keeps witnessing" |
-| ESP-NOW peer mesh | ✅ (radio) | **Absent** | Router-independent fleet link + cross-signing |
+| ESP-NOW peer presence | ✅ (radio) | **Built · bench-gated** | Router-independent peer-liveness ingest (rx-only) — compile-verified (`-espnow` env) |
 | Camera / microphone | ❌ by design | **Absent (intentional)** | *Not a gap* — "it shows, it doesn't watch" |
 | Backlight PWM dimming | ❌ (CH422G on/off) | **Absent (hardware)** | Night = dark theme + backlight off |
 
@@ -267,15 +267,35 @@ this table to match reality either way.
 
 ---
 
-## 7. ESP-NOW mesh & fleet cross-signing — resilience upside
+## 7. ESP-NOW peer presence — router-independent resilience
 
-**Status:** Absent (no `esp_now` in the display firmware). The radio supports it.
+**Status:** Built · bench-gated (`FEATURE_ESPNOW 0`, compile-verified by
+`canary-display-dash-espnow`). The **receive side** now exists:
+`src/net/espnow_peer.cpp` brings up an ESP-NOW listener on the WiFi channel and
+drains peer **fleet-link presence beacons** into the fleet model
+(`on_beacon`), reusing the exact host-tested wire contract the BLE chirp path
+uses (`canary/net/beacon_parse.h`) via the pure `espnow_peer_logic.h`
+(`test_espnow_peer.cpp`). One wire format, one parser — an ESP-NOW frame and a
+BLE advert from one canary resolve to one witness, and foreign traffic is
+rejected before it reaches the fleet.
 
-**Why it matters:** an attacker who kills the WiFi AP silences an MQTT-only fleet.
-An ESP-NOW peer link is router-independent, so Canaries keep talking — and can
-**cross-sign each other's chain heads** (witness-the-witness), making tamper
-materially harder. Aligned with the tamper-resistance thesis; larger effort, so
-it sits behind RS485/CAN in priority.
+**Why it matters:** an attacker who kills the WiFi AP silences an MQTT-only
+fleet. ESP-NOW is connectionless and router-independent, so the dash keeps
+hearing peer liveness off the raw 2.4 GHz channel when the broker is dark.
+
+**Honesty correction (like §2):** the earlier note said Canaries "cross-sign
+each other's chain heads." **The dash cannot** — it has no signing identity
+(`src/trust.cpp` verifies + TOFU-pins only, never mints). So this is a
+**receive-only observer**: it never transmits and never signs, and a peer's
+*signed* chain head still travels over the signed MQTT pipeline. ESP-NOW carries
+only the coarse presence summary the beacon already coarsens (an UNSIGNED
+observation, same footing as the BLE beacon). Byte-neutral to the emulator
+(`src/net/espnow_peer.cpp` is empty without the flag).
+
+**Remaining to go live:** the paired WAP-side ESP-NOW *broadcast* of the beacon
+(the sender for this receiver) and WiFi-STA channel coexistence tuning are the
+follow-ups; then flip `FEATURE_ESPNOW` on. Cross-signing proper is a
+Canary-to-Canary (signing device) property, not a display one.
 
 ---
 

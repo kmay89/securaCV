@@ -812,6 +812,22 @@ jobs:
           /tmp/rtc_pcf | tee /tmp/rtc_pcf.log
           grep -q "ALL .* PASSED" /tmp/rtc_pcf.log
 
+      - name: Build + run canary-display ESP-NOW peer-decode host test
+        # Router-independent peer presence: the decode that turns a raw ESP-NOW
+        # payload into a fleet-link beacon (fp4 + status) reuses the shared,
+        # host-tested beacon wire contract (canary/net/beacon_parse.h), so an
+        # ESP-NOW frame and a BLE advert from one canary resolve to one witness,
+        # and foreign traffic / noise is rejected before the fleet. The esp_now
+        # transport is compile-checked by the canary-display-dash-espnow env.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_espnow_peer.cpp \
+              -o /tmp/espnow_peer
+          /tmp/espnow_peer | tee /tmp/espnow_peer.log
+          grep -q "ALL .* PASSED" /tmp/espnow_peer.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
