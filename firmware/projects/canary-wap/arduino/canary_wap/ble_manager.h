@@ -290,6 +290,7 @@ static String statusJson() {
     nearby["canary_count"] = ble_nearby::activeCanaryCount();
     nearby["non_canary_count"] = ble_nearby::getNonCanaryCount();
     nearby["scan_active"] = ble_nearby::isScanActive();
+    nearby["beacons_received"] = ble_nearby::getBeaconsReceived();
 
     String json;
     serializeJson(doc, json);

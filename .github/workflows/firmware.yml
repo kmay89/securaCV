@@ -1189,6 +1189,20 @@ jobs:
           /tmp/canonical_fleet_beacon | tee /tmp/canonical_fleet_beacon.log
           grep -q "ALL PASS" /tmp/canonical_fleet_beacon.log
 
+      - name: Build + run canonical fleet-roster host test
+        # The device-side roster (firmware/common/fleet_link/fleet_roster.h) — a
+        # Canary's own view of the OTHER Canaries it hears. Single-source header,
+        # included via -I by the canary / vision / sense firmwares; this exercises
+        # note()/upsert/evict/expire/count/find from its one source of truth.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/common/fleet_link \
+              firmware/common/fleet_link/test_fleet_roster.cpp \
+              -o /tmp/canonical_fleet_roster
+          /tmp/canonical_fleet_roster | tee /tmp/canonical_fleet_roster.log
+          grep -q "ALL PASS" /tmp/canonical_fleet_roster.log
+
       - name: Build + run WAP fleet-beacon builder host test
         run: |
           set -euo pipefail
