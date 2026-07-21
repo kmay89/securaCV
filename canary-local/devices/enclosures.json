@@ -373,7 +373,22 @@
    "note": "dual column, 3 USB ports",
    "device": "canary-vision",
    "preview": "preview_dev_combo.png",
-   "parts": [],
+   "parts": [
+    {
+     "name": "back",
+     "file": "preview/canary_combo_back.stl",
+     "preview_mesh": true,
+     "print_note": "prints flat — no supports",
+     "material": "PETG / ASA (PLA indoors)"
+    },
+    {
+     "name": "front",
+     "file": "preview/canary_combo_front.stl",
+     "preview_mesh": true,
+     "print_note": "prints face-down without support",
+     "material": "PETG / ASA (PLA indoors)"
+    }
+   ],
    "scad": "canary_combo.scad"
   },
   {
