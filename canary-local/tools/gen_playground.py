@@ -76,52 +76,70 @@ def main() -> None:
 
     # ── Wire net colours (RGB float triples), reused by the 3D renderer ──
     colors = {
-        "5v": [0.85, 0.2, 0.16],     # supply +
-        "gnd": [0.12, 0.12, 0.14],   # isolated GND / supply -
+        "5v": [0.85, 0.2, 0.16],     # supply + / VIN / DI COM
+        "gnd": [0.12, 0.12, 0.14],   # ground
         "di": [0.98, 0.83, 0.3],     # isolated input signal
         "do": [0.62, 0.45, 0.85],    # isolated open-drain output
         "sda": [0.35, 0.68, 0.4],    # I2C data
         "scl": [0.32, 0.5, 0.85],    # I2C clock
         "vout": [0.95, 0.55, 0.2],   # I2C header VOUT (3V3/5V)
+        "rs485": [0.55, 0.55, 0.62],  # RS485 A/B
+        "can": [0.45, 0.72, 0.78],   # CAN H/L
     }
 
-    # ── Terminal map — landing pads with a 3D anchor + the net each carries.
-    # Frame: board lies in the X–Z plane, +Y up (thickness). The green
-    # field-wiring terminal block runs along the +Z (front) edge; the I2C
-    # sensor header sits on the −X (left) edge. Positions are mm, staged for
-    # legibility — only that a wire lands on this named terminal is a claim.
-    tb_z = 40.0
-    tb_y = 3.0
-    terminals = {
-        "VIN+": {"label": "VIN +", "net": "5v", "pos": [-58, tb_y, tb_z],
-                 "blurb": "6–36 V wide-input supply +"},
-        "VIN-": {"label": "VIN -", "net": "gnd", "pos": [-48, tb_y, tb_z],
-                 "blurb": "supply return"},
-        "DI_COM": {"label": "DI COM", "net": "5v", "pos": [-30, tb_y, tb_z],
-                   "blurb": "isolated-input common — external 5–36 V supply +"},
-        "DI0": {"label": "DI0", "net": "di", "exio": "EXIO0", "bit": bit_di0,
-                "pos": [-20, tb_y, tb_z],
-                "blurb": "isolated digital input 0 (optocoupled, read via CH422G)"},
-        "DI1": {"label": "DI1", "net": "di", "exio": "EXIO5", "bit": bit_di1,
-                "pos": [-10, tb_y, tb_z],
-                "blurb": "isolated digital input 1 (optocoupled, read via CH422G)"},
-        "DO0": {"label": "DO0", "net": "do", "od": "OD0", "bit": bit_do0,
-                "pos": [2, tb_y, tb_z],
-                "blurb": "isolated open-drain output 0 (≤450 mA sink)"},
-        "DO1": {"label": "DO1", "net": "do", "od": "OD1", "bit": bit_do1,
-                "pos": [12, tb_y, tb_z],
-                "blurb": "isolated open-drain output 1 (≤450 mA sink)"},
-        "ISO_GND": {"label": "ISO GND", "net": "gnd", "pos": [24, tb_y, tb_z],
-                    "blurb": "isolated ground for the DO load supply"},
-        "I2C_VOUT": {"label": "VOUT", "net": "vout", "pos": [-66, tb_y, 18],
-                     "blurb": "sensor-header supply (3V3/5V, per your sensor)"},
-        "I2C_GND": {"label": "GND", "net": "gnd", "pos": [-66, tb_y, 8],
-                    "blurb": "sensor-header ground"},
-        "I2C_SDA": {"label": "SDA", "net": "sda", "gpio": int(sda), "pos": [-66, tb_y, -2],
-                    "blurb": f"I2C data (GPIO{sda}) — shared with GT911 + CH422G"},
-        "I2C_SCL": {"label": "SCL", "net": "scl", "gpio": int(scl), "pos": [-66, tb_y, -12],
-                    "blurb": f"I2C clock (GPIO{scl}) — shared with GT911 + CH422G"},
-    }
+    # ── Terminal map — the REAL 4.3B-BOX rear connector.
+    #
+    # Transcribed from the enclosure's back silkscreen (see the product photo /
+    # Waveshare wiki): ONE 16-way pluggable green terminal block along the top
+    # edge of the BACK face, in this fixed left→right order, with the group
+    # legend printed under it:
+    #
+    #   [ Isolated I/O            ][RS485][ CAN ][   I2C    ][   6-56V   ]
+    #     DI1 DI0 GND DI-COM DO1 DO0  A  B   H  L   SCL SDA GND  VOUT GND VIN
+    #
+    # Frame: the enclosure lies with its BIG faces in the X–Z plane, +Y up.
+    # The back (wiring) face is +Y; the connector sits near the +Z edge and the
+    # terminals point up (+Y). Positions are mm — only that a wire lands on this
+    # named terminal is a claim; the row geometry is staged for legibility.
+    row_y = 13.0     # terminal tops, just above the +Y (back) face
+    row_z = 30.0     # near the +Z edge of the enclosure
+    x0, dx = -56.25, 7.5   # 16 terminals, centred, 7.5 mm pitch
+    # (id, label, net, group, extra)
+    ORDER = [
+        ("DI1", "DI1", "di", "iso", {"exio": "EXIO5", "bit": bit_di1,
+            "blurb": "isolated digital input 1 (optocoupled, read via CH422G)"}),
+        ("DI0", "DI0", "di", "iso", {"exio": "EXIO0", "bit": bit_di0,
+            "blurb": "isolated digital input 0 (optocoupled, read via CH422G)"}),
+        ("GND_ISO", "GND", "gnd", "iso", {"blurb": "isolated-side ground (DO load return)"}),
+        ("DI_COM", "DI COM", "5v", "iso", {"blurb": "isolated-input common — external 5–36 V supply +"}),
+        ("DO1", "DO1", "do", "iso", {"od": "OD1", "bit": bit_do1,
+            "blurb": "isolated open-drain output 1 (≤450 mA sink)"}),
+        ("DO0", "DO0", "do", "iso", {"od": "OD0", "bit": bit_do0,
+            "blurb": "isolated open-drain output 0 (≤450 mA sink)"}),
+        ("RS485_A", "A", "rs485", "rs485", {"blurb": "RS485 A (GPIO44/43 — shares the USB-UART console)"}),
+        ("RS485_B", "B", "rs485", "rs485", {"blurb": "RS485 B"}),
+        ("CAN_H", "H", "can", "can", {"blurb": "CAN High (dedicated transceiver, GPIO15/16)"}),
+        ("CAN_L", "L", "can", "can", {"blurb": "CAN Low"}),
+        ("SCL", "SCL", "scl", "i2c", {"gpio": int(scl), "blurb": f"I2C clock (GPIO{scl}) — shared with GT911 + CH422G"}),
+        ("SDA", "SDA", "sda", "i2c", {"gpio": int(sda), "blurb": f"I2C data (GPIO{sda}) — shared with GT911 + CH422G"}),
+        ("GND_I2C", "GND", "gnd", "i2c", {"blurb": "I2C header ground"}),
+        ("VOUT", "VOUT", "vout", "pwr", {"blurb": "sensor-header supply out (3V3/5V, per your sensor)"}),
+        ("GND_PWR", "GND", "gnd", "pwr", {"blurb": "power ground"}),
+        ("VIN", "VIN", "5v", "pwr", {"blurb": "wide-input supply + (board silkscreen: 6-56V)"}),
+    ]
+    terminals = {}
+    for i, (tid, label, net, group, extra) in enumerate(ORDER):
+        terminals[tid] = {"label": label, "net": net, "group": group,
+                          "pos": [round(x0 + i * dx, 2), row_y, row_z], **extra}
+
+    # Silkscreen legend groups printed under the connector (left→right).
+    groups = [
+        {"id": "iso", "label": "Isolated I/O", "members": ["DI1", "DI0", "GND_ISO", "DI_COM", "DO1", "DO0"]},
+        {"id": "rs485", "label": "RS485", "members": ["RS485_A", "RS485_B"]},
+        {"id": "can", "label": "CAN", "members": ["CAN_H", "CAN_L"]},
+        {"id": "i2c", "label": "I2C", "members": ["SCL", "SDA", "GND_I2C"]},
+        {"id": "pwr", "label": "6-56V", "members": ["VOUT", "GND_PWR", "VIN"]},
+    ]
 
     # ── Bring-up code snippets — ports of playground.cpp, with the pin facts
     # injected from pins.h (so the code can never claim a stale address/bit).
@@ -272,7 +290,7 @@ def main() -> None:
             "peripheral": {"name": "Chime / buzzer", "part": "piezo",
                            "blurb": "Chime, LED, or relay coil (add a flyback diode across coils). Driven, never sensed."},
             "port": {"label": "Output channel", "choices": ["DO0", "DO1"], "default": "DO0"},
-            "wires": [["DO0", "do"], ["ISO_GND", "gnd"]],
+            "wires": [["DO0", "do"], ["GND_ISO", "gnd"]],
             "instructions": (
                 "Isolated open-drain output (max 450 mA sink):\n"
                 "1. External supply \"+\" -> load \"+\" (chime, LED,\n"
@@ -291,7 +309,7 @@ def main() -> None:
             "peripheral": {"name": "Strobe / siren", "part": "ws2812",
                            "blurb": "Second isolated output — a strobe/siren candidate while DO0 holds the chime."},
             "port": {"label": "Output channel", "choices": ["DO1", "DO0"], "default": "DO1"},
-            "wires": [["DO1", "do"], ["ISO_GND", "gnd"]],
+            "wires": [["DO1", "do"], ["GND_ISO", "gnd"]],
             "instructions": (
                 "Second isolated output - same wiring as DO0.\n"
                 "Use it for a strobe/siren candidate while DO0\n"
@@ -309,7 +327,7 @@ def main() -> None:
                            "blurb": "VEML7700 (0x10, preferred) or BH1750 strapped to 0x5C — its default 0x23 is the CH422G's."},
             "port": {"label": "Sensor / address", "choices": ["VEML7700 · 0x10", "BH1750 · 0x5C"],
                      "default": "VEML7700 · 0x10"},
-            "wires": [["I2C_VOUT", "vout"], ["I2C_GND", "gnd"], ["I2C_SDA", "sda"], ["I2C_SCL", "scl"]],
+            "wires": [["VOUT", "vout"], ["GND_I2C", "gnd"], ["SDA", "sda"], ["SCL", "scl"]],
             "instructions": (
                 "Ambient light sensor on the I2C terminal:\n"
                 "1. VEML7700 (addr 0x10, preferred) or BH1750 with\n"
@@ -330,7 +348,7 @@ def main() -> None:
                            "blurb": "Time-of-flight ranging (0x29). Under the TRIP threshold counts one trip — a laser-gap prototype."},
             "port": {"label": "Trip threshold", "choices": ["50 mm", "100 mm", "200 mm", "400 mm"],
                      "default": "100 mm"},
-            "wires": [["I2C_VOUT", "vout"], ["I2C_GND", "gnd"], ["I2C_SDA", "sda"], ["I2C_SCL", "scl"]],
+            "wires": [["VOUT", "vout"], ["GND_I2C", "gnd"], ["SDA", "sda"], ["SCL", "scl"]],
             "instructions": (
                 "VL53L0X time-of-flight on the I2C terminal\n"
                 "(addr 0x29). Wire like the light sensor.\n"
@@ -351,7 +369,7 @@ def main() -> None:
                            "blurb": "12-electrode controller (0x5A). Cycle sensitivity for the printed shell-thickness coupon test."},
             "port": {"label": "Sensitivity", "choices": ["contact", "2mm shell", "4mm shell", "max gain"],
                      "default": "contact"},
-            "wires": [["I2C_VOUT", "vout"], ["I2C_GND", "gnd"], ["I2C_SDA", "sda"], ["I2C_SCL", "scl"]],
+            "wires": [["VOUT", "vout"], ["GND_I2C", "gnd"], ["SDA", "sda"], ["SCL", "scl"]],
             "instructions": (
                 "MPR121 12-pad controller (addr 0x5A).\n"
                 "Shell-thickness test (printed plastic coupons):\n"
@@ -371,7 +389,7 @@ def main() -> None:
             "signal": "bus", "dir": "i2c", "kind": "info",
             "peripheral": None,
             "port": None,
-            "wires": [["I2C_SDA", "sda"], ["I2C_SCL", "scl"]],
+            "wires": [["SDA", "sda"], ["SCL", "scl"]],
             "instructions": (
                 "Live scan of the shared GPIO8/9 bus (every 3 s).\n"
                 "Reserved here: 0x23/0x24/0x26/0x38 = CH422G\n"
@@ -395,7 +413,7 @@ def main() -> None:
         {"name": "VOUT", "status": "open", "note": "sensor-header supply"},
         {"name": "RS485 44/43", "status": "reserved", "note": "shares the USB-UART console pins"},
         {"name": "CAN 15/16", "status": "open", "note": "dedicated transceiver (if not using CAN)"},
-        {"name": "VIN 6-36V", "status": "reserved", "note": "wide-input supply"},
+        {"name": "VIN 6-56V", "status": "reserved", "note": "wide-input supply (rear silkscreen)"},
         {"name": "LCD x21", "status": "reserved", "note": "RGB565 panel — consumed"},
         {"name": "Touch INT 4", "status": "reserved", "note": "GT911"},
         {"name": "USB 19/20", "status": "reserved", "note": "native USB CDC"},
@@ -419,10 +437,17 @@ def main() -> None:
             "vendor": board_vendor,
             "mcu": board_mcu,
             "fw_version": fw_version,
-            "dims_mm": [136, 82, 12],
+            "enclosure": "LCD-4.3B-BOX",
+            "dims_mm": [136, 88, 26],
+            "connector": {
+                "face": "back", "edge": "+z", "ways": 16,
+                "pitch_mm": 7.5, "row_y": row_y, "row_z": row_z,
+                "note": ("ONE pluggable 16-way green terminal block along the top edge "
+                         "of the BACK face — see the enclosure rear silkscreen."),
+            },
             "display": {"size_in": 4.3, "res": [int(need(pins, "LCD_WIDTH")),
                                                 int(need(pins, "LCD_HEIGHT"))],
-                        "iface": "RGB565 parallel (DE mode)"},
+                        "iface": "RGB565 parallel (DE mode)", "face": "front"},
             "tagline": "Wire it, watch it — the peripheral playground on real Waveshare hardware.",
             "blurb": ("The industrial-IO dash SKU. No raw ESP32 GPIO is broken out — every "
                       "external wire lands on an isolated, buffered, or bused terminal, which "
@@ -444,6 +469,7 @@ def main() -> None:
         },
         "colors": colors,
         "terminals": terminals,
+        "groups": groups,
         "stations": stations,
         "pinTracker": pin_tracker,
     }

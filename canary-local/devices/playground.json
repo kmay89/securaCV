@@ -8,18 +8,29 @@
   "vendor": "Waveshare",
   "mcu": "ESP32-S3",
   "fw_version": "2.2.0",
+  "enclosure": "LCD-4.3B-BOX",
   "dims_mm": [
    136,
-   82,
-   12
+   88,
+   26
   ],
+  "connector": {
+   "face": "back",
+   "edge": "+z",
+   "ways": 16,
+   "pitch_mm": 7.5,
+   "row_y": 13.0,
+   "row_z": 30.0,
+   "note": "ONE pluggable 16-way green terminal block along the top edge of the BACK face \u2014 see the enclosure rear silkscreen."
+  },
   "display": {
    "size_in": 4.3,
    "res": [
     800,
     480
    ],
-   "iface": "RGB565 parallel (DE mode)"
+   "iface": "RGB565 parallel (DE mode)",
+   "face": "front"
   },
   "tagline": "Wire it, watch it \u2014 the peripheral playground on real Waveshare hardware.",
   "blurb": "The industrial-IO dash SKU. No raw ESP32 GPIO is broken out \u2014 every external wire lands on an isolated, buffered, or bused terminal, which is exactly what makes it the safe host for the peripheral playground.",
@@ -74,140 +85,254 @@
    0.95,
    0.55,
    0.2
+  ],
+  "rs485": [
+   0.55,
+   0.55,
+   0.62
+  ],
+  "can": [
+   0.45,
+   0.72,
+   0.78
   ]
  },
  "terminals": {
-  "VIN+": {
-   "label": "VIN +",
-   "net": "5v",
+  "DI1": {
+   "label": "DI1",
+   "net": "di",
+   "group": "iso",
    "pos": [
-    -58,
-    3.0,
-    40.0
+    -56.25,
+    13.0,
+    30.0
    ],
-   "blurb": "6\u201336 V wide-input supply +"
-  },
-  "VIN-": {
-   "label": "VIN -",
-   "net": "gnd",
-   "pos": [
-    -48,
-    3.0,
-    40.0
-   ],
-   "blurb": "supply return"
-  },
-  "DI_COM": {
-   "label": "DI COM",
-   "net": "5v",
-   "pos": [
-    -30,
-    3.0,
-    40.0
-   ],
-   "blurb": "isolated-input common \u2014 external 5\u201336 V supply +"
+   "exio": "EXIO5",
+   "bit": "(1 << 5)",
+   "blurb": "isolated digital input 1 (optocoupled, read via CH422G)"
   },
   "DI0": {
    "label": "DI0",
    "net": "di",
+   "group": "iso",
+   "pos": [
+    -48.75,
+    13.0,
+    30.0
+   ],
    "exio": "EXIO0",
    "bit": "(1 << 0)",
-   "pos": [
-    -20,
-    3.0,
-    40.0
-   ],
    "blurb": "isolated digital input 0 (optocoupled, read via CH422G)"
   },
-  "DI1": {
-   "label": "DI1",
-   "net": "di",
-   "exio": "EXIO5",
-   "bit": "(1 << 5)",
+  "GND_ISO": {
+   "label": "GND",
+   "net": "gnd",
+   "group": "iso",
    "pos": [
-    -10,
-    3.0,
-    40.0
+    -41.25,
+    13.0,
+    30.0
    ],
-   "blurb": "isolated digital input 1 (optocoupled, read via CH422G)"
+   "blurb": "isolated-side ground (DO load return)"
   },
-  "DO0": {
-   "label": "DO0",
-   "net": "do",
-   "od": "OD0",
-   "bit": "(1 << 0)",
+  "DI_COM": {
+   "label": "DI COM",
+   "net": "5v",
+   "group": "iso",
    "pos": [
-    2,
-    3.0,
-    40.0
+    -33.75,
+    13.0,
+    30.0
    ],
-   "blurb": "isolated open-drain output 0 (\u2264450 mA sink)"
+   "blurb": "isolated-input common \u2014 external 5\u201336 V supply +"
   },
   "DO1": {
    "label": "DO1",
    "net": "do",
+   "group": "iso",
+   "pos": [
+    -26.25,
+    13.0,
+    30.0
+   ],
    "od": "OD1",
    "bit": "(1 << 1)",
-   "pos": [
-    12,
-    3.0,
-    40.0
-   ],
    "blurb": "isolated open-drain output 1 (\u2264450 mA sink)"
   },
-  "ISO_GND": {
-   "label": "ISO GND",
-   "net": "gnd",
+  "DO0": {
+   "label": "DO0",
+   "net": "do",
+   "group": "iso",
    "pos": [
-    24,
-    3.0,
-    40.0
+    -18.75,
+    13.0,
+    30.0
    ],
-   "blurb": "isolated ground for the DO load supply"
+   "od": "OD0",
+   "bit": "(1 << 0)",
+   "blurb": "isolated open-drain output 0 (\u2264450 mA sink)"
   },
-  "I2C_VOUT": {
-   "label": "VOUT",
-   "net": "vout",
+  "RS485_A": {
+   "label": "A",
+   "net": "rs485",
+   "group": "rs485",
    "pos": [
-    -66,
-    3.0,
-    18
+    -11.25,
+    13.0,
+    30.0
    ],
-   "blurb": "sensor-header supply (3V3/5V, per your sensor)"
+   "blurb": "RS485 A (GPIO44/43 \u2014 shares the USB-UART console)"
   },
-  "I2C_GND": {
-   "label": "GND",
-   "net": "gnd",
+  "RS485_B": {
+   "label": "B",
+   "net": "rs485",
+   "group": "rs485",
    "pos": [
-    -66,
-    3.0,
-    8
+    -3.75,
+    13.0,
+    30.0
    ],
-   "blurb": "sensor-header ground"
+   "blurb": "RS485 B"
   },
-  "I2C_SDA": {
-   "label": "SDA",
-   "net": "sda",
-   "gpio": 8,
+  "CAN_H": {
+   "label": "H",
+   "net": "can",
+   "group": "can",
    "pos": [
-    -66,
-    3.0,
-    -2
+    3.75,
+    13.0,
+    30.0
    ],
-   "blurb": "I2C data (GPIO8) \u2014 shared with GT911 + CH422G"
+   "blurb": "CAN High (dedicated transceiver, GPIO15/16)"
   },
-  "I2C_SCL": {
+  "CAN_L": {
+   "label": "L",
+   "net": "can",
+   "group": "can",
+   "pos": [
+    11.25,
+    13.0,
+    30.0
+   ],
+   "blurb": "CAN Low"
+  },
+  "SCL": {
    "label": "SCL",
    "net": "scl",
-   "gpio": 9,
+   "group": "i2c",
    "pos": [
-    -66,
-    3.0,
-    -12
+    18.75,
+    13.0,
+    30.0
    ],
+   "gpio": 9,
    "blurb": "I2C clock (GPIO9) \u2014 shared with GT911 + CH422G"
+  },
+  "SDA": {
+   "label": "SDA",
+   "net": "sda",
+   "group": "i2c",
+   "pos": [
+    26.25,
+    13.0,
+    30.0
+   ],
+   "gpio": 8,
+   "blurb": "I2C data (GPIO8) \u2014 shared with GT911 + CH422G"
+  },
+  "GND_I2C": {
+   "label": "GND",
+   "net": "gnd",
+   "group": "i2c",
+   "pos": [
+    33.75,
+    13.0,
+    30.0
+   ],
+   "blurb": "I2C header ground"
+  },
+  "VOUT": {
+   "label": "VOUT",
+   "net": "vout",
+   "group": "pwr",
+   "pos": [
+    41.25,
+    13.0,
+    30.0
+   ],
+   "blurb": "sensor-header supply out (3V3/5V, per your sensor)"
+  },
+  "GND_PWR": {
+   "label": "GND",
+   "net": "gnd",
+   "group": "pwr",
+   "pos": [
+    48.75,
+    13.0,
+    30.0
+   ],
+   "blurb": "power ground"
+  },
+  "VIN": {
+   "label": "VIN",
+   "net": "5v",
+   "group": "pwr",
+   "pos": [
+    56.25,
+    13.0,
+    30.0
+   ],
+   "blurb": "wide-input supply + (board silkscreen: 6-56V)"
   }
  },
+ "groups": [
+  {
+   "id": "iso",
+   "label": "Isolated I/O",
+   "members": [
+    "DI1",
+    "DI0",
+    "GND_ISO",
+    "DI_COM",
+    "DO1",
+    "DO0"
+   ]
+  },
+  {
+   "id": "rs485",
+   "label": "RS485",
+   "members": [
+    "RS485_A",
+    "RS485_B"
+   ]
+  },
+  {
+   "id": "can",
+   "label": "CAN",
+   "members": [
+    "CAN_H",
+    "CAN_L"
+   ]
+  },
+  {
+   "id": "i2c",
+   "label": "I2C",
+   "members": [
+    "SCL",
+    "SDA",
+    "GND_I2C"
+   ]
+  },
+  {
+   "id": "pwr",
+   "label": "6-56V",
+   "members": [
+    "VOUT",
+    "GND_PWR",
+    "VIN"
+   ]
+  }
+ ],
  "stations": [
   {
    "id": "doorbell",
@@ -339,7 +464,7 @@
      "do"
     ],
     [
-     "ISO_GND",
+     "GND_ISO",
      "gnd"
     ]
    ],
@@ -391,7 +516,7 @@
      "do"
     ],
     [
-     "ISO_GND",
+     "GND_ISO",
      "gnd"
     ]
    ],
@@ -439,19 +564,19 @@
    },
    "wires": [
     [
-     "I2C_VOUT",
+     "VOUT",
      "vout"
     ],
     [
-     "I2C_GND",
+     "GND_I2C",
      "gnd"
     ],
     [
-     "I2C_SDA",
+     "SDA",
      "sda"
     ],
     [
-     "I2C_SCL",
+     "SCL",
      "scl"
     ]
    ],
@@ -501,19 +626,19 @@
    },
    "wires": [
     [
-     "I2C_VOUT",
+     "VOUT",
      "vout"
     ],
     [
-     "I2C_GND",
+     "GND_I2C",
      "gnd"
     ],
     [
-     "I2C_SDA",
+     "SDA",
      "sda"
     ],
     [
-     "I2C_SCL",
+     "SCL",
      "scl"
     ]
    ],
@@ -570,19 +695,19 @@
    },
    "wires": [
     [
-     "I2C_VOUT",
+     "VOUT",
      "vout"
     ],
     [
-     "I2C_GND",
+     "GND_I2C",
      "gnd"
     ],
     [
-     "I2C_SDA",
+     "SDA",
      "sda"
     ],
     [
-     "I2C_SCL",
+     "SCL",
      "scl"
     ]
    ],
@@ -626,11 +751,11 @@
    "port": null,
    "wires": [
     [
-     "I2C_SDA",
+     "SDA",
      "sda"
     ],
     [
-     "I2C_SCL",
+     "SCL",
      "scl"
     ]
    ],
@@ -697,9 +822,9 @@
    "note": "dedicated transceiver (if not using CAN)"
   },
   {
-   "name": "VIN 6-36V",
+   "name": "VIN 6-56V",
    "status": "reserved",
-   "note": "wide-input supply"
+   "note": "wide-input supply (rear silkscreen)"
   },
   {
    "name": "LCD x21",
