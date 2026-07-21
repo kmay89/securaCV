@@ -15,12 +15,15 @@
 //     drive is bounded: pulses are 1.5 s, latches auto-release after 30 s.
 //   - No network stack runs in this mode (main.cpp never initializes it).
 #include <config.h>
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND && defined(CD_FLAVOR_DASH)
+#if (((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))) && defined(CD_FLAVOR_DASH)
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <lvgl.h>
 #include <stdarg.h>
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+#include <Preferences.h>   // dev-mode latch: long-press exits back to the fleet
+#endif
 
 #include "pins.h"
 #include "canary/playground/playground.h"
@@ -451,7 +454,24 @@ void playground_loop() {
     s_ty = ts.y;
   } else if (!ts.touched && s_touch_down) {
     s_touch_down = false;
-    if (now - s_touch_down_ms < 600 && g.display_ok) {
+    const uint32_t held = now - s_touch_down_ms;
+#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+    // Long-press (>= 3 s) leaves dev mode: release both outputs, clear the NVS
+    // latch, and reboot back to the fleet face. (Harmless in the dedicated
+    // bench env, where the latch is never read on boot.)
+    if (held >= 3000) {
+      do_drive(0, false);
+      do_drive(1, false);
+      Preferences p;
+      if (p.begin("securacv", /*readOnly=*/false)) {
+        p.putBool("devmode", false);
+        p.end();
+      }
+      delay(60);
+      ESP.restart();   // does not return
+    }
+#endif
+    if (held < 600 && g.display_ok) {
       playground_ui_handle_tap(s_tx, s_ty);
     }
   }
@@ -548,4 +568,4 @@ void playground_loop() {
 
 }  // namespace canary::playground
 
-#endif  // FEATURE_PLAYGROUND && CD_FLAVOR_DASH
+#endif  // (FEATURE_PLAYGROUND || FEATURE_DEVMODE) && CD_FLAVOR_DASH

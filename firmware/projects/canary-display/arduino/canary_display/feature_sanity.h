@@ -109,15 +109,19 @@
 // mode must not build — failing loud beats a bench build whose DI/DO
 // stations silently drive the wrong expander bits.
 
-#if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
+// FEATURE_DEVMODE reboots into that same peripheral bench from Settings, so it
+// carries the identical board contract — the terminal block is still the whole
+// safety story. Both flags are gated here together.
+#if (defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || \
+    (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE)
   #if !defined(HAS_ISOLATED_IO) || !HAS_ISOLATED_IO
-    #error "FEATURE_PLAYGROUND=1 requires a board with isolated DI/DO (HAS_ISOLATED_IO=1 — the Waveshare ESP32-S3-Touch-LCD-4.3B, boards/waveshare-esp32s3-lcd43b). Build the canary-display-playground env, or in the Arduino IDE pick the 'Waveshare ESP32-S3-Touch-LCD-4.3B' board (see docs/hardware/dev_playground_43b.md)."
+    #error "FEATURE_PLAYGROUND / FEATURE_DEVMODE require a board with isolated DI/DO (HAS_ISOLATED_IO=1 — the Waveshare ESP32-S3-Touch-LCD-4.3B, boards/waveshare-esp32s3-lcd43b). Build the canary-display-playground or canary-display-dash-b env, or in the Arduino IDE pick the 'Waveshare ESP32-S3-Touch-LCD-4.3B' board (see docs/hardware/dev_playground_43b.md)."
   #endif
   #if defined(HAS_DISPLAY) && !HAS_DISPLAY
-    #error "FEATURE_PLAYGROUND=1 but this board has no display (HAS_DISPLAY=0) — the playground is a guided on-glass mode. Select the 4.3B display board."
+    #error "FEATURE_PLAYGROUND / FEATURE_DEVMODE but this board has no display (HAS_DISPLAY=0) — the bench is a guided on-glass mode. Select the 4.3B display board."
   #endif
   #if defined(HAS_TOUCH) && !HAS_TOUCH
-    #error "FEATURE_PLAYGROUND=1 but this board has no touch controller (HAS_TOUCH=0) — the playground's station cards are tap-driven. Select the 4.3B display board."
+    #error "FEATURE_PLAYGROUND / FEATURE_DEVMODE but this board has no touch controller (HAS_TOUCH=0) — the bench's station cards are tap-driven. Select the 4.3B display board."
   #endif
 #endif
 
