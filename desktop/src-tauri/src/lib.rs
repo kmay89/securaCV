@@ -30,9 +30,13 @@ use tauri_plugin_updater::UpdaterExt;
 // this embed can never drift from the website/firmware source of truth.
 const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.json"));
 
-// The one sidecar we ship. Must match the `externalBin` entry in
-// tauri.conf.json and the scope `name` in capabilities/default.json.
-const ESPFLASH: &str = "binaries/espflash";
+// The one sidecar we ship. This is the RUNTIME name: the bundler flattens the
+// `externalBin` "binaries/espflash-<triple>" to plain `espflash` next to the
+// app binary (Contents/MacOS/espflash), and Tauri resolves the sidecar by that
+// basename. It must match the scope `name` in capabilities/default.json.
+// (Using "binaries/espflash" here makes Tauri look for MacOS/binaries/espflash,
+// which doesn't exist → "No such file or directory".)
+const ESPFLASH: &str = "espflash";
 
 /// A USB serial port as the OS sees it — enough for the UI to show a friendly
 /// picker without pretending to know more than it does.
