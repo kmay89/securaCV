@@ -120,12 +120,15 @@ diagnostics and **never** set the `Verified` trust badge.
 | **Witness LWT "offline"** | — | Amber immediately, red after the lost deadline | Same ladder, honest label |
 | **Whole-internet outage** | Unaffected | Unaffected (clock free-runs; SNTP resyncs later) | Nothing to do — the system is LAN-complete |
 
-The one gap that remains by design in v0.1.x: **when WiFi itself is down,
-no new events reach the display** (last-known + staleness honesty only).
-The planned fix is the passive **BLE Chirp scan** fallback — Canaries
-already chirp heartbeat/tamper/alert over connectionless BLE adverts
-(`docs/ble_protocol.md` §5), and a display can listen without joining
-anything. That closes the loop: WiFi dead, tamper still reaches the glass.
+The old v0.1.x gap — **when WiFi itself is down, no new events reach the
+display** — is now addressed by the **direct BLE fleet link** (§3.1): the
+display passively hears each Canary's presence+status beacon and, on a tap,
+pulls fuller detail over a bounded GATT connection, with no broker and no
+router. It builds on the passive **BLE Chirp scan** fallback (Canaries chirp
+heartbeat/tamper/alert over connectionless BLE adverts, `docs/ble_protocol.md`
+§5, `FEATURE_CHIRP_SCAN`). So WiFi dead, presence and tamper still reach the
+glass. The fleet link is implemented and host-tested; its on-air behavior is
+hardware-validation pending (see §3.1's status note).
 
 ## 5.1 Canary-side broker gossip — SHIPPED (`FEATURE_MDNS_BROKER_GOSSIP`)
 
@@ -164,4 +167,8 @@ End-to-end: **plug in → scan → password → watching your canaries.**
    this for any household that has one — this closes the no-canary-yet gap.)
 
 *(BLE Chirp off-WiFi fallback, once listed here, shipped in wave 2 —
-`FEATURE_CHIRP_SCAN`, see the trailblazer spec §6.)*
+`FEATURE_CHIRP_SCAN`, see the trailblazer spec §6. Wave 3 extended it into the
+full **direct BLE fleet link** — continuous presence+status beacon plus an
+on-demand GATT pull, `FEATURE_FLEET_LINK` — so a display reads nearby Canaries
+directly with no broker and no WiFi; see §3.1. Implemented + host-tested,
+hardware smoke-test pending before a signed release.)*
