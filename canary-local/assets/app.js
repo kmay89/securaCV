@@ -477,7 +477,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     "Try it": () => tryView(guideProxy, noteLine),
     ...(ctx.bench ? { Bench: () => benchView(ctx, guideProxy, noteLine) } : {}),
     Wire: () => wireView(serialLog, wireLog),
-    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
+    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id, state.build),
     ...(state.boards?.device_board?.[dev.id]
       ? { Board: () => buildBoardLab(state.boards, dev.id) } : {}),
     ...(state.assembly?.devices?.[dev.id]
@@ -943,7 +943,7 @@ function buildWitnessSheet(ctx, side) {
       w.append(list);
       return w;
     },
-    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
+    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id, state.build),
     ...(state.boards?.device_board?.[dev.id]
       ? { Board: () => buildBoardLab(state.boards, dev.id) } : {}),
     ...(state.assembly?.devices?.[dev.id]
