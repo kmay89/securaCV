@@ -105,6 +105,7 @@ jobs:
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
           node --test canary-local/tests/flash.test.js
+          node --test canary-local/tests/playground.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -159,6 +160,13 @@ jobs:
           python3 canary-local/tools/gen_vault.py
           if ! git diff --exit-code -- canary-local/devices/vault.json; then
             echo "::error::generated Vault data stale — run canary-local/tools/gen_vault.py and commit (the code moved)"
+            exit 1
+          fi
+      - name: Playground data drift (parsed from the Waveshare 4.3B pins.h + playground firmware)
+        run: |
+          python3 canary-local/tools/gen_playground.py
+          if ! git diff --exit-code -- canary-local/devices/playground.json; then
+            echo "::error::generated Playground data stale — run canary-local/tools/gen_playground.py and commit (the firmware pins moved)"
             exit 1
           fi
 

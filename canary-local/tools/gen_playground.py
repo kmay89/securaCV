@@ -1,0 +1,457 @@
+#!/usr/bin/env python3
+"""Generate canary-local/devices/playground.json — the Waveshare 4.3B
+peripheral Playground's fact sheet — from the firmware, so it cannot drift.
+
+Honesty contract (CI drift-gates the output of this script against the
+committed file, exactly like gen_senselab.py / gen_wap.py):
+
+  * Board id/name/vendor/mcu, the CH422G command addresses, the isolated
+    DI/DO expander bits, and the I2C pins are PARSED from
+    firmware/boards/waveshare-esp32s3-lcd43b/pins/pins.h and injected into
+    the terminal map + the per-station bring-up code. Change a pin in the
+    firmware and this file changes → the drift gate fails until it's re-run.
+  * The firmware version is parsed from the canary-display version.h.
+  * The station wiring instructions are carried VERBATIM from the playground
+    UI (firmware/projects/canary-display/.../playground_ui.cpp); the code
+    snippets are line-for-line ports of that project's playground.cpp
+    drivers. tests/playground.test.js re-checks the prose against the
+    firmware source and the PG1 grammar against playground-sim.js.
+
+The board body is a schematic procedural stand-in sized from Waveshare's
+published outline (NOT vendor CAD) — the same honesty split wiring.json
+uses for peripherals: only the terminal endpoints are claims, the routing
+is staged for legibility.
+
+Run:  python3 canary-local/tools/gen_playground.py
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+PINS_H = ROOT / "firmware/boards/waveshare-esp32s3-lcd43b/pins/pins.h"
+VERSION_H = ROOT / "firmware/projects/canary-display/arduino/canary_display/version.h"
+OUT = ROOT / "canary-local/devices/playground.json"
+
+
+def parse_defines(path: Path) -> dict:
+    """Pull `#define NAME VALUE` pairs (value = first token after the name)."""
+    text = path.read_text()
+    out = {}
+    for m in re.finditer(r"^#define\s+(\w+)\s+(.+?)\s*(?://.*)?$", text, re.M):
+        out[m.group(1)] = m.group(2).strip()
+    return out
+
+
+def need(defs: dict, key: str) -> str:
+    if key not in defs:
+        sys.exit(f"gen_playground: {key} missing from pins.h — firmware moved it?")
+    return defs[key]
+
+
+def dequote(v: str) -> str:
+    return v.strip().strip('"')
+
+
+def main() -> None:
+    pins = parse_defines(PINS_H)
+    ver = parse_defines(VERSION_H)
+
+    board_id = dequote(need(pins, "BOARD_ID"))
+    board_name = dequote(need(pins, "BOARD_NAME"))
+    board_vendor = dequote(need(pins, "BOARD_VENDOR"))
+    board_mcu = dequote(need(pins, "BOARD_MCU"))
+    fw_version = dequote(ver.get("CANARY_FW_VERSION", '"?"'))
+
+    sda = need(pins, "I2C_PIN_SDA")
+    scl = need(pins, "I2C_PIN_SCL")
+    addr_oc = need(pins, "CH422G_ADDR_OC")   # WR_OC — DO0/DO1 open-drain latch
+    addr_in = need(pins, "CH422G_ADDR_IN")   # RD_IO — DI0/DI1 input read
+    bit_di0 = need(pins, "ISO_IN_BIT_DI0")
+    bit_di1 = need(pins, "ISO_IN_BIT_DI1")
+    bit_do0 = need(pins, "ISO_OUT_BIT_DO0")
+    bit_do1 = need(pins, "ISO_OUT_BIT_DO1")
+
+    # ── Wire net colours (RGB float triples), reused by the 3D renderer ──
+    colors = {
+        "5v": [0.85, 0.2, 0.16],     # supply +
+        "gnd": [0.12, 0.12, 0.14],   # isolated GND / supply -
+        "di": [0.98, 0.83, 0.3],     # isolated input signal
+        "do": [0.62, 0.45, 0.85],    # isolated open-drain output
+        "sda": [0.35, 0.68, 0.4],    # I2C data
+        "scl": [0.32, 0.5, 0.85],    # I2C clock
+        "vout": [0.95, 0.55, 0.2],   # I2C header VOUT (3V3/5V)
+    }
+
+    # ── Terminal map — landing pads with a 3D anchor + the net each carries.
+    # Frame: board lies in the X–Z plane, +Y up (thickness). The green
+    # field-wiring terminal block runs along the +Z (front) edge; the I2C
+    # sensor header sits on the −X (left) edge. Positions are mm, staged for
+    # legibility — only that a wire lands on this named terminal is a claim.
+    tb_z = 40.0
+    tb_y = 3.0
+    terminals = {
+        "VIN+": {"label": "VIN +", "net": "5v", "pos": [-58, tb_y, tb_z],
+                 "blurb": "6–36 V wide-input supply +"},
+        "VIN-": {"label": "VIN -", "net": "gnd", "pos": [-48, tb_y, tb_z],
+                 "blurb": "supply return"},
+        "DI_COM": {"label": "DI COM", "net": "5v", "pos": [-30, tb_y, tb_z],
+                   "blurb": "isolated-input common — external 5–36 V supply +"},
+        "DI0": {"label": "DI0", "net": "di", "exio": "EXIO0", "bit": bit_di0,
+                "pos": [-20, tb_y, tb_z],
+                "blurb": "isolated digital input 0 (optocoupled, read via CH422G)"},
+        "DI1": {"label": "DI1", "net": "di", "exio": "EXIO5", "bit": bit_di1,
+                "pos": [-10, tb_y, tb_z],
+                "blurb": "isolated digital input 1 (optocoupled, read via CH422G)"},
+        "DO0": {"label": "DO0", "net": "do", "od": "OD0", "bit": bit_do0,
+                "pos": [2, tb_y, tb_z],
+                "blurb": "isolated open-drain output 0 (≤450 mA sink)"},
+        "DO1": {"label": "DO1", "net": "do", "od": "OD1", "bit": bit_do1,
+                "pos": [12, tb_y, tb_z],
+                "blurb": "isolated open-drain output 1 (≤450 mA sink)"},
+        "ISO_GND": {"label": "ISO GND", "net": "gnd", "pos": [24, tb_y, tb_z],
+                    "blurb": "isolated ground for the DO load supply"},
+        "I2C_VOUT": {"label": "VOUT", "net": "vout", "pos": [-66, tb_y, 18],
+                     "blurb": "sensor-header supply (3V3/5V, per your sensor)"},
+        "I2C_GND": {"label": "GND", "net": "gnd", "pos": [-66, tb_y, 8],
+                    "blurb": "sensor-header ground"},
+        "I2C_SDA": {"label": "SDA", "net": "sda", "gpio": int(sda), "pos": [-66, tb_y, -2],
+                    "blurb": f"I2C data (GPIO{sda}) — shared with GT911 + CH422G"},
+        "I2C_SCL": {"label": "SCL", "net": "scl", "gpio": int(scl), "pos": [-66, tb_y, -12],
+                    "blurb": f"I2C clock (GPIO{scl}) — shared with GT911 + CH422G"},
+    }
+
+    # ── Bring-up code snippets — ports of playground.cpp, with the pin facts
+    # injected from pins.h (so the code can never claim a stale address/bit).
+    def di_code(chan):
+        t = terminals[chan]
+        return (
+            f"// Waveshare 4.3B — {chan} isolated input ({t['exio']}) bring-up.\n"
+            f"// Field side energized -> optocoupler pulls the expander bit LOW.\n"
+            f"#include <Wire.h>\n"
+            f"#define CH422G_RD_IO {addr_in}      // input read (EXIO0..7)\n"
+            f"#define ISO_IN_{chan}   {t['bit']}  // {t['exio']}\n\n"
+            f"bool {chan.lower()}_active() {{\n"
+            f"  Wire.requestFrom(CH422G_RD_IO, 1);\n"
+            f"  uint8_t bits = Wire.read();\n"
+            f"  return (bits & ISO_IN_{chan}) == 0;  // active-LOW when energized\n"
+            f"}}"
+        )
+
+    def do_code(chan):
+        t = terminals[chan]
+        return (
+            f"// Waveshare 4.3B — {chan} isolated open-drain output ({t['od']}).\n"
+            f"// Bit LOW conducts (sinks the load); HIGH releases it. VERIFY polarity.\n"
+            f"#include <Wire.h>\n"
+            f"#define CH422G_WR_OC {addr_oc}       // open-drain latch (OD0..3)\n"
+            f"#define ISO_OUT_{chan}  {t['bit']}   // {t['od']}\n\n"
+            f"void {chan.lower()}_pulse_ms(uint16_t ms) {{\n"
+            f"  Wire.beginTransmission(CH422G_WR_OC);\n"
+            f"  Wire.write((uint8_t)~ISO_OUT_{chan} & 0x0F);  // sink {chan}\n"
+            f"  Wire.endTransmission();\n"
+            f"  delay(ms);                                    // bounded pulse\n"
+            f"  Wire.beginTransmission(CH422G_WR_OC);\n"
+            f"  Wire.write(0x0F);                             // release all\n"
+            f"  Wire.endTransmission();\n"
+            f"}}"
+        )
+
+    light_code = (
+        f"// VEML7700 ambient light (I2C 0x10) on the sensor header.\n"
+        f"#include <Wire.h>\n"
+        f"#define VEML7700 0x10\n\n"
+        f"void light_init() {{                 // gain x1, 100 ms, enabled\n"
+        f"  Wire.beginTransmission(VEML7700);\n"
+        f"  Wire.write(0x00); Wire.write(0x00); Wire.write(0x00);\n"
+        f"  Wire.endTransmission();\n"
+        f"}}\n"
+        f"float light_lux() {{\n"
+        f"  Wire.beginTransmission(VEML7700); Wire.write(0x04);\n"
+        f"  Wire.endTransmission(false);\n"
+        f"  Wire.requestFrom(VEML7700, 2);\n"
+        f"  uint16_t raw = Wire.read() | (Wire.read() << 8);\n"
+        f"  return raw * 0.0576f;              // gain x1 @ 100 ms\n"
+        f"}}"
+    )
+
+    tof_code = (
+        f"// VL53L0X time-of-flight (I2C 0x29). Continuous ranging, mm.\n"
+        f"// Full init in playground.cpp tof_init(); the read is:\n"
+        f"#include <Wire.h>\n"
+        f"#define VL53L0X 0x29\n\n"
+        f"bool tof_read_mm(uint16_t* mm) {{\n"
+        f"  uint8_t status = 0;\n"
+        f"  Wire.beginTransmission(VL53L0X); Wire.write(0x13);\n"
+        f"  Wire.endTransmission(false); Wire.requestFrom(VL53L0X, 1);\n"
+        f"  status = Wire.read();\n"
+        f"  if (!(status & 0x07)) return false;         // no new sample\n"
+        f"  uint8_t r[2];\n"
+        f"  Wire.beginTransmission(VL53L0X); Wire.write(0x1E);\n"
+        f"  Wire.endTransmission(false); Wire.requestFrom(VL53L0X, 2);\n"
+        f"  r[0] = Wire.read(); r[1] = Wire.read();\n"
+        f"  *mm = (r[0] << 8) | r[1];\n"
+        f"  Wire.beginTransmission(VL53L0X); Wire.write(0x0B); Wire.write(0x01);\n"
+        f"  Wire.endTransmission();                      // clear interrupt\n"
+        f"  return true;\n"
+        f"}}"
+    )
+
+    pad_code = (
+        f"// MPR121 12-electrode cap-touch (I2C 0x5A). Read the touch bitmap.\n"
+        f"#include <Wire.h>\n"
+        f"#define MPR121 0x5A\n\n"
+        f"uint16_t pad_touched() {{\n"
+        f"  uint8_t b[2];\n"
+        f"  Wire.beginTransmission(MPR121); Wire.write(0x00);\n"
+        f"  Wire.endTransmission(false); Wire.requestFrom(MPR121, 2);\n"
+        f"  b[0] = Wire.read(); b[1] = Wire.read();\n"
+        f"  return (b[0] | (b[1] << 8)) & 0x0FFF;   // electrodes 0..11\n"
+        f"}}"
+    )
+
+    census_code = (
+        f"// I2C census — scan the shared 8/9 bus (playground.cpp census()).\n"
+        f"#include <Wire.h>\n\n"
+        f"void i2c_census() {{\n"
+        f"  for (uint8_t a = 0x08; a <= 0x77; a++) {{\n"
+        f"    Wire.beginTransmission(a);\n"
+        f"    if (Wire.endTransmission() == 0) Serial.printf(\"  0x%02X\\n\", a);\n"
+        f"  }}\n"
+        f"}}"
+    )
+
+    # ── Stations — order matches the firmware META[] table. Instructions are
+    # verbatim from playground_ui.cpp (the test greps that file for them).
+    stations = [
+        {
+            "id": "doorbell", "title": "Doorbell", "where": "DI0",
+            "signal": "di0", "dir": "in", "kind": "di",
+            "peripheral": {"name": "Doorbell button", "part": "button",
+                           "blurb": "Dry contact (wet/NPN/PNP also OK, 5–36 V) — optocoupled, never touches the S3."},
+            "port": {"label": "Input channel", "choices": ["DI0", "DI1"], "default": "DI0"},
+            "wires": [["DI_COM", "5v"], ["DI0", "di"]],
+            "instructions": (
+                "Wire (supply OFF first):\n"
+                "1. External 5-24 V DC supply \"+\" -> DI COM.\n"
+                "2. Doorbell button between supply \"-\" and DI0\n"
+                "   (dry contact; wet/NPN/PNP also OK, 5-36 V).\n"
+                "3. Power the supply, press the button.\n"
+                "Presses count here and pulse DO0 (the \"ding\" link).\n"
+                "Safe: DI is optocoupled - it never touches the S3."),
+            "code": {"DI0": di_code("DI0"), "DI1": di_code("DI1")},
+            "stimulus": [{"id": "press", "label": "Press", "action": "di:on"},
+                         {"id": "release", "label": "Release", "action": "di:off"}],
+            "expect": ["state=active count=", "state=clear held_ms="],
+        },
+        {
+            "id": "intrusion", "title": "Intrusion", "where": "DI1",
+            "signal": "di1", "dir": "in", "kind": "di",
+            "peripheral": {"name": "PIR / reed / beam-break", "part": "reed",
+                           "blurb": "PIR, reed contact, or laser break-beam receiver — relay or open-collector output."},
+            "port": {"label": "Input channel", "choices": ["DI1", "DI0"], "default": "DI1"},
+            "wires": [["DI_COM", "5v"], ["DI1", "di"]],
+            "instructions": (
+                "PIR / reed contact / laser break-beam receiver:\n"
+                "1. Supply \"+\" -> DI COM (shared with DI0).\n"
+                "2. Sensor output (relay or open-collector) between\n"
+                "   supply \"-\" and DI1.\n"
+                "3. For a beam-gap sensor: aim emitter at receiver;\n"
+                "   breaking the beam trips DI1 - the held-ms readout\n"
+                "   is your gap timing."),
+            "code": {"DI1": di_code("DI1"), "DI0": di_code("DI0")},
+            "stimulus": [{"id": "trip", "label": "Trip (magnet / motion)", "action": "di:on"},
+                         {"id": "clear", "label": "Clear", "action": "di:off"}],
+            "expect": ["state=active count=", "state=clear held_ms="],
+        },
+        {
+            "id": "chime", "title": "Chime out", "where": "DO0",
+            "signal": "do0", "dir": "out", "kind": "do",
+            "peripheral": {"name": "Chime / buzzer", "part": "piezo",
+                           "blurb": "Chime, LED, or relay coil (add a flyback diode across coils). Driven, never sensed."},
+            "port": {"label": "Output channel", "choices": ["DO0", "DO1"], "default": "DO0"},
+            "wires": [["DO0", "do"], ["ISO_GND", "gnd"]],
+            "instructions": (
+                "Isolated open-drain output (max 450 mA sink):\n"
+                "1. External supply \"+\" -> load \"+\" (chime, LED,\n"
+                "   relay coil - add a flyback diode across coils).\n"
+                "2. Load \"-\" -> DO0. Supply \"-\" -> the isolated GND.\n"
+                "3. PULSE drives 1.5 s; LATCH holds 30 s max.\n"
+                "Every drive is bounded - outputs release themselves."),
+            "code": {"DO0": do_code("DO0"), "DO1": do_code("DO1")},
+            "stimulus": [{"id": "pulse", "label": "PULSE 1.5s", "action": "do:pulse"},
+                         {"id": "latch", "label": "LATCH 30s", "action": "do:latch"}],
+            "expect": ["out=on", "out=off"],
+        },
+        {
+            "id": "strobe", "title": "Strobe out", "where": "DO1",
+            "signal": "do1", "dir": "out", "kind": "do",
+            "peripheral": {"name": "Strobe / siren", "part": "ws2812",
+                           "blurb": "Second isolated output — a strobe/siren candidate while DO0 holds the chime."},
+            "port": {"label": "Output channel", "choices": ["DO1", "DO0"], "default": "DO1"},
+            "wires": [["DO1", "do"], ["ISO_GND", "gnd"]],
+            "instructions": (
+                "Second isolated output - same wiring as DO0.\n"
+                "Use it for a strobe/siren candidate while DO0\n"
+                "holds the chime, to test both alert voices at\n"
+                "once. PULSE = 1.5 s, LATCH auto-releases at 30 s."),
+            "code": {"DO1": do_code("DO1"), "DO0": do_code("DO0")},
+            "stimulus": [{"id": "pulse", "label": "PULSE 1.5s", "action": "do:pulse"},
+                         {"id": "latch", "label": "LATCH 30s", "action": "do:latch"}],
+            "expect": ["out=on", "out=off"],
+        },
+        {
+            "id": "light", "title": "Light", "where": "I2C",
+            "signal": "light", "dir": "i2c", "kind": "i2c",
+            "peripheral": {"name": "Ambient light sensor", "part": "i2c_sensor",
+                           "blurb": "VEML7700 (0x10, preferred) or BH1750 strapped to 0x5C — its default 0x23 is the CH422G's."},
+            "port": {"label": "Sensor / address", "choices": ["VEML7700 · 0x10", "BH1750 · 0x5C"],
+                     "default": "VEML7700 · 0x10"},
+            "wires": [["I2C_VOUT", "vout"], ["I2C_GND", "gnd"], ["I2C_SDA", "sda"], ["I2C_SCL", "scl"]],
+            "instructions": (
+                "Ambient light sensor on the I2C terminal:\n"
+                "1. VEML7700 (addr 0x10, preferred) or BH1750 with\n"
+                "   ADDR strapped HIGH (0x5C - its default 0x23 is\n"
+                "   the CH422G's, do not use it!).\n"
+                "2. VOUT->VCC GND->GND SDA->SDA SCL->SCL.\n"
+                "   Check VOUT is 5 V or 3.3 V per your sensor.\n"
+                "Hot-plug OK - the census attaches it in ~3 s."),
+            "code": {"VEML7700 · 0x10": light_code, "BH1750 · 0x5C": light_code},
+            "stimulus": [{"id": "bright", "label": "Uncover (bright)", "action": "light:bright"},
+                         {"id": "dark", "label": "Cover (dark)", "action": "light:dark"}],
+            "expect": ["attached=0x10", "attached=0x5C"],
+        },
+        {
+            "id": "tof", "title": "ToF range", "where": "I2C",
+            "signal": "tof", "dir": "i2c", "kind": "i2c",
+            "peripheral": {"name": "VL53L0X ToF", "part": "i2c_sensor",
+                           "blurb": "Time-of-flight ranging (0x29). Under the TRIP threshold counts one trip — a laser-gap prototype."},
+            "port": {"label": "Trip threshold", "choices": ["50 mm", "100 mm", "200 mm", "400 mm"],
+                     "default": "100 mm"},
+            "wires": [["I2C_VOUT", "vout"], ["I2C_GND", "gnd"], ["I2C_SDA", "sda"], ["I2C_SCL", "scl"]],
+            "instructions": (
+                "VL53L0X time-of-flight on the I2C terminal\n"
+                "(addr 0x29). Wire like the light sensor.\n"
+                "Live mm readout; dropping under the TRIP\n"
+                "threshold counts one trip - point it across a\n"
+                "doorway and it is your laser-gap prototype.\n"
+                "Bench driver: uncalibrated, +/- a few percent."),
+            "code": {c: tof_code for c in ["50 mm", "100 mm", "200 mm", "400 mm"]},
+            "stimulus": [{"id": "near", "label": "Object near (trip)", "action": "tof:near"},
+                         {"id": "far", "label": "Object far (clear)", "action": "tof:far"},
+                         {"id": "cycle", "label": "Cycle trip", "action": "tof:cycle"}],
+            "expect": ["trip=1 mm=", "trip_mm="],
+        },
+        {
+            "id": "captouch", "title": "Cap touch", "where": "I2C",
+            "signal": "captouch", "dir": "i2c", "kind": "i2c",
+            "peripheral": {"name": "MPR121 pad", "part": "i2c_sensor",
+                           "blurb": "12-electrode controller (0x5A). Cycle sensitivity for the printed shell-thickness coupon test."},
+            "port": {"label": "Sensitivity", "choices": ["contact", "2mm shell", "4mm shell", "max gain"],
+                     "default": "contact"},
+            "wires": [["I2C_VOUT", "vout"], ["I2C_GND", "gnd"], ["I2C_SDA", "sda"], ["I2C_SCL", "scl"]],
+            "instructions": (
+                "MPR121 12-pad controller (addr 0x5A).\n"
+                "Shell-thickness test (printed plastic coupons):\n"
+                "1. Tape a coupon over an electrode.\n"
+                "2. Cycle SENSITIVITY until a finger through the\n"
+                "   coupon registers reliably, no ghost touches.\n"
+                "3. Note preset vs thickness in the bench log -\n"
+                "   that pair is the enclosure design input."),
+            "code": {c: pad_code for c in ["contact", "2mm shell", "4mm shell", "max gain"]},
+            "stimulus": [{"id": "touch", "label": "Touch pad", "action": "pad:touch"},
+                         {"id": "release", "label": "Release", "action": "pad:release"},
+                         {"id": "preset", "label": "Cycle sensitivity", "action": "pad:preset"}],
+            "expect": ["pads=0x", "preset="],
+        },
+        {
+            "id": "census", "title": "I2C census", "where": "bus",
+            "signal": "bus", "dir": "i2c", "kind": "info",
+            "peripheral": None,
+            "port": None,
+            "wires": [["I2C_SDA", "sda"], ["I2C_SCL", "scl"]],
+            "instructions": (
+                "Live scan of the shared GPIO8/9 bus (every 3 s).\n"
+                "Reserved here: 0x23/0x24/0x26/0x38 = CH422G\n"
+                "commands, 0x5D/0x14 = GT911. A sensor set to a\n"
+                "reserved address will misbehave AND can glitch\n"
+                "backlight/touch - re-strap it before wiring."),
+            "code": {"bus": census_code},
+            "stimulus": [{"id": "scan", "label": "Scan bus", "action": "bus:scan"}],
+            "expect": ["i2c="],
+        },
+    ]
+
+    # ── Pin tracker — the 4.3B's used-vs-open budget (dev_playground_43b.md).
+    pin_tracker = [
+        {"name": "DI0 doorbell", "status": "open", "note": "isolated input (EXIO0)"},
+        {"name": "DI1 intrusion", "status": "open", "note": "isolated input (EXIO5)"},
+        {"name": "DI COM", "status": "open", "note": "isolated-input common"},
+        {"name": "DO0 chime", "status": "open", "note": "open-drain out (OD0)"},
+        {"name": "DO1 strobe", "status": "open", "note": "open-drain out (OD1)"},
+        {"name": f"I2C {sda}/{scl}", "status": "shared", "note": "sensor header — shared with GT911 + CH422G"},
+        {"name": "VOUT", "status": "open", "note": "sensor-header supply"},
+        {"name": "RS485 44/43", "status": "reserved", "note": "shares the USB-UART console pins"},
+        {"name": "CAN 15/16", "status": "open", "note": "dedicated transceiver (if not using CAN)"},
+        {"name": "VIN 6-36V", "status": "reserved", "note": "wide-input supply"},
+        {"name": "LCD x21", "status": "reserved", "note": "RGB565 panel — consumed"},
+        {"name": "Touch INT 4", "status": "reserved", "note": "GT911"},
+        {"name": "USB 19/20", "status": "reserved", "note": "native USB CDC"},
+        {"name": "SD 11-13", "status": "reserved", "note": "reserved-unused v0.1"},
+        {"name": "Free GPIO", "status": "none", "note": "none — expansion happens on the buses"},
+    ]
+
+    data = {
+        "$note": (
+            "GENERATED by canary-local/tools/gen_playground.py — do not edit by hand. "
+            "CI drift-gates this file against firmware/boards/waveshare-esp32s3-lcd43b/"
+            "pins/pins.h and the canary-display playground firmware. The board body is a "
+            "schematic procedural stand-in sized from Waveshare's outline (not vendor CAD); "
+            "only the terminal endpoints are claims, routing is staged for legibility. "
+            "Behavior is ported in canary-local/assets/playground-sim.js (Node-tested)."),
+        "schema": 1,
+        "generated_by": "canary-local/tools/gen_playground.py",
+        "board": {
+            "id": board_id,
+            "name": board_name,
+            "vendor": board_vendor,
+            "mcu": board_mcu,
+            "fw_version": fw_version,
+            "dims_mm": [136, 82, 12],
+            "display": {"size_in": 4.3, "res": [int(need(pins, "LCD_WIDTH")),
+                                                int(need(pins, "LCD_HEIGHT"))],
+                        "iface": "RGB565 parallel (DE mode)"},
+            "tagline": "Wire it, watch it — the peripheral playground on real Waveshare hardware.",
+            "blurb": ("The industrial-IO dash SKU. No raw ESP32 GPIO is broken out — every "
+                      "external wire lands on an isolated, buffered, or bused terminal, which "
+                      "is exactly what makes it the safe host for the peripheral playground."),
+            "i2c": {"sda": int(sda), "scl": int(scl)},
+            "expander": {"read": addr_in, "oc": addr_oc},
+            "provenance": ("Pin/terminal map + the CH422G addresses and isolated DI/DO bits are "
+                           "parsed from firmware/boards/waveshare-esp32s3-lcd43b/pins/pins.h; "
+                           "station behavior ports firmware/projects/canary-display/.../playground.cpp; "
+                           "wiring text is verbatim from playground_ui.cpp; comms + pin tracker from "
+                           "docs/hardware/dev_playground_43b.md. Compile-verified board (the pin map "
+                           "carries VERIFY tags) — verify polarity/timings against your revision."),
+        },
+        "comms": {
+            "hello": "PG1 HELLO board=<id> fw=<ver>",
+            "evt": "PG1 <ms> EVT <station> <k>=<v>...",
+            "snap": "PG1 <ms> SNAP di0=.. di1=.. do0=.. do1=.. lux=.. tof_mm=.. tof_ok=.. pads=.. preset=.. i2c=..",
+            "snap_every_ms": 1000,
+        },
+        "colors": colors,
+        "terminals": terminals,
+        "stations": stations,
+        "pinTracker": pin_tracker,
+    }
+
+    OUT.write_text(json.dumps(data, indent=1, ensure_ascii=True) + "\n")
+    print(f"wrote {OUT.relative_to(ROOT)} ({len(stations)} stations, "
+          f"{len(terminals)} terminals) fw={fw_version}")
+
+
+if __name__ == "__main__":
+    main()
