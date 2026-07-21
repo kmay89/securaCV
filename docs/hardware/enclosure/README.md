@@ -36,6 +36,7 @@ before printing — material choice and the gasket option matter out there.
 - [The complete file map](#the-complete-file-map) — every file, one line each
 - [Pick your variant](#pick-your-variant) — gallery with previews + 3D viewers
 - [Engineering & materials](#engineering--materials-security-build) — durability, materials, thermal kit, finish
+- [Best-practice printing tips](./printing_best_practices.md) — the *why* behind a good print: strength, fit, finish, durability (slicer-agnostic)
 - [Printing in PETG — Cura guide](./printing_petg_cura.md) — reasoned settings sheet, per-model cheat-sheet, importable profile
 - [Field & environmental ratings](./field_ratings.md) — what "IP67"/"MIL-SPEC" honestly means here, the CER ladder + home test protocols
 - Device deep-dives: [WAP](#canary-wap--enclosure-v07) · [Vision](#canary-vision--enclosure-v02) · [Doorbell](#canary-vision--doorbell-v01) · [Sense radome](#canary-sense--radome-enclosure-v01)
@@ -246,7 +247,9 @@ further ~20 % creep and stiffness margin if you have an oven. For the full
 reasoning — every Cura setting with its *why*, a per-model orientation
 cheat-sheet, PETG stringing/sealing notes, and a one-click importable profile —
 see [**Printing in PETG — Cura guide**](./printing_petg_cura.md) (with a
-one-click [importable Cura profile](./profiles/README.md)).
+one-click [importable Cura profile](./profiles/README.md)). For the reasoning
+behind it all — where strength comes from, fits, finish, durability — see
+[**Best-practice printing tips**](./printing_best_practices.md).
 
 **Mass budget** (solid-volume upper bounds from the rendered STLs; PETG at
 1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 12 g/pair, WAP battery
@@ -779,6 +782,7 @@ exits the bottom wall (`xiao_usb_z` — measure the seated stack).
 > check the radome window lands over the antenna array.
 
 ## Links
+- [Best-practice printing tips](./printing_best_practices.md) — the *why*: strength, fit, finish, durability (slicer-agnostic)
 - [Printing in PETG — Cura guide](./printing_petg_cura.md) — settings sheet, per-model cheat-sheet, importable profile
 - [Field & environmental ratings](./field_ratings.md) — hardware limits, the CER ladder, home test protocols
 - [Peripheral Build Plan & BOM](../canary_peripheral_build_plan.md) — parts, wiring, climate/IP guidance

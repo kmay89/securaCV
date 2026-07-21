@@ -8,6 +8,11 @@ values port back to 4.x and forward to newer releases by hand).
 Read it once, print the [fit coupon](./canary_fit_coupon.scad), and every part
 in the [catalog](./README.md) prints the same way afterwards.
 
+> Want the *reasoning* behind these numbers — where strength comes from, why
+> hotter prints stronger, when annealing helps or hurts — rather than just the
+> values? See [**Best-practice printing tips**](./printing_best_practices.md),
+> the slicer-agnostic companion to this page.
+
 - [Start here: profile vs. settings sheet (read this first)](#start-here-profile-vs-settings-sheet)
 - [The one idea that makes these print well](#the-one-idea-the-model-already-did-the-hard-part)
 - [The settings sheet (universal — type these into Custom mode)](#the-settings-sheet)
