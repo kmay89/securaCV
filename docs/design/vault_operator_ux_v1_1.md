@@ -160,20 +160,40 @@ backend hold a non-extractable key.
 /// raw secret is ever available.
 pub trait KeyStore {
     /// Sign `msg` with the device identity key, domain-separated by `domain`.
+    /// The signature is computed *inside* the store; the private key never
+    /// crosses this boundary.
     fn sign_device(&self, domain: &[u8], msg: &[u8]) -> Result<Signature>;
 
     /// The device verifying key (safe to publish; pinned in device_metadata).
     fn device_public_key(&self) -> Result<VerifyingKey>;
 
-    /// Unwrap a vault DEK / master secret for a seal envelope. For hardware
-    /// backends this runs inside the device; the master key never leaves it.
-    fn unwrap_vault_secret(&self, wrapped: &WrappedKey) -> Result<Zeroizing<[u8; 32]>>;
+    /// Unwrap the *per-envelope* DEK for a seal, using the persistent vault
+    /// master key *inside* the store. Only the ephemeral, single-envelope DEK
+    /// crosses this boundary (zeroized after use) — the persistent master secret
+    /// never does, which is what preserves the "non-extractable" property for a
+    /// hardware backend. (Returning the master key as bytes, as a naive
+    /// `unwrap_vault_secret(...) -> [u8;32]` would, defeats that property; a
+    /// strict backend MAY instead expose `open_envelope` below and never return
+    /// key material at all.)
+    fn unwrap_envelope_dek(&self, wrapped_dek: &WrappedKey) -> Result<Zeroizing<[u8; 32]>>;
+
+    /// Strictest form: perform the AEAD open entirely in-store, returning the
+    /// (post-quorum, operator-authorized) plaintext so *no* key material —
+    /// master or DEK — is ever returned. Optional; a file backend can default it
+    /// to unwrap-then-decrypt.
+    fn open_envelope(&self, envelope: &SealedEnvelope) -> Result<Zeroizing<Vec<u8>>>;
 
     /// Human-facing description for `doctor` ("file (0600)", "TPM 2.0 @ 0x81..",
     /// "PKCS#11 slot 0"). Purely informational.
     fn backend_label(&self) -> &str;
 }
 ```
+
+The vault is DEK-wrapped (`seal_v2`: a per-envelope DEK encrypts the payload; the
+master key wraps the DEK), so the boundary falls naturally between the two: the
+**persistent** master key stays in the store, and at most an **ephemeral**
+per-envelope DEK — or nothing, with `open_envelope` — ever reaches process
+memory.
 
 Backends, each behind a cargo feature so the default build is unchanged:
 
@@ -182,7 +202,7 @@ Backends, each behind a cargo feature so the default build is unchanged:
 | **File** (default) | *(always on)* | Today's `master.key` + seed-derived signing key | Behavior-identical to current code; the refactor is a no-op for existing installs. |
 | **TPM 2.0** | `keystore-tpm` | Device signing key + vault master key sealed to the TPM | Primary hardware target for the appliance/Pi/x86 host. Non-extractable, PCR-bindable. |
 | **PKCS#11** | `keystore-pkcs11` | Device or trustee keys on an HSM / smartcard | Covers enterprise HSMs and PIV smartcards via a standard interface. |
-| **FIDO2 / PIV token** | `keystore-fido2` | *Trustee* keys on a YubiKey-class token | For Phase 3 — makes each trustee an independently controlled *device*, which is exactly what Invariant V's "independently controlled principals or devices" wants. |
+| **PIV / hardware Ed25519 token** | `keystore-fido2` | *Trustee* keys on a YubiKey-class token | For Phase 3 — makes each trustee an independently controlled *device*, exactly what Invariant V's "independently controlled principals or devices" wants. **Caveat:** only token modes that emit a real Ed25519 signature over the `trustee-approval:v2` message plug into the current schema; generic FIDO2/WebAuthn assertions do not (see §7 Phase 3). |
 
 Design rules for the trait:
 - **The default path does not change.** File backend = current bytes, current
@@ -201,15 +221,24 @@ New `break_glass` subcommands, all built on the crypto that already exists:
 - **`break_glass init`** — the guided first-run ceremony. Prompts for (or takes
   flags): threshold `n`, expected trustee count `m`, which `KeyStore` backend to
   use, and the vault root. Creates/loads the device identity in the chosen
-  backend, writes the (empty-roster) policy shell, and prints the device public
-  key and a checklist of what's left (enroll `m` trustees, run a drill). Idempotent
-  and safe to re-run — it reports state rather than clobbering.
-- **`break_glass trustee enroll`** — enroll one trustee into the policy without
-  hand-editing hex. Two modes: **generate** (mints a keypair, writes the private
-  part to the trustee's chosen store — file or hardware token — and captures the
-  public key), or **import** (takes a public key the trustee generated on their
-  own machine/token). Either way it appends a `TrusteeEntry` and re-signs the
-  policy. Complements, doesn't replace, `policy set`.
+  backend and prints the device public key plus a checklist of what's left
+  (enroll `m` trustees, run a drill). Crucially it does **not** write a
+  `QuorumPolicy` yet: `QuorumPolicy::validate` rejects an empty roster and any
+  `n` greater than the trustee count *by design* (both are Invariant-V guards in
+  `src/break_glass/core.rs`), and that validator must not be weakened to store a
+  half-set-up "shell." Instead `init` records **draft setup state kept separate
+  from the committed policy**; the real `QuorumPolicy` is committed only once
+  enrollment can satisfy `n`-of-`m` (see `enroll`). Idempotent and safe to
+  re-run — it reports state rather than clobbering.
+- **`break_glass trustee enroll`** — enroll one trustee without hand-editing hex.
+  Two modes: **generate** (mints a keypair, writes the private part to the
+  trustee's chosen store — file or hardware token — and captures the public key),
+  or **import** (takes a public key the trustee generated on their own machine /
+  token). It appends the `TrusteeEntry` to the **draft roster**; once the roster
+  reaches a valid `n`-of-`m` it commits (or updates) the real `QuorumPolicy` via
+  the existing `set_break_glass_policy` path — so `validate` always runs against a
+  complete roster, never a partial one. Complements, doesn't replace,
+  `policy set`.
 - **`break_glass drill`** — rehearse a full request→approve→authorize→unseal
   against a **throwaway** envelope with dummy contents, so operators prove the
   quorum works *before* they need it. Writes a receipt tagged as a drill, then
@@ -223,7 +252,10 @@ New `break_glass` subcommands, all built on the crypto that already exists:
   can gate a deploy.
 
 These four — `init`, `enroll`, `drill`, `doctor` — are Phase 1 and need **no new
-crypto**; they orchestrate what's already in `cli.rs` / `core.rs`.
+crypto**: they orchestrate what's already in `cli.rs` / `core.rs`, plus one small
+piece of new *state* — a **draft-setup store** distinct from the committed
+`QuorumPolicy` — so a half-finished enrollment is never mistaken for a live
+quorum gate (and `QuorumPolicy::validate` never has to be relaxed).
 
 ### 5.3 Guided web setup wizard
 
@@ -239,8 +271,13 @@ handler). Add a **0 · Set up** phase in front of Connect that mirrors the WAP
 - Surfaces `doctor` output as a health panel (green/red per check).
 - A **"Run a drill"** button that drives `break_glass drill` through the server
   and shows the receipt — the web equivalent of the CLI rehearsal.
-- Hardware flows (Phase 3+) appear here as "this trustee uses a security key"
-  using WebAuthn where the browser supports it.
+- Hardware flows (Phase 3+) appear here as "this trustee uses a security key" —
+  but only for tokens that can produce the **existing Ed25519 trustee approval**
+  (see the Phase 3 caveat in §7). Generic WebAuthn is *not* a drop-in here: a
+  WebAuthn assertion signs `authenticatorData ‖ SHA-256(clientDataJSON)` and
+  carries a credential id, which is not the 64-byte Ed25519 signature over the
+  `trustee-approval:v2` message the kernel verifies. Supporting plain WebAuthn
+  would require the credential-bearing trustee schema flagged in §7 first.
 
 The wizard is a convenience over the CLI, not a second source of truth; it calls
 the same server endpoints and writes the same policy.
@@ -315,10 +352,26 @@ with zero crypto risk; the hardware phases are gated on physical validation.
 - **Est.:** ~2–3 weeks. **Depends on:** Phase 1; **a TPM to validate on.**
 
 ### Phase 3 — Trustee hardware tokens
+- **Trustee-credential decision (must settle first).** Today a trustee is a bare
+  32-byte Ed25519 public key and an approval is a 64-byte Ed25519 signature over
+  the `trustee-approval:v2` message (`TrusteeEntry` / `Approval` in
+  `src/break_glass/core.rs`). Hardware tokens split two ways against that:
+  - **(a) Ed25519-capable tokens** (PIV / PKCS#11 slots configured for Ed25519,
+    or tokens exposing raw Ed25519 signing) can produce that exact approval —
+    they slot into the current schema with **no format change**. Lowest-risk path.
+  - **(b) Generic FIDO2 / WebAuthn** cannot: the assertion signs
+    `authenticatorData ‖ SHA-256(clientDataJSON)` and carries a credential id, so
+    it needs an **algorithm/credential-bearing trustee schema** (extend
+    `TrusteeEntry` to carry an alg tag + credential id/pubkey, and teach approval
+    verification the WebAuthn shape) — a real, versioned change to the quorum
+    format and its verifier, not just a new backend.
+  - **Recommendation:** ship (a) in v1.1 and treat (b) as a follow-up only if the
+    demand for consumer FIDO2 keys justifies the format change.
 - `keystore-fido2` / `keystore-pkcs11` for trustee keys; `enroll` learns the
-  hardware modes.
-- Approval signing via the token (CLI and, where supported, WebAuthn in the console).
-- **Est.:** ~2–3 weeks. **Depends on:** Phase 2; **YubiKey-class tokens to validate.**
+  hardware modes (scoped to whichever of (a)/(b) is chosen).
+- Approval signing via the token (CLI; and in the console for the chosen path).
+- **Est.:** ~2–3 weeks for (a); **+1–2 weeks** if (b)'s schema change is in scope.
+  **Depends on:** Phase 2; **hardware tokens to validate.**
 
 ### Phase 4 — Web wizard, rotation docs, drills-in-CI
 - The **0 · Set up** wizard phase in `breakglass.html` + health panel + drill button.
@@ -354,6 +407,12 @@ These change what gets built; I'd like your calls before writing code.
    one.
 5. **Do drills belong in CI?** Running a headless drill on every change keeps the
    setup flow honest (our usual drift-gate ethos) but adds a job. Worth it?
+6. **Trustee credential format (Phase 3).** Keep the current Ed25519-only trustee
+   schema and support only tokens that emit that exact approval (PIV/PKCS#11
+   Ed25519 — no format change), or extend `TrusteeEntry`/approval verification to
+   a credential-bearing schema so generic FIDO2/WebAuthn keys work too (a
+   versioned change to the quorum format)? My lean: **Ed25519-only for v1.1**,
+   revisit WebAuthn later. (See §7 Phase 3.)
 
 ---
 
