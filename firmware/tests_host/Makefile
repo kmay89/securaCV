@@ -71,6 +71,14 @@ USBONB_BIN = $(BUILD_DIR)/test_usb_onboard_logic
 TESTCON_HDR = ../common/health/test_console.h
 TESTCON_BIN = $(BUILD_DIR)/test_test_console
 
+# Boot crash-loop / safe-mode policy (common/health/boot_policy.h): the pure
+# decision half of "a bad image must not brick trust" — proves a good image
+# never trips safe mode, an unconfirmed image defers to A/B rollback, a confirmed
+# crash-loop degrades to safe mode after exactly N boots and stays there, and
+# that safe mode is always escapable (never a permanent brick). Pure header.
+BOOTPOL_HDR = ../common/health/boot_policy.h
+BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
+
 # Console scene engine (common/ui/*.h): proves the drunken-bishop randomart is a
 # faithful, deterministic, bounded walk, and — the anti-fragile guarantee — that
 # the ASCII tier never emits an escape or non-7-bit byte and every framed line
@@ -121,6 +129,9 @@ $(USBONB_BIN): test_usb_onboard_logic.cpp $(USBONB_HDR) Makefile | $(BUILD_DIR)
 $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_test_console.cpp -o $@
 
+$(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_boot_policy.cpp -o $@
+
 $(SCENE_BIN): test_console_scene.cpp $(SCENE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_console_scene.cpp -o $@
 
@@ -130,7 +141,7 @@ $(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(SCENE_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SCENE_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -138,6 +149,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WITSTORE_BIN)
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
+	./$(BOOTPOL_BIN)
 	./$(SCENE_BIN)
 	./$(MANIFEST_BIN)
 	./$(OPTFEAT_BIN)

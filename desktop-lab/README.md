@@ -104,8 +104,15 @@ and test a build without touching the Releases page. CI installs with
 
 ## Signing & notarization
 
-The pipeline ships unsigned artifacts by default. To codesign + notarize
-macOS (so it opens without the Gatekeeper warning), add the Apple signing
-secrets that `tauri-action` reads (`APPLE_CERTIFICATE`,
-`APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
-`APPLE_PASSWORD`, `APPLE_TEAM_ID`) to the repo and the build will use them.
+The pipeline ships unsigned artifacts by default — signing is **opt-in** so a
+stray or invalid cert can never break the build. To codesign + notarize macOS
+(so it opens without the Gatekeeper warning):
+
+1. Add the Apple signing secrets that `tauri-action` reads (`APPLE_CERTIFICATE`,
+   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+   `APPLE_PASSWORD`, `APPLE_TEAM_ID`).
+2. Set the repository **variable** `ENABLE_MACOS_SIGNING` to `true`
+   (Settings → Secrets and variables → Actions → **Variables**).
+
+Until that variable is `true`, the macOS build is intentionally unsigned and
+the secrets are ignored.

@@ -78,17 +78,19 @@ jobs:
         working-directory: desktop-lab
         run: npm ci
 
-      - name: Build & publish
+      # Codesigning/notarization is OPT-IN via the `ENABLE_MACOS_SIGNING`
+      # repository variable (Settings → Secrets and variables → Actions →
+      # Variables). It is split into two steps on purpose: tauri's macOS
+      # bundler treats APPLE_CERTIFICATE as "sign me" whenever the env var is
+      # *defined at all* — even as an empty string — and then fails importing
+      # it. So the default (unsigned) build must define NO APPLE_* env keys.
+      # Turn signing on by setting the variable to `true` once real certs +
+      # the APPLE_* secrets are in place.
+      - name: Build & publish (unsigned)
+        if: vars.ENABLE_MACOS_SIGNING != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional Apple codesign/notarize secrets (used automatically if set):
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: desktop-lab
           # Publish on a tag push, or on a manual run when `publish` is checked.
@@ -103,6 +105,30 @@ jobs:
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
 
             First launch on macOS: unsigned builds may need right-click → Open.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Build & publish (signed macOS)
+        if: vars.ENABLE_MACOS_SIGNING == 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: desktop-lab
+          tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
+          releaseName: "SecuraCV Lab v__VERSION__"
+          releaseBody: |
+            The **SecuraCV Lab**, as a native app — local-first, nothing phones home.
+
+            - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
+            - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
