@@ -21,7 +21,8 @@
 // Same failure posture as the ESP32 flow: every error names the fix, and
 // nothing here can brick the module — the burn menu lives in mask ROM.
 
-import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson } from "./we2-core.js";
+import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
+         formatDetections, detectionSummary } from "./we2-core.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -388,6 +389,7 @@ function phaseModuleDone(ctx, s, job) {
   img.className = "we2-preview-cv";
   stage.append(img);
   const meta = el("p", "fineprint", "");
+  const seenBanner = el("div", "we2-seen flash-hidden");
   const sliders = el("div", "vis-preview-controls");
   const mkSlider = (label, cmd, init) => {
     const boxS = el("label", "vis-slider");
@@ -402,26 +404,36 @@ function phaseModuleDone(ctx, s, job) {
     return boxS;
   };
   sliders.append(mkSlider("Confidence (TSCORE)", "TSCORE", 70), mkSlider("IoU (TIOU)", "TIOU", 45));
-  bench.append(rowB, stage, sliders, meta);
+  bench.append(rowB, seenBanner, stage, sliders, meta);
   box.append(bench);
 
-  let previewing = false;
+  let previewing = false, seen = false;
   at.onEvent((f) => {
     if (!previewing || !f.data) return;
     const ctx2 = img.getContext("2d");
     const draw = (boxes) => {
-      for (const b of boxes || []) {
-        const [x, y, w, h, score, target] = b;
-        ctx2.strokeStyle = "#ffd44f"; ctx2.lineWidth = 2;
-        ctx2.strokeRect(x - w / 2, y - h / 2, w, h);
-        ctx2.fillStyle = "rgba(20,20,20,0.8)";
-        ctx2.font = "600 12px ui-monospace, Menlo, monospace";
-        const label = "class " + target + " · " + score;
-        ctx2.fillRect(x - w / 2, y - h / 2 - 16, ctx2.measureText(label).width + 8, 15);
-        ctx2.fillStyle = "#ffd44f";
-        ctx2.fillText(label, x - w / 2 + 4, y - h / 2 - 4);
+      const dets = formatDetections(boxes);
+      for (const d of dets) {
+        // Confidence-tinted: a confident hit glows green, a marginal one stays amber.
+        const hot = d.score >= 60;
+        ctx2.lineWidth = 3;
+        ctx2.strokeStyle = hot ? "#7CFF9B" : "#FFD44F";
+        ctx2.strokeRect(d.x - d.w / 2, d.y - d.h / 2, d.w, d.h);
+        ctx2.font = "700 13px ui-monospace, Menlo, monospace";
+        const tw = ctx2.measureText(d.text).width + 10;
+        ctx2.fillStyle = hot ? "rgba(10,38,20,0.9)" : "rgba(20,20,20,0.85)";
+        ctx2.fillRect(d.x - d.w / 2, d.y - d.h / 2 - 20, tw, 19);
+        ctx2.fillStyle = hot ? "#7CFF9B" : "#FFD44F";
+        ctx2.fillText(d.text, d.x - d.w / 2 + 5, d.y - d.h / 2 - 6);
       }
-      if ((boxes || []).length) meta.textContent = "boxes: " + JSON.stringify(boxes);
+      // A clean readout — "1 person · 92% confident" — never a raw JSON dump.
+      meta.textContent = detectionSummary(boxes);
+      // The wow: the first time it actually sees a person, celebrate once.
+      if (dets.length && !seen) {
+        seen = true;
+        seenBanner.textContent = "👁 It sees you — the model is live and working ✓";
+        seenBanner.classList.remove("flash-hidden");
+      }
     };
     if (f.data.image) {
       const image = new Image();
@@ -437,6 +449,8 @@ function phaseModuleDone(ctx, s, job) {
   });
   startBtn.addEventListener("click", async () => {
     previewing = true;
+    seen = false; seenBanner.classList.add("flash-hidden");
+    meta.textContent = "watching…";
     startBtn.disabled = true; stopBtn.disabled = false;
     await at.cmd("INVOKE=-1,0,0", { timeoutMs: 4000 }); // continuous, with frames
   });
