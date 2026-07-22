@@ -263,15 +263,11 @@ function overviewView() {
       h("div", { class: "verb" }, s.verb),
       h("div", { class: "cnt" }, n + (n === 1 ? " bench" : " benches") + (s.fork ? " · forks" : "")));
   });
-  return h("div", { class: "hero-o" },
-    h("span", { class: "kick" }, h("span", { html: "●" }), " Running the real firmware"),
-    h("h1", { html: "Meet your Canary <em>before</em> you meet your Canary." }),
-    h("p", {}, "One guided build line, start to proof. Learn it, break it, fix it here — then set up the one on your desk right the first time. Works offline; nothing phones anywhere."),
-    h("div", { class: "actions" },
-      h("button", { class: "btn primary", onclick: () => navigate(firstOf(M.stages[0]).slug) },
-        "Start the build line",
-        h("span", { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>' })),
-      h("a", { class: "btn ghost", href: "index.html" }, "Explore in 3D →")),
+  return h("div", { class: "ov" },
+    h("div", { class: "room-wrap" },
+      h("iframe", { class: "room", src: "room.html", loading: "eager",
+        title: "The Canary Lab — a workshop you can walk. Tap a station to open its bench." })),
+    h("div", { class: "ov-cards-head" }, "Jump straight to a stage"),
     h("div", { class: "stage-cards" }, ...cards),
   );
 }
@@ -329,5 +325,11 @@ async function boot() {
   root.replaceChildren(shell);
   navigate(routeId(location.hash.slice(1)), false);
   window.addEventListener("hashchange", () => navigate(routeId(location.hash.slice(1)), false));
+  // The embedded isometric room (Overview) posts a slug when a station's tool is
+  // tapped; route it through the same allowlist sanitizer before navigating.
+  window.addEventListener("message", (e) => {
+    const d = e.data;
+    if (d && d.source === "canary-room" && typeof d.slug === "string") navigate(routeId(d.slug));
+  });
 }
 boot();
