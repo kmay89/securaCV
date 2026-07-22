@@ -166,7 +166,7 @@ test("manifestEntry refuses a chip-mismatched image (defence in depth)", async (
 });
 
 // ── ?manifest= override (self-hosted / air-gapped, phishing-guarded) ────────
-test("manifestOverrideUrl: same-origin and private/LAN allowed, public refused", async () => {
+test("manifestOverrideUrl: same-origin and loopback allowed, LAN/public refused", async () => {
   const { manifestOverrideUrl } = await core();
   const origin = "https://kmay89.github.io";
   // No override → null.
@@ -179,21 +179,28 @@ test("manifestOverrideUrl: same-origin and private/LAN allowed, public refused",
   assert.strictEqual(
     manifestOverrideUrl("?manifest=custom/m.json", origin),
     "https://kmay89.github.io/custom/m.json");
-  // Private / LAN / localhost hosts → allowed (air-gapped self-host).
+  // Loopback (a same-machine manifest server) → allowed. This is the exact set
+  // the page's CSP connect-src can pin, so the code guard and the CSP agree —
+  // and loopback isn't mixed-content-blocked even on the hosted HTTPS Lab.
+  for (const u of [
+    "http://localhost:8000/m.json",
+    "https://localhost/m.json",
+    "http://127.0.0.1:8443/manifest-flash.json",
+  ]) assert.ok(manifestOverrideUrl("?manifest=" + encodeURIComponent(u), origin), "should allow " + u);
+  // Broader private/LAN hosts → refused now: a static CSP can't enumerate
+  // private-IP ranges, so the override no longer accepts hosts the browser
+  // would block at the CSP layer anyway (self-host same-origin or use a local
+  // file for those).
   for (const u of [
     "http://192.168.1.50:8443/manifest-flash.json",
     "http://10.0.0.2/m.json",
     "http://canary.local/m.json",
     "http://nas.lan/m.json",
-    "http://localhost:8000/m.json",
     "http://172.16.9.9/m.json",
-  ]) assert.ok(manifestOverrideUrl("?manifest=" + encodeURIComponent(u), origin), "should allow " + u);
+  ]) assert.strictEqual(manifestOverrideUrl("?manifest=" + encodeURIComponent(u), origin), null, "should refuse " + u);
   // Public third-party origin → refused (firmware-phishing guard).
   assert.strictEqual(
     manifestOverrideUrl("?manifest=https://evil.example.com/m.json", origin), null);
-  // 172.32 is outside the private 172.16/12 block → refused.
-  assert.strictEqual(
-    manifestOverrideUrl("?manifest=http://172.32.0.1/m.json", origin), null);
   // A bare relative ref stays same-origin (harmless — it just 404s).
   assert.strictEqual(manifestOverrideUrl("?manifest=%%%", origin), origin + "/%%%");
   // A malformed absolute URL → null, never throws.
@@ -934,6 +941,11 @@ test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
   assert.match(csp, /connect-src[^;]*'self'/);
   assert.match(csp, /connect-src[^;]*https:\/\/github\.com/);
   assert.match(csp, /connect-src[^;]*https:\/\/\*\.githubusercontent\.com/);
+  // Loopback (a same-machine manifest server) is pinned to exact hosts, and
+  // there is NO open http:/https: scheme-source — the override guard in
+  // flash-core.js accepts exactly this set, so code and CSP can't disagree.
+  assert.match(csp, /connect-src[^;]*http:\/\/localhost:\*/);
+  assert.doesNotMatch(csp, /connect-src[^;]*\bhttps?:(?!\/\/)/);
   // The whole point is defeated if inline/eval sneaks back in.
   assert.doesNotMatch(csp, /'unsafe-inline'/);
   assert.doesNotMatch(csp, /'unsafe-eval'/);

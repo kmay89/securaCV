@@ -184,11 +184,13 @@ world-class installer guards its own supply chain.
   use neither (verified in CI), so the policy needs no `'unsafe-*'` escape.
   `base-uri`, `object-src`, and `form-action` are `'none'`: no `<base>` rewrite
   of the relative asset paths, no plugins, no form posts. `connect-src` is
-  narrowed to `'self'` + our signed release host and its asset CDN, so not even
-  a first-party bug could beam your backup or MAC to a third party. (`http:`
-  stays allowed there **only** to preserve the documented plain-HTTP LAN /
-  air-gapped manifest override; it is inert on the hosted HTTPS Lab, where
-  mixed-content blocking already forbids `http` fetches.)
+  narrowed to `'self'` + our signed release host and its asset CDN + **loopback**
+  (`localhost` / `127.0.0.1`) for a same-machine manifest server, so not even a
+  first-party bug could beam your backup or MAC to a third party. That loopback
+  set is exactly what the `?manifest=` override accepts (see below), so the code
+  guard and the CSP agree — no accepted host is silently blocked at the browser
+  layer, and loopback works even from the hosted HTTPS Lab (it's "potentially
+  trustworthy", so not mixed-content-blocked).
 - **Subresource-Integrity on the vendored modules.** An inline import map pins
   the SHA-384 of each vendored third-party module — esptool-js, md5, ed25519,
   qrcode — so a tampered engine simply won't load: the browser refuses a hash
@@ -248,12 +250,14 @@ doesn't race that workflow.
 Air-gapped / self-hosted: the page accepts `?manifest=<url>` to point at a
 manifest you host yourself. To keep a crafted link from turning the public Lab
 into a firmware-phishing vector, the override is honored **only** for a
-same-origin manifest or one on a private/LAN/localhost host — the same hosts
-the OTA engine trusts for plain-HTTP local update servers
-([`firmware_ota.md` § transport policy](firmware_ota.md)); any other origin is
-ignored and the flasher falls back to the signed release. **Advanced → flash a
-local file** flashes any factory `.bin` with no manifest at all — the fully
-offline posture the OTA engine also offers.
+same-origin manifest or one on a **loopback** host (`localhost` / `127.0.0.1`) —
+a manifest server on the same machine. That set is deliberately the exact set
+the page's CSP (`connect-src`) can pin, so the guard and the browser policy
+never disagree. For a manifest on another box on the LAN (a private IP or
+`.local` name), CSP has no way to allowlist arbitrary private ranges, so either
+serve the manifest same-origin alongside the page, or use **Advanced → flash a
+local file**, which flashes any factory `.bin` with no manifest at all — the
+fully offline posture the OTA engine also offers.
 
 ## Files
 
