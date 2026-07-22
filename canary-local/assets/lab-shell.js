@@ -56,12 +56,23 @@ function flatten() {
 const firstOf = (stage) => (stage.tracks ? stage.tracks[0].benches[0] : stage.benches[0]);
 const siteHref = (href) => (href && href.startsWith("/") ? SITE_ORIGIN + href : href);
 
+// The depth options for a bench, guaranteeing the parent page is reachable.
+// If a bench folds subpages (e.g. house → scenes) but no depth points back at
+// the bench's own page, prepend a parent option so `bench.lab` is never orphaned.
+function depthsFor(bench) {
+  if (!bench.depths || !bench.depths.length) return null;
+  if (bench.depths.some((d) => d.lab === bench.lab)) return bench.depths;
+  return [{ label: bench.noun, lab: bench.lab, desc: bench.desc, real: bench.real }, ...bench.depths];
+}
+
 /* ---- navigation ---- */
 function navigate(id, push = true) {
-  // Resolve the (user-controlled) hash to a FIXED, known view. `view` is always
+  // Follow a manifest redirect from an old slug (e.g. #wap → first-boot), then
+  // resolve the (user-controlled) hash to a FIXED, known view. `view` is always
   // one of these literals and `hash` below is a literal or a manifest slug, so
   // no untrusted value is ever echoed back into location.hash. Anything we don't
   // recognize falls through to the overview. (CodeQL: client-side URL redirect.)
+  if (M.redirects && Object.prototype.hasOwnProperty.call(M.redirects, id)) id = M.redirects[id];
   const view =
     id === "start" ? "start" :
     id === "all" ? "all" :
@@ -103,9 +114,10 @@ function stageRow(stage, curEntry, done) {
       h("span", { class: "lb", html: benchLabel(b) }),
       h("span", { class: "meta" }, b.real ? h("span", { class: "rf", title: "boots real firmware" }) : null),
     ));
-    if (sel && b.depths) {
+    const bd = depthsFor(b);
+    if (sel && bd) {
       const sub = h("div", { class: "children lvl2" });
-      b.depths.forEach((d, i) =>
+      bd.forEach((d, i) =>
         sub.append(h("button", { class: "item" + ((depthSel[b.slug] || 0) === i ? " sel" : ""), onclick: () => { depthSel[b.slug] = i; navigate(b.slug, false); } },
           h("span", { class: "lb" }, d.label))));
       kids.append(sub);
@@ -193,10 +205,11 @@ function renderContent(view, entry) {
 
 function benchView(entry) {
   const { stage, track, bench } = entry;
+  const depths = depthsFor(bench);
   const di = depthSel[bench.slug] || 0;
-  const depth = bench.depths ? bench.depths[di] : null;
+  const depth = depths ? depths[di] : null;
   const real = depth?.real ?? bench.real;
-  const openHref = depth?.lab || bench.lab;
+  const openHref = depth ? depth.lab : bench.lab;
   const idx = ROUTE.indexOf(entry);
   const prev = ROUTE[idx - 1], next = ROUTE[idx + 1];
 
@@ -210,8 +223,8 @@ function benchView(entry) {
       h("h1", {}, bench.noun),
       real ? h("span", { class: "badge" }, "Real firmware") : null),
     stage.fork ? h("div", { class: "forknote" }, "⑃ Stage 4 forks here — camera or radar. Both paths rejoin at Home.") : null,
-    bench.depths ? h("div", { class: "seg", role: "tablist" },
-      ...bench.depths.map((d, i) => h("button", { class: i === di ? "on" : "", role: "tab", "aria-selected": i === di,
+    depths ? h("div", { class: "seg", role: "tablist" },
+      ...depths.map((d, i) => h("button", { class: i === di ? "on" : "", role: "tab", "aria-selected": i === di,
         onclick: () => { depthSel[bench.slug] = i; navigate(bench.slug, false); } }, d.label))) : null,
     h("p", { class: "lead" }, depth?.desc || bench.desc || ""),
     h("div", { class: "actions" },
