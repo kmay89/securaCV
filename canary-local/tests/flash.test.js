@@ -963,6 +963,25 @@ test("postFlashNextStep: every catalog product yields a complete step (can't rot
   }
 });
 
+test("healthVerdict: maps the self-test score to a plain verdict, never a false pass", async () => {
+  const { healthVerdict } = await core();
+  assert.strictEqual(healthVerdict(98).level, "ok");
+  assert.strictEqual(healthVerdict(80).level, "ok");     // boundary
+  assert.strictEqual(healthVerdict(79).level, "warn");
+  assert.strictEqual(healthVerdict(50).level, "warn");   // boundary
+  assert.strictEqual(healthVerdict(49).level, "attn");
+  assert.strictEqual(healthVerdict(0).level, "attn");
+  assert.strictEqual(healthVerdict(100).level, "ok");    // top of the valid range
+  // unknown / null / out-of-range health must be pending — never shown as a pass
+  for (const h of [-1, 101, 1000, null, undefined, NaN, "98"]) {
+    assert.strictEqual(healthVerdict(h).level, "pending", `health=${String(h)}`);
+  }
+  for (const h of [98, 65, 20, null]) {
+    const v = healthVerdict(h);
+    assert.ok(v.icon && v.label, `verdict for ${String(h)} missing icon/label`);
+  }
+});
+
 test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
   const csp = cspContent(FLASH_HTML);
   assert.ok(csp, "no CSP <meta> in flash.html");
