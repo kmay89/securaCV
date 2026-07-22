@@ -146,13 +146,19 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "ui/console_theme.h"
 #include "ui/console_scenes.h"
 #include "ui/console_wake.h"
-// The 'n' nearby-fleet card: the shared roster (which OTHER Canaries this one
-// hears over BLE) rendered as a width-aligned panel. Host-tested; UNSIGNED presence.
-#include "ui/fleet_view.h"
-#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
-#include "fleet_roster_feed.h"        // the live roster the 'n' card snapshots
-#endif
 static void print_boot_welcome();   // the friendly char-box hello on connect
+#endif
+
+// The fleet view: the 'n' nearby-fleet card (needs the console engine) AND the
+// pure roster->peer helpers (fleet_peer_from_entry / fleet_fmt_flags) that the
+// 'j' manifest's fleet[] reuses. Pull it in whenever EITHER the console card
+// (FEATURE_CONSOLE_THEME) or the manifest fleet[] (FEATURE_BLE_SCAN) needs it;
+// fleet_view.h is self-contained (it includes the console engine it depends on).
+#if FEATURE_CONSOLE_THEME || (defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN)
+#include "ui/fleet_view.h"
+#endif
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "fleet_roster_feed.h"        // the live roster the 'n' card + fleet[] read
 #endif
 
 // Optional ESP-IDF provenance APIs for the 'f' fingerprint command. Guarded by
@@ -2429,6 +2435,34 @@ static void emit_self_manifest() {
     nc++;
   }
 
+  // The fleet roster THIS unit has heard over the air — the machine-readable
+  // twin of the 'n' card, for the browser /fleet page. Public-only and UNSIGNED.
+  // Empty unless FEATURE_BLE_SCAN feeds the roster; single-sourced from the same
+  // snapshot + host-tested projection (fleet_peer_from_entry) the card uses, so
+  // the page shows the live truth. (null + 0 → "fleet":[] on non-scan builds.)
+  const manifest::Peer* fleet_ptr = nullptr;
+  size_t nfleet = 0;
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  static manifest::Peer   fleetbuf[FLEET_ROSTER_MAX];
+  static FleetRosterEntry rent[FLEET_ROSTER_MAX];
+  static char             flagbufs[FLEET_ROSTER_MAX][40];
+  const int rn = fleet_roster_feed::snapshot(rent, FLEET_ROSTER_MAX);
+  const uint32_t rnow = millis();
+  for (int i = 0; i < rn && nfleet < FLEET_ROSTER_MAX; ++i) {
+    const scene::FleetPeer vp = scene::fleet_peer_from_entry(rent[i], rnow);
+    scene::fleet_fmt_flags(vp.flags, flagbufs[nfleet], sizeof flagbufs[nfleet]);
+    fleetbuf[nfleet].fp      = vp.fp4;
+    fleetbuf[nfleet].age_s   = vp.age_s;
+    fleetbuf[nfleet].health  = vp.health_pct;
+    fleetbuf[nfleet].battery = vp.battery_pct;
+    fleetbuf[nfleet].chain   = vp.chain_lo;
+    // "" for a clean peer (fleet_fmt_flags renders that as "ok" for the console).
+    fleetbuf[nfleet].flags   = (vp.flags == 0) ? "" : flagbufs[nfleet];
+    nfleet++;
+  }
+  fleet_ptr = fleetbuf;
+#endif
+
   manifest::Facts f{};
   f.board          = DEVICE_TYPE;
   f.firmware       = FIRMWARE_VERSION;
@@ -2446,9 +2480,22 @@ static void emit_self_manifest() {
   f.feature_count  = nf;
   f.commands       = cmds;
   f.command_count  = nc;
+  f.fleet          = fleet_ptr;
+  f.fleet_count    = nfleet;
   f.help_url       = SECURACV_HELP_URL_BASE;
 
+  // Only the scan build carries a fleet[]; size it for the WORST case so a full,
+  // maximally-flagged roster never overflows to {"error":...} exactly when it's
+  // most interesting. Worst peer — max age (uint32) + every status word —
+  // serialises to ~119B; FLEET_ROSTER_MAX (16) of them ≈ 1.9KB, plus the base
+  // manifest (full command set + features + 64-hex keys) ≈ 1.4KB → ~3.3KB. 4KB
+  // clears that with headroom. Non-scan builds keep the small buffer (their
+  // fleet[] is always empty), so RAM doesn't regress there.
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  static char buf[4096];
+#else
   static char buf[1600];
+#endif
   size_t n = manifest::build(f, buf, sizeof buf);
   Serial.println();
   if (n) Serial.println(buf);

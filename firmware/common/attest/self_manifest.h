@@ -44,6 +44,22 @@ struct Cmd {
   const char* name;
 };
 
+// One OTHER Canary this device has heard over the air, for the fleet[] array —
+// the machine-readable twin of the `n`/"nearby" console card. Public-only and
+// UNSIGNED (liveness/self-report, never a verified trust claim): a peer's short
+// fingerprint, how long ago it was last heard, its self-reported health/battery
+// (<0 → emitted as null), the low bits of its chain height, and a worded status
+// ("" when nothing is set). Single-sourced from the same fleet roster the `n`
+// card renders, so the browser /fleet page shows the live truth.
+struct Peer {
+  const char* fp;      // 4 hex chars — the peer id / short fingerprint
+  uint32_t age_s;      // seconds since last heard
+  int health;          // 0..100, <0 = unknown → null
+  int battery;         // 0..100, <0 = unknown → null
+  uint32_t chain;      // low 16 bits of the peer's chain height
+  const char* flags;   // worded status, comma-joined ("" = nothing set)
+};
+
 // Everything the device knows about itself, as plain pointers/values the caller
 // fills from live state. Hex fields are lower-case, NUL-terminated, exactly as
 // long as their byte count implies (pubkey = 64, fp = 16, chain_head = 64).
@@ -64,6 +80,8 @@ struct Facts {
   size_t feature_count;
   const Cmd* commands;        // the interactive keys THIS image answers
   size_t command_count;
+  const Peer* fleet;          // OTHER Canaries this one has heard (may be empty)
+  size_t fleet_count;
   const char* help_url;       // "https://securacv.com/canary"
 };
 
@@ -163,6 +181,25 @@ inline size_t build(const Facts& f, char* out, size_t cap) {
     w.raw('{');
     w.key("key", true);  w.str(keybuf);
     w.key("name", false); w.str(f.commands[i].name ? f.commands[i].name : "");
+    w.raw('}');
+  }
+  w.raw(']');
+  w.key("fleet", false);
+  w.raw('[');
+  for (size_t i = 0; i < f.fleet_count; ++i) {
+    if (i) w.raw(',');
+    const Peer& p = f.fleet[i];
+    w.raw('{');
+    w.key("fp", true);       w.str(p.fp ? p.fp : "");
+    w.key("age", false);     w.u32(p.age_s);
+    w.key("health", false);
+    if (p.health < 0) w.raw("null");
+    else { int h = p.health > 100 ? 100 : p.health; w.u32((uint32_t)h); }
+    w.key("battery", false);
+    if (p.battery < 0) w.raw("null");
+    else { int b = p.battery > 100 ? 100 : p.battery; w.u32((uint32_t)b); }
+    w.key("chain", false);   w.u32(p.chain);
+    w.key("flags", false);   w.str(p.flags ? p.flags : "");
     w.raw('}');
   }
   w.raw(']');

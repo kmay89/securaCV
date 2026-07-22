@@ -37,6 +37,13 @@ static const manifest::Cmd kCmds[] = {
   { 'i', "identity" }, { 'j', "manifest" }, { 'l', "identity-banner" }
 };
 
+// A sample fleet roster: a healthy peer, and one under attention with an unknown
+// battery. chain 0x4210 = 16912, 0x0031 = 49.
+static const manifest::Peer kPeers[] = {
+  { "a1b2",  3, 100,  87, 0x4210, "" },
+  { "c3d4", 47,  72,  -1, 0x0031, "alert, degraded" },
+};
+
 static manifest::Facts sample() {
   manifest::Facts f{};
   f.board = "canary";
@@ -55,6 +62,8 @@ static manifest::Facts sample() {
   f.feature_count = sizeof(kFeatures) / sizeof(kFeatures[0]);
   f.commands = kCmds;
   f.command_count = sizeof(kCmds) / sizeof(kCmds[0]);
+  f.fleet = kPeers;
+  f.fleet_count = sizeof(kPeers) / sizeof(kPeers[0]);
   f.help_url = "https://securacv.com/canary";
   return f;
 }
@@ -76,7 +85,7 @@ static void test_shape_and_keys() {
   const char* keys[] = { "\"board\"", "\"firmware\"", "\"git\"", "\"protocol\"",
                          "\"device_id\"", "\"pubkey\"", "\"pubkey_fp\"",
                          "\"chain_head\"", "\"seq\"", "\"boots\"", "\"health\"",
-                         "\"tamper\"", "\"features\"", "\"help\"" };
+                         "\"tamper\"", "\"features\"", "\"fleet\"", "\"help\"" };
   for (const char* k : keys) CHECK(has(s, k));
 
   // The pubkey — the randomart source — must be present verbatim (64 hex).
@@ -91,6 +100,10 @@ static void test_shape_and_keys() {
   // The live command set — each as {"key","name"} — so the app shows exactly
   // what THIS unit answers.
   CHECK(has(s, "\"commands\":[{\"key\":\"i\",\"name\":\"identity\"},{\"key\":\"j\",\"name\":\"manifest\"},{\"key\":\"l\",\"name\":\"identity-banner\"}]"));
+  // The fleet roster — each peer public-only, an unknown battery as null, a
+  // worded status. This is the exact shape the browser /fleet page reads.
+  CHECK(has(s, "\"fleet\":[{\"fp\":\"a1b2\",\"age\":3,\"health\":100,\"battery\":87,\"chain\":16912,\"flags\":\"\"},"
+              "{\"fp\":\"c3d4\",\"age\":47,\"health\":72,\"battery\":null,\"chain\":49,\"flags\":\"alert, degraded\"}]"));
 }
 
 // ── an empty command set renders [] (a stripped/production image is valid) ───
@@ -100,6 +113,59 @@ static void test_no_commands() {
   f.commands = nullptr; f.command_count = 0;
   manifest::build(f, buf, sizeof buf);
   CHECK(has(std::string(buf), "\"commands\":[]"));
+}
+
+// ── an empty fleet renders [] (a device that has heard no peers is valid) ────
+static void test_no_fleet() {
+  char buf[1024];
+  manifest::Facts f = sample();
+  f.fleet = nullptr; f.fleet_count = 0;
+  manifest::build(f, buf, sizeof buf);
+  CHECK(has(std::string(buf), "\"fleet\":[]"));
+}
+
+// ── a full, maximally-flagged roster fits the firmware's scan-build buffer ───
+static void test_worst_case_fleet_fits() {
+  // The failure this guards: a populated roster serialising past the manifest
+  // buffer drops the WHOLE `j` response to {"error":"manifest overflow"} exactly
+  // when the fleet is most interesting. Build the worst case — FLEET_ROSTER_MAX
+  // peers, each with the widest age (uint32) and every status word — atop a rich
+  // command/feature set, and prove it fits main.cpp's 4096-byte scan buffer
+  // (and really did NOT fit the old 2560 one).
+  manifest::Peer peers[16];
+  for (int i = 0; i < 16; ++i) {
+    peers[i].fp = "ffff";
+    peers[i].age_s = 4294967295u;   // uint32 max — the widest "age" digits
+    peers[i].health = 100;
+    peers[i].battery = 100;
+    peers[i].chain = 65535;
+    peers[i].flags = "tamper, alert, degraded, muted, wifi";   // every word
+  }
+  static const char* const manyFeats[] = {
+    "sd_storage", "wifi_ap", "gnss", "ble_status", "ble", "mesh", "console_theme",
+    "diagnostics", "ota_pull", "power_monitor", "usb_onboard", "csi", "acoustic",
+    "touch", "ir_rmt", "temp_tamper"
+  };
+  static const manifest::Cmd manyCmds[] = {
+    { 'i', "identity" }, { 'j', "manifest" }, { 's', "status" }, { 'g', "gps" },
+    { 'b', "battery" }, { 'd', "diagnostics" }, { 'm', "mqtt" }, { 't', "run-tests" },
+    { 'c', "attest" }, { 'f', "fingerprint" }, { 'e', "explain-boot" },
+    { 'w', "tamper-log" }, { 'l', "identity-banner" }, { 'n', "nearby" },
+    { 'a', "wake-selftest" }
+  };
+  manifest::Facts f = sample();
+  f.features = manyFeats; f.feature_count = 16;
+  f.commands = manyCmds; f.command_count = 15;
+  f.fleet = peers; f.fleet_count = 16;
+
+  char buf[4096];   // must match main.cpp's scan-build buffer
+  size_t n = manifest::build(f, buf, sizeof buf);
+  CHECK(n > 0);                         // did NOT overflow
+  CHECK(n < sizeof buf);
+  CHECK(buf[0] == '{' && buf[n - 1] == '}');
+  // The same worst case overflows the old 2560 buffer — the bug this sizing fixes.
+  char old_buf[2560];
+  CHECK(manifest::build(f, old_buf, sizeof old_buf) == 0);
 }
 
 // ── unknown health is JSON null, tamper flips to a bare true ─────────────────
@@ -150,6 +216,7 @@ static void test_null_fields_safe() {
   CHECK(s.front() == '{' && s.back() == '}');
   CHECK(has(s, "\"device_id\":\"\""));      // null → empty string, not a crash
   CHECK(has(s, "\"features\":[]"));
+  CHECK(has(s, "\"fleet\":[]"));            // no roster → empty array, not a crash
 }
 
 // ── a too-small buffer fails closed: empty string + 0, never a truncation ───
@@ -180,6 +247,8 @@ static void test_bounded_no_overflow() {
 int main() {
   test_shape_and_keys();
   test_no_commands();
+  test_no_fleet();
+  test_worst_case_fleet_fits();
   test_unknown_health_and_tamper();
   test_escaping();
   test_no_features();
