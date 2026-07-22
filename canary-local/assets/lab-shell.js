@@ -66,13 +66,20 @@ function depthsFor(bench) {
 }
 
 /* ---- navigation ---- */
+// Turn a raw (user-controlled) hash into a known-safe route id. Following a
+// manifest redirect first, then validating against an allowlist with
+// Array.includes() — a sanitizer CodeQL recognizes — guarantees no untrusted
+// value ever reaches navigation. Anything unknown becomes the overview.
+let VALID_IDS = [];
+function routeId(raw) {
+  const id = M.redirects && Object.prototype.hasOwnProperty.call(M.redirects, raw) ? M.redirects[raw] : raw;
+  return VALID_IDS.includes(id) ? id : "overview";
+}
+
 function navigate(id, push = true) {
-  // Follow a manifest redirect from an old slug (e.g. #wap → first-boot), then
-  // resolve the (user-controlled) hash to a FIXED, known view. `view` is always
-  // one of these literals and `hash` below is a literal or a manifest slug, so
-  // no untrusted value is ever echoed back into location.hash. Anything we don't
-  // recognize falls through to the overview. (CodeQL: client-side URL redirect.)
-  if (M.redirects && Object.prototype.hasOwnProperty.call(M.redirects, id)) id = M.redirects[id];
+  // `id` is always an allowlisted route (from routeId) or a literal bench slug
+  // from a click handler. `view` is one of these literals and `hash` below is a
+  // literal or a manifest slug — so nothing untrusted is echoed into location.
   const view =
     id === "start" ? "start" :
     id === "all" ? "all" :
@@ -316,10 +323,11 @@ async function boot() {
     return;
   }
   flatten();
+  VALID_IDS = ["overview", "start", "all", ...ROUTE.map((e) => e.bench.slug)];
   root.removeAttribute("data-loading");
   const shell = h("div", { class: "shell" }, h("div", { class: "main" }));
   root.replaceChildren(shell);
-  navigate(location.hash.slice(1) || "overview", false);
-  window.addEventListener("hashchange", () => navigate(location.hash.slice(1) || "overview", false));
+  navigate(routeId(location.hash.slice(1)), false);
+  window.addEventListener("hashchange", () => navigate(routeId(location.hash.slice(1)), false));
 }
 boot();
