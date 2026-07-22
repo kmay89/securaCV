@@ -142,6 +142,7 @@
     { "label": "Download", "href": "/download.html" }
   ],
   "footerNav": [
+    { "label": "Site map", "href": "/site-map.html" },
     { "label": "Your Canary (help)", "href": "/canary.html" },
     { "label": "Privacy", "href": "/privacy.html" },
     { "label": "GitHub", "href": "https://github.com/kmay89/securaCV" }
@@ -151,5 +152,38 @@
     "board-room": "boards", "wap": "first-boot", "homeassistant": "hub",
     "showroom": "see-it-in-3d", "playground": "test-bench",
     "corps": "makers", "checkup": "self-check", "watch-over": "why-canary"
+  },
+  "htmlDocumentation": {
+    "$comment": "All committed HTML documentation and support pages that are not primary Lab benches. Keep this inventory updated when adding standalone HTML so the sitemap and docs map do not miss it.",
+    "groups": [
+      {
+        "label": "Lab shell and compatibility",
+        "items": [
+          { "noun": "Lab shell", "href": "lab.html", "purpose": "Canonical adaptive Lab shell; iPad sidebar and phone tab bar come from the same bundle." },
+          { "noun": "Legacy Lab front door", "href": "index.html", "purpose": "Redirects old links to the Lab shell or fleet cards." },
+          { "noun": "Isometric room", "href": "room.html", "purpose": "Embedded workshop overview used by the Lab shell." },
+          { "noun": "Emulator harness", "href": "emulator/web/harness.html", "purpose": "Developer/CI boot harness for real display firmware compiled to WebAssembly." },
+          { "noun": "Kiri slicing fixture", "href": "tests/fixtures/kiri_harness.html", "purpose": "Offline test fixture for the enclosure/slicer bench." }
+        ]
+      },
+      {
+        "label": "iPad and native app runbooks",
+        "items": [
+          { "noun": "iPad field guide", "href": "../desktop-lab/ipad-guide.html", "purpose": "Narrated architecture guide for making the same Lab bundle feel native on iPad." },
+          { "noun": "iPad setup runbook", "href": "../desktop-lab/ipad-setup.html", "purpose": "Step-by-step Mac/Xcode path for simulator, side-load, TestFlight, and App Store builds." }
+        ]
+      },
+      {
+        "label": "Evidence and operator HTML",
+        "items": [
+          { "noun": "Witness kernel explainer", "href": "../docs/witness-kernel.html", "purpose": "Standalone architectural explainer for the privacy witness kernel." },
+          { "noun": "Break-glass ceremony", "href": "../src/break_glass/breakglass.html", "purpose": "Local quorum unseal UI for raw-media access." },
+          { "noun": "Evidence viewer", "href": "../viewer/evidence_viewer.html", "purpose": "Offline verifier/viewer for exported witness evidence." },
+          { "noun": "Evidence viewer template", "href": "../viewer/template.html", "purpose": "Template used to package static evidence viewer exports." },
+          { "noun": "Privacy witness wizard", "href": "../privacy_witness_kernel/wizard/index.html", "purpose": "Standalone setup wizard for the privacy witness kernel prototype." }
+        ]
+      }
+    ]
   }
+
 }

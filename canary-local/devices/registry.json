@@ -83,7 +83,20 @@
         "docs/hardware/display_living_canary.md",
         "docs/hardware/display_bench_bringup.md"
       ],
-      "status": "in development — render/CI-verified, bench pending"
+      "status": "in development — render/CI-verified, bench pending",
+      "persona": {
+        "name": "Pip the Bedside Conductor",
+        "accent": "moonlit gold",
+        "shape": "round songbird with a crescent chest, tiny baton tail, and a halo-ring perch",
+        "story": "Pip is the canary who learned to whisper instead of shout. At night, Pip curls into one calm ring beside you, counting the whole flock without filling the room with dashboards. If a sibling needs attention, Pip raises a gentle glow you can understand half-awake: safe, check, or help.",
+        "specialty": "Screen / bedside glance",
+        "good_for": [
+          "Seeing house status in one second",
+          "Night-safe alerts that do not feel like a phone notification",
+          "Proof QR handoff when you need to show what happened"
+        ],
+        "catchphrase": "I keep watch quietly, so you can sleep loudly."
+      }
     },
     {
       "id": "canary-display-dash",
@@ -172,7 +185,20 @@
         "docs/hardware/display_ux_design.md",
         "docs/hardware/display_trailblazer_spec.md"
       ],
-      "status": "in development — render/CI-verified, bench pending"
+      "status": "in development — render/CI-verified, bench pending",
+      "persona": {
+        "name": "Marlow the Mapmaker",
+        "accent": "blueprint gold",
+        "shape": "wide-winged wall bird with a poster-flat body, compass tail, and bright card-shaped feathers",
+        "story": "Marlow is the family translator. Every witness in the house tells tiny truthful claims; Marlow turns them into cards, timelines, and calm next steps on a wall-size pane. Marlow is best when everyone needs the same answer without digging through an app.",
+        "specialty": "Screen / household command wall",
+        "good_for": [
+          "A shared household view",
+          "Roll call for every witness",
+          "Event timelines and proof sheets at a glance"
+        ],
+        "catchphrase": "I make the flock readable."
+      }
     },
     {
       "id": "canary-vision",
@@ -197,7 +223,20 @@
         "docs/hardware/canary_vision_getting_started.md",
         "docs/hardware/grove_vision_ai_v2_guide.md"
       ],
-      "status": "released — print-validated enclosure, fw 2.2.0"
+      "status": "released — print-validated enclosure, fw 2.2.0",
+      "persona": {
+        "name": "Iris the Pixel Keeper",
+        "accent": "saffron and privacy black",
+        "shape": "sleek camera-eyed canary with eyelid-shaped wings and a sealed little locket under its beak",
+        "story": "Iris sees motion the way a careful neighbor sees a porch light: enough to know something happened, never enough to gossip. The camera chip makes the decision locally, then Iris lets the pixels stay home and sends only a small signed claim.",
+        "specialty": "AI vision",
+        "good_for": [
+          "Porches, entries, and zones where visual confirmation matters",
+          "Person-present claims without exporting raw frames",
+          "Evidence that proves timing without becoming surveillance"
+        ],
+        "catchphrase": "I can tell you someone arrived without taking their picture home."
+      }
     },
     {
       "id": "canary-wap",
@@ -223,7 +262,20 @@
       "docs": [
         "docs/getting_started_canary.md"
       ],
-      "status": "released — the canary.local hostname lives here today"
+      "status": "released — the canary.local hostname lives here today",
+      "persona": {
+        "name": "Wisp the Air-Reader",
+        "accent": "mint radio green",
+        "shape": "soft-feathered canary with translucent wave-shaped wings and a curious tilted head",
+        "story": "Wisp listens to the shape of Wi-Fi in the room. When the air bends around movement, Wisp notices without needing a lens, a portrait, or a bright screen. It is the canary for spaces that deserve awareness, not cameras.",
+        "specialty": "Canary Sense / Wi-Fi field presence",
+        "good_for": [
+          "Camera-free rooms",
+          "Presence and dwelling cues through the radio field",
+          "A friendly first Canary that hosts canary.local today"
+        ],
+        "catchphrase": "I feel the room breathe, without looking at anyone."
+      }
     },
     {
       "id": "canary-sense",
@@ -249,7 +301,20 @@
       "docs": [
         "firmware/projects/canary-sense/README.md"
       ],
-      "status": "phase 2 complete — signing witness, bench items open"
+      "status": "phase 2 complete — signing witness, bench items open",
+      "persona": {
+        "name": "Radar Roo the Wall-Whisperer",
+        "accent": "violet mmWave",
+        "shape": "round-bellied canary with radar-ring freckles, a tiny explorer visor, and nested oval wings",
+        "story": "Roo sends tiny 60 GHz ripples and reads how they return. That makes Roo excellent at quiet presence: someone still on the sofa, a hallway that changed, a room that is occupied but camera-free. Roo is precise about there, never about who.",
+        "specialty": "mmWave detection",
+        "good_for": [
+          "Stillness-aware rooms where motion sensors miss people",
+          "Range and occupancy cues without identity",
+          "Privacy-sensitive bedrooms, studios, and care spaces"
+        ],
+        "catchphrase": "I know someone is there; I never ask who."
+      }
     },
     {
       "id": "canary-fence-guard",
@@ -355,6 +420,19 @@
         ],
         "request_title": "Concept request: Canary Fence Guard (Meshtastic perimeter witness)",
         "request_body": "Seen the Fence Guard concept card. What I'd want from a chain-link-mounted, solar-fed Meshtastic perimeter witness:\n\n- fence length / terrain:\n- mesh distance to the nearest node:\n- shade situation:\n- what should count as an alarm (climb / cut / lean / gate):\n"
+      },
+      "persona": {
+        "name": "Bramble the Boundary Bird",
+        "accent": "solar amber and field green",
+        "shape": "weather-cloaked canary with branch-like tail feathers, clamp feet, and a little sun-panel cape",
+        "story": "Bramble is still learning outside the nest. One day it will perch on a fence line, feel climbs or cuts as vibrations, and carry a signed claim home over mesh without mapping your property for strangers. For now, Bramble wears a concept ribbon because honest products say what is real.",
+        "specialty": "Perimeter mesh concept",
+        "good_for": [
+          "Long fence lines past Wi-Fi",
+          "Solar field trials and false-alarm learning",
+          "Future perimeter witness claims without GPS or PII"
+        ],
+        "catchphrase": "I turn the fence into a witness, not a billboard."
       }
     }
   ]
