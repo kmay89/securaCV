@@ -41,9 +41,11 @@
           "desc": "Spin every real board in 3D; ‘Wire it’ stages the harness." }
       ],
       "site": [
-        { "noun": "See it in 3D", "href": "/showroom.html", "wasNamed": "Showroom" },
-        { "noun": "Print one", "href": "/print.html" },
-        { "noun": "Test bench", "href": "/playground.html", "wasNamed": "Playground" }
+        { "noun": "See it in 3D", "slug": "see-it-in-3d", "href": "/showroom.html", "wasNamed": "Showroom" },
+        { "noun": "Print one", "slug": "print", "href": "/print.html" },
+        { "noun": "Test bench", "slug": "test-bench", "href": "/playground.html", "wasNamed": "Playground" },
+        { "noun": "Makers", "slug": "makers", "href": "/corps.html", "wasNamed": "Maker Corps" },
+        { "noun": "Gallery", "slug": "gallery", "href": "/gallery.html" }
       ]
     },
     {
@@ -98,8 +100,8 @@
           ] }
       ],
       "site": [
-        { "noun": "Why Canary", "href": "/watch-over.html", "wasNamed": "Watched over, never watched" },
-        { "noun": "Plug it in", "href": "/plugin.html" }
+        { "noun": "Why Canary", "slug": "why-canary", "href": "/watch-over.html", "wasNamed": "Watched over, never watched" },
+        { "noun": "Plug it in", "slug": "plug-it-in", "href": "/plugin.html" }
       ]
     },
     {
@@ -115,9 +117,9 @@
           ] }
       ],
       "site": [
-        { "noun": "How it works", "href": "/how-it-works.html" },
-        { "noun": "The evidence vault", "href": "/vault.html" },
-        { "noun": "Self-check", "href": "/checkup.html", "wasNamed": "Canary Doctor" }
+        { "noun": "How it works", "slug": "how-it-works", "href": "/how-it-works.html" },
+        { "noun": "The evidence vault", "slug": "evidence-vault", "href": "/vault.html" },
+        { "noun": "Self-check", "slug": "self-check", "href": "/checkup.html", "wasNamed": "Canary Doctor" }
       ]
     }
   ],
@@ -125,7 +127,7 @@
     { "label": "How it works", "href": "/how-it-works.html" },
     { "label": "The Lab", "href": "/lab.html" },
     { "label": "Compare", "href": "/compare.html" },
-    { "label": "Build it yourself", "href": "/maker.html", "gathers": ["workshop", "boards", "first-boot", "playground", "print", "gallery", "corps"] },
+    { "label": "Build it yourself", "href": "/maker.html", "gathers": ["workshop", "boards", "first-boot", "test-bench", "print", "gallery", "makers"] },
     { "label": "Store", "href": "/store.html" },
     { "label": "Download", "href": "/download.html" }
   ],
@@ -134,6 +136,7 @@
     { "label": "Privacy", "href": "/privacy.html" },
     { "label": "GitHub", "href": "https://github.com/kmay89/securaCV" }
   ],
+  "$redirects_note": "Maps an old slug → the new canonical slug. Every target below is now defined as a `slug` on a bench (stages[].benches[]) or a site link (stages[].site[]), so a renderer can always resolve it.",
   "redirects": {
     "board-room": "boards", "wap": "first-boot", "homeassistant": "hub",
     "showroom": "see-it-in-3d", "playground": "test-bench",
