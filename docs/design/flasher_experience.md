@@ -11,16 +11,21 @@
 
 ```
 plug it in ─▶ it flashes (can't pick wrong, can't brick)
-           ─▶ it COMES TO LIFE  — a receipt + the board's signed identity
+           ─▶ it COMES TO LIFE  — a receipt + the board's identity (its public
+              key, drawn as randomart — verifiable, though not a signed transcript)
            ─▶ it PROVES ITSELF  — a live self-check you can watch (no screen needed)
            ─▶ ONE obvious next step for THIS board (Wi-Fi, watch presence, …)
            ─▶ later: you always KNOW, at a glance, that every Canary is
               up to date and healthy — and heal the ones that aren't
 ```
 
-Every stage tells the *same* story from *one* source of truth (the device's
-signed self-manifest), so the flasher, `securacv.com/canary`, and the fleet view
-can never disagree (anti-rot — see `self_star_roadmap.md`).
+Every stage tells the *same* story from *one* source of truth — the device's
+**public** self-manifest (`j`) — so the flasher, `securacv.com/canary`, and the
+fleet view can never disagree (anti-rot — see `self_star_roadmap.md`). Important:
+the manifest is **public, unauthenticated** metadata — the JSON itself is not
+signed. Over USB you trust it because you are physically holding the cable; over
+the LAN (the fleet view) it must be **authenticated before it is trusted** — see
+the security model below.
 
 ## What already exists — REUSE, do not rebuild
 
@@ -78,9 +83,12 @@ Grove Vision AI V2 / WE2 camera module (its model, a different USB VID/PID).
   USB flasher shows, now for the whole fleet.
 - **One-tap update:** poke the device to run its *own* signed OTA check. The
   device stays the trust boundary; the tool never holds a key or pushes an image.
+  **Prerequisite:** offer over-the-air update only once safe-mode/A-B is enabled
+  in the target build (see the security model) — until then a bad OTA can need a
+  cable, which is unacceptable for a *remote* update, so this stays gated.
 - **Doctor & heal:** surface the existing self-test + self-repair fixes per
-  device; a bad update degrades to safe-mode/A-B (Phase-1 of the RoT work), never
-  a brick.
+  device; where safe-mode/A-B is live, a bad update reverts or degrades to a
+  recoverable console instead of hanging.
 
 ### Phase 4 — the last-mile magic
 - **"Use this Mac's Wi-Fi"** (native): read the current SSID + its password from
@@ -94,21 +102,34 @@ boundary**, and that's already true:
 
 - **Updates:** the Canary only ever installs an **Ed25519-signed** image it
   verifies itself, and the **anti-rollback floor** refuses any downgrade even if
-  validly signed. **Safe-mode / A-B** (RoT Phase 1) means a bad update reverts or
-  degrades to a recoverable console — it *cannot* brick. The tool's "update" button
-  only asks the device to check; it carries no signing key and pushes no bytes.
+  validly signed. The tool's "update" button only asks the device to *check*; it
+  carries no signing key and pushes no bytes. **Recoverability, told honestly:**
+  the **safe-mode / A-B** net that makes a bad update *revert* instead of hang is
+  written but **not yet enabled in the shipping Arduino/Canary builds**
+  (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` + the boot wiring — `self_star_roadmap.md`
+  §TODO 2). Over USB you can always recover (the bootloader is mask ROM); **over
+  the air, until safe-mode/A-B ships, a bad update can leave a device needing a
+  cable.** So **remote fleet-update must gate itself on safe-mode/A-B being live**,
+  and until then the UX says "may need a cable to recover," never "can't brick."
 - **Discovery is read-only.** mDNS is advertise-only; discovering a Canary opens
   no control channel.
-- **Status is public-only.** The self-manifest is public by construction (no
-  secret ever leaves the device — same rule as the trust card). Reading it over
-  the LAN leaks nothing.
+- **Status is public-only, and must be *authenticated* over the LAN.** The
+  self-manifest leaks nothing (no secret ever leaves the device — same rule as the
+  trust card), so reading it is safe. But it is **not signed as transmitted**: over
+  USB you trust it by physical connection; over the LAN a spoofer could serve a
+  fake or stale one. So the fleet view must **verify each device against its pinned
+  key via challenge-response** — the `SECURACV-ATTEST-v1` attestation already in
+  `firmware/common/health/test_console.h` (nonce → signed by the identity key) —
+  before showing a Canary as authentically "healthy / up to date." Anything
+  unverified is shown *as* unverified, never as authentic.
 - **Control is authenticated.** Anything that *changes* a device (trigger OTA,
   config, pairing) rides the device's existing credential gate (the canary-wap
   route-security model: every mutating route is Bearer/session/pair-token gated).
   The tool authenticates to the device; it is never trusted implicitly.
 - **Feel, not fear.** Because the guarantees are real, the UI can *say* them
-  plainly — "signed ✓ · verified ✓ · can't brick ✓ · always recoverable" — and
-  keep warnings gentle and actionable, never alarming.
+  plainly — "signed ✓ · verified ✓ · recoverable ✓" (USB flashing is always
+  recoverable; over-the-air becomes so once safe-mode/A-B ships) — and keep
+  warnings gentle and actionable, never alarming.
 
 Any weakening of these defaults goes through the `THREAT_MODEL.md` /
 `LESSONS_LEARNED.md` process in the PR template.
@@ -118,8 +139,25 @@ Any weakening of these defaults goes through the `THREAT_MODEL.md` /
 Phase 1 first — it's the reusable foundation (the come-to-life receipt +
 prove-it-works self-check is exactly what Phase 2's two-port self-check and
 Phase 3's fleet "is it healthy?" reuse). Phase 3 (network fleet-view) is the
-headline, and it's native-app work that stands on Phases 1–2 plus the shipped
-OTA + safe-mode trust machinery.
+headline, and it's native-app work that stands on Phases 1–2 plus the signed-OTA
+trust machinery — and its remote-update step depends on the safe-mode/A-B
+enablement (RoT Phase 1) actually shipping first, so the two tracks are linked.
+
+## Adjacent bets (captured, not yet scheduled)
+
+- **Beyond the Canary — a Raspberry Pi "just works" Home Assistant appliance.**
+  Same spirit: type your Wi-Fi, flash, and it boots into a working setup with the
+  Canary bridge + tools baked in, self-healing and self-updating for years. Two
+  honest constraints shape it: (1) a Pi flashes a **whole OS image to an SD card /
+  USB stick**, not USB-serial — and a browser can't write raw block devices, so
+  this is a **native-app** job (the shape Raspberry Pi Imager / balenaEtcher use,
+  with elevated privileges); (2) much of "flash a Pi for Home Assistant" is
+  *already solved* by **Home Assistant OS + Raspberry Pi Imager**, so our leverage
+  is a **pre-baked image or HAOS add-on** that bundles the Canary integration and
+  the self-heal / auto-update posture — not a new imager. Anything genuinely
+  reusable there (a clean flash-and-provision flow, the self-check UX) could be
+  contributed back to the HA community. A separate, larger track — worth doing,
+  but after the Canary bring-up + fleet-view flow is proven.
 
 ## Related
 
