@@ -122,6 +122,24 @@ enum Command {
         #[command(subcommand)]
         command: PolicyCommand,
     },
+
+    /// Health-check the break-glass setup: quorum policy, device identity, and
+    /// vault key material. Exits non-zero if anything is missing or invalid, so
+    /// it can gate a deploy. Read-only.
+    Doctor {
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        #[arg(
+            long,
+            default_value = "vault/envelopes",
+            help = "Vault directory (where master.key lives)"
+        )]
+        vault_path: String,
+        /// Device key seed (must match witnessd) — needed to open the encrypted
+        /// kernel database.
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -260,6 +278,14 @@ pub fn run() -> Result<()> {
                 cmd_policy_show(&db, &ruleset_id, &device_key_seed)
             }
         },
+        Command::Doctor {
+            db,
+            vault_path,
+            device_key_seed,
+        } => {
+            let _stage = ui.stage("Vault doctor");
+            cmd_doctor(&db, &vault_path, &device_key_seed)
+        }
     }
 }
 
@@ -443,6 +469,258 @@ fn cmd_policy_show(db_path: &str, ruleset_id: &str, device_key_seed: &str) -> Re
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
     println!("{}", serde_json::to_string_pretty(policy)?);
     Ok(())
+}
+
+// Doctor status glyphs (ASCII-safe meaning is clear even if a terminal drops the
+// codepoint): check / cross / warning.
+const DR_OK: &str = "\u{2713}"; // ✓
+const DR_BAD: &str = "\u{2717}"; // ✗
+const DR_WARN: &str = "\u{26a0}"; // ⚠
+
+/// Short, human-comparable fingerprint of a 32-byte key (first 8 bytes, hex).
+fn short_fp(bytes: &[u8; 32]) -> String {
+    bytes[..8].iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn count_receipts(conn: &rusqlite::Connection) -> Result<i64> {
+    Ok(
+        conn.query_row("SELECT COUNT(*) FROM break_glass_receipts", [], |r| {
+            r.get(0)
+        })?,
+    )
+}
+
+/// Open the SQLCipher-encrypted kernel database, deriving the key from the
+/// device seed exactly as the kernel and `log_verify` do. Fails if the seed is
+/// wrong or the database is corrupt (the key check reads a page). Read-only use.
+fn open_kernel_db_keyed(db_path: &str, device_key_seed: &str) -> Result<rusqlite::Connection> {
+    let signing_key = crate::signing_key_from_seed(device_key_seed)?;
+    let seed_env = crate::db_key_seed_from_env();
+    let db_key =
+        crate::resolve_db_encryption_key(&signing_key, seed_env.as_ref().map(|s| s.as_str()));
+    let conn = rusqlite::Connection::open(db_path)?;
+    conn.pragma_update(None, "key", format!("x'{}'", db_key.as_str()))?;
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+        .map_err(|_| {
+            anyhow!(
+                "could not open the kernel database — wrong device key seed or corrupt database"
+            )
+        })?;
+    Ok(conn)
+}
+
+/// Inspect the break-glass setup and report health. Read-only; never writes.
+/// Exits non-zero (via the returned `Err`) if anything is missing or invalid so
+/// it can gate a deploy. Warnings (e.g. the master key being plaintext on disk,
+/// which is the honest state until hardware-backed keys land) do not fail.
+fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<()> {
+    let mut problems = 0usize;
+    let mut warnings = 0usize;
+
+    println!("=== Break-glass vault doctor ===");
+    println!("Kernel DB:  {}", db_path);
+    println!("Vault path: {}", vault_path);
+    println!();
+
+    // --- quorum policy + device identity + receipts (all live in the DB) ---
+    println!("[ quorum policy ]");
+    if !std::path::Path::new(db_path).exists() {
+        println!(
+            "  {} no kernel database at {} — set a policy with `break_glass policy set`",
+            DR_BAD, db_path
+        );
+        problems += 1;
+    } else {
+        match open_kernel_db_keyed(db_path, device_key_seed)
+            .and_then(|conn| load_break_glass_policy(&conn).map(|p| (conn, p)))
+        {
+            Ok((conn, Some(policy))) => {
+                println!(
+                    "  {} quorum policy configured: {}-of-{}",
+                    DR_OK, policy.n, policy.m
+                );
+                let mut bad_keys = 0usize;
+                for t in &policy.trustees {
+                    if VerifyingKey::from_bytes(&t.public_key).is_ok() {
+                        println!("    · {}  {}", t.id.0, short_fp(&t.public_key));
+                    } else {
+                        println!(
+                            "    {} trustee {} has an invalid public key",
+                            DR_BAD, t.id.0
+                        );
+                        bad_keys += 1;
+                    }
+                }
+                if bad_keys == 0 {
+                    println!(
+                        "  {} {} trustee key(s), all well-formed",
+                        DR_OK,
+                        policy.trustees.len()
+                    );
+                } else {
+                    problems += bad_keys;
+                }
+                println!("    crypto mode: {:?}", policy.vault.crypto_mode);
+
+                println!();
+                println!("[ device identity ]");
+                // Verify the supplied seed actually derives the pinned identity —
+                // not just that *some* key is pinned. When SECURACV_DB_KEY_SEED is
+                // set, the DB key is independent of the device seed, so the DB can
+                // open with the WRONG device seed; without this check `doctor`
+                // would report HEALTHY while `authorize`/`witnessd` (which pin the
+                // identity via Kernel::open) reject the same seed.
+                let seed_vk =
+                    crate::signing_key_from_seed(device_key_seed).map(|sk| sk.verifying_key());
+                match (device_public_key_from_db(&conn), seed_vk) {
+                    (Ok(pinned), Ok(vk)) if pinned.to_bytes() == vk.to_bytes() => println!(
+                        "  {} device public key pinned, matches the supplied seed: {}",
+                        DR_OK,
+                        short_fp(&pinned.to_bytes())
+                    ),
+                    (Ok(pinned), Ok(vk)) => {
+                        println!(
+                            "  {} device seed mismatch: DB is pinned to {} but the supplied \
+                             seed derives {} — authorize/witnessd will reject this seed",
+                            DR_BAD,
+                            short_fp(&pinned.to_bytes()),
+                            short_fp(&vk.to_bytes())
+                        );
+                        problems += 1;
+                    }
+                    (Ok(pinned), Err(_)) => {
+                        println!(
+                            "  {} device public key pinned ({}) but the supplied seed is unusable",
+                            DR_BAD,
+                            short_fp(&pinned.to_bytes())
+                        );
+                        problems += 1;
+                    }
+                    (Err(_), _) => {
+                        println!("  {} no device public key pinned in the database", DR_BAD);
+                        problems += 1;
+                    }
+                }
+
+                println!();
+                println!("[ history ]");
+                match count_receipts(&conn) {
+                    Ok(n) if n > 0 => println!("    break-glass receipts logged: {}", n),
+                    Ok(_) => println!(
+                        "    no break-glass receipts yet — rehearse the flow before you need it"
+                    ),
+                    Err(_) => println!("    (receipts table not initialized yet)"),
+                }
+            }
+            Ok((_conn, None)) => {
+                println!(
+                    "  {} no quorum policy configured — set one with `break_glass policy set`",
+                    DR_BAD
+                );
+                problems += 1;
+            }
+            Err(e) => {
+                // Either the database wouldn't open with this seed, or the stored
+                // policy failed validation — both are hard problems.
+                println!("  {} {}", DR_BAD, e);
+                problems += 1;
+            }
+        }
+    }
+
+    // --- vault master key ---
+    println!();
+    println!("[ vault master key ]");
+    let master = std::path::Path::new(vault_path).join("master.key");
+    if !master.exists() {
+        println!(
+            "  {} master.key not found at {} — it is created on first seal; \
+             this vault directory has not been initialized yet",
+            DR_WARN,
+            master.display()
+        );
+        warnings += 1;
+    } else {
+        match std::fs::metadata(&master) {
+            Ok(meta) => {
+                if meta.len() == 32 {
+                    println!(
+                        "  {} master.key present ({} bytes) at {}",
+                        DR_OK,
+                        meta.len(),
+                        master.display()
+                    );
+                } else {
+                    println!(
+                        "  {} master.key at {} is {} bytes, expected 32",
+                        DR_BAD,
+                        master.display(),
+                        meta.len()
+                    );
+                    problems += 1;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = meta.permissions().mode() & 0o777;
+                    if mode == 0o600 {
+                        println!("  {} permissions are 0600 (owner-only)", DR_OK);
+                    } else if mode & 0o077 != 0 {
+                        // Group/other can read the vault master secret — a real
+                        // hole: a local user could decrypt sealed evidence with no
+                        // trustee quorum (Invariant V). Hard failure, not a warning.
+                        println!(
+                            "  {} permissions are {:o} — the master key is readable beyond its \
+                             owner; anyone with that access can decrypt the vault WITHOUT quorum. \
+                             Run `chmod 600 {}`",
+                            DR_BAD,
+                            mode,
+                            master.display()
+                        );
+                        problems += 1;
+                    } else {
+                        // Owner-only but not exactly 0600 (e.g. 0400/0700): not a
+                        // leak, just unusual — nudge toward the canonical mode.
+                        println!(
+                            "  {} permissions are {:o} (owner-only, but not 0600) — run `chmod 600 {}`",
+                            DR_WARN,
+                            mode,
+                            master.display()
+                        );
+                        warnings += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  {} cannot read master.key metadata: {}", DR_BAD, e);
+                problems += 1;
+            }
+        }
+        println!(
+            "  {} the master key is plaintext on disk — no hardware backing yet (file backend)",
+            DR_WARN
+        );
+        println!("    hardware-backed keys are v1.1; see docs/design/vault_operator_ux_v1_1.md");
+        warnings += 1;
+    }
+
+    // --- key store backend ---
+    println!();
+    println!("[ key store ]");
+    println!("    backend: file (the only backend today)");
+
+    // --- summary + exit gate ---
+    println!();
+    if problems == 0 {
+        println!("Result: HEALTHY ({} warning(s))", warnings);
+        Ok(())
+    } else {
+        println!("Result: {} PROBLEM(S), {} warning(s)", problems, warnings);
+        Err(anyhow!(
+            "vault doctor found {} problem(s) — see the report above",
+            problems
+        ))
+    }
 }
 
 fn cmd_receipts(
@@ -1034,6 +1312,164 @@ mod tests {
             bucket,
         };
         cmd_authorize_with_bucket(args)?;
+        Ok(())
+    }
+
+    fn trustee_entry(id: &str, seed: u8) -> String {
+        let key = SigningKey::from_bytes(&[seed; 32]);
+        format!("{}:{}", id, hex_encode(key.verifying_key().to_bytes()))
+    }
+
+    #[test]
+    fn doctor_healthy_for_configured_policy() -> Result<()> {
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_doctor_ok_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir)?;
+        let db_path = temp_dir.join("witness.db");
+        let vault_path = temp_dir.join("vault");
+        std::fs::create_dir_all(&vault_path)?;
+
+        let entries = vec![
+            trustee_entry("alice", 7),
+            trustee_entry("bob", 8),
+            trustee_entry("carol", 9),
+        ];
+        cmd_policy_set(
+            2,
+            &entries,
+            &db_path.to_string_lossy(),
+            "ruleset:test",
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        )?;
+
+        // Policy present + device key pinned by `policy set`. master.key is absent
+        // (created on first seal), which doctor treats as a warning, not a problem,
+        // so the overall result is healthy (Ok).
+        cmd_doctor(
+            &db_path.to_string_lossy(),
+            &vault_path.to_string_lossy(),
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_fails_without_policy() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_doctor_nopolicy_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        // DB does not exist -> "no kernel database" is a hard problem -> non-zero exit.
+        let db_path = temp_dir.join("witness.db");
+        let vault_path = temp_dir.join("vault");
+        let result = cmd_doctor(
+            &db_path.to_string_lossy(),
+            &vault_path.to_string_lossy(),
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        );
+        assert!(
+            result.is_err(),
+            "doctor must fail (non-zero) when no policy is configured"
+        );
+    }
+
+    #[test]
+    fn doctor_flags_wrong_size_master_key() -> Result<()> {
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_doctor_badkey_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir)?;
+        let db_path = temp_dir.join("witness.db");
+        let vault_path = temp_dir.join("vault");
+        std::fs::create_dir_all(&vault_path)?;
+
+        let entry = trustee_entry("solo", 3);
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&entry),
+            &db_path.to_string_lossy(),
+            "ruleset:test",
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        )?;
+
+        // A truncated master.key is a hard problem even though the policy is valid.
+        std::fs::write(vault_path.join("master.key"), [0u8; 10])?;
+        let result = cmd_doctor(
+            &db_path.to_string_lossy(),
+            &vault_path.to_string_lossy(),
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        );
+        assert!(
+            result.is_err(),
+            "doctor must fail on a wrong-size master.key"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn doctor_flags_group_readable_master_key() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_doctor_perms_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir)?;
+        let db_path = temp_dir.join("witness.db");
+        let vault_path = temp_dir.join("vault");
+        std::fs::create_dir_all(&vault_path)?;
+
+        let entry = trustee_entry("solo", 5);
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&entry),
+            &db_path.to_string_lossy(),
+            "ruleset:test",
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        )?;
+
+        // Correctly-sized master key, but group/world-readable (0644) — a hard
+        // problem, because it lets a local user decrypt the vault without quorum.
+        let master = vault_path.join("master.key");
+        std::fs::write(&master, [7u8; 32])?;
+        std::fs::set_permissions(&master, std::fs::Permissions::from_mode(0o644))?;
+        let result = cmd_doctor(
+            &db_path.to_string_lossy(),
+            &vault_path.to_string_lossy(),
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        );
+        assert!(
+            result.is_err(),
+            "a group/world-readable master.key must be a hard failure"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_fails_with_wrong_device_seed() -> Result<()> {
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_doctor_wrongseed_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir)?;
+        let db_path = temp_dir.join("witness.db");
+        let vault_path = temp_dir.join("vault");
+        std::fs::create_dir_all(&vault_path)?;
+
+        let entry = trustee_entry("solo", 6);
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&entry),
+            &db_path.to_string_lossy(),
+            "ruleset:test",
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        )?;
+
+        // A different device seed can't open the (seed-keyed) DB, so doctor fails
+        // rather than falsely reporting healthy with the wrong identity.
+        let result = cmd_doctor(
+            &db_path.to_string_lossy(),
+            &vault_path.to_string_lossy(),
+            "devkey:test:ffffffffffffffffffff",
+        );
+        assert!(
+            result.is_err(),
+            "doctor must fail when the supplied device seed doesn't match the vault"
+        );
         Ok(())
     }
 }
