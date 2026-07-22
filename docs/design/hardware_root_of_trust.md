@@ -5,12 +5,15 @@ the path for every Canary; the irreversible tiers (3–4) are opt-in only.
 Intended Status: Informative (architecture decision record)
 Last Updated: 2026-07-22
 
-> This RFC records *policy and protocol decisions*, not a merge of eFuse-burning
-> code. Every operation it discusses at Tier 3+ is **irreversible silicon** —
-> burning an eFuse cannot be undone, and a wrong step bricks the board
-> permanently. The §8 decisions are settled; even so, the irreversible tiers ship
-> **no executable code** until a specific deployment needs them and the gated
-> operator ceremony in §5.2 is built and reviewed on its own.
+> This RFC records *policy and protocol decisions*, and adds **no code** itself.
+> Every operation it discusses at Tier 3+ is **irreversible silicon** — an eFuse
+> burn cannot be undone, and a wrong step bricks the board permanently. None of
+> the irreversible tiers is wired into the build, the firmware, or the flasher.
+> The one in-repo thing that *can* burn eFuses —
+> `firmware/provisioning/provision_canary.sh` (§2.3) — is **manual, dry-run-first
+> operator tooling** a human runs deliberately; it is never invoked automatically,
+> and §5.2 specifies the gating it still needs (enforced key backup +
+> surrendered-guarantees prompt) before any fleet locks a board.
 
 ## 1. Summary
 
@@ -140,7 +143,7 @@ honest hardware-RoT design must own this, not bury it.
 | **0** (default) | Ed25519 identity in NVS; signed OTA | — | **Yes** | Everyone |
 | **1** | Anti-rollback (A/B + boot self-test/safe-mode) | Yes (software) | Yes | Everyone — should become default |
 | **2** | Software **attestation** (signed challenge-response + firmware self-measurement) | Yes | Yes | Anyone wanting a signed, replay-proof health report |
-| **3** | Flash encryption (**development** mode) + DS-bound identity key | Partly (still reflashable) | Mostly | Physical-theft threat models |
+| **3** | Flash encryption (**development** mode) — identity key protected at rest; DS-bound key optional (§8 #4) | Partly (still reflashable) | Mostly | Physical-theft threat models |
 | **4** | Secure Boot v2 + flash encryption (**release**) + JTAG-off | **No — eFuse** | **No** | High-assurance deployments only |
 
 Tiers 1–2 are the "every Canary should have this" band — pure software, no eFuse,
@@ -279,8 +282,10 @@ Mirroring the honesty of the vault RFC's §5.5
   `securacv.attest/v1` (challenge-response + measurement) on the existing identity
   key; add the read-only "is this device locked?" probe so the flasher refuses
   locked units cleanly. No eFuse.
-- **Phase 3 — key-at-rest protection.** Flash encryption (development mode) +
-  DS-bound attestation key; validated on dev boards; still reflashable.
+- **Phase 3 — key-at-rest protection.** Flash encryption (development mode) so the
+  Ed25519 identity is protected at rest (§8 #4 default); a DS-peripheral-bound RSA
+  key is added *only* where a deployment needs non-extractability against a full
+  flash readout. Validated on dev boards; still reflashable.
 - **Phase 4 — full lockdown ceremony (opt-in, irreversible).** Secure Boot v2 +
   flash encryption (release) + JTAG-off via the gated `provision_canary.sh` flow,
   with enforced key backup and the surrendered-guarantees printout. Ships only for
