@@ -109,7 +109,10 @@ if not wap_reg:
     die("registry.json has no canary-wap device entry")
 
 boards = json.loads(read(BOARDS))
-BOARD_ID = boards.get("device_board", {}).get("canary-wap")
+# device_board maps a device to a LIST of boards (primary first); the WAP's
+# main board is the first. Tolerate the legacy single-string form too.
+_wap_board = boards.get("device_board", {}).get("canary-wap")
+BOARD_ID = _wap_board[0] if isinstance(_wap_board, list) and _wap_board else _wap_board
 if not BOARD_ID:
     die("boards.json device_board has no canary-wap mapping")
 BOARD_NAME_FULL = boards.get("boards", {}).get(BOARD_ID, {}).get("name", "")

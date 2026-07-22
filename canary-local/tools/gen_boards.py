@@ -28,6 +28,7 @@ import subprocess
 from pathlib import Path
 
 import cascadio
+import numpy as np
 import trimesh
 from trimesh.visual import TextureVisuals
 from trimesh.visual.material import PBRMaterial
@@ -44,6 +45,23 @@ def _set_color(geom, rgb):
     geom.visual = TextureVisuals(material=PBRMaterial(baseColorFactor=[*rgb, 1.0]))
 
 
+def _drop_below_y(scene, y_mm):
+    """Strip any solid whose highest point sits below y_mm (raw tessellated
+    millimetres, +Y up). This catches a vendor demo stand/mount that
+    `merge_primitives` fuses into unnamed material buckets — the name-based
+    `drop` can't see those (the merge promotes a SolidWorks feature name over
+    the part name), but the printed stand sits entirely under the board, with a
+    clean air gap above it, so a Y-plane cut removes it and nothing else. The
+    board's own components all live above the cut. World Y = node transform ×
+    vertices × 1000 (the GLB is in metres; the page's glb.js scales the same)."""
+    for name in list(scene.geometry):
+        nodes = scene.graph.geometry_nodes.get(name, [])
+        T = scene.graph.get(nodes[0])[0] if nodes else np.eye(4)
+        v = trimesh.transform_points(scene.geometry[name].vertices, T) * 1000.0
+        if v[:, 1].max() < y_mm:
+            scene.delete_geometry(name)
+
+
 def bake_round_display(scene):
     """SolidWorks STEP export carried no per-solid colours through the
     tessellator, so assign by geometry: the Ø43 discs/ring are the black
@@ -57,6 +75,44 @@ def bake_round_display(scene):
             _set_color(geom, (0.21, 0.22, 0.25))   # glass / screen disc
         else:
             _set_color(geom, (0.14, 0.14, 0.16))   # connectors, socket, parts
+
+
+def _pi_colour(name):
+    """Colour a Raspberry Pi 5 solid from the vendor's own name (its STEP carried
+    no colours). The model is exact; only the colour is ours, keyed off the
+    part label so the assignment is honest, not eyeballed geometry."""
+    n = name.lower()
+    if "plate_raspberry" in n or n.startswith("plate"):
+        return (0.05, 0.20, 0.10)                       # FR-4 PCB green
+    if any(k in n for k in ("ethernet", "usb", "hdmi", "rj45", "port", "jack", "shield")):
+        return (0.72, 0.73, 0.76)                       # bright metal shells
+    if any(k in n for k in ("broadcom", "rp1", "controller", "transceiv", "d9whv", "mxl", "pmic", "chip")):
+        return (0.05, 0.05, 0.06)                       # black silicon
+    if any(k in n for k in ("gpio", "header", "connect", "pin", "gold")):
+        return (0.83, 0.67, 0.27)                       # gold header pins
+    return (0.11, 0.11, 0.13)                            # dark passives / default
+
+
+def bake_raspberry_pi(scene):
+    """The Pi 5 STEP carries no per-solid colours and tessellates to ~12k named
+    solids. Colour each by its vendor name (_pi_colour), then concatenate solids
+    that share a colour into ONE mesh per colour, so the committed GLB is a
+    handful of parts (like every other board) instead of 12k draw calls. Returns
+    a fresh scene; transforms are baked into the vertices so the flattened mesh
+    exports identically to how glb.js re-reads it."""
+    buckets = {}
+    for name in list(scene.geometry):
+        g = scene.geometry[name].copy()
+        nodes = scene.graph.geometry_nodes.get(name, [])
+        if nodes:
+            g.apply_transform(scene.graph.get(nodes[0])[0])
+        buckets.setdefault(_pi_colour(name), []).append(g)
+    out = trimesh.Scene()
+    for colour, geoms in buckets.items():
+        m = trimesh.util.concatenate(geoms)
+        _set_color(m, colour)
+        out.add_geometry(m)
+    return out
 
 
 def build_board(cfg):
@@ -89,8 +145,13 @@ def build_board(cfg):
                 if any(d in name.lower() for d in drop):
                     scene.delete_geometry(name)
 
+        if cfg.get("drop_below_y") is not None and hasattr(scene, "geometry"):
+            _drop_below_y(scene, cfg["drop_below_y"])
+
         if cfg.get("materials") == "round-display":
             bake_round_display(scene)
+        elif cfg.get("materials") == "raspberry-pi":
+            scene = bake_raspberry_pi(scene)
 
         scene.export(str(out))
     finally:
@@ -125,10 +186,13 @@ def main():
         print(f"OK {b['id']}: {facts['dims_mm']} mm · {facts['triangles']:,} tris · "
               f"{facts['parts']} parts · {len(facts['materials'])} materials → {rel}")
 
+    # device -> [board_id, ...] in config order (primary board first). A device
+    # can carry more than one board (e.g. the Watch is a plain XIAO stacked in
+    # the Round Display); board-lab.js renders a picker when the list has >1.
     dev_index = {}
     for bid, e in boards.items():
         for d in e["devices"]:
-            dev_index.setdefault(d, bid)
+            dev_index.setdefault(d, []).append(bid)
 
     doc = {
         "generated_by": "canary-local/tools/gen_boards.py",
