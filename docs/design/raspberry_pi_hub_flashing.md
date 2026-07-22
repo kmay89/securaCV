@@ -191,9 +191,15 @@ Raspberry Pi Imager.
   - *Remaining (needs the Tauri build + new deps):* the I/O that feeds those —
     the TLS download, computing the SHA-256, fetching HA's `.sha256`, and the
     `.xz` decompress.
-- **Step 4 — the guarded write (hardware-validated before merge).** Raw
-  block-device write with progress + read-back verify, behind the Step-1 gate and
-  a typed confirmation. This is the footgun; it does not merge on review alone.
+- **Step 4 — the guarded write (hardware-validated before merge).**
+  - *Authorization gate (landed):* `hub_core::hub_flash::authorize_write` is the
+    only way to obtain a `WriteAuthorization`, and it demands a `VerifiedImage`
+    proof (returned by `verify_download`), a target that still `classify`s as
+    eligible, and explicit confirmation. The write entry point takes a
+    `WriteAuthorization` by value — so "write without verify + an eligible target
+    + confirm" is a compile error, not a bug you can introduce. Pure + host-tested.
+  - *Remaining (the footgun, hardware-validated):* the raw block-device write
+    itself, with progress + read-back verify. Does not merge on review alone.
 - **Step 5 — seed the boot partition.**
   - *Wi-Fi keyfile generator (landed):* `hub_core::hub_seed::wifi_keyfile` builds
     the NetworkManager keyfile HAOS reads at first boot from the SSID +

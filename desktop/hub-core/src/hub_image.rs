@@ -228,10 +228,35 @@ fn normalize_sha256(raw: &str) -> Option<String> {
     is_sha256_hex(token).then(|| token.to_ascii_lowercase())
 }
 
+/// Proof that a *specific* downloaded image verified. A capability token with no
+/// public constructor: the ONLY way to get one is a successful
+/// [`verify_download`]. It records the `image_url` it verified (and the digest
+/// that matched), so the proof is bound to one plan's image — a stale token from
+/// a previously-verified image can't be paired with a different plan. The
+/// write-authorization gate (`hub_flash`) requires one AND checks it matches the
+/// plan being written, so the safety ordering is enforced by the type system,
+/// not by discipline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedImage {
+    image_url: String,
+    sha256: String,
+}
+
+impl VerifiedImage {
+    /// The image URL this proof verified — ties it to a specific [`WritePlan`].
+    pub fn image_url(&self) -> &str {
+        &self.image_url
+    }
+    /// The SHA-256 digest that matched.
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+}
+
 /// Decide whether a downloaded image passes verification, given the SHA-256 the
 /// caller `computed` over the bytes and — for the unpinned case — the checksum
 /// Home Assistant `published` for that asset (`None` if the caller couldn't
-/// fetch it).
+/// fetch it). Returns a [`VerifiedImage`] proof on success.
 ///
 /// The trust order is the point of this function, made once and tested:
 ///   1. If the plan carries a repo-**pinned** hash, that is authoritative — the
@@ -246,7 +271,7 @@ pub fn verify_download(
     plan: &WritePlan,
     computed: &str,
     published: Option<&str>,
-) -> Result<(), VerifyError> {
+) -> Result<VerifiedImage, VerifyError> {
     // Normalize each hash to canonical lowercase hex up front, so the envelope
     // (a `sha256:` prefix, a trailing filename) never masquerades as a mismatch
     // or a malformed value. A hash that can't be normalized fails loudly.
@@ -262,7 +287,10 @@ pub fn verify_download(
                 value: expected_raw.trim().to_string(),
             })?;
         return if computed == expected {
-            Ok(())
+            Ok(VerifiedImage {
+                image_url: plan.image_url.clone(),
+                sha256: computed,
+            })
         } else {
             Err(VerifyError::PinnedMismatch {
                 expected,
@@ -279,7 +307,10 @@ pub fn verify_download(
                     value: published_raw.trim().to_string(),
                 })?;
             if computed == published {
-                Ok(())
+                Ok(VerifiedImage {
+                    image_url: plan.image_url.clone(),
+                    sha256: computed,
+                })
             } else {
                 Err(VerifyError::PublishedMismatch {
                     published,
@@ -430,7 +461,7 @@ mod tests {
 
     #[test]
     fn a_pinned_image_matching_its_hash_passes() {
-        assert_eq!(verify_download(&pinned_plan(SHA_A), SHA_A, None), Ok(()));
+        assert!(verify_download(&pinned_plan(SHA_A), SHA_A, None).is_ok());
     }
 
     #[test]
@@ -447,18 +478,12 @@ mod tests {
     #[test]
     fn a_pinned_hash_is_authoritative_over_any_published_one() {
         // Even if HA's published value would say otherwise, the pinned hash wins.
-        assert_eq!(
-            verify_download(&pinned_plan(SHA_A), SHA_A, Some(SHA_B)),
-            Ok(())
-        );
+        assert!(verify_download(&pinned_plan(SHA_A), SHA_A, Some(SHA_B)).is_ok());
     }
 
     #[test]
     fn an_unpinned_image_matching_the_published_hash_passes() {
-        assert_eq!(
-            verify_download(&unpinned_plan(), SHA_A, Some(SHA_A)),
-            Ok(())
-        );
+        assert!(verify_download(&unpinned_plan(), SHA_A, Some(SHA_A)).is_ok());
     }
 
     #[test]
@@ -483,7 +508,7 @@ mod tests {
     #[test]
     fn hash_comparison_is_case_insensitive() {
         let upper = SHA_A.to_ascii_uppercase();
-        assert_eq!(verify_download(&pinned_plan(SHA_A), &upper, None), Ok(()));
+        assert!(verify_download(&pinned_plan(SHA_A), &upper, None).is_ok());
     }
 
     #[test]
@@ -491,26 +516,17 @@ mod tests {
         // GitHub exposes asset digests as "sha256:<hex>"; that must verify, not
         // be rejected as malformed.
         let published = format!("sha256:{SHA_A}");
-        assert_eq!(
-            verify_download(&unpinned_plan(), SHA_A, Some(&published)),
-            Ok(())
-        );
+        assert!(verify_download(&unpinned_plan(), SHA_A, Some(&published)).is_ok());
         // Case-insensitive prefix too.
         let published_upper = format!("SHA256:{SHA_A}");
-        assert_eq!(
-            verify_download(&unpinned_plan(), SHA_A, Some(&published_upper)),
-            Ok(())
-        );
+        assert!(verify_download(&unpinned_plan(), SHA_A, Some(&published_upper)).is_ok());
     }
 
     #[test]
     fn a_published_checksum_in_sha256sum_file_form_is_accepted() {
         // A `.sha256` file's contents are "<hash>  <filename>".
         let published = format!("{SHA_A}  haos_rpi5-64-18.1.img.xz");
-        assert_eq!(
-            verify_download(&unpinned_plan(), SHA_A, Some(&published)),
-            Ok(())
-        );
+        assert!(verify_download(&unpinned_plan(), SHA_A, Some(&published)).is_ok());
     }
 
     #[test]
