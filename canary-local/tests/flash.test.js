@@ -971,8 +971,9 @@ test("healthVerdict: maps the self-test score to a plain verdict, never a false 
   assert.strictEqual(healthVerdict(50).level, "warn");   // boundary
   assert.strictEqual(healthVerdict(49).level, "attn");
   assert.strictEqual(healthVerdict(0).level, "attn");
-  // unknown / null health must be pending — never shown as a pass
-  for (const h of [-1, null, undefined, NaN, "98"]) {
+  assert.strictEqual(healthVerdict(100).level, "ok");    // top of the valid range
+  // unknown / null / out-of-range health must be pending — never shown as a pass
+  for (const h of [-1, 101, 1000, null, undefined, NaN, "98"]) {
     assert.strictEqual(healthVerdict(h).level, "pending", `health=${String(h)}`);
   }
   for (const h of [98, 65, 20, null]) {

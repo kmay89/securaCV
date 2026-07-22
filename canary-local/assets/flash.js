@@ -2123,11 +2123,15 @@ function phaseMonitor(port, opts = {}) {
       (signed ? "✓ " : "") + "Your Canary just proved itself"));
     // The self-check verdict, front and centre — so a headless board (no screen)
     // SHOWS you it works instead of being a silent dud. Health IS its self-test.
-    if (typeof m.health === "number") {
+    {
+      // Always show the verdict — including "Self-check pending" when health is
+      // null/unknown — so a headless board never falls back to no status at all.
       const v = core.healthVerdict(m.health);
+      const scored = typeof m.health === "number" && Number.isFinite(m.health) &&
+                     m.health >= 0 && m.health <= 100;
       const vb = el("div", `flash-selfcheck flash-selfcheck-${v.level}`);
       vb.append(el("span", "flash-selfcheck-icon", v.icon));
-      vb.append(el("span", null, `${v.label} · ${m.health}/100`));
+      vb.append(el("span", null, scored ? `${v.label} · ${m.health}/100` : v.label));
       idCard.append(vb);
     }
     const facts = el("div", "flash-facts");

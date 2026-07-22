@@ -1196,7 +1196,10 @@ export function postFlashNextStep(product, opts = {}) {
 // the network fleet view later. Pure + host-tested.
 //   Returns { level, icon, label } — level ∈ pending | ok | warn | attn.
 export function healthVerdict(health) {
-  if (typeof health !== "number" || !Number.isFinite(health) || health < 0) {
+  // Fail safe on anything that isn't a real 0-100 score — null, NaN, a negative,
+  // or an out-of-range value from a firmware bug / corrupted serial line. None of
+  // those may read as a pass; they are "pending" (self-test unknown).
+  if (typeof health !== "number" || !Number.isFinite(health) || health < 0 || health > 100) {
     return { level: "pending", icon: "…", label: "Self-check pending" };
   }
   if (health >= 80) return { level: "ok",   icon: "✓", label: "Self-check passed" };
