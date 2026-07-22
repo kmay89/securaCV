@@ -82,13 +82,17 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional Apple codesign/notarize secrets (used automatically if set):
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Codesigning/notarization is OPT-IN via the `ENABLE_MACOS_SIGNING`
+          # repository variable, so a stray or invalid APPLE_* secret can never
+          # break the default (unsigned) build. Set the variable to `true`
+          # (Settings → Secrets and variables → Actions → Variables) once real
+          # Apple certs are in place, and these secrets flow through automatically.
+          APPLE_CERTIFICATE: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_TEAM_ID || '' }}
         with:
           projectPath: desktop-lab
           # Publish on a tag push, or on a manual run when `publish` is checked.
