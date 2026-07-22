@@ -3,7 +3,8 @@
 #
 # Trigger: push a tag like `app-v0.1.0`. (Bump `version` in
 # desktop-lab/package.json AND desktop-lab/src-tauri/tauri.conf.json first.)
-# Also runnable manually (workflow_dispatch) for a test build.
+# Also runnable manually (workflow_dispatch) — leave `publish` unchecked for a
+# throwaway build-only smoke test, or check it to cut a draft release.
 name: Desktop app release
 
 on:
@@ -11,6 +12,18 @@ on:
     tags:
       - "app-v*"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a draft GitHub Release (unchecked = build-only smoke test)"
+        type: boolean
+        default: true
+
+# One release build per ref at a time. A tag build must never be cancelled
+# mid-flight (half-uploaded release assets), so we only auto-cancel the
+# cheap manual smoke-test runs.
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 permissions:
   contents: write
@@ -26,6 +39,9 @@ jobs:
           - platform: ubuntu-22.04      # .AppImage + .deb
             args: ""
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+    env:
+      RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -49,15 +65,18 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: desktop-lab/src-tauri -> target
+          key: ${{ matrix.platform }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: desktop-lab/package-lock.json
 
       - name: Install Tauri CLI
         working-directory: desktop-lab
-        run: npm install
+        run: npm ci
 
       - name: Build & publish
         uses: tauri-apps/tauri-action@v0
@@ -72,7 +91,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: desktop-lab
-          tagName: app-v__VERSION__
+          # Publish on a tag push, or on a manual run when `publish` is checked.
+          # A build-only smoke test (publish unchecked) still compiles both
+          # bundles and uploads them as workflow artifacts below.
+          tagName: ${{ (github.event_name == 'push' || inputs.publish) && 'app-v__VERSION__' || '' }}
           releaseName: "SecuraCV Lab v__VERSION__"
           releaseBody: |
             The **SecuraCV Lab**, as a native app — local-first, nothing phones home.
@@ -84,3 +106,19 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Always attach the built installers to the workflow run itself, so a
+      # build-only smoke test (or a failed publish) still yields testable
+      # artifacts without touching the Releases page.
+      - name: Upload installers as workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: securacv-lab-${{ matrix.platform }}
+          path: |
+            desktop-lab/src-tauri/target/**/release/bundle/dmg/*.dmg
+            desktop-lab/src-tauri/target/**/release/bundle/macos/*.app
+            desktop-lab/src-tauri/target/**/release/bundle/appimage/*.AppImage
+            desktop-lab/src-tauri/target/**/release/bundle/deb/*.deb
+          if-no-files-found: ignore
+          retention-days: 14

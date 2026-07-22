@@ -1,0 +1,11 @@
+# Node
+node_modules/
+
+# Rust / Tauri build output
+src-tauri/target/
+
+# Tauri mobile scaffolding (generated on demand; this app ships desktop only)
+src-tauri/gen/
+
+# Tauri may emit a schema cache here
+src-tauri/.tauri/

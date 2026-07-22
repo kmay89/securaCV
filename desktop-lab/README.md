@@ -85,6 +85,13 @@ the website's Download page sends people.
 git tag app-v0.1.0 && git push origin app-v0.1.0
 ```
 
+You can also run the workflow manually (**Actions → Desktop app release →
+Run workflow**): leave **publish** unchecked for a throwaway build-only smoke
+test, or check it to cut a draft release. Either way both installers are
+attached to the workflow run as artifacts (14-day retention), so you can grab
+and test a build without touching the Releases page. CI installs with
+`npm ci` against the committed `package-lock.json` for reproducible builds.
+
 ## Roadmap
 
 1. **This** — Tauri shell of the Lab, Mac/Linux installers, release pipeline.
