@@ -1,0 +1,111 @@
+# Desktop app — iOS/iPad build (Tauri v2 mobile) for the SecuraCV Lab.
+#
+# Manual-dispatch ONLY, so it never blocks PR/CI. It also no-ops cleanly until
+# iOS is enabled (repo variable ENABLE_IOS_BUILD=true) with Apple signing set up
+# — so a curious "Run workflow" click succeeds with a helpful message rather
+# than failing. Full setup: desktop-lab/MOBILE.md.
+name: Mobile (iOS) build
+
+on:
+  workflow_dispatch:
+    inputs:
+      export_method:
+        description: "Xcode export method"
+        type: choice
+        options: [debugging, release-testing, app-store-connect]
+        default: debugging
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Gate — iOS builds enabled?
+        if: vars.ENABLE_IOS_BUILD != 'true'
+        run: |
+          echo "::notice::iOS builds are not enabled yet — skipping."
+          echo "Set the repo variable ENABLE_IOS_BUILD=true and the Apple signing"
+          echo "secrets (see desktop-lab/MOBILE.md), then re-run this workflow."
+
+      - uses: actions/checkout@v4
+        if: vars.ENABLE_IOS_BUILD == 'true'
+
+      - name: Set up Rust (+ iOS targets)
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Cache Rust build
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-lab/src-tauri -> target
+          key: ios
+
+      - name: Set up Node
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop-lab/package-lock.json
+
+      - name: Install Tauri CLI
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        working-directory: desktop-lab
+        run: npm ci
+
+      - name: Initialize the iOS project
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        working-directory: desktop-lab
+        run: npm run ios:init
+
+      # App Store Connect API-key signing needs the .p8 as a real file on disk;
+      # a secret is a string, so materialize it here and point Tauri at the path.
+      - name: Write App Store Connect API key
+        id: asc_key
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        run: |
+          if [ -z "$APPLE_API_KEY_BASE64" ]; then
+            echo "::error::ENABLE_IOS_BUILD is true but the APPLE_API_KEY_BASE64 secret is empty."
+            echo "Store the base64-encoded App Store Connect .p8 key as APPLE_API_KEY_BASE64 (see desktop-lab/MOBILE.md)."
+            exit 1
+          fi
+          keydir="$RUNNER_TEMP/private_keys"
+          mkdir -p "$keydir"
+          keyfile="$keydir/AuthKey_${APPLE_API_KEY}.p8"
+          echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$keyfile"
+          chmod 600 "$keyfile"
+          echo "path=$keyfile" >> "$GITHUB_OUTPUT"
+
+      - name: Build iOS
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        working-directory: desktop-lab
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ steps.asc_key.outputs.path }}
+        run: npm run ios:build -- --export-method ${{ inputs.export_method }}
+
+      - name: Upload .ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: securacv-lab-ios
+          path: desktop-lab/src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: warn
+          retention-days: 14
