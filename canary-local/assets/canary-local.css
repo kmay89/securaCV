@@ -1789,3 +1789,75 @@ button.ghost.small.bench-ff { font-size: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .finish-picker.cycling .finish-swatch.on { animation: none; }
 }
+
+/* ── The Operator's Bench (operator.html) ─────────────────────────────────── */
+.op-lede { color: #d6d6d6; font-size: 17px; max-width: 680px; margin: 18px 0 0; }
+
+/* the four commands */
+.op-cmds { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.op-cmd { padding: 16px 18px; border-radius: var(--radius); border: 1px solid var(--edge);
+  background: var(--surface); border-top: 3px solid var(--canary-deep); }
+.op-cmd-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.op-cmd-name { background: transparent; padding: 0; color: var(--canary); font-weight: 700; font-size: 16px; }
+.op-cmd-one { color: var(--muted); font-size: 13px; }
+.op-cmd-usage { display: block; margin: 2px 0 10px; padding: 8px 10px; background: #0d0d0f;
+  border: 1px solid var(--edge); border-radius: 8px; color: #c9c9c9; font-size: 12.5px; overflow-x: auto; white-space: nowrap; }
+.op-flags { margin-top: 10px; display: grid; gap: 5px; }
+.op-flag { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 10px; align-items: baseline; }
+.op-flag-k { background: transparent; padding: 0; color: var(--canary-deep); font-size: 12.5px; }
+.op-flag-v { color: #b7b7b7; font-size: 13px; }
+
+/* the ceremony: terminal + live state */
+.op-ceremony { display: grid; grid-template-columns: 1fr 260px; gap: 14px; align-items: stretch; }
+.op-term { background: #0b0b0d; border: 1px solid var(--edge); border-radius: 12px; padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55;
+  max-height: 340px; overflow-y: auto; }
+.op-term-block { padding: 6px 0; border-bottom: 1px dashed #1c1c1f; opacity: 0.5; transition: opacity 0.2s; }
+.op-term-block:last-child { border-bottom: 0; }
+.op-term-block.on { opacity: 1; }
+.op-term-cmd { color: var(--canary); white-space: pre-wrap; word-break: break-word; }
+.op-term-cmd::first-line { font-weight: 600; }
+.op-term-out { color: #b9b9b9; white-space: pre-wrap; word-break: break-word; }
+
+.op-state { background: var(--surface); border: 1px solid var(--edge); border-radius: 12px; padding: 14px; }
+.op-state-h { font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--canary-deep); }
+.op-state-target { color: #ddd; font-size: 15px; margin: 6px 0 12px; }
+.op-state-k { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin: 10px 0 6px; }
+.op-roster { display: flex; flex-direction: column; gap: 5px; }
+.op-tr { padding: 6px 10px; border-radius: 8px; border: 1px solid #202020; color: var(--faint);
+  font-size: 13px; background: #131315; }
+.op-tr.on { border-color: rgba(255, 212, 79, 0.5); color: #f0e6c8; background: #1a1710; font-weight: 600; }
+.op-badge { display: inline-block; margin-top: 4px; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 650; }
+.op-badge-draft { border: 1px dashed #2c2c2c; color: var(--faint); background: transparent; }
+.op-badge-live { border: 1px solid var(--canary); color: #151204; background: var(--canary); }
+
+.op-ctl { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.op-btn { padding: 7px 14px; border-radius: 10px; border: 1px solid var(--edge); background: var(--surface);
+  color: #ddd; font-size: 13px; cursor: pointer; }
+.op-btn:disabled { opacity: 0.4; cursor: default; }
+.op-btn-primary:not(:disabled) { background: var(--canary); border-color: var(--canary); color: #151204; font-weight: 650; }
+.op-dots { display: flex; gap: 6px; flex: 1; justify-content: center; }
+.op-dot { width: 24px; height: 24px; border-radius: 50%; border: 1px solid #2a2a2a; background: transparent;
+  color: var(--faint); font-size: 11px; cursor: pointer; }
+.op-dot.on { border-color: var(--canary); color: var(--canary); }
+.op-note { text-align: center; }
+
+/* doctor checks */
+.op-checks { display: grid; gap: 8px; }
+.op-check { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 12px 14px;
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); align-items: start; }
+.op-check-sec { color: var(--canary-deep); font-weight: 600; font-size: 13px; }
+.op-check-body { display: grid; gap: 3px; }
+.op-check-line { font-size: 13px; }
+.op-ok { color: #8bc98a; }
+.op-warn { color: var(--warn); }
+.op-fail { color: #e0736a; }
+
+/* drill */
+.op-drill { margin-bottom: 12px; }
+.op-drill-steps { margin: 0; padding-left: 20px; color: #c4c4c4; display: grid; gap: 4px; font-size: 14px; }
+
+@media (max-width: 760px) {
+  .op-cmds { grid-template-columns: 1fr; }
+  .op-ceremony { grid-template-columns: 1fr; }
+}
