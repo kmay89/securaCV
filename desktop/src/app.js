@@ -180,6 +180,7 @@ function resetSteps() {
   $("flash-target").textContent = "";
   $("console").classList.add("hidden");
   setStatus("flash-result", "");
+  hideHatchCard();
 }
 
 let lastPortKey = "";
@@ -281,8 +282,10 @@ async function onFlash() {
       baud: state.catalog.flash_baud || 921600,
     });
     setStatus("flash-result", "Done — your Canary is booting its new firmware. ✓", "ok");
+    showHatchCard(state.product);
   } catch (e) {
     setStatus("flash-result", String(e), "err");
+    hideHatchCard();
   } finally {
     unlisten();
     btn.disabled = false;
@@ -337,6 +340,43 @@ function setStatus(id, msg, kind) {
 function enableCard(id) {
   $(id).classList.remove("disabled");
 }
+
+function hideHatchCard() {
+  const card = $("hatch-card");
+  if (card) card.classList.add("hidden");
+}
+
+function showHatchCard(product) {
+  const moment = hatchMoment(product);
+  $("hatch-card").querySelector(".hatch-kicker").textContent = moment.kicker || "Canary hatched";
+  $("hatch-title").textContent = moment.title;
+  $("hatch-body").textContent = moment.body;
+  const steps = $("hatch-steps");
+  steps.innerHTML = "";
+  moment.steps.forEach((step) => {
+    const li = document.createElement("li");
+    li.textContent = step;
+    steps.appendChild(li);
+  });
+  $("hatch-card").classList.remove("hidden");
+}
+
+function hatchMoment(product) {
+  if (product && product.hatch && Array.isArray(product.hatch.steps)) {
+    return product.hatch;
+  }
+  return {
+    kicker: "Canary hatched",
+    title: "Your Canary is on its perch.",
+    body: "Open the device dashboard or Home Assistant and run the first safe self-test.",
+    steps: [
+      "Use the setup path shown for this firmware.",
+      "Run Identify or a self-test so the device proves it is the one in your hand.",
+      "Confirm the state change locally before placing it for normal use."
+    ]
+  };
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
