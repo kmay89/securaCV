@@ -4,7 +4,7 @@
 //! The host owns the single [`Kernel`] handle. For every claim an adapter produces, the host:
 //! 1. optionally drops it if below a confidence floor (a coarse, host-level filter),
 //! 2. deduplicates it within the current time bucket,
-//! 3. builds a [`CandidateEvent`] via [`claim_to_candidate`] (sanitizing the zone), and
+//! 3. builds a [`crate::CandidateEvent`] via [`claim_to_candidate`] (sanitizing the zone), and
 //! 4. submits it through `Kernel::append_event_checked` — **the only egress to the log.**
 //!
 //! There is intentionally **no** method on `AdapterHost` that writes an `Event` or

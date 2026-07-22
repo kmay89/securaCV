@@ -3,7 +3,7 @@
 //!
 //! The CLI flow is stateless (each approval is a file on disk). A *served* UI
 //! needs somewhere to collect approvals as trustees submit them over time, then
-//! hand the assembled set to [`BreakGlass::authorize`]. This module is exactly
+//! hand the assembled set to `BreakGlass::authorize`. This module is exactly
 //! that — and nothing more. It holds **no secrets**: approvals are
 //! self-authenticating Ed25519 signatures over the public request hash, so the
 //! session is safe to keep in memory and is wiped when the request is closed.

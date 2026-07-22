@@ -44,7 +44,7 @@ struct Args {
 enum Command {
     /// Request a timestamp for the current chain head from a TSA over HTTPS
     Request {
-        /// TSA endpoint, e.g. https://freetsa.org/tsr
+        /// TSA endpoint, e.g. <https://freetsa.org/tsr>
         #[arg(long)]
         url: String,
         /// Permit a plaintext http:// TSA endpoint (token integrity does not
