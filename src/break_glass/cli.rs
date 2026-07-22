@@ -564,13 +564,39 @@ fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<
 
                 println!();
                 println!("[ device identity ]");
-                match device_public_key_from_db(&conn) {
-                    Ok(vk) => println!(
-                        "  {} device public key pinned: {}",
+                // Verify the supplied seed actually derives the pinned identity —
+                // not just that *some* key is pinned. When SECURACV_DB_KEY_SEED is
+                // set, the DB key is independent of the device seed, so the DB can
+                // open with the WRONG device seed; without this check `doctor`
+                // would report HEALTHY while `authorize`/`witnessd` (which pin the
+                // identity via Kernel::open) reject the same seed.
+                let seed_vk =
+                    crate::signing_key_from_seed(device_key_seed).map(|sk| sk.verifying_key());
+                match (device_public_key_from_db(&conn), seed_vk) {
+                    (Ok(pinned), Ok(vk)) if pinned.to_bytes() == vk.to_bytes() => println!(
+                        "  {} device public key pinned, matches the supplied seed: {}",
                         DR_OK,
-                        short_fp(&vk.to_bytes())
+                        short_fp(&pinned.to_bytes())
                     ),
-                    Err(_) => {
+                    (Ok(pinned), Ok(vk)) => {
+                        println!(
+                            "  {} device seed mismatch: DB is pinned to {} but the supplied \
+                             seed derives {} — authorize/witnessd will reject this seed",
+                            DR_BAD,
+                            short_fp(&pinned.to_bytes()),
+                            short_fp(&vk.to_bytes())
+                        );
+                        problems += 1;
+                    }
+                    (Ok(pinned), Err(_)) => {
+                        println!(
+                            "  {} device public key pinned ({}) but the supplied seed is unusable",
+                            DR_BAD,
+                            short_fp(&pinned.to_bytes())
+                        );
+                        problems += 1;
+                    }
+                    (Err(_), _) => {
                         println!("  {} no device public key pinned in the database", DR_BAD);
                         problems += 1;
                     }
@@ -639,9 +665,24 @@ fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<
                     let mode = meta.permissions().mode() & 0o777;
                     if mode == 0o600 {
                         println!("  {} permissions are 0600 (owner-only)", DR_OK);
-                    } else {
+                    } else if mode & 0o077 != 0 {
+                        // Group/other can read the vault master secret — a real
+                        // hole: a local user could decrypt sealed evidence with no
+                        // trustee quorum (Invariant V). Hard failure, not a warning.
                         println!(
-                            "  {} permissions are {:o}, expected 0600 — run `chmod 600 {}`",
+                            "  {} permissions are {:o} — the master key is readable beyond its \
+                             owner; anyone with that access can decrypt the vault WITHOUT quorum. \
+                             Run `chmod 600 {}`",
+                            DR_BAD,
+                            mode,
+                            master.display()
+                        );
+                        problems += 1;
+                    } else {
+                        // Owner-only but not exactly 0600 (e.g. 0400/0700): not a
+                        // leak, just unusual — nudge toward the canonical mode.
+                        println!(
+                            "  {} permissions are {:o} (owner-only, but not 0600) — run `chmod 600 {}`",
                             DR_WARN,
                             mode,
                             master.display()
@@ -1359,6 +1400,75 @@ mod tests {
         assert!(
             result.is_err(),
             "doctor must fail on a wrong-size master.key"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn doctor_flags_group_readable_master_key() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_doctor_perms_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir)?;
+        let db_path = temp_dir.join("witness.db");
+        let vault_path = temp_dir.join("vault");
+        std::fs::create_dir_all(&vault_path)?;
+
+        let entry = trustee_entry("solo", 5);
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&entry),
+            &db_path.to_string_lossy(),
+            "ruleset:test",
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        )?;
+
+        // Correctly-sized master key, but group/world-readable (0644) — a hard
+        // problem, because it lets a local user decrypt the vault without quorum.
+        let master = vault_path.join("master.key");
+        std::fs::write(&master, [7u8; 32])?;
+        std::fs::set_permissions(&master, std::fs::Permissions::from_mode(0o644))?;
+        let result = cmd_doctor(
+            &db_path.to_string_lossy(),
+            &vault_path.to_string_lossy(),
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        );
+        assert!(
+            result.is_err(),
+            "a group/world-readable master.key must be a hard failure"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_fails_with_wrong_device_seed() -> Result<()> {
+        let temp_dir =
+            std::env::temp_dir().join(format!("secura_doctor_wrongseed_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir)?;
+        let db_path = temp_dir.join("witness.db");
+        let vault_path = temp_dir.join("vault");
+        std::fs::create_dir_all(&vault_path)?;
+
+        let entry = trustee_entry("solo", 6);
+        cmd_policy_set(
+            1,
+            std::slice::from_ref(&entry),
+            &db_path.to_string_lossy(),
+            "ruleset:test",
+            "devkey:test:a1b2c3d4e5f6a7b8c9d0",
+        )?;
+
+        // A different device seed can't open the (seed-keyed) DB, so doctor fails
+        // rather than falsely reporting healthy with the wrong identity.
+        let result = cmd_doctor(
+            &db_path.to_string_lossy(),
+            &vault_path.to_string_lossy(),
+            "devkey:test:ffffffffffffffffffff",
+        );
+        assert!(
+            result.is_err(),
+            "doctor must fail when the supplied device seed doesn't match the vault"
         );
         Ok(())
     }
