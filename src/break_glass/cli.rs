@@ -140,6 +140,19 @@ enum Command {
         #[arg(long, env = "DEVICE_KEY_SEED")]
         device_key_seed: String,
     },
+
+    /// Rehearse a full break-glass (request → approve → authorize → seal →
+    /// unseal) in a throwaway sandbox — temp database, temp vault, and ephemeral
+    /// trustee keys, all discarded afterward. Proves the machinery works on this
+    /// build before you need it in a real incident. Touches nothing real.
+    Drill {
+        /// Quorum threshold to rehearse (n)
+        #[arg(long, default_value_t = 2)]
+        threshold: u8,
+        /// Number of trustees in the rehearsed quorum (m)
+        #[arg(long, default_value_t = 3)]
+        trustees: u8,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -285,6 +298,13 @@ pub fn run() -> Result<()> {
         } => {
             let _stage = ui.stage("Vault doctor");
             cmd_doctor(&db, &vault_path, &device_key_seed)
+        }
+        Command::Drill {
+            threshold,
+            trustees,
+        } => {
+            let _stage = ui.stage("Break-glass drill");
+            cmd_drill(threshold, trustees)
         }
     }
 }
@@ -719,6 +739,162 @@ fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<
         Err(anyhow!(
             "vault doctor found {} problem(s) — see the report above",
             problems
+        ))
+    }
+}
+
+// Throwaway device seed for the drill's temp database. Fixed is fine: every drill
+// runs in its own fresh tempdir, so the DB (and this seed's derived keys) never
+// escape the sandbox or collide with a real deployment.
+const DRILL_SEED: &str = "devkey:drill:00112233445566778899";
+
+/// Run one request → approve → authorize cycle against the (temp) kernel and
+/// return a signed break-glass token, logging a receipt in the process — exactly
+/// what `authorize` does, minus the file shuffling. `approver_keys` are the first
+/// `n` trustee keys (their ids taken from the policy in the same order).
+fn drill_authorize(
+    kernel: &mut Kernel,
+    policy: &crate::break_glass::QuorumPolicy,
+    envelope: &str,
+    ruleset_hash: [u8; 32],
+    approver_keys: &[SigningKey],
+) -> Result<BreakGlassToken> {
+    let bucket = TimeBucket::now_10min()?;
+    let request = UnlockRequest::new(
+        envelope,
+        ruleset_hash,
+        "DRILL — rehearsal, not a real disclosure",
+        bucket,
+    )?;
+    let approvals: Vec<Approval> = approver_keys
+        .iter()
+        .zip(policy.trustees.iter())
+        .map(|(key, trustee)| Approval::signed(trustee.id.clone(), request.request_hash(), key))
+        .collect();
+    let (result, receipt) = BreakGlass::authorize(policy, &request, &approvals, bucket);
+    let receipt_entry_hash = kernel.log_break_glass_receipt(&receipt, &approvals)?;
+    let mut token = result.map_err(|e| anyhow!("drill quorum authorization failed: {}", e))?;
+    kernel.sign_break_glass_token(&mut token, receipt_entry_hash)?;
+    Ok(token)
+}
+
+/// Rehearse the whole break-glass path in an isolated sandbox and report whether
+/// it works end to end. Everything — the kernel DB, the vault, the trustee keys —
+/// is ephemeral and discarded when the temp dir drops, so this touches nothing
+/// real. Exits non-zero (via the returned `Err`) if any step fails.
+fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
+    if threshold == 0 || trustees == 0 || threshold > trustees {
+        return Err(anyhow!(
+            "drill needs 1 <= threshold <= trustees (got {}-of-{})",
+            threshold,
+            trustees
+        ));
+    }
+
+    println!("=== Break-glass drill ===");
+    println!(
+        "Rehearsing a {}-of-{} quorum end to end in a throwaway sandbox — temp DB, \
+         temp vault, ephemeral keys, all discarded after. Nothing real is touched.",
+        threshold, trustees
+    );
+    println!();
+
+    let temp = tempfile::tempdir()?;
+    let db_str = temp.path().join("witness.db").to_string_lossy().to_string();
+    let vault_path = temp.path().join("vault");
+
+    let cfg = kernel_config(&db_str, "ruleset:drill", DRILL_SEED);
+    let ruleset_hash = cfg.ruleset_hash;
+    let envelope = "drill-rehearsal";
+
+    // Authorize both tokens (seal + unseal) up front, then drop the kernel so the
+    // vault side reads the receipts through its own connection — no two writers.
+    let device_vk;
+    let crypto_mode;
+    let mut seal_token;
+    let mut unseal_token;
+    {
+        let mut kernel = Kernel::open(&cfg)?;
+        device_vk = kernel.device_verifying_key();
+
+        let trustee_keys: Vec<SigningKey> = (0..trustees)
+            .map(|i| SigningKey::from_bytes(&[0xA0u8.wrapping_add(i); 32]))
+            .collect();
+        let entries: Vec<crate::break_glass::TrusteeEntry> = trustee_keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| crate::break_glass::TrusteeEntry {
+                id: TrusteeId::new(&format!("drill-trustee-{}", i + 1)),
+                public_key: key.verifying_key().to_bytes(),
+            })
+            .collect();
+        let policy = crate::break_glass::QuorumPolicy::new(threshold, entries)?;
+        kernel.set_break_glass_policy(&policy)?;
+        crypto_mode = policy.vault.crypto_mode;
+        println!(
+            "  {} set up a {}-of-{} sandbox quorum",
+            DR_OK, policy.n, policy.m
+        );
+
+        let approvers = &trustee_keys[..threshold as usize];
+        seal_token = drill_authorize(&mut kernel, &policy, envelope, ruleset_hash, approvers)?;
+        unseal_token = drill_authorize(&mut kernel, &policy, envelope, ruleset_hash, approvers)?;
+        println!(
+            "  {} {} trustees approved; two break-glass tokens minted (one to seal, one to unseal)",
+            DR_OK, threshold
+        );
+    }
+
+    let vault = Vault::new(VaultConfig {
+        local_path: vault_path,
+        crypto_mode,
+    })?;
+    let conn = open_kernel_db_keyed(&db_str, DRILL_SEED)?;
+    #[cfg(feature = "pqc-signatures")]
+    let pq_pk = crate::device_pq_public_key_from_db(&conn).ok();
+    #[cfg(not(feature = "pqc-signatures"))]
+    let pq_pk: Option<crate::crypto::signatures::PqPublicKey> = None;
+
+    let payload =
+        b"SecuraCV break-glass drill \xE2\x80\x94 throwaway payload, safe to discard".to_vec();
+    let mut raw = payload.clone();
+    vault.seal(
+        envelope,
+        &mut seal_token,
+        ruleset_hash,
+        &mut raw,
+        &device_vk,
+        |hash| break_glass_receipt_outcome_for_verifier(&conn, &device_vk, hash, pq_pk.as_ref()),
+    )?;
+    println!("  {} sealed a throwaway envelope", DR_OK);
+
+    // Burn-first, exactly as `unseal` does, then recover.
+    crate::consume_break_glass_token_durably(&conn, &unseal_token)?;
+    let clear = vault.unseal(
+        envelope,
+        &mut unseal_token,
+        ruleset_hash,
+        &device_vk,
+        |hash| break_glass_receipt_outcome_for_verifier(&conn, &device_vk, hash, pq_pk.as_ref()),
+    )?;
+    println!("  {} unsealed it with a fresh quorum token", DR_OK);
+
+    println!();
+    if clear == payload {
+        println!(
+            "  {} recovered payload matches the original, byte for byte",
+            DR_OK
+        );
+        println!();
+        println!("Result: DRILL PASSED — break-glass works end to end on this build.");
+        Ok(())
+    } else {
+        println!(
+            "  {} recovered payload does NOT match what was sealed",
+            DR_BAD
+        );
+        Err(anyhow!(
+            "drill failed: the unsealed payload did not match the sealed payload"
         ))
     }
 }
@@ -1471,5 +1647,29 @@ mod tests {
             "doctor must fail when the supplied device seed doesn't match the vault"
         );
         Ok(())
+    }
+
+    #[test]
+    fn drill_completes_end_to_end() -> Result<()> {
+        // A 2-of-3 rehearsal runs the whole request→approve→authorize→seal→unseal
+        // path in a throwaway sandbox and must succeed on a healthy build.
+        cmd_drill(2, 3)?;
+        Ok(())
+    }
+
+    #[test]
+    fn drill_with_single_trustee_quorum() -> Result<()> {
+        // 1-of-1 is the smallest valid quorum and must also round-trip.
+        cmd_drill(1, 1)?;
+        Ok(())
+    }
+
+    #[test]
+    fn drill_rejects_impossible_quorum() {
+        assert!(cmd_drill(0, 3).is_err(), "threshold 0 is invalid");
+        assert!(
+            cmd_drill(4, 3).is_err(),
+            "threshold greater than trustee count is invalid"
+        );
     }
 }

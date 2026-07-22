@@ -174,6 +174,15 @@ jobs:
           ( cd /tmp/release && { sha256sum manifest-flash.json; sha256sum ./*-factory.bin 2>/dev/null || true; } > flasher-sha256sums.txt )
           ls -la /tmp/release
 
+      # No build-provenance attestation on THIS path on purpose. It is a manual
+      # (workflow_dispatch) rebuild that compiles a *tagged* firmware with
+      # *today's* packaging tooling (the overlay above), so the workflow run's
+      # source ref (the dispatch commit) doesn't equal the firmware's tag — a
+      # single SLSA statement can't honestly name one source. The normal signed
+      # release (firmware-release.yml) builds the SAME factory images from the
+      # tag itself and attests them accurately; this out-of-band path keeps the
+      # SHA-256 + same-origin trust it always had (docs/browser_flasher.md
+      # § Trust model, docs/supply_chain_transparency.md § Scope).
       - name: Attach to the release
         # Adds/updates the flasher assets on the tag's release, creating the
         # release if it doesn't exist yet (the pre-key path). Existing release
