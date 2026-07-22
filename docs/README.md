@@ -51,6 +51,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [HA + Frigate over MQTT, worked example](integrations/home-assistant-frigate-mqtt.md)
 - [MR60BHA2 radar via ESPHome](integrations/mr60bha2_esphome.md)
 - Onboarding flows: [multiple Canaries](onboarding_multiple_canaries.md) · [the unified wizard](onboarding_unified_wizard.md) · [workflow evaluation](onboarding_workflow_evaluation.md)
+- [The one-flash Pi hub (design)](design/raspberry_pi_hub_flashing.md) — RFC: type Wi-Fi, write the card, boot a self-healing Home Assistant hub — built on HAOS so it never rots
 
 </details>
 
