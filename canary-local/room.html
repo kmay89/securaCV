@@ -890,7 +890,7 @@
       if(selPad) scene.insertBefore(spot,selPad); else scene.appendChild(spot);
     }
     Array.prototype.forEach.call(document.querySelectorAll('.chip'),function(c){c.classList.toggle('on',c.getAttribute('data-id')===String(s.id));});
-    var toolHtml=s.tools.map(function(t){return '<a href="'+t[3]+'" target="_blank" rel="noopener"><span class="em">'+t[0]+'</span><span class="tt"><b>'+t[1]+'</b><span>'+t[2]+'</span></span></a>';}).join('');
+    var toolHtml=s.tools.map(function(t){return '<a href="'+t[3]+'" data-slug="'+(t[4]||'')+'" target="_blank" rel="noopener"><span class="em">'+t[0]+'</span><span class="tt"><b>'+t[1]+'</b><span>'+t[2]+'</span></span></a>';}).join('');
     var nextHtml=s.next?'<div class="next"><span class="arw">→</span><span>Next station · <b>'+s.next+'</b></span></div>':'<div class="next"><span class="arw">✓</span><span><b>The line is complete — the fleet grows from here.</b></span></div>';
     var forkHtml=s.forkNote?'<p class="fork-note">⑃ '+s.forkNote+'</p>':'';
     panel.innerHTML='<div class="panel-anim"><div class="panel-head" style="--pc:'+s.hex+'"><div class="kick">'+s.kick+'</div><h2><em>'+s.verb+'</em> '+s.title+'</h2><p class="give">'+s.give+'</p></div><div class="panel-body" style="--pc:'+s.hex+'"><div class="lbl">Open the bench</div><div class="tool-list">'+toolHtml+'</div>'+forkHtml+nextHtml+'</div></div>';
@@ -997,6 +997,25 @@
   soundBtn.addEventListener('click',function(){ var m=!SFX.isMuted(); SFX.setMuted(m); soundBtn.textContent=m?'🔇 Muted':'🔊 Sound'; soundBtn.setAttribute('aria-pressed',String(!m)); if(!m) SFX.pick(); });
   ['pointerdown','keydown'].forEach(function(ev){ document.addEventListener(ev,function(){ SFX.resume(); },{once:true}); });
 
+  // Manifest-drive the station tool lists from build-line.json — the Lab's single
+  // source of truth. Falls back to the hardcoded tools if it can't load, so the
+  // room still works standalone/offline. Rename or add a bench there → it shows here.
+  fetch('build-line.json',{cache:'no-cache'}).then(function(r){return r.ok?r.json():null;}).then(function(M){
+    if(!M||!M.room) return;
+    var IDX={};
+    M.stages.forEach(function(st){
+      (st.tracks?st.tracks.reduce(function(a,t){return a.concat(t.benches);},[]):(st.benches||[])).forEach(function(b){
+        IDX[b.slug]={noun:b.noun,desc:b.desc||'',url:b.lab,lab:true,slug:b.slug};
+      });
+      (st.site||[]).forEach(function(s){ if(s.slug) IDX[s.slug]={noun:s.noun,desc:'',url:(s.href&&s.href.charAt(0)==='/'?'https://securacv.com'+s.href:s.href),lab:false}; });
+    });
+    Object.keys(M.room).forEach(function(id){
+      var st=byId[id]; if(!st) return;
+      var t=M.room[id].map(function(m){ var x=IDX[m.slug]; return x?[m.e,x.noun,x.desc,x.url,x.lab?x.slug:'']:null; }).filter(Boolean);
+      if(t.length) st.tools=t;
+    });
+  }).catch(function(){});
+
   draw();
 })();
 </script>
@@ -1011,11 +1030,14 @@
   var FILE2SLUG = {'boards':'boards','vision':'vision','sense':'sense','senselab':'sense','homeassistant':'hub','house':'house','scenes':'house','vault':'vault','workshop':'workshop','start':'start','flash':'flash','wap':'first-boot'};
   document.addEventListener('click', function(e){
     var a = e.target.closest && e.target.closest('a[href]'); if(!a) return;
-    var href = a.getAttribute('href') || '';
-    if (href.indexOf('canary-local/') === -1) return;
-    var slug=null, m=href.match(/canary-local\/([a-z0-9_-]+)\.html/i);
-    if (m) slug = FILE2SLUG[m[1].toLowerCase()] || null;
-    else if (/canary-local\/?($|[#?])/.test(href)) slug='fleet';
+    var slug = a.getAttribute('data-slug') || null;   // manifest-driven tools carry their slug
+    if (!slug){                                        // fall back to parsing a canary-local URL
+      var href = a.getAttribute('href') || '';
+      if (href.indexOf('canary-local/') === -1) return;
+      var m = href.match(/canary-local\/([a-z0-9_-]+)\.html/i);
+      if (m) slug = FILE2SLUG[m[1].toLowerCase()] || null;
+      else if (/canary-local\/?($|[#?])/.test(href)) slug = 'fleet';
+    }
     if (slug){ e.preventDefault(); parent.postMessage({source:'canary-room', slug:slug}, '*'); }
   }, true);
 })();

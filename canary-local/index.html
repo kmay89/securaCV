@@ -9,7 +9,18 @@
   <!-- The Lab's front door is now the adaptive shell (lab.html): the isometric
        workshop as Overview, the six-stage build line around it. Redirect there. -->
   <meta http-equiv="refresh" content="0; url=lab.html" />
-  <script>location.replace("lab.html");</script>
+  <script>
+    // Device deep-links (index.html#<device-id>) historically opened a card
+    // sheet on this page; that page is now fleet.html, so forward a simple id
+    // hash there. Everything else goes to the shell. The hash is validated
+    // against a strict pattern, so only a bare id is ever appended to a fixed
+    // same-page path — no untrusted value controls the destination.
+    (function () {
+      var h = location.hash;
+      if (h && /^#[\w-]+$/.test(h)) location.replace("fleet.html" + h);
+      else location.replace("lab.html");
+    })();
+  </script>
   <style>
     body{font-family:-apple-system,BlinkMacSystemFont,system-ui,"Inter",sans-serif;margin:0;
       display:grid;place-items:center;min-height:100vh;background:#fafaf9;color:#52525b;letter-spacing:-.01em;}

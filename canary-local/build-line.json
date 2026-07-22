@@ -7,6 +7,16 @@
     "nav": "stage-tabs",
     "note": "The desktop app renders the six stages below as a native toolbar tab bar; each tab shows that stage's benches. The isometric room is the default 'Overview' surface."
   },
+  "$room_note": "Maps each isometric-room station (room.html) to the benches/site links it opens, by slug + emoji. The room reads this so its tool lists stay in lockstep with the manifest; it falls back to its own hardcoded tools if the manifest can't load.",
+  "room": {
+    "1":  [{ "e": "🐦", "slug": "fleet" }, { "e": "🧭", "slug": "choose" }],
+    "2":  [{ "e": "🧱", "slug": "workshop" }, { "e": "💎", "slug": "see-it-in-3d" }],
+    "3":  [{ "e": "📌", "slug": "boards" }, { "e": "🎛️", "slug": "test-bench" }],
+    "4a": [{ "e": "📷", "slug": "vision" }],
+    "4b": [{ "e": "📡", "slug": "sense" }],
+    "5":  [{ "e": "🏠", "slug": "hub" }, { "e": "🏡", "slug": "house" }],
+    "6":  [{ "e": "🔐", "slug": "vault" }, { "e": "🧠", "slug": "how-it-works" }]
+  },
   "onramp": {
     "noun": "Get started",
     "slug": "start",
