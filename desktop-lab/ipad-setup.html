@@ -369,13 +369,26 @@
         </div>
         <div class="cmd">
           <button class="copy" type="button">⧉ Copy</button>
-          <pre><code><span class="c"># signed build for a real iPad / TestFlight —</span>
+          <pre><code><span class="c"># put it on YOUR OWN iPad (free Apple ID) —</span>
 <span class="c"># replace XXXXXXXXXX with your 10-character Apple Team ID</span>
 <span class="p">$</span> <span class="k">export</span> APPLE_DEVELOPMENT_TEAM=<span class="v">XXXXXXXXXX</span>
-<span class="p">$</span> npm run ios:build -- --export-method <span class="v">app-store-connect</span></code></pre>
+<span class="p">$</span> npm run ios:build -- --export-method <span class="v">debugging</span></code></pre>
         </div>
         <div class="expect"><span class="i">✓</span><span>Success looks like: it finishes with a path to an
           <b><code>.ipa</code></b> file. That's your installable app.</span></div>
+        <div style="margin-top:12px;font-size:13.8px;color:var(--ink-2)">
+          <b style="color:var(--ink)">Match the <code>--export-method</code> to where it's going</b> — the
+          wrong one fails signing. <code>debugging</code> uses a free <b>Apple Development</b> certificate
+          (your own iPad); TestFlight and the App Store need the paid <b>$99/yr Apple Developer Program</b>:
+        </div>
+        <div class="caps" style="margin-top:10px">
+          <div class="caprow"><span class="st y">FREE</span><span><span class="cn"><code>debugging</code></span>
+            <span class="cd"> — your own iPad, 7-day install. This is the command above.</span></span></div>
+          <div class="caprow"><span class="st n">PAID</span><span><span class="cn"><code>release-testing</code></span>
+            <span class="cd"> — TestFlight (Apple Distribution cert).</span></span></div>
+          <div class="caprow"><span class="st n">PAID</span><span><span class="cn"><code>app-store-connect</code></span>
+            <span class="cd"> — the App Store (Apple Distribution cert).</span></span></div>
+        </div>
         <details class="fix">
           <summary><span class="caret">▶</span> If it goes wrong</summary>
           <div class="fixbody"><dl>

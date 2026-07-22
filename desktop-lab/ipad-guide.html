@@ -296,12 +296,15 @@
         <li>
           <div class="st-h">Produce an installable build</div>
           <div class="st-b">An unsigned <code>.ipa</code> for the Simulator needs nothing extra. For a
-            <strong>signed</strong> build to a real iPad or TestFlight, set your Team ID and let Tauri sign:</div>
+            <strong>signed</strong> build, set your Team ID and match <code>--export-method</code> to the
+            destination — <code>debugging</code> (free Apple Development cert) for your own iPad,
+            <code>release-testing</code> for TestFlight, <code>app-store-connect</code> for the App Store
+            (the last two need the paid Program's Apple Distribution cert):</div>
           <pre><code><span class="p">$</span> npm run ios:build                       <span class="c"># unsigned .ipa</span>
 
-<span class="c"># signed (device / TestFlight):</span>
+<span class="c"># signed to your own iPad (free Apple ID):</span>
 <span class="p">$</span> <span class="k">export</span> APPLE_DEVELOPMENT_TEAM=<span class="v">XXXXXXXXXX</span>   <span class="c"># your 10-char Team ID</span>
-<span class="p">$</span> npm run ios:build -- --export-method <span class="v">app-store-connect</span></code></pre>
+<span class="p">$</span> npm run ios:build -- --export-method <span class="v">debugging</span></code></pre>
         </li>
       </ol>
 

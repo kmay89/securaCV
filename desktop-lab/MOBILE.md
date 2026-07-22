@@ -50,10 +50,19 @@ regenerate in CI (the workflow does the latter).
 npm run ios:build    # tauri ios build — produces an .ipa
 ```
 
-For a **signed** build (device / TestFlight), set your team + let Tauri sign:
+For a **signed** build, set your team and match `--export-method` to the
+destination (the wrong one fails signing):
 
 ```sh
 export APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX   # your 10-char Team ID
+
+# your own iPad — free Apple ID, Apple Development cert, 7-day install:
+npm run ios:build -- --export-method debugging
+
+# TestFlight (paid Program, Apple Distribution cert):
+npm run ios:build -- --export-method release-testing
+
+# App Store (paid Program, Apple Distribution cert):
 npm run ios:build -- --export-method app-store-connect
 ```
 
