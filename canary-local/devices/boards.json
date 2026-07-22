@@ -12,6 +12,9 @@
   "canary-display-watch": [
    "seeed_round_display_xiao",
    "seeed_xiao_esp32s3"
+  ],
+  "canary-display-dash": [
+   "waveshare_4_3b"
   ]
  },
  "boards": {
@@ -1006,6 +1009,281 @@
    "blurb": "85 x 56 mm. The Raspberry Pi 5 that runs Home Assistant as the fleet's hub \u2014 the Canaries report to it over the network (MQTT), so almost nothing wires to its GPIO. Shown here for completeness: the 40-pin GPIO header, the stacked USB-A / Ethernet cluster, dual micro-HDMI, and the USB-C power in.",
    "doc": "https://www.raspberrypi.com/documentation/computers/raspberry-pi.html",
    "provenance": "Raspberry Pi Ltd mechanical CAD (STEP). Redistributed here as the board's source of truth for the local viewer; see boards/vendor/README.md. The STEP carried no per-solid colours, so materials are assigned by the vendor's own part names (PCB green, metal shells on the USB/Ethernet/HDMI shields, gold on the GPIO header, black silicon) \u2014 the shape is the vendor's exact model, only the colour is ours. The Pi 5 is the Home Assistant hub the Canary fleet reports to (docs / homeassistant.html), not a Canary device board \u2014 it lives in the Board Room only, tessellated coarser (tol 0.35 mm) to keep the committed mesh reasonable."
+  },
+  "waveshare_4_3b": {
+   "name": "Waveshare ESP32-S3-Touch-LCD-4.3B",
+   "vendor": "Waveshare",
+   "mpn": "ESP32-S3-Touch-LCD-4.3B",
+   "devices": [
+    "canary-display-dash"
+   ],
+   "glb": "boards/waveshare_4_3b.glb",
+   "dims_mm": [
+    118,
+    38.9,
+    79
+   ],
+   "triangles": 2432,
+   "parts": 11,
+   "materials": [
+    {
+     "color": "#d4ab45",
+     "triangles": 1024
+    },
+    {
+     "color": "#0e0f11",
+     "triangles": 456
+    },
+    {
+     "color": "#282a2e",
+     "triangles": 352
+    },
+    {
+     "color": "#1b1c1f",
+     "triangles": 144
+    },
+    {
+     "color": "#0f131a",
+     "triangles": 92
+    },
+    {
+     "color": "#b2b2ab",
+     "triangles": 76
+    },
+    {
+     "color": "#47b857",
+     "triangles": 64
+    },
+    {
+     "color": "#db9e2e",
+     "triangles": 64
+    },
+    {
+     "color": "#d13d38",
+     "triangles": 64
+    },
+    {
+     "color": "#3e8d35",
+     "triangles": 60
+    },
+    {
+     "color": "#b8bac2",
+     "triangles": 36
+    }
+   ],
+   "pose": {
+    "rx": -0.3,
+    "ry": 0.06,
+    "dist_factor": 1.9
+   },
+   "pads": {
+    "_comment": "The 16 screw terminals laid down by build_waveshare_4_3b at 3.81 mm pitch on the REAR (\u2212Y) face near the bottom (\u2212Z) edge \u2014 opposite the screen, as on the real board \u2014 the same geometry the anchors below read from. Order is the rear silk, VIN end (\u2212X) to DI1 end (+X); CAN is L,H and RS485 is B,A per firmware/boards/waveshare-esp32s3-lcd43b. The three grounds are group-qualified (the Isolated I/O side is opto-isolated, NOT common with the 6-36 V or I2C ground) so wiring targets stay unambiguous.",
+    "VIN": [
+     -28.575,
+     -13.0,
+     -25.9
+    ],
+    "GND-pwr": [
+     -24.765,
+     -13.0,
+     -25.9
+    ],
+    "VOUT": [
+     -20.955,
+     -13.0,
+     -25.9
+    ],
+    "GND-i2c": [
+     -17.145,
+     -13.0,
+     -25.9
+    ],
+    "SDA": [
+     -13.335,
+     -13.0,
+     -25.9
+    ],
+    "SCL": [
+     -9.525,
+     -13.0,
+     -25.9
+    ],
+    "L": [
+     -5.715,
+     -13.0,
+     -25.9
+    ],
+    "H": [
+     -1.905,
+     -13.0,
+     -25.9
+    ],
+    "B": [
+     1.905,
+     -13.0,
+     -25.9
+    ],
+    "A": [
+     5.715,
+     -13.0,
+     -25.9
+    ],
+    "DO0": [
+     9.525,
+     -13.0,
+     -25.9
+    ],
+    "DO1": [
+     13.335,
+     -13.0,
+     -25.9
+    ],
+    "DI COM": [
+     17.145,
+     -13.0,
+     -25.9
+    ],
+    "GND-io": [
+     20.955,
+     -13.0,
+     -25.9
+    ],
+    "DI0": [
+     24.765,
+     -13.0,
+     -25.9
+    ],
+    "DI1": [
+     28.575,
+     -13.0,
+     -25.9
+    ]
+   },
+   "pinout": [
+    {
+     "label": "6-36 V power in",
+     "pin": "VIN / GND-pwr",
+     "gpio": "isolated DC",
+     "use": "Terminal supply, board silk \u201c6~36V\u201d (product page says 7-36 V \u2014 stay \u22657 V). Or power over USB-C.",
+     "anchors": [
+      [
+       -28.575,
+       -13.0,
+       -25.9
+      ],
+      [
+       -24.765,
+       -13.0,
+       -25.9
+      ]
+     ]
+    },
+    {
+     "label": "I2C sensor header",
+     "pin": "VOUT / GND-i2c / SDA / SCL",
+     "gpio": "GPIO8/9",
+     "use": "The dev-playground sensor port \u2014 shares the GT911 touch + CH422G expander bus; VOUT is 5 V or 3V3 by resistor option (default 5 V).",
+     "anchors": [
+      [
+       -20.955,
+       -13.0,
+       -25.9
+      ],
+      [
+       -17.145,
+       -13.0,
+       -25.9
+      ],
+      [
+       -13.335,
+       -13.0,
+       -25.9
+      ],
+      [
+       -9.525,
+       -13.0,
+       -25.9
+      ]
+     ]
+    },
+    {
+     "label": "CAN",
+     "pin": "H / L",
+     "gpio": "GPIO15/16",
+     "use": "Dedicated TWAI transceiver; jumper-selectable 120\u03a9 terminator.",
+     "anchors": [
+      [
+       -1.905,
+       -13.0,
+       -25.9
+      ],
+      [
+       -5.715,
+       -13.0,
+       -25.9
+      ]
+     ]
+    },
+    {
+     "label": "RS485",
+     "pin": "A / B",
+     "gpio": "GPIO43/44",
+     "use": "Auto-direction \u2014 shares the CH343 UART console pins, so logging and RS485 are mutually exclusive.",
+     "anchors": [
+      [
+       5.715,
+       -13.0,
+       -25.9
+      ],
+      [
+       1.905,
+       -13.0,
+       -25.9
+      ]
+     ]
+    },
+    {
+     "label": "Isolated I/O",
+     "pin": "DO0 / DO1 / DI COM / GND-io / DI0 / DI1",
+     "gpio": "CH422G",
+     "use": "Optocoupled: DO0/DO1 open-drain sink \u2264450 mA (external supply); DI0/DI1 read 5-36 V referenced to DI COM, never board GND.",
+     "anchors": [
+      [
+       9.525,
+       -13.0,
+       -25.9
+      ],
+      [
+       13.335,
+       -13.0,
+       -25.9
+      ],
+      [
+       17.145,
+       -13.0,
+       -25.9
+      ],
+      [
+       20.955,
+       -13.0,
+       -25.9
+      ],
+      [
+       24.765,
+       -13.0,
+       -25.9
+      ],
+      [
+       28.575,
+       -13.0,
+       -25.9
+      ]
+     ]
+    }
+   ],
+   "blurb": "4.3\" 800x480 IPS touch panel in a boxed ESP32-S3 with a field-wiring terminal block \u2014 no raw GPIO is broken out, so every wire lands on an isolated, buffered or bused interface (isolated DI/DO, RS485, CAN, an I2C sensor header, 6-36 V in). That is what makes it the Canary Dash / dev-playground host. This is a reverse-engineered dimensional model (no vendor CAD); the 16-terminal block matches the firmware silk exactly.",
+   "doc": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4.3B",
+   "provenance": "Reverse-engineered DIMENSIONAL MODEL \u2014 not vendor CAD (Waveshare publishes no STEP for this board). Built procedurally by tools/gen_boards.py (build_waveshare_4_3b): a rounded ABS shell with a boolean-cut screen pocket and edge I/O, a glossy off 4.3in IPS panel, and the green 16-position pluggable terminal. Proportions and the exposed-feature layout follow MaffooClock's published shell for the 5in sibling (ESP32-S3-Touch-LCD-5/5B, CC-BY-NC-SA) used as a DIMENSIONAL REFERENCE ONLY \u2014 no third-party mesh is copied or redistributed \u2014 scaled to the 4.3B and cross-checked against firmware/boards/waveshare-esp32s3-lcd43b and the owner's photos. The terminal pitch (3.81 mm), silk order and group labels are exact to the firmware silk; the case and screen are measured approximations. Honest about what it is, like the Round Display's geometry-assigned materials."
   }
  }
 }

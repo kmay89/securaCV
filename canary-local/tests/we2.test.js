@@ -292,8 +292,9 @@ test("flash.json we2_module mirrors the engine's own constants", async () => {
   assert.strictEqual(m.usb_pid, asHex(WE2.USB_PID), "catalog USB pid ≠ engine USB_PID");
   // the erase pass must clear the very slot we then burn (Seeed's flasher does)
   assert.ok(WE2.ERASE_SLOTS.includes(WE2.MODEL_ADDR), "MODEL_ADDR not among ERASE_SLOTS");
-  // the flasher fetches the pinned model from the LATEST release, always
-  assert.match(m.manifest_url, /\/releases\/latest\/download\/manifest-vision-model\.json$/);
+  // the flasher fetches the pinned model from the firmware release TAG
+  // (fw-v<train>), never /latest/ — a native-app release would shadow it
+  assert.match(m.manifest_url, /\/releases\/download\/fw-v[\d.]+\/manifest-vision-model\.json$/);
 });
 
 // The workflow that stamps the manifest must read the burn address FROM
