@@ -23,6 +23,8 @@
 
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
          formatDetections, detectionSummary, WE2_CLASSES } from "./we2-core.js";
+import { visionSession } from "./vision-session.js";
+import { visionChecklistCard } from "./vision-checklist.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -326,6 +328,10 @@ function phaseModuleFlash(ctx, s, job) {
     });
     try {
       await f.flashModel(job.bytes);
+      // Two-port Vision: the camera module's model is now burned — record it
+      // (once, here at the completion transition) so the done screen can insist
+      // on both ports and celebrate only when both are in.
+      visionSession.markDone("we2");
       ctx.setPhase(phaseModuleDone(ctx, s, job));
     } catch (e) {
       log.textContent += "✗ " + e.message + "\n";
@@ -350,6 +356,18 @@ function phaseModuleDone(ctx, s, job) {
 
   const at = makeAtClient(s.t);
   at.start();
+
+  // Two-port guardrail: this camera module is done — show whether the ESP32
+  // Vision firmware is too, and celebrate only when both ports are in. If the
+  // board's firmware still needs doing, route straight to it (closes this port).
+  box.append(visionChecklistCard(visionSession.parts(), {
+    onFlashOther: async () => {
+      try { await at.cmd("BREAK", { timeoutMs: 600 }); } catch { /* leaving anyway */ }
+      try { at.stop(); } catch { /* leaving anyway */ }
+      try { await s.t.close(); } catch { /* leaving anyway */ }
+      ctx.back();
+    },
+  }));
 
   (async () => {
     // give the app firmware a beat to come up, then handshake

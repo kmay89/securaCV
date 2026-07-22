@@ -1248,6 +1248,37 @@ export function visionCompletion(parts) {
   };
 }
 
+// Is this catalog product the ESP32 half of a two-port Canary Vision? (It needs
+// the WE2 camera module flashed too.) Recognized from the id, the same loose
+// signal postFlashNextStep uses, so the done screen can insist on both ports.
+export function isVisionBoard(product) {
+  return /vision/.test((product && product.id) || "");
+}
+
+// Display-ready checklist for the two-port Vision, from the parts flashed so far
+// ({ esp32, we2 }). One place owns the wording so the ESP32 done screen and the
+// camera-module done screen read identically. Pure + host-tested.
+export function visionChecklistModel(parts) {
+  const c = visionCompletion(parts);
+  const rows = [
+    { key: "esp32", label: "The Vision firmware · the ESP32 board’s port", done: c.esp32 },
+    { key: "we2", label: "The person-detection model · the camera module’s port", done: c.we2 },
+  ];
+  const status = c.done
+    ? "Both ports done — your Canary Vision is fully set up. ✓"
+    : `${c.count} of ${c.total} done — next, ${c.nextLabel}.`;
+  return {
+    title: "A Canary Vision takes two flashes",
+    done: c.done,
+    count: c.count,
+    total: c.total,
+    remaining: c.remaining,
+    nextPart: c.remaining[0] || null,
+    rows,
+    status,
+  };
+}
+
 // ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
 // One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
 // Public-only by construction: it takes a plain object of already-safe facts

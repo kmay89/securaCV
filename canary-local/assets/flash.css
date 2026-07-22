@@ -252,6 +252,32 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-nextstep-body { margin: 5px 0 0; color: #d8d8d8; font-size: 14px; line-height: 1.5; }
 @keyframes flash-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
+/* ── two-port Vision: the "did you do BOTH ports?" completion checklist ───── */
+.vision-checklist {
+  text-align: left; margin: 16px auto 2px; max-width: 460px;
+  border: 1px solid rgba(255,212,79,0.28); background: rgba(255,212,79,0.06);
+  border-radius: 12px; padding: 12px 14px;
+}
+.vision-checklist.is-done {           /* both ports in → celebrate in green */
+  border-color: rgba(67,160,71,0.42); background: rgba(67,160,71,0.12);
+  animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both;
+}
+.vision-checklist-title { font-weight: 640; color: var(--canary); }
+.vision-checklist.is-done .vision-checklist-title { color: #bfe3c1; }
+.vision-checklist-rows {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.vision-row { display: flex; align-items: flex-start; gap: 9px; font-size: 14px; line-height: 1.4; }
+.vision-row-mark { flex: none; width: 18px; text-align: center; font-weight: 700; }
+.vision-row.is-todo { color: #b9b9b9; }
+.vision-row.is-todo .vision-row-mark { color: rgba(255,212,79,0.7); }
+.vision-row.is-done { color: #e8e8e8; }
+.vision-row.is-done .vision-row-mark { color: #7CFF9B; }
+.vision-checklist-status { margin: 10px 0 0; font-size: 13.5px; color: #d8d8d8; }
+.vision-checklist.is-done .vision-checklist-status { color: #cfe9d0; font-weight: 620; }
+.vision-checklist-cta { margin-top: 11px; }
+
 /* ── error ─────────────────────────────────────────────────────────────── */
 .flash-error { border-color: rgba(251,140,0,0.4); }
 .flash-steps { margin: 10px 0 4px; padding-left: 20px; color: #d7d7d7; }
