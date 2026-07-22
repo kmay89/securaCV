@@ -58,8 +58,13 @@ const siteHref = (href) => (href && href.startsWith("/") ? SITE_ORIGIN + href : 
 
 /* ---- navigation ---- */
 function navigate(id, push = true) {
+  // Resolve the (user-controlled) hash to a FIXED, known view. `view` is always
+  // one of these literals and `hash` below is a literal or a manifest slug, so
+  // no untrusted value is ever echoed back into location.hash. Anything we don't
+  // recognize falls through to the overview. (CodeQL: client-side URL redirect.)
   const view =
-    id === "overview" || id === "start" || id === "all" ? id :
+    id === "start" ? "start" :
+    id === "all" ? "all" :
     BY_SLUG.has(id) ? "bench" : "overview";
   const entry = view === "bench" ? BY_SLUG.get(id) : null;
   if (entry) markVisited(entry.stage.id);
