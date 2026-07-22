@@ -23,6 +23,7 @@ import { ESPLoader, Transport } from "./vendor/esptool-js/bundle.js";
 import { md5Raw } from "./vendor/md5/md5.js";
 import * as core from "./flash-core.js";
 import { phaseModule } from "./we2-flash.js";
+import { wifiMemory } from "./wifi-memory.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -1130,6 +1131,11 @@ function renderWifiFields(box) {
   ssid.type = "text"; ssid.placeholder = "network name (SSID)"; ssid.autocomplete = "off";
   pass.type = "password"; pass.placeholder = "password";
   pass.autocomplete = "new-password";
+  // Remember-across-boards: pre-fill from the home Wi-Fi we already know — this
+  // tab's session, or a copy saved on this computer if the user opted in — so a
+  // whole batch of Canaries provisions without re-typing it into each one.
+  const savedWifi = wifiMemory.recall();
+  if (savedWifi) { ssid.value = savedWifi.ssid; pass.value = savedWifi.pass; }
   const showBtn = el("button", "ghost small", "show");
   showBtn.addEventListener("click", () => {
     pass.type = pass.type === "password" ? "text" : "password";
@@ -1147,6 +1153,32 @@ function renderWifiFields(box) {
     "or you leave this empty — it simply broadcasts its own setup network " +
     "to connect to and finish setup there. What you type stays on this " +
     "page and goes only to the chip over the cable."));
+
+  // Type it once, provision a whole batch. By default the network is kept in
+  // memory for this tab only (gone when you close it, never written to disk);
+  // ticking "remember" also saves it in THIS browser on THIS computer so it
+  // survives — local-only, never sent anywhere, Forget clears it instantly.
+  const remRow = el("div", "flash-wifi-remember");
+  const remLabel = el("label", "flash-wifi-remember-label");
+  const rememberChk = el("input"); rememberChk.type = "checkbox";
+  rememberChk.checked = wifiMemory.isPersisted();
+  remLabel.append(rememberChk, document.createTextNode(" Remember on this computer"));
+  const forgetBtn = el("button", "ghost small", "Forget saved Wi-Fi");
+  const refreshForget = () => forgetBtn.classList.toggle("flash-hidden", !wifiMemory.recall());
+  forgetBtn.addEventListener("click", () => {
+    wifiMemory.forget();
+    ssid.value = ""; pass.value = ""; rememberChk.checked = false;
+    refreshForget();
+  });
+  // Ticking/unticking persists (or un-persists) immediately when a network is
+  // already typed, so the checkbox is honest about what's saved right now.
+  rememberChk.addEventListener("change", () => {
+    if (ssid.value) { wifiMemory.remember({ ssid: ssid.value, pass: pass.value }, rememberChk.checked); }
+    refreshForget();
+  });
+  remRow.append(remLabel, forgetBtn);
+  sec.append(remRow);
+  refreshForget();
 
   // Bonus for camera Canaries: the same fields can mint a standard WiFi QR
   // (generated right here, nothing sent anywhere) to show the lens later.
@@ -1186,6 +1218,8 @@ function renderWifiFields(box) {
       try {
         // The builder validates lengths; run it small just for the checks.
         core.buildNvsWifiImage(ssid.value, pass.value, 4096);
+        // Remember it for the next board (session always; disk if opted in).
+        wifiMemory.remember({ ssid: ssid.value, pass: pass.value }, rememberChk.checked);
         return { ok: true, wifi: { ssid: ssid.value, pass: pass.value } };
       } catch (e) {
         err.textContent = String(e.message || e);
@@ -1449,11 +1483,16 @@ function phaseDone(opts) {
       ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
       `No setup network needed (it still appears if the join fails, as the fallback).`));
     box.append(w);
-  } else if (product) {
-    const note = state.catalog.products.find((p) => p.id === product.id);
-    const p = el("p", "muted", note ? note.provisioning_note : "");
-    box.append(p);
-  } else {
+  }
+  // The ONE obvious next step for THIS board — tailored to how it sets up and
+  // what it senses, so "it's alive" leads somewhere instead of dead-ending.
+  if (product && !opts.isBackup) {
+    const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
+    const ns = el("div", "flash-nextstep");
+    ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
+    ns.append(el("p", "flash-nextstep-body", step.body));
+    box.append(ns);
+  } else if (!product) {
     box.append(el("p", "muted", "It rebooted into the firmware you just wrote. If it doesn’t light up, tap the RESET button once."));
   }
 
