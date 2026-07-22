@@ -38,11 +38,17 @@ CANARY_LOCAL = HERE.parent
 REPO = CANARY_LOCAL.parent
 
 REPO_SLUG = "kmay89/securaCV"
-# Version-agnostic "latest signed release" asset URLs, mirroring the OTA
-# engine's convention (docs/firmware_ota.md). The flasher fetches the
-# manifest; the manifest names the versioned factory binaries.
-RELEASE_LATEST = f"https://github.com/{REPO_SLUG}/releases/latest/download"
-MANIFEST_URL = f"{RELEASE_LATEST}/manifest-flash.json"
+# Firmware ships in its OWN tagged release, fw-v<train>, and the flasher pins its
+# manifest to that tag — deliberately NOT /releases/latest/. This repo also
+# publishes the native desktop app + flasher (app-v*, flasher-v*), and GitHub's
+# "latest" is the newest release of ANY kind: a native-app release silently
+# shadows the firmware manifest at /latest/, and the flasher then shows "no
+# release yet" though the firmware release is sitting right there. The train is
+# the committed single source of truth (registry.json), drift-gated in CI, so
+# the pinned URL is exact, reproducible, and can't be shadowed. The manifest it
+# points to still names the versioned factory binaries (as absolute URLs).
+def release_download_base(fw_train: str) -> str:
+    return f"https://github.com/{REPO_SLUG}/releases/download/fw-v{fw_train}"
 
 # The Ed25519 release public key the device pins, single-sourced so the browser
 # flasher verifies signatures against the SAME key (docs/firmware_ota.md).
@@ -288,6 +294,12 @@ def main() -> None:
     if not fw_train:
         die("registry.json has no fw_train")
 
+    # Pin every release asset URL to this train's tag (fw-v<train>) — see
+    # release_download_base(): /latest/ is unsafe here because native-app
+    # releases share the repo and become GitHub's "latest".
+    release_base = release_download_base(fw_train)
+    manifest_url = f"{release_base}/manifest-flash.json"
+
     flavors = {f["name"]: f for f in json.loads(read(REPO / "firmware/flavors.json"))}
 
     products_out = []
@@ -326,8 +338,8 @@ def main() -> None:
                 "human copy, and is honest even before a release exists.",
         "fw_train": fw_train,
         "repo": REPO_SLUG,
-        "release_latest": RELEASE_LATEST,
-        "manifest_url": MANIFEST_URL,
+        "release_download": release_base,
+        "manifest_url": manifest_url,
         # The pinned Ed25519 release public key (from the firmware header) so
         # the flasher verifies image signatures against the same key the device
         # does. All-zero until the signing ceremony → flasher falls back to
@@ -342,7 +354,7 @@ def main() -> None:
         # from Seeed's open-source flasher), the same posture: pinned asset,
         # SHA-256 before a byte is written, and you can't brick it (the burn
         # menu lives in ROM). Facts drift-gated against the device guide.
-        "we2_module": we2_module_block(),
+        "we2_module": we2_module_block(release_base),
         # The promise the whole tool is built to keep, shown in the UI and
         # grounded in docs/firmware_ota.md § the no-brick guarantees.
         "no_brick": {
@@ -404,7 +416,7 @@ def we2_engine_fact(src: str, name: str) -> str:
     return m.group(1)
 
 
-def we2_module_block() -> dict:
+def we2_module_block(release_base: str) -> dict:
     # The burn address is the engine's, verbatim — never a second literal that
     # could drift from what we2-core.js actually writes to. Read once; read()
     # dies cleanly if the engine file is gone. int(..., 0) accepts a hex baud
@@ -421,7 +433,7 @@ def we2_module_block() -> dict:
         "usb_pid": usb_pid,
         "baud": baud,
         "model_addr": model_addr,
-        "manifest_url": f"{RELEASE_LATEST}/manifest-vision-model.json",
+        "manifest_url": f"{release_base}/manifest-vision-model.json",
         "model": {
             "name": "Person Detection",
             "arch": "Swift-YOLO (tiny) · 192×192×3 RGB · compiled for the Ethos-U55",
