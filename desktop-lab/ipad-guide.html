@@ -1,0 +1,483 @@
+<title>Getting the Lab onto iPad — a field guide</title>
+<style>
+  :root{
+    /* palette — signal blue (the Lab's own brand) + canary gold, on blue-biased ink/paper */
+    --paper:#f6f7fb;      --paper-2:#eef1f7;   --card:#ffffff;
+    --ink:#111725;        --ink-2:#39424f;     --ink-3:#5b6472;
+    --line:#dde2ec;       --line-2:#c9d0de;
+    --signal:#2563eb;     --signal-soft:#e7effd;
+    --canary:#c98a06;     --canary-bright:#e8b423; --canary-soft:#fbf1d6;
+    --good:#0f9d58;       --good-soft:#e4f4ea;
+    --warn:#b4530a;       --warn-soft:#fbe6da;
+    --shadow:0 1px 2px rgba(17,23,37,.05), 0 8px 30px rgba(17,23,37,.06);
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#0c111b;    --paper-2:#0f1524;   --card:#141b2a;
+      --ink:#eef1f8;      --ink-2:#b7c0d1;     --ink-3:#8b96a8;
+      --line:#232c40;     --line-2:#2e3a52;
+      --signal:#6ea0ff;   --signal-soft:#182541;
+      --canary:#f5c542;   --canary-bright:#f5c542; --canary-soft:#2a2410;
+      --good:#3ddc91;     --good-soft:#0f2a20;
+      --warn:#f0a35e;     --warn-soft:#2c1a0d;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 40px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --paper:#f6f7fb;--paper-2:#eef1f7;--card:#ffffff;--ink:#111725;--ink-2:#39424f;--ink-3:#5b6472;
+    --line:#dde2ec;--line-2:#c9d0de;--signal:#2563eb;--signal-soft:#e7effd;--canary:#c98a06;
+    --canary-bright:#e8b423;--canary-soft:#fbf1d6;--good:#0f9d58;--good-soft:#e4f4ea;--warn:#b4530a;
+    --warn-soft:#fbe6da;--shadow:0 1px 2px rgba(17,23,37,.05),0 8px 30px rgba(17,23,37,.06);
+  }
+  :root[data-theme="dark"]{
+    --paper:#0c111b;--paper-2:#0f1524;--card:#141b2a;--ink:#eef1f8;--ink-2:#b7c0d1;--ink-3:#8b96a8;
+    --line:#232c40;--line-2:#2e3a52;--signal:#6ea0ff;--signal-soft:#182541;--canary:#f5c542;
+    --canary-bright:#f5c542;--canary-soft:#2a2410;--good:#3ddc91;--good-soft:#0f2a20;--warn:#f0a35e;
+    --warn-soft:#2c1a0d;--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 40px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0);
+    background-size:26px 26px;background-attachment:fixed;}
+  @media (prefers-color-scheme:dark){body{background-image:radial-gradient(circle at 1px 1px, #17203200 1px, transparent 0)}}
+
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:210px 1fr;gap:52px}
+  main{min-width:0;max-width:720px;padding-bottom:120px}
+
+  /* ---- rail : echoes the app's own sidebar ---- */
+  nav.rail{position:sticky;top:0;align-self:start;height:100vh;padding:36px 0;display:flex;flex-direction:column;gap:2px;overflow:auto}
+  .rail .brand{display:flex;align-items:center;gap:9px;margin-bottom:26px;font-weight:700;letter-spacing:-.01em;font-size:15px}
+  .rail .brand .dot{width:26px;height:26px;border-radius:8px;background:linear-gradient(150deg,var(--signal),color-mix(in srgb,var(--signal) 55%,var(--canary-bright)));
+    display:grid;place-items:center;color:#fff;font-size:15px;flex:none;box-shadow:var(--shadow)}
+  .rail a{color:var(--ink-3);text-decoration:none;font-size:13px;padding:6px 12px;border-radius:7px;
+    display:flex;align-items:center;gap:10px;line-height:1.35;transition:color .15s,background .15s}
+  .rail a .n{font-family:var(--mono);font-size:11px;color:var(--line-2);width:16px;flex:none}
+  .rail a:hover{color:var(--ink);background:var(--paper-2)}
+  .rail a.on{color:var(--signal);background:var(--signal-soft)}
+  .rail a.on .n{color:var(--signal)}
+  .rail .railfoot{margin-top:auto;padding:14px 12px 0;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);line-height:1.7;border-top:1px solid var(--line)}
+
+  /* ---- hero ---- */
+  header.hero{padding:76px 0 30px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--canary);
+    display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:"";width:26px;height:1.5px;background:var(--canary)}
+  h1{font-size:clamp(34px,6vw,52px);line-height:1.02;letter-spacing:-.035em;font-weight:800;margin:20px 0 0;text-wrap:balance}
+  h1 .glow{color:var(--signal)}
+  .sub{font-size:19px;color:var(--ink-2);margin:20px 0 0;max-width:56ch;line-height:1.55}
+  .platrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+  .plat{font-family:var(--mono);font-size:12px;padding:6px 11px;border-radius:999px;border:1px solid var(--line-2);
+    color:var(--ink-2);display:flex;align-items:center;gap:7px;background:var(--card)}
+  .plat.live{border-color:color-mix(in srgb,var(--good) 45%,transparent);color:var(--good);background:var(--good-soft)}
+  .plat b{color:var(--ink);font-weight:600}
+  .plat.live b{color:var(--good)}
+
+  /* ---- section scaffolding ---- */
+  section{padding-top:64px;scroll-margin-top:24px}
+  .sec-k{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+    display:flex;align-items:center;gap:9px;margin-bottom:14px}
+  .sec-k .b{font-family:var(--mono);color:var(--canary);font-weight:700}
+  h2{font-size:29px;letter-spacing:-.025em;font-weight:750;margin:0;line-height:1.12;text-wrap:balance}
+  h3{font-size:18px;letter-spacing:-.01em;font-weight:680;margin:34px 0 0}
+  p{margin:16px 0 0;color:var(--ink-2)}
+  p strong,li strong{color:var(--ink);font-weight:640}
+  main a{color:var(--signal);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--signal) 35%,transparent)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--paper-2);border:1px solid var(--line);
+    padding:.1em .38em;border-radius:5px;color:var(--ink);white-space:nowrap}
+
+  /* ---- the "one frontend → four surfaces" diagram ---- */
+  .spine{margin-top:30px;border:1px solid var(--line);border-radius:16px;background:var(--card);padding:24px;box-shadow:var(--shadow);overflow:hidden}
+  .spine .core{display:flex;align-items:center;gap:13px;font-family:var(--mono);font-size:13px}
+  .spine .core .pill{background:var(--signal-soft);color:var(--signal);border:1px solid color-mix(in srgb,var(--signal) 30%,transparent);
+    padding:8px 13px;border-radius:9px;font-weight:600}
+  .spine .core .arw{flex:1;height:1.5px;background:linear-gradient(90deg,var(--signal),transparent);position:relative;min-width:24px}
+  .fan{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:18px}
+  .surf{border:1px solid var(--line);border-radius:11px;padding:14px 12px;background:var(--paper);text-align:center}
+  .surf .g{font-size:22px;line-height:1}
+  .surf .t{font-family:var(--mono);font-size:11.5px;margin-top:8px;color:var(--ink);font-weight:600}
+  .surf .s{font-size:10.5px;margin-top:3px;color:var(--good);font-family:var(--mono)}
+  .surf.soon .s{color:var(--canary)}
+  .surf.soon{border-style:dashed}
+
+  /* ---- step list ---- */
+  ol.steps{list-style:none;counter-reset:s;padding:0;margin:26px 0 0}
+  ol.steps>li{counter-increment:s;position:relative;padding:0 0 26px 52px;border-left:2px solid var(--line);margin-left:15px}
+  ol.steps>li:last-child{border-left-color:transparent;padding-bottom:0}
+  ol.steps>li::before{content:counter(s);position:absolute;left:-16px;top:-4px;width:30px;height:30px;border-radius:50%;
+    background:var(--card);border:2px solid var(--line-2);color:var(--ink-2);font-family:var(--mono);font-weight:700;font-size:13px;
+    display:grid;place-items:center}
+  ol.steps>li.key::before{background:var(--signal);border-color:var(--signal);color:#fff}
+  ol.steps>li .st-h{font-weight:660;font-size:16.5px;color:var(--ink);margin-top:1px}
+  ol.steps>li .st-b{margin-top:6px}
+
+  pre{margin:14px 0 0;background:var(--ink);border-radius:11px;padding:15px 16px;overflow-x:auto;
+    border:1px solid color-mix(in srgb,var(--signal) 22%,#000);box-shadow:var(--shadow)}
+  @media (prefers-color-scheme:light){pre{background:#0e1626}}
+  :root[data-theme="light"] pre{background:#0e1626}
+  pre code{background:none;border:0;padding:0;white-space:pre;color:#dfe6f2;font-size:13px;line-height:1.7;display:block}
+  pre .c{color:#7c88a1}      /* comment */
+  pre .p{color:#f5c542}      /* prompt/canary */
+  pre .k{color:#6ea0ff}      /* keyword */
+  pre .v{color:#3ddc91}      /* value */
+
+  /* ---- device comparison ---- */
+  .devs{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:26px}
+  .dev{border:1px solid var(--line);border-radius:16px;background:var(--card);padding:18px;box-shadow:var(--shadow)}
+  .dev .cap{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);display:flex;justify-content:space-between}
+  .dev .cap b{color:var(--signal)}
+  .screen{margin-top:12px;border-radius:12px;border:1px solid var(--line-2);background:var(--paper);aspect-ratio:4/3;overflow:hidden;display:flex}
+  /* iPad: sidebar + content */
+  .screen.pad .sb{width:38%;border-right:1px solid var(--line);padding:10px 8px;display:flex;flex-direction:column;gap:5px;background:var(--paper-2)}
+  .screen .row{height:7px;border-radius:3px;background:var(--line-2)}
+  .screen .row.on{background:var(--signal)}
+  .screen.pad .bd{flex:1;padding:11px 10px;display:flex;flex-direction:column;gap:7px}
+  .screen .blk{border-radius:5px;background:var(--line);}
+  .screen .blk.big{height:34%;background:linear-gradient(120deg,var(--signal-soft),var(--paper-2))}
+  /* iPhone: content + bottom tab bar */
+  .screen.phone{flex-direction:column}
+  .screen.phone .bd{flex:1;padding:11px 10px;display:flex;flex-direction:column;gap:7px}
+  .screen.phone .tabs{height:26%;min-height:34px;border-top:1px solid var(--line);display:flex;justify-content:space-around;align-items:center;padding:0 6px;background:var(--paper-2)}
+  .screen.phone .tabs i{width:16px;height:16px;border-radius:5px;background:var(--line-2);display:block}
+  .screen.phone .tabs i.on{background:var(--signal)}
+  .dev .note{font-size:12.5px;color:var(--ink-3);margin-top:12px;font-family:var(--mono);line-height:1.55}
+
+  /* ---- mechanism cards ---- */
+  .mech{display:flex;flex-direction:column;gap:2px;margin-top:26px}
+  .mcard{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:20px 22px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .mcard+.mcard{margin-top:14px}
+  .mcard .tag{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--canary);font-weight:700}
+  .mcard h3{margin:8px 0 0;font-size:18.5px}
+  .mcard p{margin-top:9px;font-size:15px}
+  .mcard .file{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin-top:12px;padding-top:12px;border-top:1px dashed var(--line-2);
+    display:flex;align-items:center;gap:8px}
+  .mcard .file .fk{color:var(--good)}
+
+  /* ---- principle trio (self-heal / won't rot / magic) ---- */
+  .why{display:grid;grid-template-columns:1fr;gap:14px;margin-top:26px}
+  .pr{border:1px solid var(--line);border-left:3px solid var(--canary-bright);border-radius:12px;background:var(--card);padding:20px 22px;box-shadow:var(--shadow)}
+  .pr .h{display:flex;align-items:baseline;gap:12px}
+  .pr .h .icn{font-size:20px}
+  .pr .h .ti{font-size:18px;font-weight:720;letter-spacing:-.01em}
+  .pr .mono{font-family:var(--mono);font-size:11.5px;color:var(--canary);text-transform:uppercase;letter-spacing:.08em;margin-left:auto}
+  .pr p{margin-top:10px;font-size:15px}
+
+  /* ---- honesty box ---- */
+  .honest{margin-top:26px;border:1px solid var(--line-2);border-radius:14px;background:var(--paper-2);padding:4px 22px 20px}
+  .honest h3{font-size:17px}
+  .honest .split{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:14px}
+  .honest ul{margin:8px 0 0;padding-left:0;list-style:none}
+  .honest li{position:relative;padding:5px 0 5px 24px;font-size:14px;color:var(--ink-2);line-height:1.5}
+  .honest li::before{position:absolute;left:0;top:5px;font-family:var(--mono);font-weight:700}
+  .honest .real li::before{content:"✓";color:var(--good)}
+  .honest .need li::before{content:"→";color:var(--warn)}
+  .honest .col-h{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+  .honest .real .col-h{color:var(--good)}
+  .honest .need .col-h{color:var(--warn)}
+
+  .callout{margin-top:22px;border-radius:12px;background:var(--canary-soft);border:1px solid color-mix(in srgb,var(--canary) 35%,transparent);
+    padding:16px 18px;font-size:14.5px;color:var(--ink-2);display:flex;gap:12px}
+  .callout .cw{font-size:18px;flex:none}
+  .callout b{color:var(--ink)}
+
+  footer{margin-top:70px;padding-top:26px;border-top:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--ink-3);line-height:1.8}
+
+  /* reveal */
+  .rv{opacity:0;transform:translateY(14px);transition:opacity .6s ease,transform .6s ease}
+  .rv.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}html{scroll-behavior:auto}}
+
+  @media (max-width:900px){
+    .wrap{grid-template-columns:1fr;gap:0}
+    nav.rail{display:none}
+    header.hero{padding-top:44px}
+    .fan{grid-template-columns:repeat(2,1fr)}
+    .devs,.honest .split{grid-template-columns:1fr}
+  }
+</style>
+
+<div class="wrap">
+  <nav class="rail">
+    <div class="brand"><span class="dot">◆</span> SecuraCV&nbsp;Lab</div>
+    <a href="#idea"><span class="n">01</span> The idea</a>
+    <a href="#walk"><span class="n">02</span> Get it on iPad</a>
+    <a href="#ipad"><span class="n">03</span> Why iPad feels right</a>
+    <a href="#how"><span class="n">04</span> How it works</a>
+    <a href="#magic"><span class="n">05</span> Why it can't rot</a>
+    <a href="#honest"><span class="n">06</span> Real vs. your account</a>
+    <div class="railfoot">Phase 2 · Tauri v2 mobile<br>desktop-lab/</div>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <div class="eyebrow">Field guide · iPad &amp; iPadOS</div>
+      <h1>One frontend. Four platforms. A build that <span class="glow">can't rot.</span></h1>
+      <p class="sub">The Lab already runs on your Mac, your Linux box, and the web. Getting it onto
+        iPad isn't a rewrite — it's a wrapper around the exact same code, plus your Apple account.
+        Here's the whole path, and why it keeps working long after you stop looking at it.</p>
+      <div class="platrow">
+        <span class="plat live">● <b>Web</b> shipping</span>
+        <span class="plat live">● <b>macOS</b> shipping</span>
+        <span class="plat live">● <b>Linux</b> shipping</span>
+        <span class="plat">◍ <b>iPad</b> scaffolded</span>
+      </div>
+    </header>
+
+    <section id="idea">
+      <div class="sec-k"><span class="b">01</span> The idea in one breath</div>
+      <h2>iPad doesn't get its own app. It gets the same one.</h2>
+      <p>Everything you see in the Lab — the isometric room, the six-stage build line, the 3D device
+        cards, the fix-it flows — is one static bundle: <code>canary-local/</code>. Plain HTML, CSS, JS,
+        and committed WebAssembly. No build step, nothing to compile.</p>
+      <p>Tauri's job is to put a native window around that bundle on each operating system. On the Mac
+        it's a macOS WebView; on iPad it's the iPadOS WebView. <strong>Same pixels, native frame.</strong>
+        The config already points the app at the shared bundle:</p>
+
+      <div class="spine rv">
+        <div class="core">
+          <span class="pill">canary-local/</span>
+          <span class="arw"></span>
+          <span style="font-family:var(--mono);font-size:11.5px;color:var(--ink-3)">Tauri wraps it →</span>
+        </div>
+        <div class="fan">
+          <div class="surf"><div class="g">🌐</div><div class="t">Web</div><div class="s">live</div></div>
+          <div class="surf"><div class="g">🖥️</div><div class="t">macOS</div><div class="s">live</div></div>
+          <div class="surf"><div class="g">🐧</div><div class="t">Linux</div><div class="s">live</div></div>
+          <div class="surf soon"><div class="g">▦</div><div class="t">iPad</div><div class="s">this guide</div></div>
+        </div>
+      </div>
+      <p style="margin-top:16px;font-size:14px;color:var(--ink-3)"><code>tauri.conf.json</code> →
+        <code>"frontendDist": "../../canary-local"</code>. One line. That's the whole relationship between
+        the app and the frontend — and it's identical on every platform.</p>
+    </section>
+
+    <section id="walk">
+      <div class="sec-k"><span class="b">02</span> Get it on iPad</div>
+      <h2>The actual walkthrough</h2>
+      <p>You do this on a <strong>Mac</strong> — iOS/iPadOS builds only come from Xcode's toolchain.
+        Free Apple Developer tier is enough to run it in the iPad Simulator and side-load to your own
+        iPad for 7 days; the $99/yr Program is only needed for TestFlight or the App Store.</p>
+
+      <ol class="steps">
+        <li>
+          <div class="st-h">One-time setup on your Mac</div>
+          <div class="st-b">Install <strong>Xcode</strong> + Command Line Tools (this brings the iPad
+            Simulator), sign in with your Apple ID, then add the Rust targets Tauri cross-compiles to:</div>
+          <pre><code><span class="c"># the three iOS/iPadOS architectures Tauri needs</span>
+<span class="p">$</span> rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios</code></pre>
+        </li>
+        <li>
+          <div class="st-h">Install the app's dependencies</div>
+          <div class="st-b">From the desktop-lab folder — same <code>package.json</code> that builds the
+            Mac and Linux installers:</div>
+          <pre><code><span class="p">$</span> <span class="k">cd</span> desktop-lab
+<span class="p">$</span> npm install</code></pre>
+        </li>
+        <li class="key">
+          <div class="st-h">Generate the Xcode project</div>
+          <div class="st-b">This is the one command that makes iPad real. It reads
+            <code>tauri.conf.json</code> + <code>Cargo.toml</code> and writes a full Xcode project into
+            <code>src-tauri/gen/apple/</code>. You never hand-edit that folder — it's generated, and that's
+            the whole trick to why it won't rot (§05).</div>
+          <pre><code><span class="p">$</span> npm run ios:init      <span class="c"># → tauri ios init</span></code></pre>
+        </li>
+        <li class="key">
+          <div class="st-h">Run it in the iPad Simulator</div>
+          <div class="st-b">Build, boot a simulator, and launch. When prompted for a device, pick an
+            <strong>iPad</strong> (e.g. <em>iPad Pro 13"</em>) rather than an iPhone — that's all it takes to
+            see the iPad layout. Live-reload is on, so edits to <code>canary-local/</code> show up instantly.</div>
+          <pre><code><span class="p">$</span> npm run ios:dev       <span class="c"># → tauri ios dev</span>
+<span class="c"># pick an iPad simulator, or plug in your own iPad and pick it</span></code></pre>
+        </li>
+        <li>
+          <div class="st-h">Produce an installable build</div>
+          <div class="st-b">An unsigned <code>.ipa</code> for the Simulator needs nothing extra. For a
+            <strong>signed</strong> build to a real iPad or TestFlight, set your Team ID and let Tauri sign:</div>
+          <pre><code><span class="p">$</span> npm run ios:build                       <span class="c"># unsigned .ipa</span>
+
+<span class="c"># signed (device / TestFlight):</span>
+<span class="p">$</span> <span class="k">export</span> APPLE_DEVELOPMENT_TEAM=<span class="v">XXXXXXXXXX</span>   <span class="c"># your 10-char Team ID</span>
+<span class="p">$</span> npm run ios:build -- --export-method <span class="v">app-store-connect</span></code></pre>
+        </li>
+      </ol>
+
+      <div class="callout">
+        <span class="cw">📓</span>
+        <div>Every command above already exists as a script in <b>desktop-lab/package.json</b>
+          (<code>ios:init</code>, <code>ios:dev</code>, <code>ios:build</code>), and the full one-time
+          checklist lives in <b>desktop-lab/MOBILE.md</b>. This guide is the narrated version of that doc.</div>
+      </div>
+    </section>
+
+    <section id="ipad">
+      <div class="sec-k"><span class="b">03</span> Why iPad feels right</div>
+      <h2>The same shell, laid out for the room it's in</h2>
+      <p>The Lab's navigation is <strong>adaptive by width, not by platform</strong>. One rule in the
+        stylesheet decides everything: below 860px it collapses the sidebar into a bottom tab bar; above it,
+        the sidebar stays. iPad is wide — so iPad gets the <strong>booklet-style sidebar</strong>, the
+        Wikipedia-like index you wanted. iPhone is narrow, so it gets thumb-friendly <strong>tabs</strong>.
+        No forked code; the layout just responds.</p>
+
+      <div class="devs">
+        <div class="dev rv">
+          <div class="cap"><span>iPad · landscape</span><b>sidebar</b></div>
+          <div class="screen pad">
+            <div class="sb">
+              <div class="row on"></div><div class="row"></div><div class="row"></div>
+              <div class="row"></div><div class="row"></div>
+            </div>
+            <div class="bd">
+              <div class="blk big"></div><div class="blk" style="height:9px;width:70%"></div>
+              <div class="blk" style="height:9px;width:90%"></div><div class="blk" style="height:9px;width:55%"></div>
+            </div>
+          </div>
+          <div class="note">Full source-list sidebar — every bench one tap away, like a booklet you can flip.</div>
+        </div>
+        <div class="dev rv">
+          <div class="cap"><span>iPhone · portrait</span><b>tab bar</b></div>
+          <div class="screen phone">
+            <div class="bd">
+              <div class="blk big"></div><div class="blk" style="height:9px;width:80%"></div>
+              <div class="blk" style="height:9px;width:60%"></div>
+            </div>
+            <div class="tabs"><i class="on"></i><i></i><i></i><i></i><i></i><i></i></div>
+          </div>
+          <div class="note">Six build stages become six bottom tabs — reachable one-handed.</div>
+        </div>
+      </div>
+      <p>And because the stylesheet uses <code>env(safe-area-inset-*)</code>, the tab bar clears the home
+        indicator and the top bar clears the camera notch on its own — no per-device tuning. The iPad build
+        inherits all of that for free the moment you wrap it.</p>
+    </section>
+
+    <section id="how">
+      <div class="sec-k"><span class="b">04</span> How it works</div>
+      <h2>Three mechanisms, and that's the whole machine</h2>
+      <p>There's no fourth secret. iPad support is these three seams working together — each one already
+        present in the repo today.</p>
+
+      <div class="mech">
+        <div class="mcard rv">
+          <div class="tag">Mechanism 01 · the wrapper</div>
+          <h3>The frontend is shared, not ported</h3>
+          <p>Tauri points at <code>canary-local/</code> and serves it inside the native WebView. The Rust
+            entry point is already marked mobile-ready, so the same binary logic compiles to a desktop app
+            <em>or</em> a mobile app depending on the target — no branch in your code.</p>
+          <div class="file"><span class="fk">lib.rs</span> · <code>#[cfg_attr(mobile, tauri::mobile_entry_point)]</code></div>
+        </div>
+
+        <div class="mcard rv">
+          <div class="tag">Mechanism 02 · the seam</div>
+          <h3>A capability layer that's honest per surface</h3>
+          <p>The native shell exposes a small function the frontend can ask: <em>what can this device
+            actually do?</em> Today it reports the shell it's running in; as native serial, BLE and mDNS
+            land, the same call flips them on. The frontend reads this and shows only what's real —
+            so USB flashing, which Apple blocks on iOS, is simply <strong>hidden on iPad</strong> and points
+            to the desktop app instead of offering a button that can't work.</p>
+          <div class="file"><span class="fk">lib.rs</span> · <code>native_capabilities() → { serial, discovery, notifications }</code></div>
+        </div>
+
+        <div class="mcard rv">
+          <div class="tag">Mechanism 03 · the source of truth</div>
+          <h3>One manifest drives every surface</h3>
+          <p>The benches, the room map, and the navigation all read from a single file. Add a bench there
+            and it appears in the web Lab, the Mac app, and the iPad app at once — because they're the same
+            frontend reading the same manifest. There is no iPad copy to keep in sync.</p>
+          <div class="file"><span class="fk">build-line.json</span> · benches · room · siteNav</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="magic">
+      <div class="sec-k"><span class="b">05</span> Why it self-heals, won't rot &amp; works like magic</div>
+      <h2>The parts that usually break are the parts we don't keep</h2>
+      <p>iOS projects are notorious for bit-rot: Xcode changes its project format most years, and a
+        hand-maintained <code>.xcodeproj</code> quietly stops opening. We sidestep the entire failure mode by
+        never owning the fragile artifact in the first place.</p>
+
+      <div class="why">
+        <div class="pr rv">
+          <div class="h"><span class="icn">🌱</span><span class="ti">It won't rot</span><span class="mono">generated, not authored</span></div>
+          <p>The Xcode project in <code>gen/apple/</code> is <strong>derived</strong> from
+            <code>tauri.conf.json</code> + <code>Cargo.toml</code>, never edited by hand. When a new Xcode
+            ships, you don't patch anything — you delete the folder and run <code>ios:init</code> again, and
+            it regenerates fresh against whatever toolchain you have now. The source of truth is config that
+            doesn't age; the thing that ages is disposable.</p>
+        </div>
+        <div class="pr rv">
+          <div class="h"><span class="icn">🩹</span><span class="ti">It self-heals</span><span class="mono">degrade, don't break</span></div>
+          <p>Every native power flows through the capability seam. If a capability isn't available — because
+            it's iOS, or because Apple tightened a rule — the frontend reads <code>false</code> and
+            <strong>hides that path</strong> rather than shipping a dead button. A new platform restriction
+            becomes a one-line flag flip, and the UI reshapes itself around what's actually possible. Nothing
+            is ever left pointing at a capability that vanished.</p>
+        </div>
+        <div class="pr rv">
+          <div class="h"><span class="icn">✨</span><span class="ti">It works like magic</span><span class="mono">one edit, four surfaces</span></div>
+          <p>Because iPad runs the identical <code>canary-local/</code> bundle, a change to a bench, the room,
+            or the nav ripples to web, Mac, Linux, and iPad in the same commit. You are never re-implementing
+            the Lab for a new device — you're re-framing the one you already have. That's the whole illusion:
+            there's less here than it looks like, which is exactly why it holds.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="honest">
+      <div class="sec-k"><span class="b">06</span> Real vs. your account</div>
+      <h2>What's wired today, and what needs you</h2>
+      <p>Straight about the seam: the scaffolding is all in the repo, but the first real build needs an
+        Apple Developer account — signing and provisioning can't come from CI or this repo alone.</p>
+
+      <div class="honest">
+        <h3 style="margin-top:14px">The split</h3>
+        <div class="split">
+          <div class="real">
+            <div class="col-h">✓ Already in the repo</div>
+            <ul>
+              <li><code>ios:init/dev/build</code> scripts in package.json</li>
+              <li>Mobile-ready Rust entry point &amp; capability seam</li>
+              <li>Adaptive sidebar ↔ tab-bar layout with safe-area insets</li>
+              <li>MOBILE.md setup checklist</li>
+              <li>Gated CI workflow that no-ops until you enable it</li>
+            </ul>
+          </div>
+          <div class="need">
+            <div class="col-h">→ Needs your Apple account</div>
+            <ul>
+              <li>A Mac with Xcode + the iOS Simulator</li>
+              <li>Apple Developer sign-in (free tier to start)</li>
+              <li>Team ID for a signed device / TestFlight build</li>
+              <li>Repo variable <code>ENABLE_IOS_BUILD=true</code> + Apple secrets to turn CI on</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <p>The iPad CI job stays on manual dispatch and cleanly no-ops with a helpful message until those
+        secrets exist — so it never blocks anything, and it's ready the day you wire up provisioning.
+        Android is the same shape after this: <code>tauri android init</code>, same bundle, almost no new work.</p>
+    </section>
+
+    <footer>
+      SecuraCV Lab · Phase 2 cross-platform · web + macOS + Linux ship today, iPad one Apple account away<br>
+      Source of truth: desktop-lab/MOBILE.md · canary-local/build-line.json · nothing phones home.
+    </footer>
+  </main>
+</div>
+
+<script>
+  // scroll-reveal
+  const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12});
+  document.querySelectorAll('.rv').forEach(el=>io.observe(el));
+
+  // rail active-section tracking
+  const links=[...document.querySelectorAll('.rail a')];
+  const map=new Map(links.map(a=>[a.getAttribute('href').slice(1),a]));
+  const so=new IntersectionObserver((es)=>{
+    es.forEach(e=>{if(e.isIntersecting){links.forEach(l=>l.classList.remove('on'));const a=map.get(e.target.id);if(a)a.classList.add('on');}})
+  },{rootMargin:"-20% 0px -70% 0px"});
+  document.querySelectorAll('section[id]').forEach(s=>so.observe(s));
+</script>
