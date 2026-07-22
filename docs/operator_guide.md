@@ -75,6 +75,22 @@ plaintext on disk (the honest state until hardware-backed keys land; see
 [the v1.1 design](design/vault_operator_ux_v1_1.md)). It **exits non-zero if
 anything is missing or invalid**, so it can gate a deploy in a script or CI step.
 
+### Rehearse it (`drill`)
+
+Prove the whole break-glass path works *before* you need it at 3 a.m.:
+
+```bash
+cargo run --bin break_glass -- drill --threshold 2 --trustees 3
+```
+
+`drill` runs a full request → approve → authorize → seal → unseal cycle in a
+**throwaway sandbox** — a temporary database, a temporary vault, and ephemeral
+trustee keys, all discarded when it finishes. It touches nothing real. It seals a
+dummy payload behind a fresh `n`-of-`m` quorum, unseals it with a second quorum
+token, and confirms the recovered bytes match byte-for-byte, then prints
+**DRILL PASSED** (exit 0) or fails non-zero. Use it to confirm a build/host can
+actually execute break-glass, and to let trustees practice the flow with zero risk.
+
 ## Break-glass unseal workflow
 
 Ensure a quorum policy is stored first (`break_glass policy set`). Then create an unlock request,
