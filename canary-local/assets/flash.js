@@ -1483,11 +1483,16 @@ function phaseDone(opts) {
       ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
       `No setup network needed (it still appears if the join fails, as the fallback).`));
     box.append(w);
-  } else if (product) {
-    const note = state.catalog.products.find((p) => p.id === product.id);
-    const p = el("p", "muted", note ? note.provisioning_note : "");
-    box.append(p);
-  } else {
+  }
+  // The ONE obvious next step for THIS board — tailored to how it sets up and
+  // what it senses, so "it's alive" leads somewhere instead of dead-ending.
+  if (product && !opts.isBackup) {
+    const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
+    const ns = el("div", "flash-nextstep");
+    ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
+    ns.append(el("p", "flash-nextstep-body", step.body));
+    box.append(ns);
+  } else if (!product) {
     box.append(el("p", "muted", "It rebooted into the firmware you just wrote. If it doesn’t light up, tap the RESET button once."));
   }
 
