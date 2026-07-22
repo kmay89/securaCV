@@ -24,6 +24,17 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
+// The Raspberry Pi Home Assistant hub path (design: docs/design/
+// raspberry_pi_hub_flashing.md). Writing a whole-OS image to a raw disk is the
+// one thing this app can do that ISN'T can't-brick-safe like an ESP32 flash — a
+// wrong-disk write destroys data. So the *decision* of what is a legal write
+// target lands first, pure and host-tested, before any byte-writing command
+// exists — mirroring how the firmware lands its boot policy as a tested pure
+// layer ahead of the risky wiring. The enumerator, the confirm UI, and the
+// guarded write build on top of this in follow-up changes; each must run a
+// candidate through `hub_disk::classify` and refuse anything not `Eligible`.
+pub mod hub_disk;
+
 // The flasher catalog is baked in at compile time so the app can list every
 // Canary and enforce the chip guard with zero network. build.rs copies the ONE
 // canonical `canary-local/devices/flash.json` into OUT_DIR on every build, so

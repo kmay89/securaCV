@@ -1,6 +1,6 @@
 # Design: the Raspberry Pi hub, flashed in one shot
 
-**Status:** proposal / RFC · **Date:** 2026-07-22 · **Owner:** TBD
+**Status:** accepted — build in progress (§7 step 1 landed) · **Date:** 2026-07-22 · **Owner:** TBD
 
 > *"Can our flashing tool support the Raspberry Pi with a custom flash that adds
 > all the tools they need for it to just work — they put in their Wi-Fi, flash it,
@@ -148,42 +148,75 @@ Real, upstreamable gifts (the user's instinct here is right):
 - Submitting our **add-on repo** to the community add-on ecosystem (needs
   DOCS.md/icon/CHANGELOG polish — already on strategy P1/P2) widens distribution.
 
-## 7. Phased plan
+## 7. Build plan (native image-writer, HAOS base, full stack)
 
-- **Phase 0 — this doc + the decisions in §8.** No code until the base OS and the
-  first delivery vehicle are chosen.
-- **Phase 1 — the fast "boom", minimal new code.** A scripted recipe that
-  post-processes the pinned official HAOS image: inject the Wi-Fi keyfile + seed
-  the curated securaCV backup. Turn "The Hub" page from `"real": false` simulation
-  into a real, guided path (download → write with Imager/`dd` → the seed is already
-  inside). Delivers the one-flash experience with **no new flasher engine yet**.
-- **Phase 2 — native image-writer in the desktop flasher.** Add an SD/USB/NVMe
-  writer to `desktop/` alongside the ESP path: enumerate **removable** disks with
-  hard safety guards, decompress + write + verify, then write the boot-partition
-  seed. Reuse `wifi-memory.js`; upgrade the persist store to the OS keychain (the
-  desktop README already anticipates this). This is the real engineering lift.
-- **Phase 3 — community + convergence.** Extract the SD-health add-on for upstream;
-  submit the add-on repo to the community store; fold the hub image into the signed
-  release train; converge with the §7.7 Canary onboarding (Improv / zeroconf) so
-  hub and Canaries share one adoption flow.
+The decisions in §8 are locked, so this is a concrete build order rather than a
+menu. The destructive part (writing a raw disk) is sequenced the way the firmware
+sequences anything that can hurt: **the pure decision layer lands and is tested
+first, and the risky wiring is gated behind it** (cf.
+`firmware/common/health/boot_policy.h`). "Native image-writer" does not mean we
+reinvent an imager — the `flasher_experience.md` adjacent-bet is explicit that
+the leverage is the *pre-baked HAOS image*, so the app writes **our seeded HAOS
+image** using a proven write approach, in-app, so the operator never leaves for
+Raspberry Pi Imager.
 
-## 8. Open decisions (product calls before we build)
+- **Step 1 — the target-disk safety layer (this change).** Pure, host-tested:
+  `desktop/src-tauri/src/hub_disk.rs` decides what is a legal write target and
+  refuses the system disk / fixed disks / too-small / unknown-size devices, with
+  human-readable reasons and advisory warnings. No byte-writing code exists yet.
+- **Step 2 — enumerate + confirm UI.** Platform disk enumeration (Linux
+  `/sys/block` + which disk backs `/`; then macOS `diskutil`, Windows), every
+  candidate run through `hub_disk::classify`; a picker that shows eligible cards
+  and *why* the rest are hidden, plus an explicit size/model confirm.
+- **Step 3 — acquire the image.** Download the pinned, checksummed HAOS-based hub
+  image over TLS, verify its hash, decompress (`.xz`) — reusing the release-train
+  honesty (a catalog entry that is truthful before the image exists).
+- **Step 4 — the guarded write (hardware-validated before merge).** Raw
+  block-device write with progress + read-back verify, behind the Step-1 gate and
+  a typed confirmation. This is the footgun; it does not merge on review alone.
+- **Step 5 — seed the boot partition.** Write the Wi-Fi NetworkManager keyfile
+  (reusing the flasher's existing "type Wi-Fi once" secret, `wifi-memory.js`;
+  upgrade the persist store to the OS keychain) + the curated **full-stack**
+  securaCV backup (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards +
+  blueprints) so first boot comes up wired.
+- **Step 6 — community + convergence.** Extract the SD-health add-on for upstream;
+  submit the add-on repo to the community store; fold the hub image into the
+  signed release train; converge with the §7.7 Canary onboarding (Improv /
+  zeroconf) so hub and Canaries share one adoption flow.
 
-1. **Base OS.** *Recommended:* HAOS-derived (post-process the official image) — we
-   inherit self-heal / A-B OTA / years-of-life and don't own a rotting fork.
-   *Alternative:* a fully custom securaCV image (more branding/control, but we then
-   own the durability burden the user explicitly wants avoided).
-2. **First delivery vehicle.** *Recommended:* the Phase-1 scripted/docs recipe on
-   the official image — ships the "boom" fastest, no wrong-disk footgun yet.
-   *Alternative:* go straight to the Phase-2 desktop image-writer engine.
-3. **Pre-bake scope.** Minimal (Wi-Fi + Mosquitto + PWK add-on) vs the full
-   opinionated stack (also Frigate / go2rtc + dashboards + blueprints). Minimal is
-   the safe default; the stack is the more "magical" out-of-box.
+> **CI note.** The `desktop/` crate only builds on release tags (`app-v*` /
+> `flasher-v*`), not in PR CI, and needs webkit/gtk system libs. The pure layers
+> (Step 1, and the pure halves of 2–3) are therefore verified with a standalone
+> `rustc --test`; before Step 4 merges, add a PR check that at least compiles and
+> unit-tests the desktop crate's pure modules so the writer can't rot silently.
+
+## 8. Decisions (locked 2026-07-22)
+
+1. **Base OS → build on Home Assistant OS.** Post-process the pinned official
+   image; inherit self-heal / A-B rollback / auto-update from the HA project and
+   let our add-on ride its update channel. We do not own a rotting fork. (The
+   custom-image alternative was declined — it would put the "never rots" burden
+   back on us.)
+2. **First delivery vehicle → the native image-writer in the desktop flasher.**
+   Straight to the in-app SD/USB/NVMe writer, not a scripted-recipe interim — the
+   "flash it like a Canary" experience end to end. Accepts the bigger lift and the
+   wrong-disk footgun, which §7 and §9 mitigate with the safety-first sequencing.
+3. **Pre-bake scope → the full stack.** The flashed hub boots with Wi-Fi +
+   Mosquitto + the PWK add-on **and** Frigate/go2rtc + the Lovelace dashboards +
+   the alert/digest blueprints already wired — the most "magical" out-of-box. Cost:
+   more surface to keep working across HA versions; the curated backup is
+   version-pinned and drift-checked like the rest of the catalog.
+
+Cross-reference: [`flasher_experience.md`](flasher_experience.md) §"Adjacent
+bets" (the native-app / pre-baked-image framing) and §7.7 of
+[`docs/strategy/11-home-assistant-platform-architecture.md`](../strategy/11-home-assistant-platform-architecture.md)
+(the Canary onboarding this hub flow fronts).
 
 ## 9. Risks & anti-goals
 
-- **Wrong-disk wipe** (Phase 2): removable-only enumeration, size/model
-  confirmation, verify-after-write. Non-negotiable before shipping the writer.
+- **Wrong-disk wipe** (§7 step 4): removable-only enumeration, refuse the system
+  disk, size/model confirmation, verify-after-write — the guarantees `hub_disk`
+  now encodes and tests. Non-negotiable before shipping the writer.
 - **Don't fork HAOS.** A bespoke image is the rot risk in disguise.
 - **SD as boot media** is the weak link for multi-year uptime; steer to NVMe/SSD on
   Pi 5, keep the wear monitor loud.
