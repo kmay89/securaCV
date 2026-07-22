@@ -93,6 +93,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <summary><strong>Evidence & trust</strong> — the cryptographic spine</summary>
 
 - [Security docs](security/README.md) — security model, threat model, audit
+- [Supply-chain transparency](supply_chain_transparency.md) — signed build provenance + a public transparency log; verify a download was built from the open source
 - [Device trust & PKI](device_trust.md) — pinned keys, stricter than TOFU
 - [Log verification](log_verify.md) — proving the chain, offline
 - [Timestamping](timestamping.md) — coarse time as a feature
