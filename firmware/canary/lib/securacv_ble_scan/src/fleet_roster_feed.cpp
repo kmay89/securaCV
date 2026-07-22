@@ -93,6 +93,14 @@ int peer_count() {
 
 uint32_t seen() { return s_seen; }
 
+// Single-task by design, so the copy needs no lock: the writer (on_advert, via
+// the NimBLE scan callback), tick(), peer_count(), and this snapshot all run on
+// the MAIN LOOP — the same invariant ble_scout.cpp relies on for its plain
+// broadcast-callback store ("emit_arrived/departed run from ble_scout_tick /
+// on_advert — both on the main loop", ble_scout.cpp). There is no concurrent
+// writer to tear an entry mid-copy. If the roster is ever fed from a separate
+// task, this AND the existing readers (peer_count/tick) would need a shared
+// critical section together — a subsystem change, not a per-caller lock.
 int snapshot(FleetRosterEntry* out, int max) {
   if (!s_inited || !out || max <= 0) return 0;
   int n = 0;
