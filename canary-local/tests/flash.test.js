@@ -1020,6 +1020,52 @@ test("visionCompletion: tracks the 2-of-2 so you can't walk away half-done", asy
   assert.strictEqual(both.nextLabel, null);
 });
 
+test("isVisionBoard: only the Vision boards are the two-port pair", async () => {
+  const { isVisionBoard } = await core();
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-vision" }), true);
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-vision-xiao-s3" }), true);
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-vision-xiao-c3" }), true);
+  // Non-Vision boards are single-port — no camera module to also flash.
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-sense" }), false);
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary-wap" }), false);
+  assert.strictEqual(isVisionBoard({ id: "securacv-canary" }), false);
+  assert.strictEqual(isVisionBoard(null), false);
+  assert.strictEqual(isVisionBoard({}), false);
+});
+
+test("visionChecklistModel: one wording drives both done screens", async () => {
+  const { visionChecklistModel } = await core();
+  // Nothing flashed yet — two open rows.
+  const zero = visionChecklistModel({});
+  assert.strictEqual(zero.done, false);
+  assert.strictEqual(zero.count, 0);
+  assert.strictEqual(zero.rows.length, 2);
+  assert.strictEqual(zero.rows[0].done, false);
+  assert.strictEqual(zero.rows[1].done, false);
+
+  // ESP32 done → camera module is next; the firmware row is checked, camera open.
+  const esp = visionChecklistModel({ esp32: true });
+  assert.strictEqual(esp.done, false);
+  assert.strictEqual(esp.count, 1);
+  assert.strictEqual(esp.nextPart, "we2");
+  assert.strictEqual(esp.rows[0].done, true);
+  assert.strictEqual(esp.rows[1].done, false);
+  assert.match(esp.status, /1 of 2/);
+  assert.match(esp.status, /camera module/i);
+
+  // Camera module first → the ESP32 firmware is next.
+  const cam = visionChecklistModel({ we2: true });
+  assert.strictEqual(cam.nextPart, "esp32");
+  assert.match(cam.status, /ESP32 board/i);
+
+  // Both done → the celebration, no "next".
+  const both = visionChecklistModel({ esp32: true, we2: true });
+  assert.strictEqual(both.done, true);
+  assert.strictEqual(both.count, 2);
+  assert.strictEqual(both.nextPart, null);
+  assert.match(both.status, /fully set up/i);
+});
+
 test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
   const csp = cspContent(FLASH_HTML);
   assert.ok(csp, "no CSP <meta> in flash.html");

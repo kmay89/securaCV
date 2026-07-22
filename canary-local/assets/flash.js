@@ -24,6 +24,8 @@ import { md5Raw } from "./vendor/md5/md5.js";
 import * as core from "./flash-core.js";
 import { phaseModule } from "./we2-flash.js";
 import { wifiMemory } from "./wifi-memory.js";
+import { visionSession } from "./vision-session.js";
+import { visionChecklistCard } from "./vision-checklist.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -1427,6 +1429,12 @@ async function startFlash(opts) {
 
     state.busy = false;
     state.baudCeiling = null; // this speed worked — don't carry a cap forward
+    // Two-port Vision: this ESP32 half is now flashed — record it (once, here at
+    // the completion transition, not in the render) so the done screen and the
+    // camera-module flow can insist on both ports.
+    if (opts.product && !opts.isBackup && core.isVisionBoard(opts.product)) {
+      visionSession.markDone("esp32");
+    }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length, wifiSsid, wifi: null }));
   } catch (e) {
@@ -1511,7 +1519,19 @@ function phaseDone(opts) {
   }
   // The ONE obvious next step for THIS board — tailored to how it sets up and
   // what it senses, so "it's alive" leads somewhere instead of dead-ending.
-  if (product && !opts.isBackup) {
+  if (product && !opts.isBackup && core.isVisionBoard(product)) {
+    // A Vision is two ports. The generic "watch it prove itself" is premature
+    // until the camera module has its model too — so here the two-port checklist
+    // IS the next step: it shows what's done, what's left, and routes to the
+    // other port. (visionSession was marked at the completion transition above.)
+    box.append(visionChecklistCard(visionSession.parts(), {
+      onFlashOther: () => setPhase(phaseModule({
+        catalog: state.catalog,
+        setPhase,
+        back: () => setPhase(phaseConnect()),
+      })),
+    }));
+  } else if (product && !opts.isBackup) {
     const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
     const ns = el("div", "flash-nextstep");
     ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
