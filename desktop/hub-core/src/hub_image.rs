@@ -228,10 +228,18 @@ fn normalize_sha256(raw: &str) -> Option<String> {
     is_sha256_hex(token).then(|| token.to_ascii_lowercase())
 }
 
+/// Proof that a downloaded image verified. A capability token with no public
+/// constructor: the ONLY way to get one is a successful [`verify_download`]. The
+/// write-authorization gate (`hub_flash`) requires one, so an image can't be
+/// authorized for writing without having actually passed verification — the
+/// safety ordering is enforced by the type system, not by discipline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedImage(());
+
 /// Decide whether a downloaded image passes verification, given the SHA-256 the
 /// caller `computed` over the bytes and — for the unpinned case — the checksum
 /// Home Assistant `published` for that asset (`None` if the caller couldn't
-/// fetch it).
+/// fetch it). Returns a [`VerifiedImage`] proof on success.
 ///
 /// The trust order is the point of this function, made once and tested:
 ///   1. If the plan carries a repo-**pinned** hash, that is authoritative — the
@@ -246,7 +254,7 @@ pub fn verify_download(
     plan: &WritePlan,
     computed: &str,
     published: Option<&str>,
-) -> Result<(), VerifyError> {
+) -> Result<VerifiedImage, VerifyError> {
     // Normalize each hash to canonical lowercase hex up front, so the envelope
     // (a `sha256:` prefix, a trailing filename) never masquerades as a mismatch
     // or a malformed value. A hash that can't be normalized fails loudly.
@@ -262,7 +270,7 @@ pub fn verify_download(
                 value: expected_raw.trim().to_string(),
             })?;
         return if computed == expected {
-            Ok(())
+            Ok(VerifiedImage(()))
         } else {
             Err(VerifyError::PinnedMismatch {
                 expected,
@@ -279,7 +287,7 @@ pub fn verify_download(
                     value: published_raw.trim().to_string(),
                 })?;
             if computed == published {
-                Ok(())
+                Ok(VerifiedImage(()))
             } else {
                 Err(VerifyError::PublishedMismatch {
                     published,
@@ -430,7 +438,10 @@ mod tests {
 
     #[test]
     fn a_pinned_image_matching_its_hash_passes() {
-        assert_eq!(verify_download(&pinned_plan(SHA_A), SHA_A, None), Ok(()));
+        assert_eq!(
+            verify_download(&pinned_plan(SHA_A), SHA_A, None),
+            Ok(VerifiedImage(()))
+        );
     }
 
     #[test]
@@ -449,7 +460,7 @@ mod tests {
         // Even if HA's published value would say otherwise, the pinned hash wins.
         assert_eq!(
             verify_download(&pinned_plan(SHA_A), SHA_A, Some(SHA_B)),
-            Ok(())
+            Ok(VerifiedImage(()))
         );
     }
 
@@ -457,7 +468,7 @@ mod tests {
     fn an_unpinned_image_matching_the_published_hash_passes() {
         assert_eq!(
             verify_download(&unpinned_plan(), SHA_A, Some(SHA_A)),
-            Ok(())
+            Ok(VerifiedImage(()))
         );
     }
 
@@ -483,7 +494,10 @@ mod tests {
     #[test]
     fn hash_comparison_is_case_insensitive() {
         let upper = SHA_A.to_ascii_uppercase();
-        assert_eq!(verify_download(&pinned_plan(SHA_A), &upper, None), Ok(()));
+        assert_eq!(
+            verify_download(&pinned_plan(SHA_A), &upper, None),
+            Ok(VerifiedImage(()))
+        );
     }
 
     #[test]
@@ -493,13 +507,13 @@ mod tests {
         let published = format!("sha256:{SHA_A}");
         assert_eq!(
             verify_download(&unpinned_plan(), SHA_A, Some(&published)),
-            Ok(())
+            Ok(VerifiedImage(()))
         );
         // Case-insensitive prefix too.
         let published_upper = format!("SHA256:{SHA_A}");
         assert_eq!(
             verify_download(&unpinned_plan(), SHA_A, Some(&published_upper)),
-            Ok(())
+            Ok(VerifiedImage(()))
         );
     }
 
@@ -509,7 +523,7 @@ mod tests {
         let published = format!("{SHA_A}  haos_rpi5-64-18.1.img.xz");
         assert_eq!(
             verify_download(&unpinned_plan(), SHA_A, Some(&published)),
-            Ok(())
+            Ok(VerifiedImage(()))
         );
     }
 
