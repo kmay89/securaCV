@@ -27,19 +27,14 @@ use tauri_plugin_updater::UpdaterExt;
 // The Raspberry Pi Home Assistant hub path (design: docs/design/
 // raspberry_pi_hub_flashing.md). Writing a whole-OS image to a raw disk is the
 // one thing this app can do that ISN'T can't-brick-safe like an ESP32 flash — a
-// wrong-disk write destroys data. So the *decision* of what is a legal write
-// target lands first, pure and host-tested, before any byte-writing command
-// exists — mirroring how the firmware lands its boot policy as a tested pure
-// layer ahead of the risky wiring. The enumerator, the confirm UI, and the
-// guarded write build on top of this in follow-up changes; each must run a
-// candidate through `hub_disk::classify` and refuse anything not `Eligible`.
-pub mod hub_disk;
-// Step 2's safety-critical core: turn the OS's raw disk view into classified
-// targets — pure functions over /proc/mounts + /sys/block that identify the
-// system disk (so it's refused) and external SSD/NVMe (so it's offerable),
-// host-tested, plus a thin read-only Linux `enumerate()`. No confirm UI or
-// byte-writing command yet; those follow, still gated on `hub_disk::classify`.
-pub mod hub_enumerate;
+// wrong-disk write destroys data. The footgun-critical logic (what is a legal
+// write target, and how to enumerate disks and tell the system disk from an
+// external one) lives in the dependency-free `hub-core` crate (../hub-core) so
+// it is unit-tested on every PR without the desktop stack. The enumerator's
+// tauri command, the confirm UI, and the guarded write build on top of it in
+// follow-up changes — each must run a candidate through `hub_core::hub_disk::
+// classify` and refuse anything not `Eligible`. (Wired in via a path dependency
+// when the first command that uses it lands.)
 
 // The flasher catalog is baked in at compile time so the app can list every
 // Canary and enforce the chip guard with zero network. build.rs copies the ONE

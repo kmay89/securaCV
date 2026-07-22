@@ -198,11 +198,14 @@ Raspberry Pi Imager.
   signed release train; converge with the §7.7 Canary onboarding (Improv /
   zeroconf) so hub and Canaries share one adoption flow.
 
-> **CI note.** The `desktop/` crate only builds on release tags (`app-v*` /
-> `flasher-v*`), not in PR CI, and needs webkit/gtk system libs. The pure layers
-> (Step 1, and the pure halves of 2–3) are therefore verified with a standalone
-> `rustc --test`; before Step 4 merges, add a PR check that at least compiles and
-> unit-tests the desktop crate's pure modules so the writer can't rot silently.
+> **CI note (resolved).** The Tauri app (`desktop/src-tauri`) only builds on
+> release tags (`app-v*` / `flasher-v*`) and needs webkit/gtk, so it can't be
+> tested in PR CI. The footgun-critical logic therefore lives in its own
+> dependency-free crate, `desktop/hub-core` (`hub_disk` + `hub_enumerate`), which
+> the `Hub Core` workflow `cargo test`s (+ `fmt`/`clippy -D warnings`) on every PR
+> that touches it — so the disk-writer safety layer is verified continuously, not
+> just at release. `src-tauri` will consume it via a path dependency when the
+> first command that uses it lands.
 
 ## 8. Decisions (locked 2026-07-22)
 

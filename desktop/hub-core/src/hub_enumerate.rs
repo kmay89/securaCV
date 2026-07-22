@@ -228,8 +228,17 @@ mod tests {
             assert!(is_candidate_disk(ok), "{ok} should be a candidate");
         }
         for no in [
-            "sda1", "nvme0n1p1", "mmcblk0p2", // partitions
-            "loop0", "ram0", "zram0", "dm-0", "md0", "sr0", "fd0", "nbd0", // pseudo/virtual
+            "sda1",
+            "nvme0n1p1",
+            "mmcblk0p2", // partitions
+            "loop0",
+            "ram0",
+            "zram0",
+            "dm-0",
+            "md0",
+            "sr0",
+            "fd0",
+            "nbd0", // pseudo/virtual
         ] {
             assert!(!is_candidate_disk(no), "{no} should NOT be a candidate");
         }
