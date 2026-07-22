@@ -50,7 +50,7 @@ test("vision.json has every section the page requires", () => {
 });
 
 test("counts are not thin (a broken parse would fail here)", () => {
-  assert.strictEqual(data.mqtt.discovery.entities.length, 16);
+  assert.strictEqual(data.mqtt.discovery.entities.length, 19);
   assert.ok(data.mqtt.topics.length >= 15, "too few MQTT topics");
   assert.ok(data.serial.boot.length >= 20, "boot log too short");
   assert.ok(data.sandbox.length >= 5, "too few sandbox scenes");

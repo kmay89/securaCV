@@ -542,6 +542,21 @@
           "desc": "the occupied cell of the 3\u00d73 grid, as \"r,c\""
         },
         {
+          "name": "Occupancy",
+          "component": "sensor",
+          "desc": "coarse count bucket \u2014 none / one / two / several, never an exact tally"
+        },
+        {
+          "name": "Posture",
+          "component": "sensor",
+          "desc": "coarse upright / ambiguous / horizontal from the box aspect ratio \u2014 not a skeleton"
+        },
+        {
+          "name": "Proximity",
+          "component": "sensor",
+          "desc": "coarse far / mid / near from the box area fraction"
+        },
+        {
           "name": "Last event",
           "component": "sensor",
           "desc": "the most recent witness event name"

@@ -378,10 +378,11 @@ must(GETTING_STARTED, "streams camera frames to the", "preview privacy note")
 # highest score wins — one box, however many people are in frame.
 must(VISION_MGR_CPP, "if (b.target != det.person_target) continue;", "class filter")
 must(VISION_MGR_CPP, "if (b.score < det.score_min) continue;", "score filter")
-must(VISION_MGR_CPP, "if (b.score > best) {", "best-box rule")
-# voxel mapping — center of the box, integer grid math
-must(VISION_MGR_CPP, "const int cx = bb.x + (bb.w / 2);", "voxel center x")
-must(VISION_MGR_CPP, "int c = (cx * cols) / FRAME_W;", "voxel col math")
+must(VISION_MGR_CPP, "if (b.score > bestScore) {", "best-box rule")
+# voxel mapping — center of the box, integer grid math (the math now lives in a
+# point_to_cell() helper: cx->px, cols->C, same integer formula)
+must(VISION_MGR_CPP, "point_to_cell(bb.x + (bb.w / 2), bb.y + (bb.h / 2), rows, cols, r, c);", "voxel center -> cell")
+must(VISION_MGR_CPP, "c = (px * C) / FRAME_W;", "voxel col math")
 
 EVENTS = re.findall(r'emit\(out_event,\s*"([a-z_]+)"', read(PRESENCE_FSM_CPP))
 if len(set(EVENTS)) < 5:
@@ -531,6 +532,9 @@ ENTITY_META = {
     "Dwelling": ("binary_sensor", "someone has stayed — occupancy class"),
     "Confidence": ("sensor", "best-box score, 0–100 %"),
     "Voxel": ("sensor", f"the occupied cell of the {VOXEL_COLS}×{VOXEL_ROWS} grid, as \"r,c\""),
+    "Occupancy": ("sensor", "coarse count bucket — none / one / two / several, never an exact tally"),
+    "Posture": ("sensor", "coarse upright / ambiguous / horizontal from the box aspect ratio — not a skeleton"),
+    "Proximity": ("sensor", "coarse far / mid / near from the box area fraction"),
     "Last event": ("sensor", "the most recent witness event name"),
     "Uptime": ("sensor", "seconds since boot"),
     "WiFi RSSI": ("sensor", "diagnostic — link strength"),
