@@ -1483,11 +1483,16 @@ function phaseDone(opts) {
       ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
       `No setup network needed (it still appears if the join fails, as the fallback).`));
     box.append(w);
-  } else if (product) {
-    const note = state.catalog.products.find((p) => p.id === product.id);
-    const p = el("p", "muted", note ? note.provisioning_note : "");
-    box.append(p);
-  } else {
+  }
+  // The ONE obvious next step for THIS board — tailored to how it sets up and
+  // what it senses, so "it's alive" leads somewhere instead of dead-ending.
+  if (product && !opts.isBackup) {
+    const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
+    const ns = el("div", "flash-nextstep");
+    ns.append(el("div", "flash-nextstep-title", `Next — ${step.title}`));
+    ns.append(el("p", "flash-nextstep-body", step.body));
+    box.append(ns);
+  } else if (!product) {
     box.append(el("p", "muted", "It rebooted into the firmware you just wrote. If it doesn’t light up, tap the RESET button once."));
   }
 
@@ -2116,12 +2121,24 @@ function phaseMonitor(port, opts = {}) {
     idCard.classList.remove("flash-hidden");
     idCard.append(el("div", "flash-identity-head",
       (signed ? "✓ " : "") + "Your Canary just proved itself"));
+    // The self-check verdict, front and centre — so a headless board (no screen)
+    // SHOWS you it works instead of being a silent dud. Health IS its self-test.
+    {
+      // Always show the verdict — including "Self-check pending" when health is
+      // null/unknown — so a headless board never falls back to no status at all.
+      const v = core.healthVerdict(m.health);
+      const scored = typeof m.health === "number" && Number.isFinite(m.health) &&
+                     m.health >= 0 && m.health <= 100;
+      const vb = el("div", `flash-selfcheck flash-selfcheck-${v.level}`);
+      vb.append(el("span", "flash-selfcheck-icon", v.icon));
+      vb.append(el("span", null, scored ? `${v.label} · ${m.health}/100` : v.label));
+      idCard.append(vb);
+    }
     const facts = el("div", "flash-facts");
     if (m.board) facts.append(fact("board", m.board));
     if (m.firmware) facts.append(fact("firmware", m.firmware));
     const fp = core.formatFingerprint(m.pubkey_fp || m.pubkey);
     if (fp) facts.append(fact("key fingerprint", fp));
-    if (typeof m.health === "number") facts.append(fact("health", `${m.health}/100`));
     if (typeof m.boots === "number") facts.append(fact("boots", String(m.boots)));
     idCard.append(facts);
     if (m.tamper) {

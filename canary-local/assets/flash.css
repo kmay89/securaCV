@@ -243,6 +243,13 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-done { text-align: center; }
 .flash-done .flash-row { justify-content: center; }
 .flash-done-bird { font-size: 52px; animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both; }
+.flash-nextstep {
+  text-align: left; margin: 16px auto 2px; max-width: 460px;
+  border: 1px solid rgba(255,212,79,0.28); background: rgba(255,212,79,0.06);
+  border-radius: 12px; padding: 12px 14px;
+}
+.flash-nextstep-title { font-weight: 640; color: var(--canary); }
+.flash-nextstep-body { margin: 5px 0 0; color: #d8d8d8; font-size: 14px; line-height: 1.5; }
 @keyframes flash-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
 /* ── error ─────────────────────────────────────────────────────────────── */
@@ -494,3 +501,12 @@ button.flash-map-key:hover { color: var(--text); }
   border-radius: 12px; padding: 12px 14px; margin: 10px 0;
 }
 .flash-identity-head { font-weight: 640; font-size: 15px; color: #bfe6fb; margin-bottom: 6px; }
+.flash-selfcheck {
+  display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 8px;
+  padding: 6px 13px; border-radius: 999px; font-weight: 600; font-size: 14px;
+}
+.flash-selfcheck-icon { font-size: 15px; }
+.flash-selfcheck-ok { background: rgba(67,160,71,0.12); border: 1px solid rgba(67,160,71,0.4); color: #bfe3c1; }
+.flash-selfcheck-warn { background: rgba(255,212,79,0.1); border: 1px solid rgba(255,212,79,0.35); color: #f0dca0; }
+.flash-selfcheck-attn { background: rgba(244,67,54,0.1); border: 1px solid rgba(244,67,54,0.4); color: #f3b0ab; }
+.flash-selfcheck-pending { background: rgba(255,255,255,0.04); border: 1px solid var(--edge); color: var(--muted); }

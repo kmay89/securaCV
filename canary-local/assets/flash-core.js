@@ -1134,6 +1134,79 @@ export function formatFingerprint(hex, maxBytes = 8) {
   return pairs.length > maxBytes ? shown + "…" : shown;
 }
 
+// ── post-flash: the ONE obvious next step for THIS board ────────────────────
+// After a Canary proves itself over the console, tell the user the single next
+// thing to do — tailored to how the board is set up and what it senses — so the
+// "it's alive" moment leads somewhere instead of dead-ending at "cool, now what?"
+// Pure + host-tested (tests/flash.test.js); flash.js renders it.
+//
+//   product         the flashed catalog product ({id, provisioning, …})
+//   opts.wifiJoined true if Wi-Fi creds were written during the flash (so the
+//                   board is already joining the network, not raising a portal)
+// Returns { kind, title, body, cta } — kind is the machine-readable action the
+// UI wires a button to; title/body/cta are the human copy.
+export function postFlashNextStep(product, opts = {}) {
+  const id = (product && product.id) || "";
+  const prov = product && product.provisioning;
+  const wifiJoined = !!(opts && opts.wifiJoined);
+
+  // Coarse role from the id — only picks which "watch it prove itself" hint fits.
+  const role =
+    /sense/.test(id) ? "sense" :
+    /vision/.test(id) ? "vision" :
+    /wap/.test(id) ? "wap" :
+    "canary";
+
+  // "ap" boards raise their own phone Wi-Fi portal on first boot — unless we
+  // already wrote the home Wi-Fi during the flash, in which case they just join.
+  if (prov === "ap" && !wifiJoined) {
+    return {
+      kind: "wifi-portal",
+      title: "Finish setup from your phone",
+      body: "It’s broadcasting its own Wi-Fi network now — join it from your " +
+            "phone and a setup page opens by itself. Nothing to type here.",
+      cta: "How to connect",
+    };
+  }
+
+  const proof = {
+    sense: "Open the live monitor and walk past it — presence flips to " +
+           "“someone’s here” within about a second. No screen needed: the " +
+           "console is its voice.",
+    vision: "Open the live monitor — it reports what its camera sees as coarse " +
+            "events (a person, roughly where), never raw video.",
+    wap: "Open the live monitor and move around — it feels presence in the " +
+         "Wi-Fi field itself, no camera.",
+    canary: "Open the live monitor — sensing, the witness chain, and the Home " +
+            "Assistant bridge all report in.",
+  };
+  return {
+    kind: wifiJoined ? "joining-wifi" : "prove-live",
+    title: wifiJoined ? "It’s joining your Wi-Fi — watch it come up"
+                      : "Watch it prove itself",
+    body: proof[role] || proof.canary,
+    cta: "Open the live monitor",
+  };
+}
+
+// ── prove it works: the self-check verdict from the manifest health ─────────
+// The manifest's `health` (0-100, or null) IS the device self-test result. Turn
+// it into a plain-language verdict so a headless board (Sense/mmWave) *shows*
+// you it works instead of being a silent dud — and so the same mapping can drive
+// the network fleet view later. Pure + host-tested.
+//   Returns { level, icon, label } — level ∈ pending | ok | warn | attn.
+export function healthVerdict(health) {
+  // Fail safe on anything that isn't a real 0-100 score — null, NaN, a negative,
+  // or an out-of-range value from a firmware bug / corrupted serial line. None of
+  // those may read as a pass; they are "pending" (self-test unknown).
+  if (typeof health !== "number" || !Number.isFinite(health) || health < 0 || health > 100) {
+    return { level: "pending", icon: "…", label: "Self-check pending" };
+  }
+  if (health >= 80) return { level: "ok",   icon: "✓", label: "Self-check passed" };
+  if (health >= 50) return { level: "warn", icon: "⚠", label: "Up, with minor warnings" };
+  return { level: "attn", icon: "⚠", label: "Needs attention" };
+}
+
 // ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
 // One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
 // Public-only by construction: it takes a plain object of already-safe facts

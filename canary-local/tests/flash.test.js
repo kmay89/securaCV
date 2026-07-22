@@ -928,6 +928,60 @@ function importmapText(html) {
   return m ? m[1] : null;
 }
 
+// ── post-flash: the "come to life" next step ────────────────────────────────
+test("postFlashNextStep: ap boards go to the phone portal, unless Wi-Fi was written", async () => {
+  const { postFlashNextStep } = await core();
+  const canary = { id: "securacv-canary", provisioning: "ap" };
+  assert.strictEqual(postFlashNextStep(canary).kind, "wifi-portal");
+  // Pre-provisioned the home Wi-Fi during the flash → it's already joining.
+  assert.strictEqual(postFlashNextStep(canary, { wifiJoined: true }).kind, "joining-wifi");
+});
+
+test("postFlashNextStep: usb-secrets boards go straight to proving themselves", async () => {
+  const { postFlashNextStep } = await core();
+  for (const id of ["securacv-canary-sense", "securacv-canary-sense-wellbeing", "securacv-canary-vision-xiao-s3"]) {
+    const step = postFlashNextStep({ id, provisioning: "usb-secrets" });
+    assert.strictEqual(step.kind, "prove-live");
+    assert.match(step.cta, /monitor/i);
+  }
+});
+
+test("postFlashNextStep: the prove-it hint is tailored to what the board senses", async () => {
+  const { postFlashNextStep } = await core();
+  assert.match(postFlashNextStep({ id: "securacv-canary-sense", provisioning: "usb-secrets" }).body, /presence|walk past/i);
+  assert.match(postFlashNextStep({ id: "securacv-canary-vision-xiao-s3", provisioning: "usb-secrets" }).body, /camera|sees/i);
+  assert.match(postFlashNextStep({ id: "securacv-canary-wap", provisioning: "ap" }, { wifiJoined: true }).body, /Wi-Fi field|move around/i);
+});
+
+test("postFlashNextStep: every catalog product yields a complete step (can't rot)", async () => {
+  const { postFlashNextStep } = await core();
+  for (const p of catalog.products) {
+    for (const wifiJoined of [false, true]) {
+      const s = postFlashNextStep(p, { wifiJoined });
+      assert.ok(s && s.kind && s.title && s.body && s.cta, `${p.id} (wifiJoined=${wifiJoined}) incomplete`);
+    }
+  }
+});
+
+test("healthVerdict: maps the self-test score to a plain verdict, never a false pass", async () => {
+  const { healthVerdict } = await core();
+  assert.strictEqual(healthVerdict(98).level, "ok");
+  assert.strictEqual(healthVerdict(80).level, "ok");     // boundary
+  assert.strictEqual(healthVerdict(79).level, "warn");
+  assert.strictEqual(healthVerdict(50).level, "warn");   // boundary
+  assert.strictEqual(healthVerdict(49).level, "attn");
+  assert.strictEqual(healthVerdict(0).level, "attn");
+  assert.strictEqual(healthVerdict(100).level, "ok");    // top of the valid range
+  // unknown / null / out-of-range health must be pending — never shown as a pass
+  for (const h of [-1, 101, 1000, null, undefined, NaN, "98"]) {
+    assert.strictEqual(healthVerdict(h).level, "pending", `health=${String(h)}`);
+  }
+  for (const h of [98, 65, 20, null]) {
+    const v = healthVerdict(h);
+    assert.ok(v.icon && v.label, `verdict for ${String(h)} missing icon/label`);
+  }
+});
+
 test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
   const csp = cspContent(FLASH_HTML);
   assert.ok(csp, "no CSP <meta> in flash.html");
