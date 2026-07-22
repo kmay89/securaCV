@@ -1,0 +1,155 @@
+{
+  "$generated_by": "canary-local/tools/gen_hub_image.py \u2014 do not edit by hand",
+  "$doc": "The securaCV Home Assistant hub image \u2014 single source of truth for the native Raspberry Pi hub flasher (docs/design/raspberry_pi_hub_flashing.md). Every fact is derived from an existing source so it can't drift: the base OS version rides the Hub's upstream snapshot, the card floor is parsed from the flasher safety gate (hub_disk.rs), and the baked-in payload is enumerated from the repo's own HA assets. Honest before an image is pinned: the URL is derivable from the version; sha256 stays empty (pinned=false) until the pin ceremony \u2014 the same posture as flash.json's all-zero release key.",
+  "schema_version": 1,
+  "base_os": {
+    "name": "Home Assistant OS",
+    "why": "HAOS is already the self-healing, auto-updating appliance the request asks for: an immutable A/B root (RAUC) that rolls back a bad boot, a Supervisor that watchdogs add-ons, and hands-off OS + add-on updates. We post-process the official image; we do not fork it. See the design doc \u00a74.",
+    "version": "18.1",
+    "version_source": "canary-local/devices/homeassistant.json:upstream.haos_version",
+    "arch": "aarch64",
+    "pinned": false,
+    "pin_note": "sha256 is set by the pin ceremony (a refresh step, mirroring the OTA signing ceremony). Until then the writer verifies the download against HA's published .sha256 and these stay empty.",
+    "boards": [
+      {
+        "id": "rpi5-64",
+        "name": "Raspberry Pi 5 (64-bit)",
+        "recommended": true,
+        "durable_default": "boot from NVMe/SSD (Pi 5) for multi-year endurance",
+        "image_asset": "haos_rpi5-64-18.1.img.xz",
+        "image_url": "https://github.com/home-assistant/operating-system/releases/download/18.1/haos_rpi5-64-18.1.img.xz",
+        "sha256": ""
+      },
+      {
+        "id": "rpi4-64",
+        "name": "Raspberry Pi 4 (64-bit, 4 GB+)",
+        "recommended": false,
+        "durable_default": "use a high-endurance A2 microSD; watch the SD wear sensor",
+        "image_asset": "haos_rpi4-64-18.1.img.xz",
+        "image_url": "https://github.com/home-assistant/operating-system/releases/download/18.1/haos_rpi4-64-18.1.img.xz",
+        "sha256": ""
+      }
+    ]
+  },
+  "card_requirements": {
+    "min_bytes": 30064771072,
+    "min_source": "desktop/src-tauri/src/hub_disk.rs:MIN_TARGET_BYTES",
+    "recommended_bytes": 68719476736,
+    "recommended_source": "desktop/src-tauri/src/hub_disk.rs:RECOMMENDED_TARGET_BYTES",
+    "human_minimum": "32 GB+",
+    "human_minimum_source": "canary-local/devices/homeassistant.json:hardware (microSD card)",
+    "note": "The exact byte floor is the flasher's safety gate; the human minimum is the supported hardware. A 32 GB card (~29.7 GiB) clears the floor; 16 GB and below are refused."
+  },
+  "payload": {
+    "what": "The full-stack pre-bake: the hub boots already wired \u2014 no add-on hunting, no restarts.",
+    "integration": {
+      "domain": "securacv",
+      "name": "SecuraCV",
+      "version": "0.6.0",
+      "min_ha": "2024.4.1",
+      "source": "canary-local/devices/homeassistant.json:integration"
+    },
+    "add_ons": [
+      {
+        "slug": "privacy_witness_kernel",
+        "name": "Privacy Witness Kernel",
+        "source": "securacv",
+        "from": "privacy_witness_kernel/config.yaml"
+      },
+      {
+        "slug": "core_mosquitto",
+        "name": "Mosquitto broker",
+        "why": "the add-on auto-discovers it (config.yaml services: mqtt:want) and MQTT Discovery needs it",
+        "source": "ha-community"
+      },
+      {
+        "slug": "go2rtc",
+        "name": "go2rtc",
+        "why": "camera discovery/restreaming (config.yaml go2rtc_discovery / go2rtc_url)",
+        "source": "ha-community"
+      },
+      {
+        "slug": "frigate",
+        "name": "Frigate NVR",
+        "why": "the recommended camera detection path (config.yaml mode: frigate)",
+        "source": "ha-community"
+      }
+    ],
+    "dashboards": [
+      {
+        "file": "homeassistant/lovelace/securacv-canary-dashboard.yaml",
+        "name": "canary dashboard"
+      },
+      {
+        "file": "homeassistant/lovelace/securacv-dashboard.yaml",
+        "name": "dashboard"
+      },
+      {
+        "file": "homeassistant/lovelace/securacv-vision-dashboard.yaml",
+        "name": "vision dashboard"
+      }
+    ],
+    "automations": [
+      {
+        "file": "homeassistant/automations/securacv_battery_health.yaml",
+        "name": "battery health"
+      },
+      {
+        "file": "homeassistant/automations/securacv_daily_digest.yaml",
+        "name": "daily digest"
+      },
+      {
+        "file": "homeassistant/automations/securacv_integrity_failure.yaml",
+        "name": "integrity failure"
+      },
+      {
+        "file": "homeassistant/automations/securacv_pattern_break.yaml",
+        "name": "pattern break"
+      },
+      {
+        "file": "homeassistant/automations/securacv_vision_presence.yaml",
+        "name": "vision presence"
+      }
+    ],
+    "blueprints": [
+      {
+        "file": "docs/blueprints/canary_sense_after_hours_presence.yaml",
+        "name": "canary sense after hours presence"
+      },
+      {
+        "file": "docs/blueprints/canary_sense_lights_out_tamper.yaml",
+        "name": "canary sense lights out tamper"
+      },
+      {
+        "file": "docs/blueprints/canary_sense_welfare_check.yaml",
+        "name": "canary sense welfare check"
+      },
+      {
+        "file": "docs/blueprints/securacv_alerts.yaml",
+        "name": "alerts"
+      },
+      {
+        "file": "docs/blueprints/securacv_daily_digest.yaml",
+        "name": "daily digest"
+      }
+    ]
+  },
+  "provisioning": {
+    "wifi": "A NetworkManager keyfile (CONFIG/network/my-network) seeded onto the boot partition \u2014 the same secret the Canary flasher already collects (wifi-memory.js). Local-only: it goes on the card, never to a cloud.",
+    "seed": "A curated HA backup, restored at onboarding, brings the payload up pre-wired.",
+    "self_heal": "Inherited from HAOS: A/B rollback + Supervisor watchdog + hands-off updates; our add-on rides the Supervisor update channel.",
+    "custody": "No cloud, nothing phones home; the image is a post-processed pinned official artifact (Inv. IV)."
+  },
+  "meta": {
+    "design": "docs/design/raspberry_pi_hub_flashing.md",
+    "upstream_fetched_at": "2026-07-19",
+    "sources": [
+      "canary-local/devices/homeassistant.json",
+      "desktop/src-tauri/src/hub_disk.rs",
+      "privacy_witness_kernel/config.yaml",
+      "homeassistant/lovelace/*.yaml",
+      "homeassistant/automations/*.yaml",
+      "docs/blueprints/*.yaml"
+    ]
+  }
+}

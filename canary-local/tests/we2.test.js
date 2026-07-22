@@ -22,6 +22,33 @@ const { join } = require("node:path");
 const core = () => import("../assets/we2-core.js");
 
 // ── CRC + framing ──────────────────────────────────────────────────────────
+// ── live-preview detection formatting (the bench "wow") ─────────────────────
+test("formatDetections: labels SSCMA boxes with the class name + %", async () => {
+  const { formatDetections } = await core();
+  const d = formatDetections([[100, 80, 40, 60, 92, 0]]);
+  assert.strictEqual(d.length, 1);
+  assert.strictEqual(d[0].label, "person");
+  assert.strictEqual(d[0].text, "person · 92%");
+  assert.strictEqual(d[0].score, 92);
+  assert.deepStrictEqual([d[0].x, d[0].y, d[0].w, d[0].h], [100, 80, 40, 60]);
+  // unknown target → generic label, never a crash
+  assert.strictEqual(formatDetections([[0, 0, 1, 1, 50, 9]])[0].label, "object");
+  // score clamps to 0-100 and rounds
+  assert.strictEqual(formatDetections([[0, 0, 1, 1, 150.6, 0]])[0].score, 100);
+  assert.strictEqual(formatDetections([[0, 0, 1, 1, -5, 0]])[0].score, 0);
+  // garbage in → empty, no throw
+  assert.deepStrictEqual(formatDetections(null), []);
+  assert.deepStrictEqual(formatDetections([[1, 2, 3]]), []); // too short
+  assert.deepStrictEqual(formatDetections([["x", 0, 1, 1, 90, 0]]), []); // non-numeric geom
+});
+
+test("detectionSummary: a clean pluralized readout with top confidence", async () => {
+  const { detectionSummary } = await core();
+  assert.match(detectionSummary([]), /watching/i);
+  assert.strictEqual(detectionSummary([[0, 0, 1, 1, 92, 0]]), "1 person · 92% confident");
+  assert.strictEqual(detectionSummary([[0, 0, 1, 1, 80, 0], [0, 0, 1, 1, 88, 0]]), "2 people · 88% confident");
+});
+
 test("crc16xmodem matches the known-answer vector", async () => {
   const { crc16xmodem } = await core();
   const ascii = (s) => Uint8Array.from(s, (c) => c.charCodeAt(0));

@@ -160,19 +160,27 @@ the leverage is the *pre-baked HAOS image*, so the app writes **our seeded HAOS
 image** using a proven write approach, in-app, so the operator never leaves for
 Raspberry Pi Imager.
 
-- **Step 1 — the target-disk safety layer (this change).** Pure, host-tested:
+- **The catalog spine (landed).** `canary-local/devices/hub_image.json`, generated
+  by `gen_hub_image.py` and drift-gated in CI, is the one source the writer, the
+  "Hub" page, and the docs read — so they can't disagree about the image, the card
+  floor, or what's baked in. Every fact is *derived*: the base OS version rides the
+  Hub's upstream snapshot, the card floor is parsed from `hub_disk.rs`, and the
+  full-stack payload is enumerated from the repo's own HA assets. It can't rot.
+- **Step 1 — the target-disk safety layer (landed).** Pure, host-tested:
   `desktop/src-tauri/src/hub_disk.rs` decides what is a legal write target and
-  refuses the system disk / fixed disks / too-small / unknown-size devices, with
-  human-readable reasons and advisory warnings. No byte-writing code exists yet.
+  refuses the system disk / internal fixed disks / too-small / unknown-size
+  devices, with human-readable reasons and advisory warnings. No byte-writing code
+  exists yet.
 - **Step 2 — enumerate + confirm UI.** Platform disk enumeration (Linux
   `/sys/block` + which disk backs `/` + external-vs-internal from the transport;
   then macOS `diskutil` internal/ejectable, Windows), every candidate run through
   `hub_disk::classify`; a picker that shows eligible cards/SSDs and *why* the rest
   are hidden, plus an explicit size/model confirm. The external call stays
   conservative: unproven ⇒ refused.
-- **Step 3 — acquire the image.** Download the pinned, checksummed HAOS-based hub
-  image over TLS, verify its hash, decompress (`.xz`) — reusing the release-train
-  honesty (a catalog entry that is truthful before the image exists).
+- **Step 3 — acquire the image.** Read the target board's image URL from
+  `hub_image.json`, download the HAOS-based hub image over TLS, verify its hash
+  (against HA's published `.sha256` until the `pinned` sha lands), decompress
+  (`.xz`). The catalog is already truthful before an image is pinned.
 - **Step 4 — the guarded write (hardware-validated before merge).** Raw
   block-device write with progress + read-back verify, behind the Step-1 gate and
   a typed confirmation. This is the footgun; it does not merge on review alone.

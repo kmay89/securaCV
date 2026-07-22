@@ -275,3 +275,39 @@ export function modelInfoJson({ version, sha256 }) {
     source: "securacv.com/lab — vendored from Seeed SSCMA model zoo",
   };
 }
+
+// ── live-preview detection formatting (the bench "wow") ─────────────────────
+// The pinned Vision model detects one class; single source for the label map so
+// the bench preview reads "person · 92%", not "class 0 · 85".
+export const WE2_CLASSES = ["person"];
+
+// Normalize an SSCMA detection box — [x, y, w, h, score, target] — into a
+// labelled object the preview draws. `score` is already 0-100 (a percent).
+// Unknown targets get a generic label instead of breaking; garbage is dropped.
+// Pure + host-tested (tests/we2.test.js).
+export function formatDetections(boxes, classes = WE2_CLASSES) {
+  const out = [];
+  for (const b of boxes || []) {
+    if (!Array.isArray(b) || b.length < 6) continue;
+    const [x, y, w, h, score, target] = b;
+    if (![x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n))) continue;
+    const label = (classes && classes[target]) || "object";
+    const pct = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+    out.push({ x, y, w, h, score: pct, label, text: `${label} · ${pct}%` });
+  }
+  return out;
+}
+
+// A one-line readout of what it sees right now — pluralized, with the top
+// confidence — for the "it sees you!" moment. "watching…" when nothing's found.
+export function detectionSummary(boxes, classes = WE2_CLASSES) {
+  const dets = formatDetections(boxes, classes);
+  if (!dets.length) return "watching… nothing yet";
+  const counts = {};
+  let top = 0;
+  for (const d of dets) { counts[d.label] = (counts[d.label] || 0) + 1; if (d.score > top) top = d.score; }
+  const pluralize = (word, n) =>
+    n === 1 ? word : word === "person" ? "people" : word.endsWith("s") ? word : word + "s";
+  const parts = Object.entries(counts).map(([label, n]) => `${n} ${pluralize(label, n)}`);
+  return `${parts.join(", ")} · ${top}% confident`;
+}
