@@ -185,7 +185,7 @@ test("bestBox: class filter, threshold, highest score — vision_mgr.cpp's rule"
 
 test("bboxToVoxel: the firmware's integer math, clamps included", async () => {
   const { bboxToVoxel } = await import("../assets/vision-ui.js");
-  assert.ok(visionMgrCpp.includes("int c = (cx * cols) / FRAME_W;"));
+  assert.ok(visionMgrCpp.includes("c = (px * C) / FRAME_W;"));
   const g = { cols: 3, rows: 3, w: 240, h: 240 };
   // center of frame lands center cell
   assert.deepStrictEqual(bboxToVoxel({ x: 100, y: 100, w: 40, h: 40 }, g),
