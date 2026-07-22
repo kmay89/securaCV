@@ -1,14 +1,19 @@
 # Opt-in hardware root of trust for the Canary (ESP32-S3) — design
 
-Status: Draft RFC — **for sign-off**
-Intended Status: Informative (design/decision doc)
+Status: **Accepted (v1)** — defaults decided (§8): the reversible tiers (1–2) are
+the path for every Canary; the irreversible tiers (3–4) are opt-in only.
+Intended Status: Informative (architecture decision record)
 Last Updated: 2026-07-22
 
-> This RFC proposes *policy and protocol*, not a merge of eFuse-burning code.
-> Every operation it discusses at Tier 3 is **irreversible silicon** — burning an
-> eFuse cannot be undone, and a wrong step bricks the board permanently. Nothing
-> here is wired to run by default, and the irreversible tiers should not ship as
-> executable code until the open decisions in §8 are signed off.
+> This RFC records *policy and protocol decisions*, and adds **no code** itself.
+> Every operation it discusses at Tier 3+ is **irreversible silicon** — an eFuse
+> burn cannot be undone, and a wrong step bricks the board permanently. None of
+> the irreversible tiers is wired into the build, the firmware, or the flasher.
+> The one in-repo thing that *can* burn eFuses —
+> `firmware/provisioning/provision_canary.sh` (§2.3) — is **manual, dry-run-first
+> operator tooling** a human runs deliberately; it is never invoked automatically,
+> and §5.2 specifies the gating it still needs (enforced key backup +
+> surrendered-guarantees prompt) before any fleet locks a board.
 
 ## 1. Summary
 
@@ -33,12 +38,12 @@ What's missing is not more tooling — it's the **decision layer**:
    read it out. This RFC proposes binding it to hardware (the ESP32-S3 DS
    peripheral) for deployments that need it.
 
-The recommendation (§8) is deliberately conservative: ship the **reversible**
-value first (anti-rollback, boot safe-mode, flasher awareness, software
-attestation) so every Canary gets tamper-*evidence* and rollback safety while
-staying un-brickable; gate the **irreversible** tamper-*resistance* (full Secure
-Boot + flash encryption + JTAG-off) behind an explicit, heavily-warned opt-in for
-the deployments that genuinely need it.
+The decision (§8, now settled) is deliberately conservative: **every Canary gets
+the reversible value** (anti-rollback, boot safe-mode, flasher awareness, software
+attestation) — tamper-*evidence* and rollback safety while staying un-brickable;
+the **irreversible** tamper-*resistance* (full Secure Boot + flash encryption +
+JTAG-off) is **opt-in only** — explicit, heavily-warned, key-backup enforced — for
+the deployments that genuinely need it, and is never the default.
 
 ## 2. Current state — what is already built
 
@@ -138,7 +143,7 @@ honest hardware-RoT design must own this, not bury it.
 | **0** (default) | Ed25519 identity in NVS; signed OTA | — | **Yes** | Everyone |
 | **1** | Anti-rollback (A/B + boot self-test/safe-mode) | Yes (software) | Yes | Everyone — should become default |
 | **2** | Software **attestation** (signed challenge-response + firmware self-measurement) | Yes | Yes | Anyone wanting a signed, replay-proof health report |
-| **3** | Flash encryption (**development** mode) + DS-bound identity key | Partly (still reflashable) | Mostly | Physical-theft threat models |
+| **3** | Flash encryption (**development** mode) — identity key protected at rest; DS-bound key optional (§8 #4) | Partly (still reflashable) | Mostly | Physical-theft threat models |
 | **4** | Secure Boot v2 + flash encryption (**release**) + JTAG-off | **No — eFuse** | **No** | High-assurance deployments only |
 
 Tiers 1–2 are the "every Canary should have this" band — pure software, no eFuse,
@@ -267,8 +272,8 @@ Mirroring the honesty of the vault RFC's §5.5
 
 ## 7. Phased task breakdown
 
-- **Phase 0 — this RFC.** Sign off §8. Nothing irreversible; no code that burns
-  eFuses merges.
+- **Phase 0 — this RFC. ✅ Done** (§8 signed off, 2026-07-22). Nothing
+  irreversible; no code that burns eFuses merges.
 - **Phase 1 — reversible safety net (highest value, no eFuse).** Wire
   `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` + boot self-test/safe-mode (the audit
   §"partition table + sdkconfig" recommendation, and the `self_star_roadmap`
@@ -277,39 +282,56 @@ Mirroring the honesty of the vault RFC's §5.5
   `securacv.attest/v1` (challenge-response + measurement) on the existing identity
   key; add the read-only "is this device locked?" probe so the flasher refuses
   locked units cleanly. No eFuse.
-- **Phase 3 — key-at-rest protection.** Flash encryption (development mode) +
-  DS-bound attestation key; validated on dev boards; still reflashable.
+- **Phase 3 — key-at-rest protection.** Flash encryption (development mode) so the
+  Ed25519 identity is protected at rest (§8 #4 default); a DS-peripheral-bound RSA
+  key is added *only* where a deployment needs non-extractability against a full
+  flash readout. Validated on dev boards; still reflashable.
 - **Phase 4 — full lockdown ceremony (opt-in, irreversible).** Secure Boot v2 +
   flash encryption (release) + JTAG-off via the gated `provision_canary.sh` flow,
   with enforced key backup and the surrendered-guarantees printout. Ships only for
   operators who explicitly choose it.
 
-## 8. Open decisions for you (sign-off)
+## 8. Decisions (accepted — v1, 2026-07-22)
 
-1. **Do we offer Tier 4 at all**, given it deletes the un-brickable promise?
-   *Recommendation: yes, but strictly opt-in and heavily gated; the default Canary
-   never leaves Tier 0/1.*
-2. **Secure Boot scheme:** on the ESP32-S3/C3 the only option is **RSA-3072-PSS**
-   (what `generate_keys.sh` already produces) — those chips have no ECDSA
-   secure-boot path. Only the ESP32-C6 members (canary-sense) have an
-   ECDSA-capable ROM, so ECDSA-P256 is at most a *per-chip* question if lockdown
-   ever extends to them. *Recommendation: standardize on RSA-3072 across the fleet
-   for a single signing ceremony; treat C6-ECDSA as a separate future note, not a
-   scheme choice now.*
-3. **Flash encryption mode offered at Tier 3:** development (reflashable) as the
-   default advanced tier, release only at Tier 4? *Recommendation: yes.*
-4. **Attestation key binding:** separate DS-bound RSA key (§5.4a) vs Ed25519 under
-   flash/NVS encryption (§5.4b)? *Recommendation: 5.4b for Tier 3, 5.4a only if a
-   deployment needs non-extractability against flash readout.*
-5. **Anti-rollback floor:** app-level A/B only (reversible) vs also burning the
-   `SECURE_VERSION` eFuse counter (irreversible downgrade floor)? *Recommendation:
-   app-level default; eFuse counter only at Tier 4.*
-6. **Flasher policy for locked devices:** hard-refuse with guidance (recommended),
-   or offer an in-page signed-USB flash (needs the owner's private key in the
-   browser — **not** recommended)?
-7. **Key relationship:** keep the RSA-3072 Secure Boot key and the Ed25519 OTA
-   release key fully separate (recommended — different roles, different
-   ceremonies) or unify management?
+Signed off by the maintainer. Each decision keeps the reversible, sovereign
+default and pushes every irreversible choice into the opt-in band. "Decided"
+here means the **default** architecture; a deployment that opts into Tiers 3–4 is
+choosing the alternative knowingly, per §5.1–5.2.
+
+1. **Offer the irreversible lockdown (Tier 4) at all? — Yes, but opt-in only.**
+   The default Canary never leaves Tiers 0–2 (un-brickable). Tier 4 exists solely
+   for deployments that accept losing field-recoverability in exchange for
+   physical tamper-resistance, behind the gated ceremony in §5.2.
+2. **Secure Boot scheme — RSA-3072-PSS.** It is the only scheme the ESP32-S3 and
+   ESP32-C3 ROM support (and what `generate_keys.sh` already produces), so one key
+   type serves one signing ceremony across the fleet. ECDSA-P256 is recorded only
+   as a future per-chip possibility for the ESP32-C6 members (canary-sense) — not
+   a scheme choice now.
+3. **Flash-encryption mode — development mode at Tier 3; release mode only inside
+   full Tier 4.** Dev mode is the sweet spot: it protects WiFi/keys at rest from a
+   thief while the device stays field-recoverable. Release mode (which disables
+   plaintext re-flashing) belongs only with the full, opt-in lockdown.
+4. **Attestation key binding — Ed25519 identity key under flash/NVS encryption
+   (§5.4b) is the default;** the DS-peripheral-bound RSA key (§5.4a) is added
+   **only** where a deployment needs non-extractability against a full flash
+   readout. Simpler, and it reuses the identity the device already self-provisions.
+5. **Anti-rollback floor — app-level A/B (reversible) is the default;** the
+   irreversible `SECURE_VERSION` eFuse counter is burned **only at Tier 4.** A
+   fused floor is permanent — a bad version bump could strand a device forever — so
+   it stays out of the default path.
+6. **Flasher policy for a locked device — hard-refuse with guidance** ("this
+   Canary is hardware-locked; it updates via signed OTA"). The owner's signing key
+   is **never** placed in the browser — that would defeat the lock and be a
+   catastrophic key-exposure risk.
+7. **Key relationship — keep the RSA-3072 Secure Boot key and the Ed25519 OTA
+   release key fully separate.** Different roles, different ceremonies, isolated
+   blast radius: a compromise of one does not compromise the other.
+
+**Build order that follows from these decisions** (§7): **Phase 1** — Tier 1
+(anti-rollback + boot safe-mode, pure software, no eFuse) — is the next thing to
+build; **Phase 2** — Tier 2 (the `securacv.attest/v1` protocol + the flasher's
+locked-device detection) — follows. Phases 3–4 (the eFuse-burning path) stay
+design-only until a specific deployment requests them.
 
 ## 9. Appendix — references & the measurement payload
 
