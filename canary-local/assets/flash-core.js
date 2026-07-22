@@ -1207,6 +1207,47 @@ export function healthVerdict(health) {
   return { level: "attn", icon: "⚠", label: "Needs attention" };
 }
 
+// ── two-port Vision: which device is on this port, and are both done? ───────
+// A Canary Vision is TWO flashes on TWO ports: the ESP32 (Vision firmware) and
+// the Grove Vision AI V2 / WE2 camera module (its person-detection model). The
+// WE2 announces a specific USB id (a CH343 bridge); anything else on the wire is
+// the main ESP32 board. Recognizing the port lets the flow route to the right
+// engine and never let you walk away after flashing only one. Pure + host-tested.
+export function identifyPort(portInfo, catalog) {
+  const we2 = catalog && catalog.we2_module;
+  const vid = portInfo && portInfo.usbVendorId;
+  if (we2 && typeof vid === "number") {
+    const wVid = parseInt(we2.usb_vid, 16);
+    const wPid = parseInt(we2.usb_pid, 16);
+    if (vid === wVid && (portInfo.usbProductId === wPid || !Number.isFinite(wPid))) {
+      return "we2"; // the Grove Vision AI V2 camera module
+    }
+  }
+  return "esp32"; // the main board (Canary/Vision ESP32)
+}
+
+// Given which of the two Vision parts are flashed ({ esp32, we2 }), report the
+// 2-of-2 state so the UI can insist on both — "1 of 2 done, now the OTHER port".
+export function visionCompletion(parts) {
+  const esp32 = !!(parts && parts.esp32);
+  const we2 = !!(parts && parts.we2);
+  const remaining = [];
+  if (!esp32) remaining.push("esp32");
+  if (!we2) remaining.push("we2");
+  const label = {
+    esp32: "the Vision firmware (the ESP32 board’s port)",
+    we2: "the camera module’s model (the Grove Vision AI V2’s port)",
+  };
+  return {
+    done: esp32 && we2,
+    esp32, we2,
+    count: (esp32 ? 1 : 0) + (we2 ? 1 : 0),
+    total: 2,
+    remaining,
+    nextLabel: remaining.length ? label[remaining[0]] : null,
+  };
+}
+
 // ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
 // One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
 // Public-only by construction: it takes a plain object of already-safe facts
