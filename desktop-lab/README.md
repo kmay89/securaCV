@@ -100,8 +100,9 @@ and test a build without touching the Releases page. CI installs with
 3. **Menubar fleet companion** — mDNS/BLE status, native notifications on
    signed events, the signed timeline.
 4. Extend the same shared core to **iOS/iPad** (Tauri v2 mobile — **scaffolded**,
-   see [`MOBILE.md`](MOBILE.md); needs your Apple Developer account to build) and
-   a **Home Assistant add-on**.
+   see [`MOBILE.md`](MOBILE.md) or the rendered walkthrough
+   [`ipad-guide.html`](ipad-guide.html); needs your Apple Developer account to
+   build) and a **Home Assistant add-on**.
 
 ## Signing & notarization
 

@@ -11,6 +11,11 @@ just wrap it in a Tauri v2 mobile shell. One frontend, four platforms.
 > provisioning) — that can't be done from CI or this repo alone. This doc is
 > the exact checklist.
 
+> 📖 **Prefer the narrated version?** [`ipad-guide.html`](ipad-guide.html) is a
+> rendered walkthrough of everything below — the steps, how the three mechanisms
+> fit together, and why the iPad build self-heals and won't rot. Open it in a
+> browser.
+
 ---
 
 ## What you need (one time)
