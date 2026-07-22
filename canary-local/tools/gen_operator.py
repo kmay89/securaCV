@@ -155,6 +155,7 @@ COMMANDS = [
             {"flag": "--id name", "desc": "a short, unique label for this trustee"},
             {"flag": "--public-key HEX", "desc": "import an existing 32-byte Ed25519 public key"},
             {"flag": "--generate --output FILE", "desc": "mint a keypair; write the signing key (0600) to hand over"},
+            {"flag": "--device-key-seed", "desc": "the device seed (also DEVICE_KEY_SEED) — required, opens the encrypted DB"},
         ],
     },
     {
@@ -225,10 +226,13 @@ CONCEPTS = [
 CEREMONY = {
     "threshold": 2,
     "target": 3,
-    "note": "the exact commands, in order, with the real binary's output. Watch the roster fill "
-            "and the policy go live the instant it becomes a valid 2-of-3.",
+    "note": "the exact commands, in order, with the real binary's output. Each command that opens "
+            "the encrypted kernel database carries DEVICE_KEY_SEED=… inline (init, every enroll, "
+            "doctor) — export it once instead if you prefer, or pass --device-key-seed. drill needs "
+            "no seed: it runs entirely in a throwaway sandbox. Watch the roster fill and the policy "
+            "go live the instant it becomes a valid 2-of-3.",
     "steps": [
-        {"cmd": "break_glass init --threshold 2 --trustees 3 --db witness.db",
+        {"cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass init --threshold 2 --trustees 3 --db witness.db",
          "out": [
              "=== Break-glass setup — init ===",
              "  ✓ device identity pinned: b5c3d676657d54cd",
@@ -237,16 +241,16 @@ CEREMONY = {
          ],
          "roster": [], "policy": None,
          "note": "Identity pinned; a 2-of-3 draft opened. No policy yet — an empty roster isn't a gate."},
-        {"cmd": "break_glass trustee enroll --id alice --public-key 0123… --db witness.db",
+        {"cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass trustee enroll --id alice --public-key 0123… --db witness.db",
          "out": ["  ✓ enrolled trustee 'alice' (1/3)"],
          "roster": ["alice"], "policy": None,
          "note": "One of three. Still below the threshold of 2, so no policy commits."},
-        {"cmd": "break_glass trustee enroll --id bob --public-key 4567… --db witness.db",
+        {"cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass trustee enroll --id bob --public-key 4567… --db witness.db",
          "out": ["  ✓ enrolled trustee 'bob' (2/3)",
                  "  ✓ quorum policy is live: 2-of-2"],
          "roster": ["alice", "bob"], "policy": "2-of-2",
          "note": "Threshold reached — the policy goes live as a valid 2-of-2 and the vault can now open under quorum."},
-        {"cmd": "break_glass trustee enroll --id carol --generate --output carol.key --db witness.db",
+        {"cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass trustee enroll --id carol --generate --output carol.key --db witness.db",
          "out": ["  ✓ minted a signing key for 'carol' → carol.key (secret, mode 0600 — hand it to the trustee)",
                  "  ✓ enrolled trustee 'carol' (3/3)",
                  "  ✓ quorum policy is live: 2-of-3"],
@@ -264,7 +268,7 @@ CEREMONY = {
          ],
          "roster": ["alice", "bob", "carol"], "policy": "2-of-3",
          "note": "A full rehearsal in a throwaway sandbox — real crypto, discarded after. Nothing real touched."},
-        {"cmd": "break_glass doctor --db witness.db",
+        {"cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass doctor --db witness.db",
          "out": [
              "=== Break-glass vault doctor ===",
              "[ quorum policy ]",
