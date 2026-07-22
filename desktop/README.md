@@ -47,8 +47,10 @@ split into `release.rs`, `provisioning.rs`, `serial_monitor.rs`, and `we2.rs`.
 For `usb-secrets` images, Wi-Fi and MQTT values are patched into the ESP32 NVS
 partition only after the untouched release image verifies. Passwords are not
 logged or serialized, and the UI clears them after a successful write. The
-host receipt records both the official release hash and the installed,
-device-specific hash.
+patched image is handed to `espflash` through an atomically-created, randomly
+named private temporary file (mode 0600 on Unix) that is removed on every
+ordinary exit path. The host receipt records both the official release hash
+and the installed, device-specific hash.
 
 ## Layout
 

@@ -397,9 +397,14 @@ async function onFlash() {
     state.vision.hostBoot = null;
     clearSecretFields();
     renderReceipts();
-    setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
-    state.busy = false;
-    await startMonitor();
+    if (requiresLiveReceipt(state.product)) {
+      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
+      state.busy = false;
+      await startMonitor();
+    } else {
+      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓", "ok");
+      maybeHatch();
+    }
   } catch (e) {
     setStatus("flash-result", String(e), "err");
     hideHatchCard();
@@ -530,6 +535,9 @@ function renderReceipts(forceVision = false) {
   const host = state.vision.hostFlash;
   const boot = state.vision.hostBoot;
   const module = state.vision.module;
+  const product = (state.catalog && state.catalog.products || [])
+    .find((p) => host && p.id === host.product_id) || state.product;
+  const receiptRequired = requiresLiveReceipt(product);
   const vision = forceVision || !!module || !!(host && host.product_id.includes("vision"));
   const any = !!host || !!boot || !!module || forceVision;
   $("receipts").classList.toggle("hidden", !any);
@@ -551,6 +559,7 @@ function renderReceipts(forceVision = false) {
         ? "manifest received; Vision I²C proof not healthy"
         : "waiting for live serial manifest"
   );
+  $("receipt-host-boot").classList.toggle("hidden", !receiptRequired);
   $("receipt-module").classList.toggle("hidden", !vision);
   $("receipt-host-boot").querySelector("span").textContent = vision
     ? "Host boot + Vision I²C"
@@ -569,18 +578,25 @@ function renderReceipts(forceVision = false) {
 function maybeHatch() {
   const host = state.vision.hostFlash;
   const boot = state.vision.hostBoot;
-  if (!host || !boot || !boot.ready) {
+  const product = (state.catalog && state.catalog.products || [])
+    .find((p) => host && p.id === host.product_id) || state.product;
+  if (!host || (requiresLiveReceipt(product) && (!boot || !boot.ready))) {
     hideHatchCard();
     return;
   }
-  const product = (state.catalog && state.catalog.products || [])
-    .find((p) => p.id === host.product_id) || state.product;
   const isVision = host.product_id.includes("vision");
   if (isVision && !(state.vision.module && state.vision.module.inference_ok)) {
     hideHatchCard();
     return;
   }
   showHatchCard(product);
+}
+
+// Missing/unknown catalog entries fail closed and still require a receipt.
+// The generated catalog writes an explicit false only when the product's real
+// firmware sources do not wire the shared self-manifest to the `j` command.
+function requiresLiveReceipt(product) {
+  return !product || product.serial_receipt !== false;
 }
 
 // ── self-update ─────────────────────────────────────────────────────────────

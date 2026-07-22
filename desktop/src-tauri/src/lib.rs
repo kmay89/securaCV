@@ -58,6 +58,24 @@ const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.jso
 // which doesn't exist → "No such file or directory".)
 const ESPFLASH: &str = "espflash";
 
+/// Stage a firmware image in an atomically-created, randomly named private
+/// file. `NamedTempFile` creates mode 0600 on Unix and removes the file on
+/// drop, so a provisioned image never passes through a world-readable path.
+fn stage_firmware(bytes: &[u8], safe_id: &str) -> Result<tempfile::NamedTempFile, String> {
+    use std::io::Write;
+
+    let mut staged = tempfile::Builder::new()
+        .prefix(&format!("securacv-{safe_id}-"))
+        .suffix(".bin")
+        .tempfile()
+        .map_err(|e| format!("couldn't create private firmware staging file: {e}"))?;
+    staged
+        .write_all(bytes)
+        .and_then(|_| staged.flush())
+        .map_err(|e| format!("couldn't stage the image: {e}"))?;
+    Ok(staged)
+}
+
 /// A USB serial port as the OS sees it — enough for the UI to show a friendly
 /// picker without pretending to know more than it does.
 #[derive(Serialize)]
@@ -271,6 +289,12 @@ async fn flash(
     }
     let needs_provisioning =
         product.get("provisioning").and_then(Value::as_str) == Some("usb-secrets");
+    // The generated catalog derives this from the product's real serial-command
+    // implementation. Missing fields fail closed for older/unknown catalogs.
+    let expects_serial_receipt = product
+        .get("serial_receipt")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     if needs_provisioning && provisioning.is_none() {
         return Err(
             "this firmware uses generic release placeholders; Wi-Fi and MQTT provisioning is required before flash"
@@ -383,25 +407,10 @@ async fn flash(
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    // Unique per-run name so concurrent runs (or a stale file owned by another
-    // user) can't collide. `unwrap_or_default()` keeps it panic-free on a clock
-    // set before the epoch (SystemTime::saturating_duration_since is nightly-only).
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("securacv-{safe_id}-{stamp}.bin"));
-    std::fs::write(&path, &bytes).map_err(|e| format!("couldn't stage the image: {e}"))?;
-
-    // RAII cleanup: the staged image is removed on every exit path — including an
-    // early return if the sidecar fails to start below.
-    struct TempFileGuard(std::path::PathBuf);
-    impl Drop for TempFileGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-    let _guard = TempFileGuard(path.clone());
+    // Keep the private file handle alive until espflash exits. Its RAII guard
+    // removes the path on success and on every ordinary error return.
+    let staged = stage_firmware(&bytes, &safe_id)?;
+    let path = staged.path();
     emit(
         &app,
         format!(
@@ -448,13 +457,15 @@ async fn flash(
             _ => {}
         }
     }
-    // (the staged image is removed by TempFileGuard on scope exit)
+    // (`staged` removes the private image on scope exit.)
 
     if code == 0 {
-        emit(
-            &app,
-            "✓ chip write verified — reopening serial for the live boot receipt.".into(),
-        );
+        let message = if expects_serial_receipt {
+            "✓ chip write verified — reopening serial for the live boot receipt."
+        } else {
+            "✓ chip write verified — this firmware does not require a live receipt."
+        };
+        emit(&app, message.into());
         Ok(FlashReceipt {
             target: "esp32-host",
             product_id,
@@ -667,4 +678,37 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running SecuraCV Flasher");
+}
+
+#[cfg(test)]
+mod staging_tests {
+    use super::stage_firmware;
+
+    #[test]
+    fn staged_firmware_is_private_and_removed_on_drop() {
+        let staged = stage_firmware(b"provisioned-secret-image", "canary-vision")
+            .expect("private staging file");
+        let path = staged.path().to_path_buf();
+        assert_eq!(
+            std::fs::read(&path).expect("staged bytes"),
+            b"provisioned-secret-image"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)
+                .expect("staging metadata")
+                .permissions()
+                .mode();
+            assert_eq!(
+                mode & 0o077,
+                0,
+                "staging file must not be group/world accessible"
+            );
+        }
+
+        drop(staged);
+        assert!(!path.exists(), "staging path must be removed on drop");
+    }
 }
