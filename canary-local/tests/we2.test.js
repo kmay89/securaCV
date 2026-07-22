@@ -40,6 +40,13 @@ test("formatDetections: labels SSCMA boxes with the class name + %", async () =>
   assert.deepStrictEqual(formatDetections(null), []);
   assert.deepStrictEqual(formatDetections([[1, 2, 3]]), []); // too short
   assert.deepStrictEqual(formatDetections([["x", 0, 1, 1, 90, 0]]), []); // non-numeric geom
+  // A custom model (bench passes an empty class map when job.pinned is false)
+  // must NOT be labelled "person" — class 0 reads the generic "object".
+  const custom = formatDetections([[100, 80, 40, 60, 92, 0]], []);
+  assert.strictEqual(custom[0].label, "object");
+  assert.strictEqual(custom[0].text, "object · 92%");
+  // an explicit class map still names its own classes
+  assert.strictEqual(formatDetections([[0, 0, 1, 1, 90, 0]], ["cat"])[0].label, "cat");
 });
 
 test("detectionSummary: a clean pluralized readout with top confidence", async () => {
@@ -47,6 +54,10 @@ test("detectionSummary: a clean pluralized readout with top confidence", async (
   assert.match(detectionSummary([]), /watching/i);
   assert.strictEqual(detectionSummary([[0, 0, 1, 1, 92, 0]]), "1 person · 92% confident");
   assert.strictEqual(detectionSummary([[0, 0, 1, 1, 80, 0], [0, 0, 1, 1, 88, 0]]), "2 people · 88% confident");
+  // A custom model's readout stays honest — "object", never "person" — so the
+  // bench never gives a false "it sees you" for a model that isn't the pinned one.
+  assert.strictEqual(detectionSummary([[0, 0, 1, 1, 92, 0]], []), "1 object · 92% confident");
+  assert.strictEqual(detectionSummary([[0, 0, 1, 1, 80, 0], [0, 0, 1, 1, 88, 0]], []), "2 objects · 88% confident");
 });
 
 test("crc16xmodem matches the known-answer vector", async () => {
