@@ -180,6 +180,7 @@ function resetSteps() {
   $("flash-target").textContent = "";
   $("console").classList.add("hidden");
   setStatus("flash-result", "");
+  hideHatchCard();
 }
 
 let lastPortKey = "";
@@ -281,8 +282,10 @@ async function onFlash() {
       baud: state.catalog.flash_baud || 921600,
     });
     setStatus("flash-result", "Done — your Canary is booting its new firmware. ✓", "ok");
+    showHatchCard(state.product);
   } catch (e) {
     setStatus("flash-result", String(e), "err");
+    hideHatchCard();
   } finally {
     unlisten();
     btn.disabled = false;
@@ -337,6 +340,61 @@ function setStatus(id, msg, kind) {
 function enableCard(id) {
   $(id).classList.remove("disabled");
 }
+
+function hideHatchCard() {
+  const card = $("hatch-card");
+  if (card) card.classList.add("hidden");
+}
+
+function showHatchCard(product) {
+  const moment = hatchMoment(product);
+  $("hatch-title").textContent = moment.title;
+  $("hatch-body").textContent = moment.body;
+  const steps = $("hatch-steps");
+  steps.innerHTML = "";
+  moment.steps.forEach((step) => {
+    const li = document.createElement("li");
+    li.textContent = step;
+    steps.appendChild(li);
+  });
+  $("hatch-card").classList.remove("hidden");
+}
+
+function hatchMoment(product) {
+  const id = product && product.id;
+  if (id && id.includes("vision")) {
+    return {
+      title: "Your Vision Canary is waking up.",
+      body: "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+      steps: [
+        "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+        "Put the board where it can see a doorway, then walk through once.",
+        "Open Home Assistant and watch the presence entity flip to detected, then clear."
+      ]
+    };
+  }
+  if (id && id.includes("sense")) {
+    return {
+      title: "Your Sense Canary is listening with radar.",
+      body: "The first satisfying test is motion in empty air: no camera, no mic, just the mmWave witness waking up.",
+      steps: [
+        "Power it from the room where it will live and wait for Home Assistant discovery.",
+        "Stand still for a breath, then walk past it at normal speed.",
+        "Watch presence flip in Home Assistant; on Wellbeing builds, try seated breathing only after the presence card is stable."
+      ]
+    };
+  }
+  return {
+    title: "Your Canary is on its perch.",
+    body: "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+    steps: [
+      "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+      "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+      "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+    ]
+  };
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])

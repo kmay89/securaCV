@@ -149,3 +149,23 @@ kbd {
 .dot.connected { background: var(--success); }
 .dot.failed { background: #d97706; }
 @keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+
+.hatch {
+  margin-top: 14px;
+  border: 1px solid color-mix(in srgb, var(--canary) 55%, var(--border));
+  background: linear-gradient(135deg, var(--canary-soft), var(--surface));
+  border-radius: 13px;
+  padding: 14px 16px;
+}
+.hatch-kicker {
+  color: var(--canary-dark);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.hatch h3 { font-size: 16px; margin-top: 2px; }
+.hatch p:not(.hatch-kicker) { color: var(--text-secondary); font-size: 13.5px; margin-top: 4px; }
+.hatch ol { margin: 10px 0 0 20px; color: var(--text-secondary); font-size: 13.5px; }
+.hatch li + li { margin-top: 5px; }

@@ -580,6 +580,19 @@ void canary_mark_react(CanaryReact r) {
       flourish_wing(6, 150);
       arm_react_restore(2000);
       break;
+    case CanaryReact::Reassure:
+      // Acknowledgement is friendship done right: the bird settles, but it
+      // does not pretend the condition vanished before the facts do.
+      lv_obj_set_y(s_eye, lv_obj_get_y(s_eye) + 1);
+      flourish_wing(1, 420);
+      arm_react_restore(900);
+      break;
+    case CanaryReact::Nestle:
+      // Quiet-hours handoff: tuck the beak and soften the eye. No sound, no
+      // flash, no attention grab — trust sometimes means becoming smaller.
+      pose_asleep();
+      arm_react_restore(1200);
+      break;
   }
 }
 

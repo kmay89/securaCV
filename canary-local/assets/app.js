@@ -92,6 +92,7 @@ function renderCards() {
     const cv = el("canvas", "card-3d");
     const name = el("div", "card-name", dev.name);
     const tag = el("div", "card-tag", dev.tagline);
+    const persona = dev.persona ? el("div", "card-persona", `${dev.persona.name} · ${dev.persona.specialty}`) : null;
     const chips = el("div", "card-chips");
     chips.append(
       el("span", "chip", dev.kind === "display" ? "shows"
@@ -100,7 +101,9 @@ function renderCards() {
     );
     if (dev.emulator) chips.append(el("span", "chip chip-live", "live firmware"));
     if (dev.kind === "concept") chips.append(el("span", "chip chip-soon", "coming soon"));
-    card.append(cv, name, tag, chips);
+    card.append(cv, name, tag);
+    if (persona) card.append(persona);
+    card.append(chips);
     grid.append(card);
 
     const scene = new DeviceScene(cv, null);
@@ -183,6 +186,7 @@ function buildConceptSheet(ctx, side) {
   };
 
   const views = {
+    Persona: () => personaView(dev),
     "The idea": () => {
       const w = el("div");
       w.append(el("p", "body", c.idea || dev.tagline));
@@ -491,6 +495,7 @@ async function buildDisplaySheet(ctx, side, stage) {
   });
 
   const views = {
+    Persona: () => personaView(dev),
     Tour: () => tourView(guideProxy, DISPLAY_TOUR, noteLine),
     "Fix it": () => fixView(guideProxy, DISPLAY_FIXES, noteLine),
     "Try it": () => tryView(guideProxy, noteLine),
@@ -864,6 +869,36 @@ function wireView(serialLog, wireLog) {
   return wrap;
 }
 
+function personaView(dev) {
+  const p = dev.persona || {};
+  const wrap = el("div", "persona-view");
+  const hero = el("div", "persona-hero");
+  if (p.accent) hero.style.setProperty("--persona-accent", p.accent_color || "var(--canary)");
+  hero.append(
+    el("p", "persona-kicker", p.specialty || "Canary"),
+    el("h3", null, p.name || dev.name),
+    el("p", "persona-story", p.story || dev.tagline)
+  );
+  wrap.append(hero);
+  if (p.shape || p.accent) {
+    const look = el("p", "persona-look");
+    look.append(
+      el("strong", null, "How to recognize this bird: "),
+      document.createTextNode([p.shape, p.accent ? `accent: ${p.accent}` : ""].filter(Boolean).join(" · "))
+    );
+    wrap.append(look);
+  }
+  if (p.good_for?.length) {
+    const list = el("ul", "persona-goodfor");
+    for (const item of p.good_for) list.append(el("li", null, item));
+    wrap.append(el("h4", null, "What this canary is good at"), list);
+  }
+  if (p.catchphrase) wrap.append(el("p", "persona-quote", `“${p.catchphrase}”`));
+  wrap.append(el("p", "muted",
+    "Designed to be memorable, not manipulative: each character explains the real sensing boundary in plain language and keeps the privacy promise visible."));
+  return wrap;
+}
+
 function specsView(dev) {
   const wrap = el("div", "specs");
   const dl = el("dl");
@@ -923,6 +958,7 @@ function buildWitnessSheet(ctx, side) {
   side.append(tabs, panel);
 
   const views = {
+    Persona: () => personaView(dev),
     "Lights": () => {
       const w = el("div");
       w.append(el("p", "muted",
