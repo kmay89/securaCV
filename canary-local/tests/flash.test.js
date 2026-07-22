@@ -982,6 +982,44 @@ test("healthVerdict: maps the self-test score to a plain verdict, never a false 
   }
 });
 
+// ── two-port Vision: recognize each port, insist on both ────────────────────
+test("identifyPort: the WE2 camera module is recognized by its USB id", async () => {
+  const { identifyPort } = await core();
+  // The catalog's we2_module carries the module's USB vid/pid (a CH343).
+  const info = {
+    usbVendorId: parseInt(catalog.we2_module.usb_vid, 16),
+    usbProductId: parseInt(catalog.we2_module.usb_pid, 16),
+  };
+  assert.strictEqual(identifyPort(info, catalog), "we2");
+  // Anything else on the wire is the main ESP32 board (native S3, CP210x, unknown).
+  assert.strictEqual(identifyPort({ usbVendorId: 0x303a, usbProductId: 0x1001 }, catalog), "esp32");
+  assert.strictEqual(identifyPort({ usbVendorId: 0x10c4, usbProductId: 0xea60 }, catalog), "esp32");
+  assert.strictEqual(identifyPort({}, catalog), "esp32");
+  assert.strictEqual(identifyPort(null, catalog), "esp32");
+  // Critical: a CH340 ESP32 board shares the WE2's WCH vendor (0x1a86) but has a
+  // different product id — it must NOT be mistaken for the camera module.
+  assert.strictEqual(identifyPort({ usbVendorId: 0x1a86, usbProductId: 0x7523 }, catalog), "esp32");
+});
+
+test("visionCompletion: tracks the 2-of-2 so you can't walk away half-done", async () => {
+  const { visionCompletion } = await core();
+  const none = visionCompletion({});
+  assert.strictEqual(none.done, false);
+  assert.strictEqual(none.count, 0);
+  assert.deepStrictEqual(none.remaining, ["esp32", "we2"]);
+
+  const one = visionCompletion({ esp32: true });
+  assert.strictEqual(one.done, false);
+  assert.strictEqual(one.count, 1);
+  assert.deepStrictEqual(one.remaining, ["we2"]);
+  assert.match(one.nextLabel, /camera module/i);   // it points you at the other port
+
+  const both = visionCompletion({ esp32: true, we2: true });
+  assert.strictEqual(both.done, true);
+  assert.strictEqual(both.count, 2);
+  assert.strictEqual(both.nextLabel, null);
+});
+
 test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
   const csp = cspContent(FLASH_HTML);
   assert.ok(csp, "no CSP <meta> in flash.html");

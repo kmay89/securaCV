@@ -565,6 +565,31 @@ function connectFailed(e, pinfo) {
       ? "That almost always means it isn’t in download mode yet — no harm done."
       : v.hint,
     false);
+  // The commonest *confusing* failure: the Vision's CAMERA MODULE plugged into
+  // the ESP32 flow. It's a different chip (WE2 behind a CH343) that never speaks
+  // esptool, so the sync "fails" — recognize it by its USB id and hand the user
+  // to the right engine instead of dead-ending on generic download-mode advice.
+  // identifyPort matches vid AND pid, so a CH340 ESP32 board (same WCH vendor,
+  // different product) is never mistaken for the module. Host-tested.
+  if (core.identifyPort(pinfo || state.portInfo, state.catalog) === "we2" &&
+      state.catalog.we2_module) {
+    const card = el("div", "flash-note flash-note-soft");
+    card.append(el("strong", null, "📷 That’s the Vision’s camera module — not an ESP32 board."));
+    card.append(el("p", null,
+      "Nothing’s wrong: it flashes a different way (its own engine, over the " +
+      "module’s USB-C port). Let’s load its person-detection model instead."));
+    box.append(card);
+    const row = el("div", "flash-row");
+    const go = el("button", "primary", "Load the camera module’s model →");
+    go.addEventListener("click", () => setPhase(phaseModule({
+      catalog: state.catalog, setPhase, back: () => setPhase(phaseConnect()),
+    })));
+    const back = el("button", "ghost", "Back");
+    back.addEventListener("click", () => setPhase(phaseConnect()));
+    row.append(go, back);
+    box.append(row);
+    return box; // skip the generic download-mode / driver advice — wrong for the module
+  }
   // For a genuine "not in download mode" show the gesture; for a specific cause
   // (port busy, permissions, cable) the hint above already says what to do.
   if (v.kind === "not-in-download" || v.kind === "unknown") {
