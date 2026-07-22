@@ -1,0 +1,24 @@
+# Standalone workspace root: like desktop/src-tauri, this declares an empty
+# [workspace] so Cargo doesn't try to fold it into the repo-root witness-kernel
+# workspace. It is depended on by ../src-tauri via a path dependency.
+[workspace]
+
+[package]
+name = "hub-core"
+version = "0.1.0"
+description = "Pure, host-tested safety logic for the securaCV Home Assistant hub flasher: which disk may be written, and how to enumerate candidates safely."
+authors = ["Errer Labs"]
+license = "Apache-2.0"
+repository = "https://github.com/kmay89/securaCV"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "hub_core"
+
+# No dependencies on purpose. This crate is pure `std` — no Tauri, no serial, no
+# I/O beyond the read-only /proc + /sys reads in the Linux enumerator — so it
+# compiles and unit-tests on ANY CI runner without the desktop stack
+# (webkit/gtk). That is the whole point of splitting it out: the footgun-critical
+# logic behind the disk writer can never rot silently just because the full
+# desktop app only builds on release tags.

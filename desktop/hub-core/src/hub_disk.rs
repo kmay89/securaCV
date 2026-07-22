@@ -141,9 +141,15 @@ impl Refusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Warning {
     /// Fits, but below the recommended (endurance-headroom) card size.
-    SmallerThanRecommended { have_bytes: u64, recommend_bytes: u64 },
+    SmallerThanRecommended {
+        have_bytes: u64,
+        recommend_bytes: u64,
+    },
     /// Large enough to be a backup drive / NAS — worth a second look.
-    LargerThanTypical { have_bytes: u64, advisory_bytes: u64 },
+    LargerThanTypical {
+        have_bytes: u64,
+        advisory_bytes: u64,
+    },
     /// The device currently has mounted filesystems that the write will erase.
     HasMountedData,
     /// A non-removable target accepted only because the enumerator marked it
@@ -401,7 +407,10 @@ mod tests {
             external: false,
             ..good_card()
         };
-        assert_eq!(classify(&d), Eligibility::Refused(Refusal::InternalFixedDisk));
+        assert_eq!(
+            classify(&d),
+            Eligibility::Refused(Refusal::InternalFixedDisk)
+        );
     }
 
     #[test]
@@ -488,10 +497,13 @@ mod tests {
         // At the floor it fits but is below the recommended size → one warning.
         match classify(&d) {
             Eligibility::Eligible { warnings } => {
-                assert_eq!(warnings, vec![Warning::SmallerThanRecommended {
-                    have_bytes: MIN_TARGET_BYTES,
-                    recommend_bytes: RECOMMENDED_TARGET_BYTES,
-                }]);
+                assert_eq!(
+                    warnings,
+                    vec![Warning::SmallerThanRecommended {
+                        have_bytes: MIN_TARGET_BYTES,
+                        recommend_bytes: RECOMMENDED_TARGET_BYTES,
+                    }]
+                );
             }
             other => panic!("expected eligible, got {other:?}"),
         }
@@ -621,7 +633,15 @@ mod tests {
     #[test]
     fn from_sysblock_converts_512_byte_sectors_to_bytes() {
         // 125_000_000 sectors × 512 B = 64_000_000_000 B (a ~64 GB card).
-        let d = from_sysblock("sdb", "1", "125000000", "SanDisk Extreme", false, false, false);
+        let d = from_sysblock(
+            "sdb",
+            "1",
+            "125000000",
+            "SanDisk Extreme",
+            false,
+            false,
+            false,
+        );
         assert_eq!(d.path, "/dev/sdb");
         assert_eq!(d.model, "SanDisk Extreme");
         assert_eq!(d.size_bytes, 64_000_000_000);
@@ -644,7 +664,10 @@ mod tests {
         );
         assert!(!d.removable);
         assert!(!d.external);
-        assert_eq!(classify(&d), Eligibility::Refused(Refusal::InternalFixedDisk));
+        assert_eq!(
+            classify(&d),
+            Eligibility::Refused(Refusal::InternalFixedDisk)
+        );
     }
 
     #[test]
@@ -672,7 +695,15 @@ mod tests {
 
     #[test]
     fn from_sysblock_reads_garbage_size_as_zero_and_refuses_it() {
-        let d = from_sysblock("sdb", "1", "not-a-number", "Weird Reader", false, false, false);
+        let d = from_sysblock(
+            "sdb",
+            "1",
+            "not-a-number",
+            "Weird Reader",
+            false,
+            false,
+            false,
+        );
         assert_eq!(d.size_bytes, 0);
         assert_eq!(classify(&d), Eligibility::Refused(Refusal::UnknownSize));
     }
