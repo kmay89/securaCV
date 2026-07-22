@@ -44,6 +44,38 @@ this public key from the database by default, or accept an explicit key via `--p
 The break-glass CLI stores the quorum policy in the kernel database so `break_glass authorize`
 can evaluate approvals against a persistent trustee roster.
 
+### Guided setup (`init` + `trustee enroll`)
+
+The easiest way to stand up a quorum. `init` pins the device identity and opens an
+`n`-of-`m` **setup draft**; `trustee enroll` adds trustees one at a time. The quorum
+policy commits automatically the moment the draft is a valid quorum (once `n`
+trustees are enrolled), and each further enrollment strengthens it — so you never
+hand-assemble a policy or hold a partial one:
+
+```bash
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin break_glass -- init --threshold 2 --trustees 3 --db witness.db
+
+# Import a trustee who generated their own key and sent you the public half:
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin break_glass -- trustee enroll --id alice --public-key 0123... --db witness.db
+
+# …or mint a keypair for them (writes the signing key at mode 0600 to hand over):
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin break_glass -- trustee enroll --id bob --generate --output bob.key --db witness.db
+```
+
+The draft is a plain file next to the database (`<db>.setup-draft.json`, override with
+`--draft`). It holds only public keys and counts — no secrets. It is kept **separate**
+from the committed quorum policy on purpose: `QuorumPolicy::validate` rejects an empty
+or partial roster (Invariant V), so a half-finished enrollment can never be mistaken
+for a live gate. When you're done, rehearse with [`drill`](#rehearse-it-drill) and
+confirm with [`doctor`](#health-check-doctor).
+
+### Manual policy (`policy set`)
+
+To set the whole roster in one shot (e.g. from an existing key inventory):
+
 ```bash
 DEVICE_KEY_SEED=devkey:your-seed \
   cargo run --bin break_glass -- policy set \
