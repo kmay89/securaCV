@@ -996,6 +996,9 @@ test("identifyPort: the WE2 camera module is recognized by its USB id", async ()
   assert.strictEqual(identifyPort({ usbVendorId: 0x10c4, usbProductId: 0xea60 }, catalog), "esp32");
   assert.strictEqual(identifyPort({}, catalog), "esp32");
   assert.strictEqual(identifyPort(null, catalog), "esp32");
+  // Critical: a CH340 ESP32 board shares the WE2's WCH vendor (0x1a86) but has a
+  // different product id — it must NOT be mistaken for the camera module.
+  assert.strictEqual(identifyPort({ usbVendorId: 0x1a86, usbProductId: 0x7523 }, catalog), "esp32");
 });
 
 test("visionCompletion: tracks the 2-of-2 so you can't walk away half-done", async () => {
