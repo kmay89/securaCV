@@ -165,9 +165,11 @@ Raspberry Pi Imager.
   refuses the system disk / fixed disks / too-small / unknown-size devices, with
   human-readable reasons and advisory warnings. No byte-writing code exists yet.
 - **Step 2 — enumerate + confirm UI.** Platform disk enumeration (Linux
-  `/sys/block` + which disk backs `/`; then macOS `diskutil`, Windows), every
-  candidate run through `hub_disk::classify`; a picker that shows eligible cards
-  and *why* the rest are hidden, plus an explicit size/model confirm.
+  `/sys/block` + which disk backs `/` + external-vs-internal from the transport;
+  then macOS `diskutil` internal/ejectable, Windows), every candidate run through
+  `hub_disk::classify`; a picker that shows eligible cards/SSDs and *why* the rest
+  are hidden, plus an explicit size/model confirm. The external call stays
+  conservative: unproven ⇒ refused.
 - **Step 3 — acquire the image.** Download the pinned, checksummed HAOS-based hub
   image over TLS, verify its hash, decompress (`.xz`) — reusing the release-train
   honesty (a catalog entry that is truthful before the image exists).
@@ -214,9 +216,15 @@ bets" (the native-app / pre-baked-image framing) and §7.7 of
 
 ## 9. Risks & anti-goals
 
-- **Wrong-disk wipe** (§7 step 4): removable-only enumeration, refuse the system
-  disk, size/model confirmation, verify-after-write — the guarantees `hub_disk`
-  now encodes and tests. Non-negotiable before shipping the writer.
+- **Wrong-disk wipe** (§7 step 4): a legal target must be *external to this
+  machine* — removable **or** enumerator-confirmed external, so the SSD/NVMe
+  durable default still qualifies — never the system disk or an internal fixed
+  disk, and at least the **32 GB supported minimum** (the hub hardware list);
+  plus size/model confirmation and verify-after-write. These are the guarantees
+  `hub_disk` now encodes and tests. The enumerator's external-vs-internal call
+  must stay **conservative** — unsure ⇒ not external ⇒ refused — so a
+  misclassification costs a card swap, never a wiped internal disk.
+  Non-negotiable before shipping the writer.
 - **Don't fork HAOS.** A bespoke image is the rot risk in disguise.
 - **SD as boot media** is the weak link for multi-year uptime; steer to NVMe/SSD on
   Pi 5, keep the wear monitor loud.

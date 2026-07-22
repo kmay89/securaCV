@@ -1,4 +1,4 @@
-//! hub_disk — which removable disk may we write a Home Assistant hub image to?
+//! hub_disk — which disk may we write a Home Assistant hub image to?
 //!
 //! Writing an OS image is the one place this app can do real harm. Flashing a
 //! Canary is safe by construction — the ESP32's first-stage bootloader is mask
@@ -12,35 +12,52 @@
 //! pure, host-tested decision layer *before* the risky boot-path wiring
 //! (`firmware/common/health/boot_policy.h`), the decision of *what is a legal
 //! write target* lives here — pure, exhaustively unit-tested, and settled
-//! before a single byte is ever written. The destructive write itself is a
-//! separate, hardware-validated step (a later change); its one hard contract is
-//! that it MUST call [`classify`] and refuse anything that is not
+//! before a single byte is written. The destructive write itself is a separate,
+//! hardware-validated step (a later change); its one hard contract is that it
+//! MUST call [`classify`] and refuse anything that is not
 //! [`Eligibility::Eligible`].
 //!
+//! **What counts as a legal target.** A hub disk must be *external to this
+//! computer*: a removable SD card / USB stick, or an external / ejectable
+//! SSD or NVMe (the Pi 5 "durable default" the design steers toward — see
+//! `docs/design/raspberry_pi_hub_flashing.md`). A disk that is neither
+//! removable nor external is an internal fixed disk and is never a target. The
+//! system/boot disk is refused outright, first, on top of that. It must also be
+//! big enough for the supported full-stack image (Frigate/go2rtc + dashboards),
+//! whose hardware list asks for a 32 GB+ card.
+//!
 //! This module has no Tauri, no serial, no I/O in its decision path: it reasons
-//! over already-observed facts about a disk. Enumerating the disks (and, on each
-//! platform, deciding which one backs the running OS) is the enumerator's job in
-//! a follow-up change; [`from_sysblock`] is the pure half of that, kept here so
-//! it can be tested the same way.
+//! over already-observed facts about a disk. Enumerating the disks — and, per
+//! platform, deciding which is the system disk and which non-removable disks are
+//! *external* — is the enumerator's job in a follow-up change; [`from_sysblock`]
+//! is the pure half of that, kept here so it can be tested the same way.
 
 /// 1024³ — disk sizes are quoted in binary gibibytes throughout this module.
+/// (Human display in [`fmt_bytes`] uses the same base, so a "32 GB" card, which
+/// reports ~31.9 × 10⁹ bytes, shows as ~29.7 GB — the usual marketing-vs-OS gap.)
 const GIB: u64 = 1024 * 1024 * 1024;
 
-/// Hard floor: below this, a device is too small to hold a Home Assistant OS
-/// image and is almost certainly not the SD card / USB stick the operator
-/// means (a phantom reader slot, a tiny EFI helper partition surfaced as a
-/// "disk", etc.). HAOS itself asks for 8 GiB+; we refuse well below that rather
-/// than gamble.
-pub const MIN_TARGET_BYTES: u64 = 3 * GIB;
+/// Hard floor. The supported hub is a **32 GB+** card (the Home Assistant
+/// hardware list in `canary-local/tools/gen_homeassistant.py`) and this build
+/// preloads the *full-stack* image — HAOS plus Frigate/go2rtc — so an undersized
+/// card yields a thrashing, unsupported hub, not a smaller one. A nominal 32 GB
+/// card reports ~29.7 GiB, so the floor sits just under that at 28 GiB: it
+/// accepts a genuine 32 GB card and refuses 16 GB and below outright (a warning
+/// is not enough once this is the writer's hard gate).
+pub const MIN_TARGET_BYTES: u64 = 28 * GIB;
 
-/// Below this we still allow the write but warn: it fits, but it is smaller
-/// than Home Assistant's recommended card and will have little headroom.
-pub const RECOMMENDED_TARGET_BYTES: u64 = 8 * GIB;
+/// Below this we still allow the write but advise a bigger card. Endurance is
+/// the reason, not capacity: `docs/sd_card_health.md` notes a 64 GB card holding
+/// a couple GB of data wear-levels across far more flash, which is exactly what a
+/// 24/7 hub wants.
+pub const RECOMMENDED_TARGET_BYTES: u64 = 64 * GIB;
 
-/// Above this we still allow the write but warn loudly: a drive this large is
-/// far more likely to be an external SSD or a backup disk than the SD/USB the
-/// operator intends — exactly the "am I about to nuke my photo archive?" case.
-pub const TYPICAL_CEILING_BYTES: u64 = 256 * GIB;
+/// Above this we still allow the write but nudge the operator to confirm. An
+/// external SSD is a legitimate (encouraged) Pi 5 target, so size alone is no
+/// longer a "wrong device" signal the way it was for cards — but a drive this
+/// large is also what a backup disk or NAS looks like, so a large target earns a
+/// "is this really the one you mean?" beat at the confirm step.
+pub const LARGE_ADVISORY_BYTES: u64 = 512 * GIB;
 
 /// A block device as the enumerator observed it. Every field is a plain
 /// observation; turning observations into a safe/unsafe verdict is [`classify`]'s
@@ -55,9 +72,16 @@ pub struct TargetDisk {
     /// Total capacity in bytes. `0` means the OS would not tell us — which we
     /// treat as disqualifying, never as "small".
     pub size_bytes: u64,
-    /// The OS marks this device as removable (an SD reader or USB stick). A
-    /// fixed internal disk is `false`.
+    /// The OS marks this device as removable (an SD reader or USB stick).
     pub removable: bool,
+    /// The device is external to this computer — an external / ejectable SSD or
+    /// NVMe that is not part of the running machine. This is what lets the
+    /// Pi 5 "durable default" (an SSD) be a target even though such drives are
+    /// usually reported non-removable. The enumerator sets it from the OS's
+    /// internal/ejectable signal and MUST be conservative: when it cannot prove
+    /// a non-removable disk is external, it leaves this `false` so the disk is
+    /// refused rather than risked.
+    pub external: bool,
     /// This device backs the running operating system (its root / boot lives
     /// here). Computed by the platform enumerator; writing it would destroy the
     /// very machine the operator is using.
@@ -75,11 +99,12 @@ pub struct TargetDisk {
 pub enum Refusal {
     /// It backs the running OS. The strongest refusal; checked first.
     SystemDisk,
-    /// It is a fixed / internal disk, not a removable card or stick.
-    NotRemovable,
+    /// It is a fixed disk inside this computer — neither removable nor a known
+    /// external drive.
+    InternalFixedDisk,
     /// The OS reported an unknown (zero) size; we will not write blind.
     UnknownSize,
-    /// It is smaller than a hub image needs.
+    /// It is smaller than the supported hub image needs.
     TooSmall { need_bytes: u64, have_bytes: u64 },
 }
 
@@ -91,8 +116,8 @@ impl Refusal {
             Refusal::SystemDisk => {
                 "this is the disk your computer runs from — never a write target".to_string()
             }
-            Refusal::NotRemovable => {
-                "this looks like a fixed internal disk, not a removable card or USB stick"
+            Refusal::InternalFixedDisk => {
+                "this looks like a fixed disk inside your computer, not a removable card or an external SSD/USB drive"
                     .to_string()
             }
             Refusal::UnknownSize => {
@@ -102,7 +127,7 @@ impl Refusal {
                 need_bytes,
                 have_bytes,
             } => format!(
-                "too small for a Home Assistant image — needs at least {}, this is {}",
+                "too small for a full Home Assistant hub — needs at least {}, this is {}",
                 fmt_bytes(*need_bytes),
                 fmt_bytes(*have_bytes)
             ),
@@ -115,12 +140,15 @@ impl Refusal {
 /// step, not a veto.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Warning {
-    /// Fits, but below the recommended card size.
+    /// Fits, but below the recommended (endurance-headroom) card size.
     SmallerThanRecommended { have_bytes: u64, recommend_bytes: u64 },
-    /// Far larger than a typical card — likely a real drive; double-check.
-    LargerThanTypical { have_bytes: u64, ceiling_bytes: u64 },
+    /// Large enough to be a backup drive / NAS — worth a second look.
+    LargerThanTypical { have_bytes: u64, advisory_bytes: u64 },
     /// The device currently has mounted filesystems that the write will erase.
     HasMountedData,
+    /// A non-removable target accepted only because the enumerator marked it
+    /// external — surface that judgement so the operator can sanity-check it.
+    ExternalNonRemovable,
 }
 
 impl Warning {
@@ -131,20 +159,23 @@ impl Warning {
                 have_bytes,
                 recommend_bytes,
             } => format!(
-                "smaller than recommended ({}, vs {} suggested) — it will work but with little headroom",
+                "smaller than recommended ({}, vs {} suggested) — it will work but with little endurance headroom",
                 fmt_bytes(*have_bytes),
                 fmt_bytes(*recommend_bytes)
             ),
             Warning::LargerThanTypical {
                 have_bytes,
-                ceiling_bytes,
+                advisory_bytes,
             } => format!(
-                "this is {} — larger than a typical SD/USB ({}+). Make sure it isn't a drive you want to keep",
+                "this is {} — larger than a typical card ({}+). Make sure it isn't a drive you want to keep",
                 fmt_bytes(*have_bytes),
-                fmt_bytes(*ceiling_bytes)
+                fmt_bytes(*advisory_bytes)
             ),
             Warning::HasMountedData => {
                 "this device has data on it right now — everything on it will be erased".to_string()
+            }
+            Warning::ExternalNonRemovable => {
+                "treated as an external drive (e.g. an SSD/NVMe), not a card — double-check it's the right one".to_string()
             }
         }
     }
@@ -168,19 +199,20 @@ impl Eligibility {
 /// The single safety gate. Given the observed facts about a disk, decide whether
 /// it may be written. Order matters: the most dangerous condition wins the
 /// explanation, so a device that is both the system disk *and* (somehow) marked
-/// removable is still refused as [`Refusal::SystemDisk`].
+/// removable/external is still refused as [`Refusal::SystemDisk`].
 ///
-/// The refusals are deliberately belt-and-suspenders: `system` is refused
-/// outright, but even if a platform's system-disk detection ever failed, a
-/// normal internal disk is also `!removable` and would still be refused. A
-/// target has to be removable, not the system disk, of known size, and big
-/// enough — all four — to be written.
+/// The refusals are deliberately belt-and-suspenders. A legal target must be
+/// external to this machine (removable OR enumerator-confirmed external), not the
+/// system disk, of known size, and big enough — all four. Because `external`
+/// defaults conservative in the enumerator, the failure mode of a
+/// misclassification is a *refused* disk (the operator falls back to a plain
+/// card), never a wrongly-offered internal one.
 pub fn classify(disk: &TargetDisk) -> Eligibility {
     if disk.system {
         return Eligibility::Refused(Refusal::SystemDisk);
     }
-    if !disk.removable {
-        return Eligibility::Refused(Refusal::NotRemovable);
+    if !disk.removable && !disk.external {
+        return Eligibility::Refused(Refusal::InternalFixedDisk);
     }
     if disk.size_bytes == 0 {
         return Eligibility::Refused(Refusal::UnknownSize);
@@ -199,11 +231,15 @@ pub fn classify(disk: &TargetDisk) -> Eligibility {
             recommend_bytes: RECOMMENDED_TARGET_BYTES,
         });
     }
-    if disk.size_bytes > TYPICAL_CEILING_BYTES {
+    if disk.size_bytes > LARGE_ADVISORY_BYTES {
         warnings.push(Warning::LargerThanTypical {
             have_bytes: disk.size_bytes,
-            ceiling_bytes: TYPICAL_CEILING_BYTES,
+            advisory_bytes: LARGE_ADVISORY_BYTES,
         });
+    }
+    // A non-removable disk that got here did so because it's external; say so.
+    if !disk.removable && disk.external {
+        warnings.push(Warning::ExternalNonRemovable);
     }
     if disk.has_mounts {
         warnings.push(Warning::HasMountedData);
@@ -240,21 +276,23 @@ pub fn eligible_targets(disks: Vec<TargetDisk>) -> Vec<Judged> {
 
 /// Parse the raw reads of one Linux `/sys/block/<name>` entry into a
 /// [`TargetDisk`]. Pure on purpose: the platform enumerator (a later change)
-/// does the file I/O and root-disk resolution, then hands the strings here, so
-/// the parsing is testable without real hardware.
+/// does the file I/O and the system-disk / external resolution, then hands the
+/// strings here, so the parsing is testable without real hardware.
 ///
 /// - `removable_raw`  is `/sys/block/<name>/removable` (`"1"` = removable).
 /// - `size_512_blocks` is `/sys/block/<name>/size` (in 512-byte sectors, as the
 ///   Linux block layer always reports regardless of the device's real sector
 ///   size).
 /// - `model_raw` is `/sys/block/<name>/device/model` (may be empty/whitespace).
-/// - `system` and `has_mounts` are decided by the enumerator from the mount
-///   table and the device backing `/`.
+/// - `external`, `system`, and `has_mounts` are decided by the enumerator: from
+///   the device's transport/subsystem (USB/UAS → external; the internal
+///   NVMe/eMMC → not), the disk backing `/`, and the mount table respectively.
 pub fn from_sysblock(
     name: &str,
     removable_raw: &str,
     size_512_blocks: &str,
     model_raw: &str,
+    external: bool,
     system: bool,
     has_mounts: bool,
 ) -> TargetDisk {
@@ -279,6 +317,7 @@ pub fn from_sysblock(
         model,
         size_bytes,
         removable,
+        external,
         system,
         has_mounts,
     }
@@ -309,13 +348,18 @@ fn fmt_bytes(bytes: u64) -> String {
 mod tests {
     use super::*;
 
-    /// A normal, safe target: a 32 GB USB stick with nothing mounted.
+    /// A nominal 32 GB card, as `docs/sd_card_health.md`'s own example reports
+    /// one (~29.7 GiB usable) — the supported-minimum reference size.
+    const CARD_32GB_BYTES: u64 = 31_914_983_424;
+
+    /// A normal, safe target: a 64 GB removable USB stick with nothing mounted.
     fn good_card() -> TargetDisk {
         TargetDisk {
             path: "/dev/sdb".to_string(),
-            model: "Generic USB 32GB".to_string(),
-            size_bytes: 32 * GIB,
+            model: "Generic USB 64GB".to_string(),
+            size_bytes: 64 * GIB,
             removable: true,
+            external: false, // removable already qualifies it; external is for non-removable
             system: false,
             has_mounts: false,
         }
@@ -337,12 +381,13 @@ mod tests {
     }
 
     #[test]
-    fn system_disk_wins_the_reason_even_if_marked_removable() {
-        // Defence in depth: a device that is somehow both removable and the
-        // system disk must still be refused, and refused *as* the system disk.
+    fn system_disk_wins_the_reason_even_if_marked_removable_and_external() {
+        // Defence in depth: a device that is somehow the system disk must still
+        // be refused, and refused *as* the system disk, whatever else it claims.
         let d = TargetDisk {
             system: true,
             removable: true,
+            external: true,
             ..good_card()
         };
         assert_eq!(classify(&d), Eligibility::Refused(Refusal::SystemDisk));
@@ -350,11 +395,35 @@ mod tests {
 
     #[test]
     fn a_fixed_internal_disk_is_refused() {
+        // Not removable and not external → an internal fixed disk.
         let d = TargetDisk {
             removable: false,
+            external: false,
             ..good_card()
         };
-        assert_eq!(classify(&d), Eligibility::Refused(Refusal::NotRemovable));
+        assert_eq!(classify(&d), Eligibility::Refused(Refusal::InternalFixedDisk));
+    }
+
+    #[test]
+    fn an_external_ssd_is_eligible_even_though_it_is_not_removable() {
+        // The Pi 5 durable default: a 256 GB external SSD/NVMe. Non-removable,
+        // but the enumerator proved it external, so it is a legal target — with
+        // an advisory that it was treated as an external drive.
+        let d = TargetDisk {
+            path: "/dev/sda".to_string(),
+            model: "Samsung T7 256GB".to_string(),
+            size_bytes: 256 * GIB,
+            removable: false,
+            external: true,
+            system: false,
+            has_mounts: false,
+        };
+        assert_eq!(
+            classify(&d),
+            Eligibility::Eligible {
+                warnings: vec![Warning::ExternalNonRemovable]
+            }
+        );
     }
 
     #[test]
@@ -367,51 +436,31 @@ mod tests {
     }
 
     #[test]
-    fn a_too_small_card_is_refused_with_the_numbers() {
+    fn a_16gb_card_is_refused_as_too_small_for_the_full_stack_hub() {
         let d = TargetDisk {
-            size_bytes: 2 * GIB,
+            size_bytes: 16 * GIB,
             ..good_card()
         };
         assert_eq!(
             classify(&d),
             Eligibility::Refused(Refusal::TooSmall {
                 need_bytes: MIN_TARGET_BYTES,
-                have_bytes: 2 * GIB,
+                have_bytes: 16 * GIB,
             })
         );
     }
 
     #[test]
-    fn a_card_at_exactly_the_floor_is_eligible() {
+    fn a_nominal_32gb_card_is_eligible_and_warns_it_is_below_recommended() {
         let d = TargetDisk {
-            size_bytes: MIN_TARGET_BYTES,
-            ..good_card()
-        };
-        // At the floor it fits but is below the recommended size, so exactly one
-        // (small) warning.
-        match classify(&d) {
-            Eligibility::Eligible { warnings } => {
-                assert_eq!(warnings.len(), 1);
-                assert!(matches!(
-                    warnings[0],
-                    Warning::SmallerThanRecommended { .. }
-                ));
-            }
-            other => panic!("expected eligible, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_small_but_usable_card_warns_it_is_below_recommended() {
-        let d = TargetDisk {
-            size_bytes: 4 * GIB,
+            size_bytes: CARD_32GB_BYTES,
             ..good_card()
         };
         assert_eq!(
             classify(&d),
             Eligibility::Eligible {
                 warnings: vec![Warning::SmallerThanRecommended {
-                    have_bytes: 4 * GIB,
+                    have_bytes: CARD_32GB_BYTES,
                     recommend_bytes: RECOMMENDED_TARGET_BYTES,
                 }]
             }
@@ -419,17 +468,47 @@ mod tests {
     }
 
     #[test]
-    fn a_very_large_disk_is_allowed_but_warned() {
+    fn a_disk_just_below_the_floor_is_refused() {
         let d = TargetDisk {
-            size_bytes: 512 * GIB,
+            size_bytes: MIN_TARGET_BYTES - 1,
+            ..good_card()
+        };
+        assert!(matches!(
+            classify(&d),
+            Eligibility::Refused(Refusal::TooSmall { .. })
+        ));
+    }
+
+    #[test]
+    fn a_disk_exactly_at_the_floor_is_eligible() {
+        let d = TargetDisk {
+            size_bytes: MIN_TARGET_BYTES,
+            ..good_card()
+        };
+        // At the floor it fits but is below the recommended size → one warning.
+        match classify(&d) {
+            Eligibility::Eligible { warnings } => {
+                assert_eq!(warnings, vec![Warning::SmallerThanRecommended {
+                    have_bytes: MIN_TARGET_BYTES,
+                    recommend_bytes: RECOMMENDED_TARGET_BYTES,
+                }]);
+            }
+            other => panic!("expected eligible, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_very_large_drive_is_allowed_but_warned() {
+        let d = TargetDisk {
+            size_bytes: 1024 * GIB, // 1 TiB — could be a backup disk
             ..good_card()
         };
         assert_eq!(
             classify(&d),
             Eligibility::Eligible {
                 warnings: vec![Warning::LargerThanTypical {
-                    have_bytes: 512 * GIB,
-                    ceiling_bytes: TYPICAL_CEILING_BYTES,
+                    have_bytes: 1024 * GIB,
+                    advisory_bytes: LARGE_ADVISORY_BYTES,
                 }]
             }
         );
@@ -451,16 +530,16 @@ mod tests {
 
     #[test]
     fn warnings_can_stack() {
-        // A tiny-but-legal, mounted card: below recommended AND has data.
+        // A nominal 32 GB, mounted card: below recommended AND has data.
         let d = TargetDisk {
-            size_bytes: 4 * GIB,
+            size_bytes: CARD_32GB_BYTES,
             has_mounts: true,
             ..good_card()
         };
         match classify(&d) {
             Eligibility::Eligible { warnings } => {
                 assert!(warnings.contains(&Warning::SmallerThanRecommended {
-                    have_bytes: 4 * GIB,
+                    have_bytes: CARD_32GB_BYTES,
                     recommend_bytes: RECOMMENDED_TARGET_BYTES,
                 }));
                 assert!(warnings.contains(&Warning::HasMountedData));
@@ -471,9 +550,9 @@ mod tests {
     }
 
     #[test]
-    fn eligible_targets_keeps_only_safe_disks_and_preserves_order() {
+    fn eligible_targets_keeps_safe_disks_incl_external_ssd_and_preserves_order() {
         let disks = vec![
-            good_card(), // eligible
+            good_card(), // eligible (removable)
             TargetDisk {
                 path: "/dev/sda".to_string(),
                 system: true,
@@ -482,16 +561,19 @@ mod tests {
             TargetDisk {
                 path: "/dev/nvme0n1".to_string(),
                 removable: false,
+                external: false,
                 ..good_card()
-            }, // refused: fixed
+            }, // refused: internal fixed
             TargetDisk {
-                path: "/dev/sdc".to_string(),
+                path: "/dev/nvme1n1".to_string(),
+                removable: false,
+                external: true,
                 ..good_card()
-            }, // eligible
+            }, // eligible: external SSD/NVMe
         ];
         let kept = eligible_targets(disks);
         let paths: Vec<_> = kept.iter().map(|j| j.disk.path.as_str()).collect();
-        assert_eq!(paths, vec!["/dev/sdb", "/dev/sdc"]);
+        assert_eq!(paths, vec!["/dev/sdb", "/dev/nvme1n1"]);
     }
 
     #[test]
@@ -518,46 +600,79 @@ mod tests {
         // the UI can show without post-processing.
         let r = Refusal::TooSmall {
             need_bytes: MIN_TARGET_BYTES,
-            have_bytes: 2 * GIB,
+            have_bytes: 16 * GIB,
         };
-        assert!(r.reason().contains("3.0 GB"));
-        assert!(r.reason().contains("2.0 GB"));
+        assert!(r.reason().contains("28.0 GB"));
+        assert!(r.reason().contains("16.0 GB"));
         assert!(!Refusal::SystemDisk.reason().is_empty());
-
-        let w = Warning::HasMountedData;
-        assert!(!w.message().is_empty());
+        assert!(!Refusal::InternalFixedDisk.reason().is_empty());
+        for w in [
+            Warning::HasMountedData,
+            Warning::ExternalNonRemovable,
+            Warning::LargerThanTypical {
+                have_bytes: 1024 * GIB,
+                advisory_bytes: LARGE_ADVISORY_BYTES,
+            },
+        ] {
+            assert!(!w.message().is_empty());
+        }
     }
 
     #[test]
     fn from_sysblock_converts_512_byte_sectors_to_bytes() {
-        // 62_500_000 sectors × 512 B = 32_000_000_000 B (a ~32 GB card).
-        let d = from_sysblock("sdb", "1", "62500000", "SanDisk Extreme", false, false);
+        // 125_000_000 sectors × 512 B = 64_000_000_000 B (a ~64 GB card).
+        let d = from_sysblock("sdb", "1", "125000000", "SanDisk Extreme", false, false, false);
         assert_eq!(d.path, "/dev/sdb");
         assert_eq!(d.model, "SanDisk Extreme");
-        assert_eq!(d.size_bytes, 32_000_000_000);
+        assert_eq!(d.size_bytes, 64_000_000_000);
         assert!(d.removable);
-        // A real 32 GB card is comfortably eligible.
+        assert!(!d.external);
+        // A real 64 GB card is comfortably eligible.
         assert!(classify(&d).is_eligible());
     }
 
     #[test]
-    fn from_sysblock_treats_a_fixed_disk_as_non_removable() {
-        // system=false here so the verdict isolates the removable check; the
-        // system-first ordering is covered by its own test above.
-        let d = from_sysblock("nvme0n1", "0", "1000215216", "WD Blue SSD", false, false);
+    fn from_sysblock_marks_an_internal_fixed_disk_refused() {
+        let d = from_sysblock(
+            "nvme0n1",
+            "0",
+            "1000215216",
+            "WD Blue SSD",
+            false, // not external — the internal boot NVMe
+            false,
+            true,
+        );
         assert!(!d.removable);
-        assert_eq!(classify(&d), Eligibility::Refused(Refusal::NotRemovable));
+        assert!(!d.external);
+        assert_eq!(classify(&d), Eligibility::Refused(Refusal::InternalFixedDisk));
+    }
+
+    #[test]
+    fn from_sysblock_carries_external_through_for_an_ssd() {
+        // A big external NVMe over USB: not removable, but external → eligible.
+        let d = from_sysblock(
+            "sda",
+            "0",
+            "500118192",
+            "Samsung T7",
+            true, // external
+            false,
+            false,
+        );
+        assert!(!d.removable);
+        assert!(d.external);
+        assert!(classify(&d).is_eligible());
     }
 
     #[test]
     fn from_sysblock_falls_back_to_the_device_name_when_model_is_blank() {
-        let d = from_sysblock("sdb", "1", "62500000", "   ", false, false);
+        let d = from_sysblock("sdb", "1", "125000000", "   ", false, false, false);
         assert_eq!(d.model, "sdb");
     }
 
     #[test]
     fn from_sysblock_reads_garbage_size_as_zero_and_refuses_it() {
-        let d = from_sysblock("sdb", "1", "not-a-number", "Weird Reader", false, false);
+        let d = from_sysblock("sdb", "1", "not-a-number", "Weird Reader", false, false, false);
         assert_eq!(d.size_bytes, 0);
         assert_eq!(classify(&d), Eligibility::Refused(Refusal::UnknownSize));
     }
@@ -566,7 +681,7 @@ mod tests {
     fn fmt_bytes_is_human_readable() {
         assert_eq!(fmt_bytes(0), "unknown size");
         assert_eq!(fmt_bytes(512), "512 B");
-        assert_eq!(fmt_bytes(32 * GIB), "32.0 GB");
+        assert_eq!(fmt_bytes(64 * GIB), "64.0 GB");
         assert_eq!(fmt_bytes(2 * 1024 * GIB), "2.0 TB");
     }
 }
