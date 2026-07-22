@@ -34,6 +34,12 @@ private:
   BBox bbox_{};
   int confidence_=0;
 
+  // coarse optical extras (live/telemetry tier — carried through to snapshot)
+  uint8_t   person_count_=0;
+  Posture   posture_=Posture::Unknown;
+  Proximity proximity_=Proximity::Unknown;
+  uint16_t  voxel_mask_=0;
+
   VoxelTracker voxel_tracker_;
 };
 

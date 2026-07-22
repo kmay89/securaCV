@@ -22,6 +22,11 @@ void PresenceFSM::reset() {
   bbox_ = BBox{};
   confidence_=0;
 
+  person_count_=0;
+  posture_=Posture::Unknown;
+  proximity_=Proximity::Unknown;
+  voxel_mask_=0;
+
   voxel_tracker_.reset();
 }
 
@@ -36,6 +41,12 @@ bool PresenceFSM::tick(const VisionSample& vs, uint32_t now_ms, EventMsg& out_ev
 
   bbox_ = vs.bbox;
   confidence_ = vs.person_now ? vs.bbox.score : 0;
+
+  // Coarse optical extras — pass-through to the live snapshot (never sealed).
+  person_count_ = vs.person_count;
+  posture_      = vs.posture;
+  proximity_    = vs.proximity;
+  voxel_mask_   = vs.voxel_mask;
 
   if (vs.person_now) {
     last_seen_ms_ = now_ms;
@@ -116,6 +127,11 @@ StateSnapshot PresenceFSM::snapshot(uint32_t now_ms, const char* last_event) con
   s.confidence = confidence_;
   s.voxel = voxel_tracker_.stable();
   s.bbox  = bbox_;
+
+  s.person_count = person_count_;
+  s.posture      = posture_;
+  s.proximity    = proximity_;
+  s.voxel_mask   = voxel_mask_;
 
   s.last_event = last_event ? last_event : "boot";
   s.uptime_s   = now_ms / 1000;

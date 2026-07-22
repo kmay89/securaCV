@@ -95,6 +95,10 @@ def main() -> None:
     ap.add_argument("--tag", required=True, help="the release tag, e.g. fw-v2.3.0")
     ap.add_argument("--out-dir", required=True, type=pathlib.Path, help="where to write the .bin + manifest")
     ap.add_argument("--notes", default="", help="release notes (optional; the flasher doesn't display them)")
+    ap.add_argument("--signing-key", type=pathlib.Path, default=None,
+                    help="Ed25519 release private-key PEM. When given, each factory image is "
+                         "signed (same scheme as ota_release.py) so the flasher verifies the "
+                         "signature in-browser. Omit for the pre-key path (checksum-only).")
     args = ap.parse_args()
 
     catalog = json.loads(FLASH_JSON.read_text(encoding="utf-8"))
@@ -103,6 +107,21 @@ def main() -> None:
     dl = f"https://github.com/{args.repo}/releases/download/{args.tag}"
     rel_url = f"https://github.com/{args.repo}/releases/tag/{args.tag}"
     notes = args.notes.strip() or f"SecuraCV Canary firmware {args.version}."
+
+    # Load the release signer if a key was supplied — reuse ota_release.py so the
+    # signature scheme (uint32_le(size) || sha256, Ed25519) can never drift from
+    # the OTA path or the device verifier.
+    signer = None
+    if args.signing_key and args.signing_key.exists():
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        import ota_release  # noqa: E402 — local sibling tool
+        priv = ota_release.load_private_key(args.signing_key)
+        signer = (ota_release, priv)
+        print(f"build_flash_manifest: signing factory images (key id "
+              f"{ota_release.signing_key_id(priv.public_key())}).")
+    else:
+        print("build_flash_manifest: no signing key — factory images are checksum-only "
+              "(the flasher verifies SHA-256 and shows the build as unsigned).")
 
     products: dict[str, dict] = {}
     version_errors: list[str] = []
@@ -130,7 +149,7 @@ def main() -> None:
                 f"CANARY_FW_VERSION to match before tagging {args.tag}.")
             continue
         data = out.read_bytes()
-        products[pid] = {
+        rec = {
             "version": expected_version,
             "chipFamily": p["chip"],
             "factory": f"{dl}/{out.name}",
@@ -138,6 +157,11 @@ def main() -> None:
             "size": len(data),
             "release_notes": notes,
         }
+        if signer:
+            ota, priv = signer
+            rec["signature"] = ota.sign_firmware(priv, data).hex()
+            rec["signing_key_id"] = ota.signing_key_id(priv.public_key())
+        products[pid] = rec
 
     # Refuse to publish a manifest that would advertise a version the firmware
     # doesn't report — the check firmware-release.yml runs before its OTA

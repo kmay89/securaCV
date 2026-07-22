@@ -132,8 +132,7 @@ export const PARTS = {
   // A flexible FPC camera ribbon that ARCS from its connector (local origin)
   // up to the camera head at `to`. A real camera flex is not rigid — a
   // quadratic Bézier bows through `bow` so the head reaches the aperture
-  // wherever the enclosure puts it. Built as a flat swept strip; the face
-  // normal `nrm` is normalized (consistent width + correct lighting).
+  // wherever the enclosure puts it. Built as a flat swept strip.
   ribbon({ to = [0, 0, 12], bow = 6, width = 8.5, color = FLEX } = {}) {
     const m = new MB(), N = 36, half = width / 2;
     const b = to, mid = [b[0] / 2, b[1] / 2, b[2] / 2];
@@ -143,6 +142,10 @@ export const PARTS = {
     const raw = [dir[1] * up[2] - dir[2] * up[1], dir[2] * up[0] - dir[0] * up[2], dir[0] * up[1] - dir[1] * up[0]];
     const nl = Math.hypot(raw[0], raw[1], raw[2]) || 1;
     const nrm = [raw[0] / nl, raw[1] / nl, raw[2] / nl];
+    // face normal ⊥ both the width (nrm) and the ribbon length (dir): the whole
+    // strip is planar (curve + width both live in the dir–nrm plane), so this is
+    // the constant surface normal the vertices carry — for correct shading.
+    const fn = [nrm[1] * dir[2] - nrm[2] * dir[1], nrm[2] * dir[0] - nrm[0] * dir[2], nrm[0] * dir[1] - nrm[1] * dir[0]];
     const ctrl = [mid[0] + nrm[0] * bow, mid[1] + nrm[1] * bow, mid[2] + nrm[2] * bow];
     const bez = (t) => { const u = 1 - t; return [
       2 * u * t * ctrl[0] + t * t * b[0],
@@ -152,8 +155,8 @@ export const PARTS = {
     for (let i = 0; i <= N; i++) {
       const c = bez(i / N);
       rows.push([
-        m.v([c[0] - nrm[0] * half, c[1] - nrm[1] * half, c[2] - nrm[2] * half], nrm),
-        m.v([c[0] + nrm[0] * half, c[1] + nrm[1] * half, c[2] + nrm[2] * half], nrm)]);
+        m.v([c[0] - nrm[0] * half, c[1] - nrm[1] * half, c[2] - nrm[2] * half], fn),
+        m.v([c[0] + nrm[0] * half, c[1] + nrm[1] * half, c[2] + nrm[2] * half], fn)]);
     }
     for (let i = 0; i < N; i++) m.quad(rows[i][0], rows[i][1], rows[i + 1][1], rows[i + 1][0]);
     return [{ builder: m.out(), color, gloss: 0.4 }];

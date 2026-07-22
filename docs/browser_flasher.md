@@ -53,6 +53,50 @@ bridge), there is usually **no driver to install** — the single biggest
 "it won't connect" support cause simply isn't present. A USB-C **data** cable
 (not charge-only) is the one requirement.
 
+## Self-healing (never get stuck)
+
+The flasher tries to fix the common failures before asking the user to:
+
+- **Baud ladder** — connecting tries the fast transfer speed, then steps down
+  (921600 → 460800 → 230400 → 115200) automatically. Flaky cables, unpowered
+  hubs, and long USB runs sync fine but choke the high-speed transfer; stepping
+  down heals it silently instead of dead-ending. (`FLASH_BAUDS`.)
+- **Boot-log diagnosis** — the serial monitor watches the boot log for fatal
+  signatures (brownout, `Guru Meditation`, no bootable app, flash-read errors)
+  and turns each into a plain-language cause + fix, rather than raw panic text.
+  (`diagnoseBootLog`.)
+- **Failure escalation** — a failed install offers the next self-heal step
+  inline: **Clean install (full erase)** reconnects straight into the rescue
+  flow (which also restores a safety copy if one was taken).
+- **Bridge-chip driver hints** — for the non-native-USB variant, the flasher
+  reads the port's USB VID/PID and links the exact driver (CP210x / CH340 /
+  FTDI) *only* when the board actually uses that bridge. (`usbBridgeInfo`.)
+- **"Copy a diagnostic report"** — every stuck screen offers one click to copy
+  a paste-able report (browser, OS, chip, MAC, baud, error, log tail) for
+  Discussions. Public-only by construction — never WiFi credentials or keys.
+  (`buildDiagnosticReport`.)
+
+These sit on top of what was already there: automatic pre-flash backup,
+auto-reconnect across native-USB re-enumeration, chunked reads with per-chunk
+retry, and a manual rescue flow.
+
+The baud ladder heals *write-time* failures too, not just connect: a flaky
+cable can sync at 921600 but time out mid-transfer, so a failed install lowers
+the baud ceiling a rung and the retry writes at the gentler speed (reset for a
+fresh board). And the "Clean install" escalation carries the product you were
+installing into the rescue, so it can't default to the wrong firmware.
+
+## Post-flash proof
+
+"Watch it boot & prove itself →" doesn't just stream the log — it asks the
+running firmware for its **signed self-manifest** (`j`, schema
+`securacv.canary.manifest/v1`) and shows a verified-identity card: board,
+firmware version, **key fingerprint**, health, and boot count, read straight
+from the board over the cable. It's the flash proven from the device's own
+mouth — the same self-verify [`securacv.com/canary`](self_star_roadmap.md) does
+— and it never leaves the page. Variants without a serial console simply don't
+show the card (the boot log still streams). (`parseSelfManifest`.)
+
 ## How it fits the release system
 
 ```
@@ -95,21 +139,69 @@ option is a belt-and-suspenders full erase for a misbehaving board.
 
 ## Trust model (read this before relying on it)
 
-The **OTA** channel's authenticity rests on an Ed25519 chain the device
-verifies against a pinned key. The **browser** channel is different: the user
-is physically holding the board over USB, and the trust anchors are
+The flasher verifies an image against the **same pinned Ed25519 release key the
+device does** — so a swapped-but-checksummed image (a compromised release or
+host) is refused on the USB channel too, not just over the air. Three anchors:
 
-1. **HTTPS + same-origin GitHub Releases** — the manifest and images are served
-   from the project's own release assets over TLS, and
-2. **SHA-256 integrity** — every image is checked against the manifest's digest
-   before it's written.
+1. **Ed25519 release signature** — when the release is signed and the key is
+   provisioned, the browser verifies the signature over `uint32_le(size) ||
+   sha256(image)` (the same scheme as `ota_release.py` and the device
+   verifier) against the public key pinned into the page. The key is
+   single-sourced from `firmware/common/ota/src/ota_release_key.h` into
+   `flash.json` by `gen_flash.py`, so it can't drift from what the device
+   trusts. A **failed** signature check refuses the flash before any byte is
+   written.
+2. **SHA-256 integrity** — every image is checked against the manifest digest,
+   always, before writing.
+3. **HTTPS + same-origin GitHub Releases** — the manifest and images come from
+   the project's own release assets over TLS.
 
-The browser has no pinned-key ceremony, so `manifest-flash.json` is **not**
-Ed25519-signed the way the OTA manifest is; binding the browser path to the
-release key is possible future hardening but buys little against a physical-USB
-attacker who could flash their own image anyway. For distributing the project's
-own firmware to its own users, HTTPS + same-origin + SHA-256 is the same model
-ESP Web Tools ships with, and it is stated here rather than implied.
+**Honest fallbacks.** Until the signing-key ceremony happens the pinned key is
+all-zero, and images built by the out-of-band `flasher-release.yml` (the pre-key
+path) carry no signature — in both cases the flasher verifies **SHA-256 only**
+and says so plainly (the receipts show "checksum only, unsigned build"). A
+**local file** (Advanced) is checksum-fingerprinted but, by definition, not
+signature-checked. What it never does is *silently* accept an unverified image
+when it claimed it would verify one.
+
+The verifier is the vendored, self-hosted [`@noble/ed25519`](https://github.com/paulmillr/noble-ed25519)
+(`assets/vendor/ed25519/`); the Python-signer ↔ browser-verifier interop is
+pinned by a test. Note this raises the bar to OTA parity but doesn't add
+per-device anti-replay: the USB path can still install any *validly signed*
+release (including an older one) — that's deliberate, it's the recovery
+channel.
+
+### Page & engine integrity (CSP + Subresource-Integrity)
+
+The three anchors above authenticate the *firmware*. They assume the flasher's
+own code is honest — so a second layer hardens the page itself, the way a
+world-class installer guards its own supply chain.
+
+- **A strict Content-Security-Policy** (a `<meta http-equiv>` in `flash.html`,
+  since GitHub Pages can't set response headers). `default-src 'none'` denies
+  everything by default; `script-src 'self'` / `style-src 'self'` allow only
+  this site's own code with **no inline and no `eval`** — the vendored engines
+  use neither (verified in CI), so the policy needs no `'unsafe-*'` escape.
+  `base-uri`, `object-src`, and `form-action` are `'none'`: no `<base>` rewrite
+  of the relative asset paths, no plugins, no form posts. `connect-src` is
+  narrowed to `'self'` + our signed release host and its asset CDN, so not even
+  a first-party bug could beam your backup or MAC to a third party. (`http:`
+  stays allowed there **only** to preserve the documented plain-HTTP LAN /
+  air-gapped manifest override; it is inert on the hosted HTTPS Lab, where
+  mixed-content blocking already forbids `http` fetches.)
+- **Subresource-Integrity on the vendored modules.** An inline import map pins
+  the SHA-384 of each vendored third-party module — esptool-js, md5, ed25519,
+  qrcode — so a tampered engine simply won't load: the browser refuses a hash
+  mismatch (proven by a Chromium probe that flips a byte and watches the module
+  get rejected). First-party app code is same-origin, already constrained by
+  `script-src 'self'`, and changes too often to hash by hand, so it's left
+  unpinned by design. Enforced on Chromium ≥ 127 — which the flasher already
+  requires for Web Serial; older engines ignore the hashes and load the same
+  same-origin modules, so nothing breaks.
+- **Drift-gated, like the rest.** `tests/flash.test.js` recomputes every SRI
+  hash from the real vendored bytes, and the CSP's import-map hash from the
+  map's own text, and walks the flasher's module graph so a *new, unpinned*
+  vendored import fails CI. The hashes can't silently rot or be skipped.
 
 ## Going live (owner steps)
 
@@ -167,7 +259,7 @@ offline posture the OTA engine also offers.
 
 | Path | Role |
 |---|---|
-| `canary-local/flash.html` | the page shell (hero + `<main>` + module script) |
+| `canary-local/flash.html` | the page shell (hero + `<main>` + module script); carries the strict CSP + the SRI import map |
 | `canary-local/assets/flash.js` | the renderer + esptool-js glue (the theatre) |
 | `canary-local/assets/flash-core.js` | DOM-free core: chip guard, image parsers, manifest logic (tested) |
 | `canary-local/assets/flash.css` | styles, on the Lab's design tokens |
@@ -183,8 +275,10 @@ offline posture the OTA engine also offers.
 ## Testing
 
 - **Logic:** `node --test canary-local/tests/flash.test.js` — chip guard,
-  partition-table + `esp_app_desc` parsers, manifest validation, and the
-  byte↔binary-string glue (with high-byte round-trips).
+  partition-table + `esp_app_desc` parsers, manifest validation, the
+  byte↔binary-string glue (with high-byte round-trips), and the CSP + SRI
+  drift gate (recomputes every vendored hash + the import-map hash, and fails
+  if a vendored import isn't pinned).
 - **Drift:** CI runs `gen_flash.py` and diffs `flash.json`; a board change in
   firmware that isn't regenerated is a red X.
 - **Bench (real board):** plug into Chrome, flash a variant, pull the cable

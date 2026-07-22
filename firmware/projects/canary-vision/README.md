@@ -58,6 +58,30 @@ A ready-made dashboard for these entities ships at
 automations at
 [`homeassistant/automations/securacv_vision_presence.yaml`](../../../homeassistant/automations/securacv_vision_presence.yaml).
 
+## Coarse optical signals (occupancy · posture · proximity)
+
+The person-detection model returns **every** detected person box each frame, not
+just one. The firmware reads them all (at zero extra inference cost — the boxes
+are already in RAM after the invoke) and derives three **coarse, non-identifying**
+signals, published on the retained `state` topic and surfaced as HA sensors:
+
+| Sensor | Values | Derived from | Notes |
+|---|---|---|---|
+| **Occupancy** | `none / one / two / several` | count of qualifying boxes | a bucket, never an exact running tally (no household profiling) |
+| **Posture** | `upright / ambiguous / horizontal` | primary box **aspect ratio** | a fall/collapse *proxy* with no pose model and no keypoints — advisory, physics-only |
+| **Proximity** | `far / mid / near` | primary box **area** fraction | coarse distance band, like an RSSI trend |
+
+These are **ordinals only** — no coordinate, angle, area, or distance is ever
+published — and the **signed witness record is unchanged**: promoting any of
+these into the sealed vocabulary (e.g. a sustained `posture_horizontal` fall
+claim, or an honest coarse `occupants`) is a spec-first change per Invariant VI.
+The raw `bbox` still rides the non-sealed live/aim telemetry for aiming, exactly
+as before. Thresholds seed from `include/canary/vision/optical_features.h`; the
+pure coarsening is host-unit-tested in
+[`firmware/tests_host/test_optical_features.cpp`](../../tests_host/test_optical_features.cpp),
+and the signal vocabulary + invariant mapping live in
+[`spec/canary_free_signals_v0.md`](../../../spec/canary_free_signals_v0.md) §3.9.
+
 ## Aim assist (boxes-only live view)
 
 An HA switch (`Aim assist`, off by default) streams the best person box —
@@ -101,6 +125,9 @@ Discovery (retained):
 - `homeassistant/binary_sensor/<device_id>/dwelling/config`
 - `homeassistant/sensor/<device_id>/confidence/config`
 - `homeassistant/sensor/<device_id>/voxel/config`
+- `homeassistant/sensor/<device_id>/occupancy/config`
+- `homeassistant/sensor/<device_id>/posture/config`
+- `homeassistant/sensor/<device_id>/proximity/config`
 - `homeassistant/sensor/<device_id>/last_event/config`
 - `homeassistant/sensor/<device_id>/uptime/config`
 

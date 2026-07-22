@@ -754,3 +754,244 @@ test("validateCatalog passes the shipped catalog and flags real breakage", async
   const badProd = JSON.parse(JSON.stringify(catalog)); delete badProd.products[0].chip;
   assert.ok(validateCatalog(badProd).some((e) => /missing chip/.test(e)));
 });
+
+// ── self-healing: baud ladder, boot-log diagnosis, bridge detect, report ────
+test("FLASH_BAUDS: fastest-first ladder, distinct from the console list", async () => {
+  const { FLASH_BAUDS } = await core();
+  assert.deepStrictEqual(FLASH_BAUDS, [921600, 460800, 230400, 115200]);
+  // strictly descending — the connect flow steps down on failure
+  for (let i = 1; i < FLASH_BAUDS.length; i++) assert.ok(FLASH_BAUDS[i] < FLASH_BAUDS[i - 1]);
+});
+
+test("diagnoseBootLog: maps fatal signatures to fixes, else null", async () => {
+  const { diagnoseBootLog } = await core();
+  assert.strictEqual(diagnoseBootLog(""), null);
+  assert.strictEqual(diagnoseBootLog("Hello canary chirp, booting normally"), null);
+
+  const brown = diagnoseBootLog("rst:0x10 (RTCWDT_RTC_RST)\nBrownout detector was triggered\n");
+  assert.strictEqual(brown.signature, "brownout");
+  assert.strictEqual(brown.action, "power"); // NOT a reflash — a power problem
+
+  const panic = diagnoseBootLog("Guru Meditation Error: Core 0 panic'ed\nBacktrace: 0x400...");
+  assert.strictEqual(panic.signature, "panic");
+  assert.strictEqual(panic.action, "clean-install");
+
+  const noapp = diagnoseBootLog("invalid header: 0xffffffff\nno bootable app partitions");
+  assert.strictEqual(noapp.signature, "no-app");
+  assert.strictEqual(noapp.action, "clean-install");
+
+  // every diagnosis carries human means + fix text
+  for (const d of [brown, panic, noapp]) { assert.ok(d.means && d.fix); }
+});
+
+test("usbBridgeInfo: native USB → null, bridge chips → driver link", async () => {
+  const { usbBridgeInfo } = await core();
+  assert.strictEqual(usbBridgeInfo(0x303a, 0x1001), null); // Espressif native USB
+  assert.strictEqual(usbBridgeInfo(null, null), null);
+  assert.strictEqual(usbBridgeInfo(0xbeef, 0x1), null);    // unknown → no driver to chase
+  const cp = usbBridgeInfo(0x10c4, 0xea60);
+  assert.ok(cp && /CP210x/.test(cp.name) && /silabs\.com/.test(cp.driverUrl));
+  const ch = usbBridgeInfo(0x1a86, 0x7523);
+  assert.ok(ch && /CH340/.test(ch.name) && /wch/.test(ch.driverUrl));
+});
+
+test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", async () => {
+  const { buildDiagnosticReport } = await core();
+  const r = buildDiagnosticReport({
+    browser: "Chrome", webSerial: true, chip: "ESP32-S3", mac: "AA:BB",
+    baud: 460800, error: "timed out", product: "canary-wap",
+    logTail: "line1\nline2\nBrownout detector was triggered",
+  });
+  assert.ok(r.includes("SecuraCV flasher diagnostic"));
+  assert.ok(r.includes("web serial: yes") && r.includes("connected baud: 460800"));
+  assert.ok(r.includes("chip: ESP32-S3") && r.includes("error: timed out"));
+  assert.ok(r.includes("Brownout")); // log tail included
+  // empty/missing fields are omitted, not rendered as blanks
+  assert.ok(!/platform:/.test(r) && !/flash size:/.test(r));
+  // never leaks a field we didn't pass (e.g. wifi/keys aren't inputs at all)
+  assert.ok(!/password|ssid|pubkey/i.test(r));
+});
+
+// ── post-flash proof: self-manifest read-back ───────────────────────────────
+test("parseSelfManifest: extracts the signed manifest from a noisy boot log", async () => {
+  const { parseSelfManifest, formatFingerprint } = await core();
+  const m = {
+    schema: "securacv.canary.manifest/v1", board: "xiao-esp32s3", firmware: "2.3.0-wap",
+    git: "abc1234", pubkey: "00112233", pubkey_fp: "aabbccddeeff0011", health: 100,
+    tamper: false, seq: 5, boots: 12,
+    features: ["ota", "ble"], commands: [{ key: "j", name: "self-manifest" }, { key: "h", name: "help" }],
+  };
+  // Real serial output: boot spam, then the JSON line, then more spam.
+  const buf = "rst:0x1 (POWERON)\nSecuraCV canary booting\n" + JSON.stringify(m) + "\nchirp\n";
+  const got = parseSelfManifest(buf);
+  assert.ok(got, "should find the manifest");
+  assert.strictEqual(got.firmware, "2.3.0-wap");
+  assert.strictEqual(got.pubkey_fp, "aabbccddeeff0011");
+  assert.strictEqual(got.health, 100);
+  // nested braces in commands[] must not fool the brace matcher
+  assert.strictEqual(got.commands.length, 2);
+  // no manifest present → null; partial line → null (waits for more bytes)
+  assert.strictEqual(parseSelfManifest("just boot text, no json"), null);
+  assert.strictEqual(parseSelfManifest('{"schema":"securacv.canary.manifest/v1","board":"xia'), null);
+  // a JSON object that isn't the manifest schema → null
+  assert.strictEqual(parseSelfManifest('{"schema":"something.else/v1"}'), null);
+  // fingerprint formatting
+  assert.strictEqual(formatFingerprint("aabbccddeeff0011"), "aa:bb:cc:dd:ee:ff:00:11");
+  assert.strictEqual(formatFingerprint("aabbccddeeff00112233"), "aa:bb:cc:dd:ee:ff:00:11…");
+  assert.strictEqual(formatFingerprint(""), "");
+});
+
+// ── release signature verification (in-browser, pinned key) ─────────────────
+const nodeCrypto = require("node:crypto");
+function makeSignedImage() {
+  const { publicKey, privateKey } = nodeCrypto.generateKeyPairSync("ed25519");
+  const pubHex = publicKey.export({ type: "spki", format: "der" }).subarray(-32).toString("hex");
+  const image = Buffer.from("SecuraCV factory image bytes — test");
+  const sha = nodeCrypto.createHash("sha256").update(image).digest();
+  const msg = Buffer.concat([Buffer.from(new Uint32Array([image.length]).buffer), sha]); // uint32_le||sha256
+  const sigHex = nodeCrypto.sign(null, msg, privateKey).toString("hex");
+  return { pubHex, sigHex, size: image.length, sha: new Uint8Array(sha) };
+}
+
+test("verifyImageSignature: accepts a genuine signature, rejects tampering", async () => {
+  const { verifyImageSignature, ed25519Message, isRealPubkey, hexToBytes } = await core();
+  const { pubHex, sigHex, size, sha } = makeSignedImage();
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size, sha), true);
+  // wrong size, flipped signature byte, wrong hash, wrong key → all false
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size + 1, sha), false);
+  const flipped = hexToBytes(sigHex); flipped[0] ^= 1;
+  assert.strictEqual(await verifyImageSignature(Buffer.from(flipped).toString("hex"), pubHex, size, sha), false);
+  const otherSha = new Uint8Array(sha); otherSha[5] ^= 0xff;
+  assert.strictEqual(await verifyImageSignature(sigHex, pubHex, size, otherSha), false);
+  // the all-zero placeholder key never verifies (unprovisioned) — checksum-only
+  assert.strictEqual(isRealPubkey("00".repeat(32)), false);
+  assert.strictEqual(await verifyImageSignature(sigHex, "00".repeat(32), size, sha), false);
+  // no signature / malformed → false (caller falls back, doesn't crash)
+  assert.strictEqual(await verifyImageSignature("", pubHex, size, sha), false);
+  // message layout is exactly uint32_le(size) || sha256
+  const m = ed25519Message(0x04030201, sha);
+  assert.deepStrictEqual(Array.from(m.subarray(0, 4)), [0x01, 0x02, 0x03, 0x04]);
+  assert.strictEqual(m.length, 36);
+});
+
+test("manifestEntry passes the signature + key id through", async () => {
+  const { manifestEntry } = await core();
+  const m = goodManifest();
+  m.products["securacv-canary-wap"].signature = "ab".repeat(64);
+  m.products["securacv-canary-wap"].signing_key_id = "0011223344556677";
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  const e = manifestEntry(m, wap, "ESP32-S3");
+  assert.strictEqual(e.signature, "ab".repeat(64));
+  assert.strictEqual(e.signingKeyId, "0011223344556677");
+});
+
+test("imageVerificationPolicy: fail-closed once a real key is pinned", async () => {
+  const { imageVerificationPolicy } = await core();
+  // Real key + signature → must verify.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: true, selfHosted: false }), "verify");
+  // Real key + official manifest + NO signature → REFUSE (the P1 hole).
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: false }), "require-signature");
+  // Real key + self-hosted manifest without a signature → user opted in → checksum-only.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: true, hasSignature: false, selfHosted: true }), "checksum-only");
+  // No key yet (pre-ceremony) → checksum-only regardless.
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: false, selfHosted: false }), "checksum-only");
+  assert.strictEqual(imageVerificationPolicy({ keyReal: false, hasSignature: true, selfHosted: false }), "checksum-only");
+});
+
+// ── supply-chain hardening: CSP + Subresource-Integrity on the flasher page ──
+// flash.html ships a strict Content-Security-Policy (only same-origin, vendored
+// code runs) and an import map carrying SRI hashes for the vendored third-party
+// modules. These are the drift gate: they recompute every hash from the real
+// bytes, so a vendored bump, an edited policy, or a new *unpinned* vendored
+// import fails CI instead of silently shipping.
+const { createHash } = require("node:crypto");
+const { dirname, relative, resolve } = require("node:path");
+
+const FLASH_HTML = readFileSync(join(ROOT, "flash.html"), "utf8");
+
+function cspContent(html) {
+  const m = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/);
+  return m ? m[1] : null;
+}
+function importmapText(html) {
+  const m = html.match(/<script type="importmap">([\s\S]*?)<\/script>/);
+  return m ? m[1] : null;
+}
+
+test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
+  const csp = cspContent(FLASH_HTML);
+  assert.ok(csp, "no CSP <meta> in flash.html");
+  // Deny-all baseline; scripts + styles are same-origin only.
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/);
+  assert.match(csp, /style-src 'self'/);
+  // No <base> rewrite of our relative asset paths, no plugins, no form posts.
+  assert.match(csp, /base-uri 'none'/);
+  assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /form-action 'none'/);
+  // Firmware fetches: our release host + its asset CDN, plus 'self' for the
+  // catalog / a same-origin manifest. No open wildcard host.
+  assert.match(csp, /connect-src[^;]*'self'/);
+  assert.match(csp, /connect-src[^;]*https:\/\/github\.com/);
+  assert.match(csp, /connect-src[^;]*https:\/\/\*\.githubusercontent\.com/);
+  // The whole point is defeated if inline/eval sneaks back in.
+  assert.doesNotMatch(csp, /'unsafe-inline'/);
+  assert.doesNotMatch(csp, /'unsafe-eval'/);
+  assert.doesNotMatch(csp, /'wasm-unsafe-eval'/);
+});
+
+test("flash.html: the CSP 'sha256-…' matches the inline import map's bytes", () => {
+  const csp = cspContent(FLASH_HTML);
+  const text = importmapText(FLASH_HTML);
+  assert.ok(text, "no import map in flash.html");
+  const want = "sha256-" + createHash("sha256").update(text, "utf8").digest("base64");
+  assert.ok(csp.includes("'" + want + "'"),
+    `CSP script-src must pin the import map with '${want}' (recompute if you edited the map)`);
+});
+
+test("flash.html: SRI hashes match the real vendored module bytes", () => {
+  const map = JSON.parse(importmapText(FLASH_HTML)).integrity;
+  assert.ok(map && Object.keys(map).length >= 4, "expected an integrity map for the vendored modules");
+  for (const [rel, pinned] of Object.entries(map)) {
+    const algo = pinned.split("-")[0];
+    assert.ok(["sha256", "sha384", "sha512"].includes(algo), `${rel}: unexpected SRI algorithm "${algo}"`);
+    const actual = algo + "-" + createHash(algo).update(readFileSync(join(ROOT, rel))).digest("base64");
+    assert.strictEqual(actual, pinned, `${rel}: SRI hash is stale — recompute it from the vendored file`);
+  }
+});
+
+test("flash.html: every vendored module the flasher imports is pinned", () => {
+  // Walk the flasher's module graph from its entry point and collect every
+  // ./vendor/* import. The set must equal the integrity map — a newly added
+  // unpinned vendored dependency (or a stale pin) fails right here.
+  const map = JSON.parse(importmapText(FLASH_HTML)).integrity;
+  const seen = new Set();
+  const vendored = new Set();
+  const queue = [join(ROOT, "assets/flash.js")];
+  const PATTERNS = [
+    /\bfrom\s*["']([^"']+)["']/g,               // import … from "x"
+    /\bimport\s*\(\s*["']([^"']+)["']/g,        // import("x")  — dynamic
+    /(?:^|[;{}\s])import\s+["']([^"']+)["']/g,  // import "x"   — side-effect
+  ];
+  while (queue.length) {
+    const file = queue.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let src;
+    try { src = readFileSync(file, "utf8"); } catch { continue; }
+    for (const re of PATTERNS) {
+      for (const m of src.matchAll(re)) {
+        const spec = m[1];
+        if (!spec.startsWith(".")) continue; // the flasher has no bare specifiers
+        const rel = relative(ROOT, resolve(dirname(file), spec)).split("\\").join("/");
+        if (rel.startsWith("assets/vendor/")) vendored.add(rel);
+        else if (/\.m?js$/.test(rel)) queue.push(join(ROOT, rel)); // first-party: recurse
+      }
+    }
+  }
+  // Import-map integrity keys are URL-like ("./assets/…") so the browser
+  // resolves and matches them; compare against the graph on the bare path.
+  const norm = (s) => s.replace(/^\.\//, "");
+  assert.deepStrictEqual([...vendored].map(norm).sort(), Object.keys(map).map(norm).sort(),
+    "the flasher's vendored imports and the SRI integrity map have drifted apart");
+});

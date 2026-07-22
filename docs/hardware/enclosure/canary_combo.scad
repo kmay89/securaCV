@@ -21,7 +21,7 @@ opt_hood = false;    // rain hood over the lens
 opt_led  = true;     // one light pipe (wire to either stack's LED)
 
 /* [Vision stack] — Grove Vision AI V2 + stacked XIAO. MEASURE */
-vm_l = 25.0;  vm_w = 25.0;
+vm_l = 40.0;  vm_w = 20.0;   // measured Grove 1x2 form (was 25x25 — same fix as the Vision/doorbell cases)
 cam_w = 25.0;  cam_h = 24.0;
 cam_hole_x = 21.0;  cam_hole_y = 12.5;  cam_post_d = 3.6;  cam_post_h = 4.0;  cam_screw_d = 1.6;
 lens_dx = 0.0;  lens_dy = 2.5;
