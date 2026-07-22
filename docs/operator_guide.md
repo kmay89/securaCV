@@ -59,6 +59,22 @@ DEVICE_KEY_SEED=devkey:your-seed \
 Trustee entries use the format `id:HEX_PUBLIC_KEY`, where the public key is the hex-encoded
 32-byte Ed25519 verifying key.
 
+### Health check (`doctor`)
+
+Before you rely on the vault, confirm it is actually set up correctly:
+
+```bash
+DEVICE_KEY_SEED=devkey:your-seed \
+  cargo run --bin break_glass -- doctor --db witness.db --vault-path vault/envelopes
+```
+
+`doctor` is read-only. It reports whether a quorum policy is configured (`n`-of-`m`,
+with every trustee key well-formed), whether the device identity is pinned, and the
+state of the vault master key — including a loud reminder that the master key is
+plaintext on disk (the honest state until hardware-backed keys land; see
+[the v1.1 design](design/vault_operator_ux_v1_1.md)). It **exits non-zero if
+anything is missing or invalid**, so it can gate a deploy in a script or CI step.
+
 ## Break-glass unseal workflow
 
 Ensure a quorum policy is stored first (`break_glass policy set`). Then create an unlock request,
