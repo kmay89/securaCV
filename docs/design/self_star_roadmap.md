@@ -65,7 +65,7 @@ scan like `verify.js` bounds its read window. Don't call a group of Canaries a
 
 ---
 
-## TODO 2 — Boot safe-mode + A/B auto-rollback (self-healing) · *coming soon, design-first*
+## TODO 2 — Boot safe-mode + A/B auto-rollback (self-healing) · *in progress*
 
 **What.** A bad firmware image must not be able to brick trust. On boot, run
 the existing self-test; if it fails hard (or the app crashes N times), fall
@@ -74,27 +74,67 @@ the new slot fails its post-flash self-test, plus a minimal **safe-mode
 console** that still prints the trust card + a recovery URL even when the main
 app won't come up.
 
+**Status (2026-07).** The **app-level anti-rollback version floor** is done and
+host-tested in `test_ota_logic.cpp`. The **A/B rollback engine** (post-flash
+self-test → mark-valid-or-revert, plus the `verifyRollbackLater` ownership that
+keeps a new image `PENDING_VERIFY`) is written in
+`firmware/common/ota/securacv_ota.*` and active in the `canary-ota` ESP-IDF
+project, where `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` — but **that bootloader
+config is not yet enabled in the shipping Arduino/Canary builds**, so there the
+Arduino core auto-confirms the image and the revert net is inert until the config
+lands (part of the Phase 1 boot-path work; see "What already exists"). The
+crash-loop → safe-mode half — for a *confirmed* image that can no longer come up,
+when there is no A/B image to revert to — begins with the pure decision layer
+`firmware/common/health/boot_policy.h` (host-tested in
+`tests_host/test_boot_policy.cpp`). **Still to land, and gated on hardware
+validation:** enabling the bootloader rollback config in the shipping builds,
+wiring the crash-loop counter into the boot path, and the safe-mode console
+(steps 1–2 below).
+
 **Why (user value).** Resilience — the highest-stakes self-healing. A failed
 update or corrupted image degrades to a recoverable state instead of a dead
 device, and the evidence on the SD card stays intact and verifiable.
 
 **What already exists to build on.**
-- `FEATURE_OTA_PULL` + `firmware/common/ota/securacv_ota.*` already register
+- 🟡 **A/B rollback engine is written, but gated on the bootloader rollback
+  config.** `FEATURE_OTA_PULL` + `firmware/common/ota/securacv_ota.*` register the
   post-flash self-tests (see `main.cpp` `k_ota_selftests[]`,
-  `securacv_ota_register_selftest`) and the ESP OTA path can roll back
-  (`esp_ota_mark_app_invalid_rollback_and_reboot`).
+  `securacv_ota_register_selftest`); `securacv_ota_boot_self_test()` runs them
+  and, on a required failure, calls `esp_ota_mark_app_invalid_rollback_and_reboot()`.
+  The engine overrides the Arduino core's weak `verifyRollbackLater()` so a new
+  image stays `PENDING_VERIFY` until it confirms itself — a crash/hang/brownout
+  before confirmation reverts to the previous image on the next boot. **This only
+  functions where `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is set** — the
+  `verifyRollbackLater` override is `#if`-guarded on that symbol in
+  `securacv_ota.cpp`. Today that config lives only in the `canary-ota` ESP-IDF
+  project (`sdkconfig.defaults`/`.production`); in the main Arduino/Canary builds
+  the core auto-confirms the image and the revert net is inert. **Enabling that
+  config in the shipping builds is remaining Phase 1 boot-path work.**
+- ✅ **App-level anti-rollback floor is done.** `securacv_ota_update_decision()`
+  compares against `max(running_version, nvs_floor)`; the floor is raised on
+  confirmation. Host-tested in `firmware/common/ota/test_ota_logic.cpp`.
 - `diag_run_selftest()` / `diag_get_selftest()` provide the health gate.
 - The themed console (`console_scenes.h`) can render the safe-mode card.
 
 **Approach (sketch).**
 1. Boot-count-in-NVS crash loop detector (increment early in boot, clear once
-   the app reaches "healthy"); after N failures, boot into safe-mode.
+   the app reaches "healthy"); after N failures, boot into safe-mode. **The pure
+   decision for this is done** — `firmware/common/health/boot_policy.h`
+   (`bootpolicy::decide()`), host-tested in `tests_host/test_boot_policy.cpp`.
+   *Pending (boot-path, hardware-validated):* the NVS counter + the early-boot
+   increment/reset wiring that calls it.
 2. Safe-mode: minimal init, print `welcome_card`/`trust_card` + recovery URL,
    accept only the read-only diagnostic console (`Tier::Diag`), offer re-flash.
-3. A/B: verify the post-flash self-test already gates `mark_app_valid`; add the
-   rollback-on-failure path and a host-tested decision function (mirror
-   `test_console.h`'s pure-policy pattern — the *decision* logic lives in a pure
-   header, proven in `tests_host`).
+   *Pending (boot-path, hardware-validated).*
+3. **A/B: engine code in place; the crash-loop/safe-mode *decision* is now
+   host-tested.** The post-flash self-test gates `mark_app_valid` and the
+   rollback-on-failure path is written (see "What already exists") — live only
+   where `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is enabled (`canary-ota`), still
+   to be turned on in the shipping builds. The crash-loop/safe-mode *decision*
+   logic now lives in the pure header `boot_policy.h`, proven in `tests_host` —
+   mirroring `test_console.h`'s pure-policy pattern. Host-tested here: the
+   decision half. Needs hardware: the boot-path glue **and** the bootloader
+   rollback config in the shipping builds.
 
 **Risks / gotchas.** **This touches the boot/OTA path — real bricking risk if
 wrong.** Do a design doc + explicit human sign-off before code. Must be proven
@@ -114,5 +154,8 @@ migration-sensitive for already-deployed devices.
    Keep everything **read-only, public-only** on the diagnostic console.
 3. Anti-rot is non-negotiable: pin new wire formats with host tests in *both*
    repos, single-source from the firmware.
-4. Fleet map is safe to build now. Safe-mode/rollback needs a design doc and a
-   human yes first.
+4. Fleet map is safe to build now. Safe-mode/rollback has its design doc
+   ([`hardware_root_of_trust.md`](hardware_root_of_trust.md) §7 Phase 1, signed
+   off 2026-07-22) and its pure decision layer landed (`boot_policy.h`); the
+   remaining boot-path wiring still needs a hardware smoke test before it merges
+   — a bug there could brick the one thing we promise you can't brick.
