@@ -52,9 +52,10 @@ viewer. Nothing here is fetched at runtime — the page ships the derived mesh
   (`source: "procedural"`, `builder: "waveshare_4_3b"` → `build_waveshare_4_3b`,
   using `shapely` + `manifold3d` for the rounded shell and boolean cutouts): a
   **dimensional model reverse-engineered** — a rounded charcoal ABS case with a
-  recessed glossy 4.3″ panel, the green 16-way pluggable terminal, TF + dual
-  USB-C + BOOT/RESET on one short edge, and status LEDs + a power slide on the
-  other. Its proportions and exposed-feature layout are taken from **MaffooClock's
+  recessed glossy 4.3″ panel on the front, the green 16-way pluggable terminal on
+  the **rear** (opposite the screen, where the field wiring exits — as on the
+  real board), TF + dual USB-C + BOOT/RESET on one short edge, and status LEDs +
+  a power slide on the other. Its proportions and exposed-feature layout are taken from **MaffooClock's
   published shell for the 5″ sibling** (ESP32-S3-Touch-LCD-5/5B, on Printables) —
   used **as a dimensional reference only, not copied or redistributed** (see the
   licence note below) — scaled to the 4.3B and cross-checked against
