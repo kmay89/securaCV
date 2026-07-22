@@ -1,6 +1,10 @@
 # Rust build output
 src-tauri/target/
 src-tauri/gen/
+hub-core/target/
+# hub-core has no dependencies, so its lockfile is trivial and regenerates
+# deterministically in CI — like src-tauri, we don't track it.
+hub-core/Cargo.lock
 
 # Node
 node_modules/

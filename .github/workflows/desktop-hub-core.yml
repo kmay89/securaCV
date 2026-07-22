@@ -1,0 +1,52 @@
+name: Hub Core
+
+# desktop/hub-core holds the footgun-critical logic behind the Raspberry Pi hub
+# disk writer: which disk may be written (hub_disk) and how to enumerate the
+# machine's disks and tell the system disk from an external one (hub_enumerate).
+#
+# The full desktop app (desktop/src-tauri) only builds on release tags and needs
+# the webkit/gtk stack, so nothing in PR CI would catch a break in this logic if
+# it lived there. hub-core is deliberately pure `std` with no dependencies, so it
+# compiles and unit-tests on a plain runner — this workflow is the gate that
+# keeps the disk-writer safety layer from rotting silently between releases.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'desktop/hub-core/**'
+      - '.github/workflows/desktop-hub-core.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'desktop/hub-core/**'
+      - '.github/workflows/desktop-hub-core.yml'
+
+# Read-only token: this workflow only checks out and runs cargo — it needs
+# nothing else. (CodeQL flags workflows that don't pin GITHUB_TOKEN scope.)
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A new push to a PR branch cancels the in-flight run; main is never cancelled.
+concurrency:
+  group: hub-core-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop/hub-core
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install fmt + clippy
+        run: rustup component add rustfmt clippy
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test

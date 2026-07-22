@@ -181,10 +181,13 @@ Raspberry Pi Imager.
   - *Remaining:* macOS (`diskutil` internal/ejectable) + Windows backends; the
     read-only `list_hub_targets` command; and the picker that shows eligible
     cards/SSDs, *why* the rest are hidden, and an explicit size/model confirm.
-- **Step 3 — acquire the image.** Read the target board's image URL from
-  `hub_image.json`, download the HAOS-based hub image over TLS, verify its hash
-  (against HA's published `.sha256` until the `pinned` sha lands), decompress
-  (`.xz`). The catalog is already truthful before an image is pinned.
+- **Step 3 — acquire the image.**
+  - *Resolver (landed):* `hub_core::hub_image` turns the catalog into a typed
+    `WritePlan` (board → image URL, whether a pinned hash is trustworthy or we
+    fall back to HA's `.sha256`, the card-size requirement) — pure and
+    host-tested, so the catalog can't hand the writer a nonsensical plan.
+  - *Remaining (needs the Tauri build + new deps):* the actual download over TLS,
+    the sha256/`.sha256` verification, and the `.xz` decompress.
 - **Step 4 — the guarded write (hardware-validated before merge).** Raw
   block-device write with progress + read-back verify, behind the Step-1 gate and
   a typed confirmation. This is the footgun; it does not merge on review alone.
@@ -198,11 +201,14 @@ Raspberry Pi Imager.
   signed release train; converge with the §7.7 Canary onboarding (Improv /
   zeroconf) so hub and Canaries share one adoption flow.
 
-> **CI note.** The `desktop/` crate only builds on release tags (`app-v*` /
-> `flasher-v*`), not in PR CI, and needs webkit/gtk system libs. The pure layers
-> (Step 1, and the pure halves of 2–3) are therefore verified with a standalone
-> `rustc --test`; before Step 4 merges, add a PR check that at least compiles and
-> unit-tests the desktop crate's pure modules so the writer can't rot silently.
+> **CI note (resolved).** The Tauri app (`desktop/src-tauri`) only builds on
+> release tags (`app-v*` / `flasher-v*`) and needs webkit/gtk, so it can't be
+> tested in PR CI. The footgun-critical logic therefore lives in its own
+> dependency-free crate, `desktop/hub-core` (`hub_disk` + `hub_enumerate`), which
+> the `Hub Core` workflow `cargo test`s (+ `fmt`/`clippy -D warnings`) on every PR
+> that touches it — so the disk-writer safety layer is verified continuously, not
+> just at release. `src-tauri` will consume it via a path dependency when the
+> first command that uses it lands.
 
 ## 8. Decisions (locked 2026-07-22)
 

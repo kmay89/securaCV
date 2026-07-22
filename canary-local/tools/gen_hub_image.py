@@ -16,7 +16,7 @@ regenerated:
      Hub's own upstream snapshot (haos_version, freshness-tracked by the
      homeassistant-freshness workflow) + the integration block + the hardware
      list's card requirement.
-  2. desktop/src-tauri/src/hub_disk.rs ......... the card-size floor is PARSED
+  2. desktop/hub-core/src/hub_disk.rs ......... the card-size floor is PARSED
      from the flasher's safety gate (MIN/RECOMMENDED_TARGET_BYTES), so the copy
      "needs a 32 GB+ card" and the code that refuses an undersized one are one
      value, not two that can drift apart.
@@ -47,7 +47,7 @@ REPO = Path(__file__).resolve().parents[2]
 OUT_JSON = REPO / "canary-local/devices/hub_image.json"
 
 HA_JSON = REPO / "canary-local/devices/homeassistant.json"
-HUB_DISK_RS = REPO / "desktop/src-tauri/src/hub_disk.rs"
+HUB_DISK_RS = REPO / "desktop/hub-core/src/hub_disk.rs"
 ADDON_CONFIG = REPO / "privacy_witness_kernel/config.yaml"
 LOVELACE_DIR = REPO / "homeassistant/lovelace"
 AUTOMATIONS_DIR = REPO / "homeassistant/automations"
@@ -252,9 +252,9 @@ def main() -> None:
         },
         "card_requirements": {
             "min_bytes": min_bytes,
-            "min_source": "desktop/src-tauri/src/hub_disk.rs:MIN_TARGET_BYTES",
+            "min_source": "desktop/hub-core/src/hub_disk.rs:MIN_TARGET_BYTES",
             "recommended_bytes": recommended_bytes,
-            "recommended_source": "desktop/src-tauri/src/hub_disk.rs:RECOMMENDED_TARGET_BYTES",
+            "recommended_source": "desktop/hub-core/src/hub_disk.rs:RECOMMENDED_TARGET_BYTES",
             "human_minimum": parse_human_minimum(ha),
             "human_minimum_source": "canary-local/devices/homeassistant.json:hardware (microSD card)",
             "note": (
@@ -302,7 +302,7 @@ def main() -> None:
             "upstream_fetched_at": upstream.get("fetched_at", ""),
             "sources": [
                 "canary-local/devices/homeassistant.json",
-                "desktop/src-tauri/src/hub_disk.rs",
+                "desktop/hub-core/src/hub_disk.rs",
                 "privacy_witness_kernel/config.yaml",
                 "homeassistant/lovelace/*.yaml",
                 "homeassistant/automations/*.yaml",
