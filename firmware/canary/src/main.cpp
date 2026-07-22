@@ -2484,11 +2484,15 @@ static void emit_self_manifest() {
   f.fleet_count    = nfleet;
   f.help_url       = SECURACV_HELP_URL_BASE;
 
-  // Only the scan build carries a fleet[]; there it needs room for up to
-  // FLEET_ROSTER_MAX peer objects (~80B each). Non-scan builds keep the small
-  // buffer — their fleet[] is always empty — so RAM doesn't regress.
+  // Only the scan build carries a fleet[]; size it for the WORST case so a full,
+  // maximally-flagged roster never overflows to {"error":...} exactly when it's
+  // most interesting. Worst peer — max age (uint32) + every status word —
+  // serialises to ~119B; FLEET_ROSTER_MAX (16) of them ≈ 1.9KB, plus the base
+  // manifest (full command set + features + 64-hex keys) ≈ 1.4KB → ~3.3KB. 4KB
+  // clears that with headroom. Non-scan builds keep the small buffer (their
+  // fleet[] is always empty), so RAM doesn't regress there.
 #if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
-  static char buf[2560];
+  static char buf[4096];
 #else
   static char buf[1600];
 #endif

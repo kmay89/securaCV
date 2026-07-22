@@ -124,6 +124,50 @@ static void test_no_fleet() {
   CHECK(has(std::string(buf), "\"fleet\":[]"));
 }
 
+// ── a full, maximally-flagged roster fits the firmware's scan-build buffer ───
+static void test_worst_case_fleet_fits() {
+  // The failure this guards: a populated roster serialising past the manifest
+  // buffer drops the WHOLE `j` response to {"error":"manifest overflow"} exactly
+  // when the fleet is most interesting. Build the worst case — FLEET_ROSTER_MAX
+  // peers, each with the widest age (uint32) and every status word — atop a rich
+  // command/feature set, and prove it fits main.cpp's 4096-byte scan buffer
+  // (and really did NOT fit the old 2560 one).
+  manifest::Peer peers[16];
+  for (int i = 0; i < 16; ++i) {
+    peers[i].fp = "ffff";
+    peers[i].age_s = 4294967295u;   // uint32 max — the widest "age" digits
+    peers[i].health = 100;
+    peers[i].battery = 100;
+    peers[i].chain = 65535;
+    peers[i].flags = "tamper, alert, degraded, muted, wifi";   // every word
+  }
+  static const char* const manyFeats[] = {
+    "sd_storage", "wifi_ap", "gnss", "ble_status", "ble", "mesh", "console_theme",
+    "diagnostics", "ota_pull", "power_monitor", "usb_onboard", "csi", "acoustic",
+    "touch", "ir_rmt", "temp_tamper"
+  };
+  static const manifest::Cmd manyCmds[] = {
+    { 'i', "identity" }, { 'j', "manifest" }, { 's', "status" }, { 'g', "gps" },
+    { 'b', "battery" }, { 'd', "diagnostics" }, { 'm', "mqtt" }, { 't', "run-tests" },
+    { 'c', "attest" }, { 'f', "fingerprint" }, { 'e', "explain-boot" },
+    { 'w', "tamper-log" }, { 'l', "identity-banner" }, { 'n', "nearby" },
+    { 'a', "wake-selftest" }
+  };
+  manifest::Facts f = sample();
+  f.features = manyFeats; f.feature_count = 16;
+  f.commands = manyCmds; f.command_count = 15;
+  f.fleet = peers; f.fleet_count = 16;
+
+  char buf[4096];   // must match main.cpp's scan-build buffer
+  size_t n = manifest::build(f, buf, sizeof buf);
+  CHECK(n > 0);                         // did NOT overflow
+  CHECK(n < sizeof buf);
+  CHECK(buf[0] == '{' && buf[n - 1] == '}');
+  // The same worst case overflows the old 2560 buffer — the bug this sizing fixes.
+  char old_buf[2560];
+  CHECK(manifest::build(f, old_buf, sizeof old_buf) == 0);
+}
+
 // ── unknown health is JSON null, tamper flips to a bare true ─────────────────
 static void test_unknown_health_and_tamper() {
   char buf[1024];
@@ -204,6 +248,7 @@ int main() {
   test_shape_and_keys();
   test_no_commands();
   test_no_fleet();
+  test_worst_case_fleet_fits();
   test_unknown_health_and_tamper();
   test_escaping();
   test_no_features();
