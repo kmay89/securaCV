@@ -11,8 +11,10 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use ed25519_dalek::{SigningKey, VerifyingKey};
+use rand::TryRng;
 use std::io::IsTerminal;
 use std::io::Write;
+use zeroize::Zeroize;
 
 use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT};
 use crate::{
@@ -152,6 +154,66 @@ enum Command {
         /// Number of trustees in the rehearsed quorum (m)
         #[arg(long, default_value_t = 3)]
         trustees: u8,
+    },
+
+    /// Start a guided break-glass setup: pin the device identity and open a
+    /// draft for an n-of-m quorum. Enroll trustees with `trustee enroll`; the
+    /// quorum policy commits automatically once enough are enrolled. Idempotent.
+    Init {
+        /// Quorum threshold (n) — how many trustees must approve
+        #[arg(long)]
+        threshold: u8,
+        /// Target number of trustees (m) you plan to enroll
+        #[arg(long)]
+        trustees: u8,
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        #[arg(long, default_value = "ruleset:v0.3.0")]
+        ruleset_id: String,
+        /// Device key seed (must match witnessd)
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: String,
+        /// Setup-draft file (defaults to <db>.setup-draft.json)
+        #[arg(long)]
+        draft: Option<String>,
+    },
+
+    /// Manage trustees during setup
+    Trustee {
+        #[command(subcommand)]
+        command: TrusteeCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TrusteeCommand {
+    /// Enroll one trustee into the setup draft. Either import an existing public
+    /// key (`--public-key`) or mint a fresh keypair (`--generate --output`). The
+    /// quorum policy commits/updates automatically once the draft is valid.
+    Enroll {
+        /// Trustee id (a short human label, unique within the quorum)
+        #[arg(long)]
+        id: String,
+        /// Mint a fresh Ed25519 keypair for this trustee (writes the signing key
+        /// to --output). Mutually exclusive with --public-key.
+        #[arg(long, conflicts_with = "public_key")]
+        generate: bool,
+        /// Where to write the newly-minted signing key (required with --generate)
+        #[arg(long)]
+        output: Option<String>,
+        /// Import an existing 32-byte Ed25519 public key (hex)
+        #[arg(long, value_name = "HEX")]
+        public_key: Option<String>,
+        #[arg(long, default_value = "witness.db")]
+        db: String,
+        #[arg(long, default_value = "ruleset:v0.3.0")]
+        ruleset_id: String,
+        /// Device key seed (must match witnessd)
+        #[arg(long, env = "DEVICE_KEY_SEED")]
+        device_key_seed: String,
+        /// Setup-draft file (defaults to <db>.setup-draft.json)
+        #[arg(long)]
+        draft: Option<String>,
     },
 }
 
@@ -306,6 +368,48 @@ pub fn run() -> Result<()> {
             let _stage = ui.stage("Break-glass drill");
             cmd_drill(threshold, trustees)
         }
+        Command::Init {
+            threshold,
+            trustees,
+            db,
+            ruleset_id,
+            device_key_seed,
+            draft,
+        } => {
+            let _stage = ui.stage("Break-glass init");
+            cmd_init(
+                threshold,
+                trustees,
+                &db,
+                &ruleset_id,
+                &device_key_seed,
+                draft.as_deref(),
+            )
+        }
+        Command::Trustee { command } => match command {
+            TrusteeCommand::Enroll {
+                id,
+                generate,
+                output,
+                public_key,
+                db,
+                ruleset_id,
+                device_key_seed,
+                draft,
+            } => {
+                let _stage = ui.stage("Enroll trustee");
+                cmd_trustee_enroll(
+                    &id,
+                    generate,
+                    output.as_deref(),
+                    public_key.as_deref(),
+                    &db,
+                    &ruleset_id,
+                    &device_key_seed,
+                    draft.as_deref(),
+                )
+            }
+        },
     }
 }
 
@@ -897,6 +1001,296 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
             "drill failed: the unsealed payload did not match the sealed payload"
         ))
     }
+}
+
+// --------------------------------------------------------------------------- //
+// Guided setup: `init` + `trustee enroll`, backed by a plaintext draft file
+// that is kept SEPARATE from the committed QuorumPolicy. QuorumPolicy::validate
+// rejects an empty/partial roster by design (Invariant V), so the draft is where
+// a half-finished enrollment lives until it can commit a valid n-of-m — the
+// validator never sees a partial roster.
+// --------------------------------------------------------------------------- //
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DraftTrustee {
+    id: String,
+    public_key_hex: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SetupDraft {
+    threshold: u8,
+    target_trustees: u8,
+    trustees: Vec<DraftTrustee>,
+}
+
+/// The draft lives next to the database unless overridden. It holds only public
+/// keys and counts — no secrets — so it is a plain (non-encrypted) file.
+fn draft_path(db_path: &str, draft_override: Option<&str>) -> String {
+    match draft_override {
+        Some(p) => p.to_string(),
+        None => format!("{}.setup-draft.json", db_path),
+    }
+}
+
+fn read_draft(path: &str) -> Result<Option<SetupDraft>> {
+    if !std::path::Path::new(path).exists() {
+        return Ok(None);
+    }
+    let json = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("failed to read setup draft {}: {}", path, e))?;
+    let draft: SetupDraft =
+        serde_json::from_str(&json).map_err(|e| anyhow!("invalid setup draft {}: {}", path, e))?;
+    Ok(Some(draft))
+}
+
+fn write_draft(path: &str, draft: &SetupDraft) -> Result<()> {
+    let json = format!("{}\n", serde_json::to_string_pretty(draft)?);
+    std::fs::write(path, json).map_err(|e| anyhow!("failed to write setup draft {}: {}", path, e))
+}
+
+/// Write a freshly-minted trustee signing key (hex) to `path`, mode 0600 — this
+/// IS a secret, unlike the draft. Matches the format `approve --signing-key`
+/// reads.
+fn write_signing_key_file(path: &str, signing_key: &SigningKey) -> Result<()> {
+    let payload = format!("{}\n", hex_vec(&signing_key.to_bytes()));
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(payload.as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, payload)?;
+    }
+    Ok(())
+}
+
+fn print_setup_next_steps(draft: &SetupDraft) {
+    let n = draft.trustees.len();
+    let target = draft.target_trustees as usize;
+    println!();
+    if n < draft.threshold as usize {
+        println!(
+            "Next: enroll {} more trustee(s) before the quorum can go live:",
+            draft.threshold as usize - n
+        );
+    } else if n < target {
+        println!(
+            "Next: the policy is live; enroll {} more to reach your target of {}:",
+            target - n,
+            target
+        );
+    } else {
+        println!("Setup complete. Rehearse and verify:");
+        println!(
+            "  break_glass drill --threshold {} --trustees {}",
+            draft.threshold, draft.target_trustees
+        );
+        println!("  break_glass doctor");
+        return;
+    }
+    println!("  break_glass trustee enroll --id <name> --public-key <HEX>");
+    println!("  break_glass trustee enroll --id <name> --generate --output <name>.key");
+}
+
+fn cmd_init(
+    threshold: u8,
+    trustees: u8,
+    db_path: &str,
+    ruleset_id: &str,
+    device_key_seed: &str,
+    draft_override: Option<&str>,
+) -> Result<()> {
+    if threshold == 0 || trustees == 0 || threshold > trustees {
+        return Err(anyhow!(
+            "init needs 1 <= threshold <= trustees (got {}-of-{})",
+            threshold,
+            trustees
+        ));
+    }
+
+    println!("=== Break-glass setup — init ===");
+
+    // Open the kernel once: this creates the (encrypted) database and pins the
+    // device identity, so `authorize`/`witnessd` recognize this seed later.
+    let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
+    let kernel = Kernel::open(&cfg)?;
+    let device_vk = kernel.device_verifying_key();
+    drop(kernel);
+    println!(
+        "  {} device identity pinned: {}",
+        DR_OK,
+        short_fp(&device_vk.to_bytes())
+    );
+
+    let dpath = draft_path(db_path, draft_override);
+    if let Some(existing) = read_draft(&dpath)? {
+        // Idempotent: report state rather than clobbering an in-progress setup.
+        println!(
+            "  {} setup already in progress: {} of {} trustees enrolled toward a {}-of-{} quorum",
+            DR_OK,
+            existing.trustees.len(),
+            existing.target_trustees,
+            existing.threshold,
+            existing.target_trustees
+        );
+        print_setup_next_steps(&existing);
+        return Ok(());
+    }
+
+    let draft = SetupDraft {
+        threshold,
+        target_trustees: trustees,
+        trustees: Vec::new(),
+    };
+    write_draft(&dpath, &draft)?;
+    println!(
+        "  {} started a {}-of-{} setup draft ({})",
+        DR_OK, threshold, trustees, dpath
+    );
+    println!(
+        "    the quorum policy commits automatically once {} trustee(s) are enrolled",
+        threshold
+    );
+    print_setup_next_steps(&draft);
+    Ok(())
+}
+
+// A CLI handler whose parameters map one-to-one to `trustee enroll` flags; the
+// arguments are all distinct and independently meaningful, so a bag struct would
+// obscure more than it helps.
+#[allow(clippy::too_many_arguments)]
+fn cmd_trustee_enroll(
+    id: &str,
+    generate: bool,
+    output: Option<&str>,
+    public_key: Option<&str>,
+    db_path: &str,
+    ruleset_id: &str,
+    device_key_seed: &str,
+    draft_override: Option<&str>,
+) -> Result<()> {
+    let dpath = draft_path(db_path, draft_override);
+    let mut draft = read_draft(&dpath)?
+        .ok_or_else(|| anyhow!("no setup in progress — run `break_glass init` first"))?;
+
+    let id = id.trim();
+    if id.is_empty() {
+        return Err(anyhow!("trustee id cannot be empty"));
+    }
+    if draft.trustees.iter().any(|t| t.id == id) {
+        return Err(anyhow!("trustee id '{}' is already enrolled", id));
+    }
+    if draft.trustees.len() >= draft.target_trustees as usize {
+        return Err(anyhow!(
+            "the draft already has its target of {} trustees — re-init to change the target",
+            draft.target_trustees
+        ));
+    }
+
+    // Resolve the trustee's public key: mint a fresh keypair, or import one.
+    let public_key_bytes: [u8; 32] = match (generate, public_key) {
+        (true, _) => {
+            let out = output.ok_or_else(|| {
+                anyhow!("--generate requires --output <file> to save the trustee's signing key")
+            })?;
+            let mut seed = [0u8; 32];
+            rand::rngs::SysRng
+                .try_fill_bytes(&mut seed[..])
+                .map_err(|_| anyhow!("OS RNG unavailable"))?;
+            let signing_key = SigningKey::from_bytes(&seed);
+            seed.zeroize();
+            write_signing_key_file(out, &signing_key)?;
+            println!(
+                "  {} minted a signing key for '{}' → {} (secret, mode 0600 — hand it to the trustee)",
+                DR_OK, id, out
+            );
+            signing_key.verifying_key().to_bytes()
+        }
+        (false, Some(hex_str)) => {
+            let bytes = hex::decode(hex_str.trim())
+                .map_err(|e| anyhow!("invalid public key hex: {}", e))?;
+            if bytes.len() != 32 {
+                return Err(anyhow!("public key must be 32 bytes, got {}", bytes.len()));
+            }
+            let mut pk = [0u8; 32];
+            pk.copy_from_slice(&bytes);
+            VerifyingKey::from_bytes(&pk).map_err(|_| anyhow!("not a valid Ed25519 public key"))?;
+            pk
+        }
+        (false, None) => {
+            return Err(anyhow!(
+                "provide either --public-key <HEX> or --generate --output <file>"
+            ));
+        }
+    };
+
+    // Reject a reused key: quorum independence is a property of the KEYS, not
+    // just the ids (Invariant V) — mirrors QuorumPolicy::validate, but fails now
+    // with a clear message instead of at commit.
+    let public_key_hex = hex_vec(&public_key_bytes);
+    if draft
+        .trustees
+        .iter()
+        .any(|t| t.public_key_hex == public_key_hex)
+    {
+        return Err(anyhow!(
+            "that public key is already enrolled under another trustee — quorum independence requires distinct keys"
+        ));
+    }
+
+    draft.trustees.push(DraftTrustee {
+        id: id.to_string(),
+        public_key_hex,
+    });
+    write_draft(&dpath, &draft)?;
+    println!(
+        "  {} enrolled trustee '{}' ({}/{})",
+        DR_OK,
+        id,
+        draft.trustees.len(),
+        draft.target_trustees
+    );
+
+    // Commit (or update) the real policy as soon as the draft is a valid quorum.
+    if draft.trustees.len() >= draft.threshold as usize {
+        let entries = draft
+            .trustees
+            .iter()
+            .map(|t| {
+                let bytes = hex::decode(&t.public_key_hex)
+                    .map_err(|e| anyhow!("corrupt draft key for {}: {}", t.id, e))?;
+                let mut pk = [0u8; 32];
+                if bytes.len() != 32 {
+                    return Err(anyhow!("corrupt draft key for {}", t.id));
+                }
+                pk.copy_from_slice(&bytes);
+                Ok(crate::break_glass::TrusteeEntry {
+                    id: TrusteeId::new(&t.id),
+                    public_key: pk,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let policy = crate::break_glass::QuorumPolicy::new(draft.threshold, entries)?;
+        let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
+        let mut kernel = Kernel::open(&cfg)?;
+        kernel.set_break_glass_policy(&policy)?;
+        println!(
+            "  {} quorum policy is live: {}-of-{}",
+            DR_OK, policy.n, policy.m
+        );
+    }
+
+    print_setup_next_steps(&draft);
+    Ok(())
 }
 
 fn cmd_receipts(
@@ -1671,5 +2065,202 @@ mod tests {
             cmd_drill(4, 3).is_err(),
             "threshold greater than trustee count is invalid"
         );
+    }
+
+    fn pub_hex(seed: u8) -> String {
+        hex_encode(
+            SigningKey::from_bytes(&[seed; 32])
+                .verifying_key()
+                .to_bytes(),
+        )
+    }
+
+    const TEST_SEED: &str = "devkey:test:a1b2c3d4e5f6a7b8c9d0";
+
+    fn policy_of(db: &str) -> Option<(u8, u8)> {
+        let cfg = kernel_config(db, "ruleset:test", TEST_SEED);
+        let kernel = Kernel::open(&cfg).unwrap();
+        kernel.break_glass_policy().map(|p| (p.n, p.m))
+    }
+
+    #[test]
+    fn init_and_enroll_commit_policy_at_threshold() -> Result<()> {
+        let temp = std::env::temp_dir().join(format!("secura_init_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+
+        cmd_init(2, 3, &db, "ruleset:test", TEST_SEED, None)?;
+        // init is idempotent — a second call reports state, doesn't error/clobber.
+        cmd_init(2, 3, &db, "ruleset:test", TEST_SEED, None)?;
+        // draft only: no committed policy yet (validate would reject a partial roster).
+        assert_eq!(policy_of(&db), None);
+
+        cmd_trustee_enroll(
+            "alice",
+            false,
+            None,
+            Some(&pub_hex(1)),
+            &db,
+            "ruleset:test",
+            TEST_SEED,
+            None,
+        )?;
+        assert_eq!(
+            policy_of(&db),
+            None,
+            "one trustee is below the threshold of 2"
+        );
+
+        cmd_trustee_enroll(
+            "bob",
+            false,
+            None,
+            Some(&pub_hex(2)),
+            &db,
+            "ruleset:test",
+            TEST_SEED,
+            None,
+        )?;
+        assert_eq!(
+            policy_of(&db),
+            Some((2, 2)),
+            "policy goes live at the threshold"
+        );
+
+        cmd_trustee_enroll(
+            "carol",
+            false,
+            None,
+            Some(&pub_hex(3)),
+            &db,
+            "ruleset:test",
+            TEST_SEED,
+            None,
+        )?;
+        assert_eq!(
+            policy_of(&db),
+            Some((2, 3)),
+            "further enrollment strengthens the quorum"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn enroll_rejects_duplicates_and_bad_input() -> Result<()> {
+        let temp =
+            std::env::temp_dir().join(format!("secura_enroll_dup_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+        cmd_init(2, 3, &db, "ruleset:test", TEST_SEED, None)?;
+        cmd_trustee_enroll(
+            "alice",
+            false,
+            None,
+            Some(&pub_hex(1)),
+            &db,
+            "ruleset:test",
+            TEST_SEED,
+            None,
+        )?;
+
+        let enroll = |id: &str, generate: bool, output: Option<&str>, pk: Option<&str>| {
+            cmd_trustee_enroll(
+                id,
+                generate,
+                output,
+                pk,
+                &db,
+                "ruleset:test",
+                TEST_SEED,
+                None,
+            )
+        };
+        assert!(
+            enroll("alice", false, None, Some(&pub_hex(9))).is_err(),
+            "duplicate id"
+        );
+        assert!(
+            enroll("alice2", false, None, Some(&pub_hex(1))).is_err(),
+            "duplicate key"
+        );
+        assert!(
+            enroll("bob", false, None, None).is_err(),
+            "no key and no --generate"
+        );
+        assert!(
+            enroll("bob", true, None, None).is_err(),
+            "--generate without --output"
+        );
+        assert!(
+            enroll("bob", false, None, Some("nothex")).is_err(),
+            "bad hex"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn enroll_before_init_fails() {
+        let temp = std::env::temp_dir().join(format!("secura_noinit_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+        let r = cmd_trustee_enroll(
+            "alice",
+            false,
+            None,
+            Some(&pub_hex(1)),
+            &db,
+            "ruleset:test",
+            TEST_SEED,
+            None,
+        );
+        assert!(r.is_err(), "enroll must fail before init");
+    }
+
+    #[test]
+    fn init_rejects_impossible_quorum() {
+        let temp = std::env::temp_dir().join(format!("secura_initbad_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+        assert!(cmd_init(0, 3, &db, "ruleset:test", TEST_SEED, None).is_err());
+        assert!(cmd_init(4, 3, &db, "ruleset:test", TEST_SEED, None).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn enroll_generate_writes_0600_signing_key() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = std::env::temp_dir().join(format!("secura_gen_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp)?;
+        let db = temp.join("witness.db").to_string_lossy().to_string();
+        let keyfile = temp.join("dave.key").to_string_lossy().to_string();
+        cmd_init(1, 1, &db, "ruleset:test", TEST_SEED, None)?;
+        cmd_trustee_enroll(
+            "dave",
+            true,
+            Some(&keyfile),
+            None,
+            &db,
+            "ruleset:test",
+            TEST_SEED,
+            None,
+        )?;
+
+        let mode = std::fs::metadata(&keyfile)?.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "a minted signing key must be written mode 0600"
+        );
+        let hex = std::fs::read_to_string(&keyfile)?;
+        assert_eq!(
+            hex::decode(hex.trim()).unwrap().len(),
+            32,
+            "key file holds 32-byte hex"
+        );
+        assert_eq!(
+            policy_of(&db),
+            Some((1, 1)),
+            "1-of-1 commits on the single enrollment"
+        );
+        Ok(())
     }
 }
