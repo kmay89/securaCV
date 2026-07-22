@@ -104,7 +104,18 @@ jobs:
             - **macOS**: download the `.dmg` (universal — Apple Silicon & Intel).
             - **Linux**: `.AppImage` (runs anywhere) or `.deb` (Debian/Ubuntu).
 
-            First launch on macOS: unsigned builds may need right-click → Open.
+            ### macOS: first launch (one time)
+
+            These builds are **unsigned**, so macOS quarantines them. On recent
+            macOS, right-click → Open no longer works — clear the quarantine flag
+            instead. Drag the app to Applications, then in **Terminal** run:
+
+            ```sh
+            xattr -dr com.apple.quarantine "/Applications/SecuraCV Lab.app"
+            ```
+
+            Then launch it normally. Full steps (and the Terminal-free path on
+            older macOS): [`desktop-lab/INSTALL.md`](https://github.com/kmay89/securaCV/blob/main/desktop-lab/INSTALL.md).
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
