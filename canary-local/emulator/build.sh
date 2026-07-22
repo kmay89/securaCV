@@ -4,6 +4,7 @@
 #
 #   ./build.sh watch     → dist/canary-display-watch.js   (240×240 round)
 #   ./build.sh dash      → dist/canary-display-dash.js    (800×480 panel)
+#   ./build.sh vision    → dist/canary-vision-core.js     (real witness core)
 #   ./build.sh all
 #
 # The build compiles the REAL firmware sources (src/main.cpp, the LVGL
@@ -14,6 +15,7 @@
 # file:// — no server, no CDN, nothing leaves the machine (Invariant IV
 # extends to the docs).
 #
+# Toolchain: Emscripten 6.0.3 (pinned because dist is byte-compared in CI).
 # Dependencies (fetched once into third_party/, pinned):
 #   lvgl v8.4.0                (same pin as canary-display.ini)
 #   rweather/arduinolibs       (Crypto — same library the firmware uses)
@@ -40,22 +42,113 @@ ARDUINOJSON_VER="7.4.1"
 # rweather/arduinolibs has no release tags; pin the audited commit so the
 # Ed25519 verify path can never drift under the wasm build silently.
 ARDUINOLIBS_COMMIT="37a76b8f7516568e1c575b6dc9268da1ccaac6b6"
+EMSCRIPTEN_VERSION="6.0.3"
 
 FLAVOR="${1:-watch}"
 if [[ "$FLAVOR" == "all" ]]; then
   "$0" watch
   "$0" dash
+  "$0" vision
   exit 0
 fi
-[[ "$FLAVOR" == "watch" || "$FLAVOR" == "dash" ]] || {
-  echo "usage: $0 [watch|dash|all]" >&2
+[[ "$FLAVOR" == "watch" || "$FLAVOR" == "dash" || "$FLAVOR" == "vision" ]] || {
+  echo "usage: $0 [watch|dash|vision|all]" >&2
   exit 2
 }
 
 command -v emcc >/dev/null || {
-  echo "emcc not found — install emscripten (apt install emscripten, or emsdk)" >&2
+  echo "emcc not found — install Emscripten SDK $EMSCRIPTEN_VERSION" >&2
   exit 1
 }
+EMCC_VERSION="$(emcc --version | head -1)"
+[[ "$EMCC_VERSION" == *" $EMSCRIPTEN_VERSION-git"* ]] || {
+  echo "wrong Emscripten version — need $EMSCRIPTEN_VERSION for reproducible dist artifacts" >&2
+  echo "found: $EMCC_VERSION" >&2
+  exit 1
+}
+
+# ── Canary Vision core ─────────────────────────────────────────────────
+# The Grove module/camera remains the staged sensor boundary. From the first
+# SSCMA box onward this artifact is the production Canary Vision code:
+# detection_pipeline.h + detect_config.cpp + presence_fsm.cpp +
+# voxel_tracker.cpp. It is deliberately small and has no LVGL/crypto deps.
+if [[ "$FLAVOR" == "vision" ]]; then
+  VISION_PROJ="$FW/projects/canary-vision"
+  VISION_CFG="$FW/configs/canary-vision/default"
+  VISION_OBJ="$BUILD/vision"
+  OUT_BASE="canary-vision-core"
+  mkdir -p "$VISION_OBJ" "$DIST"
+
+  VISION_INCLUDES=(
+    -I "$EMU_DIR/shim"
+    -I "$EMU_DIR/vision"
+    -I "$VISION_PROJ/include"
+    -I "$VISION_CFG"
+  )
+  VISION_FLAGS=(
+    -std=gnu++17 -fno-exceptions -fno-rtti -O2 -Wall -Wextra
+    -DARDUINO=10812
+    -Wno-builtin-macro-redefined
+    '-D__DATE__="emu"'
+    '-D__TIME__="build"'
+    -ffile-prefix-map="$REPO_ROOT"=/securacv
+    -ffile-prefix-map="$EMU_DIR"=/securacv/canary-local/emulator
+    "${VISION_INCLUDES[@]}"
+  )
+  VISION_SRCS=(
+    "$VISION_PROJ/src/detect_config.cpp"
+    "$VISION_PROJ/src/state/presence_fsm.cpp"
+    "$VISION_PROJ/src/state/voxel_tracker.cpp"
+    "$EMU_DIR/vision/vision_core_bindings.cpp"
+    "$EMU_DIR/vision/vision_core_shim.cpp"
+  )
+
+  VISION_NEWEST_HDR=""
+  while IFS= read -r -d '' h; do
+    if [[ -z "$VISION_NEWEST_HDR" || "$h" -nt "$VISION_NEWEST_HDR" ]]; then
+      VISION_NEWEST_HDR="$h"
+    fi
+  done < <(find "$VISION_PROJ/include" "$VISION_CFG" "$EMU_DIR/shim" \
+                 "$EMU_DIR/vision" -name '*.h' -print0)
+
+  VISION_OBJS=()
+  for src in "${VISION_SRCS[@]}"; do
+    rel="$(echo "$src" | sed 's|[/.]|_|g')"
+    obj="$VISION_OBJ/$rel.o"
+    VISION_OBJS+=("$obj")
+    if [[ -f "$obj" && "$obj" -nt "$src" &&
+          ( -z "$VISION_NEWEST_HDR" || "$obj" -nt "$VISION_NEWEST_HDR" ) ]]; then
+      continue
+    fi
+    em++ -c "$src" "${VISION_FLAGS[@]}" -o "$obj"
+  done
+
+  echo "── linking $OUT_BASE from Canary Vision firmware ──"
+  em++ "${VISION_OBJS[@]}" -O2 \
+    --no-entry \
+    -sALLOW_MEMORY_GROWTH \
+    -sINITIAL_MEMORY=8388608 \
+    -sMODULARIZE=1 \
+    -sEXPORT_NAME=createCanaryVisionCore \
+    -sENVIRONMENT=web,node \
+    -sSINGLE_FILE=1 \
+    -sEXPORTED_RUNTIME_METHODS=cwrap,UTF8ToString \
+    -o "$DIST/$OUT_BASE.js"
+
+  FW_VERSION="$(sed -n 's/.*CANARY_FW_VERSION "\(.*\)".*/\1/p' "$VISION_PROJ/include/canary/version.h")"
+  GIT_SHA="$(git -C "$FW/.." rev-parse --short HEAD 2>/dev/null || echo dev)"
+  cat > "$DIST/$OUT_BASE.meta.json" <<EOF
+{
+  "flavor": "vision-core",
+  "fw_version": "$FW_VERSION",
+  "git": "$GIT_SHA",
+  "source": "firmware/projects/canary-vision"
+}
+EOF
+  ls -la "$DIST/$OUT_BASE.js"
+  echo "OK: $OUT_BASE (real Canary Vision core $FW_VERSION @ $GIT_SHA)"
+  exit 0
+fi
 
 # ── Pinned third-party fetch (idempotent) ───────────────────────────────
 mkdir -p "$TP" "$DIST"

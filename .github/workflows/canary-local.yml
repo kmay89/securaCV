@@ -1,9 +1,9 @@
 # canary.local page CI — the emulator is the firmware, so this workflow
 # proves three things on every change to either side of that boundary:
-#   1. the display firmware still compiles to WebAssembly (both flavors)
+#   1. display + Vision firmware still compile to WebAssembly
 #   2. the freshly-built firmware actually boots in a browser (probe:
 #      framebuffer flushes, boot banner, MQTT round-trip, TOFU pinning)
-#   3. the page's DOM-free logic tests pass, and committed dist/
+#   3. page logic + committed firmware-wasm tests pass, and dist/
 #      artifacts stay consistent with the registry's firmware train
 name: canary.local
 
@@ -14,6 +14,7 @@ on:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
       - "firmware/projects/canary-sense/**"
+      - "firmware/projects/canary-vision/**"
       - "docs/hardware/mr60bha2_radar_notes.md"
       - "docs/standard/CANARY_CARDS.md"
       - "docs/getting_started_canary.md"
@@ -51,6 +52,7 @@ on:
       - "canary-local/**"
       - "firmware/projects/canary-wap/**"
       - "firmware/projects/canary-sense/**"
+      - "firmware/projects/canary-vision/**"
       - "docs/hardware/mr60bha2_radar_notes.md"
       - "docs/standard/CANARY_CARDS.md"
       - "docs/getting_started_canary.md"
@@ -237,10 +239,12 @@ jobs:
             canary-local/emulator/test/sha256_vectors.c \
             canary-local/emulator/src/emu_sha256.c -o /tmp/shacheck
           /tmp/shacheck
-      - name: Install emscripten
+      - name: Install pinned Emscripten SDK 6.0.3
         run: |
-          sudo apt-get update
-          sudo apt-get install -y emscripten
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          /tmp/emsdk/emsdk install 6.0.3
+          /tmp/emsdk/emsdk activate 6.0.3
+          source /tmp/emsdk/emsdk_env.sh
           emcc --version | head -1
       - name: Cache third-party sources
         uses: actions/cache@v6
@@ -275,8 +279,9 @@ jobs:
         run: node canary-local/tests/operator_probe.mjs
       - name: Kiri probe — print estimate + watch-it-print + slice bridge (fail-closed)
         run: node canary-local/tests/kiri_slice_probe.mjs
-      - name: Build both flavors from THIS tree
+      - name: Build display flavors + Vision core from THIS tree
         run: |
+          source /tmp/emsdk/emsdk_env.sh
           cd canary-local/emulator
           ./build.sh all
       - name: Dist drift check (committed artifacts match this tree's sources)

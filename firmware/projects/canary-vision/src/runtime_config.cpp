@@ -113,4 +113,14 @@ const RuntimeConfig& get() {
   return g_cfg;
 }
 
+bool wifi_credentials_configured() {
+  const RuntimeConfig& cfg = get();
+  return !is_placeholder(cfg.wifi_ssid);
+}
+
+bool mqtt_credentials_configured() {
+  const RuntimeConfig& cfg = get();
+  return !is_placeholder(cfg.mqtt_host) && cfg.mqtt_port != 0;
+}
+
 } // namespace canary::cfg

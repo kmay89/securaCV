@@ -22,16 +22,26 @@ const openExternal = (url) =>
 const normChip = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
 
 const POLL_MS = 1000;
+const WE2_VID = 0x1a86;
+const WE2_PID = 0x55d3;
 
 const state = {
   catalog: null,
   manifest: null,
   port: null,        // the port we're currently tracking
+  portInfo: null,
+  portKind: null,    // "esp32" | "we2"
   chip: null,        // identified chip for state.port, or null
   product: null,
   detecting: false,  // a detect_chip call is in flight
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
   busy: false,       // a flash is running — pause the watcher
+  monitoring: false,
+  vision: {
+    hostFlash: null,
+    hostBoot: null,
+    module: null,
+  },
 };
 
 // ── boot ───────────────────────────────────────────────────────────────────
@@ -53,6 +63,13 @@ async function boot() {
   );
 
   $("flash-btn").addEventListener("click", onFlash);
+  $("module-flash-btn").addEventListener("click", onFlashModule);
+  $("monitor-start").addEventListener("click", startMonitor);
+  $("monitor-stop").addEventListener("click", stopMonitor);
+  $("monitor-manifest").addEventListener("click", () =>
+    invoke("serial_monitor_send", { command: "j" }).catch((e) =>
+      setStatus("monitor-status", String(e), "err"))
+  );
   $("update-btn").addEventListener("click", onInstallUpdate);
   $("update-dismiss").addEventListener("click", () =>
     $("update-banner").classList.add("hidden")
@@ -65,11 +82,50 @@ async function boot() {
   });
   // Switching ports (multiple plugged in) restarts identification for that one.
   $("port-select").addEventListener("change", (e) => {
+    stopMonitor();
     state.port = e.target.value;
+    state.portInfo = null;
+    state.portKind = null;
     state.chip = null;
     state.failedPort = null;
     resetSteps();
     pollPorts();
+  });
+
+  await listen("serial:log", (ev) => appendConsole("serial-console", ev.payload));
+  await listen("serial:status", (ev) => {
+    $("monitor-status").textContent = ev.payload;
+    if (String(ev.payload).toLowerCase().includes("stopped") ||
+        String(ev.payload).toLowerCase().includes("could not")) {
+      setMonitorButtons(false);
+    }
+  });
+  await listen("serial:receipt", (ev) => {
+    state.vision.hostBoot = ev.payload;
+    renderReceipts();
+    maybeHatch();
+  });
+  await listen("serial:vision", (ev) => {
+    const host = state.vision.hostFlash;
+    if (!host || !host.product_id.includes("vision") ||
+        Number(ev.payload && ev.payload.module_id) <= 0) return;
+    // Compatibility with the already-published 2.2.0 image: it prints the
+    // live Grove ID but predates the `j` manifest command. The release hash is
+    // already in hostFlash; this boot line proves that exact image reached its
+    // Vision I²C init. New images replace this with the full manifest receipt.
+    state.vision.hostBoot = {
+      target: "esp32-host",
+      ready: true,
+      manifest: { board: "canary-vision", health: null },
+      vision: ev.payload,
+      compatibility: "live-boot-line",
+    };
+    renderReceipts();
+    maybeHatch();
+  });
+  await listen("vision:log", (ev) => appendConsole("console", ev.payload + "\n"));
+  await listen("vision:progress", (ev) => {
+    $("module-progress").textContent = Math.round(Number(ev.payload) * 100) + "%";
   });
 
   checkForUpdate();     // best-effort, in the background
@@ -79,7 +135,7 @@ async function boot() {
 
 // ── the live watcher ─────────────────────────────────────────────────────────
 async function pollPorts() {
-  if (state.busy) return; // don't poke the port mid-flash
+  if (state.busy || state.monitoring) return; // don't poke a port another task owns
 
   let ports;
   try {
@@ -102,10 +158,13 @@ async function pollPorts() {
   // A different port than we were tracking → start fresh on it.
   if (candidate.name !== state.port) {
     state.port = candidate.name;
+    state.portInfo = candidate;
+    state.portKind = null;
     state.chip = null;
     state.failedPort = null;
     resetSteps();
   }
+  state.portInfo = candidate;
 
   if (state.chip) return;                    // already identified — steady state
   if (state.detecting) return;               // identify already in flight
@@ -131,6 +190,16 @@ async function identify(portInfo) {
   const port = portInfo.name;
   const label = portInfo.product ? `${port} (${portInfo.product})` : port;
   state.detecting = true;
+  if (Number(portInfo.vid) === WE2_VID && Number(portInfo.pid) === WE2_PID) {
+    state.portKind = "we2";
+    state.chip = "WE2";
+    setConn("connected", `Connected · Grove Vision AI V2 module on ${port}`);
+    $("recheck").classList.remove("hidden");
+    showModuleFlow();
+    state.detecting = false;
+    return;
+  }
+  state.portKind = "esp32";
   setConn("reading", `Found ${label} — reading chip…`);
   $("download-mode").classList.add("hidden");
   try {
@@ -160,7 +229,10 @@ async function identify(portInfo) {
 }
 
 function onDisconnect() {
+  stopMonitor();
   state.port = null;
+  state.portInfo = null;
+  state.portKind = null;
   state.chip = null;
   state.product = null;
   state.failedPort = null;
@@ -180,7 +252,12 @@ function resetSteps() {
   $("flash-target").textContent = "";
   $("console").classList.add("hidden");
   setStatus("flash-result", "");
-  hideHatchCard();
+  $("provisioning").classList.add("hidden");
+  $("host-flash-controls").classList.remove("hidden");
+  $("module-flow").classList.add("hidden");
+  $("serial-monitor").classList.add("hidden");
+  renderReceipts();
+  maybeHatch();
 }
 
 let lastPortKey = "";
@@ -251,6 +328,22 @@ function renderProducts() {
 
 function onProductChosen(p, ver) {
   enableCard("step-flash");
+  state.portKind = "esp32";
+  $("module-flow").classList.add("hidden");
+  $("host-flash-controls").classList.remove("hidden");
+  $("serial-monitor").classList.remove("hidden");
+  $("provisioning").classList.toggle("hidden", p.provisioning !== "usb-secrets");
+  if (p.provisioning === "usb-secrets" && !$("device-id").value) {
+    const family = p.id.includes("vision")
+      ? "canary_vision"
+      : p.id.includes("sense")
+        ? "canary_sense"
+        : "canary";
+    const suffix = Array.from(crypto.getRandomValues(new Uint8Array(2)))
+      .map((b) => b.toString(16).padStart(2, "0")).join("");
+    $("device-id").value = `${family}_${suffix}`;
+    $("mqtt-host").value ||= "homeassistant.local";
+  }
   const btn = $("flash-btn");
   btn.disabled = !ver;
   $("flash-target").textContent = ver
@@ -258,8 +351,24 @@ function onProductChosen(p, ver) {
     : "No published release for this one yet.";
 }
 
+function showModuleFlow() {
+  enableCard("step-flash");
+  $("step-pick").classList.add("disabled");
+  $("pick-sub").textContent = "Grove Vision AI V2 module recognized — its model is flashed below.";
+  $("provisioning").classList.add("hidden");
+  $("host-flash-controls").classList.add("hidden");
+  $("serial-monitor").classList.add("hidden");
+  $("module-flow").classList.remove("hidden");
+  $("console").textContent = "";
+  $("console").classList.remove("hidden");
+  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable.");
+  renderReceipts(true);
+}
+
 // ── step 3: flash ───────────────────────────────────────────────────────────
 async function onFlash() {
+  const provisioning = readProvisioning(state.product);
+  if (state.product.provisioning === "usb-secrets" && !provisioning) return;
   const btn = $("flash-btn");
   const con = $("console");
   con.textContent = "";
@@ -268,6 +377,7 @@ async function onFlash() {
   btn.textContent = "Flashing…";
   setStatus("flash-result", "");
   state.busy = true; // pause the watcher so it can't grab the port
+  await stopMonitor();
 
   const unlisten = await listen("flash:log", (ev) => {
     con.textContent += ev.payload + "\n";
@@ -275,14 +385,21 @@ async function onFlash() {
   });
 
   try {
-    await invoke("flash", {
+    const receipt = await invoke("flash", {
       port: state.port,
       productId: state.product.id,
       manifestUrl: state.catalog.manifest_url,
       baud: state.catalog.flash_baud || 921600,
+      detectedChip: state.chip,
+      provisioning,
     });
-    setStatus("flash-result", "Done — your Canary is booting its new firmware. ✓", "ok");
-    showHatchCard(state.product);
+    state.vision.hostFlash = receipt;
+    state.vision.hostBoot = null;
+    clearSecretFields();
+    renderReceipts();
+    setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
+    state.busy = false;
+    await startMonitor();
   } catch (e) {
     setStatus("flash-result", String(e), "err");
     hideHatchCard();
@@ -295,6 +412,175 @@ async function onFlash() {
     state.chip = null;
     state.failedPort = null;
   }
+}
+
+function readProvisioning(product) {
+  if (!product || product.provisioning !== "usb-secrets") return null;
+  const fields = ["device-id", "wifi-ssid", "wifi-pass", "mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"];
+  for (const id of fields) {
+    const input = $(id);
+    if (!input.checkValidity()) {
+      input.reportValidity();
+      return null;
+    }
+  }
+  const wifiPass = $("wifi-pass").value;
+  if (wifiPass && (new TextEncoder().encode(wifiPass).length < 8 ||
+                   new TextEncoder().encode(wifiPass).length > 63)) {
+    setStatus("flash-result", "Wi-Fi password must be 8–63 UTF-8 bytes (or empty for an open network).", "err");
+    return null;
+  }
+  return {
+    deviceId: $("device-id").value.trim(),
+    wifiSsid: $("wifi-ssid").value,
+    wifiPass,
+    mqttHost: $("mqtt-host").value.trim(),
+    mqttPort: Number($("mqtt-port").value),
+    mqttUser: $("mqtt-user").value,
+    mqttPass: $("mqtt-pass").value,
+  };
+}
+
+function clearSecretFields() {
+  $("wifi-pass").value = "";
+  $("mqtt-pass").value = "";
+}
+
+async function onFlashModule() {
+  const btn = $("module-flash-btn");
+  btn.disabled = true;
+  btn.textContent = "Flashing model…";
+  state.busy = true;
+  $("console").textContent = "";
+  $("console").classList.remove("hidden");
+  $("module-progress").textContent = "0%";
+  $("module-preview").classList.add("hidden");
+  setStatus("flash-result", "");
+  try {
+    const receipt = await invoke("flash_vision_module", {
+      port: state.port,
+      manifestUrl: state.catalog.we2_module.manifest_url,
+    });
+    state.vision.module = receipt;
+    $("module-progress").textContent = "100% · inference proved";
+    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓", "ok");
+    if (receipt.preview_image) {
+      $("module-preview").src = "data:image/jpeg;base64," + receipt.preview_image;
+      $("module-preview").classList.remove("hidden");
+    }
+    renderReceipts(true);
+    maybeHatch();
+  } catch (e) {
+    setStatus("flash-result", String(e), "err");
+  } finally {
+    state.busy = false;
+    btn.disabled = false;
+    btn.textContent = "Flash & prove the Vision module";
+  }
+}
+
+// ── serial monitor + earned receipts ────────────────────────────────────────
+async function startMonitor() {
+  if (!state.port || state.portKind !== "esp32") {
+    setStatus("flash-result", "Connect the ESP32 host port to start its serial monitor.", "err");
+    return;
+  }
+  $("serial-monitor").classList.remove("hidden");
+  $("serial-console").textContent = "";
+  $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
+  setMonitorButtons(true);
+  try {
+    await invoke("start_serial_monitor", {
+      port: state.port,
+      vid: state.portInfo && state.portInfo.vid,
+      pid: state.portInfo && state.portInfo.pid,
+      baud: state.catalog.console_baud || 115200,
+    });
+  } catch (e) {
+    setMonitorButtons(false);
+    $("monitor-status").textContent = String(e);
+  }
+}
+
+async function stopMonitor() {
+  try { await invoke("stop_serial_monitor"); } catch (_) {}
+  setMonitorButtons(false);
+}
+
+function setMonitorButtons(running) {
+  state.monitoring = running;
+  $("monitor-start").disabled = running;
+  $("monitor-stop").disabled = !running;
+  $("monitor-manifest").disabled = !running;
+}
+
+function appendConsole(id, text) {
+  const con = $(id);
+  con.textContent += String(text);
+  con.scrollTop = con.scrollHeight;
+}
+
+function setReceipt(id, ok, text) {
+  const row = $(id);
+  row.className = "receipt " + (ok ? "ok" : "pending");
+  row.querySelector("strong").textContent = text;
+}
+
+function renderReceipts(forceVision = false) {
+  const host = state.vision.hostFlash;
+  const boot = state.vision.hostBoot;
+  const module = state.vision.module;
+  const vision = forceVision || !!module || !!(host && host.product_id.includes("vision"));
+  const any = !!host || !!boot || !!module || forceVision;
+  $("receipts").classList.toggle("hidden", !any);
+  if (!any) return;
+
+  setReceipt(
+    "receipt-host-image",
+    !!host,
+    host
+      ? `✓ v${host.version} · ${host.bytes_written.toLocaleString()} B · ${host.release_verification || "SHA-256"} · ${host.installed_sha256.slice(0, 12)}…`
+      : "waiting for ESP32 flash"
+  );
+  setReceipt(
+    "receipt-host-boot",
+    !!(boot && boot.ready),
+    boot && boot.ready
+      ? `✓ ${boot.manifest.board} · health ${boot.manifest.health ?? "unknown"}`
+      : boot
+        ? "manifest received; Vision I²C proof not healthy"
+        : "waiting for live serial manifest"
+  );
+  $("receipt-module").classList.toggle("hidden", !vision);
+  $("receipt-host-boot").querySelector("span").textContent = vision
+    ? "Host boot + Vision I²C"
+    : "Host boot manifest";
+  if (vision) {
+    setReceipt(
+      "receipt-module",
+      !!(module && module.inference_ok),
+      module && module.inference_ok
+        ? `✓ v${module.version} · inference · ${module.sha256.slice(0, 12)}…`
+        : "waiting for WE2 model + AT inference"
+    );
+  }
+}
+
+function maybeHatch() {
+  const host = state.vision.hostFlash;
+  const boot = state.vision.hostBoot;
+  if (!host || !boot || !boot.ready) {
+    hideHatchCard();
+    return;
+  }
+  const product = (state.catalog && state.catalog.products || [])
+    .find((p) => p.id === host.product_id) || state.product;
+  const isVision = host.product_id.includes("vision");
+  if (isVision && !(state.vision.module && state.vision.module.inference_ok)) {
+    hideHatchCard();
+    return;
+  }
+  showHatchCard(product);
 }
 
 // ── self-update ─────────────────────────────────────────────────────────────
@@ -364,12 +650,12 @@ function hatchMoment(product) {
   const id = product && product.id;
   if (id && id.includes("vision")) {
     return {
-      title: "Your Vision Canary is waking up.",
-      body: "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+      title: "Your Vision Canary is awake — both boards proved it.",
+      body: "The host reported its signed identity and live Vision I²C module; the WE2 reported the pinned model and completed an inference.",
       steps: [
-        "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
         "Put the board where it can see a doorway, then walk through once.",
-        "Open Home Assistant and watch the presence entity flip to detected, then clear."
+        "Open Home Assistant and watch the presence entity flip to detected, then clear.",
+        "The attended module frame above stayed on this computer; deployed events remain presence/boxes only."
       ]
     };
   }

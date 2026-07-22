@@ -35,7 +35,7 @@ namespace manifest {
 
 // Bump the minor when adding fields (additive), the major on a breaking change.
 // The website pins this exact string so a breaking change fails CI loudly.
-inline constexpr const char* SCHEMA = "securacv.canary.manifest/v1";
+static constexpr const char* SCHEMA = "securacv.canary.manifest/v1";
 
 // One interactive command the device answers, for the commands[] array. Key is
 // a single serial character; name is the short registry label ("identity").
