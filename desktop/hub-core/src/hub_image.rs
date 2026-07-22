@@ -206,6 +206,28 @@ fn is_sha256_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Extract the canonical lowercase SHA-256 hex from the several shapes a
+/// checksum arrives in, or `None` if there isn't a valid one:
+///   - bare `<64hex>`
+///   - GitHub's asset digest `sha256:<64hex>` (case-insensitive prefix)
+///   - a `sha256sum` file line `<64hex>  <filename>` (first whitespace token)
+///
+/// So the verify decision never rejects a correctly-served checksum as malformed
+/// just because of its envelope, and callers don't each re-implement the
+/// stripping (and get it subtly wrong).
+fn normalize_sha256(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    // Strip a case-insensitive "sha256:" digest prefix if present. `get(..7)`
+    // keeps this panic-safe on short or multi-byte input.
+    let s = match s.get(..7) {
+        Some(p) if p.eq_ignore_ascii_case("sha256:") => &s[7..],
+        _ => s,
+    };
+    // A `sha256sum` file line is "<hash>  <name>": the digest is the first token.
+    let token = s.split_whitespace().next().unwrap_or("");
+    is_sha256_hex(token).then(|| token.to_ascii_lowercase())
+}
+
 /// Decide whether a downloaded image passes verification, given the SHA-256 the
 /// caller `computed` over the bytes and — for the unpinned case — the checksum
 /// Home Assistant `published` for that asset (`None` if the caller couldn't
@@ -225,47 +247,43 @@ pub fn verify_download(
     computed: &str,
     published: Option<&str>,
 ) -> Result<(), VerifyError> {
-    let computed = computed.trim();
-    if !is_sha256_hex(computed) {
-        return Err(VerifyError::MalformedHash {
-            which: "computed",
-            value: computed.to_string(),
-        });
-    }
+    // Normalize each hash to canonical lowercase hex up front, so the envelope
+    // (a `sha256:` prefix, a trailing filename) never masquerades as a mismatch
+    // or a malformed value. A hash that can't be normalized fails loudly.
+    let computed = normalize_sha256(computed).ok_or_else(|| VerifyError::MalformedHash {
+        which: "computed",
+        value: computed.trim().to_string(),
+    })?;
 
-    if let Some(expected) = plan.expected_sha256.as_deref() {
-        let expected = expected.trim();
-        if !is_sha256_hex(expected) {
-            return Err(VerifyError::MalformedHash {
+    if let Some(expected_raw) = plan.expected_sha256.as_deref() {
+        let expected =
+            normalize_sha256(expected_raw).ok_or_else(|| VerifyError::MalformedHash {
                 which: "expected",
-                value: expected.to_string(),
-            });
-        }
-        return if computed.eq_ignore_ascii_case(expected) {
+                value: expected_raw.trim().to_string(),
+            })?;
+        return if computed == expected {
             Ok(())
         } else {
             Err(VerifyError::PinnedMismatch {
-                expected: expected.to_ascii_lowercase(),
-                got: computed.to_ascii_lowercase(),
+                expected,
+                got: computed,
             })
         };
     }
 
     match published {
-        Some(published) => {
-            let published = published.trim();
-            if !is_sha256_hex(published) {
-                return Err(VerifyError::MalformedHash {
+        Some(published_raw) => {
+            let published =
+                normalize_sha256(published_raw).ok_or_else(|| VerifyError::MalformedHash {
                     which: "published",
-                    value: published.to_string(),
-                });
-            }
-            if computed.eq_ignore_ascii_case(published) {
+                    value: published_raw.trim().to_string(),
+                })?;
+            if computed == published {
                 Ok(())
             } else {
                 Err(VerifyError::PublishedMismatch {
-                    published: published.to_ascii_lowercase(),
-                    got: computed.to_ascii_lowercase(),
+                    published,
+                    got: computed,
                 })
             }
         }
@@ -466,6 +484,46 @@ mod tests {
     fn hash_comparison_is_case_insensitive() {
         let upper = SHA_A.to_ascii_uppercase();
         assert_eq!(verify_download(&pinned_plan(SHA_A), &upper, None), Ok(()));
+    }
+
+    #[test]
+    fn a_published_checksum_with_a_sha256_prefix_is_accepted() {
+        // GitHub exposes asset digests as "sha256:<hex>"; that must verify, not
+        // be rejected as malformed.
+        let published = format!("sha256:{SHA_A}");
+        assert_eq!(
+            verify_download(&unpinned_plan(), SHA_A, Some(&published)),
+            Ok(())
+        );
+        // Case-insensitive prefix too.
+        let published_upper = format!("SHA256:{SHA_A}");
+        assert_eq!(
+            verify_download(&unpinned_plan(), SHA_A, Some(&published_upper)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_published_checksum_in_sha256sum_file_form_is_accepted() {
+        // A `.sha256` file's contents are "<hash>  <filename>".
+        let published = format!("{SHA_A}  haos_rpi5-64-18.1.img.xz");
+        assert_eq!(
+            verify_download(&unpinned_plan(), SHA_A, Some(&published)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_enveloped_checksum_still_catches_a_real_mismatch() {
+        // Normalizing the envelope must not paper over an actual mismatch.
+        let published = format!("sha256:{SHA_B}");
+        assert_eq!(
+            verify_download(&unpinned_plan(), SHA_A, Some(&published)),
+            Err(VerifyError::PublishedMismatch {
+                published: SHA_B.to_string(),
+                got: SHA_A.to_string(),
+            })
+        );
     }
 
     #[test]
