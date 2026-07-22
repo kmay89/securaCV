@@ -5,6 +5,7 @@
   "repo": "kmay89/securaCV",
   "release_latest": "https://github.com/kmay89/securaCV/releases/latest/download",
   "manifest_url": "https://github.com/kmay89/securaCV/releases/latest/download/manifest-flash.json",
+  "release_pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
   "flash_baud": 921600,
   "console_baud": 115200,
   "chips": {

@@ -14,6 +14,7 @@
 #if FEATURE_BLE_STATUS
 
 #include <NimBLEDevice.h>
+#include <fleet_beacon.h>
 #include "securacv_witness.h"
 #include "securacv_diagnostics.h"
 #include "securacv_power.h"
@@ -40,6 +41,13 @@ static NimBLECharacteristic*  s_sd_usage_char   = nullptr;
 static bool     s_initialized      = false;
 static bool     s_connected        = false;
 static uint32_t s_last_update_ms   = 0;
+
+/* Fleet-link presence beacon fingerprint (fp2): the last 2 bytes of this
+ * device's Ed25519 pubkey fingerprint. Fixed once at init from
+ * witness_get_device().pubkey_fp[6..7] — the same 2 bytes the "SCV-XXXX"
+ * device id derives from — so a canary-display can resolve the device from
+ * the broker-free beacon alone. See <fleet_beacon.h> for the wire contract. */
+static uint8_t  s_beacon_fp[2]     = {0, 0};
 
 /* ════════════════════════════════════════════════════════════════════════════ */
 /*  CONNECTION CALLBACKS                                                      */
@@ -79,6 +87,108 @@ static const char* resolve_ble_name(void) {
   }
 #endif
   return witness_get_device().device_id;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════ */
+/*  FLEET-LINK PRESENCE BEACON ADVERT (single (re)build chokepoint)           */
+/* ════════════════════════════════════════════════════════════════════════════ */
+
+/* Build the 11-byte fleet-link presence beacon from this canary's live state
+ * and install it as the PRIMARY advertisement, moving the service UUIDs +
+ * device name into the SCAN RESPONSE. A canary-display active-scans, so it
+ * still resolves both — backward compatible with the old UUID-only advert,
+ * while adding a broker-free / WiFi-free presence beacon a display finds
+ * directly. Mirrors the canary-wap sketch's ble_opera::applyBeaconAdvertising().
+ *
+ * Values are sourced from canary's real modules; fields without a clean source
+ * carry the documented 0xFF/unknown sentinel or a cleared flag — never a
+ * fabricated value:
+ *   flags        tamper (witness tamper_active), degraded (diag degrade level),
+ *                on_wifi_sta (system health wifi_active). mic_muted / alert are
+ *                left clear (canary exposes no clean signal at this layer).
+ *   battery_pct  power_get_state().soc_pct, else 0xFF unknown.
+ *   health_pct   diag self-test health_score (once it has run), else 0xFF.
+ *   chain_height witness device seq (low 16 bits ride the wire).
+ *   fp2          s_beacon_fp — last 2 bytes of the pubkey fingerprint.
+ *
+ * Fail-safe: if the explicit adv-data path fails for any reason, fall back to
+ * today's addServiceUUID + startAdvertising behavior so the device is NEVER
+ * left un-advertised. Returns true when the beacon path took, false on
+ * fallback. Cheap — safe to call from the periodic ble_status_update(). */
+static bool apply_beacon_advertising(void) {
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  if (!adv) return false;
+
+  uint8_t  flags        = 0;
+  int      battery_pct  = -1;   /* -1 -> 0xFF unknown on the wire */
+  int      health_pct   = -1;   /* -1 -> 0xFF unknown on the wire */
+  uint32_t chain_height = 0;
+
+  /* Chain height + tamper flag from the witness identity. */
+  {
+    DeviceIdentity& dev = witness_get_device();
+    chain_height = dev.seq;
+    if (dev.tamper_active) flags |= FLEET_BEACON_FLAG_TAMPER;
+  }
+
+  /* On-WiFi-STA flag from system health. */
+  {
+    SystemHealth& health = witness_get_health();
+    if (health.wifi_active) flags |= FLEET_BEACON_FLAG_ON_WIFI_STA;
+  }
+
+#if FEATURE_POWER_MONITOR
+  {
+    power_state_t pwr;
+    if (power_get_state(&pwr)) {
+      battery_pct = (int)pwr.soc_pct;  /* fleet_beacon_pct() clamps >100 -> 0xFF */
+    }
+  }
+#endif
+
+#if FEATURE_DIAGNOSTICS
+  {
+    selftest_report_t st;
+    if (diag_get_selftest(&st) && st.has_run) {
+      health_pct = (int)st.health_score;
+    }
+    if (diag_get_degrade_level() != DEGRADE_NONE) {
+      flags |= FLEET_BEACON_FLAG_DEGRADED;
+    }
+  }
+#endif
+
+  /* Payload bytes [2..10]; NimBLE prepends the 2 company-id bytes. */
+  uint8_t payload[FLEET_BEACON_PAYLOAD_LEN];
+  fleet_beacon_build(payload, flags, battery_pct, health_pct, chain_height,
+                     s_beacon_fp[0], s_beacon_fp[1]);
+
+  /* Full manufacturer blob = company id (LE) + payload. */
+  uint8_t mfg[FLEET_BEACON_PAYLOAD_LEN + 2];
+  mfg[0] = FLEET_BEACON_COMPANY_ID & 0xFF;
+  mfg[1] = (FLEET_BEACON_COMPANY_ID >> 8) & 0xFF;
+  memcpy(&mfg[2], payload, FLEET_BEACON_PAYLOAD_LEN);
+
+  NimBLEAdvertisementData advData;
+  advData.setManufacturerData(std::string((char*)mfg, sizeof(mfg)));
+
+  /* Service UUIDs + name move to the scan response (still discoverable by an
+   * active scanner) to make room for the beacon in the primary advert. */
+  NimBLEAdvertisementData scanData;
+  scanData.setName(resolve_ble_name());
+  scanData.addServiceUUID(BLE_BATTERY_SERVICE_UUID);
+  scanData.addServiceUUID(BLE_SCV_SERVICE_UUID);
+
+  bool ok = adv->setAdvertisementData(advData);
+  ok = adv->setScanResponseData(scanData) && ok;
+  if (!ok) {
+    /* Fallback: legacy UUID + name advert (pre-beacon behavior). Never leave
+     * the device un-advertised. */
+    adv->addServiceUUID(BLE_BATTERY_SERVICE_UUID);
+    adv->addServiceUUID(BLE_SCV_SERVICE_UUID);
+    return false;
+  }
+  return true;
 }
 
 bool ble_status_stack_begin(void) {
@@ -206,14 +316,29 @@ bool ble_status_init(void) {
   scv_svc->start();
 
   /* ── Advertising ──────────────────────────────────────────────────── */
-  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(BLE_BATTERY_SERVICE_UUID);
-  adv->addServiceUUID(BLE_SCV_SERVICE_UUID);
+  /* Fix the fleet-link beacon fingerprint: the last 2 bytes of the Ed25519
+   * pubkey fingerprint — the same 2 bytes the "SCV-XXXX" device id derives
+   * from — so a canary-display resolves this device from the beacon alone. */
+  {
+    DeviceIdentity& dev = witness_get_device();
+    s_beacon_fp[0] = dev.pubkey_fp[6];
+    s_beacon_fp[1] = dev.pubkey_fp[7];
+  }
+
   // NimBLE-Arduino 2.x removed NimBLEAdvertising::setScanResponse(bool) and
-  // set{Min,Max}Preferred(); scan response and connection-interval hints are
-  // now configured via NimBLEAdvertisementData / NimBLEDevice defaults. The
-  // status service only needs basic connectable advertising, so the 2.x
-  // defaults are sufficient (mirrors the canary-wap sketch's bluetooth_channel).
+  // set{Min,Max}Preferred(); scan response is enabled via enableScanResponse()
+  // and its contents set via NimBLEAdvertisementData. The service UUIDs + name
+  // ride the scan response so the primary advert carries the fleet-link
+  // presence beacon (mirrors the canary-wap sketch's ble_opera advert).
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  adv->enableScanResponse(true);
+  if (!apply_beacon_advertising()) {
+    /* apply_beacon_advertising() already installed the legacy UUID+name advert
+     * as a fallback — the device is advertising, just without the presence
+     * beacon. Log so the failure is visible in the field. */
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_BLUETOOTH,
+               "BLE beacon adv setup failed — legacy UUID advert active", nullptr);
+  }
   NimBLEDevice::startAdvertising();
 
   s_initialized = true;
@@ -285,6 +410,12 @@ void ble_status_update(void) {
     uint32_t up = health.uptime_sec;
     s_uptime_char->setValue(up);
   }
+
+  /* ── Fleet-link presence beacon ───────────────────────────────────── */
+  /* Re-apply the manufacturer-data beacon with the live battery/health/
+   * chain/flags just refreshed above. The chokepoint re-reads the same
+   * modules, so the on-air beacon tracks device state at the 5 s cadence. */
+  apply_beacon_advertising();
 }
 
 /* ════════════════════════════════════════════════════════════════════════════ */

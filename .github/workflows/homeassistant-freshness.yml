@@ -41,7 +41,7 @@ jobs:
       # The honesty gate below runs HERE either way — the PR is validated
       # before it exists — but set the secret if branch protection requires
       # the checks to report on the PR itself.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.FRESHNESS_PAT || github.token }}
       - name: Refresh upstream snapshot

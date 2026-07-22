@@ -12,6 +12,7 @@ signed firmware image; a local STL).
 |---|---|---|---|---|
 | `esptool-js/` | [`esptool-js`](https://github.com/espressif/esptool-js) | 0.5.4 | Apache-2.0 | Espressif's official in-browser flasher: Web Serial transport, chip detection, read/write flash. `bundle.js` is the upstream single-file ESM build, unmodified. |
 | `md5/` | [`blueimp-md5`](https://github.com/blueimp/JavaScript-MD5) | 2.19.0 | MIT | MD5 for post-write verification. `md5.js` is the upstream source converted from UMD to a native ES module (algorithm unmodified) with an added `md5Raw` export that hashes raw bytes without UTF-8 re-encoding — required so the hash matches the device's own flash MD5. |
+| `ed25519/` | [`@noble/ed25519`](https://github.com/paulmillr/noble-ed25519) | 2.1.0 | MIT | Verifies a firmware image's Ed25519 **release signature** in-browser before flashing (message `uint32_le(size) \|\| sha256(image)`), against the key pinned into `flash.json` — the same proof the device does. `ed25519.mjs` is the upstream single-file ESM, unmodified. |
 | `kiri/` | [`Kiri:Moto`](https://github.com/GridSpace/grid-apps) (grid-apps) | pinned commit | MIT | **Optional** real-slicer bridge for the print guide: turns the estimated print time into a true toolpath time. Not a single-file library but a build-from-source engine, so its bundle is **not committed** — it's added by `tools/vendor_kiri.sh` and the print guide falls back to the honest estimate until then. See [`kiri/README.md`](./kiri/README.md). |
 
 ## Why MD5 at all

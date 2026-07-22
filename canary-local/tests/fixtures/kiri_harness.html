@@ -21,7 +21,8 @@
     import { buildEnclosureLab } from "./assets/enclosure-lab.js";
     try {
       const enc = await (await fetch("devices/enclosures.json")).json();
-      const lab = buildEnclosureLab(enc, "canary-wap"); // WAP has committed STLs
+      const build = await (await fetch("devices/build.json")).json();
+      const lab = buildEnclosureLab(enc, "canary-wap", build); // WAP: committed STLs + priced BOM
       document.getElementById("mount").append(lab);
       window.__harnessReady = true;
     } catch (e) {

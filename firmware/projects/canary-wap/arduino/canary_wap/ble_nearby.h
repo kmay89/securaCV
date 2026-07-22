@@ -22,6 +22,7 @@
 #if FEATURE_BLE && FEATURE_BLE_NEARBY
 
 #include <NimBLEDevice.h>
+#include "fleet_beacon.h"   // canonical fleet-link presence beacon wire format
 
 namespace ble_nearby {
 
@@ -38,6 +39,7 @@ static bool g_scanActive = false;
 static unsigned long g_lastScanMs = 0;
 static uint32_t g_lastScanDurationMs = 0;
 static uint32_t g_chirpsReceived = 0;
+static uint32_t g_beaconsReceived = 0;
 static uint32_t g_canariesDiscovered = 0;
 
 // ════════════════════════════════════════════════════════════════
@@ -115,6 +117,26 @@ static bool parseChirpData(const uint8_t* data, size_t len, NearbyCanary* canary
     return true;
 }
 
+// Parse the fleet-link presence beacon (type 0x10, 11-byte manufacturer blob)
+// via the canonical shared parser (fleet_beacon.h). This is the direct,
+// broker-free status channel: unlike the chirp it carries battery %, health %,
+// liveness flags, and the low 16 bits of the chain height. Returns true and
+// fills the peer's status on a well-formed beacon. The fp2 suffix it carries is
+// the SAME 2 bytes the chirp puts at [15-16], so a chirp and a beacon from the
+// one device resolve to the same roster slot.
+static bool parseBeaconData(const uint8_t* data, size_t len, NearbyCanary* canary) {
+    FleetBeaconFields f;
+    if (!fleet_beacon_parse(data, len, &f)) return false;
+
+    snprintf(canary->deviceIdPrefix, 5, "%02x%02x", f.fp_b0, f.fp_b1);
+    canary->hasBeaconStatus = true;
+    canary->batteryPct    = (int16_t)f.battery_pct;   // -1 when unknown
+    canary->healthPct     = (int16_t)f.health_pct;    // -1 when unknown
+    canary->beaconFlags   = f.flags;
+    canary->chainHeightLo = f.chain_lo16;
+    return true;
+}
+
 // ════════════════════════════════════════════════════════════════
 // SCAN CALLBACKS
 // ════════════════════════════════════════════════════════════════
@@ -130,19 +152,28 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
             }
         }
 
-        // Check manufacturer data for chirp packets
+        // Check manufacturer data for a fleet-link presence beacon (11-byte,
+        // type 0x10 — rich status) or a chirp (17-byte — presence + chain).
         bool hasChirpData = false;
+        bool hasBeaconData = false;
         NearbyCanary tempCanary;
         memset(&tempCanary, 0, sizeof(tempCanary));
+        tempCanary.batteryPct = -1;   // unknown until a beacon says otherwise
+        tempCanary.healthPct  = -1;
 
         if (advertisedDevice->haveManufacturerData()) {
-            String mfgData = String(advertisedDevice->getManufacturerData().c_str());
-            if (mfgData.length() >= CHIRP_PAYLOAD_SIZE + 2) {
-                hasChirpData = parseChirpData(
-                    (const uint8_t*)mfgData.c_str(),
-                    mfgData.length(),
-                    &tempCanary
-                );
+            // Read the RAW bytes — a std::string preserves embedded NULs, which
+            // an Arduino String(c_str()) would truncate at (the beacon's flags/
+            // battery/version bytes are frequently 0x00).
+            const std::string mfg = advertisedDevice->getManufacturerData();
+            const uint8_t* mfgBytes = reinterpret_cast<const uint8_t*>(mfg.data());
+            const size_t mfgLen = mfg.size();
+
+            if (mfgLen == FLEET_BEACON_MFG_LEN) {
+                hasBeaconData = parseBeaconData(mfgBytes, mfgLen, &tempCanary);
+                if (hasBeaconData) isCanary = true;
+            } else if (mfgLen >= (size_t)(CHIRP_PAYLOAD_SIZE + 2)) {
+                hasChirpData = parseChirpData(mfgBytes, mfgLen, &tempCanary);
                 if (hasChirpData) isCanary = true;
             }
         }
@@ -151,7 +182,7 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
             if (isCanary) {
                 // Extract device ID prefix from name if available
                 char prefix[5] = {0};
-                if (hasChirpData) {
+                if (hasChirpData || hasBeaconData) {
                     strncpy(prefix, tempCanary.deviceIdPrefix, 4);
                 } else {
                     // Try to extract from BLE name "SCV-XXXX"
@@ -175,6 +206,9 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
                     memset(&g_nearbyCanaries[slot], 0, sizeof(NearbyCanary));
                     strncpy(g_nearbyCanaries[slot].deviceIdPrefix, prefix, 4);
                     g_nearbyCanaries[slot].deviceIdPrefix[4] = '\0';
+                    // Unknown until a beacon carries status — never show a false 0%.
+                    g_nearbyCanaries[slot].batteryPct = -1;
+                    g_nearbyCanaries[slot].healthPct  = -1;
                     g_nearbyCanaries[slot].active = true;
                     g_canariesDiscovered++;
                 }
@@ -186,6 +220,19 @@ class NearbyScanCallbacks : public NimBLEScanCallbacks {
                     g_nearbyCanaries[slot].lastChirpType = tempCanary.lastChirpType;
                     memcpy(g_nearbyCanaries[slot].chainHashPrefix, tempCanary.chainHashPrefix, 8);
                     g_chirpsReceived++;
+                }
+
+                if (hasBeaconData) {
+                    // Rich status from the direct beacon. battery/health carry a
+                    // -1 sentinel when the beacon marked them unknown — keep the
+                    // last known value in that case (a status-less refresh must
+                    // not wipe a good reading), mirroring the shared roster rule.
+                    g_nearbyCanaries[slot].hasBeaconStatus = true;
+                    if (tempCanary.batteryPct >= 0) g_nearbyCanaries[slot].batteryPct = tempCanary.batteryPct;
+                    if (tempCanary.healthPct  >= 0) g_nearbyCanaries[slot].healthPct  = tempCanary.healthPct;
+                    g_nearbyCanaries[slot].beaconFlags   = tempCanary.beaconFlags;
+                    g_nearbyCanaries[slot].chainHeightLo = tempCanary.chainHeightLo;
+                    g_beaconsReceived++;
                 }
 
                 if (isNew) {
@@ -350,6 +397,10 @@ static uint32_t getCanariesDiscovered() {
     return g_canariesDiscovered;
 }
 
+static uint32_t getBeaconsReceived() {
+    return g_beaconsReceived;
+}
+
 // Build JSON for /api/nearby endpoint
 // Caller must hold or acquire mutex
 static String buildNearbyJson() {
@@ -389,7 +440,28 @@ static String buildNearbyJson() {
             json += chirpTypeName(g_nearbyCanaries[i].lastChirpType);
             json += "\",\"chain_hash_prefix\":\"";
             json += hashHex;
-            json += "\"}";
+            json += "\"";
+
+            // Direct fleet-link beacon status (present only once a type-0x10
+            // beacon has been decoded for this peer). battery/health are null
+            // when the beacon marked them unknown (0xFF on the wire).
+            if (g_nearbyCanaries[i].hasBeaconStatus) {
+                const uint8_t fl = g_nearbyCanaries[i].beaconFlags;
+                json += ",\"beacon\":{\"battery_pct\":";
+                json += (g_nearbyCanaries[i].batteryPct >= 0) ? String(g_nearbyCanaries[i].batteryPct) : String("null");
+                json += ",\"health_pct\":";
+                json += (g_nearbyCanaries[i].healthPct >= 0) ? String(g_nearbyCanaries[i].healthPct) : String("null");
+                json += ",\"chain_height_lo\":";
+                json += String(g_nearbyCanaries[i].chainHeightLo);
+                json += ",\"tamper\":";      json += (fl & FLEET_BEACON_FLAG_TAMPER)      ? "true" : "false";
+                json += ",\"mic_muted\":";   json += (fl & FLEET_BEACON_FLAG_MIC_MUTED)   ? "true" : "false";
+                json += ",\"degraded\":";    json += (fl & FLEET_BEACON_FLAG_DEGRADED)    ? "true" : "false";
+                json += ",\"on_wifi\":";     json += (fl & FLEET_BEACON_FLAG_ON_WIFI_STA) ? "true" : "false";
+                json += ",\"alert\":";       json += (fl & FLEET_BEACON_FLAG_ALERT)       ? "true" : "false";
+                json += "}";
+            }
+
+            json += "}";
         }
         xSemaphoreGive(g_nearbyMutex);
     }
@@ -400,6 +472,8 @@ static String buildNearbyJson() {
     json += g_scanActive ? "true" : "false";
     json += ",\"last_scan_ms\":";
     json += String(g_lastScanDurationMs);
+    json += ",\"beacons_received\":";
+    json += String(g_beaconsReceived);
     json += "}";
 
     return json;
@@ -417,6 +491,7 @@ namespace ble_nearby {
     static inline uint16_t getNonCanaryCount() { return 0; }
     static inline bool isScanActive() { return false; }
     static inline uint32_t getChirpsReceived() { return 0; }
+    static inline uint32_t getBeaconsReceived() { return 0; }
     static inline uint32_t getCanariesDiscovered() { return 0; }
     static inline String buildNearbyJson() { return "{\"canaries\":[],\"non_canary_device_count\":0,\"scan_active\":false,\"last_scan_ms\":0}"; }
 }

@@ -8,6 +8,7 @@
 // setup path. Everything works offline; nothing phones anywhere.
 
 import { DeviceScene, BUILDERS } from "./scene3d.js";
+import { buildFinishPicker, startFinishShowcase, hasUserChoice } from "./finishes.js";
 import { fmtLen, UNIT_MODES } from "./assembly-rules.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { buildEnclosureLab } from "./enclosure-lab.js";
@@ -57,11 +58,29 @@ async function main() {
     .then((r) => r.json())
     .catch(() => null);
   $("#fw-train").textContent = `firmware train ${state.registry.fw_train}`;
+  mountFinishPicker();
   renderCards();
+  // The models cross-fade to the active finish live (role-tagged shell parts
+  // read it per-frame — no rebuild). On a first visit, run the ambient
+  // showcase: a slow, calm cycle through the palette that demos customisation
+  // until the visitor picks a swatch. Honour a saved choice and reduced motion.
+  if (!hasUserChoice() && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    startFinishShowcase();
+  }
   // Deep link from the chooser: index.html#<device-id> opens its sheet.
   const target = decodeURIComponent(location.hash.slice(1));
   const dev = state.registry.devices.find((d) => d.id === target);
   if (dev) openSheet(dev);
+}
+
+// the finish picker rides in the hero, above the fineprint line
+function mountFinishPicker() {
+  const hero = $("#hero");
+  if (!hero || hero.querySelector(".finish-bar")) return;
+  const bar = el("div", "finish-bar");
+  bar.append(el("span", "finish-bar-cap", "Finish"), buildFinishPicker());
+  const fine = hero.querySelector(".fineprint");
+  hero.insertBefore(bar, fine || null);
 }
 
 function renderCards() {
@@ -88,7 +107,7 @@ function renderCards() {
     (BUILDERS[dev.id] || BUILDERS["canary-wap"])(scene);
     upgradeRealShape(scene, dev.id);
     scene.start();
-    state.cards.set(dev.id, { scene });
+    state.cards.set(dev.id, { scene, dev });
 
     card.addEventListener("click", () => openSheet(dev));
   }
@@ -477,7 +496,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     "Try it": () => tryView(guideProxy, noteLine),
     ...(ctx.bench ? { Bench: () => benchView(ctx, guideProxy, noteLine) } : {}),
     Wire: () => wireView(serialLog, wireLog),
-    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
+    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id, state.build),
     ...(state.boards?.device_board?.[dev.id]
       ? { Board: () => buildBoardLab(state.boards, dev.id) } : {}),
     ...(state.assembly?.devices?.[dev.id]
@@ -943,7 +962,7 @@ function buildWitnessSheet(ctx, side) {
       w.append(list);
       return w;
     },
-    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id),
+    Enclosure: () => buildEnclosureLab(state.enclosures, dev.id, state.build),
     ...(state.boards?.device_board?.[dev.id]
       ? { Board: () => buildBoardLab(state.boards, dev.id) } : {}),
     ...(state.assembly?.devices?.[dev.id]

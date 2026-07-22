@@ -21,6 +21,8 @@
 #include <Wire.h>
 #include <lvgl.h>
 #include <stdarg.h>
+#include <string.h>
+#include <driver/twai.h>   // CAN station: ESP-IDF TWAI controller (GPIO15/16)
 #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
 #include <Preferences.h>   // dev-mode latch: long-press exits back to the fleet
 #endif
@@ -31,6 +33,8 @@
 #include "canary/hal/display.h"
 #include "canary/ui/lvgl_port.h"
 #include "canary/version.h"
+#include "canary/io/modbus_rtu.h"   // RS485 station: pure Modbus RTU framing/CRC
+#include "canary/io/can_frame.h"    // CAN station: pure frame model + formatter
 #include "boot/boot_banner.h"
 
 namespace canary::playground {
@@ -260,7 +264,8 @@ void do_drive(int ch, bool sink) {
 // ── Timers ──────────────────────────────────────────────────────────────
 
 uint32_t t_di = 0, t_light = 0, t_tof = 0, t_pad = 0, t_scan = 0, t_snap = 0,
-         t_ui = 0;
+         t_ui = 0, t_can = 0;
+constexpr uint32_t CAN_DRAIN_MS = 100;   // fieldbus RX poll cadence
 
 // Touch tap detection (the playground owns the glass; main.cpp's gesture
 // policy is bypassed in this mode).
@@ -340,6 +345,101 @@ void action_tof_cycle_trip() {
   while (i < n && TOF_TRIPS[i] != g.tof.trip_mm) i++;
   g.tof.trip_mm = TOF_TRIPS[(i + 1) % n];
   say_evt("tof", "trip_mm=%u", (unsigned)g.tof.trip_mm);
+}
+
+// ── RS485 (Modbus RTU) + CAN (TWAI) fieldbus stations ───────────────────
+// The production RS485/CAN drivers ship gated (FEATURE_RS485/FEATURE_CAN); the
+// playground brings up its own thin transport here using the SAME host-tested
+// pure cores (canary/io/modbus_rtu.h, canary/io/can_frame.h), so a bench can
+// exercise both buses without enabling the production feature flags — exactly
+// the "minimal in-repo driver" posture the I2C sensors use. Bench-pending:
+// TX/RX orientation and bit timing are VERIFY-tagged in pins.h.
+namespace mb = canary::io::modbus;
+namespace canf = canary::io::can;
+
+static void rs485_begin_once() {
+  if (g.rs485.ready) return;
+  Serial1.begin(RS485_BAUD_DEFAULT, SERIAL_8N1, RS485_PIN_RX, RS485_PIN_TX);
+  g.rs485.ready = true;
+}
+
+static bool can_begin_once() {
+  if (g.can.ready) return true;
+  twai_general_config_t gc = TWAI_GENERAL_CONFIG_DEFAULT(
+      (gpio_num_t)CAN_PIN_TX, (gpio_num_t)CAN_PIN_RX, TWAI_MODE_NORMAL);
+  twai_timing_config_t tc = TWAI_TIMING_CONFIG_500KBITS();
+  twai_filter_config_t fc = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+  if (twai_driver_install(&gc, &tc, &fc) != ESP_OK) return false;
+  if (twai_start() != ESP_OK) { twai_driver_uninstall(); return false; }
+  g.can.ready = true;
+  return true;
+}
+
+// Drain any received CAN frames (non-blocking), logging each. Called from loop.
+static void can_drain() {
+  if (!g.can.ready) return;
+  for (int i = 0; i < 8; i++) {
+    twai_message_t m = {};
+    if (twai_receive(&m, 0) != ESP_OK) break;
+    g.can.rx++;
+    g.can.last_id = m.identifier;
+    canf::Frame f = {};
+    f.id = m.identifier;
+    f.extended = m.extd != 0;
+    f.rtr = m.rtr != 0;
+    f.dlc = m.data_length_code > canf::MAX_DLC ? canf::MAX_DLC : m.data_length_code;
+    for (uint8_t j = 0; j < f.dlc; j++) f.data[j] = m.data[j];
+    char line[80];
+    if (canf::format_frame(f, line, sizeof(line)) > 0) say_evt("can", "rx %s", line);
+  }
+}
+
+void action_rs485_probe() {
+  rs485_begin_once();
+  uint8_t req[mb::MAX_ADU];
+  const size_t n = mb::build_read_holding(1, 0, 1, req, sizeof(req));
+  while (Serial1.available()) Serial1.read();     // flush stale bytes
+  Serial1.write(req, n);
+  Serial1.flush();
+  g.rs485.polls++;
+  const size_t want = mb::read_response_len(1);
+  uint8_t resp[mb::MAX_ADU];
+  size_t got = 0;
+  const uint32_t deadline = millis() + 300;
+  while (got < want && (int32_t)(deadline - millis()) > 0) {
+    while (Serial1.available() && got < sizeof(resp)) resp[got++] = (uint8_t)Serial1.read();
+  }
+  uint16_t regs[1] = {0};
+  const int r = (got >= want)
+                    ? mb::parse_registers(resp, got, 1, mb::FN_READ_HOLDING, regs, 1)
+                    : (int)mb::ERR_SHORT;
+  if (r == 1) {
+    g.rs485.replies++;
+    g.rs485.last_val = regs[0];
+    g.rs485.last_ok = true;
+    say_evt("rs485", "slave=1 reg=0 val=%u crc=ok", (unsigned)regs[0]);
+  } else {
+    g.rs485.last_ok = false;
+    say_evt("rs485", "slave=1 reply=none");
+  }
+}
+
+void action_can_send() {
+  if (!can_begin_once()) { say_evt("can", "tx=fail driver"); return; }
+  canf::Frame f = {};
+  f.id = 0x100;
+  f.dlc = 8;
+  for (uint8_t i = 0; i < f.dlc; i++) f.data[i] = (uint8_t)(0xC0 + i);
+  twai_message_t m = {};
+  m.identifier = f.id;
+  m.data_length_code = f.dlc;
+  for (uint8_t i = 0; i < f.dlc; i++) m.data[i] = f.data[i];
+  if (twai_transmit(&m, pdMS_TO_TICKS(50)) == ESP_OK) {
+    g.can.tx++;
+    say_evt("can", "tx id=0x%03lX dlc=8 ok", (unsigned long)f.id);
+  } else {
+    say_evt("can", "tx=fail (bus quiet? need another node/ack)");
+  }
 }
 
 // ── Census / hot-plug ───────────────────────────────────────────────────
@@ -550,6 +650,13 @@ void playground_loop() {
   if (now - t_scan >= SCAN_EVERY_MS) {
     t_scan = now;
     census(now);
+  }
+
+  // Fieldbus RX: drain any CAN frames that arrived since the last pass (the
+  // RS485 station is request/response, driven from the PROBE action instead).
+  if (now - t_can >= CAN_DRAIN_MS) {
+    t_can = now;
+    can_drain();
   }
 
   if (now - t_snap >= SNAP_EVERY_MS) {

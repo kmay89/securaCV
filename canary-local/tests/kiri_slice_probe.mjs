@@ -93,6 +93,10 @@ try {
   const grams = totals.find((t) => /\bg$/.test(t));
   if (!grams || !(parseFloat(grams) > 0)) fail("no positive filament mass in totals: " + JSON.stringify(totals));
 
+  // ── cost-to-build panel renders with the real BOM (WAP is priced) ──
+  const buildUnit = await page.$eval(".est-build-unit", (e) => e.textContent).catch(() => "");
+  if (!/\$\d/.test(buildUnit)) fail("cost-to-build unit price missing: " + JSON.stringify(buildUnit));
+
   // ── "watch it print" runs without error ──
   const play = await page.$(".print-play");
   if (!play) fail("no watch-it-print button");

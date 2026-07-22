@@ -86,6 +86,30 @@ static bool payload_is(const uint8_t* payload, unsigned int len, const char* tok
 
 // ── Fleet dispatch ──────────────────────────────────────────────────────
 
+// canary-sense coarse-vocabulary decoders (the ONLY words that ever cross the
+// wire about what the radar saw — see the device's privacy chokepoint). An
+// unrecognised word maps to the safe "unknown/0" slot, never a crash.
+static uint8_t str_to_presence(const char* s) {
+  if (!s) return 0;
+  if (strcmp(s, "present") == 0) return 2;
+  if (strcmp(s, "clear") == 0)   return 1;
+  return 0;  // "unknown"
+}
+static uint8_t str_to_occupants(const char* s) {
+  if (!s) return 0;
+  if (strcmp(s, "2+") == 0) return 2;
+  if (strcmp(s, "1") == 0)  return 1;
+  return 0;  // "0"
+}
+static uint8_t str_to_range(const char* s) {
+  if (!s) return 0;
+  if (strcmp(s, "near") == 0) return 1;
+  if (strcmp(s, "mid") == 0)  return 2;
+  if (strcmp(s, "far") == 0)  return 3;
+  return 0;  // "unknown"
+}
+static int constrain_u8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+
 static void dispatch_fleet(const char* device_id, const char* suffix,
                            const uint8_t* payload, unsigned int len) {
   using canary::fleet::the_fleet;
@@ -192,6 +216,42 @@ static void dispatch_fleet(const char* device_id, const char* suffix,
   else fleet.on_activity(device_id, now);
   if (doc["breathing_locked"].is<bool>()) {
     fleet.on_wellbeing(device_id, doc["breathing_locked"].as<bool>(), now);
+  }
+  // Radar claim surface (canary-sense): the coarse presence/count/range
+  // vocabulary + lux + P1-gated BPM. Only a payload that actually carries the
+  // radar vocabulary is treated as a sense row, so non-radar variants never
+  // get spuriously marked card-bearing. Raw distance/per-target data never
+  // appear on the wire — the device coarsened them at its own chokepoint.
+  // The coarse presence vocabulary rides "presence_state" ("unknown"/"clear"/
+  // "present"); "presence" itself is the HA-facing bool. Detect a radar row on
+  // any of the radar-only keys.
+  if (doc["presence_state"].is<const char*>() || doc["range"].is<const char*>() ||
+      doc["radar_ok"].is<bool>()) {
+    canary::fleet::SenseState ss;
+    ss.presence  = str_to_presence(doc["presence_state"] | "unknown");
+    ss.occupants = str_to_occupants(doc["occupants"] | "0");
+    ss.range     = str_to_range(doc["range"] | "unknown");
+    ss.radar_ok  = doc["radar_ok"] | false;
+    ss.frame_errors = doc["frame_errors"] | 0UL;
+    // lux may serialize as "138.0" (float) or "138" (int); accept either.
+    if (doc["lux"].is<float>() || doc["lux"].is<int>()) {
+      const float lx = doc["lux"].as<float>();
+      ss.have_lux = true;
+      ss.lux = (lx < 0) ? -1 : (int)(lx + 0.5f);
+    }
+    // BPM rides the state payload only on a wellbeing build, under the same
+    // gate as breathing_locked — so its presence is the reliable "this device
+    // offers BPM" signal (the values themselves publish as a number when the
+    // lock holds, or JSON null otherwise, which is_int cleanly distinguishes).
+    if (doc["breathing_locked"].is<bool>()) {
+      ss.have_bpm = true;
+      const bool br_num = doc["breath_bpm"].is<int>();
+      const bool hr_num = doc["heart_bpm"].is<int>();
+      ss.bpm_valid = br_num && hr_num;  // both numeric == lock holds
+      if (br_num) ss.breath_bpm = (uint8_t)constrain_u8(doc["breath_bpm"] | 0);
+      if (hr_num) ss.heart_bpm  = (uint8_t)constrain_u8(doc["heart_bpm"] | 0);
+    }
+    fleet.on_sense_state(device_id, ss, now);
   }
   // Room comfort, when the variant reports it (spellings differ; °C either
   // way). Tenths keep 21.5° honest on the glass.

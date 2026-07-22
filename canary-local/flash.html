@@ -2,11 +2,52 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <!--
+    Supply-chain hardening (see docs/browser_flasher.md § Trust model): a strict
+    Content-Security-Policy so only this site's own vendored code can run, and
+    the page can only fetch firmware from our signed GitHub releases.
+      · script-src / style-src 'self' — no inline, no eval; every module is
+        same-origin and vendored (esptool-js, md5, ed25519, qrcode).
+      · the 'sha256-…' pins the inline import map below, which carries the
+        Subresource-Integrity hashes for those vendored modules.
+      · connect-src — our release host + its asset CDN. 'http:' keeps the
+        documented plain-HTTP LAN / air-gapped manifest override working
+        (docs/firmware_ota.md § transport policy); it is inert on the hosted
+        HTTPS Lab, where mixed-content blocking already forbids http fetches.
+      · base-uri / object-src / form-action 'none' — no <base> rewrite of our
+        relative asset paths, no plugins, no form posts.
+    frame-ancestors is omitted on purpose: it is ignored in a <meta> CSP, and
+    the OS/browser serial chooser can't be spoofed from inside a frame anyway.
+    tests/flash.test.js is the drift gate for the 'sha256-…' and the SRI hashes.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-EktR3SFf0lLCbyovl7Zr3tGJNxikCFvtZ3djuXGsas0='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://github.com https://*.githubusercontent.com http:; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Flash a Canary — in your browser · canary.local</title>
   <meta name="description" content="Flash SecuraCV Canary firmware straight from a Chromium browser over USB-C — no Arduino, no PlatformIO, no terminal. It detects your ESP32 chip, backs the board up automatically before writing, flashes a signed release image, and verifies it against the chip's own checksum. It's a triage bench too: a read-only health check reports firmware slots, update history, crash dumps and witness-chain state, and a built-in serial monitor talks to the firmware's console. Built so you can't pick the wrong image and can't brick the board: the ESP32's bootloader is mask ROM. Works offline; the flashing engine is served from this site, nothing phones anywhere." />
   <link rel="stylesheet" href="assets/canary-local.css" />
   <link rel="stylesheet" href="assets/flash.css" />
+
+  <!--
+    Subresource-Integrity for the vendored third-party modules the flasher
+    imports (esptool-js, md5, ed25519, qrcode). A tampered vendored file no
+    longer loads: its hash won't match and the browser refuses the module.
+    First-party app code (flash.js, flash-core.js, we2-*) is left unpinned by
+    design — it's same-origin (already constrained by script-src 'self') and
+    changes too often to hash by hand. tests/flash.test.js recomputes every
+    hash here from the real files (and the CSP 'sha256-…' from this map's text)
+    and fails CI on any drift. Enforced on Chromium ≥127; older engines ignore
+    the integrity keys and load the same same-origin modules, so nothing breaks.
+  -->
+  <script type="importmap">
+  {
+    "integrity": {
+      "./assets/vendor/esptool-js/bundle.js": "sha384-Gp/Yl7Y7m9qaoDj9xbD5mb2FcpfQlqemsrun4ezVApnzUBdo77IhT5w9D4vZIJ7E",
+      "./assets/vendor/md5/md5.js": "sha384-nTJVtDIe2cQok3jlbNMqFicv2lW+iWFtrtq03JP3yWXKk5Hkzr6elQfuxd5rxbL2",
+      "./assets/vendor/ed25519/ed25519.mjs": "sha384-TTqxRhoQYuK4G8/juEEFIIQckgqZi21+TAKdfSRmKS0hXaOHYATAvi6sIxK3B6TE",
+      "./assets/vendor/qrcode/qrcode.mjs": "sha384-xHtsZTi0cOhTiha4kloGDUR5e5A8ixkKsF1Mmpqq3tkDpAhkA4YOKIDua/Tc0Ecd"
+    }
+  }
+  </script>
 </head>
 <body>
   <header id="hero" class="hub-hero">

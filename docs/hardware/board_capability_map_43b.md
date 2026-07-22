@@ -24,19 +24,19 @@ row cites the file that backs the claim.
 | 4.3" RGB565 800×480 panel | ✅ | **Driven** | The glass itself |
 | GT911 5-pt cap touch | ✅ | **Driven** | Tap = wake, long-press = acknowledge |
 | CH422G I²C IO expander | ✅ | **Driven** | Owns panel control + isolated field IO |
-| 2× isolated digital **inputs** (DI0/DI1) | ✅ | **Driven (bench only)** | Wire in a real PIR / reed / tamper switch → **signed event** |
-| 2× isolated open-drain **outputs** (DO0/DO1, ≤450 mA) | ✅ | **Driven (bench only)** | Drive a siren/strobe/door-strike — the dash can *act*, not just watch |
+| 2× isolated digital **inputs** (DI0/DI1) | ✅ | **Driven (runtime, 4.3B)** | Wire in a real PIR / reed / tamper switch → **unsigned local event** (the dash can't sign) |
+| 2× isolated open-drain **outputs** (DO0/DO1, ≤450 mA) | ✅ | **Driven (runtime, 4.3B)** | DO0 sirens on an unacked alert — the dash can *act*, not just watch |
 | I²C sensor header (VEML7700 / BH1750 / VL53L0X / MPR121) | ✅ | **Driven (bench only)** | Ambient light, ToF beam-gap, cap-touch coupons |
 | WiFi / MQTT / mDNS / OTA / web mirror | ✅ | **Driven** | Fleet ingest + self-heal |
 | BLE (passive NimBLE scan) | ✅ | **Driven** | Off-grid "Chirp" fallback |
 | **Evidence vault** (proof-carrying journal → flash) | ✅ | **Built · bench-gated** | Signed event log survives a network cut |
 | Chime engine (LEDC tone) | ⚠️ pad unpopulated on B | **Built · bench-gated** | Audible alert **via DO**, not onboard piezo |
 | **RS485 / Modbus RTU** (A/B terminal) | ✅ | **Built · bench-gated** | Integrate alarm panels, access control, HVAC/energy meters |
-| **CAN / TWAI** (H/L terminal) | ✅ | **Staged (no driver)** | Vehicle & industrial witness (gate/barrier, CANopen) |
+| **CAN / TWAI** (H/L terminal) | ✅ | **Built · bench-gated** | Vehicle & industrial witness (gate/barrier, CANopen) |
 | **microSD** (TF slot) | ✅ | **Staged (CS blocker)** | Bulk local archive — see the CH422G-CS note |
-| **Battery-backed RTC** (trusted time) | ❓ verify | **Staged / verify** | Trustworthy timestamps when NTP is blocked |
+| **Battery-backed RTC** (trusted time) | ❓ verify | **Built · bench-gated** | Trustworthy timestamps when NTP is blocked — runtime-probing layer, compile-verified (`-rtc` env) |
 | **Battery operation** (CS8501 charge/boost) | ❓ verify | **Staged / verify** | "Cut the power, the Canary keeps witnessing" |
-| ESP-NOW peer mesh | ✅ (radio) | **Absent** | Router-independent fleet link + cross-signing |
+| ESP-NOW peer presence | ✅ (radio) | **Built · bench-gated** | Router-independent peer-liveness ingest (rx-only) — compile-verified (`-espnow` env) |
 | Camera / microphone | ❌ by design | **Absent (intentional)** | *Not a gap* — "it shows, it doesn't watch" |
 | Backlight PWM dimming | ❌ (CH422G on/off) | **Absent (hardware)** | Night = dark theme + backlight off |
 
@@ -50,8 +50,13 @@ below as *unproven on hardware until a bench pass says otherwise*.
 
 ## 1. Evidence vault — the highest-value latent capability
 
-**Status:** Built, complete, `FEATURE_TIME_MACHINE_PERSIST 0`
-(`configs/canary-display/dash/config.h:43`, "bench-gated (like CHIME)").
+**Status:** Built, complete, **now compile-verified in CI**, default
+`FEATURE_TIME_MACHINE_PERSIST 0` (`configs/canary-display/dash/config.h:44`,
+"bench-gated like CHIME"). The dedicated `canary-display-dash-vault` PlatformIO
+env sets the flag so CI builds the full LittleFS + ArduinoJson persistence body
+against the real toolchain — same pattern as `-rs485` / `-can` — while the
+default dash / playground / emulator builds stay byte-identical. One bench soak
+(below) is the last gate before the default flag flips on.
 
 The dash already carries the whole durable-history layer. The event sink
 (`src/fleet/journal_instance.cpp`) builds a `JournalRecord` — which holds the
@@ -70,41 +75,67 @@ a black-box recorder for the household. Note the dash **verifies but never signs
 (`src/trust.cpp` does Ed25519 verify + TOFU pinning only), so the vault stores
 proof, it never mints it — which keeps the never-overclaim rule intact.
 
-**Activation (bench):**
-1. Add `LittleFS` to `lib_deps` in `firmware/envs/platformio/canary-display.ini`
-   and to the arduino-cli lib install step in `.github/workflows/firmware.yml`.
-2. Confirm the dash partition table has a `spiffs`/LittleFS data partition (if
-   absent, `LittleFS.begin(formatOnFail=true)` fails **safe** → RAM-only, so this
-   is non-fatal but non-functional until the partition exists).
-3. Flip `FEATURE_TIME_MACHINE_PERSIST 1` for the dash flavor.
-4. Bench-validate: trigger events, power-cycle, confirm the journal reloads;
-   watch flash wear over a soak. Then the emulator `dist/*.js` must be rebuilt
-   (`canary-local/emulator/build.sh all`) so the wasm byte-drift gate passes.
+**Activation — most of it is now done in-repo:**
+1. ~~Add `LittleFS` to `lib_deps`~~ — **not needed:** `LittleFS` ships with the
+   arduino-esp32 framework (built-in include), and `ArduinoJson` is already a
+   dash `lib_dep` (`mqtt_mgr.cpp` uses it). The `canary-display-dash-vault` env
+   carries no extra deps.
+2. ~~Confirm the partition~~ — **confirmed:** the stock `default_16MB.csv` the
+   dash already builds against carries a ~3 MB `spiffs` data partition, which is
+   what `LittleFS` mounts. If it were ever absent, `LittleFS.begin(formatOnFail=
+   true)` fails **safe** → RAM-only (non-fatal, just non-functional).
+3. **Flip `FEATURE_TIME_MACHINE_PERSIST 1` for the dash flavor** — this is the
+   only remaining code change, and it is now **byte-neutral to the emulator**:
+   `journal_store.cpp` is additionally gated `!defined(__EMSCRIPTEN__)`, so the
+   wasm build (which compiles `src/fleet/*.cpp`) always sees the no-op stubs and
+   the `dist/*.js` byte-drift gate stays green with **no rebuild**.
+4. **Bench-validate** (the real gate, needs hardware): trigger events,
+   power-cycle, confirm the journal reloads; watch flash wear over a soak. Then
+   flip the default flag on and move this row to **Driven**.
 
 **Do not** enable microSD for this — flash is the right medium (a removable card
 is pull-and-walk-away tamperable; internal flash isn't).
 
 ---
 
-## 2. Isolated DI/DO — promote from bench to the witness runtime
+## 2. Isolated DI/DO — promoted into the witness runtime (4.3B)
 
-**Status:** Driven, but only inside the dev playground
-(`src/playground/playground.cpp` via `expander_read_inputs()` /
-`expander_od_set()` in `src/hal/display_dash.cpp:166-204`). The production
-witness runtime never reads DI or drives DO.
+**Status:** Driven in the production runtime (gated on `HAS_ISOLATED_IO`, so 4.3B
+only), not just the dev playground.
 
-**Why it matters:** these are the board's cheapest, already-working superpower.
-- **DI0 / DI1** (optocoupled, 5–36 V): wire a PIR, a door/window reed, or a
-  case-tamper switch and it becomes a first-class **signed event** in the same
-  chain as the camera Canaries — the dash stops being read-only.
-- **DO0 / DO1** (≤450 mA open-drain): drive a local **siren, strobe, or door
-  strike**. The dash gains an *actuation* voice (local alarm on Tier-1 event, or
-  a relay for a maglock) instead of only showing.
+**Crucial provenance correction:** an earlier draft of this doc said a DI contact
+becomes a "signed event." **It cannot** — the dash has *no signing identity*. It
+verifies others' Ed25519 chains and TOFU-pins their keys (`src/trust.cpp`) but
+holds no private key and never calls the signer; its own MQTT health payload
+says so in plain text ("a display has no witness key"). So a contact read is an
+honestly **UNSIGNED local event** (`signed_flag=false`), on the same footing as
+the fleet model's `on_chirp`/`on_beacon` observations — never a forged witness.
 
-**Activation:** add a small production subsystem (gated, e.g. `FEATURE_FIELD_IO`)
-that maps DI edges → `fleet.on_event(...)` and Tier-1 escalations → a bounded DO
-pulse, reusing the existing expander helpers. Bench-validate optocoupler polarity
-(the `pins.h` DO polarity is VERIFY-tagged) before trusting the actuation path.
+**Shipped in this build (`src/io/field_io.cpp`, `field_io_logic.h`):**
+- **DI0 / DI1** (optocoupled, active-LOW, fail-closed read): a debounced edge →
+  `the_fleet().on_event(self_id, "door_contact"/"tamper_contact", signed_flag=false)`.
+  `tamper_contact` classifies as `Sev::Tamper` (can sound the siren); `door_contact`
+  as `Sev::Notice`. Shows on-glass and journals, with no forged provenance.
+- **DO0** (≤450 mA open-drain): a bounded **siren** — driven while the fleet's
+  worst severity is an unacked alert, released on ack/all-clear, and hard-capped
+  at 5 min so a standing alert can't blare forever (re-arms on clear/ack). The
+  debounce + bounded-siren decisions are the host-tested pure core.
+- Wired into `main.cpp` setup/loop behind `HAS_ISOLATED_IO`; byte-neutral to the
+  emulator (its dash build uses the non-B pins, which don't declare the flag).
+
+**Opt-in siren arming (shipped):** the on-glass **Settings → siren** toggle
+(`src/ui/settings_ui.cpp`, `HAS_ISOLATED_IO`-gated) arms/disarms the DO0 siren,
+**disarmed by default** and NVS-persisted (`field_io_set_armed` / `field_io_armed`,
+own `scv-field` key — no glass-blob migration). Disarmed, an unacked alert still
+shows on the glass and lands in the journal; only the physical output stays
+silent — which is also the safe posture while the DO sink polarity is unproven.
+The pure `SirenController::update` takes `armed` and treats `!armed` as resolved,
+host-tested in `test_field_io.cpp`. Byte-neutral to the emulator (no
+`HAS_ISOLATED_IO` there).
+
+**Remaining to go live:** bench-validate the optocoupler DI polarity and the DO
+sink polarity (both VERIFY-tagged in `pins.h`) on real hardware, and confirm the
+input-poll's brief expander direction-flip causes no backlight flicker.
 
 ---
 
@@ -145,18 +176,35 @@ needs an emulator `dist/*.js` rebuild). Until then it ships **off**.
 
 ## 4. CAN / TWAI — vehicle & industrial witness
 
-**Status:** Staged. Pins declared (`pins.h`, TX=GPIO15 / RX=GPIO16, **dedicated
-transceiver** — unlike the plain 4.3 there's no USB mux, and there's an on-board
-120 Ω terminator jumper). No `twai_` driver in the display project (TWAI is used
-only in `canary-wap`).
+**Status:** Built · bench-gated (`FEATURE_CAN 0`). Pins declared in `pins.h`
+(TX=GPIO15 / RX=GPIO16, **dedicated transceiver** — unlike the plain 4.3 there's
+no USB mux — plus a jumper-selectable on-board 120 Ω terminator, OFF by default;
+default bit rate `CAN_BITRATE_DEFAULT` 500 kbit/s).
+
+**Shipped in this build (compile-verified, bench-pending):**
+- `include/canary/io/can_frame.h` — a pure CAN 2.0 (ISO 11898-1) frame core: the
+  `Frame` struct, id-width validity (11-bit base / 29-bit extended), DLC ≤ 8,
+  standard-bitrate validity, SocketCAN-style acceptance filtering
+  (`(rx & mask) == (want & mask)`), and a bounded ASCII log formatter. No Arduino.
+- `tests_host/test_can_frame.cpp` — host test of every rule above (id ranges,
+  DLC bounds, filter mask cases, exact formatter output, buffer guards). Run by
+  the "CAN frame host test" step in `firmware.yml`.
+- `src/io/can_bus.{h,cpp}` — thin ESP-IDF **TWAI** transport on the H/L terminal
+  (`twai_driver_install`/`twai_start`, bounded `twai_transmit`/`twai_receive`,
+  frame ⇄ `twai_message_t` conversion, accept-all filter, normal mode) behind
+  `FEATURE_CAN`; the whole TU is empty without the flag, so the default/emulator
+  builds stay byte-identical.
+- `canary-display-dash-can` PlatformIO env (in `flavors.json` build_envs) so CI
+  compiles the gated driver — including `<driver/twai.h>` — against the toolchain.
 
 **Why it matters:** a Canary that witnesses a **vehicle gate/barrier controller,
 fleet telematics, or CANopen building automation** — a tamper-proof CAN event
-log. Lower priority than RS485 for the security use-case, but the transceiver is
-free and dedicated, so it's pure upside.
+log. The transceiver is free and dedicated, so it's pure upside.
 
-**Build shape:** ESP-IDF `twai_*` driver behind `FEATURE_CAN 0`, same
-gated + dedicated-build-env + bench-pending pattern as RS485.
+**Remaining to go live:** bench-validate TX/RX orientation, bit timing, and the
+terminator jumper against a real bus, then wire received frames into the fleet
+event pipeline and add a matching playground station (needs an emulator dist
+rebuild). Until then it ships **off**.
 
 ---
 
@@ -195,10 +243,19 @@ needs eyes on the physical board.
 
 - **RTC → trusted time.** Time comes from SNTP today (`FEATURE_SNTP`). For a
   cryptographic witness, NTP-only time is a weakness: block or spoof NTP and every
-  signed timestamp is suspect. If a PCF85063/PCF8563 is populated on the I²C bus,
-  add a **runtime-probing** RTC layer (use it if it ACKs, else SNTP — fail-safe,
-  behind `FEATURE_RTC 0`) so timestamps stay trustworthy offline. The watch
-  flavor already has PCF8563 wiring to crib from (`pins_watch.h:72-114`).
+  signed timestamp is suspect. The **runtime-probing** RTC layer now exists
+  (`FEATURE_RTC 0`, compile-verified by `canary-display-dash-rtc`): the pure core
+  `include/canary/io/rtc_pcf.h` (BCD + civil↔days epoch math + the voltage-low
+  validity gate, host-tested against libc `timegm` in `test_rtc_pcf.cpp`) and the
+  gated runtime `src/io/rtc.cpp`, which **probes 0x51 on the shared I²C bus** and
+  uses the RTC only if it ACKs with a reliable time — else SNTP, unchanged. On
+  boot it seeds the clock from the RTC before the network is up; the loop mirrors
+  NTP back once a real wall time arrives. By design it does **not** require
+  `HAS_RTC` (both 4.3B headers declare it 0), so it is honest whether or not the
+  silicon is populated. Byte-neutral to the emulator (`src/io/rtc.cpp` is empty
+  without the flag). The watch's `pins.h:72-114` documents the same PCF8563 at
+  `0x51`. **Bench-pending:** confirm the RTC silicon + address on a real 4.3B,
+  then flip `FEATURE_RTC` on and update `HAS_RTC`.
 - **Battery.** If the CS8501 is populated, the dash can run and log through a
   power cut and record the outage itself — a strong security property. **Do not
   invent the ADC/sense pin**; confirm it on the board before writing any monitor.
@@ -210,15 +267,35 @@ this table to match reality either way.
 
 ---
 
-## 7. ESP-NOW mesh & fleet cross-signing — resilience upside
+## 7. ESP-NOW peer presence — router-independent resilience
 
-**Status:** Absent (no `esp_now` in the display firmware). The radio supports it.
+**Status:** Built · bench-gated (`FEATURE_ESPNOW 0`, compile-verified by
+`canary-display-dash-espnow`). The **receive side** now exists:
+`src/net/espnow_peer.cpp` brings up an ESP-NOW listener on the WiFi channel and
+drains peer **fleet-link presence beacons** into the fleet model
+(`on_beacon`), reusing the exact host-tested wire contract the BLE chirp path
+uses (`canary/net/beacon_parse.h`) via the pure `espnow_peer_logic.h`
+(`test_espnow_peer.cpp`). One wire format, one parser — an ESP-NOW frame and a
+BLE advert from one canary resolve to one witness, and foreign traffic is
+rejected before it reaches the fleet.
 
-**Why it matters:** an attacker who kills the WiFi AP silences an MQTT-only fleet.
-An ESP-NOW peer link is router-independent, so Canaries keep talking — and can
-**cross-sign each other's chain heads** (witness-the-witness), making tamper
-materially harder. Aligned with the tamper-resistance thesis; larger effort, so
-it sits behind RS485/CAN in priority.
+**Why it matters:** an attacker who kills the WiFi AP silences an MQTT-only
+fleet. ESP-NOW is connectionless and router-independent, so the dash keeps
+hearing peer liveness off the raw 2.4 GHz channel when the broker is dark.
+
+**Honesty correction (like §2):** the earlier note said Canaries "cross-sign
+each other's chain heads." **The dash cannot** — it has no signing identity
+(`src/trust.cpp` verifies + TOFU-pins only, never mints). So this is a
+**receive-only observer**: it never transmits and never signs, and a peer's
+*signed* chain head still travels over the signed MQTT pipeline. ESP-NOW carries
+only the coarse presence summary the beacon already coarsens (an UNSIGNED
+observation, same footing as the BLE beacon). Byte-neutral to the emulator
+(`src/net/espnow_peer.cpp` is empty without the flag).
+
+**Remaining to go live:** the paired WAP-side ESP-NOW *broadcast* of the beacon
+(the sender for this receiver) and WiFi-STA channel coexistence tuning are the
+follow-ups; then flip `FEATURE_ESPNOW` on. Cross-signing proper is a
+Canary-to-Canary (signing device) property, not a display one.
 
 ---
 
@@ -256,7 +333,15 @@ every activation above:
    to then it lands as compile-verified, bench-pending firmware.
 
 **Bottom line:** the board is a full industrial witness gateway. We're driving
-the display, touch, isolated IO (bench), and the radios. The value left on the
-table is: **turn on the evidence vault**, **promote DI/DO into the witness
-runtime**, **bench-validate the RS485/Modbus driver (now built, off) and write
-the CAN driver**, and **verify the RTC/battery silicon** — in that order.
+the display, touch, isolated IO (now in the runtime on the 4.3B), and the radios.
+The value left on the table is: **turn on the evidence vault** (now compile-
+verified in CI via `canary-display-dash-vault` — one power-cycle bench soak from
+Driven), **bench-validate the field-I/O polarity and the RS485/Modbus + CAN/TWAI
+drivers (all built, the buses off, field-I/O 4.3B-only)**, and **verify the
+RTC/battery silicon** (the RTC trusted-time layer is now built + compile-verified
+via `-rtc`; a bench check of the silicon/address is the last step before it goes
+live) — in that order. The recurring theme: the code is largely written; a bench session on
+real 4.3B hardware is now the gating step for most of it —
+[`board_43b_activation_bench.md`](./board_43b_activation_bench.md) is the
+per-capability checklist for that session (wiring, flag, pass signal, and the
+`VERIFY` note each pass retires).

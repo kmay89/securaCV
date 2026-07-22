@@ -66,6 +66,15 @@
 #if defined(FEATURE_CHIRP_SCAN) && FEATURE_CHIRP_SCAN
 #include "canary/net/chirp_scan.h"
 #endif
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+#include "canary/io/field_io.h"   // 4.3B isolated DI/DO -> events + siren
+#endif
+#if defined(FEATURE_RTC) && FEATURE_RTC
+#include "canary/io/rtc.h"        // PCF8563 trusted time (probe -> seed/mirror)
+#endif
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+#include "canary/net/espnow_peer.h"  // router-independent peer presence (rx-only)
+#endif
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
 #include "canary/net/fleet_link.h"
 #endif
@@ -833,6 +842,20 @@ void setup() {
   }
 #endif
 
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Trusted time: if a PCF8563 is populated on the shared I2C bus, seed the
+  // clock from it now (so timestamps are trustworthy before/without SNTP); the
+  // loop mirrors NTP back to it once the network gives a real wall time.
+  canary::io::rtc_begin();
+#endif
+
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  // Router-independent peer presence: bring up the ESP-NOW listener now that the
+  // WiFi driver is started. Receive-only — the dash observes peer beacons off
+  // the raw channel when the AP/broker is down; it never transmits or signs.
+  canary::net::espnow_begin();
+#endif
+
   // The display's own web page — live mirror, help, master settings.
   // Started AFTER provisioning (the portal owned :80 during setup) and
   // independent of the panel: a display with broken glass still mirrors.
@@ -850,6 +873,12 @@ void setup() {
   // Care wave: restore the learned rhythm baseline from NVS (mutes re-apply
   // later, from care_loop, once SNTP gives both clocks).
   canary::care::care_begin();
+#endif
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // 4.3B field I/O: isolated contacts -> unsigned local events, siren on
+  // unacked alerts. Reports under this dash's own id; never signs.
+  canary::io::field_io_begin(canary::cfg::get().device_id);
 #endif
 
   // Seed the heap-health snapshot so the first status publish carries real
@@ -1036,6 +1065,33 @@ void loop() {
   // too, passive BLE bursts keep tamper/liveness flowing to the glass. The
   // module itself stops scanning the moment the broker is back.
   canary::net::chirp_scan_loop(now, !broker, canary::net::wifi_connected());
+#endif
+
+#if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
+  // Drain any peer presence beacons the ESP-NOW listener captured into the
+  // fleet model (unsigned observation, same footing as the BLE beacon).
+  canary::net::espnow_loop(now);
+#endif
+
+#if defined(FEATURE_MDNS_DISCOVERY) && FEATURE_MDNS_DISCOVERY
+  // Broker-less fleet enumeration (WiFi analog of the BLE presence beacon):
+  // once every device is on the home WiFi, browse the fleet's mDNS adverts
+  // directly and show every nearby Canary even with NO broker/Home Assistant.
+  // Gated on the broker being DOWN — when it's up, MQTT is the richer source,
+  // so skip the mDNS enumeration to avoid churn. Self-rate-limits (~20 s) and
+  // only actually queries when due; the query blocks ~3 s inside ESPmDNS.
+  if (!broker) canary::net::discovery_scan_witnesses(now);
+#endif
+
+#if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
+  // Poll the isolated contacts into events and drive the siren output. Cheap
+  // and self-throttled; 4.3B only.
+  canary::io::field_io_loop(now);
+#endif
+
+#if defined(FEATURE_RTC) && FEATURE_RTC
+  // Mirror NTP back to the PCF8563 once the clock is real. Self-throttled.
+  canary::io::rtc_loop(now);
 #endif
 
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK

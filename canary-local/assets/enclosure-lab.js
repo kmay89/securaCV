@@ -25,6 +25,10 @@ import {
   estimateSet,
   materialForPart,
   fmtDuration,
+  slicerConfigIni,
+  partsCost,
+  tco,
+  CLOUD_CAM,
   MATERIALS,
   MACHINE,
   ELECTRICITY_DEFAULT,
@@ -77,7 +81,7 @@ export function enclosuresFor(encData, deviceId) {
   return { mine, universal };
 }
 
-export function buildEnclosureLab(encData, deviceId) {
+export function buildEnclosureLab(encData, deviceId, buildData) {
   const wrap = el("div", "enclab");
   if (!encData) {
     wrap.append(el("p", "muted", "Enclosure catalog unavailable."));
@@ -124,6 +128,10 @@ export function buildEnclosureLab(encData, deviceId) {
     }
   });
   obs.observe(document.body, { childList: true, subtree: true });
+
+  // the device's priced BOM (build.json) — the honest majority of build cost
+  const deviceBom = buildData?.devices?.[deviceId]?.bom?.rows || [];
+  const deviceParts = partsCost(deviceBom);
 
   const lab = {
     mode: "showroom",
@@ -555,6 +563,79 @@ export function buildEnclosureLab(encData, deviceId) {
     }
     card.append(tbl);
 
+    // ── cost to build: the honest total — electronics (BOM) + printed
+    // enclosure — scaled to a fleet, with the no-cloud 3-year comparison. ──
+    const enclosureCost = est.total.cost;                 // filament + power
+    const unitCost = deviceParts.required + enclosureCost;
+    const footprint = lab.metas.reduce((a, m) => a + m.bbox.size[0] * m.bbox.size[1], 0);
+    const bedUsable = (MACHINE.bed_mm[0] - 20) * (MACHINE.bed_mm[1] - 20) * 0.55; // packing-derated
+    const platesFor = (n) => Math.max(1, Math.ceil((footprint * n) / bedUsable));
+
+    const build = el("div", "est-build");
+    build.append(el("h4", null, "Cost to build"));
+    if (deviceParts.required > 0) {
+      const line = el("p", "est-build-unit");
+      line.append(
+        document.createTextNode("One unit ≈ "),
+        el("b", null, `$${unitCost.toFixed(2)}`),
+        document.createTextNode(
+          ` — $${deviceParts.required.toFixed(2)} electronics + $${enclosureCost.toFixed(2)} printed enclosure` +
+          (deviceParts.optional > 0 ? ` (+$${deviceParts.optional.toFixed(2)} optional add-ons available)` : "")),
+      );
+      build.append(line);
+    } else {
+      build.append(el("p", "muted",
+        "Electronics BOM isn't catalogued for this device yet — showing the printed-enclosure cost only."));
+    }
+
+    // fleet scaling — one printer, back to back
+    const fleetRow = el("div", "est-fleet");
+    const qLabel = el("label", "est-field");
+    const qIn = document.createElement("input");
+    qIn.type = "number"; qIn.min = "1"; qIn.max = "100"; qIn.value = "1"; qIn.className = "est-qty";
+    qLabel.append(el("span", "muted", "fleet of"), qIn);
+    const fleetOut = el("div", "est-fleet-out");
+    fleetRow.append(qLabel, fleetOut);
+    build.append(fleetRow);
+    const renderFleet = () => {
+      const n = Math.max(1, Math.min(100, Math.round(Number(qIn.value) || 1)));
+      fleetOut.innerHTML = "";
+      const stat = (v, l) => {
+        const s = el("span", "phud-stat");
+        s.append(el("b", null, v), el("i", null, l));
+        return s;
+      };
+      fleetOut.append(
+        stat(`$${(unitCost * n).toFixed(2)}`, deviceParts.required > 0 ? "total spend" : "enclosures"),
+        stat(`${(est.total.grams * n).toFixed(0)} g`, "filament"),
+        stat(fmtDuration(est.total.timeS * n), "print · one printer"),
+        stat(`≈ ${platesFor(n)}`, "plate-loads"),
+      );
+    };
+    qIn.addEventListener("input", renderFleet);
+    renderFleet();
+
+    // 3-year, no-cloud TCO comparison (a generic comparator, stated assumptions)
+    if (deviceParts.required > 0) {
+      const t = tco({ unitCost });
+      const p = el("p", "est-tco");
+      p.append(el("strong", null, "Over 3 years: "), document.createTextNode(
+        `≈ $${t.canary.toFixed(0)} once, nothing recurring — vs a ${t.cloudLabel} at ≈ $${t.cloud.toFixed(0)} ` +
+        `(hardware + ~$${CLOUD_CAM.monthly}/mo cloud). And your video never leaves the house.`));
+      build.append(p);
+    }
+
+    const foot = el("p", "muted est-build-foot");
+    const econ = el("a", null, "the unit-economics note");
+    econ.href = GH + "docs/strategy/18-unit-economics-and-production-scale.md";
+    econ.target = "_blank";
+    econ.rel = "noopener";
+    foot.append(
+      document.createTextNode("Parts are firm (the repo's priced BOM); buying modules in bulk barely drops them — why, and when a custom PCB or mould starts to pay off, is in "),
+      econ, document.createTextNode("."));
+    build.append(foot);
+    card.append(build);
+
     // provenance — the whole point: say what's measured vs modelled.
     card.append(el("p", "muted est-prov",
       "Measured: filament mass, length and cost come from these STLs' own solid " +
@@ -608,6 +689,28 @@ export function buildEnclosureLab(encData, deviceId) {
         "The layer scrub is a true cross-section of this mesh at 0.2 mm; red = " +
         "faces steeper than 45° that would need support (these parts are " +
         "designed not to). Source: " + ps.source));
+
+      // Take these settings straight to your slicer — a config generated from
+      // the same numbers, so it can't drift from what's shown here.
+      const dlRow = el("div", "est-slice");
+      const cfgBtn = el("button", "est-slice-btn", "⬇ slicer config (.ini)");
+      cfgBtn.addEventListener("click", () => {
+        const ini = slicerConfigIni({ material: lab.shellMaterial });
+        const url = URL.createObjectURL(new Blob([ini], { type: "text/plain" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `securacv-canary-${lab.shellMaterial.toLowerCase()}-${LAYER_MM}mm.ini`;
+        // append + async revoke: Firefox/Safari need the anchor in the DOM and
+        // the object URL alive until the download has actually kicked off.
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+      });
+      dlRow.append(cfgBtn, el("span", "muted est-slice-note",
+        "for PrusaSlicer / OrcaSlicer / SuperSlicer (import as a config). " +
+        "Cura: the numbers above are your setup."));
+      sc.append(dlRow);
       printCtl.append(sc);
     }
   }
@@ -641,8 +744,12 @@ export function buildEnclosureLab(encData, deviceId) {
     else renderShowroom();
     renderLegend();
 
-    // downloads / sources
+    // downloads / sources — the STL is the tool-agnostic handoff: drop it into
+    // any slicer. (The print guide's settings card exports a matching config.)
     const files = el("p", "enclab-files");
+    if (set.parts.some((p) => !p.preview_mesh)) {
+      files.append(el("span", "muted", "Print it — download and drop into any slicer: "));
+    }
     for (const p of set.parts.filter((p) => !p.preview_mesh)) {
       const a = el("a", null, `${p.name}.stl`);
       a.href = ENC_BASE + p.file;

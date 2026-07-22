@@ -112,6 +112,8 @@ lands on **DI COM**.
 | **Light** | I2C | **VEML7700** (0x10, preferred) or BH1750 **strapped to 0x5C** | Live lux; hot-plug |
 | **ToF range** | I2C | **VL53L0X** (0x29) | Live mm + trip threshold (50/100/200/400 mm) with counter — the laser-gap prototype |
 | **Cap touch** | I2C | **MPR121** 12-pad (0x5A) | Electrode bitmap + 4 sensitivity presets for the shell-thickness test |
+| **RS485** | A/B | Modbus RTU device (energy meter, PLC, VFD, HVAC controller, alarm panel) | **PROBE** reads holding register 0 of slave 1 (9600 8N1) and shows the value — the industrial serial bus |
+| **CAN bus** | H/L | CAN 2.0 node (OBD-II/J1939, CANopen gear, gate/barrier controller, telematics) | **SEND FRAME** transmits a test frame (500 kbit/s); received frames are counted + logged |
 | **I2C census** | bus | anything | Live scan every 3 s with reserved-address warnings |
 
 ### Capacitive-touch shell-thickness test (printed coupons)

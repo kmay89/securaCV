@@ -49,6 +49,7 @@ DEVICE_OF = [
 RENDER_PRESETS = {
     "canary_watch_station.scad": ["drum", "bezel", "stand"],
     "canary_dash_display.scad": ["frame", "back", "stand"],
+    "canary_combo.scad": ["back", "front"],
 }
 
 # ── Print guidance (the lab's "how to print it" cards) ───────────────────

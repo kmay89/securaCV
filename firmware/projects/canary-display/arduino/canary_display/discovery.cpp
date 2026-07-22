@@ -15,6 +15,8 @@
 #include "config.h"     // MODEL (CD_MODEL)
 #include "version.h"    // CANARY_FW_VERSION
 #include "log.h"
+#include "fleet_instance.h"  // the_fleet()
+#include "fleet_model.h"     // on_status / on_meta
 #include "device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
 
 namespace canary::net {
@@ -24,7 +26,17 @@ namespace {
 constexpr const char* SVC = "securacv";
 constexpr const char* PROTO = "tcp";
 
+// Untrusted-TXT length ceiling: mirrors resolve_if_mdns_local's 64-char
+// buffer. No sane device_id is 64+ chars; anything longer is a mangled or
+// hostile advert and is rejected outright rather than truncated.
+constexpr size_t TXT_MAX = 64;
+
 bool s_up = false;
+
+// This display's own device_id, captured at discovery_init, so the witness
+// scan can skip our own advert (we advertise role="display" anyway, but the
+// id compare is the belt-and-suspenders self-skip).
+char s_self_id[TXT_MAX] = {0};
 
 void copy_str(char* dst, size_t cap, const char* src) {
   if (!dst || cap == 0) return;
@@ -77,6 +89,9 @@ bool resolve_if_mdns_local(const char* host, char* out, size_t cap) {
 
 bool discovery_init(const char* device_id, const char* device_type,
                     const char* role) {
+  // Remember our own id for the witness-scan self-skip.
+  copy_str(s_self_id, sizeof(s_self_id), device_id);
+
   char hostname[48];
   make_hostname(device_id, hostname, sizeof(hostname));
 
@@ -170,6 +185,45 @@ bool discovery_find_broker(char* host_out, size_t host_cap, uint16_t* port_out) 
 
   log_line("MDNS", "No broker referral on the LAN (fleet quiet, no _mqtt._tcp).");
   return false;
+}
+
+void discovery_scan_witnesses(uint32_t now) {
+  if (!s_up) return;
+
+  // Rate-limit the whole scan: the ESPmDNS query blocks ~3 s, so it must not
+  // run every loop. First call fires immediately (s_next_due == 0), then at
+  // most ~once per 20 s.
+  static uint32_t s_next_due = 0;
+  static bool s_armed = false;
+  if (s_armed && (int32_t)(now - s_next_due) < 0) return;
+  s_armed = true;
+  s_next_due = now + 20000UL;
+
+  auto& fleet = canary::fleet::the_fleet();
+
+  const int n = MDNS.queryService(SVC, PROTO);
+  for (int i = 0; i < n; i++) {
+    // Only real witnesses join the fleet: skip our own kind (display) and any
+    // advert with no role. UNAUTHENTICATED LAN input — every read is bounded.
+    const String role = MDNS.txt(i, "role");
+    if (role.length() != strlen("witness") || role != "witness") continue;
+
+    const String id = MDNS.txt(i, "device_id");
+    const size_t id_len = id.length();
+    if (id_len == 0 || id_len >= TXT_MAX) continue;  // empty or absurd -> drop
+    if (s_self_id[0] && strcmp(id.c_str(), s_self_id) == 0) continue;  // that's us
+
+    const String dt = MDNS.txt(i, "dt");    // device type (e.g. "canary-wap")
+    const String name = MDNS.txt(i, "name");
+
+    // mDNS TXT is unauthenticated: seen + named only, never a trust badge.
+    // battery_soc = -1: mDNS carries no charge state.
+    fleet.on_status(id.c_str(), dt.length() ? dt.c_str() : "",
+                    /*online=*/true, /*battery_soc=*/-1, now);
+    if (name.length() && name.length() < TXT_MAX && name != id) {
+      fleet.on_meta(id.c_str(), name.c_str(), "", now);
+    }
+  }
 }
 
 }  // namespace canary::net

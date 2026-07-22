@@ -77,8 +77,10 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [USB onboarding (design)](design/usb_onboard.md) — "plug me in": consented HID help-launch, read-only drive, guided recovery/unsealing
 - [Serial test console (design)](design/test_console.md) — run tests over serial safely: read-only `t`, tiered demo/mutate gating, the BLE bring-up ladder
 - [Themed serial console (design)](design/serial_console_theming.md) — the `l` identity banner: key fingerprint as drunken-bishop randomart, capability-probed, ASCII-safe by default
+- [Self-* roadmap (design)](design/self_star_roadmap.md) — "plug it in and it proves itself": what shipped (self-manifest `j`, randomart handshake, self-repair) + coming-soon TODOs (fleet map, boot safe-mode / A/B rollback)
 - [Browser flasher](browser_flasher.md) — flash a blank board from Chrome over USB, no toolchain
 - [Secure provisioning](secure_provisioning.md) — how a device earns its keys
+- [Hardware root of trust (design)](design/hardware_root_of_trust.md) — RFC: opt-in Secure Boot / flash encryption / attestation, tiered so the default Canary stays un-brickable
 - [Device settings access](canary_settings_access_validation.md) — who may change what, verified
 - [SD-card health](sd_card_health.md) · [thermal guide](thermal_guide.md)
 - [Flipper Zero as a debug probe](flipper_zero_debug_guide.md)
@@ -95,6 +97,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Log verification](log_verify.md) — proving the chain, offline
 - [Timestamping](timestamping.md) — coarse time as a feature
 - [Sealed snapshot vault](sealed_snapshot_vault.md) · [scheduled exports](scheduled_exports.md)
+- [Vault operator UX & hardware-backed keys (v1.1 design)](design/vault_operator_ux_v1_1.md) — RFC: guided setup/enrollment, a `KeyStore` seam (file default; TPM/PKCS#11/FIDO2), and the request→approve→unseal flow — the crypto's already wired, this scopes the operator experience around it
 - [Database key rotation](db_key_rotation.md) · [post-quantum mode](pqc_mode.md)
 - [Identity & transport](identity_transport.md) — who speaks, on what wire
 - [Failure semantics](failure_semantics.md) — what breaks loudly, and why

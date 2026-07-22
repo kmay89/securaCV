@@ -109,6 +109,65 @@ diagnostics and **never** set the `Verified` trust badge.
 > the central role if a build needs presence-only. The exact bench gate is
 > [`fleet_link_bench_checklist.md`](./fleet_link_bench_checklist.md).
 
+## 3.2 Direct mDNS fleet enumeration — no broker (the WiFi middle path)
+
+Between "MQTT with a broker" (§2/§3, richest) and "direct BLE" (§3.1, no WiFi
+at all) sits a WiFi path that needs **no broker**. Every witness firmware
+(canary-wap / canary / vision / sense) already advertises `_securacv._tcp` with
+identity TXT (`device_id`, `name`, `dt`, `role=witness`; §3). The display now
+**enumerates those adverts directly** (`discovery_scan_witnesses`) and drops
+each Canary into its fleet — real device id, name, and type — with no MQTT
+broker or Home Assistant. It runs **only while the broker is down** (MQTT is the
+richer source when present), self-rate-limits (~20 s; the mDNS query blocks
+~3 s), and — because mDNS TXT is **unauthenticated LAN input** — feeds
+seen+named liveness only, **never the `Verified` badge** (same trust posture as
+the broker gossip). Gated by `FEATURE_MDNS_DISCOVERY`.
+
+Net: plug every Canary into the home WiFi and a display finds them all, three
+ways in order of richness — **MQTT** (with a broker) → **direct mDNS on the LAN**
+(this, no broker) → **direct BLE** (§3.1, no WiFi at all).
+
+## 3.3 Every Canary keeps a fleet roster — mutual "last chirp" awareness
+
+Discovery so far has been display-centric: the glass finds the witnesses. But
+the witnesses now keep track of **each other**, too — not just the display. Every
+Canary maintains its own **fleet roster**: a small table of the OTHER Canaries it
+has heard over the air, keyed by fingerprint suffix, holding each peer's
+**last-heartbeat** (`last_seen`, the "last chirp") plus the most recent status its
+beacon carried — battery %, health %, chain height, and the liveness flags
+(tamper / mic-muted / degraded / on-wifi / alert). Peers age out after 120 s of
+silence (the beacon/chirp cadence), the same window the display and the WAP use.
+
+- **Single source of truth.** The roster logic is one pure, host-tested module,
+  `firmware/common/fleet_link/fleet_roster.h` — a fixed-size POD table with no
+  NimBLE/heap, round-tripped byte-for-byte in `test_fleet_roster.cpp`. Each
+  firmware declares one roster and feeds it from its BLE scan callback; a
+  status-less chirp (which carries no battery/health) refreshes liveness without
+  wiping the last known status.
+- **Who feeds it.** `canary-vision` and `canary-sense` gained an RX twin of their
+  presence beacon (`src/net/fleet_roster_scan.cpp`, `FEATURE_FLEET_ROSTER`): a
+  low-duty passive scan (3 s bursts / 60 s while on WiFi, continuous when fully
+  off-grid) that parses each nearby beacon + chirp into the roster. The modular
+  `canary` reuses its existing Scout passive scan — one scan, two consumers —
+  feeding the same roster (`fleet_roster_feed`, `FEATURE_BLE_SCAN`). The
+  `canary-wap` already ran a nearby-Canary roster; it now also decodes the
+  11-byte presence beacon, so a sibling's battery/health/chain/flags land in
+  `/api/nearby`, not just its presence.
+- **Trust posture.** Identical to the beacon it consumes and the display's
+  chirp/mDNS ingest: **unsigned presence** — liveness and self-reported status,
+  never a verified trust claim. The roster never stores a MAC; peers are keyed by
+  the self-reported fingerprint suffix on the wire.
+
+> **Status: implemented + host-tested; radio behavior hardware-validation
+> pending.** The roster table and beacon/chirp decode are exercised in host
+> tests and every firmware compiles in CI, but the added scan path's on-air
+> behavior and BLE/WiFi coexistence cost on the C3/C6 leaf sensors want a bench
+> smoke-test (and CI's per-board OTA size guard adjudicates the flash cost —
+> `FEATURE_FLEET_ROSTER=0` cleanly disables the scanner per board). Surfacing the
+> roster on each witness's serial/MQTT/API is an additive follow-up; the data is
+> already maintained and queryable in firmware (`fleet_roster_scan_peer_count()`
+> / the WAP's `/api/nearby`).
+
 ## 4. Failure ladder — what breaks, what keeps working, what the user sees
 
 | Scenario | Canaries | Displays | Recovery |

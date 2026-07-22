@@ -409,9 +409,9 @@
      "board": "seeed_grove_vision_ai_v2",
      "seated": {
       "pos": [
-       0,
-       -14.2,
-       12
+       -0.01,
+       -23.71,
+       17.62
       ],
       "rot": [
        0,

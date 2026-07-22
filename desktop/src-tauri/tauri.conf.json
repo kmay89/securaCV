@@ -1,0 +1,66 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SecuraCV Flasher",
+  "version": "0.1.2",
+  "identifier": "com.securacv.flasher",
+  "build": {
+    "frontendDist": "../src",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "SecuraCV Flasher",
+        "width": 940,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "appimage", "deb"],
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/espflash"],
+    "category": "DeveloperTool",
+    "shortDescription": "Flash a SecuraCV Canary — no browser, no terminal.",
+    "longDescription": "The SecuraCV Lab as a native desktop app. Detects your ESP32 Canary over USB-C, downloads the signed factory image from the project's GitHub release, and flashes it with the bundled espflash engine — no Chrome, no Web Serial, no PlatformIO. Backs up nothing you can lose (the ESP32 bootloader is mask ROM, so it can't be bricked) and self-updates from the web.",
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "dmg": {
+        "background": "dmg/background.png",
+        "windowSize": { "width": 660, "height": 460 },
+        "appPosition": { "x": 175, "y": 225 },
+        "applicationFolderPosition": { "x": 485, "y": 225 }
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/kmay89/securaCV/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3NDJCRThGRUVDQ0IzQkIKUldTN3M4enVqNzVDZHpnejBGeE0yQUg3T1RFZ3dBS0x4ckpGUTIyRU9Ea3FyaG9ZSGJXSGhmVTcK"
+    }
+  }
+}
