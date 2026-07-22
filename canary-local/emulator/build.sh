@@ -61,7 +61,8 @@ command -v emcc >/dev/null || {
   exit 1
 }
 EMCC_VERSION="$(emcc --version | head -1)"
-[[ "$EMCC_VERSION" == *" $EMSCRIPTEN_VERSION-git"* ]] || {
+[[ "$EMCC_VERSION" == *" $EMSCRIPTEN_VERSION-git"* ||
+   "$EMCC_VERSION" == *" $EMSCRIPTEN_VERSION ("* ]] || {
   echo "wrong Emscripten version — need $EMSCRIPTEN_VERSION for reproducible dist artifacts" >&2
   echo "found: $EMCC_VERSION" >&2
   exit 1
