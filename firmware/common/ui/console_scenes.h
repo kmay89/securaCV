@@ -55,6 +55,75 @@ inline void draw_canary(const Renderer& r, int inner) {
   }
 }
 
+// Tiny, honest mood theatre for the USB serial monitor. These are not alerts
+// and never identify people; they make every operator-facing state feel tended
+// without changing the facts. The bird's expression is ASCII-only and each
+// scene includes plain guidance so warmth never replaces usability.
+enum class CanaryScene : uint8_t {
+  Setup, Pairing, AllQuiet, SelfTest, Updating, LinkDown, LateWitness,
+  LostWitness, AlarmHandoff, Night,
+};
+
+struct CanarySceneDef {
+  CanaryScene scene;
+  const char* title;
+  const char* face;
+  const char* body;
+  const char* line1;
+  const char* line2;
+  int color;
+};
+
+inline const CanarySceneDef& canary_scene_def(CanaryScene s) {
+  static constexpr CanarySceneDef defs[] = {
+      {CanaryScene::Setup, "Let's find the perch", "(^.^)", "/)_/)",
+       "I will only ask for what I need.", "You stay in charge of setup.", COL_MOSS},
+      {CanaryScene::Pairing, "Making a new friend", "(o.o)", "/)>/)",
+       "Check the code on both screens.", "Two yeses make one trusted flock.", COL_BRAND},
+      {CanaryScene::AllQuiet, "All quiet", "(-.-)", "/)_/)",
+       "Everyone checked in and the chain verifies.", "Nothing needs you right now.", COL_MOSS},
+      {CanaryScene::SelfTest, "Stretching my wings", "(o.o)", "/)>/)",
+       "Running local checks only.", "I will show words, not just colours.", COL_BRAND},
+      {CanaryScene::Updating, "Fresh feathers", "(o.o)", "/)~/)",
+       "Saving a signed update.", "I keep the old copy until this proves out.", COL_BRAND},
+      {CanaryScene::LinkDown, "Listening for home", "(?.?)", "/)_/)",
+       "The hub or Wi-Fi link is quiet.", "Records stay local while I wait.", COL_AMBER},
+      {CanaryScene::LateWitness, "Looking for a flockmate", "(o.?)", "/)_/)",
+       "One witness is late past grace.", "No people, places, or secrets are shown.", COL_AMBER},
+      {CanaryScene::LostWitness, "Calling softly", "(o!)", "/)>/)",
+       "A witness is missing.", "Check power nearby when you have a moment.", COL_AMBER},
+      {CanaryScene::AlarmHandoff, "Instrument panel has the stage", "     ", "     ",
+       "No cute face during a real alarm.", "Read the signed facts above.", COL_TEXT},
+      {CanaryScene::Night, "Nestled for quiet hours", "(-.-)", "/)__)",
+       "Night mode means fewer flourishes.", "Still watching the system, not watching you.", COL_DIM},
+  };
+  for (const auto& d : defs) if (d.scene == s) return d;
+  return defs[0];
+}
+
+inline void draw_canary_pose(const Renderer& r, int inner, const char* face,
+                             const char* body, int color) {
+  char line[128];
+  center_into(line, sizeof line, CANARY_LOGO[0], inner - 2); row(r, inner, color, line);
+  center_into(line, sizeof line, face ? face : CANARY_LOGO[1], inner - 2); row(r, inner, color, line);
+  center_into(line, sizeof line, body ? body : CANARY_LOGO[2], inner - 2); row(r, inner, color, line);
+}
+
+inline void mood_card(const Renderer& r, CanaryScene s, const char* detail) {
+  const int inner = TRUST_INNER;
+  const CanarySceneDef& d = canary_scene_def(s);
+  hrule(r, d.title, inner, 0);
+  draw_canary_pose(r, inner, d.face, d.body, d.color);
+  row_blank(r, inner);
+  row(r, inner, d.color, d.line1);
+  row(r, inner, COL_NONE, d.line2);
+  if (detail && *detail) {
+    row_blank(r, inner);
+    rowf(r, inner, COL_DIM, "Note      %s", detail);
+  }
+  hrule(r, "privacy-safe local scene", inner, 2);
+}
+
 // The title block + verifiable identity, drawn as one framed panel.
 inline void trust_card(const Renderer& r, const TrustInfo& t) {
   const int inner = TRUST_INNER;
