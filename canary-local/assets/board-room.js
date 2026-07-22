@@ -395,9 +395,13 @@ export function buildBoardRoom(mount, boardsData, wiring) {
     const dl = el("a", null, "download .glb");
     dl.href = b.glb; dl.download = room.bid + ".glb";
     links.append(dl, document.createTextNode(" · source: "));
-    const step = el("a", null, "vendor STEP");
-    step.href = GH + b.source_step; step.target = "_blank"; step.rel = "noopener";
-    links.append(step);
+    if (b.source_step) {
+      const step = el("a", null, "vendor STEP");
+      step.href = GH + b.source_step; step.target = "_blank"; step.rel = "noopener";
+      links.append(step);
+    } else {
+      links.append(el("span", null, "procedural model"));  // no vendor CAD
+    }
     if (b.doc) {
       const doc = el("a", null, "vendor docs ↗");
       doc.href = b.doc; doc.target = "_blank"; doc.rel = "noopener";
