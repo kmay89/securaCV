@@ -19,7 +19,7 @@
       "id": "choose", "n": 1, "name": "Choose", "verb": "which Canary",
       "accent": "#f5b301", "icon": "compass",
       "benches": [
-        { "noun": "Meet the fleet", "slug": "fleet", "lab": "index.html#fleet", "real": true, "kind": "firmware", "status": "promote",
+        { "noun": "Meet the fleet", "slug": "fleet", "lab": "fleet.html", "real": true, "kind": "firmware", "status": "promote",
           "desc": "3D cards that boot each device's real firmware behind the glass." },
         { "noun": "Find your Canary", "slug": "choose", "lab": "choose.html", "real": false, "kind": "chooser", "status": "keep",
           "desc": "Four questions → ranked device matches with honest release status." }
