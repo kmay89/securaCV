@@ -171,12 +171,16 @@ Raspberry Pi Imager.
   refuses the system disk / internal fixed disks / too-small / unknown-size
   devices, with human-readable reasons and advisory warnings. No byte-writing code
   exists yet.
-- **Step 2 — enumerate + confirm UI.** Platform disk enumeration (Linux
-  `/sys/block` + which disk backs `/` + external-vs-internal from the transport;
-  then macOS `diskutil` internal/ejectable, Windows), every candidate run through
-  `hub_disk::classify`; a picker that shows eligible cards/SSDs and *why* the rest
-  are hidden, plus an explicit size/model confirm. The external call stays
-  conservative: unproven ⇒ refused.
+- **Step 2 — enumerate + confirm UI.**
+  - *Core (landed):* `hub_enumerate.rs` — pure functions over `/proc/mounts` +
+    `/sys/block` that map a device to its whole disk, find which disk backs `/`
+    (or `/boot`) so it's flagged `system`, and detect external drives from the
+    bus — host-tested, plus a thin read-only Linux `enumerate()`. Smoke-verified
+    against real hardware: the root disk is correctly refused. The external call
+    stays conservative: unproven ⇒ refused.
+  - *Remaining:* macOS (`diskutil` internal/ejectable) + Windows backends; the
+    read-only `list_hub_targets` command; and the picker that shows eligible
+    cards/SSDs, *why* the rest are hidden, and an explicit size/model confirm.
 - **Step 3 — acquire the image.** Read the target board's image URL from
   `hub_image.json`, download the HAOS-based hub image over TLS, verify its hash
   (against HA's published `.sha256` until the `pinned` sha lands), decompress

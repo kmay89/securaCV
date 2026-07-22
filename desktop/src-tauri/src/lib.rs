@@ -34,6 +34,12 @@ use tauri_plugin_updater::UpdaterExt;
 // guarded write build on top of this in follow-up changes; each must run a
 // candidate through `hub_disk::classify` and refuse anything not `Eligible`.
 pub mod hub_disk;
+// Step 2's safety-critical core: turn the OS's raw disk view into classified
+// targets — pure functions over /proc/mounts + /sys/block that identify the
+// system disk (so it's refused) and external SSD/NVMe (so it's offerable),
+// host-tested, plus a thin read-only Linux `enumerate()`. No confirm UI or
+// byte-writing command yet; those follow, still gated on `hub_disk::classify`.
+pub mod hub_enumerate;
 
 // The flasher catalog is baked in at compile time so the app can list every
 // Canary and enforce the chip guard with zero network. build.rs copies the ONE
