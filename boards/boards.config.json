@@ -173,6 +173,46 @@
         { "label": "USB / Ethernet", "pin": "USB-A / RJ45", "gpio": "—", "use": "Power, storage, and the wired network path to the Canaries' broker" },
         { "label": "Power", "pin": "USB-C", "gpio": "5V/5A", "use": "27 W USB-C PD in" }
       ]
+    },
+    {
+      "id": "waveshare_4_3b",
+      "devices": ["canary-display-dash"],
+      "name": "Waveshare ESP32-S3-Touch-LCD-4.3B",
+      "vendor": "Waveshare",
+      "mpn": "ESP32-S3-Touch-LCD-4.3B",
+      "source": "procedural",
+      "builder": "waveshare_4_3b",
+      "provenance": "Reverse-engineered DIMENSIONAL MODEL — not vendor CAD (Waveshare publishes no STEP for this board). Built procedurally by tools/gen_boards.py (build_waveshare_4_3b): a rounded ABS shell with a boolean-cut screen pocket and edge I/O, a glossy off 4.3in IPS panel, and the green 16-position pluggable terminal. Proportions and the exposed-feature layout follow MaffooClock's published shell for the 5in sibling (ESP32-S3-Touch-LCD-5/5B, CC-BY-NC-SA) used as a DIMENSIONAL REFERENCE ONLY — no third-party mesh is copied or redistributed — scaled to the 4.3B and cross-checked against firmware/boards/waveshare-esp32s3-lcd43b and the owner's photos. The terminal pitch (3.81 mm), silk order and group labels are exact to the firmware silk; the case and screen are measured approximations. Honest about what it is, like the Round Display's geometry-assigned materials.",
+      "doc": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4.3B",
+      "materials": "procedural",
+      "pose": { "rx": -0.3, "ry": 0.06, "dist_factor": 1.9 },
+      "blurb": "4.3\" 800x480 IPS touch panel in a boxed ESP32-S3 with a field-wiring terminal block — no raw GPIO is broken out, so every wire lands on an isolated, buffered or bused interface (isolated DI/DO, RS485, CAN, an I2C sensor header, 6-36 V in). That is what makes it the Canary Dash / dev-playground host. This is a reverse-engineered dimensional model (no vendor CAD); the 16-terminal block matches the firmware silk exactly.",
+      "pads": {
+        "_comment": "The 16 screw terminals laid down by build_waveshare_4_3b at 3.81 mm pitch on the REAR (−Y) face near the bottom (−Z) edge — opposite the screen, as on the real board — the same geometry the anchors below read from. Order is the rear silk, VIN end (−X) to DI1 end (+X); CAN is L,H and RS485 is B,A per firmware/boards/waveshare-esp32s3-lcd43b. The three grounds are group-qualified (the Isolated I/O side is opto-isolated, NOT common with the 6-36 V or I2C ground) so wiring targets stay unambiguous.",
+        "VIN": [-28.575, -13.0, -25.9],
+        "GND-pwr": [-24.765, -13.0, -25.9],
+        "VOUT": [-20.955, -13.0, -25.9],
+        "GND-i2c": [-17.145, -13.0, -25.9],
+        "SDA": [-13.335, -13.0, -25.9],
+        "SCL": [-9.525, -13.0, -25.9],
+        "L": [-5.715, -13.0, -25.9],
+        "H": [-1.905, -13.0, -25.9],
+        "B": [1.905, -13.0, -25.9],
+        "A": [5.715, -13.0, -25.9],
+        "DO0": [9.525, -13.0, -25.9],
+        "DO1": [13.335, -13.0, -25.9],
+        "DI COM": [17.145, -13.0, -25.9],
+        "GND-io": [20.955, -13.0, -25.9],
+        "DI0": [24.765, -13.0, -25.9],
+        "DI1": [28.575, -13.0, -25.9]
+      },
+      "pinout": [
+        { "label": "6-36 V power in", "pin": "VIN / GND-pwr", "gpio": "isolated DC", "use": "Terminal supply, board silk “6~36V” (product page says 7-36 V — stay ≥7 V). Or power over USB-C.", "anchors": [[-28.575, -13.0, -25.9], [-24.765, -13.0, -25.9]] },
+        { "label": "I2C sensor header", "pin": "VOUT / GND-i2c / SDA / SCL", "gpio": "GPIO8/9", "use": "The dev-playground sensor port — shares the GT911 touch + CH422G expander bus; VOUT is 5 V or 3V3 by resistor option (default 5 V).", "anchors": [[-20.955, -13.0, -25.9], [-17.145, -13.0, -25.9], [-13.335, -13.0, -25.9], [-9.525, -13.0, -25.9]] },
+        { "label": "CAN", "pin": "H / L", "gpio": "GPIO15/16", "use": "Dedicated TWAI transceiver; jumper-selectable 120Ω terminator.", "anchors": [[-1.905, -13.0, -25.9], [-5.715, -13.0, -25.9]] },
+        { "label": "RS485", "pin": "A / B", "gpio": "GPIO43/44", "use": "Auto-direction — shares the CH343 UART console pins, so logging and RS485 are mutually exclusive.", "anchors": [[5.715, -13.0, -25.9], [1.905, -13.0, -25.9]] },
+        { "label": "Isolated I/O", "pin": "DO0 / DO1 / DI COM / GND-io / DI0 / DI1", "gpio": "CH422G", "use": "Optocoupled: DO0/DO1 open-drain sink ≤450 mA (external supply); DI0/DI1 read 5-36 V referenced to DI COM, never board GND.", "anchors": [[9.525, -13.0, -25.9], [13.335, -13.0, -25.9], [17.145, -13.0, -25.9], [20.955, -13.0, -25.9], [24.765, -13.0, -25.9], [28.575, -13.0, -25.9]] }
+      ]
     }
   ]
 }

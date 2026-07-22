@@ -298,8 +298,8 @@ rule, one tier deeper:
 
 | Stage | What | Where |
 |---|---|---|
-| Source | vendor STEP (open-hardware CAD) | `boards/vendor/*.step` (+ provenance README) |
-| Generate | STEP → committed GLB (cascadio), mount parts filtered, materials baked | `canary-local/tools/gen_boards.py` ← `boards/boards.config.json` |
+| Source | vendor STEP (open-hardware CAD), or a procedural builder for boards with no vendor CAD | `boards/vendor/*.step` (+ provenance README) |
+| Generate | STEP → committed GLB (cascadio) or code → GLB (procedural), mount parts filtered, materials baked | `canary-local/tools/gen_boards.py` ← `boards/boards.config.json` |
 | Artifact | committed mesh the page loads | `canary-local/boards/*.glb` |
 | Facts | dims · triangles · materials · pinout · provenance | `canary-local/devices/boards.json` |
 | Loader | GLB → scene3d parts, ~180 lines, zero deps | `canary-local/assets/glb.js` |
@@ -314,10 +314,16 @@ outputs with node only. Committed GLBs are not byte-drift-gated (tessellation
 varies by cascadio build, exactly as preview STLs vary by openscad build); the
 JSON is.
 
-Boards today: XIAO ESP32-S3 Sense (WAP), Grove Vision AI V2 (Vision), Round
-Display for XIAO (Watch). Boards without vendor CAD — e.g. the Waveshare
-4.3B-BOX — will land as dimensional models reverse-engineered from the datasheet
-+ photographs, clearly labelled as such.
+Boards today: the XIAO ESP32-S3 Sense + L76K GNSS (WAP), the plain XIAO
+ESP32-S3 and Round Display for XIAO (Watch), Grove Vision AI V2 (Vision), the
+Raspberry Pi 5 (the Home Assistant hub — Board Room only, no device tab), and
+the Waveshare ESP32-S3-Touch-LCD-4.3B (Dash). The Waveshare has no vendor CAD,
+so it lands as a **dimensional model reverse-engineered** — built procedurally by
+`gen_boards.py` (rounded shell + boolean-cut screen/IO via `shapely`+`manifold3d`),
+its proportions taken from a published community shell for the 5″ sibling used as
+a dimensional reference only (attributed, not redistributed — see
+`boards/vendor/README.md`) and its terminal silk from the firmware board notes.
+Clearly labelled as such in its provenance and the viewer ribbon (see §4g).
 
 ## 4e. The Assemble tab: the build, from the real parts
 
