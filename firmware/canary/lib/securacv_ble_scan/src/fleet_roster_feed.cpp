@@ -93,6 +93,15 @@ int peer_count() {
 
 uint32_t seen() { return s_seen; }
 
+int snapshot(FleetRosterEntry* out, int max) {
+  if (!s_inited || !out || max <= 0) return 0;
+  int n = 0;
+  for (int i = 0; i < FLEET_ROSTER_MAX && n < max; ++i) {
+    if (s_roster.entries[i].used) out[n++] = s_roster.entries[i];
+  }
+  return n;
+}
+
 }  // namespace fleet_roster_feed
 
 #endif  // FEATURE_BLE_SCAN
