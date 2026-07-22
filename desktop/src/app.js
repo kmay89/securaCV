@@ -348,6 +348,7 @@ function hideHatchCard() {
 
 function showHatchCard(product) {
   const moment = hatchMoment(product);
+  $("hatch-card").querySelector(".hatch-kicker").textContent = moment.kicker || "Canary hatched";
   $("hatch-title").textContent = moment.title;
   $("hatch-body").textContent = moment.body;
   const steps = $("hatch-steps");
@@ -361,9 +362,14 @@ function showHatchCard(product) {
 }
 
 function hatchMoment(product) {
+  if (product && product.hatch && Array.isArray(product.hatch.steps)) {
+    return product.hatch;
+  }
+
   const id = product && product.id;
   if (id && id.includes("vision")) {
     return {
+      kicker: "Canary hatched",
       title: "Your Vision Canary is waking up.",
       body: "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
       steps: [
@@ -375,6 +381,7 @@ function hatchMoment(product) {
   }
   if (id && id.includes("sense")) {
     return {
+      kicker: "Canary hatched",
       title: "Your Sense Canary is listening with radar.",
       body: "The first satisfying test is motion in empty air: no camera, no mic, just the mmWave witness waking up.",
       steps: [
@@ -385,6 +392,7 @@ function hatchMoment(product) {
     };
   }
   return {
+    kicker: "Canary hatched",
     title: "Your Canary is on its perch.",
     body: "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
     steps: [
