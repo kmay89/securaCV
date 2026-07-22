@@ -33,9 +33,9 @@
   },
   "card_requirements": {
     "min_bytes": 30064771072,
-    "min_source": "desktop/src-tauri/src/hub_disk.rs:MIN_TARGET_BYTES",
+    "min_source": "desktop/hub-core/src/hub_disk.rs:MIN_TARGET_BYTES",
     "recommended_bytes": 68719476736,
-    "recommended_source": "desktop/src-tauri/src/hub_disk.rs:RECOMMENDED_TARGET_BYTES",
+    "recommended_source": "desktop/hub-core/src/hub_disk.rs:RECOMMENDED_TARGET_BYTES",
     "human_minimum": "32 GB+",
     "human_minimum_source": "canary-local/devices/homeassistant.json:hardware (microSD card)",
     "note": "The exact byte floor is the flasher's safety gate; the human minimum is the supported hardware. A 32 GB card (~29.7 GiB) clears the floor; 16 GB and below are refused."
@@ -145,7 +145,7 @@
     "upstream_fetched_at": "2026-07-19",
     "sources": [
       "canary-local/devices/homeassistant.json",
-      "desktop/src-tauri/src/hub_disk.rs",
+      "desktop/hub-core/src/hub_disk.rs",
       "privacy_witness_kernel/config.yaml",
       "homeassistant/lovelace/*.yaml",
       "homeassistant/automations/*.yaml",

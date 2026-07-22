@@ -21,6 +21,11 @@ on:
       - 'desktop/hub-core/**'
       - '.github/workflows/desktop-hub-core.yml'
 
+# Read-only token: this workflow only checks out and runs cargo — it needs
+# nothing else. (CodeQL flags workflows that don't pin GITHUB_TOKEN scope.)
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
