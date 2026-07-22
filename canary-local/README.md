@@ -18,6 +18,7 @@ canary-local/
   senselab.html         "The Sense Lab" — the radar pipeline dev bench (§4l)
   vision.html           "The Vision — first watch" — model load, aim card, tuning (§4k)
   vault.html            "The Vault" — sealed evidence + break-glass by quorum (§4j)
+  operator.html         "The Operator's Bench" — set up break-glass, then rehearse it (§4j·2)
   assets/
     app.js              card gallery + device sheets + guide player
     start.js            the Get Started driver (copy-gate policy + deep links, DOM-free core tested)
@@ -562,6 +563,46 @@ real 2-of-3 with all the guardrails.
 | Generated data | `canary-local/devices/vault.json` |
 | Generator | `canary-local/tools/gen_vault.py` |
 | Honesty gates | `tests/vault.test.js` + `tests/vault_probe.mjs` |
+
+## 4j·2. The Operator's Bench: set up break-glass (`operator.html`)
+
+The Vault teaches what a vault, a seal and a quorum *are*; **The Operator's Bench
+teaches how you stand one up** — the four commands that just shipped in
+`src/break_glass/cli.rs`: `init` → `trustee enroll` → `drill` → `doctor`. It's the
+"from zero to a rehearsed quorum" companion.
+
+- **The four commands** as cards — what each does, its flags, straight from the CLI.
+- **The setup ceremony** is the interactive centrepiece: step through
+  `init 2-of-3` → enroll three trustees (import a key, or *mint* one written
+  `0600`) → `drill` → `doctor`, and watch a live "vault state" panel track the
+  code's real behaviour — the committed policy stays a **draft** below the
+  threshold, goes **live as 2-of-2** the instant it's valid, then **strengthens to
+  2-of-3**. The terminal output is the real binary's, recorded.
+- **What `doctor` checks** and **what `drill` rehearses** (a throwaway sandbox that
+  burns a single-use token) — spelled out, honest about the plaintext-key warning.
+
+Anti-rot, same rule as everything here:
+
+| Fact on the page | Source of truth |
+|---|---|
+| The four commands, their flags, the draft-state store, every recorded message | `src/break_glass/cli.rs` |
+| `MAX_TRUSTEES`, the empty-roster rejection, the `distinct ≥ n` grant rule | `src/break_glass/core.rs` |
+| The guided-setup narrative | `docs/operator_guide.md`, `docs/design/vault_operator_ux_v1_1.md` |
+
+`tools/gen_operator.py` regenerates `devices/operator.json` and `sys.exit`s if any
+command, flag or message moved; the drift gate re-runs it and `git diff
+--exit-code`s. `tests/operator.test.js` re-derives the honesty (the CLI surface and
+the load-bearing messages must still exist in source, and the ceremony's policy
+transitions are checked); `tests/operator_probe.mjs` drives the page in headless
+Chromium — the whole ceremony, confirming the policy goes draft → live 2-of-2 →
+2-of-3 and the drill/doctor output renders.
+
+| Piece | File |
+|---|---|
+| The page | `canary-local/operator.html` + `assets/operator.js` |
+| Generated data | `canary-local/devices/operator.json` |
+| Generator | `canary-local/tools/gen_operator.py` |
+| Honesty gates | `tests/operator.test.js` + `tests/operator_probe.mjs` |
 
 ## 4k. The Vision: first watch (`vision.html`)
 

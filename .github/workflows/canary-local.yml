@@ -104,6 +104,7 @@ jobs:
           node --test canary-local/tests/sense.test.js
           node --test canary-local/tests/senselab.test.js
           node --test canary-local/tests/vault.test.js
+          node --test canary-local/tests/operator.test.js
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
           node --test canary-local/tests/flash.test.js
@@ -162,6 +163,13 @@ jobs:
           python3 canary-local/tools/gen_vault.py
           if ! git diff --exit-code -- canary-local/devices/vault.json; then
             echo "::error::generated Vault data stale — run canary-local/tools/gen_vault.py and commit (the code moved)"
+            exit 1
+          fi
+      - name: Operator data drift (parsed from the break-glass operator CLI)
+        run: |
+          python3 canary-local/tools/gen_operator.py
+          if ! git diff --exit-code -- canary-local/devices/operator.json; then
+            echo "::error::generated Operator data stale — run canary-local/tools/gen_operator.py and commit (src/break_glass/cli.rs moved)"
             exit 1
           fi
       - name: Playground data drift (parsed from the Waveshare 4.3B pins.h + playground firmware)
@@ -246,6 +254,8 @@ jobs:
         run: node canary-local/tests/senselab_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs
+      - name: Operator probe — setup ceremony (draft → live quorum), drill + doctor
+        run: node canary-local/tests/operator_probe.mjs
       - name: Kiri probe — print estimate + watch-it-print + slice bridge (fail-closed)
         run: node canary-local/tests/kiri_slice_probe.mjs
       - name: Build both flavors from THIS tree
