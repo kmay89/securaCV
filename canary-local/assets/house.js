@@ -584,7 +584,7 @@ function renderDetails(p) {
   const a1 = html("a", "primary small door", "find this one in the chooser →");
   a1.href = "choose.html" + chooserHash(p.answers);
   const a2 = html("a", "door", "meet it live →");
-  a2.href = `index.html#${info.device}`;
+  a2.href = `fleet.html#${info.device}`;
   const a3 = html("a", "door", "spec it →");
   a3.href = `workshop.html#${info.device}`;
   const a4 = html("a", "door", "enclosure (.scad)");

@@ -98,7 +98,7 @@ function render() {
     }
     const doors = el("p", "match-doors");
     const meet = el("a", "primary small door", "meet it live →");
-    meet.href = `index.html#${c.device}`;
+    meet.href = `fleet.html#${c.device}`;
     doors.append(meet);
     const spec = el("a", "door", "spec it in the Workshop →");
     spec.href = `workshop.html#${c.device}`;
@@ -140,7 +140,7 @@ function render() {
     card.append(el("h3", null, "…and give the fleet a face"));
     card.append(el("p", "body", `Every household above pairs naturally with a display: ${comp.why}.`));
     const meet = el("a", "primary small door", "meet the display →");
-    meet.href = `index.html#${comp.device}`;
+    meet.href = `fleet.html#${comp.device}`;
     card.append(meet);
     results.append(card);
   }

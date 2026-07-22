@@ -741,7 +741,7 @@ function renderChecklist(box) {
   }
   const explorer = el("p", "muted fineprint");
   const a = el("a", null, "every dimension, in the parameter explorer →");
-  a.href = `index.html#${state.dev}`;
+  a.href = `fleet.html#${state.dev}`;
   explorer.append(a);
   box.append(explorer);
 }
@@ -812,7 +812,7 @@ function renderPrint(root) {
     "land well under it. For the layer-by-layer view, open the print bench " +
     "on the device sheet.");
   const link = el("a", null, "open the print bench →");
-  link.href = `index.html#${state.dev}`;
+  link.href = `fleet.html#${state.dev}`;
   note.append(" ", link);
   root.append(note);
 }
@@ -990,7 +990,7 @@ function renderFlash(root) {
   if (state.dev.startsWith("canary-display")) {
     const p = el("p", "ondevice");
     const a2 = el("a", null, "practice on the live emulator →");
-    a2.href = `index.html#${state.dev}`;
+    a2.href = `fleet.html#${state.dev}`;
     p.append(el("strong", null, "Before it even ships: "),
       document.createTextNode("this device's real firmware runs in your browser — pair it, poke it, cut its network. "), a2);
     root.append(p);
@@ -1045,7 +1045,7 @@ function renderBuildCard(root) {
     "hardware ships from. When the printed parts are in your hand, the " +
     "device sheet walks pairing and fixing.");
   const a = el("a", null, `open ${reg?.name || "the device"} on canary.local →`);
-  a.href = `index.html#${state.dev}`;
+  a.href = `fleet.html#${state.dev}`;
   next.append(" ", a);
   root.append(next);
 }
