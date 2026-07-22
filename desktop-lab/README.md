@@ -6,6 +6,11 @@ It runs the real firmware emulator, 3D device cards, and fix-it flows
 entirely on your machine — **nothing phones home**, which is exactly the
 point of a security product.
 
+> **Sibling app.** [`../desktop`](../desktop) is the **SecuraCV Flasher** — a
+> focused native tool that flashes a Canary over USB with bundled `espflash`
+> (no browser, no Web Serial). This app is the broader one: the **whole Lab**
+> in a native window. They're complementary and ship as separate installers.
+
 ## Why native (and why Tauri)
 
 The Lab is already local-first web + WebAssembly, so wrapping it is natural.
@@ -28,7 +33,7 @@ The **capability layer** is the seam: in the browser it maps to WebSerial /
 ## Layout
 
 ```
-desktop/
+desktop-lab/
   package.json                 @tauri-apps/cli
   src-tauri/
     tauri.conf.json            frontendDist -> ../../canary-local (bundled as-is)
@@ -45,7 +50,7 @@ The frontend is **not built** — `canary-local/` is a static, committed bundle
 ## Develop
 
 ```bash
-cd desktop
+cd desktop-lab
 npm install
 npm run dev      # opens the Lab in a native window
 ```
@@ -60,7 +65,7 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
 ## Build installers
 
 ```bash
-cd desktop
+cd desktop-lab
 npm run build
 # → src-tauri/target/release/bundle/{dmg,macos,appimage,deb}/…
 ```
