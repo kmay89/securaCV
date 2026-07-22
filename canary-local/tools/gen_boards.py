@@ -129,12 +129,15 @@ def bake_raspberry_pi(scene):
 # not copied or redistributed) scaled to the 4.3B, cross-checked against
 # firmware/boards/waveshare-esp32s3-lcd43b and the owner's photos.
 #
-# Frame: X = width (long edge), Y = thickness (rear y=0 → front/screen at y=+TH),
-# Z = height (short edge). The terminal band runs along the +Z long edge so the
-# money pose (screen toward camera) drops it to the bottom, flags clear of glass.
+# Frame: X = width (long edge), Y = thickness (front/screen at y=+TH → rear/IO at
+# y=0). Z = height (short edge). The screen and the terminal are on OPPOSITE
+# faces (as on the real board): the glass fills the front (+Y); the green
+# terminal block and its screws sit on the REAR (−Y), where the field wiring
+# exits, near the bottom (−Z) edge. So the Board Room's default pose looks at the
+# rear (the pin side), and orbiting reveals the screen.
 WS43B_W, WS43B_HT, WS43B_TH = 118.0, 79.0, 25.0   # width, height, thickness (mm)
 WS43B_PITCH = 3.81                                # terminal pitch (silk-exact)
-WS43B_TZ = WS43B_HT / 2 - 9.0                     # terminal band centre, Z (mm)
+WS43B_TZ = -WS43B_HT / 2 + 11.0                   # terminal band centre, Z (rear, near bottom)
 
 # The 16 terminals in rear-silk order along +X (VIN end → DI1 end), transcribed
 # from firmware/boards/waveshare-esp32s3-lcd43b/README.md ("top to bottom, per
@@ -160,7 +163,7 @@ def ws43b_anchors():
     """The 16 terminal anchors (raw model mm) on the screw row — boards.json's
     pads map and pinout anchors read from the same geometry the builder lays
     down, so a flag can never point at empty space."""
-    return {name: [round(_ws43b_term_x(i), 3), 26.5, round(WS43B_TZ + 2.6, 3)]
+    return {name: [round(_ws43b_term_x(i), 3), -13.0, round(WS43B_TZ + 2.6, 3)]
             for i, (name, _grp) in enumerate(WS43B_TERMS)}
 
 
@@ -186,8 +189,9 @@ def build_waveshare_4_3b():
     """Reverse-engineered DIMENSIONAL MODEL of the Waveshare
     ESP32-S3-Touch-LCD-4.3B(-BOX) — NOT vendor CAD. A rounded charcoal ABS shell
     (boolean-cut for the recessed 4.3" glass and the edge I/O), a glossy off IPS
-    panel, the green 16-way pluggable terminal (pitch/order/labels exact to the
-    firmware silk), TF + dual USB-C + BOOT/RESET on one short edge, three status
+    panel on the front, the green 16-way pluggable terminal on the REAR
+    (pitch/order/labels exact to the firmware silk — opposite the screen, as on
+    the real board), TF + dual USB-C + BOOT/RESET on one short edge, three status
     LEDs + a power slide on the other, and rear mounting bosses. See the module
     header for the reference + honesty note."""
     W, HT, TH, TZ = WS43B_W, WS43B_HT, WS43B_TH, WS43B_TZ
@@ -216,7 +220,7 @@ def build_waveshare_4_3b():
     cham.apply_transform(rotation_matrix(np.radians(45), [1, 0, 0]))
     cham.apply_translation([0, TH + 2.0, HT / 2 + 2.0])
     body = body.difference(cham, engine="manifold")
-    GW, GH, GZ = 105.0, 55.0, -7.0                               # 4.3" glass, nudged up
+    GW, GH, GZ = 105.0, 58.0, 0.0                                # 4.3" glass, centred on the front
     pocket = _ws43b_prism_y(_ws43b_rrect(GW + 3, GH + 3, 3.0, 5), TH - 2.0, TH + 1)
     pocket.apply_translation([0, 0, GZ]); body = body.difference(pocket, engine="manifold")
     holes = [([6, 13.0, 4.2], [W/2 - 1, TH/2, 15]),              # TF slot (+X edge)
@@ -238,15 +242,17 @@ def build_waveshare_4_3b():
     glass = _ws43b_prism_y(_ws43b_rrect(GW, GH, 2.4, 5), TH - 1.6, TH - 0.35)
     glass.apply_translation([0, 0, GZ]); add(glass, GLASS)
 
-    # ── green 16-way pluggable terminal along the +Z long edge (front band) ──
+    # ── green 16-way pluggable terminal on the REAR face (−Y), near the bottom
+    #    (−Z) edge — opposite the screen, where the field wiring exits the back.
+    #    The block protrudes −Y; screws + wire mouths face −Y. ──
     blkw = (len(WS43B_TERMS) - 1) * WS43B_PITCH + WS43B_PITCH + 3.0
-    block = _ws43b_prism_y(_ws43b_rrect(blkw, 13.5, 1.2, 3), TH - 12.0, TH + 1.5)
+    block = _ws43b_prism_y(_ws43b_rrect(blkw, 14.0, 1.2, 3), -12.0, 2.0)
     block.apply_translation([0, 0, TZ]); add(block, GREEN)
     for i in range(len(WS43B_TERMS)):
         x = _ws43b_term_x(i)
-        box([WS43B_PITCH - 0.5, 3.0, 6.0], [x, TH + 0.4, TZ - 2.4], BEZEL)  # wire mouth
-        cyl(0.95, 2.6, [x, TH + 1.2, TZ + 2.6], GOLD, axis="y", n=16)       # screw head
-    box([blkw - 2, 0.6, 2.2], [0, TH + 0.9, TZ - 6.2], BEZEL)              # silk strip
+        box([WS43B_PITCH - 0.6, 2.2, 3.2], [x, -11.4, TZ - 3.0], BEZEL)  # wire-entry mouth
+        cyl(0.95, 2.6, [x, -12.6, TZ + 2.6], GOLD, axis="y", n=16)       # screw head, faces −Y
+    box([blkw - 2, 2.0, 0.6], [0, -11.4, TZ + 6.4], BEZEL)              # silk strip
 
     # ── I/O shells recessed in the +X edge holes ──
     box([2.4, 12.0, 3.4], [W/2 - 2.4, TH/2, 15], SILVER)   # TF card shell
@@ -257,8 +263,13 @@ def build_waveshare_4_3b():
         cyl(1.0, 1.6, [-W/2 + 1.6, TH/2, z], col, axis="x", n=16)
     box([2.2, 4.0, 4.2], [-W/2 + 1.8, TH/2, -12], SILVER)  # switch actuator
 
-    # ── two rear mounting bosses flanking the terminal ──
+    # ── two rear mounting bosses (top corners of the rear) ──
     for x in (-46, 46): cyl(3.0, 1.4, [x, 0.7, HT/2 - 12], BEZEL, axis="y", n=20)
+    # ── stylised rear product label (the real unit carries a sticker here) —
+    #    a plain rounded rectangle, no fabricated text/serial/barcode ──
+    STICKER = (0.70, 0.70, 0.67)
+    lbl = _ws43b_prism_y(_ws43b_rrect(46, 26, 2.0, 4), -0.6, 0.2)
+    lbl.apply_translation([0, 0, 6.0]); add(lbl, STICKER)
 
     out = trimesh.Scene()
     for colour, geoms in buckets.items():

@@ -1020,11 +1020,11 @@
    "glb": "boards/waveshare_4_3b.glb",
    "dims_mm": [
     118,
-    27.5,
+    38.9,
     79
    ],
-   "triangles": 2356,
-   "parts": 10,
+   "triangles": 2432,
+   "parts": 11,
    "materials": [
     {
      "color": "#d4ab45",
@@ -1045,6 +1045,10 @@
     {
      "color": "#0f131a",
      "triangles": 92
+    },
+    {
+     "color": "#b2b2ab",
+     "triangles": 76
     },
     {
      "color": "#47b857",
@@ -1068,91 +1072,91 @@
     }
    ],
    "pose": {
-    "rx": 0.34,
-    "ry": 0.07,
-    "dist_factor": 2.05
+    "rx": -0.3,
+    "ry": 0.06,
+    "dist_factor": 1.9
    },
    "pads": {
-    "_comment": "The 16 screw terminals laid down by build_waveshare_4_3b at 3.81 mm pitch along the +Z long-edge terminal band \u2014 the same geometry the anchors below read from. Order is the rear silk, VIN end (\u2212X) to DI1 end (+X); CAN is L,H and RS485 is B,A per firmware/boards/waveshare-esp32s3-lcd43b. The three grounds are group-qualified (the Isolated I/O side is opto-isolated, NOT common with the 6-36 V or I2C ground) so wiring targets stay unambiguous.",
+    "_comment": "The 16 screw terminals laid down by build_waveshare_4_3b at 3.81 mm pitch on the REAR (\u2212Y) face near the bottom (\u2212Z) edge \u2014 opposite the screen, as on the real board \u2014 the same geometry the anchors below read from. Order is the rear silk, VIN end (\u2212X) to DI1 end (+X); CAN is L,H and RS485 is B,A per firmware/boards/waveshare-esp32s3-lcd43b. The three grounds are group-qualified (the Isolated I/O side is opto-isolated, NOT common with the 6-36 V or I2C ground) so wiring targets stay unambiguous.",
     "VIN": [
      -28.575,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "GND-pwr": [
      -24.765,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "VOUT": [
      -20.955,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "GND-i2c": [
      -17.145,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "SDA": [
      -13.335,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "SCL": [
      -9.525,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "L": [
      -5.715,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "H": [
      -1.905,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "B": [
      1.905,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "A": [
      5.715,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "DO0": [
      9.525,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "DO1": [
      13.335,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "DI COM": [
      17.145,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "GND-io": [
      20.955,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "DI0": [
      24.765,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ],
     "DI1": [
      28.575,
-     26.5,
-     33.1
+     -13.0,
+     -25.9
     ]
    },
    "pinout": [
@@ -1164,13 +1168,13 @@
      "anchors": [
       [
        -28.575,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        -24.765,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ]
      ]
     },
@@ -1182,23 +1186,23 @@
      "anchors": [
       [
        -20.955,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        -17.145,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        -13.335,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        -9.525,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ]
      ]
     },
@@ -1210,13 +1214,13 @@
      "anchors": [
       [
        -1.905,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        -5.715,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ]
      ]
     },
@@ -1228,13 +1232,13 @@
      "anchors": [
       [
        5.715,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        1.905,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ]
      ]
     },
@@ -1246,33 +1250,33 @@
      "anchors": [
       [
        9.525,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        13.335,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        17.145,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        20.955,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        24.765,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ],
       [
        28.575,
-       26.5,
-       33.1
+       -13.0,
+       -25.9
       ]
      ]
     }
