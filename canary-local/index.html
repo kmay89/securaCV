@@ -3,72 +3,32 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>canary.local — meet your Canary</title>
-  <meta name="description" content="The Canary family's local guide: live firmware emulators, 3D device cards, and fix-it flows. Works offline; nothing phones anywhere." />
-  <link rel="stylesheet" href="assets/canary-local.css" />
+  <title>canary.local — the Lab</title>
+  <meta name="description" content="The SecuraCV Lab — meet your Canary before you meet your Canary. Works offline; nothing phones anywhere." />
+  <link rel="canonical" href="lab.html" />
+  <!-- The Lab's front door is now the adaptive shell (lab.html): the isometric
+       workshop as Overview, the six-stage build line around it. Redirect there. -->
+  <meta http-equiv="refresh" content="0; url=lab.html" />
+  <script>
+    // Device deep-links (index.html#<device-id>) historically opened a card
+    // sheet on this page; that page is now fleet.html, so forward a simple id
+    // hash there. Everything else goes to the shell. The hash is validated
+    // against a strict pattern, so only a bare id is ever appended to a fixed
+    // same-page path — no untrusted value controls the destination.
+    (function () {
+      var h = location.hash;
+      if (h && /^#[\w-]+$/.test(h)) location.replace("fleet.html" + h);
+      else location.replace("lab.html");
+    })();
+  </script>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,system-ui,"Inter",sans-serif;margin:0;
+      display:grid;place-items:center;min-height:100vh;background:#fafaf9;color:#52525b;letter-spacing:-.01em;}
+    a{color:#2563eb;font-weight:600;text-decoration:none;}
+    p{font-size:15px;}
+  </style>
 </head>
 <body>
-  <header id="hero">
-    <div class="mark" aria-hidden="true">
-      <!-- the canary mark, in the firmware's own palette -->
-      <svg viewBox="0 0 64 64" width="52" height="52">
-        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
-        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
-        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
-        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
-        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
-        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
-      </svg>
-    </div>
-    <h1>canary<span class="dot">.</span>local</h1>
-    <p class="lede">
-      Meet your Canary before you meet your Canary. Every card below is the
-      real device — and the displays run their <em>actual firmware</em>,
-      verifying real signatures.
-    </p>
-    <p class="lede-sub">
-      Learn it, break it, fix it here — then set up the one on your desk right
-      the first time.
-    </p>
-    <nav class="cta-row" aria-label="Explore canary.local">
-      <a class="cta" href="start.html">Get started <span class="cta-hint">pick your path</span></a>
-      <a class="cta" href="flash.html">Flash a Canary <span class="cta-hint">in your browser, over USB</span></a>
-      <a class="cta" href="choose.html">Find your Canary <span class="cta-hint">not sure which one?</span></a>
-      <a class="cta alt" href="house.html">The Canary House <span class="cta-hint">see a home witnessed</span></a>
-      <a class="cta alt" href="scenes.html">The Scenes <span class="cta-hint">one witness, up close</span></a>
-      <a class="cta alt" href="workshop.html">The Workshop <span class="cta-hint">spec your build</span></a>
-      <a class="cta alt" href="boards.html">The Board Room <span class="cta-hint">meet the boards</span></a>
-      <a class="cta alt" href="homeassistant.html">The Hub <span class="cta-hint">give them a home</span></a>
-      <a class="cta alt" href="wap.html">The WAP — first boot <span class="cta-hint">set one up from scratch</span></a>
-      <a class="cta alt" href="vision.html">The Vision — first watch <span class="cta-hint">the camera that keeps its pixels</span></a>
-      <a class="cta alt" href="sense.html">The Sense — radar school <span class="cta-hint">60 GHz placement &amp; tuning</span></a>
-      <a class="cta alt" href="senselab.html">The Sense Lab <span class="cta-hint">the radar pipeline, on the bench</span></a>
-      <a class="cta alt" href="vault.html">The Vault <span class="cta-hint">sealed evidence · break-glass</span></a>
-      <a class="cta alt" href="operator.html">The Operator's Bench <span class="cta-hint">set up break-glass, then rehearse it</span></a>
-    </nav>
-    <p class="fineprint">
-      <span id="fw-train">firmware train</span> · works offline · nothing here phones anywhere
-    </p>
-  </header>
-
-  <main>
-    <div id="cards" class="cards" role="list"></div>
-  </main>
-
-  <div id="sheet-root" aria-live="polite"></div>
-
-  <footer>
-    <p>
-      A SecuraCV page. The emulator is the firmware:
-      <code>firmware/projects/canary-display</code> compiled to WebAssembly —
-      same faces, same mood engine, same Ed25519 verify, shimmed only where
-      silicon meets the world. Architecture:
-      <a href="https://github.com/kmay89/securaCV/blob/main/canary-local/README.md">canary-local/README.md</a>
-    </p>
-  </footer>
-
-  <script src="emulator/dist/canary-display-watch.js"></script>
-  <script src="emulator/dist/canary-display-dash.js"></script>
-  <script type="module" src="assets/app.js"></script>
+  <p>Opening <a href="lab.html">the Lab</a>… &nbsp;·&nbsp; <a href="fleet.html">Meet the fleet</a></p>
 </body>
 </html>
