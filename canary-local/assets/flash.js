@@ -2121,12 +2121,24 @@ function phaseMonitor(port, opts = {}) {
     idCard.classList.remove("flash-hidden");
     idCard.append(el("div", "flash-identity-head",
       (signed ? "✓ " : "") + "Your Canary just proved itself"));
+    // The self-check verdict, front and centre — so a headless board (no screen)
+    // SHOWS you it works instead of being a silent dud. Health IS its self-test.
+    {
+      // Always show the verdict — including "Self-check pending" when health is
+      // null/unknown — so a headless board never falls back to no status at all.
+      const v = core.healthVerdict(m.health);
+      const scored = typeof m.health === "number" && Number.isFinite(m.health) &&
+                     m.health >= 0 && m.health <= 100;
+      const vb = el("div", `flash-selfcheck flash-selfcheck-${v.level}`);
+      vb.append(el("span", "flash-selfcheck-icon", v.icon));
+      vb.append(el("span", null, scored ? `${v.label} · ${m.health}/100` : v.label));
+      idCard.append(vb);
+    }
     const facts = el("div", "flash-facts");
     if (m.board) facts.append(fact("board", m.board));
     if (m.firmware) facts.append(fact("firmware", m.firmware));
     const fp = core.formatFingerprint(m.pubkey_fp || m.pubkey);
     if (fp) facts.append(fact("key fingerprint", fp));
-    if (typeof m.health === "number") facts.append(fact("health", `${m.health}/100`));
     if (typeof m.boots === "number") facts.append(fact("boots", String(m.boots)));
     idCard.append(facts);
     if (m.tamper) {

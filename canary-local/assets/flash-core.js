@@ -1189,6 +1189,24 @@ export function postFlashNextStep(product, opts = {}) {
   };
 }
 
+// ── prove it works: the self-check verdict from the manifest health ─────────
+// The manifest's `health` (0-100, or null) IS the device self-test result. Turn
+// it into a plain-language verdict so a headless board (Sense/mmWave) *shows*
+// you it works instead of being a silent dud — and so the same mapping can drive
+// the network fleet view later. Pure + host-tested.
+//   Returns { level, icon, label } — level ∈ pending | ok | warn | attn.
+export function healthVerdict(health) {
+  // Fail safe on anything that isn't a real 0-100 score — null, NaN, a negative,
+  // or an out-of-range value from a firmware bug / corrupted serial line. None of
+  // those may read as a pass; they are "pending" (self-test unknown).
+  if (typeof health !== "number" || !Number.isFinite(health) || health < 0 || health > 100) {
+    return { level: "pending", icon: "…", label: "Self-check pending" };
+  }
+  if (health >= 80) return { level: "ok",   icon: "✓", label: "Self-check passed" };
+  if (health >= 50) return { level: "warn", icon: "⚠", label: "Up, with minor warnings" };
+  return { level: "attn", icon: "⚠", label: "Needs attention" };
+}
+
 // ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
 // One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
 // Public-only by construction: it takes a plain object of already-safe facts
