@@ -24,9 +24,15 @@ async function loadGLB(relToCanaryLocal) {
 
 const hex = (c) => "#" + c.map((x) => Math.round(x * 255).toString(16).padStart(2, "0")).join("");
 
-test("device_board maps every device to a real board", () => {
-  for (const [device, bid] of Object.entries(boards.device_board)) {
-    assert.ok(boards.boards[bid], `${device} → ${bid} is not a real board`);
+test("device_board maps every device to real board(s)", () => {
+  for (const [device, mapped] of Object.entries(boards.device_board)) {
+    // a device may carry more than one board (primary first); tolerate the
+    // legacy single-string form too
+    const list = Array.isArray(mapped) ? mapped : [mapped];
+    assert.ok(list.length, `${device} maps to no board`);
+    for (const bid of list) {
+      assert.ok(boards.boards[bid], `${device} → ${bid} is not a real board`);
+    }
   }
 });
 

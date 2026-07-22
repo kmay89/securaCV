@@ -50,7 +50,7 @@ test("vision.json has every section the page requires", () => {
 });
 
 test("counts are not thin (a broken parse would fail here)", () => {
-  assert.strictEqual(data.mqtt.discovery.entities.length, 16);
+  assert.strictEqual(data.mqtt.discovery.entities.length, 19);
   assert.ok(data.mqtt.topics.length >= 15, "too few MQTT topics");
   assert.ok(data.serial.boot.length >= 20, "boot log too short");
   assert.ok(data.sandbox.length >= 5, "too few sandbox scenes");
@@ -68,7 +68,10 @@ test("firmware version + identity match the headers and the registry train", () 
   assert.strictEqual(data.device.fw_train, registry.fw_train);
   assert.match(configH, new RegExp('DEVICE_TYPE\\s*=\\s*"' + data.device.device_type + '"'));
   assert.match(configH, new RegExp('DEVICE_ID\\s*=\\s*"' + data.device.id_example + '"'));
-  assert.strictEqual(data.device.board_id, boards.device_board["canary-vision"]);
+  // device_board maps a device to a LIST of boards (primary first)
+  const visionBoards = [].concat(boards.device_board["canary-vision"]);
+  assert.ok(visionBoards.includes(data.device.board_id),
+    `${data.device.board_id} not in canary-vision board mapping (${visionBoards.join(", ")})`);
   assert.ok(boards.boards[data.device.board_id], "board id not in boards.json");
 });
 
@@ -185,7 +188,9 @@ test("bestBox: class filter, threshold, highest score — vision_mgr.cpp's rule"
 
 test("bboxToVoxel: the firmware's integer math, clamps included", async () => {
   const { bboxToVoxel } = await import("../assets/vision-ui.js");
-  assert.ok(visionMgrCpp.includes("int c = (cx * cols) / FRAME_W;"));
+  // #1071 refactored the firmware's voxel math into point_to_cell(); the JS
+  // bboxToVoxel still mirrors that same integer division (truncating, clamped).
+  assert.ok(visionMgrCpp.includes("c = (px * C) / FRAME_W;"));
   const g = { cols: 3, rows: 3, w: 240, h: 240 };
   // center of frame lands center cell
   assert.deepStrictEqual(bboxToVoxel({ x: 100, y: 100, w: 40, h: 40 }, g),
