@@ -1,7 +1,7 @@
 //! A thread-safe registry of sensor adapters.
 //!
 //! Modeled on `detect::registry::BackendRegistry`. Adapters are wrapped in `Mutex` because
-//! [`SensorAdapter::poll`](crate::adapter::SensorAdapter::poll) takes `&mut self`. Registration
+//! [`SensorAdapter::poll`] takes `&mut self`. Registration
 //! order is preserved so the host polls adapters deterministically.
 
 use std::collections::HashMap;
