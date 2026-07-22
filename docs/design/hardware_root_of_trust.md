@@ -137,7 +137,7 @@ honest hardware-RoT design must own this, not bury it.
 |---|---|---|---|---|
 | **0** (default) | Ed25519 identity in NVS; signed OTA | — | **Yes** | Everyone |
 | **1** | Anti-rollback (A/B + boot self-test/safe-mode) | Yes (software) | Yes | Everyone — should become default |
-| **2** | Software **attestation** (challenge-response + firmware measurement) | Yes | Yes | Anyone wanting proof-of-integrity |
+| **2** | Software **attestation** (signed challenge-response + firmware self-measurement) | Yes | Yes | Anyone wanting a signed, replay-proof health report |
 | **3** | Flash encryption (**development** mode) + DS-bound identity key | Partly (still reflashable) | Mostly | Physical-theft threat models |
 | **4** | Secure Boot v2 + flash encryption (**release**) + JTAG-off | **No — eFuse** | **No** | High-assurance deployments only |
 
@@ -176,7 +176,8 @@ that shift safe and legible:
 ### 5.3 Attestation protocol (offline-verifiable)
 
 **Goal:** a verifier (Home Assistant, an operator, a peer Canary) confirms a
-device is a genuine Canary running trusted firmware — with no cloud.
+device is a genuine Canary and — *at the measured tier (see below)* — that it is
+running trusted firmware, with no cloud.
 
 **Challenge–response.** Verifier sends a nonce; the device returns
 
@@ -196,14 +197,24 @@ The verifier checks: (a) `sig` against the **pinned** `device_pub`
 release measurement (derivable from the signed release manifest); (c) `boot_state`
 matches the tier the operator enrolled. This extends the existing
 `securacv.canary.manifest/v1` self-manifest with a *signed, fresh, nonce-bound*
-statement — turning "the device says it's healthy" into "the device *proves* it,
-and can't replay."
+statement — turning "the device says it's healthy" into "a device holding the
+pinned key attests it, freshly and un-replayably." How much the *firmware* half
+of that claim is worth then depends on the tier:
 
-**Tamper-evidence vs. resistance.** At Tiers 1–2 this is tamper-*evidence*: a
-cloned/modified device with a *different* key fails the pinned-key check, and one
-running unexpected firmware fails the measurement check — but nothing stops the
-key being copied out of plaintext NVS. Tier 3+ closes that with a non-extractable
-key (§5.4), upgrading evidence toward resistance.
+**What each tier's attestation actually proves.** A measurement is only as
+trustworthy as whatever produced it. Without Secure Boot (Tiers 0–2) the *same,
+unverified app* both computes `fw_measure` and signs it — so a malicious image
+flashed over USB that preserves NVS keeps the identity key **and** can simply
+report the expected hash; a verifier cannot tell it from honest firmware. So at
+Tiers 1–2 the attestation is a **signed self-report**, not proof of trusted
+firmware: it reliably catches a clone that *lacks* the pinned key, flags benign
+version drift (an honest device reporting an old measurement), and binds
+freshness via the nonce (no replay) — but it does **not** catch a modified image
+that lies about itself. Only once Secure Boot measures the app in the boot chain
+(Tier 4) does `fw_measure` become trustworthy and *"proves it's running trusted
+firmware"* actually hold. Tier 3's non-extractable key (§5.4) additionally stops
+the identity key being lifted out of a stolen board, closing the
+clone-with-stolen-key gap.
 
 ### 5.4 Hardware-bound identity via the DS peripheral (Tier 3+)
 
@@ -224,9 +235,11 @@ decapping-class attacker, not a casual one). §8 asks which.
 Mirroring the honesty of the vault RFC's §5.5
 ([`vault_operator_ux_v1_1.md`](vault_operator_ux_v1_1.md)):
 
-- **Secure Boot v2** — ROM verifies the bootloader signature (RSA-3072-PSS or
-  ECDSA P-256), bootloader verifies the app; up to 3 revocable key digests in
-  eFuse. Real, ROM-anchored.
+- **Secure Boot v2** — ROM verifies the bootloader signature, bootloader verifies
+  the app; up to 3 revocable key digests in eFuse. Real, ROM-anchored. On the
+  **ESP32-S3 (and C3) the only scheme is RSA-3072-PSS** — those chips have no
+  ECDSA secure-boot path; the fleet's ESP32-C6 members (canary-sense) additionally
+  have an ECDSA-capable ROM.
 - **Flash Encryption** — XTS-AES-128/256, key in read-protected eFuse.
   *Development* mode still allows re-flashing with the key present; *Release* mode
   disables plaintext serial programming. Protects at-rest, **not** a live chip.
@@ -276,9 +289,13 @@ Mirroring the honesty of the vault RFC's §5.5
 1. **Do we offer Tier 4 at all**, given it deletes the un-brickable promise?
    *Recommendation: yes, but strictly opt-in and heavily gated; the default Canary
    never leaves Tier 0/1.*
-2. **Secure Boot scheme:** RSA-3072-PSS (current kit) vs ECDSA-P256 (smaller,
-   faster verify, newer)? *Recommendation: keep RSA-3072 to match the existing
-   `generate_keys.sh`, unless verify latency bites.*
+2. **Secure Boot scheme:** on the ESP32-S3/C3 the only option is **RSA-3072-PSS**
+   (what `generate_keys.sh` already produces) — those chips have no ECDSA
+   secure-boot path. Only the ESP32-C6 members (canary-sense) have an
+   ECDSA-capable ROM, so ECDSA-P256 is at most a *per-chip* question if lockdown
+   ever extends to them. *Recommendation: standardize on RSA-3072 across the fleet
+   for a single signing ceremony; treat C6-ECDSA as a separate future note, not a
+   scheme choice now.*
 3. **Flash encryption mode offered at Tier 3:** development (reflashable) as the
    default advanced tier, release only at Tier 4? *Recommendation: yes.*
 4. **Attestation key binding:** separate DS-bound RSA key (§5.4a) vs Ed25519 under
