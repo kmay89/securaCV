@@ -28,7 +28,7 @@ const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const METAL = new Set(["#8d8d8d", "#7f8e98", "#5a5a5a", "#ada186", "#a6a6a6", "#c7d3e3", "#8a8a8a", "#b8bac2"]);
 const GOLD = new Set(["#e7c863", "#e59833", "#d4ab45"]);
 const BRIGHT = new Set(["#f6f4e9", "#ebebe5", "#ffffff", "#fefefe", "#fdfdfd"]);
-const LENS = new Set(["#801407", "#471e00", "#392d1d"]);
+const LENS = new Set(["#801407", "#471e00", "#392d1d", "#0f131a"]);
 export const hexOf = (c) => "#" + c.map((x) => Math.round(x * 255).toString(16).padStart(2, "0")).join("");
 export function glossFor(hex) {
   if (METAL.has(hex)) return 0.72;
@@ -192,10 +192,15 @@ function renderBoardPanel(boardsData, bid) {
   dl.href = board.glb;
   dl.download = bid + ".glb";
   links.append(dl, document.createTextNode(" · "));
-  const step = el("a", null, "vendor STEP");
-  step.href = GH + board.source_step;
-  step.target = "_blank"; step.rel = "noopener";
-  links.append(document.createTextNode("source: "), step);
+  if (board.source_step) {
+    const step = el("a", null, "vendor STEP");
+    step.href = GH + board.source_step;
+    step.target = "_blank"; step.rel = "noopener";
+    links.append(document.createTextNode("source: "), step);
+  } else {
+    // procedural boards (built from photos/spec) have no vendor CAD to link
+    links.append(el("span", null, "source: procedural model"));
+  }
   if (board.doc) {
     const doc = el("a", null, "vendor docs ↗");
     doc.href = board.doc; doc.target = "_blank"; doc.rel = "noopener";
