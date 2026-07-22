@@ -303,6 +303,18 @@ static void test_welcome_card() {
   CHECK(sk2.s.find("\x1b[") != std::string::npos); // colour at the confirmed tier
 }
 
+static void test_mood_cards_are_ascii_and_privacy_safe() {
+  for (int i = 0; i <= (int)CanaryScene::Night; ++i) {
+    Sink sk;
+    Renderer r{collect, &sk, caps_ascii()};
+    mood_card(r, (CanaryScene)i, "operator-visible context only");
+    for (unsigned char c : sk.s) { CHECK(c != 0x1b); CHECK(c < 0x80); }
+    CHECK(sk.s.find("privacy-safe local scene") != std::string::npos);
+    CHECK(sk.s.find("person:") == std::string::npos);
+    CHECK(sk.s.find("license plate") == std::string::npos);
+  }
+}
+
 static void test_logo_is_single_sourced() {
   // The Canary logo is ONE silhouette across every scene (and matches the site).
   // Render both cards and assert each logo row appears in both — so nobody can
@@ -325,6 +337,7 @@ static void test_logo_is_single_sourced() {
 int main() {
   test_welcome_card();
   test_logo_is_single_sourced();
+  test_mood_cards_are_ascii_and_privacy_safe();
   test_randomart_golden();
   test_randomart_walk();
   test_randomart_all_zero();
