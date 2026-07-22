@@ -19,3 +19,4 @@
 pub mod hub_disk;
 pub mod hub_enumerate;
 pub mod hub_image;
+pub mod hub_seed;

@@ -194,11 +194,18 @@ Raspberry Pi Imager.
 - **Step 4 — the guarded write (hardware-validated before merge).** Raw
   block-device write with progress + read-back verify, behind the Step-1 gate and
   a typed confirmation. This is the footgun; it does not merge on review alone.
-- **Step 5 — seed the boot partition.** Write the Wi-Fi NetworkManager keyfile
-  (reusing the flasher's existing "type Wi-Fi once" secret, `wifi-memory.js`;
-  upgrade the persist store to the OS keychain) + the curated **full-stack**
-  securaCV backup (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards +
-  blueprints) so first boot comes up wired.
+- **Step 5 — seed the boot partition.**
+  - *Wi-Fi keyfile generator (landed):* `hub_core::hub_seed::wifi_keyfile` builds
+    the NetworkManager keyfile HAOS reads at first boot from the SSID +
+    passphrase — SSID as a byte array (any characters survive), passphrase
+    validated to WPA rules, escaping handled. Pure + host-tested. (Real-HAOS
+    acceptance still needs a flash to confirm — the crate tests the generation,
+    not the boot.)
+  - *Remaining:* actually write the keyfile onto the boot partition (reuse the
+    flasher's "type Wi-Fi once" secret, `wifi-memory.js`; upgrade the persist
+    store to the OS keychain), and seed the curated **full-stack** securaCV backup
+    (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards + blueprints) so first
+    boot comes up wired.
 - **Step 6 — community + convergence.** Extract the SD-health add-on for upstream;
   submit the add-on repo to the community store; fold the hub image into the
   signed release train; converge with the §7.7 Canary onboarding (Improv /
