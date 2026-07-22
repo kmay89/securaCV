@@ -54,20 +54,26 @@ Canary the fleet source of truth is the *shared pure roster*
 `firmware/common/fleet_link/fleet_roster.h`, fed by
 `firmware/canary/lib/securacv_ble_scan/src/fleet_roster_feed.{h,cpp}` — NOT the
 display-only `canary-display/.../fleet_model.h` (`FleetModel`/`Witness`, MQTT-fed).
-**Still to wire:** (1) a per-peer snapshot accessor on `fleet_roster_feed`
-(it exposes only `peer_count()`/`seen()` today); (2) the `n`/"nearby" Diag
-command in `firmware/canary/src/main.cpp` (registry + dispatch + help), gated on
-`FEATURE_BLE_SCAN` like the feed; (3) the manifest `fleet[]` field — a
-cross-repo wire contract the website `/fleet` page reads, so make the schema
-decision deliberately (the website pins the schema string).
+
+**Console command wired (2026-07).** The `n`/"nearby" read-only `Tier::Diag`
+command is live in `firmware/canary/src/main.cpp` (registry + dispatch + help),
+gated on `FEATURE_BLE_SCAN` (the `full` env, where the roster is fed) — it
+snapshots the roster via a new `fleet_roster_feed::snapshot()` accessor and
+renders it with `fleet_card`. The roster→view projection (incl. the millis→age
+math) is a pure, host-tested helper (`scene::fleet_peer_from_entry`), so the only
+CI-verified-not-locally piece is the thin main.cpp glue.
+
+**Still to wire:** the manifest `fleet[]` field — a cross-repo wire contract the
+website `/fleet` page reads, so make the schema decision deliberately (the
+website pins the schema string). (Note: the `commands[]` array already advertises
+`n` in the `full`-env manifest, which the website renders as an available tool —
+that's additive and needs no schema change.)
 
 **Surfaces / files.**
-- Firmware: the pure renderer is done (`firmware/common/ui/fleet_view.h`,
-  host-tested — mirrors the `console_scenes.h` pattern: ASCII-floor safe,
-  width-aligned). Remaining: a new command in `kConsoleCommands` (registry is
-  the single source — see how `j`/`c`/`f` were added) plus its dispatch/help,
-  and the snapshot accessor it pulls the peer list from (`fleet_roster_feed`
-  over the shared `fleet_roster.h`).
+- Firmware: DONE — the pure renderer (`firmware/common/ui/fleet_view.h`,
+  host-tested), the `fleet_roster_feed::snapshot()` accessor, and the `n`
+  console command (`kConsoleCommands` + dispatch + help in `main.cpp`) all ship.
+  A real-terminal smoke on hardware is still worth doing before relying on it.
 - Manifest: extend `self_manifest.h` with a `fleet[]` array (peer id + short
   fp + last-seen), single-sourced from the same model, so `/fleet` renders the
   live truth (same approach as `commands[]`).
@@ -173,9 +179,10 @@ migration-sensitive for already-deployed devices.
    Keep everything **read-only, public-only** on the diagnostic console.
 3. Anti-rot is non-negotiable: pin new wire formats with host tests in *both*
    repos, single-source from the firmware.
-4. Fleet map's pure render layer landed (`fleet_view.h`, host-tested); what's
-   left is the console-command wiring + roster accessor + manifest `fleet[]`
-   (see TODO 1 Status). All host-testable, no boot-path risk. Safe-mode/rollback
+4. Fleet map's device side is done — render layer (`fleet_view.h`), roster
+   accessor, and the `n` console command all ship (see TODO 1 Status). What's
+   left is the manifest `fleet[]` field + the website `/fleet` page (cross-repo).
+   No boot-path risk. Safe-mode/rollback
    has its design doc
    ([`hardware_root_of_trust.md`](hardware_root_of_trust.md) §7 Phase 1, signed
    off 2026-07-22) and its pure decision layer landed (`boot_policy.h`); the

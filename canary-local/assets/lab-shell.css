@@ -82,7 +82,12 @@ button{font:inherit;color:inherit;cursor:pointer;}
 /* ===== content ===== */
 .main{min-width:0;display:flex;flex-direction:column;}
 .topbar{display:none;} /* phone only */
-.content{flex:1;padding:30px 40px 40px;max-width:840px;width:100%;}
+.content{flex:1;padding:30px 40px 40px;max-width:1020px;width:100%;}
+
+/* isometric room, embedded as the Overview */
+.room-wrap{border:1px solid var(--sep);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);background:var(--surface);}
+.room{width:100%;height:min(74vh,700px);border:0;display:block;}
+.ov-cards-head{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;}
 
 .crumbs{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-family:var(--mono);}
 .crumbs b{color:var(--text-2);font-weight:600;}
@@ -164,6 +169,7 @@ button{font:inherit;color:inherit;cursor:pointer;}
   .topbar .ttl{font-weight:660;font-size:15px;flex:1;text-align:center;}
   .topbar .off{font-size:10.5px;color:var(--good);font-weight:600;}
   .content{padding:20px 18px 96px;}
+  .room{height:min(64vh,500px);}
   .foot{display:none;}
   .booklet{grid-template-columns:1fr;}
 
