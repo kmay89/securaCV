@@ -5,15 +5,18 @@
 ### supply-chain — signed build provenance on release artifacts
 
 - **Every published firmware binary and browser-flasher factory image now
-  carries SLSA build provenance.** `firmware-release.yml` and
-  `flasher-release.yml` sign an in-toto provenance attestation over every
-  `.bin`, manifest, and checksum file via GitHub's OIDC identity
-  (`actions/attest-build-provenance`), record it in the Sigstore **Rekor public
-  transparency log**, and attach an offline-verifiable
-  `provenance-*.sigstore.jsonl` bundle to each release. Anyone can now confirm a
-  download was built from the open source, in the open —
+  carries SLSA build provenance.** `firmware-release.yml` signs an in-toto
+  provenance attestation over every artifact it publishes — the firmware `.bin`s,
+  the factory images it builds in the same run, the manifests, and the checksum
+  file — via GitHub's OIDC identity (`actions/attest-build-provenance`), records
+  it in the Sigstore **Rekor public transparency log**, and attaches an
+  offline-verifiable `provenance-*.sigstore.jsonl` bundle to each release. Anyone
+  can now confirm a download was built from the open source, in the open —
   `gh attestation verify <file> --repo kmay89/securaCV` — a *public* check that
-  complements the device-checked Ed25519 OTA signature and `sha256sums.txt`.
+  complements the device-checked Ed25519 OTA signature and `sha256sums.txt`. (The
+  out-of-band `flasher-release.yml` rebuild path stays SHA-256 + same-origin: its
+  tagged-firmware-plus-current-tooling build has no single source a provenance
+  statement could honestly name.)
 - **Honest about reproducibility.** New `docs/supply_chain_transparency.md`
   gives the verify recipes (online + air-gapped) and states plainly that full
   bit-for-bit reproducibility isn't guaranteed on the ESP32 toolchain yet —

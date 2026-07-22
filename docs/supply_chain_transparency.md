@@ -23,9 +23,9 @@ just the devices holding the pinned key.
 ## What we publish
 
 On every `fw-v*` release, [`firmware-release.yml`](../.github/workflows/firmware-release.yml)
-(and the out-of-band [`flasher-release.yml`](../.github/workflows/flasher-release.yml)
-for factory images) signs a [SLSA](https://slsa.dev) build-provenance
-attestation over every published `.bin`, manifest, and `sha256sums.txt`, using
+signs a [SLSA](https://slsa.dev) build-provenance attestation over every artifact
+it publishes — the firmware `.bin`s, the browser-flasher **factory images** it
+builds in the same run, the manifests, and `sha256sums.txt` — using
 [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance).
 The attestation is:
 
@@ -56,19 +56,29 @@ Loaded digest sha256:… for file://canary-2.3.0.bin
   - Built by: .github/workflows/firmware-release.yml
 ```
 
-**Offline / air-gapped** — download the release's
-`provenance-firmware-<ver>.sigstore.jsonl` bundle and verify against it, no
-network required (the same posture as the flasher's **Advanced → flash a local
-file** and the OTA engine's offline verify):
+**Offline / air-gapped** — the release's `provenance-firmware-<ver>.sigstore.jsonl`
+bundle carries the signed statement, but verifying it with *no* network also
+needs Sigstore's **trusted root**: the Fulcio / Rekor / timestamp anchors the
+bundle is checked *against*. `gh` caches that root after any online use, so a
+machine that has verified anything before already has it; for one that has
+**never** been online, export the root once on a connected machine and carry it
+in with the bundle:
 
 ```console
+# once, on a networked machine:
+$ gh attestation trusted-root > trusted_root.jsonl
+
+# in the air-gapped room — the .bin, the bundle, and trusted_root.jsonl, no network:
 $ gh attestation verify canary-2.3.0.bin \
     --bundle provenance-firmware-2.3.0.sigstore.jsonl \
+    --custom-trusted-root trusted_root.jsonl \
     --repo kmay89/securaCV
 ```
 
-A mismatch — a binary that wasn't built by our workflow, or was altered after
-the build — fails loudly. That's the point.
+That is the same fully-offline posture as the flasher's **Advanced → flash a
+local file** and the OTA engine's offline verify. A mismatch — a binary that
+wasn't built by our workflow, or was altered after the build — fails loudly.
+That's the point.
 
 ## Reproducible builds — where we actually are
 
@@ -111,12 +121,27 @@ as it lands.
 
 ## Scope
 
-Attested today: the **firmware** release ([`firmware-release.yml`](../.github/workflows/firmware-release.yml))
-and the **browser-flasher factory images** ([`flasher-release.yml`](../.github/workflows/flasher-release.yml)).
+Attested today: everything the **signed firmware release**
+([`firmware-release.yml`](../.github/workflows/firmware-release.yml)) publishes —
+the firmware binaries **and** the browser-flasher factory images it builds in the
+same run — with provenance whose source is exactly the release tag.
+
+The out-of-band [`flasher-release.yml`](../.github/workflows/flasher-release.yml)
+(a manual rebuild that compiles *tagged* firmware with *today's* packaging
+tooling) deliberately does **not** attest. That build has two different sources —
+the firmware's tag and the tooling's commit — and a single provenance statement,
+whose source ref comes from the workflow run itself, can't honestly name both; a
+statement that quietly recorded the dispatch commit as "the source" of
+tag-built firmware would be exactly the kind of misleading claim this doc exists
+to avoid. So that path keeps the SHA-256 + same-origin trust it always had
+([browser_flasher.md § Trust model](browser_flasher.md)); the factory images it
+serves are the ones the normal release already attests.
+
 The **desktop flasher** ([`desktop-flasher-release.yml`](../.github/workflows/desktop-flasher-release.yml))
 and the **Vision AI model** ([`vision-model-release.yml`](../.github/workflows/vision-model-release.yml))
-publish executables/artifacts too and are the next to get the same treatment —
-tracked as a follow-up so this claim stays honest about what's covered *now*.
+publish executables/artifacts too and are the next to get the firmware release's
+treatment — tracked as a follow-up so this claim stays honest about what's
+covered *now*.
 
 ## See also
 
