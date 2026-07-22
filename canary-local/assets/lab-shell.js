@@ -153,6 +153,7 @@ function renderSidebar(view, entry) {
       ...M.stages.map(s => stageRow(s, entry, done.has(s.id))),
       h("div", { class: "side-sec" }, "Reference"),
       navItem("all", view === "all", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h16"/></svg>', "All benches, by stage"),
+      navLink("site-map.html", '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18l6-12M4 6h5v5H4zM15 13h5v5h-5z"/></svg>', "Complete site map"),
     ),
   );
   const old = document.querySelector(".side");
@@ -160,6 +161,9 @@ function renderSidebar(view, entry) {
 }
 const navItem = (id, sel, icoHtml, label) =>
   h("button", { class: "item" + (sel ? " sel" : ""), onclick: () => navigate(id) },
+    h("span", { html: icoHtml }), h("span", { class: "lb" }, label));
+const navLink = (href, icoHtml, label) =>
+  h("a", { class: "item", href },
     h("span", { html: icoHtml }), h("span", { class: "lb" }, label));
 
 function onSearch(e) {

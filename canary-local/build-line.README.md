@@ -54,6 +54,26 @@ basic↔advanced or understand↔do toggle) instead of two competing entries:
 - `house.html` + `scenes.html` → **The Canary House** (+ "Watch it work")
 - `vault.html` + `operator.html` → **The Vault** (Understand it ↔ Set up break-glass)
 
+## HTML documentation inventory
+
+The manifest also carries `htmlDocumentation.groups`: standalone HTML docs,
+runbooks, fixtures, and operator pages that are **not** primary Lab benches. The
+visible [`site-map.html`](site-map.html) reads that list next to the six-stage
+build line so iPad/native/web navigation, docs handoffs, and HTML-only support
+pages stay discoverable without turning every support fixture into a stage.
+
+When adding any new committed `.html` page:
+
+1. If it is part of the user's build journey, add it as a `bench` or `depths`
+   item under the right stage.
+2. If it is supporting documentation, a native/mobile runbook, an evidence page,
+   or a test/dev harness, add it under `htmlDocumentation.groups`.
+3. If it replaces an old page or slug, add the old slug to `redirects`.
+
+This keeps the sitemap expandable with one manifest edit and preserves the
+"same pixels, native frame" iPad promise: the shell renders by width from the
+same source of truth instead of maintaining a separate tablet map.
+
 ## Add a bench in 3 steps
 
 1. **Add one entry** to the right stage's `benches` (or a `depths` item) here.
