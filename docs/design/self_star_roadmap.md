@@ -32,23 +32,42 @@ phone-first flow appears.
 
 ---
 
-## TODO 1 — Fleet map (self-modeling) · *coming soon*
+## TODO 1 — Fleet map (self-modeling) · *in progress*
 
-**What.** The device already models its fleet (`firmware/.../fleet_model.h`,
-`NVS_FLEET_ID`) and can reach peers over the direct BLE link (PR #1026,
-`fleet_link.cpp`, no broker/WiFi). Surface that as a **live fleet view**: an
-ASCII topology on the serial console (a new read-only `Tier::Diag` command,
-e.g. `n` for "network/nearby"), and a `/fleet` page on the website that renders
-the fleet the connected device reports.
+**What.** The device already models its fleet and can reach peers over the
+direct BLE link (PR #1026, no broker/WiFi). Surface that as a **live fleet
+view**: an ASCII topology on the serial console (a new read-only `Tier::Diag`
+command, e.g. `n` for "network/nearby"), and a `/fleet` page on the website that
+renders the fleet the connected device reports.
 
 **Why (user value).** "Your Canaries at a glance," offline. Reinforces
 self-modeling and makes multi-device ownership legible without a cloud.
 
+**Status (2026-07).** The **pure render layer landed** —
+`firmware/common/ui/fleet_view.h` (`scene::fleet_card`) turns a snapshot of the
+roster into the width-aligned, ASCII-floor-safe, dual-tier console card, honest
+that presence is UNSIGNED, host-tested with a golden in
+`firmware/tests_host/test_fleet_view.cpp`. This mirrors the `boot_policy.h`
+approach (PR #1085): the format that could silently drift is pinned in CI first,
+ahead of the device wiring. **Data-source note (a real trap):** on the main
+Canary the fleet source of truth is the *shared pure roster*
+`firmware/common/fleet_link/fleet_roster.h`, fed by
+`firmware/canary/lib/securacv_ble_scan/src/fleet_roster_feed.{h,cpp}` — NOT the
+display-only `canary-display/.../fleet_model.h` (`FleetModel`/`Witness`, MQTT-fed).
+**Still to wire:** (1) a per-peer snapshot accessor on `fleet_roster_feed`
+(it exposes only `peer_count()`/`seen()` today); (2) the `n`/"nearby" Diag
+command in `firmware/canary/src/main.cpp` (registry + dispatch + help), gated on
+`FEATURE_BLE_SCAN` like the feed; (3) the manifest `fleet[]` field — a
+cross-repo wire contract the website `/fleet` page reads, so make the schema
+decision deliberately (the website pins the schema string).
+
 **Surfaces / files.**
-- Firmware: new command in `kConsoleCommands` (registry is the single source —
-  see how `j`/`c`/`f` were added); a pure, host-testable renderer in
-  `firmware/common/ui/` (mirror the `console_scenes.h` pattern: ASCII-floor
-  safe, width-aligned, host-tested). Pull peer list from `fleet_link`/`fleet_model`.
+- Firmware: the pure renderer is done (`firmware/common/ui/fleet_view.h`,
+  host-tested — mirrors the `console_scenes.h` pattern: ASCII-floor safe,
+  width-aligned). Remaining: a new command in `kConsoleCommands` (registry is
+  the single source — see how `j`/`c`/`f` were added) plus its dispatch/help,
+  and the snapshot accessor it pulls the peer list from (`fleet_roster_feed`
+  over the shared `fleet_roster.h`).
 - Manifest: extend `self_manifest.h` with a `fleet[]` array (peer id + short
   fp + last-seen), single-sourced from the same model, so `/fleet` renders the
   live truth (same approach as `commands[]`).
@@ -154,7 +173,10 @@ migration-sensitive for already-deployed devices.
    Keep everything **read-only, public-only** on the diagnostic console.
 3. Anti-rot is non-negotiable: pin new wire formats with host tests in *both*
    repos, single-source from the firmware.
-4. Fleet map is safe to build now. Safe-mode/rollback has its design doc
+4. Fleet map's pure render layer landed (`fleet_view.h`, host-tested); what's
+   left is the console-command wiring + roster accessor + manifest `fleet[]`
+   (see TODO 1 Status). All host-testable, no boot-path risk. Safe-mode/rollback
+   has its design doc
    ([`hardware_root_of_trust.md`](hardware_root_of_trust.md) §7 Phase 1, signed
    off 2026-07-22) and its pure decision layer landed (`boot_policy.h`); the
    remaining boot-path wiring still needs a hardware smoke test before it merges

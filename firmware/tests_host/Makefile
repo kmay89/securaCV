@@ -86,6 +86,16 @@ BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
 SCENE_HDRS = ../common/ui/randomart.h ../common/ui/console_theme.h ../common/ui/console_scenes.h ../common/ui/console_wake.h
 SCENE_BIN = $(BUILD_DIR)/test_console_scene
 
+# Fleet view (common/ui/fleet_view.h): the console face of the self-* roadmap's
+# Fleet map — "which other Canaries can this one hear." Proves the ASCII tier
+# stays escape-free / 7-bit / width-aligned (same contract as the trust card),
+# that presence is rendered honestly as UNSIGNED with worded (not colour-only)
+# attention states, and pins a golden render. Pure header over the console
+# engine + the fleet-link wire constants; no Arduino deps.
+FLEETVIEW_HDRS = ../common/ui/fleet_view.h ../common/ui/console_theme.h \
+                 ../common/fleet_link/fleet_beacon.h ../common/fleet_link/fleet_roster.h
+FLEETVIEW_BIN = $(BUILD_DIR)/test_fleet_view
+
 # Device self-manifest (common/attest/self_manifest.h): the machine-readable
 # JSON the device emits on 'j' and the website parses over WebSerial. Pins the
 # schema + every key, proves string escaping, and that the bounded writer never
@@ -135,13 +145,16 @@ $(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
 $(SCENE_BIN): test_console_scene.cpp $(SCENE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_console_scene.cpp -o $@
 
+$(FLEETVIEW_BIN): test_fleet_view.cpp $(FLEETVIEW_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_fleet_view.cpp -o $@
+
 $(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_self_manifest.cpp -o $@
 
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SCENE_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -151,6 +164,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)
 	./$(SCENE_BIN)
+	./$(FLEETVIEW_BIN)
 	./$(MANIFEST_BIN)
 	./$(OPTFEAT_BIN)
 
