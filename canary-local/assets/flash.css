@@ -477,6 +477,11 @@ button.flash-map-key:hover { color: var(--text); }
 .we2-preview { margin-top: 12px; border: 1px solid #23252b; border-radius: 10px; overflow: hidden;
   background: #08090b; min-height: 120px; display: flex; align-items: center; justify-content: center; }
 .we2-preview-cv { display: block; max-width: 100%; image-rendering: pixelated; }
+.we2-seen {
+  margin: 12px 0 2px; padding: 9px 14px; border-radius: 10px; font-weight: 640;
+  color: #bfe3c1; background: rgba(67,160,71,0.12); border: 1px solid rgba(67,160,71,0.4);
+  animation: flash-pop 0.5s cubic-bezier(0.2,1.4,0.4,1) both;
+}
 @media (max-width: 700px) { .we2-src { grid-template-columns: 1fr; } }
 
 /* ── self-healing: boot-log diagnosis panel + diagnostic report ──────────── */
