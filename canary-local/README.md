@@ -585,7 +585,7 @@ HX6538 + Ethos-U55) and the ESP32 host only ever hears boxes over I2C.
 - **The host flash + serial console** — the README's own quickstart commands
   with one-tap copy, then the staged boot log; `Grove Vision AI ID=` non-zero
   is the lesson.
-- **MQTT + HA** — every topic from `topics.h`, all 16 discovery entities from
+- **MQTT + HA** — every topic from `topics.h`, all 19 discovery entities from
   `ha_discovery.cpp`, the retained `cfg/state` and the signed events.
 - **The Aim card** — the boxes-only channel, drawn the way the Lovelace card
   draws it: a wireframe box and a voxel cell on black. The exact `aim`
@@ -602,7 +602,7 @@ Anti-rot, same rule as everything here — nothing written twice:
 |---|---|
 | Thresholds, voxel grid, frame, cadences, aim timing | `include/canary/config.h` + `detect_config.h` |
 | Every MQTT topic | `include/canary/topics.h` |
-| The 16 HA entities | `src/ha/ha_discovery.cpp` |
+| The 19 HA entities | `src/ha/ha_discovery.cpp` |
 | Best-box rule + voxel math (mirrored in JS, pinned by tests) | `src/vision/vision_mgr.cpp` |
 | The event vocabulary + FSM order | `src/state/presence_fsm.cpp` |
 | The aim payload keys | `src/main.cpp` |
