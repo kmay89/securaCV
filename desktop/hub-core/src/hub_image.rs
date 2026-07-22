@@ -157,6 +157,122 @@ pub fn recommended_board(catalog: &CatalogView) -> Option<&str> {
         .map(|b| b.id.as_str())
 }
 
+/// Why a downloaded image failed verification. The writer must treat any of
+/// these as "do not write" — a hub image that isn't provably the one we meant
+/// never touches a card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyError {
+    /// The catalog pinned a hash and the download didn't match it. The strongest
+    /// failure: someone served us something other than the repo-vouched image.
+    PinnedMismatch { expected: String, got: String },
+    /// Unpinned, so we checked against Home Assistant's published `.sha256`, and
+    /// the download didn't match.
+    PublishedMismatch { published: String, got: String },
+    /// Unpinned AND no published checksum was available — we refuse to write an
+    /// unverifiable OS image rather than hope.
+    NoChecksumAvailable,
+    /// A hash wasn't a well-formed SHA-256 (64 hex chars). `which` names it
+    /// (`computed` / `expected` / `published`) so the failure is diagnosable.
+    MalformedHash { which: &'static str, value: String },
+}
+
+impl VerifyError {
+    pub fn message(&self) -> String {
+        match self {
+            VerifyError::PinnedMismatch { .. } => {
+                "the downloaded image does not match the checksum this repo pinned — refusing to \
+                 write it"
+                    .to_string()
+            }
+            VerifyError::PublishedMismatch { .. } => {
+                "the downloaded image does not match Home Assistant's published checksum — refusing \
+                 to write it"
+                    .to_string()
+            }
+            VerifyError::NoChecksumAvailable => {
+                "no checksum was available to verify the download against — refusing to write an \
+                 unverified image"
+                    .to_string()
+            }
+            VerifyError::MalformedHash { which, .. } => {
+                format!("the {which} checksum isn't a valid SHA-256")
+            }
+        }
+    }
+}
+
+/// A well-formed SHA-256 hex digest: exactly 64 hex characters.
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Decide whether a downloaded image passes verification, given the SHA-256 the
+/// caller `computed` over the bytes and — for the unpinned case — the checksum
+/// Home Assistant `published` for that asset (`None` if the caller couldn't
+/// fetch it).
+///
+/// The trust order is the point of this function, made once and tested:
+///   1. If the plan carries a repo-**pinned** hash, that is authoritative — the
+///      image must match it, and HA's published value is irrelevant.
+///   2. Otherwise the image must match HA's published `.sha256`.
+///   3. If neither is available, refuse — an unverifiable OS image is never
+///      written.
+///
+/// Comparisons are case-insensitive on the hex; every hash is shape-checked so a
+/// truncated or garbage value fails loudly instead of accidentally matching.
+pub fn verify_download(
+    plan: &WritePlan,
+    computed: &str,
+    published: Option<&str>,
+) -> Result<(), VerifyError> {
+    let computed = computed.trim();
+    if !is_sha256_hex(computed) {
+        return Err(VerifyError::MalformedHash {
+            which: "computed",
+            value: computed.to_string(),
+        });
+    }
+
+    if let Some(expected) = plan.expected_sha256.as_deref() {
+        let expected = expected.trim();
+        if !is_sha256_hex(expected) {
+            return Err(VerifyError::MalformedHash {
+                which: "expected",
+                value: expected.to_string(),
+            });
+        }
+        return if computed.eq_ignore_ascii_case(expected) {
+            Ok(())
+        } else {
+            Err(VerifyError::PinnedMismatch {
+                expected: expected.to_ascii_lowercase(),
+                got: computed.to_ascii_lowercase(),
+            })
+        };
+    }
+
+    match published {
+        Some(published) => {
+            let published = published.trim();
+            if !is_sha256_hex(published) {
+                return Err(VerifyError::MalformedHash {
+                    which: "published",
+                    value: published.to_string(),
+                });
+            }
+            if computed.eq_ignore_ascii_case(published) {
+                Ok(())
+            } else {
+                Err(VerifyError::PublishedMismatch {
+                    published: published.to_ascii_lowercase(),
+                    got: computed.to_ascii_lowercase(),
+                })
+            }
+        }
+        None => Err(VerifyError::NoChecksumAvailable),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,5 +392,127 @@ mod tests {
             known: vec!["rpi5-64".to_string()],
         };
         assert!(e.message().contains("rpi5-64"));
+    }
+
+    // ── verify_download ──────────────────────────────────────────────────────
+
+    const SHA_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const SHA_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn pinned_plan(sha: &str) -> WritePlan {
+        let mut cat = unpinned_catalog();
+        cat.pinned = true;
+        cat.boards[0].sha256 = sha.to_string();
+        resolve(&cat, "rpi5-64").unwrap()
+    }
+
+    fn unpinned_plan() -> WritePlan {
+        resolve(&unpinned_catalog(), "rpi5-64").unwrap()
+    }
+
+    #[test]
+    fn a_pinned_image_matching_its_hash_passes() {
+        assert_eq!(verify_download(&pinned_plan(SHA_A), SHA_A, None), Ok(()));
+    }
+
+    #[test]
+    fn a_pinned_image_not_matching_its_hash_is_refused() {
+        assert_eq!(
+            verify_download(&pinned_plan(SHA_A), SHA_B, None),
+            Err(VerifyError::PinnedMismatch {
+                expected: SHA_A.to_string(),
+                got: SHA_B.to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_pinned_hash_is_authoritative_over_any_published_one() {
+        // Even if HA's published value would say otherwise, the pinned hash wins.
+        assert_eq!(
+            verify_download(&pinned_plan(SHA_A), SHA_A, Some(SHA_B)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_unpinned_image_matching_the_published_hash_passes() {
+        assert_eq!(
+            verify_download(&unpinned_plan(), SHA_A, Some(SHA_A)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_unpinned_image_not_matching_the_published_hash_is_refused() {
+        assert_eq!(
+            verify_download(&unpinned_plan(), SHA_A, Some(SHA_B)),
+            Err(VerifyError::PublishedMismatch {
+                published: SHA_B.to_string(),
+                got: SHA_A.to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn an_unpinned_image_with_no_published_checksum_is_refused() {
+        assert_eq!(
+            verify_download(&unpinned_plan(), SHA_A, None),
+            Err(VerifyError::NoChecksumAvailable)
+        );
+    }
+
+    #[test]
+    fn hash_comparison_is_case_insensitive() {
+        let upper = SHA_A.to_ascii_uppercase();
+        assert_eq!(verify_download(&pinned_plan(SHA_A), &upper, None), Ok(()));
+    }
+
+    #[test]
+    fn a_malformed_computed_hash_fails_loudly() {
+        assert_eq!(
+            verify_download(&pinned_plan(SHA_A), "deadbeef", None),
+            Err(VerifyError::MalformedHash {
+                which: "computed",
+                value: "deadbeef".to_string(),
+            })
+        );
+        // A 64-char but non-hex string is also rejected (never accidentally matches).
+        let not_hex = "z".repeat(64);
+        assert!(matches!(
+            verify_download(&pinned_plan(SHA_A), &not_hex, None),
+            Err(VerifyError::MalformedHash {
+                which: "computed",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_malformed_published_hash_fails_loudly() {
+        assert_eq!(
+            verify_download(&unpinned_plan(), SHA_A, Some("nope")),
+            Err(VerifyError::MalformedHash {
+                which: "published",
+                value: "nope".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn verify_errors_render_human_text() {
+        for e in [
+            VerifyError::NoChecksumAvailable,
+            VerifyError::PinnedMismatch {
+                expected: SHA_A.to_string(),
+                got: SHA_B.to_string(),
+            },
+            VerifyError::MalformedHash {
+                which: "computed",
+                value: "x".to_string(),
+            },
+        ] {
+            assert!(!e.message().is_empty());
+        }
     }
 }

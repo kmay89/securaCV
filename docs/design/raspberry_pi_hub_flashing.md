@@ -182,12 +182,15 @@ Raspberry Pi Imager.
     read-only `list_hub_targets` command; and the picker that shows eligible
     cards/SSDs, *why* the rest are hidden, and an explicit size/model confirm.
 - **Step 3 — acquire the image.**
-  - *Resolver (landed):* `hub_core::hub_image` turns the catalog into a typed
-    `WritePlan` (board → image URL, whether a pinned hash is trustworthy or we
-    fall back to HA's `.sha256`, the card-size requirement) — pure and
-    host-tested, so the catalog can't hand the writer a nonsensical plan.
-  - *Remaining (needs the Tauri build + new deps):* the actual download over TLS,
-    the sha256/`.sha256` verification, and the `.xz` decompress.
+  - *Resolver + verify decision (landed):* `hub_core::hub_image` turns the
+    catalog into a typed `WritePlan` (board → image URL, the card-size
+    requirement), and `verify_download` makes the trust call — a repo-pinned hash
+    is authoritative, else the download must match HA's published `.sha256`, else
+    refuse; malformed hashes fail loudly. Pure and host-tested, so an
+    unverifiable or wrong image can't be blessed for writing.
+  - *Remaining (needs the Tauri build + new deps):* the I/O that feeds those —
+    the TLS download, computing the SHA-256, fetching HA's `.sha256`, and the
+    `.xz` decompress.
 - **Step 4 — the guarded write (hardware-validated before merge).** Raw
   block-device write with progress + read-back verify, behind the Step-1 gate and
   a typed confirmation. This is the footgun; it does not merge on review alone.
