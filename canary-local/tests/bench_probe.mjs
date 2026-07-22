@@ -109,7 +109,7 @@ const shade = () =>
   });
 
 // ── Open the watch sheet; let the firmware boot ─────────────────────────
-await page.goto(`http://localhost:${port}/canary-local/index.html#canary-display-watch`);
+await page.goto(`http://localhost:${port}/canary-local/fleet.html#canary-display-watch`);
 await page.waitForSelector(".tabs .tab", { timeout: 30000 });
 await openTab("Wire");
 await waitSerial("The canary is singing");

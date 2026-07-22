@@ -67,7 +67,7 @@ async function main() {
   if (!hasUserChoice() && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
     startFinishShowcase();
   }
-  // Deep link from the chooser: index.html#<device-id> opens its sheet.
+  // Deep link from the chooser: fleet.html#<device-id> opens its sheet.
   const target = decodeURIComponent(location.hash.slice(1));
   const dev = state.registry.devices.find((d) => d.id === target);
   if (dev) openSheet(dev);
