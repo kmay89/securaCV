@@ -188,6 +188,39 @@ static void test_formatters() {
   CHECK(std::strlen(tiny) <= 3);
 }
 
+// ── 5b. the roster-entry → view-peer bridge (the drift-prone millis math) ───
+static void test_peer_from_entry() {
+  FleetRosterEntry e{};
+  std::strcpy(e.fp4, "a1b2");
+  e.last_seen_ms = 1000;
+  e.health_pct = 88;
+  e.battery_pct = 55;
+  e.chain_lo = 0x1234;
+  e.flags = FLEET_BEACON_FLAG_ALERT;
+  e.rssi = -60;
+  e.used = 1;
+
+  FleetPeer p = fleet_peer_from_entry(e, 4000);  // 3 s later
+  CHECK(std::string(p.fp4) == "a1b2");
+  CHECK(p.age_s == 3);
+  CHECK(p.health_pct == 88);
+  CHECK(p.battery_pct == 55);
+  CHECK(p.chain_lo == 0x1234);
+  CHECK(p.flags == FLEET_BEACON_FLAG_ALERT);
+  CHECK(p.rssi == -60);
+
+  // Sub-second age floors to 0.
+  CHECK(fleet_peer_from_entry(e, 1500).age_s == 0);
+
+  // millis() wrap: now < last_seen must not produce a giant bogus age.
+  FleetRosterEntry w{};
+  std::strcpy(w.fp4, "c3d4");
+  w.last_seen_ms = 0xFFFFFF00u;  // just before wrap
+  w.used = 1;
+  FleetPeer pw = fleet_peer_from_entry(w, 0x00000064u);  // 356 ms after wrap
+  CHECK(pw.age_s == 0);          // small, correct — not ~4.29e6 s
+}
+
 // ── 6. the golden render (device-console stability pin) ─────────────────────
 static void test_golden() {
   // The exact ASCII-tier shape for the sample fleet. If this changes, an
@@ -227,6 +260,7 @@ int main() {
   test_empty_roster();
   test_full_tier_lights_up();
   test_formatters();
+  test_peer_from_entry();
   test_golden();
 
   if (g_failures == 0) { std::printf("PASS test_fleet_view (all assertions)\n"); return 0; }

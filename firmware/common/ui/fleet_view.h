@@ -37,6 +37,7 @@
 
 #include "ui/console_theme.h"
 #include "fleet_link/fleet_beacon.h"  // FLEET_BEACON_FLAG_* — single-source the bits
+#include "fleet_link/fleet_roster.h"  // FleetRosterEntry — the conversion source
 
 namespace scene {
 
@@ -67,6 +68,22 @@ struct FleetView {
   size_t           count;     // number of peers heard
   size_t           capacity;  // roster capacity (FLEET_ROSTER_MAX) for "n of cap"
 };
+
+// Project a raw roster entry onto a view peer at time `now_ms`. Pure and
+// host-tested so the drift-prone bridge (esp. the millis→age math) is proven,
+// leaving the device wiring a thin snapshot-and-render loop. NOTE: `fp4` aliases
+// the entry's storage, so the FleetPeer must not outlive the entry it came from.
+inline FleetPeer fleet_peer_from_entry(const FleetRosterEntry& e, uint32_t now_ms) {
+  FleetPeer p{};
+  p.fp4         = e.fp4;
+  p.age_s       = (uint32_t)(now_ms - e.last_seen_ms) / 1000u;  // wrap-safe unsigned
+  p.health_pct  = e.health_pct;
+  p.battery_pct = e.battery_pct;
+  p.chain_lo    = e.chain_lo;
+  p.flags       = e.flags;
+  p.rssi        = e.rssi;
+  return p;
+}
 
 // ── small pure formatters (host-tested directly) ────────────────────────────
 

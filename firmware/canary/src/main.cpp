@@ -146,6 +146,12 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "ui/console_theme.h"
 #include "ui/console_scenes.h"
 #include "ui/console_wake.h"
+// The 'n' nearby-fleet card: the shared roster (which OTHER Canaries this one
+// hears over BLE) rendered as a width-aligned panel. Host-tested; UNSIGNED presence.
+#include "ui/fleet_view.h"
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+#include "fleet_roster_feed.h"        // the live roster the 'n' card snapshots
+#endif
 static void print_boot_welcome();   // the friendly char-box hello on connect
 #endif
 
@@ -2106,6 +2112,9 @@ static const testcon::Command kConsoleCommands[] = {
   { 'w', "tamper-log",   testcon::Tier::Diag, false, false, false },
 #if FEATURE_CONSOLE_THEME
   { 'l', "identity-banner", testcon::Tier::Diag, false, false, false },
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+  { 'n', "nearby",          testcon::Tier::Diag, false, false, false },
+#endif
 #if FEATURE_DIAGNOSTICS
   { 'a', "wake-selftest",   testcon::Tier::Diag, false, false, false },
 #endif
@@ -2229,6 +2238,35 @@ static void show_identity_banner() {
   scene::Renderer r{theme_emit, nullptr, console_probe()};
   render_trust_card(r);
 }
+
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+// 'n' — nearby: the fleet roster (which OTHER Canaries this one has heard over
+// BLE), rendered as the width-aligned fleet card. Read-only. Presence is
+// UNSIGNED — liveness, never a verified trust claim (the card says so). Snapshot
+// the shared roster, project each entry to a view peer at `now`, then render.
+static void show_fleet_nearby() {
+  DeviceIdentity& dev = witness_get_device();
+  char self_fp4[5];
+  snprintf(self_fp4, sizeof self_fp4, "%02x%02x", dev.pubkey_fp[6], dev.pubkey_fp[7]);
+
+  static FleetRosterEntry entries[FLEET_ROSTER_MAX];
+  scene::FleetPeer peers[FLEET_ROSTER_MAX];
+  const int nn = fleet_roster_feed::snapshot(entries, FLEET_ROSTER_MAX);
+  const uint32_t now = millis();
+  for (int i = 0; i < nn; ++i) peers[i] = scene::fleet_peer_from_entry(entries[i], now);
+
+  scene::FleetView v{};
+  v.self_id  = dev.device_id;
+  v.self_fp4 = self_fp4;
+  v.peers    = peers;
+  v.count    = (size_t)(nn < 0 ? 0 : nn);
+  v.capacity = FLEET_ROSTER_MAX;
+
+  scene::Renderer r{theme_emit, nullptr, console_probe()};
+  Serial.print("\r\n");
+  scene::fleet_card(r, v);
+}
+#endif
 
 #if FEATURE_DIAGNOSTICS
 // 'a' — the animated wake: the 10 self-test probes light up [..] -> [OK]/[!!]
@@ -2456,6 +2494,9 @@ static void handle_serial_commands() {
       Serial.println("  t - Run all tests (self-test + feature health + Bluetooth)");
 #if FEATURE_CONSOLE_THEME
       Serial.println("  l - Identity banner (key fingerprint as randomart)");
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+      Serial.println("  n - Nearby Canaries (the fleet this one hears)");
+#endif
 #if FEATURE_DIAGNOSTICS
       Serial.println("  a - Animated wake (watch the self-test run live)");
 #endif
@@ -2885,6 +2926,12 @@ static void handle_serial_commands() {
     case 'L':
       show_identity_banner();
       break;
+#if defined(FEATURE_BLE_SCAN) && FEATURE_BLE_SCAN
+    case 'n':
+    case 'N':
+      show_fleet_nearby();
+      break;
+#endif
 #if FEATURE_DIAGNOSTICS
     case 'a':
     case 'A':
