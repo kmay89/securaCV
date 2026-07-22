@@ -68,6 +68,27 @@ jobs:
         working-directory: desktop-lab
         run: npm run ios:init
 
+      # App Store Connect API-key signing needs the .p8 as a real file on disk;
+      # a secret is a string, so materialize it here and point Tauri at the path.
+      - name: Write App Store Connect API key
+        id: asc_key
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        run: |
+          if [ -z "$APPLE_API_KEY_BASE64" ]; then
+            echo "::error::ENABLE_IOS_BUILD is true but the APPLE_API_KEY_BASE64 secret is empty."
+            echo "Store the base64-encoded App Store Connect .p8 key as APPLE_API_KEY_BASE64 (see desktop-lab/MOBILE.md)."
+            exit 1
+          fi
+          keydir="$RUNNER_TEMP/private_keys"
+          mkdir -p "$keydir"
+          keyfile="$keydir/AuthKey_${APPLE_API_KEY}.p8"
+          echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$keyfile"
+          chmod 600 "$keyfile"
+          echo "path=$keyfile" >> "$GITHUB_OUTPUT"
+
       - name: Build iOS
         if: vars.ENABLE_IOS_BUILD == 'true'
         working-directory: desktop-lab
@@ -77,7 +98,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY_PATH: ${{ steps.asc_key.outputs.path }}
         run: npm run ios:build -- --export-method ${{ inputs.export_method }}
 
       - name: Upload .ipa

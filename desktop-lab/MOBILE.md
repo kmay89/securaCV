@@ -90,10 +90,17 @@ and the Apple signing secrets — until those are set, the job no-ops with a cle
 message rather than failing. Set them once your provisioning is in place:
 
 - Variable: `ENABLE_IOS_BUILD = true`
-- Secrets: `APPLE_DEVELOPMENT_TEAM`, plus the same
-  `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_ID` /
-  `APPLE_PASSWORD` / `APPLE_TEAM_ID` the desktop pipeline already documents, and
-  a provisioning profile (`APPLE_MOBILE_PROVISION`).
+- Secrets:
+  - `APPLE_DEVELOPMENT_TEAM` — your 10-char Team ID.
+  - **App Store Connect API key** (how CI signs without an interactive login):
+    - `APPLE_API_ISSUER` — the issuer UUID.
+    - `APPLE_API_KEY` — the key **ID** (the 10-char string, e.g. `ABC123DEF4`).
+    - `APPLE_API_KEY_BASE64` — the `.p8` file's **contents**, base64-encoded
+      (`base64 -i AuthKey_ABC123DEF4.p8 | pbcopy`). The workflow decodes this to
+      `AuthKey_<id>.p8` on the runner and points `APPLE_API_KEY_PATH` at it — a
+      secret is a string, so the key must be materialized as a file first.
+  - `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` — the distribution
+    certificate (same as the desktop pipeline).
 
 ## Roadmap fit
 
