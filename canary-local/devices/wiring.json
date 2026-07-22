@@ -482,6 +482,63 @@
      "note": "underside pad"
     }
    ]
+  },
+  {
+   "id": "canary-display-watch-battery",
+   "device": "canary-display-watch",
+   "board": "seeed_round_display_xiao",
+   "title": "Watch Station \u2014 the one wire: the battery",
+   "note": "The watch is a zero-wire stack: the plain XIAO seats in the Round Display's XIAO socket and gets display SPI, backlight, touch, RTC and microSD through the socket with no jumpers. The only harness is the protected 150 mAh LiPo into the display's own JST 1.25 charger input \u2014 so this \"wire it\" is deliberately just that one connector. Polarity is not survivable; the display silk, not the cell's wire colour, is ground truth.",
+   "frame": {
+    "rx": -0.6,
+    "ry": 0.5,
+    "pad": 1.7
+   },
+   "peripherals": [
+    {
+     "id": "cell",
+     "ref": "lipo",
+     "pos": [
+      -24,
+      0,
+      6
+     ],
+     "rot": [
+      0,
+      90,
+      0
+     ],
+     "step": 0
+    }
+   ],
+   "steps": [
+    {
+     "title": "Battery into the JST",
+     "note": "The 302030 protected cell plugs into the Round Display's JST 1.25. The onboard charger tops it off over USB-C; the XIAO reads pack voltage through the socket. Check polarity against the display silk before it clicks home."
+    }
+   ],
+   "connections": [
+    {
+     "from": [
+      "cell",
+      "+"
+     ],
+     "to": "JST 1.25",
+     "color": "bat",
+     "step": 0,
+     "note": "cell + into the display's charger JST (verify polarity on the silk)"
+    },
+    {
+     "from": [
+      "cell",
+      "-"
+     ],
+     "to": "JST 1.25",
+     "color": "gnd",
+     "step": 0,
+     "note": "cell - return, same connector"
+    }
+   ]
   }
  ]
 }
