@@ -1,0 +1,66 @@
+# One-button native Mac app release launcher.
+#
+# Runs the two app pipelines that ship SecuraCV's macOS installers:
+#   • SecuraCV Flasher  → .github/workflows/desktop-flasher-release.yml
+#   • SecuraCV Lab      → .github/workflows/desktop-release.yml
+#
+# Use from GitHub: Actions → Mac apps — one-button build/release → Run workflow.
+# Keep publish unchecked for a build-only smoke run, or check it to publish the
+# same release artifacts those workflows publish when run directly.
+name: Mac apps — one-button build/release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish releases instead of build-only smoke artifacts"
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  launch:
+    name: Launch Flasher + Lab workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch desktop app workflows
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ref = context.ref.replace('refs/heads/', '').replace('refs/tags/', '');
+            const publish = String(core.getInput('publish')) === 'true';
+
+            const workflows = [
+              {
+                workflow_id: 'desktop-flasher-release.yml',
+                label: 'SecuraCV Flasher',
+                inputs: { dry_run: String(!publish) },
+              },
+              {
+                workflow_id: 'desktop-release.yml',
+                label: 'SecuraCV Lab',
+                inputs: { publish: String(publish) },
+              },
+            ];
+
+            for (const workflow of workflows) {
+              core.info(`Dispatching ${workflow.label} on ${ref} (publish=${publish})`);
+              await github.rest.actions.createWorkflowDispatch({
+                owner,
+                repo,
+                workflow_id: workflow.workflow_id,
+                ref,
+                inputs: workflow.inputs,
+              });
+            }
+
+            core.notice(
+              publish
+                ? 'Started both release workflows. Watch the linked workflow runs; Flasher publishes directly and Lab creates a draft release.'
+                : 'Started both build-only smoke workflows. Download the macOS artifacts from each workflow run when they finish.'
+            );
