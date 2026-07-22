@@ -53,6 +53,39 @@ test("finishing a pair, then flashing again, starts a FRESH pair (a batch just w
   assert.deepStrictEqual(vs.markDone("esp32"), { esp32: true, we2: false });
 });
 
+test("an abandoned half-pair goes stale — can't combine with a later unrelated flash", async () => {
+  const { makeVisionSession } = await mod();
+  let t = 1000;
+  const vs = makeVisionSession(mockStorage(), () => t);
+  vs.markDone("esp32");                                  // half a pair at t=1000
+  assert.deepStrictEqual(vs.parts(), { esp32: true, we2: false });
+  t += 31 * 60 * 1000;                                   // 31 min later — walked away
+  // The stale half reads as empty, so it can't falsely complete…
+  assert.deepStrictEqual(vs.parts(), { esp32: false, we2: false });
+  // …and flashing the OTHER part now starts a FRESH pair, not "both done".
+  assert.deepStrictEqual(vs.markDone("we2"), { esp32: false, we2: true });
+});
+
+test("within one bring-up, the pair stays live across the wait for the second port", async () => {
+  const { makeVisionSession } = await mod();
+  let t = 1000;
+  const vs = makeVisionSession(mockStorage(), () => t);
+  vs.markDone("esp32");
+  t += 10 * 60 * 1000;                                   // 10 min to find + plug in the module
+  vs.markDone("we2");
+  assert.deepStrictEqual(vs.parts(), { esp32: true, we2: true });   // both — the celebration
+});
+
+test("a COMPLETE pair never goes stale (only the next flash opens a new pair)", async () => {
+  const { makeVisionSession } = await mod();
+  let t = 1000;
+  const vs = makeVisionSession(mockStorage(), () => t);
+  vs.markDone("esp32");
+  vs.markDone("we2");
+  t += 24 * 60 * 60 * 1000;                              // a day later
+  assert.deepStrictEqual(vs.parts(), { esp32: true, we2: true });   // still shown done
+});
+
 test("unknown parts are ignored, never throw", async () => {
   const { makeVisionSession } = await mod();
   const vs = makeVisionSession(mockStorage());

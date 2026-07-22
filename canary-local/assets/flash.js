@@ -1525,11 +1525,16 @@ function phaseDone(opts) {
     // IS the next step: it shows what's done, what's left, and routes to the
     // other port. (visionSession was marked at the completion transition above.)
     box.append(visionChecklistCard(visionSession.parts(), {
-      onFlashOther: () => setPhase(phaseModule({
-        catalog: state.catalog,
-        setPhase,
-        back: () => setPhase(phaseConnect()),
-      })),
+      onFlashOther: async () => {
+        // Release the ESP32 port first — the module flow opens its own transport,
+        // and leaving state.session open would lock the host port until reload.
+        await onDisconnect(true);
+        setPhase(phaseModule({
+          catalog: state.catalog,
+          setPhase,
+          back: () => setPhase(phaseConnect()),
+        }));
+      },
     }));
   } else if (product && !opts.isBackup) {
     const step = core.postFlashNextStep(product, { wifiJoined: !!opts.wifiSsid });
@@ -1629,7 +1634,11 @@ function phaseDone(opts) {
   const watch = el("button", "primary", "Watch it boot & prove itself →");
   watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
   const again = el("button", "ghost", "Set up another board");
-  again.addEventListener("click", () => onDisconnect().then(() => setPhase(phaseConnect())));
+  // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
+  // half-done Vision can't carry a stale flag into the next board (else its other
+  // half could later read as "both done"). Guided continuation uses the checklist
+  // CTA above, not this button, so it's unaffected.
+  again.addEventListener("click", () => onDisconnect().then(() => { visionSession.reset(); setPhase(phaseConnect()); }));
   const tour = el("button", "ghost", "replay the layers tour");
   let tourEl = null;
   tour.addEventListener("click", () => {
