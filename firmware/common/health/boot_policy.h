@@ -11,7 +11,9 @@
  *   This layer decides, very early in boot and before any risky init, whether
  *   to proceed normally or fall back to a minimal safe-mode console. It is the
  *   LAST-RESORT net, complementary to — not a replacement for — the OTA A/B
- *   rollback that already ships in firmware/common/ota/securacv_ota.*:
+ *   rollback in firmware/common/ota/securacv_ota.* (whose verifyRollbackLater
+ *   override is #if-guarded on CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE, so it is
+ *   only active in builds that enable that bootloader config):
  *
  *     · A/B rollback (securacv_ota_boot_self_test) handles "the *new* image is
  *       bad": while an image is PENDING_VERIFY, a failed post-flash self-test —

@@ -74,15 +74,21 @@ the new slot fails its post-flash self-test, plus a minimal **safe-mode
 console** that still prints the trust card + a recovery URL even when the main
 app won't come up.
 
-**Status (2026-07).** The A/B half already ships in
-`firmware/common/ota/securacv_ota.*` (host-tested in `test_ota_logic.cpp`): the
-anti-rollback version floor and automatic rollback when a *new* image fails its
-post-flash self-test are done (see "What already exists"). The crash-loop →
-safe-mode half — for a *confirmed* image that can no longer come up, when there
-is no A/B image to revert to — begins with the pure decision layer
+**Status (2026-07).** The **app-level anti-rollback version floor** is done and
+host-tested in `test_ota_logic.cpp`. The **A/B rollback engine** (post-flash
+self-test → mark-valid-or-revert, plus the `verifyRollbackLater` ownership that
+keeps a new image `PENDING_VERIFY`) is written in
+`firmware/common/ota/securacv_ota.*` and active in the `canary-ota` ESP-IDF
+project, where `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` — but **that bootloader
+config is not yet enabled in the shipping Arduino/Canary builds**, so there the
+Arduino core auto-confirms the image and the revert net is inert until the config
+lands (part of the Phase 1 boot-path work; see "What already exists"). The
+crash-loop → safe-mode half — for a *confirmed* image that can no longer come up,
+when there is no A/B image to revert to — begins with the pure decision layer
 `firmware/common/health/boot_policy.h` (host-tested in
 `tests_host/test_boot_policy.cpp`). **Still to land, and gated on hardware
-validation:** wiring that counter into the boot path + the safe-mode console
+validation:** enabling the bootloader rollback config in the shipping builds,
+wiring the crash-loop counter into the boot path, and the safe-mode console
 (steps 1–2 below).
 
 **Why (user value).** Resilience — the highest-stakes self-healing. A failed
@@ -90,14 +96,20 @@ update or corrupted image degrades to a recoverable state instead of a dead
 device, and the evidence on the SD card stays intact and verifiable.
 
 **What already exists to build on.**
-- ✅ **A/B rollback on a failed post-flash self-test is done.**
-  `FEATURE_OTA_PULL` + `firmware/common/ota/securacv_ota.*` register the
+- 🟡 **A/B rollback engine is written, but gated on the bootloader rollback
+  config.** `FEATURE_OTA_PULL` + `firmware/common/ota/securacv_ota.*` register the
   post-flash self-tests (see `main.cpp` `k_ota_selftests[]`,
   `securacv_ota_register_selftest`); `securacv_ota_boot_self_test()` runs them
   and, on a required failure, calls `esp_ota_mark_app_invalid_rollback_and_reboot()`.
   The engine overrides the Arduino core's weak `verifyRollbackLater()` so a new
   image stays `PENDING_VERIFY` until it confirms itself — a crash/hang/brownout
-  before confirmation reverts to the previous image on the next boot.
+  before confirmation reverts to the previous image on the next boot. **This only
+  functions where `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is set** — the
+  `verifyRollbackLater` override is `#if`-guarded on that symbol in
+  `securacv_ota.cpp`. Today that config lives only in the `canary-ota` ESP-IDF
+  project (`sdkconfig.defaults`/`.production`); in the main Arduino/Canary builds
+  the core auto-confirms the image and the revert net is inert. **Enabling that
+  config in the shipping builds is remaining Phase 1 boot-path work.**
 - ✅ **App-level anti-rollback floor is done.** `securacv_ota_update_decision()`
   compares against `max(running_version, nvs_floor)`; the floor is raised on
   confirmation. Host-tested in `firmware/common/ota/test_ota_logic.cpp`.
@@ -114,12 +126,15 @@ device, and the evidence on the SD card stays intact and verifiable.
 2. Safe-mode: minimal init, print `welcome_card`/`trust_card` + recovery URL,
    accept only the read-only diagnostic console (`Tier::Diag`), offer re-flash.
    *Pending (boot-path, hardware-validated).*
-3. ✅ **A/B decision function done.** The post-flash self-test already gates
-   `mark_app_valid` and the rollback-on-failure path exists (see "What already
-   exists"). The crash-loop/safe-mode *decision* logic now lives in the pure
-   header `boot_policy.h`, proven in `tests_host` — mirroring `test_console.h`'s
-   pure-policy pattern (the decision half is host-tested; the boot-path glue that
-   calls it is the only part that needs hardware).
+3. **A/B: engine code in place; the crash-loop/safe-mode *decision* is now
+   host-tested.** The post-flash self-test gates `mark_app_valid` and the
+   rollback-on-failure path is written (see "What already exists") — live only
+   where `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is enabled (`canary-ota`), still
+   to be turned on in the shipping builds. The crash-loop/safe-mode *decision*
+   logic now lives in the pure header `boot_policy.h`, proven in `tests_host` —
+   mirroring `test_console.h`'s pure-policy pattern. Host-tested here: the
+   decision half. Needs hardware: the boot-path glue **and** the bootloader
+   rollback config in the shipping builds.
 
 **Risks / gotchas.** **This touches the boot/OTA path — real bricking risk if
 wrong.** Do a design doc + explicit human sign-off before code. Must be proven

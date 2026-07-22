@@ -275,21 +275,26 @@ Mirroring the honesty of the vault RFC's §5.5
 - **Phase 0 — this RFC. ✅ Done** (§8 signed off, 2026-07-22). Nothing
   irreversible; no code that burns eFuses merges.
 - **Phase 1 — reversible safety net (highest value, no eFuse). 🟡 In progress.**
-  Two of the three pieces already ship in `firmware/common/ota/securacv_ota.*`
-  (host-tested in `test_ota_logic.cpp`): the **app-level anti-rollback floor**
-  (`securacv_ota_update_decision` over `max(running, nvs_floor)`) and **A/B
-  rollback on a failed post-flash self-test** (`securacv_ota_boot_self_test` →
+  The **app-level anti-rollback floor** already ships in
+  `firmware/common/ota/securacv_ota.*` (`securacv_ota_update_decision` over
+  `max(running, nvs_floor)`, host-tested in `test_ota_logic.cpp`). The **A/B
+  rollback engine** (`securacv_ota_boot_self_test` →
   `esp_ota_mark_app_invalid_rollback_and_reboot`, with the `verifyRollbackLater`
-  override keeping images `PENDING_VERIFY` until confirmed). The remaining piece
-  — a **crash-loop → safe-mode** net for a *confirmed* image that can no longer
-  come up (no A/B image to revert to) — starts with the pure decision layer
-  `firmware/common/health/boot_policy.h` (host-tested in
-  `tests_host/test_boot_policy.cpp`), mirroring the `self_star_roadmap`
-  coming-soon item. Still to land: wiring that counter into the boot path,
-  `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, and the safe-mode console — the
+  override keeping images `PENDING_VERIFY` until confirmed) is written and active
+  in the `canary-ota` ESP-IDF project — but its `verifyRollbackLater` override is
+  `#if`-guarded on `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, which today is set only
+  in `canary-ota`'s `sdkconfig`; in the shipping Arduino/Canary builds the core
+  auto-confirms the image, so **enabling that config in the shipping builds is
+  itself Phase 1 work.** The third piece — a **crash-loop → safe-mode** net for a
+  *confirmed* image that can no longer come up (no A/B image to revert to) —
+  starts with the pure decision layer `firmware/common/health/boot_policy.h`
+  (host-tested in `tests_host/test_boot_policy.cpp`), mirroring the
+  `self_star_roadmap` coming-soon item. Still to land: enabling
+  `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in the shipping builds, wiring the
+  crash-loop counter into the boot path, and the safe-mode console — the
   boot-path parts carry real bricking risk and must be hardware-validated before
-  merge (see `self_star_roadmap.md` risks). Every Canary gets rollback safety;
-  still un-brickable.
+  merge (see `self_star_roadmap.md` risks). Every Canary then gets rollback
+  safety; still un-brickable.
 - **Phase 2 — attestation + flasher awareness (software).** Implement
   `securacv.attest/v1` (challenge-response + measurement) on the existing identity
   key; add the read-only "is this device locked?" probe so the flasher refuses
@@ -341,9 +346,11 @@ choosing the alternative knowingly, per §5.1–5.2.
 
 **Build order that follows from these decisions** (§7): **Phase 1** — Tier 1
 (anti-rollback + boot safe-mode, pure software, no eFuse) — is underway; the
-anti-rollback floor and A/B self-test rollback already ship, and the crash-loop/
-safe-mode decision layer (`boot_policy.h`) is now host-tested, leaving only the
-hardware-validated boot-path wiring. **Phase 2** — Tier 2 (the
+anti-rollback floor ships and the A/B rollback engine is written (live in
+`canary-ota`, still gated on `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in the
+shipping builds), and the crash-loop/safe-mode decision layer (`boot_policy.h`)
+is now host-tested — leaving the hardware-validated boot-path wiring plus turning
+that bootloader config on in the shipping builds. **Phase 2** — Tier 2 (the
 `securacv.attest/v1` protocol + the flasher's locked-device detection) — follows. Phases 3–4 (the eFuse-burning path) stay
 design-only until a specific deployment requests them.
 
