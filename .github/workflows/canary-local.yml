@@ -34,6 +34,7 @@ on:
       - "firmware/flavors.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
+      - "desktop/src-tauri/src/hub_disk.rs"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
       - "docs/homeassistant_setup.md"
@@ -66,6 +67,7 @@ on:
       - "firmware/flavors.json"
       - "firmware/envs/**"
       - "canary-local/tools/gen_flash.py"
+      - "desktop/src-tauri/src/hub_disk.rs"
       - "docs/hardware/enclosure/**"
       - "docs/hardware/bom_*.csv"
       - "docs/homeassistant_setup.md"
@@ -121,6 +123,13 @@ jobs:
           python3 canary-local/tools/gen_homeassistant.py
           if ! git diff --exit-code -- canary-local/devices/homeassistant.json; then
             echo "::error::generated hub data stale — run canary-local/tools/gen_homeassistant.py and commit"
+            exit 1
+          fi
+      - name: Hub image drift (derived from the Hub snapshot + flasher safety gate + HA assets)
+        run: |
+          python3 canary-local/tools/gen_hub_image.py
+          if ! git diff --exit-code -- canary-local/devices/hub_image.json; then
+            echo "::error::generated hub image catalog stale — a source moved (HAOS version, hub_disk.rs card floor, add-on config, or the dashboards/automations/blueprints). Run canary-local/tools/gen_hub_image.py and commit"
             exit 1
           fi
       - name: Get Started data drift (rides the Hub snapshot + README install strings)
