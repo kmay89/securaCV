@@ -155,12 +155,15 @@ if not vis_reg:
 boards = json.loads(read(BOARDS))
 BOARD_ID = None
 BOARD_NAME_FULL = None
+# the board whose own devices list includes canary-vision is the definitive map
 for bid, b in (boards.get("boards") or {}).items():
-    if "canary-vision" in (boards.get("device_board", {}).get("canary-vision", ""), *(b.get("devices") or [])):
+    if "canary-vision" in (b.get("devices") or []):
         BOARD_ID, BOARD_NAME_FULL = bid, b.get("name")
         break
 if not BOARD_ID:
-    BOARD_ID = boards.get("device_board", {}).get("canary-vision")
+    # fall back to device_board (a LIST of boards, primary first; tolerate a string)
+    _v = boards.get("device_board", {}).get("canary-vision")
+    BOARD_ID = _v[0] if isinstance(_v, list) and _v else _v
     BOARD_NAME_FULL = (boards.get("boards", {}).get(BOARD_ID) or {}).get("name")
 if not BOARD_ID:
     die("boards.json maps no board to canary-vision")
