@@ -1,0 +1,486 @@
+<title>Put the Lab on your iPad — the runbook</title>
+<style>
+  :root{
+    --paper:#f6f7fb;      --paper-2:#eef1f7;   --card:#ffffff;
+    --ink:#111725;        --ink-2:#39424f;     --ink-3:#5b6472;
+    --line:#dde2ec;       --line-2:#c9d0de;
+    --signal:#2563eb;     --signal-soft:#e7effd;
+    --canary:#b4770a;     --canary-bright:#e8b423; --canary-soft:#fbf1d6;
+    --good:#0f9d58;       --good-soft:#e4f4ea;   --good-line:#8fd3ac;
+    --bad:#c0392b;        --bad-soft:#fbe4e0;
+    --shadow:0 1px 2px rgba(17,23,37,.05), 0 8px 30px rgba(17,23,37,.06);
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#0c111b;    --paper-2:#0f1524;   --card:#141b2a;
+      --ink:#eef1f8;      --ink-2:#b7c0d1;     --ink-3:#8b96a8;
+      --line:#232c40;     --line-2:#2e3a52;
+      --signal:#6ea0ff;   --signal-soft:#182541;
+      --canary:#f5c542;   --canary-bright:#f5c542; --canary-soft:#2a2410;
+      --good:#3ddc91;     --good-soft:#0f2a20;   --good-line:#1f5c43;
+      --bad:#ff7a6b;      --bad-soft:#2c1512;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 40px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{--paper:#f6f7fb;--paper-2:#eef1f7;--card:#fff;--ink:#111725;--ink-2:#39424f;--ink-3:#5b6472;--line:#dde2ec;--line-2:#c9d0de;--signal:#2563eb;--signal-soft:#e7effd;--canary:#b4770a;--canary-bright:#e8b423;--canary-soft:#fbf1d6;--good:#0f9d58;--good-soft:#e4f4ea;--good-line:#8fd3ac;--bad:#c0392b;--bad-soft:#fbe4e0;--shadow:0 1px 2px rgba(17,23,37,.05),0 8px 30px rgba(17,23,37,.06);}
+  :root[data-theme="dark"]{--paper:#0c111b;--paper-2:#0f1524;--card:#141b2a;--ink:#eef1f8;--ink-2:#b7c0d1;--ink-3:#8b96a8;--line:#232c40;--line-2:#2e3a52;--signal:#6ea0ff;--signal-soft:#182541;--canary:#f5c542;--canary-bright:#f5c542;--canary-soft:#2a2410;--good:#3ddc91;--good-soft:#0f2a20;--good-line:#1f5c43;--bad:#ff7a6b;--bad-soft:#2c1512;--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 40px rgba(0,0,0,.35);}
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+
+  /* sticky progress header */
+  .prog{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--paper) 88%,transparent);
+    backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line)}
+  .prog .in{max-width:760px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:14px}
+  .prog .badge{width:30px;height:30px;border-radius:8px;background:linear-gradient(150deg,var(--signal),color-mix(in srgb,var(--signal) 55%,var(--canary-bright)));
+    display:grid;place-items:center;color:#fff;font-size:15px;flex:none}
+  .prog .lbl{font-weight:680;font-size:14.5px;letter-spacing:-.01em;flex:none}
+  .prog .track{flex:1;height:8px;border-radius:99px;background:var(--paper-2);overflow:hidden;border:1px solid var(--line)}
+  .prog .fill{height:100%;width:0;background:linear-gradient(90deg,var(--signal),var(--good));transition:width .45s cubic-bezier(.2,.8,.2,1)}
+  .prog .count{font-family:var(--mono);font-size:12.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;flex:none;min-width:46px;text-align:right}
+
+  .wrap{max-width:760px;margin:0 auto;padding:0 24px 120px}
+
+  header.hero{padding:52px 0 8px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--canary);display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:"";width:26px;height:1.5px;background:var(--canary)}
+  h1{font-size:clamp(30px,5.5vw,44px);line-height:1.04;letter-spacing:-.03em;font-weight:800;margin:18px 0 0;text-wrap:balance}
+  .sub{font-size:18px;color:var(--ink-2);margin:16px 0 0;max-width:54ch}
+  .rule{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+  .rule .r{font-size:13px;font-family:var(--mono);color:var(--ink-2);background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px 12px;display:flex;gap:8px;align-items:center}
+  .rule .r b{color:var(--ink);font-weight:600}
+
+  .seclabel{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:46px 0 0;display:flex;align-items:center;gap:10px}
+  .seclabel::after{content:"";flex:1;height:1px;background:var(--line)}
+
+  /* prereq gate */
+  .gate{margin-top:18px;border:1px solid var(--line);border-radius:16px;background:var(--card);box-shadow:var(--shadow);overflow:hidden}
+  .gate .ghead{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;background:var(--canary-soft)}
+  .gate .ghead .t{font-weight:700;font-size:15px}
+  .gate .ghead .t small{display:block;font-weight:500;font-size:12.5px;color:var(--ink-2);font-family:var(--mono);margin-top:2px}
+  .greq{display:flex;gap:13px;padding:14px 20px;border-top:1px solid var(--line)}
+  .greq:first-of-type{border-top:0}
+  .greq .box{flex:none;margin-top:2px}
+  .greq .body{min-width:0}
+  .greq .h{font-weight:620;font-size:15px}
+  .greq .d{font-size:13.5px;color:var(--ink-2);margin-top:3px}
+  .greq .chk{font-family:var(--mono);font-size:12px;color:var(--signal);margin-top:7px;background:var(--signal-soft);border:1px solid color-mix(in srgb,var(--signal) 22%,transparent);
+    border-radius:7px;padding:6px 9px;display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+  /* checkbox */
+  .cb{appearance:none;-webkit-appearance:none;width:22px;height:22px;border:2px solid var(--line-2);border-radius:7px;background:var(--card);
+    cursor:pointer;position:relative;flex:none;transition:background .15s,border-color .15s}
+  .cb:checked{background:var(--good);border-color:var(--good)}
+  .cb:checked::after{content:"";position:absolute;left:6px;top:2px;width:6px;height:11px;border:solid #fff;border-width:0 2.5px 2.5px 0;transform:rotate(42deg)}
+  .cb:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+
+  /* step cards */
+  ol.run{list-style:none;counter-reset:step;padding:0;margin:16px 0 0;display:flex;flex-direction:column;gap:16px}
+  li.step{counter-increment:step;border:1px solid var(--line);border-radius:16px;background:var(--card);box-shadow:var(--shadow);overflow:hidden;transition:opacity .3s,border-color .2s}
+  li.step.done{opacity:.62;border-color:var(--good-line)}
+  li.step .top{display:flex;gap:14px;align-items:flex-start;padding:18px 20px 4px}
+  li.step .num{flex:none;width:30px;height:30px;border-radius:50%;background:var(--signal-soft);color:var(--signal);border:1.5px solid color-mix(in srgb,var(--signal) 35%,transparent);
+    font-family:var(--mono);font-weight:700;font-size:14px;display:grid;place-items:center;margin-top:1px}
+  li.step.done .num{background:var(--good);border-color:var(--good);color:#fff}
+  li.step.done .num::after{content:"✓"}
+  li.step.done .num span{display:none}
+  li.step .ti{flex:1;min-width:0}
+  li.step .ti h3{margin:2px 0 0;font-size:17.5px;letter-spacing:-.01em;font-weight:700}
+  li.step .ti p{margin:5px 0 0;font-size:14.5px;color:var(--ink-2)}
+  li.step .toggle{flex:none}
+  li.step .bd{padding:6px 20px 20px 64px}
+
+  /* command block */
+  .cmd{margin-top:12px;background:#0e1626;border:1px solid color-mix(in srgb,var(--signal) 22%,#000);border-radius:11px;position:relative;box-shadow:var(--shadow)}
+  .cmd pre{margin:0;padding:14px 52px 14px 16px;overflow-x:auto}
+  .cmd code{font-family:var(--mono);font-size:13px;line-height:1.75;color:#dfe6f2;white-space:pre;display:block}
+  .cmd .p{color:#f5c542}.cmd .c{color:#7c88a1}.cmd .k{color:#6ea0ff}.cmd .v{color:#3ddc91}
+  .copy{position:absolute;top:9px;right:9px;background:#1b2740;color:#cdd8ee;border:1px solid #2c3a58;border-radius:7px;
+    font-family:var(--mono);font-size:11px;padding:5px 9px;cursor:pointer;display:flex;gap:5px;align-items:center;transition:background .15s,color .15s}
+  .copy:hover{background:#243352;color:#fff}
+  .copy.ok{background:var(--good);border-color:var(--good);color:#fff}
+  .copy:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+
+  .expect{margin-top:12px;border-radius:10px;background:var(--good-soft);border:1px solid var(--good-line);padding:11px 14px;font-size:13.8px;color:var(--ink-2);display:flex;gap:10px}
+  .expect .i{color:var(--good);font-weight:700;flex:none}
+  .expect b{color:var(--ink)}
+
+  details.fix{margin-top:10px;border-radius:10px;border:1px solid var(--line);background:var(--paper-2);overflow:hidden}
+  details.fix summary{cursor:pointer;list-style:none;padding:10px 14px;font-size:13.5px;font-weight:600;color:var(--canary);display:flex;gap:9px;align-items:center}
+  details.fix summary::-webkit-details-marker{display:none}
+  details.fix summary .caret{transition:transform .2s;font-size:11px;color:var(--ink-3)}
+  details.fix[open] summary .caret{transform:rotate(90deg)}
+  details.fix .fixbody{padding:2px 14px 13px 32px}
+  details.fix .fixbody dl{margin:0}
+  details.fix dt{font-family:var(--mono);font-size:12.5px;color:var(--bad);margin-top:11px;padding:5px 8px;background:var(--bad-soft);border-radius:6px;display:inline-block}
+  details.fix dd{margin:6px 0 0;font-size:13.8px;color:var(--ink-2)}
+  details.fix dd code,.expect code,.greq .d code,p code,li .d code{font-family:var(--mono);font-size:.85em;background:var(--paper-2);border:1px solid var(--line);border-radius:5px;padding:.08em .36em;color:var(--ink);white-space:nowrap}
+  .cmd + .cmd{margin-top:8px}
+
+  /* done banner */
+  #done{margin-top:26px;border-radius:18px;border:1.5px solid var(--good-line);background:var(--good-soft);padding:26px;text-align:center;display:none}
+  #done.show{display:block;animation:pop .5s cubic-bezier(.2,.9,.3,1.3)}
+  @keyframes pop{from{transform:scale(.96);opacity:0}to{transform:scale(1);opacity:1}}
+  #done .big{font-size:40px}
+  #done h2{margin:6px 0 0;font-size:24px;letter-spacing:-.02em}
+  #done p{margin:8px auto 0;max-width:46ch;color:var(--ink-2);font-size:15px}
+
+  /* honest capability strip */
+  .caps{margin-top:20px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card);box-shadow:var(--shadow)}
+  .caps .ch{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700;font-size:15px;background:var(--paper-2)}
+  .caprow{display:flex;gap:12px;align-items:center;padding:12px 18px;border-top:1px solid var(--line);font-size:14.5px}
+  .caprow:first-of-type{border-top:0}
+  .caprow .st{font-family:var(--mono);font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;flex:none;letter-spacing:.03em}
+  .caprow .st.y{color:var(--good);background:var(--good-soft);border:1px solid var(--good-line)}
+  .caprow .st.n{color:var(--bad);background:var(--bad-soft);border:1px solid color-mix(in srgb,var(--bad) 35%,transparent)}
+  .caprow .cn{color:var(--ink);font-weight:600}
+  .caprow .cd{color:var(--ink-3);font-size:13px}
+
+  .tip{margin-top:20px;border-radius:12px;background:var(--signal-soft);border:1px solid color-mix(in srgb,var(--signal) 28%,transparent);padding:15px 17px;font-size:14px;color:var(--ink-2);display:flex;gap:11px}
+  .tip .i{flex:none}
+  .tip b{color:var(--ink)}
+  .tip a{color:var(--signal)}
+
+  footer{margin-top:44px;padding-top:22px;border-top:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--ink-3);line-height:1.8}
+  .reset{margin-top:24px;text-align:center}
+  .reset button{font-family:var(--mono);font-size:12px;color:var(--ink-3);background:none;border:1px solid var(--line);border-radius:8px;padding:7px 13px;cursor:pointer}
+  .reset button:hover{color:var(--ink);border-color:var(--line-2)}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important}html{scroll-behavior:auto}}
+  @media (max-width:560px){li.step .bd{padding-left:20px}.prog .lbl{display:none}}
+</style>
+
+<div class="prog">
+  <div class="in">
+    <span class="badge">◆</span>
+    <span class="lbl">iPad setup</span>
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <span class="count" id="count">0 / 5</span>
+  </div>
+</div>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow">Runbook · do it once, do it right</div>
+    <h1>Put the Lab on your iPad</h1>
+    <p class="sub">Follow this top to bottom. Every command is copy-paste, every step tells you exactly
+      what success looks like, and every step has a "if it goes wrong" you can open. Don't skip — each
+      step assumes the one above it worked.</p>
+    <div class="rule">
+      <span class="r">🖥️ <b>On a Mac</b> — required</span>
+      <span class="r">⏱️ <b>~30 min</b> first time</span>
+      <span class="r">💳 <b>Free</b> Apple ID is enough to start</span>
+    </div>
+  </header>
+
+  <div class="seclabel">Before you start — check all four</div>
+  <p style="font-size:14.5px;color:var(--ink-2);margin-top:10px">Tick each box once it's true. If any is
+    missing, fix it first — the steps below will fail without them. These are one-time installs; you'll
+    never do them again.</p>
+
+  <div class="gate">
+    <div class="ghead">
+      <span style="font-size:18px">🚦</span>
+      <span class="t">Prerequisites<small>all four must be green before Step 1</small></span>
+    </div>
+    <label class="greq">
+      <input type="checkbox" class="cb pre" data-pre>
+      <span class="box"></span>
+      <span class="body">
+        <span class="h">A Mac with Xcode installed</span>
+        <span class="d">Xcode is Apple's free developer app (from the Mac App Store). It brings the iPad
+          Simulator and the build tools. iPad/iPhone apps can <b>only</b> be built on a Mac.</span>
+        <span class="chk">check: <code>xcodebuild -version</code> prints a version</span>
+      </span>
+    </label>
+    <label class="greq">
+      <input type="checkbox" class="cb pre" data-pre>
+      <span class="box"></span>
+      <span class="body">
+        <span class="h">Xcode Command Line Tools + license accepted</span>
+        <span class="d">Run <code>xcode-select --install</code> once, then
+          <code>sudo xcodebuild -license accept</code>. Skipping the license is the #1 cause of a failed
+          first build.</span>
+        <span class="chk">check: <code>xcode-select -p</code> prints a path</span>
+      </span>
+    </label>
+    <label class="greq">
+      <input type="checkbox" class="cb pre" data-pre>
+      <span class="box"></span>
+      <span class="body">
+        <span class="h">Signed into Xcode with your Apple ID</span>
+        <span class="d">Xcode ▸ Settings ▸ Accounts ▸ <b>＋</b> ▸ Apple ID. The <b>free</b> tier runs the
+          Simulator and side-loads to your own iPad for 7 days. The $99/yr Program is only needed for
+          TestFlight or the App Store.</span>
+      </span>
+    </label>
+    <label class="greq">
+      <input type="checkbox" class="cb pre" data-pre>
+      <span class="box"></span>
+      <span class="body">
+        <span class="h">Rust and Node installed</span>
+        <span class="d">The Lab shell is Rust + a Node toolchain. Get Rust from
+          <code>rustup.rs</code> and Node 20+ from <code>nodejs.org</code> (or your version manager).</span>
+        <span class="chk">check: <code>rustc --version</code> and <code>node --version</code> both print</span>
+      </span>
+    </label>
+  </div>
+
+  <div class="seclabel">The five steps</div>
+
+  <ol class="run">
+    <li class="step">
+      <div class="top">
+        <div class="num"><span>1</span></div>
+        <div class="ti">
+          <h3>Add the iPad build targets to Rust</h3>
+          <p>Tells Rust how to compile for the three iPad/iPhone chip targets. One-time.</p>
+        </div>
+        <input type="checkbox" class="cb step-cb toggle" aria-label="Mark step 1 done">
+      </div>
+      <div class="bd">
+        <div class="cmd">
+          <button class="copy" type="button">⧉ Copy</button>
+          <pre><code><span class="p">$</span> rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios</code></pre>
+        </div>
+        <div class="expect"><span class="i">✓</span><span>Success looks like: each target prints
+          <b>"info: installing component"</b> or <b>"is up to date"</b>. No red error text.</span></div>
+        <details class="fix">
+          <summary><span class="caret">▶</span> If it goes wrong</summary>
+          <div class="fixbody"><dl>
+            <dt>command not found: rustup</dt>
+            <dd>Rust isn't installed. Install it from <code>rustup.rs</code>, open a new terminal, and try again.</dd>
+          </dl></div>
+        </details>
+      </div>
+    </li>
+
+    <li class="step">
+      <div class="top">
+        <div class="num"><span>2</span></div>
+        <div class="ti">
+          <h3>Go into the app folder and install its dependencies</h3>
+          <p>Everything from here runs inside <code>desktop-lab/</code>. This is the same folder that
+            builds the Mac and Linux apps.</p>
+        </div>
+        <input type="checkbox" class="cb step-cb toggle" aria-label="Mark step 2 done">
+      </div>
+      <div class="bd">
+        <div class="cmd">
+          <button class="copy" type="button">⧉ Copy</button>
+          <pre><code><span class="p">$</span> <span class="k">cd</span> desktop-lab
+<span class="p">$</span> npm install</code></pre>
+        </div>
+        <div class="expect"><span class="i">✓</span><span>Success looks like: npm finishes with
+          <b>"added N packages"</b> and returns you to the prompt with no errors.</span></div>
+        <details class="fix">
+          <summary><span class="caret">▶</span> If it goes wrong</summary>
+          <div class="fixbody"><dl>
+            <dt>no such file or directory: desktop-lab</dt>
+            <dd>You're not in the repo root. <code>cd</code> into your clone of the securaCV repo first,
+              then run the commands.</dd>
+            <dt>command not found: npm</dt>
+            <dd>Node isn't installed. Get Node 20+ from <code>nodejs.org</code>, open a new terminal, retry.</dd>
+          </dl></div>
+        </details>
+      </div>
+    </li>
+
+    <li class="step">
+      <div class="top">
+        <div class="num"><span>3</span></div>
+        <div class="ti">
+          <h3>Generate the iPad (Xcode) project</h3>
+          <p>Builds the Xcode project from the app's config. You never edit it by hand — if it ever breaks,
+            you just run this again.</p>
+        </div>
+        <input type="checkbox" class="cb step-cb toggle" aria-label="Mark step 3 done">
+      </div>
+      <div class="bd">
+        <div class="cmd">
+          <button class="copy" type="button">⧉ Copy</button>
+          <pre><code><span class="p">$</span> npm run ios:init</code></pre>
+        </div>
+        <div class="expect"><span class="i">✓</span><span>Success looks like: it creates a
+          <code>src-tauri/gen/apple/</code> folder and finishes with <b>"iOS project generated"</b>.</span></div>
+        <details class="fix">
+          <summary><span class="caret">▶</span> If it goes wrong</summary>
+          <div class="fixbody"><dl>
+            <dt>You have not agreed to the Xcode license</dt>
+            <dd>Run <code>sudo xcodebuild -license accept</code>, then run <code>npm run ios:init</code> again.</dd>
+            <dt>xcrun: error: unable to find utility "xcodebuild"</dt>
+            <dd>Command Line Tools aren't set. Run <code>sudo xcode-select --switch /Applications/Xcode.app</code>
+              and retry.</dd>
+          </dl></div>
+        </details>
+      </div>
+    </li>
+
+    <li class="step">
+      <div class="top">
+        <div class="num"><span>4</span></div>
+        <div class="ti">
+          <h3>Run it in the iPad Simulator</h3>
+          <p>Builds and launches the Lab. When it asks which device, <b>pick an iPad</b> (e.g. iPad Pro),
+            not an iPhone — that's the only choice that matters for the iPad layout.</p>
+        </div>
+        <input type="checkbox" class="cb step-cb toggle" aria-label="Mark step 4 done">
+      </div>
+      <div class="bd">
+        <div class="cmd">
+          <button class="copy" type="button">⧉ Copy</button>
+          <pre><code><span class="p">$</span> npm run ios:dev</code></pre>
+        </div>
+        <div class="expect"><span class="i">✓</span><span>Success looks like: the iPad Simulator opens and
+          the Lab appears with its <b>sidebar on the left</b> (iPhone would show a bottom tab bar instead).
+          Edits you make to the Lab reload live.</span></div>
+        <details class="fix">
+          <summary><span class="caret">▶</span> If it goes wrong</summary>
+          <div class="fixbody"><dl>
+            <dt>No iPad in the device list</dt>
+            <dd>Open Xcode ▸ Settings ▸ Platforms and make sure an <b>iOS Simulator</b> runtime is
+              downloaded, then rerun.</dd>
+            <dt>It opened an iPhone, not an iPad</dt>
+            <dd>Stop it (<code>Ctrl-C</code>), rerun <code>npm run ios:dev</code>, and choose an iPad from
+              the list. Or launch an iPad simulator first from Xcode ▸ Open Developer Tool ▸ Simulator.</dd>
+          </dl></div>
+        </details>
+      </div>
+    </li>
+
+    <li class="step">
+      <div class="top">
+        <div class="num"><span>5</span></div>
+        <div class="ti">
+          <h3>(Optional) Make an installable build</h3>
+          <p>Only needed to put it on a <b>real</b> iPad or TestFlight. For just trying it out, Step 4 is
+            enough — you're already done.</p>
+        </div>
+        <input type="checkbox" class="cb step-cb toggle" aria-label="Mark step 5 done">
+      </div>
+      <div class="bd">
+        <div class="cmd">
+          <button class="copy" type="button">⧉ Copy</button>
+          <pre><code><span class="c"># unsigned build (for the Simulator)</span>
+<span class="p">$</span> npm run ios:build</code></pre>
+        </div>
+        <div class="cmd">
+          <button class="copy" type="button">⧉ Copy</button>
+          <pre><code><span class="c"># signed build for a real iPad / TestFlight —</span>
+<span class="c"># replace XXXXXXXXXX with your 10-character Apple Team ID</span>
+<span class="p">$</span> <span class="k">export</span> APPLE_DEVELOPMENT_TEAM=<span class="v">XXXXXXXXXX</span>
+<span class="p">$</span> npm run ios:build -- --export-method <span class="v">app-store-connect</span></code></pre>
+        </div>
+        <div class="expect"><span class="i">✓</span><span>Success looks like: it finishes with a path to an
+          <b><code>.ipa</code></b> file. That's your installable app.</span></div>
+        <details class="fix">
+          <summary><span class="caret">▶</span> If it goes wrong</summary>
+          <div class="fixbody"><dl>
+            <dt>No signing certificate / provisioning profile</dt>
+            <dd>Find your Team ID at <code>developer.apple.com</code> ▸ Membership, set it in the
+              <code>export</code> line above, and make sure your Apple ID is added in Xcode ▸ Settings ▸
+              Accounts. Free-tier device installs expire after 7 days — just rebuild to renew.</dd>
+          </dl></div>
+        </details>
+      </div>
+    </li>
+  </ol>
+
+  <div id="done">
+    <div class="big">🎉</div>
+    <h2>The Lab is running on iPad.</h2>
+    <p>That's the whole thing — the exact same Lab you use on the web and the Mac, now in your hands.
+      Below is what works on iPad and what doesn't, so nothing surprises you.</p>
+  </div>
+
+  <div class="seclabel">What works on iPad (and what can't)</div>
+  <p style="font-size:14.5px;color:var(--ink-2);margin-top:10px">iPad is a locked-down platform on purpose.
+    The Lab is honest about it — anything it can't do is <b>hidden</b>, never a dead button. Nothing here is
+    a bug to fix.</p>
+  <div class="caps">
+    <div class="ch">On iPad, the Lab can…</div>
+    <div class="caprow"><span class="st n">HIDDEN</span><span><span class="cn">Flash a Canary over USB</span>
+      <span class="cd"> — Apple blocks USB-serial on iPad. This bench is hidden and points you to the Mac app instead.</span></span></div>
+    <div class="caprow"><span class="st y">NATIVE</span><span><span class="cn">Find your Canaries on the network</span>
+      <span class="cd"> — Bluetooth + Bonjour discovery, live on your iPad.</span></span></div>
+    <div class="caprow"><span class="st y">NATIVE</span><span><span class="cn">Notify you on signed events</span>
+      <span class="cd"> — native iPad notifications.</span></span></div>
+    <div class="caprow"><span class="st y">NATIVE</span><span><span class="cn">Store data sealed on-device</span>
+      <span class="cd"> — Keychain-backed. Nothing phones home.</span></span></div>
+  </div>
+
+  <div class="tip"><span class="i">📖</span><span>Want to understand <b>why</b> this works and why it keeps
+    working — the generated project, the capability seam, the shared frontend? That's the companion piece,
+    <b>the iPad field guide</b> (<code>desktop-lab/ipad-guide.html</code>). This page is the "just do it";
+    that one is the "how it holds together."</span></div>
+
+  <div class="reset"><button type="button" id="resetBtn">↺ Reset my progress</button></div>
+
+  <footer>
+    SecuraCV Lab · iPad setup runbook · works on a Mac with Xcode · free Apple ID to start<br>
+    Same frontend as web + macOS + Linux · nothing phones home.
+  </footer>
+</div>
+
+<script>
+  const store={
+    get(){try{return JSON.parse(localStorage.getItem("ipad-run")||"{}")}catch(e){return {}}},
+    set(v){try{localStorage.setItem("ipad-run",JSON.stringify(v))}catch(e){}}
+  };
+  const stepCbs=[...document.querySelectorAll(".step-cb")];
+  const fill=document.getElementById("fill"), count=document.getElementById("count"), done=document.getElementById("done");
+
+  function refresh(){
+    const total=stepCbs.length;
+    let n=0;
+    stepCbs.forEach((cb,i)=>{
+      const li=cb.closest(".step");
+      li.classList.toggle("done",cb.checked);
+      if(cb.checked)n++;
+    });
+    fill.style.width=(n/total*100)+"%";
+    count.textContent=n+" / "+total;
+    // "done" appears once the 4 required steps (1-4) are checked
+    const core=stepCbs.slice(0,4).every(cb=>cb.checked);
+    done.classList.toggle("show",core);
+  }
+
+  // restore
+  const saved=store.get();
+  stepCbs.forEach((cb,i)=>{ if(saved["s"+i]) cb.checked=true; });
+  document.querySelectorAll(".pre").forEach((cb,i)=>{ if(saved["p"+i]) cb.checked=true; });
+
+  stepCbs.forEach((cb,i)=>cb.addEventListener("change",()=>{
+    const s=store.get(); s["s"+i]=cb.checked; store.set(s); refresh();
+    if(cb.checked){ const li=cb.closest(".step"); const nx=li.nextElementSibling; }
+  }));
+  document.querySelectorAll(".pre").forEach((cb,i)=>cb.addEventListener("change",()=>{
+    const s=store.get(); s["p"+i]=cb.checked; store.set(s);
+  }));
+
+  // copy buttons
+  document.querySelectorAll(".copy").forEach(btn=>btn.addEventListener("click",()=>{
+    const code=btn.parentElement.querySelector("code");
+    // strip the leading "$ " prompts and comments-as-is; copy runnable lines
+    const text=[...code.querySelectorAll("*")].length
+      ? code.textContent.replace(/^\s*\$\s?/gm,"").replace(/\n+$/,"")
+      : code.textContent;
+    const doOk=()=>{const o=btn.textContent;btn.textContent="✓ Copied";btn.classList.add("ok");setTimeout(()=>{btn.textContent=o;btn.classList.remove("ok")},1400)};
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(doOk).catch(fallback)}
+    else fallback();
+    function fallback(){const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");doOk()}catch(e){}document.body.removeChild(ta)}
+  }));
+
+  document.getElementById("resetBtn").addEventListener("click",()=>{
+    store.set({});
+    stepCbs.forEach(cb=>cb.checked=false);
+    document.querySelectorAll(".pre").forEach(cb=>cb.checked=false);
+    refresh();
+    window.scrollTo({top:0,behavior:"smooth"});
+  });
+
+  refresh();
+</script>
