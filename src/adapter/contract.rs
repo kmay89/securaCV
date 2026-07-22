@@ -6,7 +6,7 @@
 //! - It has **no timestamp** — the [`AdapterHost`](crate::adapter::AdapterHost) stamps a coarse
 //!   [`TimeBucket`], which the kernel's `ContractEnforcer` re-coarsens to 10 minutes.
 //! - It has **no pre-built `zone:` string** — only a raw `zone_label` that the host runs through
-//!   [`sanitize_zone_name`](crate::transport::sanitize_zone_name) and the kernel validates against
+//!   [`sanitize_zone_name`] and the kernel validates against
 //!   the strict `^zone:[a-z0-9_-]{1,64}$` allowlist.
 //! - It has **no media/blob field** — raw bytes are structurally incapable of crossing.
 //! - It has **no correlation token** — token policy is the host's, never the adapter's.

@@ -395,7 +395,7 @@ pub struct DetectSettings {
 
 impl DetectSettings {
     /// Resolved path to the tract model: the configured `tract_model`, or the default bundled
-    /// location ([`DEFAULT_TRACT_MODEL`], populated by `scripts/fetch_detection_model.sh`) when
+    /// location (the default bundled model path, populated by `scripts/fetch_detection_model.sh`) when
     /// unset. Lets operators enable object detection with just `detect.backend = "tract"`.
     pub fn tract_model_path(&self) -> PathBuf {
         self.tract_model
