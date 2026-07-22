@@ -92,6 +92,17 @@ attached to the workflow run as artifacts (14-day retention), so you can grab
 and test a build without touching the Releases page. CI installs with
 `npm ci` against the committed `package-lock.json` for reproducible builds.
 
+### One-button Mac app build/release
+
+To build both native Mac apps together, use **Actions → Build Mac apps
+(Flasher + Lab) → Run workflow**. Leave **publish** unchecked for build-only
+smoke artifacts, or check it to publish the Flasher release and create the Lab
+draft release in one click.
+
+If you do not see that workflow in Actions yet, it has not landed on the
+default branch. Until it does, run the two existing workflows separately:
+**Desktop Flasher — build & release** and **Desktop app release**.
+
 ## Roadmap
 
 1. **This** — Tauri shell of the Lab, Mac/Linux installers, release pipeline.

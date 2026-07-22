@@ -67,6 +67,17 @@ The workflow downloads the espflash sidecars, builds a **universal** macOS
 `latest.json` self-update manifest. You can also run it from the Actions tab
 (**Run workflow**) for a smoke build.
 
+### One-button Mac app build/release
+
+If you want both native Mac apps at once, use **Actions → Build Mac apps
+(Flasher + Lab) → Run workflow**. Leave **publish** unchecked for a build-only
+smoke run, or check it to publish releases for both this Flasher app and the
+sibling SecuraCV Lab app.
+
+If you do not see that workflow in Actions yet, it has not landed on the
+default branch. Until it does, run the two existing workflows separately:
+**Desktop Flasher — build & release** and **Desktop app release**.
+
 ### One-time: real self-update signing (recommended)
 
 Self-update artifacts are signed. Until you set a persistent key, CI mints an
