@@ -181,10 +181,13 @@ Raspberry Pi Imager.
   - *Remaining:* macOS (`diskutil` internal/ejectable) + Windows backends; the
     read-only `list_hub_targets` command; and the picker that shows eligible
     cards/SSDs, *why* the rest are hidden, and an explicit size/model confirm.
-- **Step 3 — acquire the image.** Read the target board's image URL from
-  `hub_image.json`, download the HAOS-based hub image over TLS, verify its hash
-  (against HA's published `.sha256` until the `pinned` sha lands), decompress
-  (`.xz`). The catalog is already truthful before an image is pinned.
+- **Step 3 — acquire the image.**
+  - *Resolver (landed):* `hub_core::hub_image` turns the catalog into a typed
+    `WritePlan` (board → image URL, whether a pinned hash is trustworthy or we
+    fall back to HA's `.sha256`, the card-size requirement) — pure and
+    host-tested, so the catalog can't hand the writer a nonsensical plan.
+  - *Remaining (needs the Tauri build + new deps):* the actual download over TLS,
+    the sha256/`.sha256` verification, and the `.xz` decompress.
 - **Step 4 — the guarded write (hardware-validated before merge).** Raw
   block-device write with progress + read-back verify, behind the Step-1 gate and
   a typed confirmation. This is the footgun; it does not merge on review alone.
