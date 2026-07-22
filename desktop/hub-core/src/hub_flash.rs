@@ -6,8 +6,9 @@
 //! accepts, and (3) had the operator confirm. Those preconditions are encoded in
 //! the type system: the write entry point (a later change, in the app) will take
 //! a [`WriteAuthorization`] by value, and the ONLY way to obtain one is
-//! [`authorize_write`] — which demands a [`VerifiedImage`] proof and re-checks the
-//! target through [`hub_disk::classify`]. "Write without verify + an eligible
+//! [`authorize_write`] — which demands a [`VerifiedImage`] proof (bound to the
+//! plan's image), and re-checks the target through [`crate::hub_disk::classify`].
+//! "Write without verify + an eligible
 //! target + confirmation" is therefore not a bug you can introduce; it doesn't
 //! compile.
 
@@ -19,6 +20,9 @@ use crate::hub_image::{VerifiedImage, WritePlan};
 /// called without a [`VerifiedImage`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthzError {
+    /// The verification proof is for a different image than this plan — e.g. the
+    /// board/image was changed after verifying. The image must be re-verified.
+    VerificationDoesNotMatchPlan,
     /// The chosen target is one the safety gate refuses (system disk, internal
     /// fixed disk, too small, unknown size). Carries the specific reason.
     TargetRefused(Refusal),
@@ -29,6 +33,11 @@ pub enum AuthzError {
 impl AuthzError {
     pub fn message(&self) -> String {
         match self {
+            AuthzError::VerificationDoesNotMatchPlan => {
+                "this image needs to be re-verified before writing (the selection changed after it \
+                 was checked)"
+                    .to_string()
+            }
             AuthzError::TargetRefused(r) => format!("can't write to this disk — {}", r.reason()),
             AuthzError::NotConfirmed => "confirm the disk to write before flashing".to_string(),
         }
@@ -71,10 +80,16 @@ impl WriteAuthorization {
 /// one, so downstream code that holds it can trust every precondition was met.
 pub fn authorize_write(
     plan: WritePlan,
-    _verified: &VerifiedImage,
+    verified: &VerifiedImage,
     target: &TargetDisk,
     operator_confirmed: bool,
 ) -> Result<WriteAuthorization, AuthzError> {
+    // The proof must be for THIS plan's image. A token minted for a
+    // previously-selected image (before the operator changed board/version)
+    // proves nothing about the image we're about to write, so reject it.
+    if verified.image_url() != plan.image_url {
+        return Err(AuthzError::VerificationDoesNotMatchPlan);
+    }
     // Re-run the safety gate on the exact disk we're about to write. Even though
     // enumeration only ever offered eligible disks, this closes the gap between
     // "offered" and "written": never authorize a disk `classify` refuses.
@@ -186,8 +201,36 @@ mod tests {
     }
 
     #[test]
+    fn a_proof_for_a_different_image_cannot_authorize_this_plan() {
+        // Verify image A, then try to authorize a DIFFERENT plan (image B) using
+        // A's proof — the stale-token attack the binding closes.
+        let sha = "a".repeat(64);
+        let proof_a = verify_download(&a_plan(), &sha, Some(&sha)).unwrap();
+        let plan_b = WritePlan {
+            board_id: "rpi4-64".to_string(),
+            image_url: "https://example/haos_rpi4-64-18.1.img.xz".to_string(),
+            ..a_plan()
+        };
+        assert_eq!(
+            authorize_write(plan_b, &proof_a, &eligible_card(), true).unwrap_err(),
+            AuthzError::VerificationDoesNotMatchPlan
+        );
+    }
+
+    #[test]
+    fn a_matching_proof_still_authorizes() {
+        // Sanity: the same proof against the plan it verified is accepted.
+        let sha = "a".repeat(64);
+        let proof = verify_download(&a_plan(), &sha, Some(&sha)).unwrap();
+        assert!(authorize_write(a_plan(), &proof, &eligible_card(), true).is_ok());
+    }
+
+    #[test]
     fn authz_errors_render_human_text() {
         assert!(!AuthzError::NotConfirmed.message().is_empty());
+        assert!(!AuthzError::VerificationDoesNotMatchPlan
+            .message()
+            .is_empty());
         assert!(AuthzError::TargetRefused(Refusal::SystemDisk)
             .message()
             .contains("computer runs from"));
