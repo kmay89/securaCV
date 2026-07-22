@@ -36,7 +36,10 @@ test("flash.json: fw_train is single-sourced from the registry", () => {
 test("flash.json: the no-brick promise and recovery ladder are present", () => {
   assert.ok(catalog.no_brick && catalog.no_brick.headline && catalog.no_brick.points.length);
   assert.ok(Array.isArray(catalog.recovery) && catalog.recovery.length >= 2);
-  assert.strictEqual(catalog.manifest_url.includes("releases/latest/download"), true);
+  // Pinned to the firmware release TAG (fw-v<train>), never /latest/: the repo
+  // also ships the native app (app-v*), and GitHub's "latest" is the newest
+  // release of ANY kind, which would shadow the firmware manifest. See gen_flash.py.
+  assert.match(catalog.manifest_url, /\/releases\/download\/fw-v[\d.]+\/manifest-flash\.json$/);
 });
 
 // ── chip guard — a board is never offered another board's image ─────────────
