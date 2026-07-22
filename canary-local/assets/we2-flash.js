@@ -22,7 +22,7 @@
 // nothing here can brick the module — the burn menu lives in mask ROM.
 
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
-         formatDetections, detectionSummary } from "./we2-core.js";
+         formatDetections, detectionSummary, WE2_CLASSES } from "./we2-core.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -407,12 +407,17 @@ function phaseModuleDone(ctx, s, job) {
   bench.append(rowB, seenBanner, stage, sliders, meta);
   box.append(bench);
 
+  // Only the pinned model is known to be the person detector. A model the user
+  // brought can detect anything, so we don't claim its class is "person" (empty
+  // map → generic "object" labels) and the celebration stays honest below.
+  const previewClasses = job.pinned ? WE2_CLASSES : [];
+
   let previewing = false, seen = false;
   at.onEvent((f) => {
     if (!previewing || !f.data) return;
     const ctx2 = img.getContext("2d");
     const draw = (boxes) => {
-      const dets = formatDetections(boxes);
+      const dets = formatDetections(boxes, previewClasses);
       for (const d of dets) {
         // Confidence-tinted: a confident hit glows green, a marginal one stays amber.
         const hot = d.score >= 60;
@@ -426,12 +431,16 @@ function phaseModuleDone(ctx, s, job) {
         ctx2.fillStyle = hot ? "#7CFF9B" : "#FFD44F";
         ctx2.fillText(d.text, d.x - d.w / 2 + 5, d.y - d.h / 2 - 6);
       }
-      // A clean readout — "1 person · 92% confident" — never a raw JSON dump.
-      meta.textContent = detectionSummary(boxes);
-      // The wow: the first time it actually sees a person, celebrate once.
+      // A clean readout — "1 person · 92% confident" for the pinned model, or
+      // "1 object · 92% confident" for a custom one — never a raw JSON dump.
+      meta.textContent = detectionSummary(boxes, previewClasses);
+      // The wow: the first time it detects anything, celebrate once. Only the
+      // pinned person model earns "it sees you"; a custom model "sees something".
       if (dets.length && !seen) {
         seen = true;
-        seenBanner.textContent = "👁 It sees you — the model is live and working ✓";
+        seenBanner.textContent = job.pinned
+          ? "👁 It sees you — the model is live and working ✓"
+          : "👁 It sees something — the model is live and working ✓";
         seenBanner.classList.remove("flash-hidden");
       }
     };
