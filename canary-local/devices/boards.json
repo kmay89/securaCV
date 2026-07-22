@@ -1209,12 +1209,12 @@
      "use": "Dedicated TWAI transceiver; jumper-selectable 120\u03a9 terminator.",
      "anchors": [
       [
-       -5.715,
+       -1.905,
        26.5,
        33.1
       ],
       [
-       -1.905,
+       -5.715,
        26.5,
        33.1
       ]
@@ -1227,12 +1227,12 @@
      "use": "Auto-direction \u2014 shares the CH343 UART console pins, so logging and RS485 are mutually exclusive.",
      "anchors": [
       [
-       1.905,
+       5.715,
        26.5,
        33.1
       ],
       [
-       5.715,
+       1.905,
        26.5,
        33.1
       ]

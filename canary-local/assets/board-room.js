@@ -179,6 +179,16 @@ export const PERIPHERAL_PARTS = {
     { builder: box(30, 6, 20), color: LIPO, gloss: 0.35 },
     { builder: box(4, 2.4, 5, 1.6), color: WHITE, gloss: 0.3, local: M4.translate(16.5, 0, 0) },
   ],
+  // an isolated-input field loop: a small DC field supply (box) in series with a
+  // dry contact (glass reed), the two leads landing on DI COM and DI0. The board
+  // GND is deliberately NOT in this loop — the DI side is optocoupled.
+  field_loop: () => [
+    { builder: box(15, 5, 12), color: LIPO, gloss: 0.35, local: M4.translate(-8, 0, 0) },      // field supply
+    { builder: box(4, 2.4, 5, 1.6), color: WHITE, gloss: 0.3, local: M4.translate(-1, 0, 0) },  // supply terminals
+    { builder: tubeX(1.2, 9, 9, 1.3), color: GLASS, gloss: 0.85 },                               // dry contact (reed)
+    { builder: tubeX(0.3, 3, 5, 1.3), color: [0.7, 0.71, 0.73], gloss: 0.6 },                    // contact lead
+    { builder: tubeX(0.3, 3, 13, 1.3), color: [0.7, 0.71, 0.73], gloss: 0.6 },                   // contact lead
+  ],
 };
 
 // compose translate·rotY (degrees) — peripherals only spin about Y in v1
