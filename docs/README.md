@@ -51,6 +51,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [HA + Frigate over MQTT, worked example](integrations/home-assistant-frigate-mqtt.md)
 - [MR60BHA2 radar via ESPHome](integrations/mr60bha2_esphome.md)
 - Onboarding flows: [multiple Canaries](onboarding_multiple_canaries.md) · [the unified wizard](onboarding_unified_wizard.md) · [workflow evaluation](onboarding_workflow_evaluation.md)
+- [The one-flash Pi hub (design)](design/raspberry_pi_hub_flashing.md) — RFC: type Wi-Fi, write the card, boot a self-healing Home Assistant hub — built on HAOS so it never rots
 
 </details>
 
@@ -79,6 +80,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Themed serial console (design)](design/serial_console_theming.md) — the `l` identity banner: key fingerprint as drunken-bishop randomart, capability-probed, ASCII-safe by default
 - [Self-* roadmap (design)](design/self_star_roadmap.md) — "plug it in and it proves itself": what shipped (self-manifest `j`, randomart handshake, self-repair) + coming-soon TODOs (fleet map, boot safe-mode / A/B rollback)
 - [Browser flasher](browser_flasher.md) — flash a blank board from Chrome over USB, no toolchain
+- [The Lab & Flasher experience (design)](design/flasher_experience.md) — the spine for the magical bring-up-and-tend arc: come-to-life receipt, two-port Vision flow, and the native-app fleet-view over the network (always know every Canary is up to date + healthy) — what to reuse, the browser-vs-native platform reality, and the security model
 - [Secure provisioning](secure_provisioning.md) — how a device earns its keys
 - [Hardware root of trust (design)](design/hardware_root_of_trust.md) — RFC: opt-in Secure Boot / flash encryption / attestation, tiered so the default Canary stays un-brickable
 - [Device settings access](canary_settings_access_validation.md) — who may change what, verified
