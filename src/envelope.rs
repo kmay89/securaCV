@@ -2,7 +2,7 @@
 //! format for the Privacy Witness Kernel's chains.
 //!
 //! See `spec/evidence_envelope.md` for the normative definition. The envelope wraps
-//! (rather than replaces) the existing [`ExportBundle`]: it carries the coarse,
+//! (rather than replaces) the existing [`crate::ExportBundle`]: it carries the coarse,
 //! human-readable [`ExportArtifact`] plus the four hash-chained ledgers verbatim, a
 //! self-describing manifest, provenance, explicit gaps, and a disclosure manifest.
 //!

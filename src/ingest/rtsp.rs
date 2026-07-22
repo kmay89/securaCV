@@ -4,9 +4,9 @@
 //! `RtspSource` is the single entry point: it is a thin facade over one of three
 //! backends — a synthetic source (for `stub://` URLs / tests), an inline GStreamer
 //! decoder (`rtsp-gstreamer`, the backend the add-on ships), and the FFmpeg decoder
-//! in [`super::rtsp_ffmpeg`] (`rtsp-ffmpeg`). The two real backends are *not* rival
+//! in `rtsp_ffmpeg` (`rtsp-ffmpeg`). The two real backends are *not* rival
 //! implementations; they share this `RtspSource`/`RawFrame` interface and both emit
-//! frames through [`super::raw_frame_at_capture`], the one capture-time privacy gate,
+//! frames through the shared capture-time privacy gate, the one capture-time privacy gate,
 //! so they cannot drift apart on timestamp coarsening or feature hashing (F-11).
 //!
 //! The RTSP source is responsible for:

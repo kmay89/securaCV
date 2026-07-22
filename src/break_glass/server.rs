@@ -2,7 +2,7 @@
 //!
 //! Self-contained on purpose: it does **not** touch the read-only event-export
 //! API server, so that surface is unchanged. It reuses the event API's
-//! [`CapabilityTokenManager`](crate::api::CapabilityTokenManager) (rotating,
+//! [`CapabilityTokenManager`] (rotating,
 //! constant-time-validated bearer token) and mirrors its plaintext-bind + TLS
 //! conformance model — TLS is terminated by a front proxy, never in-process.
 //!

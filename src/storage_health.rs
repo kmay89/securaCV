@@ -222,9 +222,8 @@ pub fn classify_thermal(temp_c: Option<f32>, t: &StorageHealthThresholds) -> The
 }
 
 /// Hysteresis tracker: the published status only moves after
-/// [`STATUS_CONFIRM_SAMPLES`] consecutive samples agree, and recovery
-/// additionally requires clearing thresholds by a margin (applied by the
-/// caller via [`StorageHealthThresholds::with_recovery_margin`]).
+/// a fixed number of consecutive samples agree, and recovery additionally
+/// requires clearing thresholds by a configured margin.
 #[derive(Debug, Clone)]
 pub struct StatusTracker {
     current: StorageHealthStatus,
@@ -310,7 +309,7 @@ pub fn wear_pct(lifetime_bytes: u64, endurance_tbw: f64) -> Option<f64> {
 }
 
 /// Write rate over the most recent 24h of samples. Requires at least two
-/// samples spanning [`MIN_RATE_SPAN_S`].
+/// samples spanning the configured minimum rate window.
 pub fn write_rate_bytes_per_day(samples: &[HealthSample], now_s: u64) -> Option<u64> {
     let cutoff = now_s.saturating_sub(RATE_WINDOW_S);
     let window: Vec<&HealthSample> = samples.iter().filter(|s| s.epoch_s >= cutoff).collect();

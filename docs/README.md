@@ -5,7 +5,7 @@ Every doc in this repo, organized by what you're trying to do. This index is
 from this page fails the build, so the map can't rot and no file can go
 straggler. Prefer clicking around? The same getting-started paths run
 interactively — with one-tap-copy commands, a progress bar, and your OS
-picked once — in **[the Lab's Get Started guide](https://kmay89.github.io/securaCV/canary-local/start.html)**.
+picked once — in **[the Lab's Get Started guide](https://kmay89.github.io/securaCV/canary-local/start.html)**. The Lab also has a generated **[complete site map](https://kmay89.github.io/securaCV/canary-local/site-map.html)** that folds in every bench, depth page, redirect, iPad runbook, evidence viewer, and standalone HTML doc from the same manifest.
 
 ## Start here
 
@@ -25,6 +25,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [The demo](demo.md) — `cargo run --bin demo`, then break the log and watch verification fail
 - [The litterbox witness](litterbox_witness_demo.md) — the smallest end-to-end build, starring a cat
 - [The Lab](https://kmay89.github.io/securaCV/canary-local/) — real firmware compiled to WebAssembly, in your browser
+- [The Lab site map](https://kmay89.github.io/securaCV/canary-local/site-map.html) — every Lab bench plus standalone HTML documentation, generated from the build-line manifest
 
 </details>
 

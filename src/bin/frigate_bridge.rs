@@ -112,12 +112,12 @@ struct Args {
     #[arg(long, env = "FRIGATE_MQTT_TOPIC", default_value = "frigate/events")]
     frigate_topic: String,
 
-    /// Frigate's mqtt.topic_prefix. Subscribes to <prefix>/events (and
-    /// <prefix>/reviews with --enable-reviews).
+    /// Frigate's mqtt.topic_prefix. Subscribes to `<prefix>/events` (and
+    /// `<prefix>/reviews` with `--enable-reviews`).
     #[arg(long, env = "FRIGATE_TOPIC_PREFIX", default_value = "frigate")]
     frigate_topic_prefix: String,
 
-    /// Additionally subscribe to Frigate's review items (<prefix>/reviews,
+    /// Additionally subscribe to Frigate's review items (`<prefix>/reviews`,
     /// Frigate 0.14+). Dedup (camera+label per bucket) prevents the same
     /// detection from being logged twice via both topics.
     #[arg(long, env = "FRIGATE_ENABLE_REVIEWS")]
