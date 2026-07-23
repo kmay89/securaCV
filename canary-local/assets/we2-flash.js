@@ -24,6 +24,7 @@
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
 import { helpTopic } from "./flash-core.js";
+import { chirp } from "./chirp.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
 
@@ -566,6 +567,7 @@ function mountBench(ctx, at, opts = {}) {
     countChip.classList.toggle("flash-hidden", !mm.count);
     if (dets.length && !seen) {
       seen = true;
+      chirp("seen");
       seenBanner.textContent = opts.pinned
         ? "👁 It sees you — the model is live and working ✓"
         : "👁 It sees something — the model is live and working ✓";

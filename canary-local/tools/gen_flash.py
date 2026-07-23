@@ -711,6 +711,118 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
                     "dropped rather than guessed at.",
             "default": f"{wk['vitals_lost_ms']} ms in the Wellbeing build.",
         },
+        # ── the passport & facts (what the flasher reads off the board) ──
+        "chip": {
+            "label": "Chip",
+            "what": "The exact silicon on this board, read from its mask ROM — the one "
+                    "fact the chip guard trusts. Only firmware built for this chip is "
+                    "ever offered.",
+        },
+        "mac": {
+            "label": "ID (MAC)",
+            "what": "The chip's factory hardware address — how the Nursery tells boards "
+                    "apart on a bench. It stays on this page; the firmware itself never "
+                    "broadcasts it (devices go by salted pseudonyms on the network).",
+        },
+        "flash_size": {
+            "label": "Flash",
+            "what": "How much storage the chip carries. The safety copy reads all of it; "
+                    "the install only touches the regions the new firmware needs.",
+        },
+        "updates_seen": {
+            "label": "Updates seen",
+            "what": "How many firmware updates this board has taken in its life, read "
+                    "from the chip's own update ledger (otadata). A brand-new board says "
+                    "nothing at all.",
+        },
+        "boots": {
+            "label": "Lifetime boots",
+            "what": "How many times this board has ever powered up, from its witness "
+                    "counters. A high number is a life well lived, not a problem.",
+        },
+        "witness_records": {
+            "label": "Witness records",
+            "what": "How many entries this Canary's tamper-evident hash chain holds — "
+                    "its sealed diary. The chain rides through reflashes untouched.",
+        },
+        "tamper_flag": {
+            "label": "Tamper flag",
+            "what": "The firmware's own 'something opened me' marker. Expected if you've "
+                    "had the enclosure apart; worth a look if you haven't.",
+        },
+        "crash_record": {
+            "label": "Crash record",
+            "what": "Whether the chip holds a saved crash dump — proof of a past hard "
+                    "fault. One dump isn't alarming; repeated ones are worth a Rescue.",
+        },
+        "self_check": {
+            "label": "Self-check score",
+            "what": "The running firmware's own 0-100 health verdict, straight from its "
+                    "mouth over the cable — sensors, storage, radio, chain, all rolled "
+                    "into one honest number.",
+        },
+        "temperature": {
+            "label": "Temperature",
+            "what": "The chip's internal die temperature. Warm is normal (they run "
+                    "30-60 °C); past ~70 °C give it airflow or shade.",
+        },
+        # ── the tools ──
+        "health_check": {
+            "label": "Health check",
+            "what": "A deep, read-only tour of the board's story: partition map, both "
+                    "firmware slots, update history, crash dumps, witness counters. "
+                    "Changes nothing — ever.",
+        },
+        "serial_monitor": {
+            "label": "Serial monitor",
+            "what": "The board's live voice over USB: watch it think, send its "
+                    "single-key commands. Nothing typed here can break it.",
+        },
+        "rescue": {
+            "label": "Rescue",
+            "what": "The back-to-known-good lever: safety copy (attempted), full wipe, "
+                    "newest signed firmware. For a board that's misbehaving in ways a "
+                    "plain reinstall doesn't cure.",
+        },
+        # ── the verdicts & the session ──
+        "verdict": {
+            "label": "The install verdict",
+            "what": "What this install IS for this board: an update (newer), a "
+                    "downgrade (older — allowed, never silent), a reinstall (same "
+                    "version, byte-for-byte fresh), or a role switch (a different kind "
+                    "of Canary).",
+        },
+        "journey": {
+            "label": "The journey bar",
+            "what": "Where you are on the path: Connect → Meet it → Choose → Install → "
+                    "First flight. Tools and side-quests never move it — only the main "
+                    "road does.",
+        },
+        "roster": {
+            "label": "The session roster",
+            "what": "Every board hatched in this tab, in order — so a batch never loses "
+                    "its place. Public facts only (which firmware, which dials, a MAC "
+                    "tail), kept only until the tab closes.",
+        },
+        "chirps": {
+            "label": "Chirps",
+            "what": "Tiny synthesized birdsong at the big moments — hello, hatch, first "
+                    "sight. Off until you invite it; the choice sticks to this browser.",
+            "default": "Off — sound is invited, never sprung.",
+        },
+        # ── the benches ──
+        "radar_bench": {
+            "label": "The radar bench",
+            "what": "The Sense's live senses off the USB cable: presence, the near/mid/"
+                    "far band, the 0/1/2+ count — the same coarse truths it publishes, "
+                    "never raw centimetres.",
+        },
+        "field_bench": {
+            "label": "The field bench",
+            "what": "The WAP's live verdict on the room: RF events, a device count "
+                    "(never an identity), a confidence word, and the CSI stir score — "
+                    "how much a moving body bends the radio.",
+        },
         # ── displays ──
         "display_emulator": {
             "label": "The 1:1 emulator",
