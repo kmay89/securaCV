@@ -28,7 +28,8 @@ mod we2;
 use provisioning::Provisioning;
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -657,6 +658,49 @@ pub fn run() {
         .manage(serial_monitor::SerialMonitorState::default())
         .manage(hub::PiUsbState::default())
         .manage(hub::HubFlashState::default())
+        // On launch, reclaim anything a crash or pulled plug orphaned (a
+        // ~2.5 GB raw staging image, a half-finished .partial download). Off
+        // the main thread so it never delays the window.
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || hub::cleanup_orphans(&handle));
+            Ok(())
+        })
+        // If the operator tries to quit while a hub flash is running, don't
+        // just die mid-write. Hold the close, ask, and — if they mean it —
+        // cancel the writer cleanly (the card is always re-flashable) before
+        // exiting. A flash-free window closes instantly as usual.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let running = window
+                    .try_state::<hub::HubFlashState>()
+                    .map(|s| s.is_running())
+                    .unwrap_or(false);
+                if running {
+                    api.prevent_close();
+                    let w = window.clone();
+                    w.dialog()
+                        .message(
+                            "A hub flash is still running. Quitting now leaves the card \
+                             unfinished — that's completely safe, you'd just flash it again. \
+                             Quit anyway?",
+                        )
+                        .title("Quit while flashing?")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Quit".into(),
+                            "Keep flashing".into(),
+                        ))
+                        .show(move |quit| {
+                            if quit {
+                                if let Some(s) = w.try_state::<hub::HubFlashState>() {
+                                    s.cancel();
+                                }
+                                w.app_handle().exit(0);
+                            }
+                        });
+                }
+            }
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())

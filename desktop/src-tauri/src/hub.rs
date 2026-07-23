@@ -49,6 +49,23 @@ pub struct PiUsbState(std::sync::Mutex<Option<CommandChild>>);
 #[derive(Default)]
 pub struct HubFlashState(std::sync::Mutex<Option<hub_io::CancelToken>>);
 
+impl HubFlashState {
+    /// Whether a flash is in flight right now (used by the quit guard).
+    pub fn is_running(&self) -> bool {
+        self.0.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+    /// Signal the running flash to stop at its next chunk boundary. Safe at
+    /// every stage — before the write nothing touched the card; during it the
+    /// card was being erased anyway and just needs a fresh flash.
+    pub fn cancel(&self) {
+        if let Ok(g) = self.0.lock() {
+            if let Some(t) = g.as_ref() {
+                t.cancel();
+            }
+        }
+    }
+}
+
 /// One disk as the picker shows it — eligible or not, always with the reason,
 /// so "why isn't my drive listed" is answered on screen instead of in a forum.
 #[derive(Serialize)]
@@ -379,6 +396,37 @@ pub async fn hub_flash(
 /// survives between runs.
 fn staging_dir() -> std::path::PathBuf {
     std::env::temp_dir()
+}
+
+/// Sweep files a crash or pulled plug could have orphaned: the ~2.5 GB raw
+/// images we stage in the temp dir (whose RaiiPath cleanup can't run if the
+/// process is killed) and any half-finished `.partial` downloads in the image
+/// cache. Best-effort and quiet — a file we can't remove is simply skipped.
+/// Run once at startup, before this process flashes anything of its own, so it
+/// never races its own work.
+pub fn cleanup_orphans(app: &AppHandle) {
+    // Raw staging images: securacv-hub-<pid>.img in the OS temp dir.
+    if let Ok(entries) = std::fs::read_dir(staging_dir()) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with("securacv-hub-") && name.ends_with(".img") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    // Half-finished downloads: <image>.partial in the image cache dir.
+    if let Ok(dir) = app.path().app_cache_dir() {
+        if let Ok(entries) = std::fs::read_dir(dir.join("hub-images")) {
+            for e in entries.flatten() {
+                if e.file_name()
+                    .to_string_lossy()
+                    .ends_with(hub_io::fetch::PARTIAL_SUFFIX)
+                {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
 }
 
 /// A filesystem-safe cache filename for an image URL — the last path segment,

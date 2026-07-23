@@ -122,6 +122,17 @@ main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; 
   .dot.reading { animation: none; }
 }
 
+/* resume-across-restart banner */
+.resume-banner {
+  display: flex; align-items: center; gap: 11px;
+  max-width: 720px; margin: 0 auto 14px;
+  background: var(--canary-soft); color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--canary) 50%, var(--border));
+  border-radius: 12px; padding: 11px 15px; font-size: 13.5px;
+}
+.resume-banner .resume-grow { flex: 1; min-width: 0; }
+.resume-banner .link-btn { white-space: nowrap; }
+
 /* first-boot companion */
 .firstboot {
   margin-top: 12px; padding-top: 12px;

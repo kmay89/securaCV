@@ -136,6 +136,15 @@
        disk says why, and the write only runs after an explicit typed confirm.
        All decisions live in the Rust hub-core crate; this UI just shows them. -->
   <main id="hub-view" class="view hidden">
+    <!-- Resume across a restart: if the app was reopened soon after a flash,
+         pick the first-boot watch back up instead of forgetting it. -->
+    <div id="hub-resume" class="resume-banner hidden" role="status">
+      <span class="dot reading" id="hub-resume-dot"></span>
+      <span class="resume-grow" id="hub-resume-text">Picking up where you left off — still watching for the hub you just made…</span>
+      <button id="hub-resume-open" class="btn btn-small hidden">Open your hub →</button>
+      <button id="hub-resume-dismiss" class="link-btn">Dismiss</button>
+    </div>
+
     <section class="card" id="hub-step-what">
       <div class="step-head"><span class="step-n">1</span><h2>What you're making</h2></div>
       <p class="muted">A <strong>Home Assistant hub</strong> for your Canaries: we download the

@@ -103,6 +103,23 @@ check each once on real hardware:
 - ☐ **Preflight** warns if the staging disk is low; the macOS permission
   heads-up appears before the write.
 
+### Recovery (the "always recovers" bar — try to break it)
+
+- ☐ **Pull the card mid-write** → clear "the card wandered off… plug it back
+  in and type ERASE again" message; the app stays alive and re-arms; a
+  re-flash of the same card succeeds.
+- ☐ **Quit the app mid-flash** → the "Quit while flashing?" dialog appears;
+  "Keep flashing" resumes, "Quit" cancels cleanly and exits.
+- ☐ **Force-kill the app (or pull power) mid-download** → relaunch: the
+  cache holds no half-file (only a `.partial`, which the startup sweep
+  removes); a fresh flash re-downloads cleanly.
+- ☐ **Force-kill mid-write** → relaunch: no stale multi-GB image is left in
+  the temp dir (startup sweep reclaimed it — check free space).
+- ☐ **Reopen soon after a completed flash** → the resume banner appears and
+  watches for the hub; when it boots, it flips to "up 🐤" with the notification.
+- ☐ **Disk-full mid-run** (fill the staging disk) → specific "ran low on
+  room… clear space and try again" copy; the card is untouched.
+
 ## 6 · Wrap-up
 
 - ☐ Re-run the freshness workflow (`workflow_dispatch`) so the HAOS version

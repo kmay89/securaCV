@@ -738,11 +738,16 @@ const hub = {
   // ETA bookkeeping, reset at each stage change
   eta: { stage: null, t0: 0, done0: 0 },
   fbTimer: null, // first-boot poll
+  resumeTimer: null, // resume-across-restart poll
   sawMacWriteHint: false,
 };
 
 const HUB_HOST = "homeassistant.local:8123";
 const HUB_REMEMBER_KEY = "securacv.hub.remember";
+const HUB_LASTFLASH_KEY = "securacv.hub.lastflash";
+// How long after a flash we'll still offer to resume the first-boot watch on
+// relaunch — comfortably longer than HAOS's 10–20 min first boot.
+const HUB_RESUME_WINDOW_MS = 45 * 60 * 1000;
 
 const HUB_STAGE_COPY = {
   download: "Downloading Home Assistant OS…",
@@ -798,6 +803,9 @@ function hubInit() {
   $("hub-fb-stop").addEventListener("click", hubStopFirstBoot);
   // Restore remembered non-secret fields.
   hubRestoreSettings();
+  // If we were reopened soon after a flash, quietly resume watching for it.
+  hubMaybeResume();
+  $("hub-resume-dot").className = "dot reading";
 
   $("hub-pi-usb-btn").addEventListener("click", hubPiUsbToggle);
   listen("hub:pi-usb", (e) => {
@@ -888,6 +896,51 @@ function hubSetMode(showHub) {
   }
 }
 
+// ── resume across a restart ──────────────────────────────────────────────────
+// A flash writes a tiny "last flash" record; on the next launch, if it's
+// recent and the hub isn't up yet, we quietly re-offer to watch for it — so a
+// crash, quit, or reboot mid-first-boot never loses the thread.
+function hubRecordFlash() {
+  try {
+    localStorage.setItem(HUB_LASTFLASH_KEY, JSON.stringify({ host: HUB_HOST, at: Date.now() }));
+  } catch (_) {}
+}
+function hubClearFlashRecord() {
+  try { localStorage.removeItem(HUB_LASTFLASH_KEY); } catch (_) {}
+}
+async function hubMaybeResume() {
+  let rec;
+  try { rec = JSON.parse(localStorage.getItem(HUB_LASTFLASH_KEY) || "null"); } catch (_) { rec = null; }
+  if (!rec || !rec.at || Date.now() - rec.at > HUB_RESUME_WINDOW_MS) { hubClearFlashRecord(); return; }
+  // If it's already up, there's nothing to resume — just tidy the record.
+  let up = false;
+  try { up = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
+  if (up) { hubClearFlashRecord(); return; }
+  const banner = $("hub-resume");
+  banner.classList.remove("hidden");
+  $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
+  $("hub-resume-dismiss").addEventListener("click", () => {
+    hubClearFlashRecord();
+    banner.classList.add("hidden");
+    if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
+  });
+  const tick = async () => {
+    let alive = false;
+    try { alive = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
+    if (alive) {
+      if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
+      $("hub-resume-dot").className = "dot connected";
+      $("hub-resume-text").textContent = "Your hub from earlier is up. 🐤";
+      $("hub-resume-open").classList.remove("hidden");
+      hubNotify("Your hub is ready", "Open " + (rec.host || HUB_HOST) + " to log in.");
+      hubChime();
+      hubClearFlashRecord();
+    }
+  };
+  hub.resumeTimer = setInterval(tick, 6000);
+  tick();
+}
+
 // Turn a backend error into calm, useful words: what happened, why the
 // hardware is fine, and the one thing to do next. Cancels are not errors.
 function hubPresentError(raw) {
@@ -906,14 +959,22 @@ function hubPresentError(raw) {
       "The card and we are telling different stories — it didn't hold what we wrote, which " +
       "usually means a worn-out or counterfeit card. Best move: try a different card. " +
       "Nothing else on your computer was touched.";
-  } else if (msg.includes("no longer connected") || msg.includes("disappeared")) {
+  } else if (
+    msg.includes("no longer connected") ||
+    msg.includes("disappeared") ||
+    /write failed after|read-back failed|Input\/output|no such device|not connected/i.test(msg)
+  ) {
     friendly =
-      "The card wandered off mid-job (loose reader? bumped cable?). Plug it back in and " +
-      "type ERASE again — we start clean from the top, no leftovers.";
-  } else if (msg.includes("download")) {
+      "The card wandered off mid-job (loose reader? bumped cable?). No harm done — plug it back " +
+      "in and type ERASE again; we start clean from the top, with no half-finished leftovers.";
+  } else if (/no space|not enough|ENOSPC/i.test(msg)) {
     friendly =
-      "The internet let us down mid-download — we even tried twice. Your card is untouched. " +
-      "Give the connection a moment and type ERASE to try again.";
+      "Your computer ran low on room to stage the image (we need about 6 GB free). Clear a little " +
+      "space and type ERASE to try again — your card wasn't touched.";
+  } else if (msg.includes("download") || /network|timed out|connection/i.test(msg)) {
+    friendly =
+      "The internet let us down mid-download — we even tried twice. Your card is untouched, and " +
+      "any part we'd fetched is kept, so a retry picks up quickly. Type ERASE to try again.";
   } else if (msg.includes("no permission") || msg.includes("authorize")) {
     friendly =
       "Your computer wouldn't let us open the disk — that's it being protective, not broken. " +
@@ -1223,6 +1284,8 @@ async function hubPreflight() {
 // Close the loop across the silent 10–20 min: poll the hub until it answers,
 // then invite the user in. Nothing here can hurt the card — it's read-only.
 function hubStartFirstBoot() {
+  // Leave a breadcrumb so a restart/quit mid-first-boot can resume the watch.
+  hubRecordFlash();
   const panel = $("hub-firstboot");
   panel.classList.remove("hidden");
   $("hub-fb-dot").className = "dot reading";
@@ -1247,6 +1310,7 @@ function hubStartFirstBoot() {
       openBtn.classList.add("alive-pop");
       hubNotify("Your hub is ready", "Open " + HUB_HOST + " to log in.");
       hubChime();
+      hubClearFlashRecord(); // it's up — nothing left to resume
     }
   };
   hub.fbTimer = setInterval(tick, 5000);
