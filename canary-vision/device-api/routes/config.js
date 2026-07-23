@@ -1,6 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
+const { validateWebhookUrl } = require('../lib/webhook-url');
 
 const VALID_SECTIONS = ['network', 'privacy', 'detection', 'integrations'];
 const VALID_PURGE_HOURS = [1, 6, 12, 24, 48, 168];
@@ -58,6 +59,14 @@ function validateConfigValues(section, data) {
           }
         }
       }
+    }
+  }
+
+  if (section === 'integrations' || (!section && data.integrations)) {
+    const integrations = section ? data : data.integrations;
+    if (integrations && integrations.webhook_url !== undefined) {
+      const result = validateWebhookUrl(integrations.webhook_url);
+      if (!result.ok) errors.push(result.error);
     }
   }
 
@@ -186,6 +195,12 @@ function configRoutes(state) {
     // Enforce immutability of camera_peek_enabled via API (Invariant I).
     const rejected = stripImmutableKeys(body, null);
 
+    // Normalize validated webhook URLs before storing them so fragments are
+    // never persisted and equivalent URLs have a stable representation.
+    if (body.integrations && body.integrations.webhook_url !== undefined) {
+      body.integrations.webhook_url = validateWebhookUrl(body.integrations.webhook_url).url;
+    }
+
     // Merge each section
     for (const section of VALID_SECTIONS) {
       if (body[section] && typeof body[section] === 'object') {
@@ -244,6 +259,10 @@ function configRoutes(state) {
 
     // Enforce immutability of camera_peek_enabled via API (Invariant I).
     const rejected = stripImmutableKeys(body, section);
+
+    if (section === 'integrations' && body.webhook_url !== undefined) {
+      body.webhook_url = validateWebhookUrl(body.webhook_url).url;
+    }
 
     Object.assign(state.config[section], body);
     state.addLog('INFO', `Config section '${section}' updated`);

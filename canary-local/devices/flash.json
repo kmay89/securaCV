@@ -34,7 +34,18 @@
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary",
       "provisioning": "ap",
-      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser."
+      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "hatch": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+          "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+          "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+          "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+        ]
+      },
+      "serial_receipt": true
     },
     {
       "id": "securacv-canary-wap",
@@ -44,7 +55,18 @@
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-wap",
       "provisioning": "ap",
-      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser."
+      "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "hatch": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+          "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+          "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+          "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+        ]
+      },
+      "serial_receipt": false
     },
     {
       "id": "securacv-canary-vision",
@@ -54,7 +76,18 @@
       "board": "esp32-c3-devkitm-1",
       "asset_stem": "canary-vision",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "hatch": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+          "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+          "Put the board where it can see a doorway, then walk through once.",
+          "Open Home Assistant and watch the presence entity flip to detected, then clear."
+        ]
+      },
+      "serial_receipt": true
     },
     {
       "id": "securacv-canary-vision-xiao-c3",
@@ -64,7 +97,18 @@
       "board": "seeed_xiao_esp32c3",
       "asset_stem": "canary-vision-xiao-c3",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "hatch": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+          "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+          "Put the board where it can see a doorway, then walk through once.",
+          "Open Home Assistant and watch the presence entity flip to detected, then clear."
+        ]
+      },
+      "serial_receipt": true
     },
     {
       "id": "securacv-canary-vision-xiao-s3",
@@ -74,7 +118,18 @@
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-vision-xiao-s3",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "hatch": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+          "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+          "Put the board where it can see a doorway, then walk through once.",
+          "Open Home Assistant and watch the presence entity flip to detected, then clear."
+        ]
+      },
+      "serial_receipt": true
     },
     {
       "id": "securacv-canary-sense",
@@ -84,7 +139,18 @@
       "board": "seeed_xiao_esp32c6",
       "asset_stem": "canary-sense",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "hatch": {
+        "kicker": "Sense Canary hatched",
+        "title": "Your Sense Canary is listening with radar.",
+        "body": "The first satisfying test is motion in empty air: no camera, no mic, just the mmWave witness waking up.",
+        "steps": [
+          "Power it from the room where it will live and wait for Home Assistant discovery.",
+          "Stand still for a breath, then walk past it at normal speed.",
+          "Watch presence flip in Home Assistant."
+        ]
+      },
+      "serial_receipt": false
     },
     {
       "id": "securacv-canary-sense-wellbeing",
@@ -94,7 +160,18 @@
       "board": "seeed_xiao_esp32c6",
       "asset_stem": "canary-sense-wellbeing",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory."
+      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "hatch": {
+        "kicker": "Wellbeing Canary hatched",
+        "title": "Your Sense Wellbeing Canary is listening with radar.",
+        "body": "Prove ordinary presence first, then let the gentler wellbeing signal settle before trusting breathing/heartbeat tiles.",
+        "steps": [
+          "Power it from the room where it will live and wait for Home Assistant discovery.",
+          "Walk past it once and watch presence flip in Home Assistant.",
+          "Sit still after the presence card is stable; then watch the wellbeing tile settle into its first breathing/heartbeat reading."
+        ]
+      },
+      "serial_receipt": false
     }
   ],
   "we2_module": {

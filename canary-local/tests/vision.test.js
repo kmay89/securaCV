@@ -5,10 +5,9 @@
 //     canary-vision firmware, the Grove Vision AI V2 docs, the registry,
 //     boards.json) so a hand-edit that bypasses the generator — or firmware
 //     drift — is caught here, not just by the generator's own asserts.
-//  2. Exercise the DOM-free cores the page ships (vision-ui.js: bestBox,
-//     bboxToVoxel, iou, nms, aimPayload, makeFsm, bootLines, mqttApply) and
-//     pin them against the firmware's own math so the "mirrors the firmware
-//     line for line" claim can't rot.
+//  2. Execute the committed WebAssembly core built from the production
+//     detection pipeline, NVS tuning, voxel tracker and presence FSM. The
+//     page has no JavaScript behavior mirror that can silently drift.
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -34,6 +33,14 @@ const fsmCpp = read(join(FW, "src/state/presence_fsm.cpp"));
 const haCpp = read(join(FW, "src/ha/ha_discovery.cpp"));
 const guide = read(join(REPO, "docs/hardware/grove_vision_ai_v2_guide.md"));
 const gettingStarted = read(join(REPO, "docs/hardware/canary_vision_getting_started.md"));
+const detectionPipelineH = read(join(FW, "include/canary/vision/detection_pipeline.h"));
+const visionBuild = read(join(ROOT, "emulator/build.sh"));
+const visionFactory = require(join(ROOT, "emulator/dist/canary-vision-core.js"));
+
+async function firmwareCore() {
+  const { createVisionFirmwareCore } = await import("../emulator/web/vision-core.js");
+  return createVisionFirmwareCore(visionFactory);
+}
 
 const num = (src, name) => {
   const m = src.match(new RegExp(name + "\\s*=\\s*(\\d+)"));
@@ -166,41 +173,75 @@ test("placement presets stay inside the firmware's tunable bounds", () => {
   }
 });
 
-// ── 7. DOM-free cores mirror the firmware's math ───────────────────────────
-test("bestBox: class filter, threshold, highest score — vision_mgr.cpp's rule", async () => {
-  const { bestBox } = await import("../assets/vision-ui.js");
-  // the rule as written in the firmware
-  assert.ok(visionMgrCpp.includes("if (b.target != det.person_target) continue;"));
-  assert.ok(visionMgrCpp.includes("if (b.score < det.score_min) continue;"));
+// ── 7. the browser executes the production firmware core ──────────────────
+test("committed wasm contract is exact and its build compiles production sources", async () => {
+  const core = await firmwareCore();
+  core.assertGeneratedData(data);
+  assert.strictEqual(core.contract.schema, "securacv.canary-vision.core/v1");
+  assert.ok(visionMgrCpp.includes("detection::sample_from_boxes(boxes, det)"));
+  for (const source of ["detect_config.cpp", "presence_fsm.cpp", "voxel_tracker.cpp",
+                        "vision_core_bindings.cpp", "vision_core_shim.cpp"])
+    assert.ok(visionBuild.includes(source), "wasm build omitted " + source);
+  assert.ok(visionBuild.includes("detection_pipeline.h"));
+  assert.ok(visionBuild.includes('"$0" vision'), "the all target must rebuild Vision");
+});
+
+test("firmware wasm: live tuning returns the production clamps", async () => {
+  const core = await firmwareCore();
+  assert.deepStrictEqual(core.configure({
+    person_target: -1, score_min: -1, lost_timeout_ms: 1, dwell_start_ms: 1,
+  }), {
+    person_target: 0, score_min: data.detect.bounds.score[0],
+    lost_timeout_ms: data.detect.bounds.lost_ms[0],
+    dwell_start_ms: data.detect.bounds.dwell_ms[0],
+  });
+  assert.deepStrictEqual(core.configure({
+    person_target: 999, score_min: 999, lost_timeout_ms: 999999, dwell_start_ms: 9999999,
+  }), {
+    person_target: 255, score_min: data.detect.bounds.score[1],
+    lost_timeout_ms: data.detect.bounds.lost_ms[1],
+    dwell_start_ms: data.detect.bounds.dwell_ms[1],
+  });
+});
+
+test("firmware wasm: class filter, threshold and highest score", async () => {
+  const core = await firmwareCore();
+  assert.ok(detectionPipelineH.includes("if (box.target != det.person_target) continue;"));
+  assert.ok(detectionPipelineH.includes("if (box.score < det.score_min) continue;"));
   const cfg = { person_target: 0, score_min: 70 };
+  core.configure({ ...data.detect, ...cfg });
   const boxes = [
     { x: 10, y: 10, w: 5, h: 5, score: 95, target: 8 },   // cat: right score, wrong class
     { x: 20, y: 20, w: 5, h: 5, score: 60, target: 0 },   // person under threshold
     { x: 30, y: 30, w: 5, h: 5, score: 80, target: 0 },
     { x: 40, y: 40, w: 5, h: 5, score: 91, target: 0 },   // best
   ];
-  assert.strictEqual(bestBox(boxes, cfg).score, 91);
-  assert.strictEqual(bestBox([boxes[0], boxes[1]], cfg), null);
-  assert.strictEqual(bestBox([], cfg), null);
+  assert.strictEqual(core.tick(0, boxes).sample.bbox.score, 91);
+  assert.strictEqual(core.tick(1, [boxes[0], boxes[1]]).sample.person_now, false);
+  assert.strictEqual(core.tick(2, []).sample.person_now, false);
   // exactly-at-threshold is kept (firmware uses <, not <=)
-  assert.strictEqual(bestBox([{ x: 0, y: 0, w: 1, h: 1, score: 70, target: 0 }], cfg).score, 70);
+  assert.strictEqual(core.tick(3,
+    [{ x: 0, y: 0, w: 1, h: 1, score: 70, target: 0 }]).sample.bbox.score, 70);
 });
 
-test("bboxToVoxel: the firmware's integer math, clamps included", async () => {
-  const { bboxToVoxel } = await import("../assets/vision-ui.js");
-  // #1071 refactored the firmware's voxel math into point_to_cell(); the JS
-  // bboxToVoxel still mirrors that same integer division (truncating, clamped).
-  assert.ok(visionMgrCpp.includes("c = (px * C) / FRAME_W;"));
-  const g = { cols: 3, rows: 3, w: 240, h: 240 };
+test("firmware wasm: bbox-to-voxel integer math and clamps", async () => {
+  const core = await firmwareCore();
+  assert.ok(detectionPipelineH.includes("c = (px * safe_cols) / FRAME_W;"));
   // center of frame lands center cell
-  assert.deepStrictEqual(bboxToVoxel({ x: 100, y: 100, w: 40, h: 40 }, g),
+  assert.deepStrictEqual(core.tick(0,
+    [{ x: 100, y: 100, w: 40, h: 40, score: 90, target: 0 }]).sample.voxel,
     { r: 1, c: 1, rows: 3, cols: 3 });
   // exactly at the right edge clamps to the last cell (cx=240 → c=3 → clamp 2)
-  assert.deepStrictEqual(bboxToVoxel({ x: 220, y: 220, w: 40, h: 40 }, g).c, 2);
-  assert.deepStrictEqual(bboxToVoxel({ x: -10, y: -10, w: 4, h: 4 }, g), { r: 0, c: 0, rows: 3, cols: 3 });
+  assert.strictEqual(core.tick(1,
+    [{ x: 220, y: 220, w: 40, h: 40, score: 90, target: 0 }]).sample.voxel.c, 2);
+  assert.deepStrictEqual(core.tick(2,
+    [{ x: -10, y: -10, w: 4, h: 4, score: 90, target: 0 }]).sample.voxel,
+    { r: 0, c: 0, rows: 3, cols: 3 });
   // integer division truncation matches C: cx=79 → 79*3/240 = 0.9875 → 0
-  assert.strictEqual(bboxToVoxel({ x: 79, y: 0, w: 0, h: 0 }, g).c, 0);
-  assert.strictEqual(bboxToVoxel({ x: 80, y: 0, w: 0, h: 0 }, g).c, 1);
+  assert.strictEqual(core.tick(3,
+    [{ x: 79, y: 0, w: 0, h: 0, score: 90, target: 0 }]).sample.voxel.c, 0);
+  assert.strictEqual(core.tick(4,
+    [{ x: 80, y: 0, w: 0, h: 0, score: 90, target: 0 }]).sample.voxel.c, 1);
 });
 
 test("aimPayload: the firmware's key set, key for key", async () => {
@@ -216,55 +257,50 @@ test("aimPayload: the firmware's key set, key for key", async () => {
   assert.strictEqual(empty.vr, -1);
 });
 
-test("makeFsm: the event order presence_fsm.cpp enforces", async () => {
-  const { makeFsm } = await import("../assets/vision-ui.js");
-  const cfg = { dwell_start_ms: 1000, lost_timeout_ms: 500,
-                interaction_window_ms: 3000, zone_interaction_ms: 2500 };
-  const fsm = makeFsm();
-  assert.strictEqual(fsm.tick(true, 0, cfg), "presence_started");
-  assert.strictEqual(fsm.tick(true, 100, cfg), null);
-  assert.strictEqual(fsm.tick(true, 1000, cfg), "dwell_started");
-  assert.strictEqual(fsm.tick(true, 1100, cfg), null); // latches the dwell
+test("firmware wasm: the production FSM event order", async () => {
+  const core = await firmwareCore();
+  core.configure({ ...data.detect, dwell_start_ms: 1000, lost_timeout_ms: 500 });
+  const person = [{ x: 100, y: 100, w: 40, h: 80, score: 90, target: 0 }];
+  assert.strictEqual(core.tick(0, person).event, "presence_started");
+  assert.strictEqual(core.tick(100, person).event, null);
+  assert.strictEqual(core.tick(1000, person).event, "dwell_started");
+  assert.strictEqual(core.tick(1100, person).event, null); // latches the dwell
   // silence: dwell_ended fires the tick before presence_ended (firmware order)
-  assert.strictEqual(fsm.tick(false, 1500, cfg), null);      // within lost timeout
-  assert.strictEqual(fsm.tick(false, 1700, cfg), "dwell_ended");
-  assert.strictEqual(fsm.tick(false, 1701, cfg), "presence_ended");
+  assert.strictEqual(core.tick(1500, []).event, null);      // within lost timeout
+  assert.strictEqual(core.tick(1700, []).event, "dwell_ended");
+  assert.strictEqual(core.tick(1701, []).event, "presence_ended");
   // the qualified (dwelled) visit signs interaction_likely inside the window
-  assert.strictEqual(fsm.tick(false, 1800, cfg), "interaction_likely");
-  assert.strictEqual(fsm.lastReason, "dwell_then_left");
-  assert.strictEqual(fsm.tick(false, 1900, cfg), null); // emitted once, not again
+  const interaction = core.tick(1800, []);
+  assert.strictEqual(interaction.event, "interaction_likely");
+  assert.strictEqual(interaction.reason, "dwell_then_left");
+  assert.strictEqual(core.tick(1900, []).event, null); // emitted once, not again
   // a short visit skips dwell — and earns no interaction event
-  assert.strictEqual(fsm.tick(true, 6000, cfg), "presence_started");
-  assert.strictEqual(fsm.tick(false, 6600, cfg), "presence_ended");
-  assert.strictEqual(fsm.tick(false, 6700, cfg), null);
-  assert.strictEqual(fsm.lastReason, null);
+  assert.strictEqual(core.tick(6000, person).event, "presence_started");
+  assert.strictEqual(core.tick(6600, []).event, "presence_ended");
+  const shortVisit = core.tick(6700, []);
+  assert.strictEqual(shortVisit.event, null);
+  assert.strictEqual(shortVisit.reason, null);
 });
 
-test("makeFsm: the stable-zone latch qualifies a visit without dwell", async () => {
-  const { makeFsm } = await import("../assets/vision-ui.js");
-  // dwell far away so only the zone path can qualify (firmware lines 61-66)
-  const cfg = { dwell_start_ms: 60000, lost_timeout_ms: 500,
-                interaction_window_ms: 3000, zone_interaction_ms: 2500 };
-  const fsm = makeFsm();
-  assert.strictEqual(fsm.tick(true, 0, cfg, "1,1"), "presence_started");
-  assert.strictEqual(fsm.tick(true, 1000, cfg, "1,1"), null);
-  assert.strictEqual(fsm.tick(true, 2600, cfg, "1,1"), null); // zone window passed → latch
-  assert.strictEqual(fsm.tick(false, 3200, cfg), "presence_ended");
-  assert.strictEqual(fsm.tick(false, 3300, cfg), "interaction_likely");
-  assert.strictEqual(fsm.lastReason, "zone_interaction_then_left");
-  // moving between cells restarts the stable clock: no latch, no event
-  const fsm2 = makeFsm();
-  fsm2.tick(true, 0, cfg, "0,0");
-  fsm2.tick(true, 1500, cfg, "0,1");
-  fsm2.tick(true, 2900, cfg, "0,2");
-  assert.strictEqual(fsm2.tick(false, 3500, cfg), "presence_ended");
-  assert.strictEqual(fsm2.tick(false, 3600, cfg), null);
-  // outside the post-leave window nothing fires either (firmware line 99)
-  const fsm3 = makeFsm();
-  fsm3.tick(true, 0, cfg, "1,1");
-  fsm3.tick(true, 2600, cfg, "1,1");
-  assert.strictEqual(fsm3.tick(false, 3200, cfg), "presence_ended");
-  assert.strictEqual(fsm3.tick(false, 6300, cfg), null); // 3.1 s after leave
+test("firmware wasm: a stable voxel qualifies interaction without dwell", async () => {
+  const core = await firmwareCore();
+  core.configure({ ...data.detect, dwell_start_ms: 60000, lost_timeout_ms: 500 });
+  const person = [{ x: 100, y: 100, w: 40, h: 80, score: 90, target: 0 }];
+  assert.strictEqual(core.tick(0, person).event, "presence_started");
+  assert.strictEqual(core.tick(1000, person).event, null);
+  assert.strictEqual(core.tick(2600, person).event, null); // firmware zone window passed → latch
+  assert.strictEqual(core.tick(3200, []).event, "presence_ended");
+  const interaction = core.tick(3300, []);
+  assert.strictEqual(interaction.event, "interaction_likely");
+  assert.strictEqual(interaction.reason, "zone_interaction_then_left");
+
+  // The same qualified visit expires after the production post-leave window.
+  core.reset();
+  core.configure({ ...data.detect, dwell_start_ms: 60000, lost_timeout_ms: 500 });
+  core.tick(0, person);
+  core.tick(2600, person);
+  assert.strictEqual(core.tick(3200, []).event, "presence_ended");
+  assert.strictEqual(core.tick(6301, []).event, null);
 });
 
 test("iou + nms behave like a de-dup pass", async () => {
@@ -295,7 +331,7 @@ test("bootLines + mqttApply contracts", async () => {
 
 test("VisionSim wires the cores together end to end", async () => {
   const { VisionSim } = await import("../assets/vision-ui.js");
-  const sim = new VisionSim(data);
+  const sim = new VisionSim(data, await firmwareCore());
   sim.run("walk");
   const events = [];
   sim.on("event", (name) => events.push(name));
@@ -305,7 +341,7 @@ test("VisionSim wires the cores together end to end", async () => {
   assert.ok(events.includes("presence_started"), "walk never started presence: " + events);
   assert.ok(events.includes("presence_ended"), "walk never ended presence: " + events);
   // the cat alone must claim nothing
-  const sim2 = new VisionSim(data);
+  const sim2 = new VisionSim(data, await firmwareCore());
   const events2 = [];
   sim2.on("event", (n) => events2.push(n));
   sim2.run("cat");

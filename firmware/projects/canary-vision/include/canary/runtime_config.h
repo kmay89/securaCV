@@ -32,4 +32,10 @@ struct RuntimeConfig {
 // Loaded once on first call (then cached). Safe to call from setup() onward.
 const RuntimeConfig& get();
 
+// True only when NVS/compiled values are real, not the generic release's
+// placeholders. Used to boot into an honest offline/provisioning state instead
+// of spending every boot in a Wi-Fi timeout/reboot loop.
+bool wifi_credentials_configured();
+bool mqtt_credentials_configured();
+
 } // namespace canary::cfg

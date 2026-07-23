@@ -6,8 +6,8 @@ firmware + the Grove Vision AI V2 docs.
 
 The Vision teaching page (`canary-local/vision.html`) stages the whole life of
 a Canary Vision — the module in 3D, the two-USB-C-port gotcha, the one-time
-SenseCraft model load (with a bounding-box preview emulated from the same
-detection semantics the firmware runs), the host flash, the boot console, the
+SenseCraft model load (with staged sensor boxes processed by the compiled
+firmware core), the host flash, the boot console, the
 MQTT/HA surfaces, the boxes-only Aim card, placement presets and live tuning.
 None of it is hand-faked: every constant, topic, entity name, boot line, step
 and threshold this page shows is either parsed straight out of the firmware /
@@ -24,7 +24,10 @@ Sources of truth (all in-repo, deterministic, offline):
       include/canary/detect_config.h  runtime-tunable bounds
       include/canary/topics.h         every MQTT topic template
       src/main.cpp                    boot scenes, aim payload, event payload
-      src/vision/vision_mgr.cpp       best-box rule, voxel mapping, I2C link line
+      include/canary/vision/detection_pipeline.h
+                                      best-box rule + voxel mapping shared by
+                                      hardware and browser firmware builds
+      src/vision/vision_mgr.cpp       I2C link and production-core call
       src/state/presence_fsm.cpp      the event vocabulary
       src/ha/ha_discovery.cpp         the HA discovery entity set
       src/net/{wifi_mgr,mqtt_mgr}.cpp boot log lines
@@ -51,6 +54,7 @@ DETECT_CFG_H = FW / "include/canary/detect_config.h"
 TOPICS_H = FW / "include/canary/topics.h"
 MAIN_CPP = FW / "src/main.cpp"
 VISION_MGR_CPP = FW / "src/vision/vision_mgr.cpp"
+DETECTION_PIPELINE_H = FW / "include/canary/vision/detection_pipeline.h"
 PRESENCE_FSM_CPP = FW / "src/state/presence_fsm.cpp"
 HA_DISCOVERY_CPP = FW / "src/ha/ha_discovery.cpp"
 WIFI_MGR_CPP = FW / "src/net/wifi_mgr.cpp"
@@ -377,15 +381,16 @@ must(GETTING_STARTED, "streams camera frames to the", "preview privacy note")
 # 6. detection semantics — the exact rules the firmware runs
 # --------------------------------------------------------------------------- #
 
-# best-box rule (vision_mgr.cpp): person class only, score >= threshold,
+# best-box rule (detection_pipeline.h): person class only, score >= threshold,
 # highest score wins — one box, however many people are in frame.
-must(VISION_MGR_CPP, "if (b.target != det.person_target) continue;", "class filter")
-must(VISION_MGR_CPP, "if (b.score < det.score_min) continue;", "score filter")
-must(VISION_MGR_CPP, "if (b.score > bestScore) {", "best-box rule")
+must(VISION_MGR_CPP, "detection::sample_from_boxes(boxes, det)", "production detection-core call")
+must(DETECTION_PIPELINE_H, "if (box.target != det.person_target) continue;", "class filter")
+must(DETECTION_PIPELINE_H, "if (box.score < det.score_min) continue;", "score filter")
+must(DETECTION_PIPELINE_H, "if (box.score > best_score) {", "best-box rule")
 # voxel mapping — center of the box, integer grid math (refactored into
 # point_to_cell() upstream in #1071; same math, verified where it now lives)
-must(VISION_MGR_CPP, "point_to_cell(bb.x + (bb.w / 2), bb.y + (bb.h / 2), rows, cols, r, c);", "voxel center")
-must(VISION_MGR_CPP, "c = (px * C) / FRAME_W;", "voxel col math")
+must(DETECTION_PIPELINE_H, "point_to_cell(box.x + (box.w / 2), box.y + (box.h / 2), rows, cols, row, col);", "voxel center")
+must(DETECTION_PIPELINE_H, "c = (px * safe_cols) / FRAME_W;", "voxel col math")
 
 EVENTS = re.findall(r'emit\(out_event,\s*"([a-z_]+)"', read(PRESENCE_FSM_CPP))
 if len(set(EVENTS)) < 5:
@@ -426,7 +431,7 @@ must(MAIN_CPP, '(o.o)  ))     Connecting to MQTT...', "mqtt scene")
 must(MAIN_CPP, 'boot_kv("Sensor",  "Grove Vision AI V2 (SSCMA)")', "sensor kv")
 must(VISION_MGR_CPP, 'Grove Vision AI ID=%d', "i2c id line")
 must(VISION_MGR_CPP, "ERROR: Grove Vision AI V2 not responding", "i2c error line")
-must(WIFI_MGR_CPP, 'Connecting SSID=\\"%s\\" ...', "wifi connecting line")
+must(WIFI_MGR_CPP, "Connecting to the provisioned WiFi network ...", "wifi connecting line")
 must(WIFI_MGR_CPP, "Connected IP=%s RSSI=%ddBm", "wifi connected line")
 must(MQTT_MGR_CPP, "Connecting %s:%u as %s ...", "mqtt connecting line")
 must(MQTT_MGR_CPP, 'log_line("MQTT", "Connected.")', "mqtt connected line")
@@ -463,7 +468,7 @@ SERIAL = {
         {"tag": "[--]", "text": f"Dwell  {DWELL_START_MS} ms  (lingering detection)"},
         {"tag": "[--]", "text": f"Voxel  {VOXEL_COLS}x{VOXEL_ROWS} grid ({FRAME_W}x{FRAME_H} frame)"},
         {"tag": "[--]", "text": f"Rate   every {INVOKE_PERIOD_MS} ms"},
-        {"tag": "[WIFI]", "text": 'Connecting SSID="YourHomeWiFi" ...'},
+        {"tag": "[WIFI]", "text": "Connecting to the provisioned WiFi network ..."},
         {"tag": "[WIFI]", "text": f"Connected IP={EX_IP} RSSI=-52dBm"},
         {"tag": "[I2C]", "text": "Grove Vision AI ID=2"},
         {"tag": "", "text": "              ,_,  ))"},

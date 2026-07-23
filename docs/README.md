@@ -81,6 +81,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Themed serial console (design)](design/serial_console_theming.md) — the `l` identity banner: key fingerprint as drunken-bishop randomart, capability-probed, ASCII-safe by default
 - [Self-* roadmap (design)](design/self_star_roadmap.md) — "plug it in and it proves itself": what shipped (self-manifest `j`, randomart handshake, self-repair) + coming-soon TODOs (fleet map, boot safe-mode / A/B rollback)
 - [Browser flasher](browser_flasher.md) — flash a blank board from Chrome over USB, no toolchain
+- [The help ecosystem layout (design)](design/help_ecosystem_layout.md) — one map, every surface: the Lab → Playground → Factory story, the self-linking/never-rots rules the website now enforces in CI, and the write-once-wrap-thin platform strategy (web/PWA/Tauri)
 - [The Lab & Flasher experience (design)](design/flasher_experience.md) — the spine for the magical bring-up-and-tend arc: come-to-life receipt, two-port Vision flow, and the native-app fleet-view over the network (always know every Canary is up to date + healthy) — what to reuse, the browser-vs-native platform reality, and the security model
 - [Secure provisioning](secure_provisioning.md) — how a device earns its keys
 - [Hardware root of trust (design)](design/hardware_root_of_trust.md) — RFC: opt-in Secure Boot / flash encryption / attestation, tiered so the default Canary stays un-brickable
@@ -140,7 +141,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 
 - **v1:** [roadmap](v1-roadmap.md) · [launch review](V1_LAUNCH_REVIEW.md) · [bench-test runbook](V1_BENCH_TEST_RUNBOOK.md)
 - **Audits:** [firmware full audit 2026-07](audit/esp32s3_firmware_full_audit_2026-07.md) · [hardware verification checklist](audit/hardware_verification_checklist.md) · [mesh & chirp audit](audit/mesh_and_chirp_audit_v1.md) · [v0.3 closeout](audit/v0.3_closeout.md) · [WAP multi-device UX audit](audit/wap_multi_device_ux_audit.md) · [UX/UI audit 2026-06](ux_ui_audit_2026-06.md)
-- **Code reviews:** [Docker container](reviews/2026-06-10_docker_container_review.md) · [full repo](reviews/2026-06-10_full_repo_code_review.md) · [HA setup audit](reviews/2026-07-11_home_assistant_setup_audit.md) · [Arduino demo commands](reviews/arduino_demo_review_commands.md) · [Arduino demo tasks](reviews/arduino_demo_review_tasks.md) · [frame-trigger pipeline plan](reviews/kernel_frame_trigger_pipeline_plan.md)
+- **Code reviews:** [Docker container](reviews/2026-06-10_docker_container_review.md) · [full repo](reviews/2026-06-10_full_repo_code_review.md) · [HA setup audit](reviews/2026-07-11_home_assistant_setup_audit.md) · [flasher hatching](reviews/2026-07-22_flasher_hatching_review.md) · [Arduino demo commands](reviews/arduino_demo_review_commands.md) · [Arduino demo tasks](reviews/arduino_demo_review_tasks.md) · [frame-trigger pipeline plan](reviews/kernel_frame_trigger_pipeline_plan.md)
 - **Requirements review series:** [review/README](review/README.md)
 - **Research:** [bitchat protocol](research/bitchat_protocol_review.md) · [display market](research/display_market_research.md) · [harm-reduction prior art](research/harm_reduction_prior_art.md)
 - **Strategy series (01–17):** [strategy/README](strategy/README.md)

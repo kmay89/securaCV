@@ -29,6 +29,10 @@ class Preferences {
   size_t putShort(const char* key, int16_t v);
   uint32_t getUInt(const char* key, uint32_t def = 0);
   size_t putUInt(const char* key, uint32_t v);
+  // ESP32 Preferences exposes both spellings. Canary Vision uses ULong for
+  // millisecond tuning values; keep it an alias of the same 32-bit NVS type.
+  uint32_t getULong(const char* key, uint32_t def = 0) { return getUInt(key, def); }
+  size_t putULong(const char* key, uint32_t v) { return putUInt(key, v); }
   int32_t getInt(const char* key, int32_t def = 0);
   size_t putInt(const char* key, int32_t v);
   int64_t getLong64(const char* key, int64_t def = 0);
