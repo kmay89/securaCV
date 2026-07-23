@@ -21,11 +21,26 @@ use hub_core::hub_image::{recommended_board, resolve, BoardImage, CatalogView};
 use hub_core::hub_seed::WifiSeed;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::ShellExt;
 
 // Same never-rot posture as the flasher catalog: the ONE canonical
 // hub_image.json is embedded fresh on every build by build.rs.
 const EMBEDDED_HUB_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/hub_image.json"));
+
+// Raspberry Pi's official USB device-boot host tool, bundled as a sidecar
+// exactly like espflash (release CI builds it from a pinned raspberrypi/usbboot
+// checkout). It waits for a Pi in ROM boot mode (power button held while
+// connecting USB-C), pushes the signed mass-storage gadget, and exits — after
+// which the Pi presents its SD/NVMe to this computer as an ordinary USB disk
+// and the normal target polling picks it up. No card reader required.
+const RPIBOOT: &str = "rpiboot";
+
+/// The one rpiboot process we may have waiting. One at a time on purpose: two
+/// concurrent rpiboots would race for the same USB device.
+#[derive(Default)]
+pub struct PiUsbState(std::sync::Mutex<Option<CommandChild>>);
 
 /// One disk as the picker shows it — eligible or not, always with the reason,
 /// so "why isn't my drive listed" is answered on screen instead of in a forum.
@@ -194,6 +209,89 @@ pub fn hub_plan(board_id: Option<String>) -> Result<HubPlanDto, String> {
         min_card_bytes: plan.min_card_bytes,
         warnings: plan.warnings.iter().map(|w| w.message()).collect(),
     })
+}
+
+/// Start waiting for a Raspberry Pi in USB device-boot mode and turn it into
+/// a disk. Spawns the bundled `rpiboot` with the mass-storage-gadget payload;
+/// rpiboot waits for the Pi, serves the gadget, and exits. Its output streams
+/// over `hub:pi-usb` and the exit code over `hub:pi-usb-done`; the Pi-as-disk
+/// then appears through the ordinary `list_hub_targets` polling (as an
+/// `RPi-MSD…` USB disk), so the rest of the flow is unchanged.
+#[tauri::command]
+pub async fn hub_pi_boot_start(
+    app: AppHandle,
+    state: tauri::State<'_, PiUsbState>,
+) -> Result<(), String> {
+    {
+        let guard = state.0.lock().map_err(|_| "Pi USB state poisoned")?;
+        if guard.is_some() {
+            return Err("already waiting for a Pi over USB".to_string());
+        }
+    }
+    // The gadget payload ships as a bundled resource next to the app (release
+    // CI vendors it from the same pinned usbboot checkout as the sidecar). A
+    // dev build without it fails here with the reason, not downstream.
+    let gadget = app
+        .path()
+        .resolve(
+            "mass-storage-gadget64",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .ok()
+        .filter(|p| p.exists())
+        .ok_or_else(|| {
+            "this build doesn't bundle the Pi USB-boot payload (mass-storage-gadget64) — \
+             use a released build, or flash the card in a reader instead"
+                .to_string()
+        })?;
+
+    let cmd = app
+        .shell()
+        .sidecar(RPIBOOT)
+        .map_err(|e| format!("bundled rpiboot missing: {e}"))?
+        .args(["-d".to_string(), gadget.to_string_lossy().into_owned()]);
+    let (mut rx, child) = cmd
+        .spawn()
+        .map_err(|e| format!("could not start rpiboot: {e}"))?;
+    *state.0.lock().map_err(|_| "Pi USB state poisoned")? = Some(child);
+
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut code = -1;
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
+                        let _ = app2.emit("hub:pi-usb", line.to_string());
+                    }
+                }
+                CommandEvent::Terminated(payload) => {
+                    code = payload.code.unwrap_or(-1);
+                }
+                _ => {}
+            }
+        }
+        if let Some(s) = app2.try_state::<PiUsbState>() {
+            if let Ok(mut guard) = s.0.lock() {
+                *guard = None;
+            }
+        }
+        let _ = app2.emit("hub:pi-usb-done", code);
+    });
+    Ok(())
+}
+
+/// Stop waiting for a Pi (the operator closed the panel or changed their
+/// mind). Killing a waiting rpiboot is harmless — nothing has been served yet.
+#[tauri::command]
+pub fn hub_pi_boot_stop(state: tauri::State<'_, PiUsbState>) -> Result<(), String> {
+    if let Some(child) = state.0.lock().map_err(|_| "Pi USB state poisoned")?.take() {
+        child
+            .kill()
+            .map_err(|e| format!("couldn't stop rpiboot: {e}"))?;
+    }
+    Ok(())
 }
 
 /// The whole pipeline, in order, in a blocking worker: download → verify →

@@ -157,6 +157,22 @@
       <p class="muted" id="hub-target-sub">Insert a microSD card (or plug in a USB SSD — the durable
         choice for a Pi 5). It's picked up automatically.</p>
       <div id="hub-target-list" class="product-list" role="radiogroup" aria-label="Write target"></div>
+      <details id="hub-pi-usb" class="hint">
+        <summary>No card reader? Use the Pi itself over USB-C</summary>
+        <p>Your Raspberry Pi 5 can be its own card reader — we borrow it for a
+          minute and it shows up here as a disk (SD card <em>and</em> NVMe).
+          The cable powers it; no power supply needed.</p>
+        <ol class="pi-usb-steps">
+          <li>Leave the Pi unpowered. Put the card you want to flash in it (or leave the NVMe in).</li>
+          <li>Click <strong>Wait for my Pi</strong> below.</li>
+          <li><strong>Hold the Pi's power button</strong>, connect a USB-C <em>data</em> cable
+            from this computer to the Pi's USB-C port, then release the button.</li>
+        </ol>
+        <div class="row">
+          <button id="hub-pi-usb-btn" class="btn btn-small">Wait for my Pi</button>
+          <span id="hub-pi-usb-status" class="muted"></span>
+        </div>
+      </details>
       <details id="hub-hidden" class="hint hidden">
         <summary id="hub-hidden-summary">Some disks are hidden</summary>
         <div id="hub-hidden-list"></div>

@@ -729,6 +729,7 @@ const hub = {
   pollTimer: null,
   busy: false,
   done: false,
+  piUsbWaiting: false,
 };
 
 const HUB_STAGE_COPY = {
@@ -752,6 +753,20 @@ function hubInit() {
     hubArm();
   });
   ["hub-ssid", "hub-pass"].forEach((id) => $(id).addEventListener("input", hubArm));
+
+  $("hub-pi-usb-btn").addEventListener("click", hubPiUsbToggle);
+  listen("hub:pi-usb", (e) => {
+    // rpiboot's own narration, one line at a time — the last line is the state.
+    $("hub-pi-usb-status").textContent = e.payload;
+  });
+  listen("hub:pi-usb-done", (e) => {
+    hub.piUsbWaiting = false;
+    $("hub-pi-usb-btn").textContent = "Wait for my Pi";
+    $("hub-pi-usb-status").textContent =
+      e.payload === 0
+        ? "Done — your Pi is becoming a disk; it will appear above in a few seconds."
+        : "Stopped. Click again to retry (hold the power button while connecting).";
+  });
 
   listen("hub:log", (e) => {
     const el = $("hub-console");
@@ -829,10 +844,13 @@ async function hubPollTargets() {
     ? eligible
         .map((t) => {
           const sel = t.path === hub.selected;
+          const isPi = /rpi[-_ ]?msd/i.test(t.model);
           const warns = t.warnings.map((w) => `<div class="p-warn">⚠ ${esc(w)}</div>`).join("");
           return `<label class="product${sel ? " selected" : ""}">
             <input type="radio" name="hub-target" value="${esc(t.path)}" ${sel ? "checked" : ""}>
-            <div><div class="p-name">${esc(t.model)}</div>
+            <div><div class="p-name">${esc(t.model)}${
+              isPi ? '<span class="chip-badge">your Pi, over USB-C</span>' : ""
+            }</div>
             <div class="p-tag">${esc(t.path)} · ${hubFmtBytes(t.size_bytes)}</div>${warns}</div>
           </label>`;
         })
@@ -864,6 +882,26 @@ async function hubPollTargets() {
   $("hub-step-wifi").classList.toggle("disabled", !hub.selected);
   $("hub-step-write").classList.toggle("disabled", !hub.selected);
   hubArm();
+}
+
+async function hubPiUsbToggle() {
+  if (hub.piUsbWaiting) {
+    try {
+      await invoke("hub_pi_boot_stop");
+    } catch (e) {
+      $("hub-pi-usb-status").textContent = String(e);
+    }
+    return; // hub:pi-usb-done resets the button
+  }
+  try {
+    await invoke("hub_pi_boot_start");
+    hub.piUsbWaiting = true;
+    $("hub-pi-usb-btn").textContent = "Stop waiting";
+    $("hub-pi-usb-status").textContent =
+      "Waiting… hold the Pi's power button, connect USB-C, release.";
+  } catch (e) {
+    $("hub-pi-usb-status").textContent = String(e);
+  }
 }
 
 function hubWifiValue() {

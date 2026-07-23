@@ -267,18 +267,25 @@ Raspberry Pi Imager.
   and the verified write, read-back, and Wi-Fi seed run **unchanged**. The
   only new machinery is the on-ramp:
 
-  - *Sidecar:* bundle `rpiboot` + the signed `mass-storage-gadget64` payload
-    from `raspberrypi/usbboot` exactly like `espflash` (CI-fetched, pinned,
-    checksummed; licenses vendored). No protocol re-implementation.
-  - *Detection:* watch USB for `0a5c:2712` (Pi 5) / `0a5c:2711` (Pi 4) while
-    the Hub tab is open; on sight, run the sidecar, then wait for the
-    `RPi-MSD` disk to appear in the normal enumerator poll.
-  - *UI copy:* "No card reader? Plug the Pi itself in: hold its power button,
-    connect USB-C to this computer, release" → "Your Pi is now a disk — we're
-    writing to the card inside it." When more than one MSD LUN appears (SD +
-    NVMe), the existing picker already handles the choice, warnings and all.
-  - *Hardware validation:* same bar as the write itself — a real Pi 5 over
-    USB-C on macOS + Linux before any tagged release claims the path.
+  - *Sidecar (implemented):* release CI builds `rpiboot` and vendors the
+    `mass-storage-gadget64` payload from one `raspberrypi/usbboot` checkout
+    (`USBBOOT_REF`, honest-before-pin: tracks upstream until the validation
+    session pins the exact tag it proved; every build logs the resolved SHA).
+    macOS bundles its own libusb (re-pointed into Resources) so nothing
+    depends on a user's Homebrew; the deb declares `libusb-1.0-0`.
+  - *On-ramp (implemented):* `hub_pi_boot_start`/`stop` commands spawn the
+    sidecar with the bundled gadget — rpiboot itself does the waiting, so no
+    separate USB watcher is needed; its narration streams to the UI and the
+    Pi-as-disk arrives through the ordinary target poll, badged "your Pi,
+    over USB-C" (`RPi-MSD…`). A build without the payload fails the panel
+    with a clear message and every other flow still works.
+  - *UI copy (implemented):* "No card reader? Use the Pi itself over USB-C" —
+    hold the power button, connect the cable, release; the cable powers the
+    board. When more than one LUN appears (SD + NVMe), the existing picker
+    handles the choice, warnings and all.
+  - *Hardware validation (OUTSTANDING):* same bar as the write itself — a
+    real Pi 5 over USB-C on macOS + Linux, then pin `USBBOOT_REF`, before any
+    tagged release claims the path.
 
 - **Step 7 — community + convergence.** Extract the SD-health add-on for upstream;
   submit the add-on repo to the community store; fold the hub image into the
