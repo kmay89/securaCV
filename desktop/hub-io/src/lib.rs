@@ -32,6 +32,7 @@
 //! Like the rest of the hub path: HARDWARE VALIDATION IS STILL REQUIRED before
 //! this ships in a tagged release — these tests prove the logic, not a boot.
 
+pub mod account;
 pub mod fetch;
 pub mod seed;
 pub mod write;
