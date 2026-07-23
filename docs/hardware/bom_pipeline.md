@@ -95,17 +95,15 @@ company; the BOM checks itself and *summons* a human with a specific,
 actionable signal. Closing the issue = decision made in the CSV (which is
 itself lint- and drift-gated), and the next night verifies the fix.
 
-## Credentials (one-time, ~10 minutes)
+## Credentials (one-time, ~15 minutes)
 
-Both APIs are free. Add the secrets to the repo
-(**Settings → Secrets and variables → Actions**) and the nightly job picks
-them up; until then it no-ops politely and the seeded snapshot stands.
-
-- **Digi-Key** — register at <https://developer.digikey.com>, create an
-  organization + production app for the *Product Information V4* API, and
-  set `DIGIKEY_CLIENT_ID` / `DIGIKEY_CLIENT_SECRET`.
-- **Mouser** — request a Search API key at
-  <https://www.mouser.com/api-search/> and set `MOUSER_API_KEY`.
+The complete walkthrough — keys, secrets, first run, the healthy log,
+and the full failure truth table — is
+[`bom_pipeline_setup.md`](./bom_pipeline_setup.md). Short version: both
+APIs are free; set `DIGIKEY_CLIENT_ID`/`DIGIKEY_CLIENT_SECRET`
+(developer.digikey.com, *Product Information V4*, client-credentials)
+and `MOUSER_API_KEY` (mouser.com/api-search) as Actions secrets; until
+then the nightly job no-ops politely and the seeded snapshot stands.
 
 LCSC has no public API; its column stays a static courtesy reference.
 
