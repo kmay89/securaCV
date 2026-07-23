@@ -1,24 +1,29 @@
 name: Hub Core
 
-# desktop/hub-core holds the footgun-critical logic behind the Raspberry Pi hub
-# disk writer: which disk may be written (hub_disk) and how to enumerate the
-# machine's disks and tell the system disk from an external one (hub_enumerate).
+# desktop/hub-core holds the footgun-critical DECISIONS behind the Raspberry
+# Pi hub disk writer (which disk may be written, is the image trusted, may we
+# write), and desktop/hub-io the MECHANISMS those decisions feed (streaming
+# download+hash, xz decompress, the read-back-verified raw write, the Wi-Fi
+# seed).
 #
-# The full desktop app (desktop/src-tauri) only builds on release tags and needs
-# the webkit/gtk stack, so nothing in PR CI would catch a break in this logic if
-# it lived there. hub-core is deliberately pure `std` with no dependencies, so it
-# compiles and unit-tests on a plain runner — this workflow is the gate that
-# keeps the disk-writer safety layer from rotting silently between releases.
+# The full desktop app (desktop/src-tauri) only builds on release tags and
+# needs the webkit/gtk stack, so nothing in PR CI would catch a break in this
+# logic if it lived there. Both crates build and test on a plain runner —
+# hub-core as pure `std`, hub-io with its few self-contained deps and tests
+# that run against plain files and a loopback HTTP server — so the disk-writer
+# path can't rot silently between releases.
 on:
   push:
     branches: [ main ]
     paths:
       - 'desktop/hub-core/**'
+      - 'desktop/hub-io/**'
       - '.github/workflows/desktop-hub-core.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'desktop/hub-core/**'
+      - 'desktop/hub-io/**'
       - '.github/workflows/desktop-hub-core.yml'
 
 # Read-only token: this workflow only checks out and runs cargo — it needs
@@ -37,10 +42,14 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [hub-core, hub-io]
     defaults:
       run:
-        working-directory: desktop/hub-core
+        working-directory: desktop/${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v4
       - name: Install fmt + clippy
