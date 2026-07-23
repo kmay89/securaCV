@@ -16,7 +16,10 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 SRC = HERE / "index.html"
-OUT = HERE.parent / "arduino" / "canary_display" / "tv_html.h"
+# Write the CANONICAL header. The Arduino sketch copy at
+# arduino/canary_display/tv_html.h is regenerated from here by
+# `./setup.sh regen` (same as mirror_html.h) — never hand-edit that copy.
+OUT = HERE.parent / "include" / "canary" / "net" / "tv_html.h"
 DELIM = "TVGLASS"  # yields the sentinel )TVGLASS"
 
 
