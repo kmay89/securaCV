@@ -150,3 +150,45 @@ battery-equipped build on a sun-baked dash regardless.
 - The two-tier local-telemetry idea (§2) is unbuilt — if you want it, the right shape is a
   second, HA-only-scoped adapter or a firmware-side local log, never routed through this
   adapter's narrow `VehicleArrivalDeparture`-only descriptor.
+
+---
+
+## 8 · Troubleshooting
+
+Anticipated, not field-reported — no bench validation against a real vehicle yet (§7).
+
+<details>
+<summary><strong>SocketCAN interface won't come up (<code>ip link set can0 up</code> fails)</strong></summary>
+
+- Confirm the `can` and `mcp251x` (or your HAT's specific driver) kernel modules are loaded:
+  `lsmod | grep can`.
+- Check the HAT's SPI overlay is actually enabled (Pi: `dtoverlay=mcp2515-can0` in
+  `/boot/config.txt` or `/boot/firmware/config.txt`, plus a reboot).
+- A bitrate mismatch with the vehicle's actual bus speed will often still let the interface come
+  up but produce only error frames — try 500000 first (most common), then 250000.
+
+</details>
+
+<details>
+<summary><strong><code>candump</code> shows nothing at all</strong></summary>
+
+- Verify CAN_H/CAN_L aren't swapped — reversing them is a common wiring mistake and typically
+  yields silence rather than an obvious error.
+- Check the HAT has a 120 Ω termination resistor populated (§4) — many boards ship with it
+  jumper-selectable, off by default.
+- Confirm the vehicle's ignition is actually on — most vehicle CAN buses go quiet with the key out.
+
+</details>
+
+<details>
+<summary><strong><code>adapter_host</code> runs but no claims appear</strong></summary>
+
+- Confirm the route's `can_id`/`byte_offset`/`equals` actually match what you saw in `candump` —
+  a single wrong hex digit silently means "never matches."
+- Remember routes are edge-triggered (§ can_bus.rs's `route_frame_edge_triggered`): the FIRST
+  matching frame after a differing one fires a claim; a byte that's already sitting in the
+  matched state when the adapter starts won't re-fire until it changes.
+- Check `adapter_host`'s logs for `registered can_bus adapter` — if that line is missing, the
+  config didn't parse the way you expect.
+
+</details>

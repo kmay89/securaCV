@@ -116,3 +116,37 @@ depending on which baseboard is fitted.
   authoring time — verify before budgeting a multi-unit deployment.
 - No sound-classification path confirmed (§2) — don't route an acoustic
   `ClaimKind` from this SKU without checking the actual hardware first.
+
+---
+
+## 6 · Troubleshooting
+
+Anticipated, not field-reported — no bench unit exists yet.
+
+<details>
+<summary><strong>Webhook adapter never sees a request</strong></summary>
+
+- Same first checks as Vision Pro: confirm the flow editor actually has an HTTP action node, and
+  that the 2002w and `adapter_host` share a reachable network — the webhook listener defaults to
+  loopback.
+- The 2002w is WiFi-only (no Ethernet fallback) — confirm it actually associated before chasing
+  anything downstream; a camera stuck retrying WiFi never reaches the flow editor at all.
+
+</details>
+
+<details>
+<summary><strong>Expected pins (PoE/CAN) aren't present</strong></summary>
+
+- This SKU is modular (Core + Sensor + Baseboard, §1) — PoE and CAN are baseboard-dependent, not
+  guaranteed on every unit. Confirm which baseboard actually shipped before assuming a pin exists.
+
+</details>
+
+<details>
+<summary><strong>Sound classification doesn't work</strong></summary>
+
+- Expected — §2 explicitly notes no onboard microphone is confirmed for this SKU/baseboard
+  combination in this repo's sources. Don't route an acoustic `ClaimKind` from it without
+  checking the actual hardware first.
+
+</details>

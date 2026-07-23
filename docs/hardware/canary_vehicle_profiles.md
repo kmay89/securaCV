@@ -119,3 +119,46 @@ still calls this whole feature "not bench-validated." Full detail, notes, and th
 - **Status fields are load-bearing.** `documented-platform-mismatch` isn't decoration — it's the
   same tier discipline as `firmware/boards/boards.json`'s `compile-tested` → `verified` ladder,
   applied to vehicle signals instead of dev boards.
+
+---
+
+## 6 · Troubleshooting
+
+<details>
+<summary><strong><code>check-profiles</code> fails after I edited <code>vehicle_profiles.toml</code> by hand</strong></summary>
+
+- Don't hand-edit `can_id`/`byte_offset`/`mask` — regenerate them:
+  `python3 scripts/dbc_signal_resolve.py resolve <dbc> <MESSAGE> <SIGNAL>` and paste the output.
+  A hand-typed value that merely *looks* plausible is exactly what this drift gate exists to catch.
+
+</details>
+
+<details>
+<summary><strong><code>resolve</code> errors with "spans a byte boundary"</strong></summary>
+
+- Expected and correct, not a bug — `CanRoute` is single-byte only (§ SOURCES.md's bit-numbering
+  primer). A signal wider than one byte, or one whose bit range crosses a byte edge, needs a
+  different mechanism than this tool provides today; it refuses rather than emitting a silently
+  wrong mask.
+
+</details>
+
+<details>
+<summary><strong><code>emit-routes</code> skips a signal with "multi-bit signal"</strong></summary>
+
+- By design (§3's `emit-routes` doc comment): a multi-bit signal (e.g. a gear-position enum) has
+  more than two states, so this tool can't guess which numeric value means what on your vehicle.
+  Supply the target value yourself using `resolve`'s byte/mask output plus your own reading of
+  the signal (a `VAL_` table if the upstream DBC has one, or bench observation).
+
+</details>
+
+<details>
+<summary><strong>A route resolved from a profile doesn't match what I see on the bench</strong></summary>
+
+- This is the expected failure mode for a `documented` or `documented-platform-mismatch` entry —
+  see §4's status tiers. The DBC excerpt may simply not apply to your exact vehicle generation.
+  `candump`/`cansniffer` your real bus (§5 of `canary_vehicle_can.md`) and treat the profile as a
+  starting hypothesis, not a fact, until you flip its `status` to `bench-confirmed` yourself.
+
+</details>

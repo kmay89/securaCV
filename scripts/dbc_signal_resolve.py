@@ -291,6 +291,7 @@ def emit_routes(profiles_path: Path, vehicle_id: str) -> int:
             print("[[adapter.route]]")
             print(f'can_id = "0x{can_id:X}"')
             print(f"byte_offset = {byte_offset}")
+            print(f'mask = "0x{mask:02X}"')
             print(f'equals = "0x{equals:02X}"')
             print(f'kind = "{sig["kind"]}"')
             print(f'zone = "{sig["zone"]}"')
