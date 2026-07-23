@@ -212,6 +212,16 @@ min_confidence = 0.6
 # zone = "loading_dock"
 # require_truthy_state = true
 
+# Canary Vision Lite (Seeed reCamera 2002w, ~$35 RISC-V/SG2002 WiFi camera).
+# Same zero-new-firmware pattern as Vision Pro above, one route per unit —
+# this is the "put several of these in mundane spots" coverage tier, not a
+# flagship chokepoint. See docs/hardware/canary_vision_lite_recamera.md.
+[[adapter.route]]
+topic = "/sensors/stockroom/recamera_2002w"
+kind = "small_object_boundary_crossing"
+zone = "stockroom"
+min_confidence = 0.6
+
 # ---------------------------------------------------------------------------
 # Adapter: BLE presence gateway (ESPresense / room-presence style)
 # Turns a popular DIY BLE presence mesh into a witness source. Subscribes to ESPresense's

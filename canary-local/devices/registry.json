@@ -555,6 +555,118 @@
         ],
         "catchphrase": "I don't need more light to tell the truth."
       }
+    },
+    {
+      "id": "canary-vision-lite",
+      "family": "canary-vision-lite",
+      "kind": "concept",
+      "name": "Canary Vision Lite",
+      "tagline": "Cheap enough to cover the mundane spots, not just the one that matters most. Coming soon.",
+      "board": "Seeed reCamera 2002w 8GB (SOPHGO SG2002, RISC-V, 1 TOPS)",
+      "senses": [
+        "daylight vision classifier (concept)"
+      ],
+      "shows": [],
+      "modality": "camera-npu",
+      "network": {
+        "mdns": "none — an external adapter source, not a flashed Canary host (concept)",
+        "web": "vendor Web UI + flow editor (device-native; no Canary firmware runs on it)",
+        "mqtt": "none directly — reaches the fleet via the webhook sensor adapter (concept): coarse claims + signed chain"
+      },
+      "docs": [
+        "docs/hardware/canary_vision_lite_recamera.md"
+      ],
+      "status": "coming soon — concept, config-only integration designed, no bench unit yet",
+      "concept": {
+        "idea": "Canary Vision Lite is the coverage counterpart to Canary Vision Pro: same zero-new-firmware pattern — its flow editor posts a classifier label and confidence to the existing webhook adapter — at roughly a tenth of the price and a fraction of the on-chip compute. Vision Pro earns a flagship spend by being the one sensor trusted with the chokepoint that can't afford to guess; Vision Lite earns its keep by being cheap enough that several mundane spots — a stockroom, a row of interior doors — can each get an actual camera instead of going without.",
+        "points": [
+          {
+            "k": "Where it earns its price",
+            "v": "a WiFi camera under $40 makes it reasonable to cover several ordinary spots that individually never justified a flagship sensor — not one showcase chokepoint, but coverage."
+          },
+          {
+            "k": "What it structurally can't do",
+            "v": "the SG2002's 1 TOPS budget has no published VLM/LLM support — unlike Vision Pro, there's no captioning capability to discipline here, because the chip can't run one in the first place."
+          },
+          {
+            "k": "How it would join the fleet",
+            "v": "identical integration to Vision Pro: the on-device flow editor's HTTP action node POSTs to the existing webhook adapter (src/adapter/webhook.rs) — zero new firmware."
+          },
+          {
+            "k": "Modular reality",
+            "v": "Core board + Sensor board + Baseboard — PoE and CAN bus are baseboard-dependent options, not guaranteed on every unit. Check which baseboard shipped before assuming those pins exist."
+          }
+        ],
+        "radio": [
+          {
+            "k": "SoC",
+            "v": "SOPHGO SG2002 — dual RISC-V C906 cores (1 GHz + 700 MHz) + 8051 MCU, 1 TOPS INT8 (CNX Software coverage)"
+          },
+          {
+            "k": "Camera",
+            "v": "OV5647, 5 MP (2592x1944) — no starlight/low-light claim, unlike Vision Pro (CNX Software coverage)"
+          },
+          {
+            "k": "Memory / storage",
+            "v": "256 MB RAM / 8 GB eMMC on this SKU (CNX Software coverage)"
+          },
+          {
+            "k": "Connectivity",
+            "v": "WiFi 2.4G/5G, Bluetooth 4.2/5.0 — the '2002w' wireless variant (CNX Software coverage)"
+          },
+          {
+            "k": "On-chip models",
+            "v": "YOLOv11 + a Node-RED-style flow editor ship built in, open-source (Seeed OSHW-reCamera-Series repo)"
+          },
+          {
+            "k": "Price",
+            "v": "roughly $35-55 depending on eMMC/wireless config — reseller-sourced estimate, not Seeed's own price page (OpenELAB listing)"
+          }
+        ],
+        "sources": [
+          {
+            "name": "CNX Software — reCamera SG2002 coverage",
+            "url": "https://www.cnx-software.com/2024/08/27/recamera-modular-ai-camera-features-sg2002-risc-v-ai-soc-supports-interchangeable-image-sensors-and-baseboards/"
+          },
+          {
+            "name": "Seeed Studio OSHW-reCamera-Series (GitHub)",
+            "url": "https://github.com/Seeed-Studio/OSHW-reCamera-Series"
+          },
+          {
+            "name": "OpenELAB — reCamera 2002w 8GB listing (price reference)",
+            "url": "https://openelab.io/products/seeed-studio-recamera-2002w-8gb"
+          }
+        ],
+        "plan": [
+          "Bench: confirm the 2002w's flow editor HTTP action node produces the documented {\"confidence\": ...} payload shape against a real webhook listener — same check as Vision Pro.",
+          "Bench: confirm which baseboard variant a real purchase ships with before assuming PoE/CAN pins exist.",
+          "Fit-check the existing canary_vision_pro_mount.scad against a real 2002w unit — same reCamera-family mount interface, different body, unverified.",
+          "Verify bearer/HMAC auth on the webhook route before any off-loopback deployment.",
+          "Promote from 'concept' to 'released' only after a real unit's claims round-trip into the sealed log."
+        ],
+        "radio_tab_label": "The hardware",
+        "plan_tab_label": "Integration plan",
+        "plan_intro": "No firmware stub for this one either — bench validation against the existing webhook adapter, not new code.",
+        "plan_doc": {
+          "label": "read the integration doc → docs/hardware/canary_vision_lite_recamera.md",
+          "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_vision_lite_recamera.md"
+        },
+        "request_title": "Concept request: Canary Vision Lite (reCamera 2002w coverage tier)",
+        "request_body": "Seen the Vision Lite concept card. What I'd want from a low-cost WiFi coverage camera:\n\n- how many spots / rooms:\n- lighting (daylight/well-lit only, or does it need to see in the dark):\n- is WiFi reachable at each spot:\n- do any of them need sound classification (that's a Vision Pro capability, not this one):\n"
+      },
+      "persona": {
+        "name": "Wren the Everywhere Scout",
+        "accent": "copper and olive",
+        "shape": "a small, practical canary with a satchel-shaped body, quick round eyes, and a modest single-lens goggle instead of a grand visor",
+        "story": "Wren doesn't try to be the fanciest bird in the fleet. Wren's whole idea is that watching one showcase spot perfectly is worth less than watching five ordinary ones honestly. So Wren costs little, carries a small classifier instead of a flagship brain, and still only ever brings home the same small signed claim as every other Canary — just from more places at once.",
+        "specialty": "Budget edge AI vision (coverage)",
+        "good_for": [
+          "Covering several mundane spots — stockrooms, interior doors, side entries — instead of one showcase chokepoint",
+          "WiFi-reachable rooms without an Ethernet run",
+          "Stretching a fleet budget across more doors, honestly"
+        ],
+        "catchphrase": "I don't need to be the best eye in the house — just one more honest one."
+      }
     }
   ]
 }
