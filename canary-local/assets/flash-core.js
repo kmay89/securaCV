@@ -1521,8 +1521,8 @@ export function displayFor(catalog, projectNameOrId) {
 // NVS witness counters. Pure formatting so the card is testable.
 export function passportRows({ otadata, witness, coredump } = {}) {
   const rows = [];
-  if (otadata && typeof otadata.updates === "number" && otadata.updates > 0) {
-    rows.push({ id: "updates", label: "Updates seen", value: `${otadata.updates}`, tone: "ok" });
+  if (otadata && typeof otadata.updatesSeen === "number" && otadata.updatesSeen > 0) {
+    rows.push({ id: "updates", label: "Updates seen", value: `${otadata.updatesSeen}`, tone: "ok" });
   }
   if (witness && typeof witness.boots === "number") {
     rows.push({ id: "boots", label: "Lifetime boots", value: `${witness.boots}`, tone: "ok" });

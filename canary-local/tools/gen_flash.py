@@ -532,8 +532,9 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         "display_emulator": {
             "label": "The 1:1 emulator",
             "what": "The real display firmware — same C++, same LVGL — compiled to run "
-                    "on this page. The pixels you see are the pixels the glass will show, "
-                    "framebuffer out, touch in.",
+                    "in the browser. The pixels you see are the pixels the glass will "
+                    "show, framebuffer out, touch in. It boots on the fleet page; the "
+                    "flasher itself runs a stricter security policy on purpose.",
             "when": "Before building a Watch Station or Dash: try the face, the touch, "
                     "the night floor, without hardware.",
         },

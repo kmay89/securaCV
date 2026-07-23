@@ -2475,6 +2475,14 @@ static void emit_self_manifest() {
   f.seq            = dev.seq;
   f.boots          = dev.boot_count;
   f.health         = health;
+  {
+    // Heat, from the shared thermal provider (never Arduino's temperatureRead()
+    // — the envsens tamper detector owns the sensor; see securacv_thermal.h).
+    float die_c = 0.0f;
+    if (thermal_read_die_c(&die_c)) {
+      f.temp_c = (int)(die_c + (die_c >= 0.0f ? 0.5f : -0.5f));
+    }
+  }
   f.tamper         = dev.tamper_active;
   f.features       = feats;
   f.feature_count  = nf;

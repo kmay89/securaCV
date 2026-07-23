@@ -250,7 +250,7 @@ test("buildNvsWifiImage: unchanged behavior through the general builder", async 
 test("passportRows: formats the read-only probes, flags what matters", async () => {
   const c = await core();
   const rows = c.passportRows({
-    otadata: { updates: 4 },
+    otadata: { updatesSeen: 4 },
     witness: { boots: 123, seq: 456, tamper: 1 },
     coredump: { present: true },
   });
