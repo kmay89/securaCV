@@ -186,7 +186,7 @@
      "id": "compact_plain",
      "label": "compact plain",
      "set": "wap-compact",
-     "dims_mm": "33.7 × 37.6 × 13.7 mm",
+     "dims_mm": "33.7 × 36.6 × 13.7 mm",
      "contents": "plain board (no camera), buzzer + LED, USB-powered",
      "options": {
       "opt_camera": false,
@@ -216,7 +216,7 @@
      "id": "battery_weather",
      "label": "battery weather",
      "set": "wap-weather",
-     "dims_mm": "106.3 × 40.6 × 20.2 mm",
+     "dims_mm": "107.1 × 41.4 × 20.2 mm",
      "contents": "battery_full + gasket seal + drip-edge lid + keyhole mounts",
      "options": {
       "opt_camera": true,

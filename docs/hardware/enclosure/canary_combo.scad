@@ -35,7 +35,7 @@ sm_l = 44.0;  sm_w = 36.0;
 s_stack_sock = 11.5;
 s_front_h = 3.5;
 ant_h = 1.2;
-radome_t = 1.0;
+radome_t = 1.5;   // ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); AVOID 0.7–1.1 mm
 rad_win_x = 24.0;  rad_win_y = 24.0;  rad_dx = 0.0;  rad_dy = 6.0;
 s_usb_z = 4.0;       // C6 USB centre above the floor
 lux_d = 3.5;  lux_dx = -13.0;  lux_dy = -14.0;
@@ -47,8 +47,8 @@ wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_
 tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
 usb_w = 10.5;  usb_h = 6.5;
-gasket_w = 1.2;  gasket_groove = 1.0;  gasket_proud = 0.6;  skirt_h = 3.0;  skirt_t = 1.6;
-clip_w = 6.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skirt_t = 1.6;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 lid_edge = 0.8;  lid_edge2 = 0.0;
 hood_len = 9.0;  hood_t = 1.8;
 kh_extra = 3.0;  kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;  kh_head_h = 3.5;  kh_face = 1.0;
@@ -69,7 +69,8 @@ col_v = max(cam_w + 2*board_clear, vm_w + 2*(clip_stack + board_clear) + 0.5);
 col_s = sm_w + 2*(clip_stack + board_clear) + 0.5;
 inner_x = col_v + 3 + col_s + 2*post_corner;
 inner_y = max(board_clear + vm_l + 2 + cam_h + 3, board_clear + sm_l + 8);
-cav_d = max(v_standoff + pcb_t + v_front_h, s_standoff + pcb_t + s_front_h) + cav_extra;
+cav_d = max(v_standoff + pcb_t + v_front_h, s_standoff + pcb_t + s_front_h,
+            v_standoff + pcb_t + usb_h) + cav_extra;   // keep the Vision USB opening fully inside the wall
 
 out_x = inner_x + 2*wall_eff;
 out_y = inner_y + 2*wall_eff;
@@ -98,7 +99,9 @@ function post_xy() = [
     [-inner_x/2 + pd/2 + 0.2, -inner_y/2 + pd/2 + 0.2],
 ];
 assert(radome_t >= 0.6 && radome_t < lid_t, "radome_t out of range");
-assert(rad_gap >= 2.5, "antenna-to-radome gap < 2.5 mm — raise cav_extra");
+assert(rad_gap >= 3.0, "antenna-to-radome gap < 3 mm — raise cav_extra");
+assert(rad_win_x + 2*abs(rad_dx) <= col_s && rad_win_y + 2*abs(rad_dy) <= sm_l,
+       "radome window exceeds the sense column — shrink rad_win/rad_dx/rad_dy");
 assert(lip_h < cav_d, "lip_h vs cavity");
 echo(str("Canary COMBO witness v0.1-dev — ", out_x, " x ", out_y, " x ", base_d + lid_t + mount_extra,
          " mm, radar gap ", rad_gap, " mm  (IN DEVELOPMENT)"));
@@ -241,7 +244,7 @@ module front() {
     }
 }
 
-module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.1); }
+module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.5); }
 
 if      (part == "back")   back();
 else if (part == "front")  translate([0, 0, lid_t]) rotate([180, 0, 0]) front();

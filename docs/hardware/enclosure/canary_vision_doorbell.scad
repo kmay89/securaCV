@@ -29,7 +29,9 @@ part = "all";        // ["body","face","plate","gasket","all"]
 
 /* [Options] */
 opt_seal   = true;   // perimeter TPU gasket + drip-edge face (doorbells live outside)
-opt_vent   = false;  // GORE vent cluster on the face (recommended in wet climates)
+opt_vent   = true;   // GORE vent cluster on the face — ON by default: a sealed outdoor
+                     // unit with no pressure path pumps moist air past the seals on
+                     // every day/night thermal cycle and the condensate never leaves
 opt_led    = false;  // separate light-pipe port (the 12 mm button usually has its own LED ring)
 opt_tamper = false;  // reed/Hall magnet pocket on the face underside
 
@@ -105,9 +107,9 @@ screw_head_d = 4.0;
 screw_head_h = 2.0;
 
 /* [Weather sealing] */
-gasket_w      = 1.2;
-gasket_groove = 1.0;
-gasket_proud  = 0.6;
+gasket_w      = 1.6;
+gasket_groove = 1.2;
+gasket_proud  = 0.3;
 skirt_h       = 3.0;
 skirt_t       = 1.6;
 
@@ -154,8 +156,8 @@ mag_dy = 8.0;
 
 /* [Board snap clips] */
 clip_w      = 6.0;
-clip_t      = 1.5;
-clip_hook   = 0.8;
+clip_t      = 1.0;
+clip_hook   = 0.5;
 clip_hook_h = 1.2;
 clip_clear  = 0.25;
 
@@ -287,6 +289,11 @@ module body() {
                     linear_extrude(gasket_groove + 1) rim_ring2d(gasket_w);
             for (yc = [-stud_y, stud_y]) stud_pocket(yc);
             if (foot_cham > 0) foot_chamfer_cut();
+            // Ø1.5 weep at the cavity's lowest point (mounted button-down):
+            // condensate drains into the unsealed body/plate interface. Too
+            // small to matter for ingress; pressure path is the vent membrane.
+            // (offset in X so it stays clear of the security boss + pilot bore)
+            translate([8, -inner_y/2 + 2, -0.1]) cylinder(d = 1.5, h = floor_t + 0.2);
         }
         // internal boss backing the security screw (~7 mm thread engagement);
         // kept below z=5 so it clears the button body's tip
@@ -325,8 +332,9 @@ module body() {
                     cube([5, clip_w + 2, vm_standoff + 1], center = true);
             }
             edgeclip(vm_cx + s*vm_w/2, vm_cy + 2 + rail_l/2, s > 0 ? 0 : 180, vm_standoff);
-            translate([vm_cx + s*(vm_w/2 - 0.5), vm_cy - vm_l/2 + 1.2, floor_t])
-                cylinder(d = 2.0, h = vm_standoff);
+            translate([vm_cx + s*(vm_w/2 + 0.1), vm_cy - vm_l/2 + 1.2, floor_t])
+                cylinder(d = 2.0, h = vm_standoff);   // +0.1 outboard: pin inner edge clears the
+                                                      // 17.8 mm XIAO, still catches the 20 mm module
         }
     }
     // security-screw pilot, drilled LAST so it passes through wall AND boss,
@@ -461,7 +469,7 @@ module face() {
 // ----------------------------------------------------------------------------
 //  GASKET
 // ----------------------------------------------------------------------------
-module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.1); }
+module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.5); }
 
 // ----------------------------------------------------------------------------
 //  WALL PLATE — flat or wedge; T-studs the body drops onto; countersunk wall

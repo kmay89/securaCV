@@ -19,7 +19,9 @@ wart_h = 36.0;       // height
 wart_d = 26.0;       // protrusion from the wall plate (collar grips this)
 collar_t = 2.4;      // collar wall
 collar_d = 14.0;     // collar depth along the wart (leave the plug face clear)
-grip_lip = 1.2;      // inward lip at the collar front that hooks the wart face
+grip_lip = 1.2;      // inward LOCATING lip at the collar front (clearance-sized: it
+                     // locates the wart, retention is friction — print the collar in
+                     // TPU, or shrink the lip opening ~1 mm for a true snap grip)
 
 /* [T-studs] — match the standard Canary keyhole pockets */
 stud_gap   = 30.0;   // stud spacing (vertical) — must fit the target case's kh_ys spread
