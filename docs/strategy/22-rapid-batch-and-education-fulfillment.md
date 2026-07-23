@@ -97,55 +97,63 @@ variance a fixed deadline can't absorb.
 Everything else (XIAO stock, flashing, kitting, ground shipping) is fast and
 low-variance.
 
-## 5. Sustainable pricing — normal markup, no at-cost tier
+## 5. Pricing — price to value and solo-survivability, not to "cheap"
 
-**We mark up; we do not sell at cost.** An earlier draft floated a Title-I
-"at-cost" rung — that was wrong and is dropped. Assembled hardware carries real
-per-unit costs *beyond parts* that a zero-margin price silently eats: outbound
-shipping, payment processing, a returns/DOA reserve, product-liability insurance,
-and support time. Below any healthy margin, one bad return wipes a whole batch.
+**The mistake to avoid is racing to the bottom.** This is a **one-person**
+operation: there is no volume to make a thin margin back on, and every assembly
+minute, support email, and RMA is the founder's own time. So we price to **value
+and survivability**, and we compete on **total cost of ownership**, not on
+sticker. Cheap is not the moat — no-subscription, own-your-data, court-grade
+evidence is.
 
-Grounded in standard practice (sources §Sources):
+**The competitive frame that makes a premium price the easy sell.** A cloud camera
+is ~$30–40 of hardware but monetizes a **$40–100/yr subscription forever** — the
+buyer's 3-year cost is **~$160–340 per camera**, and their footage lives on
+someone else's servers (doc 18 §5). A Canary is **bought once, $0 recurring, no
+cloud.** So we can carry a **premium sticker *and* a fat, solo-survivable margin
+*and* still be the cheaper total cost.** Price is not the battlefield;
+subscriptions and data ownership are. Never undercut on sticker to "win" a
+comparison we already win on TCO — that just burns the margin one person needs to
+keep the lights on.
 
-- **Keystone (2× cost ⇒ 50% gross margin) is the retail rule-of-thumb, but for
-  DTC consumer electronics it's a *floor, not a target*** — healthy brands run a
-  **33–45% gross margin** after real costs.
-- **Electronics return ~10%**, and each return **costs $30–65 to process** — so a
-  returns/DOA reserve is a line item, not an afterthought.
-- **Education pricing is a discount *off a marked-up list*, never a sale below
-  cost** — exactly how the majors do it (Apple ~10%, Logitech 25%, Samsung 30%,
-  HP up to 40% off list). We give a normal channel discount; we don't give away
-  hardware.
+Grounded in standard practice (sources §Sources): keystone (2× cost) is a *floor*,
+and for a solo brand carrying all the support/overhead alone, the target is
+**higher, not lower** — aim **~50%+ gross margin**. Education pricing stays a
+**modest courtesy discount off list (single digits to ~10%, Apple-style), never a
+mission subsidy** — the mission subsidy is the free software and the free
+self-build path (below), not thin hardware margin.
 
-**Fully-loaded per-unit cost** (what a unit actually costs us to put in a box and
-support):
+**Fully-loaded per-unit cost — including the founder's own time**, which a solo op
+*must* price in or it's working for free:
 
-| | Base COGS | +Ship | +Fees ~3% | +Returns/DOA reserve | +Insurance/overhead | **Loaded** |
-|---|---|---|---|---|---|---|
-| **WAP** | $26 | ~$4 | ~$1.8 | ~$5 | ~$2 | **~$39** |
-| **Vision** | $34 | ~$4 | ~$2.7 | ~$6 | ~$3 | **~$50** |
+| | Base COGS | +Ship | +Fees | +Returns/DOA reserve | +Founder labor (assemble/flash/pack/support) | +Insurance/overhead | **Loaded** |
+|---|---|---|---|---|---|---|---|
+| **WAP** | $26 | ~$4 | ~$2.5 | ~$5 | ~$10 | ~$2 | **~$50** |
+| **Vision** | $34 | ~$4 | ~$3.5 | ~$6 | ~$12 | ~$3 | **~$63** |
 
-**Tiers (all marked up; GM = gross margin on price *after* the loaded cost):**
+**Tiers (priced to survive; GM = gross margin on price *after* the loaded cost):**
 
-| Tier | WAP | Vision | |
+| Tier | WAP kit | Vision kit | |
 |---|---|---|---|
-| **Retail** (1–9) | **$69** (~43% GM) | **$99** (~49% GM) | list; keystone-ish |
-| **Education / volume** (10–49) | **$59** (~34% GM) | **$85** (~41% GM) | ~15% off list — normal EDU discount |
-| **District / large volume** (50+) | **$55** (~29% GM) | **$79** (~37% GM) | floor tier; still ≥ ~28% GM and ≥ 1.8× base COGS |
+| **List** (1–9) | **$99** (~49% GM) | **$149** (~58% GM) | premium, still far under cloud-cam 3-yr TCO |
+| **Education / bulk** (10+) | **$89** (~44% GM) | **$135** (~53% GM) | ~10% courtesy off list |
+| **Assembled** (R3: built, tested, serialized) | **~$129** | **~$189** | +the bench ceremony; for non-builders / the at-risk persona |
 
-The floor rule (from doc 16): **never below ~1.8× base COGS or ~28% gross margin**,
-whichever binds. Below that the returns reserve stops being covered.
+The floor rule tightens for a solo op: **never below ~45% gross margin on the
+kit.** Below that, a single RMA or a slow support month erases the unit's profit —
+and there's no volume to average it out.
 
-Worked contribution:
-- **30× WAP @ $59:** revenue ~$1,770, loaded ~$1,170, **contribution ~$600 (34%).**
-- **60× Vision @ $79:** revenue ~$4,740, loaded ~$3,000, **contribution ~$1,740 (37%).**
+Worked take-home (this pays a person for the work — the point):
+- **24× WAP @ $89:** revenue ~$2,136, loaded ~$1,200, **contribution ~$936.**
+- **60× Vision @ $135:** revenue ~$8,100, loaded ~$3,780, **contribution ~$4,320.**
 
-**Where "free" actually lives — the self-build path, not at-cost hardware.** A
+**Where "free" actually lives — the self-build path, not cheap hardware.** A
 cash-strapped school prints its own cases and sources its own boards and pays us
 **$0**, and the software, firmware, STLs, and verifier are free at any scale (doc
 16 §0, LICENSING §1). That is the honest free tier and it's a marketing asset, not
-a lost sale. Selling assembled hardware below cost is not sustainable and we don't
-pretend it is.
+a lost sale. Generosity lives in the *bits* (which cost us nothing to give) — the
+*atoms* carry a real, unapologetic margin, because one person's livelihood depends
+on it.
 
 ## 6. Rush economics — a rush eats the margin, so it's retail or a quote
 
