@@ -83,7 +83,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
-          git add "${FRESHNESS_PATHS[@]}"
+          # Stage only what exists: on an unpinned refresh (a HAOS bump the
+          # ceremony couldn't double-source yet) hub_image_pins.json may not
+          # exist, and git add on a missing pathspec is a hard error that
+          # would break exactly the self-healing path.
+          for p in "${FRESHNESS_PATHS[@]}"; do
+            if [ -e "$p" ]; then git add "$p"; fi
+          done
           git commit -m "chore(canary-local): Hub upstream snapshot → HA OS ${HAOS} / Core ${HA} (hub image ${PIN})"
           git push -f origin "$BRANCH"
           if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
