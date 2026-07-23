@@ -48,6 +48,13 @@ DEMO_SOURCES = test_demo_script.cpp ../src/fleet/fleet_model.cpp
 ARCADE_BIN = test_arcade_logic
 ARCADE_SRC = test_arcade_logic.cpp
 
+# Mic decision core (canary/io/mic_logic.h — the 4.3C): the listening gate
+# (off by default, unset pins hard-block, indicator == driver bit) and the
+# alarm-cadence detector (smoke T3 / CO T4 need two on-grammar cycles;
+# doorbells/speech/stale streaks never alarm).
+MIC_BIN = test_mic_logic
+MIC_SRC = test_mic_logic.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -69,13 +76,17 @@ $(DEMO_BIN): $(DEMO_SOURCES)
 $(ARCADE_BIN): $(ARCADE_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(ARCADE_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN)
+$(MIC_BIN): $(MIC_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(MIC_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
 	./$(MODE_BIN)
 	./$(DEMO_BIN)
 	./$(ARCADE_BIN)
+	./$(MIC_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN)

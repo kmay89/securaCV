@@ -153,6 +153,20 @@
   #endif
 #endif
 
+// ─── Acoustic alarm listener (the mic-bearing dash) ─────────────────────
+//
+// FEATURE_MIC_ALARM is the 4.3C's alarm-pattern listener. It deliberately
+// breaks the "both sides defined" convention the same way the playground
+// does: an UNDEFINED HAS_MICROPHONE means the selected board never declared
+// a mic, and a listening feature must not build on silence about the one
+// capability that IS the privacy surface — failing loud beats a mic build
+// landing on a board whose map never admitted to microphones.
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM
+  #if !defined(HAS_MICROPHONE) || !HAS_MICROPHONE
+    #error "FEATURE_MIC_ALARM=1 but this board declares no microphone (HAS_MICROPHONE=1 required — the Waveshare ESP32-S3-Touch-LCD-4.3C, boards/waveshare-esp32s3-lcd43c). Build the canary-display-dash-mic env, or drop the flag (see docs/hardware/display_mic_variant.md)."
+  #endif
+#endif
+
 // ─── Sensors & inputs ───────────────────────────────────────────────────
 
 #if defined(FEATURE_GNSS) && FEATURE_GNSS && defined(HAS_GNSS_UART) && !HAS_GNSS_UART

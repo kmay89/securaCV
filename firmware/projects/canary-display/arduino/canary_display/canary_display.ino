@@ -69,6 +69,10 @@
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
 #include "field_io.h"   // 4.3B isolated DI/DO -> events + siren
 #endif
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+#include "mic_alarm.h"  // 4.3C: acoustic alarm patterns -> events
+#endif
 #if defined(FEATURE_RTC) && FEATURE_RTC
 #include "rtc.h"        // PCF8563 trusted time (probe -> seed/mirror)
 #endif
@@ -873,6 +877,16 @@ void setup() {
   canary::io::field_io_begin(canary::cfg::get().device_id);
 #endif
 
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+  // 4.3C acoustic alarm listener (display_mic_variant.md): smoke-T3/CO-T4
+  // cadences -> unsigned local events. OFF by default; the amber MIC chip
+  // is lit exactly while the capture driver runs; disarm uninstalls the
+  // driver (the hard mute). Reports under this dash's own id; never signs,
+  // never records, never streams.
+  canary::io::mic_begin(canary::cfg::get().device_id, g_display_ok);
+#endif
+
   // Seed the heap-health snapshot so the first status publish carries real
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
@@ -1079,6 +1093,13 @@ void loop() {
   // Poll the isolated contacts into events and drive the siren output. Cheap
   // and self-throttled; 4.3B only.
   canary::io::field_io_loop(now);
+#endif
+
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+  // Drain mic frames into the cadence detector (scalars only — samples are
+  // zeroed inside the module). Self-throttled; 4.3C only.
+  canary::io::mic_loop(now);
 #endif
 
 #if defined(FEATURE_RTC) && FEATURE_RTC

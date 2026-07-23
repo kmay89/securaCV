@@ -14,6 +14,10 @@
 
 #include "pins.h"
 #include "debug_mode.h"
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+#include "mic_alarm.h"
+#endif
 #include "mode_glue.h"
 #include "diagnostics.h"
 #include "fleet_instance.h"
@@ -217,6 +221,15 @@ void page_update(uint32_t now) {
       set_line(i++, b, broker ? c_ok() : c_warn());
       snprintf(b, sizeof(b), "device  %s", canary::cfg::get().device_id);
       set_line(i++, b, c_muted());
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+      // The always-know contract, restated where diagnosticians look.
+      snprintf(b, sizeof(b), "mic  %s  rms %u",
+               !canary::io::mic_pins_ok() ? "pins unset (VERIFY)"
+               : canary::io::mic_listening() ? "LISTENING" : "off",
+               (unsigned)canary::io::mic_level());
+      set_line(i++, b, canary::io::mic_listening() ? c_warn() : c_muted());
+#endif
       set_line(i++, "hold the glass 3 s to exit debug", c_muted());
       break;
     }

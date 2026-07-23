@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### canary-display — the mic-bearing dash (Waveshare 4.3C) and the listening contract
+
+- **First-class support for the one display SKU that physically carries
+  microphones** — the 4.3C "AI voice" (dual-MIC array behind an ES7210,
+  ES8311 alongside), previously documented only as "unsuitable". Handled as
+  a **distinct privacy surface** (the Sense-Wellbeing rule): its own board
+  map (`boards/waveshare-esp32s3-lcd43c`, registered compile-tested), its
+  own env (`canary-display-dash-mic`, in flavors.json so CI builds it), and
+  its own reserved OTA product — never cross-installed with the mic-free
+  dashes, which keep their unchanged "never microphone" promise.
+- **What the mics do — and only do:** `FEATURE_MIC_ALARM` hears the two
+  regulated alarm grammars (smoke **T3**, CO **T4**), each requiring two
+  consecutive on-grammar cycles, raising `acoustic_smoke_alarm` /
+  `acoustic_co_alarm` as UNSIGNED local events (Sev::Alert). The pipeline
+  is the WAP's privacy-barrier design as a pure core
+  (`canary/io/mic_logic.h`): one RMS scalar per ~20 ms frame, buffer zeroed
+  before the read returns, booleans-and-milliseconds downstream — no
+  spectra, no models, no recording, no streaming. Host-tested
+  (`test_mic_logic.cpp`, CI step + Makefile): grammar windows, two-cycle
+  rule, doorbell/speech/stale-streak rejection, envelope hysteresis.
+- **You always know if it's on — one bit, three surfaces:** the amber
+  ● MIC chip is lit exactly while the I2S driver is installed (the same
+  gate action does both; the host test proves no
+  listening-without-chip state is representable); Settings → microphone
+  says `off / listening / pins unset` in words with the contract as the
+  page caption; the `MIC1` serial grammar heartbeats 1 Hz only while
+  capturing. **Off is the default and off is real**: arming is on-glass
+  NVS opt-in only (no remote path), disarm = `i2s_driver_uninstall` (pins
+  released — the verifiable hard mute), and the shipped audio pins are
+  **-1 (VERIFY)** so the mics are provably un-driven until the bench fills
+  them from the vendor schematic (`feature_sanity` refuses the flag on any
+  board that never declared `HAS_MICROPHONE`). The dash transparency sheet
+  renders the live mic state instead of a stale promise.
+- Docs: `docs/hardware/display_mic_variant.md` (the listening contract +
+  status ledger), board README with the bench session, hardware index row,
+  sibling-note updates in the 4.3 map.
+
 ### flasher — detection-led firmware selection (families + smartPick)
 
 - **The picker now scales to many boards and flavors without intimidating

@@ -102,5 +102,18 @@
     "tier_evidence": "",
     "used_by": ["canary-display"],
     "notes": "Industrial-IO dash SKU + dev playground host: same 800x480 panel/GT911/CH422G as the 4.3, plus isolated DI0/DI1 + DO0/DO1, RS485, dedicated CAN, I2C sensor header, 6-36 V supply. Playground bring-up doc: docs/hardware/dev_playground_43b.md."
+  },
+  {
+    "id": "waveshare-esp32s3-lcd43c",
+    "name": "Waveshare ESP32-S3-Touch-LCD-4.3C",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": ["canary-display"],
+    "notes": "The mic-bearing 'AI voice' dash sibling: same 800x480 panel family (ST7701 controller - VERIFY init) + GT911 + CH422G, plus an ES8311/ES7210 audio stack fronting a dual-MIC array. A DISTINCT privacy surface: own env (canary-display-dash-mic), own OTA product, mic off by default, alarm-pattern scalars only, hard mute = driver uninstalled, on-glass indicator while listening. Contract: docs/hardware/display_mic_variant.md."
   }
 ]

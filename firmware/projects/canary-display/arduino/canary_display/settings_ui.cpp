@@ -26,6 +26,13 @@
 #if defined(FEATURE_ARCADE) && FEATURE_ARCADE && defined(CD_FLAVOR_DASH)
 #define CD_SET_ROW_ARCADE 1
 #endif
+// The mic-bearing dash (4.3C, display_mic_variant.md): the opt-in listening
+// toggle rides Settings exactly like the siren arm — off by default, NVS'd.
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+#define CD_SET_MIC 1
+#include "mic_alarm.h"
+#endif
 
 #include "settings_ui.h"
 #include "commission_ui.h"
@@ -71,6 +78,9 @@ enum class Page {
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
   EditSiren,   // 4.3B: arm/disarm the isolated siren output (DO0)
 #endif
+#ifdef CD_SET_MIC
+  EditMic,     // 4.3C: the mic opt-in (alarm-pattern listening, default off)
+#endif
   EditStyle,   // the Character ring picker
   CalIntro,    // watch only — the black-point wizard
   CalDescend,
@@ -94,6 +104,9 @@ enum : int {
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
   IT_ROW_SIREN,
 #endif
+#ifdef CD_SET_MIC
+  IT_ROW_MIC,
+#endif
 #ifdef CD_SET_MODES
   IT_ROW_DEV,   // the root doorway row ("modes" / "dev mode")
   IT_ROW_MBENCH, IT_ROW_MDEMO, IT_ROW_MDEBUG, IT_ROW_MARCADE,
@@ -115,6 +128,10 @@ Page s_page = Page::Root;
 // The 4.3B dash root can carry both the dev-mode row and the siren row on top
 // of the shared rows, each two objects (name+value) — 16 clears the worst case.
 Item s_items[16];
+#elif defined(CD_SET_MIC)
+// The 4.3C dash root carries the microphone row (+ the modes doorway):
+// two more hit zones than the plain dash worst case.
+Item s_items[14];
 #else
 Item s_items[12];
 #endif
@@ -342,6 +359,15 @@ void build_root() {
   // 4.3B only: arm the wired siren (DO0). Disarmed by default — opt-in.
   mk_row(y, "siren", canary::io::field_io_armed() ? "armed" : "off",
          IT_ROW_SIREN);
+  y += step;
+#endif
+#ifdef CD_SET_MIC
+  // 4.3C only: the mic opt-in. The row IS part of the always-know contract:
+  // it states the live state in the same words the chip and console use.
+  mk_row(y, "microphone",
+         !canary::io::mic_pins_ok() ? "pins unset"
+         : canary::io::mic_listening() ? "listening" : "off",
+         IT_ROW_MIC);
   y += step;
 #endif
 #ifdef CD_FLAVOR_WATCH
@@ -642,6 +668,32 @@ void build_reset_confirm() {
   add_item(no, IT_NO);
 }
 
+#ifdef CD_SET_MIC
+// Mic opt-in (4.3C): one decision, two options — the siren page's shape.
+// The caption carries the whole contract in the fewest honest words: what
+// listening means, and how you always know.
+void build_edit_mic() {
+  mk_back("microphone");
+  const bool pins = canary::io::mic_pins_ok();
+  const bool on = canary::io::mic_armed();
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "listening", (pins && on) ? "on" : nullptr, IT_OPT_A, pins && on);
+  y += ROW_H;
+  mk_row(y, "off", !(pins && on) ? "on" : nullptr, IT_OPT_B, !(pins && on));
+  y += ROW_H;
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap,
+      pins ? "hears alarm patterns only - never speech;\n"
+             "audio never leaves this board. the amber\n"
+             "MIC chip is lit whenever it listens; off\n"
+             "uninstalls the driver (a real mute)."
+           : "audio pins are unset (VERIFY in pins.h) -\n"
+             "the mics are provably un-driven until the\n"
+             "bench fills them. see the board README.");
+  lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
+}
+#endif
+
 #ifdef CD_SET_MODES
 // Which gear is awaiting its confirm tap (ModesList -> ModeConfirm).
 canary::mode::Mode s_pending_mode = canary::mode::Mode::Fleet;
@@ -722,6 +774,9 @@ void build(Page pg) {
     case Page::EditScreen:   build_edit_screen(); break;
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
     case Page::EditSiren:    build_edit_siren(); break;
+#endif
+#ifdef CD_SET_MIC
+    case Page::EditMic:      build_edit_mic(); break;
 #endif
     case Page::EditStyle:    build_edit_style(); break;
     case Page::CalIntro:     build_cal_intro(); break;
@@ -819,6 +874,9 @@ void dispatch(int id) {
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
         case IT_ROW_SIREN:  build(Page::EditSiren); return;
 #endif
+#ifdef CD_SET_MIC
+        case IT_ROW_MIC:    build(Page::EditMic); return;
+#endif
         case IT_ROW_STYLE:  build(Page::EditStyle); return;
         case IT_ROW_CAL:    build(Page::CalIntro); return;
         case IT_ROW_RESET:  build(Page::ResetConfirm); return;
@@ -882,6 +940,18 @@ void dispatch(int id) {
         // through field_io, then rebuild so the row reflects it immediately.
         canary::io::field_io_set_armed(id == IT_OPT_A);
         build(Page::EditSiren);
+      }
+      return;
+#endif
+#ifdef CD_SET_MIC
+    case Page::EditMic:
+      if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_OPT_A || id == IT_OPT_B) {
+        // Landing IS choosing. mic_set_armed persists to NVS and performs
+        // the gate action in the same call — driver AND the amber chip
+        // together; with pins unset the gate refuses regardless of choice.
+        canary::io::mic_set_armed(id == IT_OPT_A);
+        build(Page::EditMic);
       }
       return;
 #endif

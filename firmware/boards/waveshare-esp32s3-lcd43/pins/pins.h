@@ -24,7 +24,10 @@
  *     stack this firmware never initializes. NOTE: the C variant has a
  *     dual-MIC array — physically present even though untouched — so the
  *     "no microphone by construction" posture does NOT hold on that SKU;
- *     prefer the plain 4.3/4.3B for the canonical Canary Dash.
+ *     prefer the plain 4.3/4.3B for the canonical Canary Dash. The C now
+ *     has its OWN first-class map + mic contract (a distinct privacy
+ *     surface): boards/waveshare-esp32s3-lcd43c + the mic doc
+ *     docs/hardware/display_mic_variant.md.
  *
  * @note This file must NOT contain any logic - only pin definitions.
  */
