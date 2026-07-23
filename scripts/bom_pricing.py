@@ -106,7 +106,11 @@ def read_boms():
     return parts
 
 
-def http_json(url, data=None, headers=None, form=False, timeout=20):
+def http_json(url, data=None, headers=None, form=False, timeout=20,
+              label="request"):
+    """POST/GET JSON. The error path logs ONLY the caller's label and the
+    exception class — never the URL or exception text, which can carry
+    credentials (the Mouser key travels as a query parameter)."""
     body = None
     headers = dict(headers or {})
     if data is not None:
@@ -124,14 +128,15 @@ def http_json(url, data=None, headers=None, form=False, timeout=20):
                 return json.loads(resp.read().decode())
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
             if attempt == 2:
-                print(f"  ! {url.split('/')[2]}: {e}", file=sys.stderr)
+                print(f"  ! {label} failed: {type(e).__name__}",
+                      file=sys.stderr)
                 return None
             time.sleep(2)
 
 
 # ── Digi-Key (Product Information V4) ────────────────────────────────────
 def digikey_token(client_id, client_secret):
-    tok = http_json(DK_TOKEN_URL, form=True, data={
+    tok = http_json(DK_TOKEN_URL, form=True, label="digikey token", data={
         "client_id": client_id,
         "client_secret": client_secret,
         "grant_type": "client_credentials",
@@ -140,7 +145,8 @@ def digikey_token(client_id, client_secret):
 
 
 def digikey_lookup(token, client_id, mpn):
-    res = http_json(DK_SEARCH_URL, data={"Keywords": mpn, "Limit": 5}, headers={
+    res = http_json(DK_SEARCH_URL, label="digikey search",
+                    data={"Keywords": mpn, "Limit": 5}, headers={
         "Authorization": f"Bearer {token}",
         "X-DIGIKEY-Client-Id": client_id,
         "X-DIGIKEY-Locale-Site": "US",
@@ -174,7 +180,7 @@ def digikey_lookup(token, client_id, mpn):
 # ── Mouser (Search API) ──────────────────────────────────────────────────
 def mouser_lookup(api_key, mpn):
     url = f"{MOUSER_URL}?apiKey={urllib.parse.quote(api_key)}"
-    res = http_json(url, data={"SearchByPartRequest": {
+    res = http_json(url, label="mouser search", data={"SearchByPartRequest": {
         "mouserPartNumber": mpn, "partSearchOptions": "",
     }})
     for part in ((res or {}).get("SearchResults") or {}).get("Parts") or []:
