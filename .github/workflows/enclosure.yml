@@ -30,6 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Web-builder manifest is in sync with the sources
+        run: python3 gen_builder_manifest.py --check
+
       - name: Install OpenSCAD + admesh
         run: |
           sudo apt-get update -qq

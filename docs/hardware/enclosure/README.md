@@ -31,6 +31,15 @@ Going **outdoors**? Read [Weather mode](#weather-mode-opt_seal) and the
 [Engineering & materials](#engineering--materials-security-build) section
 before printing — material choice and the gasket option matter out there.
 
+**No OpenSCAD installed?** The released cases can be tweaked and rendered
+**in the browser** at [securacv.com/builder](https://securacv.com/builder) —
+the same parametric sources with the common options as dropdowns, running
+OpenSCAD compiled to WebAssembly locally (nothing is uploaded). The page's
+manifest is generated from these files by
+[`gen_builder_manifest.py`](./gen_builder_manifest.py); CI fails if it
+drifts, and `./gen_builder_manifest.py --site <website-checkout>` refreshes
+the website's carried copies after a CAD change.
+
 ## Table of contents
 
 - [The complete file map](#the-complete-file-map) — every file, one line each
