@@ -322,15 +322,26 @@ BOM_MAP = [
     # display CSV interleaves W-* (watch) and D-* (dash) lines.
     ("bom_canary_wap.csv", "canary-wap", None),
     ("bom_canary_vision.csv", "canary-vision", None),
+    ("bom_canary_sense.csv", "canary-sense", None),
     ("bom_canary_display.csv", "canary-display-watch", "W-"),
     ("bom_canary_display.csv", "canary-display-dash", "D-"),
 ]
+
+# Live supply-chain overlay (scripts/bom_pricing.py → docs/hardware/pricing.json).
+# A committed input, so the drift gate stays deterministic; absent file = no
+# overlay, the CSVs' indicative prices stand alone.
+PRICING_PATH = HW / "pricing.json"
+PRICING = (json.loads(PRICING_PATH.read_text(encoding="utf-8"))
+           if PRICING_PATH.exists() else {})
 
 
 def parse_bom(name, prefix=None):
     rows = []
     req_total = 0.0
     full_total = 0.0
+    req_live = 0.0
+    full_live = 0.0
+    parts = PRICING.get("parts") or {}
     with open(HW / name, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             if not r.get("RefDes"):
@@ -346,9 +357,24 @@ def parse_bom(name, prefix=None):
             except ValueError:
                 ext = 0.0
             required = (r.get("Required") or "").strip().lower() == "required"
+            # Distributor-verified price, when the nightly snapshot has one;
+            # the CSV's indicative ExtUSD is the fallback for the live totals.
+            part = parts.get(r.get("MPN", ""))
+            live = None
+            qty = r.get("Qty", "1").strip()
+            if (part and part.get("provenance") in ("digikey", "mouser")
+                    and part.get("unit_usd") is not None and qty.isdigit()):
+                live = {
+                    "unit_usd": part["unit_usd"],
+                    "stock": part.get("stock"),
+                    "src": part["provenance"],
+                }
+            ext_live = (live["unit_usd"] * int(qty)) if live else ext
             if required:
                 req_total += ext
+                req_live += ext_live
             full_total += ext
+            full_live += ext_live
             rows.append({
                 "ref": r["RefDes"],
                 "qty": r.get("Qty", "1"),
@@ -359,12 +385,19 @@ def parse_bom(name, prefix=None):
                 "mfr": r.get("Manufacturer", ""),
                 "usd": ext,
                 "notes": r.get("Notes", ""),
+                # a real manufacturer part number a distributor can resolve
+                # (drives the Build-it page's order-the-parts copy panel)
+                "orderable": bool(part) and part["sourcing"] == "orderable",
+                **({"live": live} if live else {}),
             })
     return {
         "source": f"docs/hardware/{name}",
         "rows": rows,
         "required_usd": round(req_total, 2),
         "full_usd": round(full_total, 2),
+        **({"required_usd_live": round(req_live, 2),
+            "full_usd_live": round(full_live, 2),
+            "pricing_as_of": PRICING.get("as_of")} if PRICING else {}),
     }
 
 
@@ -413,12 +446,15 @@ def build_main():
         devices.setdefault(dev_id, {})["bom"] = parse_bom(name, prefix)
     for d, a in assembly.items():
         devices.setdefault(d, {})["assembly"] = a
-    # honest gaps, stated
-    devices.setdefault("canary-sense", {})["bom_note"] = (
-        "Sense BOM pending — parts list lives in firmware/projects/canary-sense/README.md.")
     data = {
         "generated_by": "canary-local/tools/gen_enclosures.py",
         "sbom": SBOM_INFO,
+        **({"pricing": {
+            "source": "docs/hardware/pricing.json",
+            "as_of": PRICING.get("as_of"),
+            "note": "Nightly distributor snapshot (scripts/bom_pricing.py); "
+                    "rows without a live match keep the CSV's indicative price.",
+        }} if PRICING else {}),
         "devices": devices,
     }
     BUILD_JSON.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
@@ -490,16 +526,19 @@ OPTION_LINKS = {
         "bom": ["SCR4"], "fw": []},
     ("canary_watch_station.scad", "opt_batt"): {
         "bom": ["W-BT1"], "fw": []},
-    # Sense options: BOM pending (honest gap carried from build.json);
-    # firmware flags still link where the config names them.
+    # Sense options: LED + lux are ON the MR60BHA2 kit board (no separate
+    # BOM row); the enclosure options link to bom_canary_sense.csv refs.
     ("canary_sense_enclosure.scad", "opt_led"): {
         "bom": [], "fw": ["FEATURE_STATUS_LED"]},
     ("canary_sense_enclosure.scad", "opt_lux"): {
         "bom": [], "fw": ["FEATURE_AMBIENT_LIGHT"]},
     ("canary_sense_enclosure.scad", "opt_vent"): {"bom": [], "fw": []},
-    ("canary_sense_enclosure.scad", "opt_tamper"): {"bom": [], "fw": []},
-    ("canary_sense_enclosure.scad", "opt_seal"): {"bom": [], "fw": []},
-    ("canary_sense_enclosure.scad", "opt_mount"): {"bom": [], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_tamper"): {
+        "bom": ["SW2", "MAG1"], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_seal"): {
+        "bom": ["FIL1"], "fw": []},
+    ("canary_sense_enclosure.scad", "opt_mount"): {
+        "bom": ["SCR4"], "fw": []},
 }
 
 # README preset-table name → variant-set id (both must exist; verified).

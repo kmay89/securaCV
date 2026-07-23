@@ -19,8 +19,10 @@ optional.
 | [`csi_sensing_guide.md`](./csi_sensing_guide.md) | WiFi CSI sensing on the bench — hardware-side setup and validation. |
 | [`mr60bha2_radar_notes.md`](./mr60bha2_radar_notes.md) | **MR60BHA2 radar deep-dive (Canary Sense)** — the ADT6101P all the way down: antenna/FoV, the wire beyond what we decode, placement physics with citations, the power budget derivation, and six bench flags. Its `SIM:` tables are the drift-gated source for the Sense Lab (`canary-local/sense.html`). |
 | [`canary_fence_guard_research.md`](./canary_fence_guard_research.md) | **Fence Guard research dossier (concept)** — the Seeed XIAO ESP32S3 + Wio-SX1262 Meshtastic kit, verified: specs, pin map, power measurements, solar guidance, free pins for the vibration sensor. Feeds the coming-soon concept card and `firmware/projects/canary-fence-guard/`. |
+| [`bom_pipeline.md`](./bom_pipeline.md) | **How the BOMs run themselves** — design intent (the CSVs) vs fetched supply-chain facts (`pricing.json`), the nightly Digi-Key/Mouser snapshot workflow, the exception policy (out-of-stock / price-jump / lifecycle issues), credentials setup, and the local runbook. |
 | [`bom_canary_wap.csv`](./bom_canary_wap.csv) | Machine-readable BOM — Canary WAP (XIAO ESP32-S3 Sense). |
 | [`bom_canary_vision.csv`](./bom_canary_vision.csv) | Machine-readable BOM — Canary Vision (ESP32 host + Grove Vision AI V2). |
+| [`bom_canary_sense.csv`](./bom_canary_sense.csv) | Machine-readable BOM — Canary Sense (MR60BHA2 60 GHz kit + XIAO ESP32-C6). |
 | [`bom_canary_display.csv`](./bom_canary_display.csv) | Machine-readable BOM — Canary Display (watch & dash variants). |
 
 ## The display family (watch station & dash)
@@ -50,11 +52,16 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`board_43b_activation_bench.md`](./board_43b_activation_bench.md) | **4.3B peripheral activation bench checklist** — the executable companion to the capability map: per capability (field I/O, RS485/Modbus, CAN/TWAI, evidence vault, RTC/battery), the exact wiring, build/flag, pass signal (the `[FIELD]`/`[RS485]`/`[CAN]` log lines), and the honesty-correction/`VERIFY` note each pass retires. |
 | [`display_research.md`](./display_research.md) | Display hardware research notes. |
 
-The CSVs use a flat, RoHS-style schema:
+The CSVs use a flat, RoHS-style schema (enforced by `scripts/lint_bom.py`):
 
 ```
 Item,RefDes,Qty,Required,Category,Description,Manufacturer,MPN,Mouser,DigiKey,LCSC,UnitUSD,ExtUSD,Lifecycle,RoHS,Notes
 ```
+
+The CSVs carry *design intent*; live distributor SKUs, stock, price breaks
+and lifecycle are fetched nightly into [`pricing.json`](./pricing.json) —
+see [`bom_pipeline.md`](./bom_pipeline.md). Prices typed in the CSVs are
+indicative seed values only.
 
 > **Pin definitions are authoritative in firmware**, not here — see
 > [`firmware/boards/`](../../firmware/boards/). This area documents the hardware
