@@ -15,6 +15,12 @@
         "id": "rpi5-64",
         "name": "Raspberry Pi 5 (64-bit)",
         "recommended": true,
+        "covers": [
+          "Raspberry Pi 5",
+          "Raspberry Pi 500",
+          "Compute Module 5"
+        ],
+        "usb_device_boot": "hold the power button while connecting USB-C (CM5: nRPIBOOT on the IO board)",
         "durable_default": "boot from NVMe/SSD (Pi 5) for multi-year endurance",
         "image_asset": "haos_rpi5-64-18.1.img.xz",
         "image_url": "https://github.com/home-assistant/operating-system/releases/download/18.1/haos_rpi5-64-18.1.img.xz",
@@ -24,10 +30,30 @@
         "id": "rpi4-64",
         "name": "Raspberry Pi 4 (64-bit, 4 GB+)",
         "recommended": false,
+        "covers": [
+          "Raspberry Pi 4 (4 GB+)",
+          "Raspberry Pi 400",
+          "Compute Module 4"
+        ],
+        "usb_device_boot": "connect USB-C with no card inserted (CM4: nRPIBOOT on the IO board; Pi 400: use a card reader)",
         "durable_default": "use a high-endurance A2 microSD; watch the SD wear sensor",
         "image_asset": "haos_rpi4-64-18.1.img.xz",
         "image_url": "https://github.com/home-assistant/operating-system/releases/download/18.1/haos_rpi4-64-18.1.img.xz",
         "sha256": ""
+      }
+    ],
+    "excluded_boards": [
+      {
+        "model": "Raspberry Pi 3 / 3B+",
+        "why": "1 GB RAM \u2014 below the full-stack hub's working set; HAOS runs, this payload doesn't"
+      },
+      {
+        "model": "Raspberry Pi 2 and earlier / Zero family",
+        "why": "no 64-bit or too little memory for Home Assistant itself"
+      },
+      {
+        "model": "Raspberry Pi 4 (1\u20132 GB)",
+        "why": "same image as the 4 GB+ Pi 4, but the payload needs the memory \u2014 not a supported hub"
       }
     ]
   },

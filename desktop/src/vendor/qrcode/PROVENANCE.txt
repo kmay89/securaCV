@@ -1,0 +1,7 @@
+qrcode-generator vendored for the canary.local browser flasher (WiFi QR option)
+package:  qrcode-generator@2.0.4 (npm)
+file:     qrcode.mjs (upstream ESM build, unmodified)
+sha256:   ea91d7118a5395289170da848b7c6758b996163bfbccf312591ab65a4911b7c0
+license:  MIT (header in-file; Kazuhiko Arase)
+fetched:  npm pack qrcode-generator@2.0.4
+note:     "QR Code" is a registered trademark of DENSO WAVE INCORPORATED

@@ -53,6 +53,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [MR60BHA2 radar via ESPHome](integrations/mr60bha2_esphome.md)
 - Onboarding flows: [multiple Canaries](onboarding_multiple_canaries.md) · [the unified wizard](onboarding_unified_wizard.md) · [workflow evaluation](onboarding_workflow_evaluation.md)
 - [The one-flash Pi hub (design)](design/raspberry_pi_hub_flashing.md) — RFC: type Wi-Fi, write the card, boot a self-healing Home Assistant hub — built on HAOS so it never rots
+- [Hub hardware-validation runbook](hub_validation_runbook.md) — the one-Pi-5 session that gates a tagged flasher release: write/read-back, Wi-Fi seed, USB-C gadget, account-restore mechanism
 
 </details>
 

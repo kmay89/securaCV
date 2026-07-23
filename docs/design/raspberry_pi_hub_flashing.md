@@ -248,6 +248,31 @@ Raspberry Pi Imager.
     PWK add-on + Frigate/go2rtc + dashboards + blueprints) so first boot comes
     up pre-wired — until then the hub boots as stock HAOS + Wi-Fi and the
     guide carries the user from `homeassistant.local:8123`.
+  - *Account pre-seed (minting + opt-in seed IMPLEMENTED 2026-07-23; HAOS
+    acceptance OUTSTANDING):* the flasher collects the operator's
+    name/username/password alongside the Wi-Fi (an opt-in, clearly
+    **experimental** panel in the Hub tab), mints Home Assistant's auth store
+    locally (`.storage/auth` + `.storage/auth_provider.homeassistant`,
+    bcrypt-hashed ON THE OPERATOR'S computer — the password gets the same
+    custody as the Wi-Fi secret: onto the card, never logged, never sent), and
+    `hub_io::seed::seed_card` writes it under the boot partition's `CONFIG/`
+    (Mechanism B) in the SAME mount as the Wi-Fi keyfile. A seed failure is
+    non-fatal — the verified card is never demoted, and the receipt tells the
+    tester whether to expect a login page or the wizard. First contact with
+    `homeassistant.local:8123` should then be a LOGIN page, not a setup
+    wizard. Zero-touch restore mechanisms still to confirm on hardware, in
+    order of preference:
+      1. **data-partition injection at flash time** — write the backup (or the
+         pre-expanded `.storage` + add-on containers, which also collapses the
+         10–20 min first boot toward ~2–3 min) into the image's ext4 data
+         partition before/while writing the card. Trivial from Linux; macOS
+         needs an ext4-write story, so this may start Linux-only;
+      2. **boot-partition CONFIG import** — if current HAOS's `hassos-config`
+         can be made to carry the backup in from FAT, it works from every OS;
+      3. **onboarding "restore backup"** — the fallback: still zero typing,
+         one click on first visit.
+    The validation session picks the mechanism; the auth-store minting and
+    backup assembly land in hub-core/hub-io (pure, host-tested) either way.
 - **Step 6 — the card-reader-less path: flash the Pi through its own USB-C.**
   Accepted 2026-07-23. Many laptops (every recent MacBook) have no SD reader —
   but the Pi 5 doesn't need one: the BCM2712 boot ROM has a USB *device* boot
@@ -287,6 +312,17 @@ Raspberry Pi Imager.
     real Pi 5 over USB-C on macOS + Linux, then pin `USBBOOT_REF`, before any
     tagged release claims the path.
 
+- **The experience layer (landed 2026-07-23).** Production-hardening so the
+  flow is worth running unattended: a cooperative cancel through every chunk
+  loop (stopping is always hardware-safe); a verified write is never demoted by
+  a seed stumble (it becomes a note + plan B); one automatic download retry;
+  an honest indeterminate bar with a per-stage ETA; a local **image cache**
+  (re-verified on reuse, so a second flash skips the download, never the
+  trust check); a **first-boot companion** that polls `homeassistant.local`
+  and flips to "It's alive!" with an OS notification, chime, and a QR to open
+  the hub from a phone; remembered non-secret fields; a free-space preflight;
+  and calm, humble error copy that always names the next step. All host-tested
+  or additive; none touches the safety chain.
 - **Step 7 — community + convergence.** Extract the SD-health add-on for upstream;
   submit the add-on repo to the community store; fold the hub image into the
   signed release train; converge with the §7.7 Canary onboarding (Improv /

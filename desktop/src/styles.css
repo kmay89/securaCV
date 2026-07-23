@@ -345,6 +345,81 @@ kbd {
   background: var(--bg); border: 1px solid var(--border); overflow: hidden;
 }
 .hub-progress .bar-fill { height: 100%; width: 0%; background: var(--brand); transition: width .25s linear; }
+/* a stage whose size isn't knowable up front: visibly alive, never "done" */
+.hub-progress .bar-fill.indet {
+  width: 30%;
+  animation: bar-indet 1.2s ease-in-out infinite alternate;
+}
+@keyframes bar-indet {
+  from { margin-left: 0; }
+  to { margin-left: 70%; }
+}
+.hub-stage-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+#hub-eta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* live stage pills — show where you are, light up as they pass */
+.stage-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+.stage-pill {
+  font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
+  background: var(--bg); color: var(--text-muted); border: 1px solid var(--border);
+  transition: background .3s, color .3s, border-color .3s;
+}
+.stage-pill.active {
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+  color: var(--brand); border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+}
+.stage-pill.done {
+  background: var(--success-bg); color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+}
+.stage-pill.done::before { content: "✓ "; }
+
+/* the "nothing to worry about" reassurance at the ERASE moment */
+.reassure {
+  margin-top: 12px; display: flex; gap: 10px; align-items: flex-start;
+  background: var(--success-bg); border: 1px solid color-mix(in srgb, var(--success) 28%, var(--border));
+  border-radius: 11px; padding: 11px 13px; font-size: 12.5px; color: var(--text);
+}
+.reassure-i { flex: 0 0 auto; color: var(--success); font-weight: 800; }
+
+/* alive: cards ease up on arrival; the done card gives a gentle little pop */
+#hub-view .card { animation: hub-rise .5s cubic-bezier(.2,.7,.2,1) both; }
+#hub-view .card:nth-of-type(2) { animation-delay: .06s; }
+#hub-view .card:nth-of-type(3) { animation-delay: .12s; }
+#hub-view .card:nth-of-type(4) { animation-delay: .18s; }
+@keyframes hub-rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+.alive-pop { animation: alive-pop .55s cubic-bezier(.2,1.4,.4,1); }
+@keyframes alive-pop { 0% { transform: scale(.97); } 60% { transform: scale(1.015); } 100% { transform: scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  #hub-view .card { animation: none; }
+  .alive-pop { animation: none; }
+  .stage-pill { transition: none; }
+  .hub-progress .bar-fill.indet { animation: none; width: 100%; opacity: .6; }
+  .dot.reading { animation: none; }
+}
+
+/* resume-across-restart banner */
+.resume-banner {
+  display: flex; align-items: center; gap: 11px;
+  max-width: 720px; margin: 0 auto 14px;
+  background: var(--canary-soft); color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--canary) 50%, var(--border));
+  border-radius: 12px; padding: 11px 15px; font-size: 13.5px;
+}
+.resume-banner .resume-grow { flex: 1; min-width: 0; }
+.resume-banner .link-btn { white-space: nowrap; }
+
+/* first-boot companion */
+.firstboot {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--canary) 40%, var(--border));
+}
+.fb-qr {
+  display: block; width: 148px; height: 148px; margin: 10px 0;
+  border-radius: 10px; background: #fff; padding: 8px;
+  image-rendering: pixelated;
+}
 .confirm-input {
   font: inherit; font-family: ui-monospace, "SF Mono", Menlo, monospace;
   width: 120px; padding: 8px 10px; text-transform: uppercase;
