@@ -130,6 +130,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [CI](ci.md) — what runs, what gates
 - [Feature flags](feature-flags.md) · [logging](logging.md) · [CLI UI conventions](cli_ui.md)
 - [Flight rules](FLIGHT_RULES.md) — the engineering constitution
+- [Tree map & consolidation](CONSOLIDATION.md) — what each similarly-named tree actually is (`src/` vs `kernel/` vs `privacy_witness_kernel/`, the desktop apps, the firmware lanes), plus open cleanup decisions
 - [Manual test plans](manual_test_plan_captive_portal.md) — captive portal · [MQTT](manual_test_plan_mqtt.md)
 - [The ambient display standard](standard/AMBIENT_DISPLAY_STANDARD.md) · [Canary Cards — the widget-card schema](standard/CANARY_CARDS.md)
 - Learnings from elsewhere: [Marlin & Klipper](marlin_klipper_learnings.md) · [OpenIPC](openipc_architecture_learnings.md)
@@ -145,7 +146,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - **Requirements review series:** [review/README](review/README.md)
 - **Research:** [bitchat protocol](research/bitchat_protocol_review.md) · [display market](research/display_market_research.md) · [harm-reduction prior art](research/harm_reduction_prior_art.md)
 - **Strategy series (01–17):** [strategy/README](strategy/README.md)
-- **Ecosystem & branding:** [trademark & branding policy](../TRADEMARK.md) · [trademark grants registry](trademark-grants.md) — the free "Works with SecuraCV" badge, the "… for SecuraCV" naming rule, and the public record of primary-mark grants (strategy doc 19 §5)
+- **Ecosystem & branding:** [brand & positioning](BRAND.md) — the canonical "the Canary" positioning, the one-line promise, and who we learn from · [trademark & branding policy](../TRADEMARK.md) · [trademark grants registry](trademark-grants.md) — the free "Works with SecuraCV" badge, the "… for SecuraCV" naming rule, and the public record of primary-mark grants (strategy doc 19 §5)
 - **Marketing:** [launch posts](marketing/launch_posts.md)
 
 </details>

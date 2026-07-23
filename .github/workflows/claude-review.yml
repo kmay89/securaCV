@@ -1,0 +1,68 @@
+name: Canary Reviewer
+
+# An advisory Claude review on every PR. It reads the same house rules a human
+# contributor must — CLAUDE.md, AGENTS.md, CONTRIBUTING.md, spec/invariants.md —
+# and leaves ONE review comment. It never approves, requests changes, or merges:
+# deterministic gates (rust.yml, lint.yml, features-dashboard-guard.yml, the
+# fact-tests) decide correctness. Claude only surfaces judgement calls a regex
+# can't — a missing invariant-impact statement, a smuggled tracking feature,
+# voice drift ("flock", overclaimed "Verified"), an unjustified dependency.
+#
+# Requires repo secret ANTHROPIC_API_KEY. Fork PRs get no secrets, so the job
+# skips them (they still get every deterministic check).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Read the code; write review comments. Nothing else.
+permissions:
+  contents: read
+  pull-requests: write
+
+# Supersede stale reviews when a new commit arrives on the same PR.
+concurrency:
+  group: canary-reviewer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Advisory Claude review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fork PRs cannot see ANTHROPIC_API_KEY; don't fail them, just skip.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Canary Reviewer
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the Canary Reviewer for SecuraCV. Review THIS pull request.
+
+            Read the house rules first — they are the single source of truth,
+            do not invent your own:
+              - CLAUDE.md            (voice & naming; "fleet" never "flock")
+              - AGENTS.md            (privacy invariants, dependency policy)
+              - CONTRIBUTING.md      (what we accept / close without discussion)
+              - spec/invariants.md   (invariants are law)
+
+            You are ADVISORY ONLY. Do not approve, do not request changes, do
+            not merge. Leave exactly one concise review comment. Deterministic
+            CI already checks formatting, tests, and drift — don't repeat it.
+
+            Flag only what needs a human's judgement:
+              1. Non-trivial PR missing an invariant-impact / threat-model /
+                 enforcement-point statement (CONTRIBUTING requires all three).
+              2. Anything in the "closed without discussion" list — identity,
+                 biometric, or tracking features; optional privacy flags; longer
+                 retention; cross-bucket correlation; weakened isolation.
+              3. Voice drift: "flock" anywhere but flock(2); "Verified" claimed
+                 without an Ed25519 signature check against a pinned key.
+              4. A new or changed dependency without justification per AGENTS.md.
+
+            If the PR is clean, say so in one line. Be specific and kind. Never
+            block; the maintainers decide.
