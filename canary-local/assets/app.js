@@ -185,6 +185,19 @@ function buildConceptSheet(ctx, side) {
     return a;
   };
 
+  // Tab labels and the plan panel's intro/link default to the original
+  // Fence Guard copy (unchanged for that entry) but are overridable per
+  // concept — "The radio" and a firmware stub link are mesh-specific and
+  // don't fit e.g. a camera concept with no firmware stub at all.
+  const radioTabLabel = c.radio_tab_label || "The radio";
+  const planTabLabel = c.plan_tab_label || "Firmware plan";
+  const planIntro = c.plan_intro ||
+    "Staged as a pending stub in the firmware tree — requirements first, code later, honestly labeled.";
+  const planDoc = c.plan_doc || {
+    label: "read the stub → firmware/projects/canary-fence-guard",
+    url: "https://github.com/kmay89/securaCV/blob/main/firmware/projects/canary-fence-guard/README.md",
+  };
+
   const views = {
     Persona: () => personaView(dev),
     "The idea": () => {
@@ -200,7 +213,7 @@ function buildConceptSheet(ctx, side) {
       w.append(requestDoor());
       return w;
     },
-    "The radio": () => {
+    [radioTabLabel]: () => {
       const w = el("div", "specs");
       const dl = el("dl");
       for (const r of c.radio || []) dl.append(el("dt", null, r.k), el("dd", null, r.v));
@@ -219,15 +232,14 @@ function buildConceptSheet(ctx, side) {
       }
       return w;
     },
-    "Firmware plan": () => {
+    [planTabLabel]: () => {
       const w = el("div");
-      w.append(el("p", "muted",
-        "Staged as a pending stub in the firmware tree — requirements first, code later, honestly labeled."));
+      w.append(el("p", "muted", planIntro));
       const ol = el("ol", "concept-plan");
       for (const step of c.plan || []) ol.append(el("li", null, step));
       w.append(ol);
-      const a = el("a", null, "read the stub → firmware/projects/canary-fence-guard");
-      a.href = "https://github.com/kmay89/securaCV/blob/main/firmware/projects/canary-fence-guard/README.md";
+      const a = el("a", null, planDoc.label);
+      a.href = planDoc.url;
       a.target = "_blank";
       a.rel = "noopener";
       w.append(el("p", "muted"), a);
