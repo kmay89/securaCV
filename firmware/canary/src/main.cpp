@@ -1574,6 +1574,7 @@ void loop() {
 #if FEATURE_POWER_POLICY
   policy_process();
 
+#if FEATURE_DEEP_SLEEP
   if (policy_should_deep_sleep() && !power_is_charging()) {
     uint32_t sleep_sec = policy_get_sleep_duration_sec();
     {
@@ -1600,7 +1601,19 @@ void loop() {
   } else if (policy_should_deep_sleep()) {
     policy_ack_deep_sleep();
   }
-#endif
+#else
+  /* FEATURE_DEEP_SLEEP=0 — "compiled in but never sleeps" (canary_config.h).
+   * Honor the policy's sleep bookkeeping so it does not spin re-requesting a
+   * sleep that never happens, but never actually enter deep sleep. This is the
+   * documented contract of the flag; the previous code gated this block on
+   * FEATURE_POWER_POLICY alone, so a default (FEATURE_DEEP_SLEEP=0) build would
+   * still deep-sleep on a LOW_POWER duty cycle. Critical-battery deep-sleep
+   * protection likewise requires FEATURE_DEEP_SLEEP=1 (securacv_power.cpp). */
+  if (policy_should_deep_sleep()) {
+    policy_ack_deep_sleep();
+  }
+#endif  /* FEATURE_DEEP_SLEEP */
+#endif  /* FEATURE_POWER_POLICY */
 
 #if FEATURE_DIAGNOSTICS
   diag_process();

@@ -732,6 +732,12 @@ void power_graceful_shutdown(void) {
   /* Persist final battery stats. */
   save_voltage_extremes();
 
+  /* Deep-sleep entry is gated on FEATURE_DEEP_SLEEP so a build documented as
+   * "compiled in but never sleeps" (FEATURE_DEEP_SLEEP=0) does not silently
+   * deep-sleep on a critical-battery event. When the flag is undefined (envs
+   * that don't pass -D and don't include canary_config.h here), the C
+   * preprocessor evaluates it as 0 — the safe never-sleep default. */
+#if FEATURE_DEEP_SLEEP
   /* Stop all peripherals. */
   power_stop();
 
@@ -741,6 +747,14 @@ void power_graceful_shutdown(void) {
 
   /* Enter deep sleep — does not return. */
   lowpower_enter_deep_sleep();
+#else
+  /* Never-sleep contract: the chain-close record and battery stats are already
+   * persisted above. Do not stop peripherals or deep-sleep — keep witnessing
+   * until brownout. Deep-sleep battery protection requires FEATURE_DEEP_SLEEP=1. */
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+             "Power: critical battery — deep sleep disabled (FEATURE_DEEP_SLEEP=0)",
+             nullptr);
+#endif
 }
 
 bool power_is_critical(void) {
