@@ -53,6 +53,7 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     steps:
     - uses: actions/checkout@v7
@@ -79,6 +80,7 @@ jobs:
   adapters:
     name: Adapters (behavioral tests, all features)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
     - uses: Swatinem/rust-cache@v2
@@ -95,6 +97,7 @@ jobs:
   ingest-ffmpeg:
     name: Ingest (ffmpeg file decode)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
@@ -116,6 +119,7 @@ jobs:
   ingest-rtsp:
     name: Ingest (rtsp end-to-end)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # Pinned MediaMTX (RTSP server) used to serve the fixture over RTSP.
       MEDIAMTX_VERSION: v1.9.3
@@ -150,6 +154,7 @@ jobs:
   frigate-mqtt-e2e:
     name: Frigate MQTT (live broker)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
     # Cache cargo registry + target dir, keyed per job. Cuts re-runs (e.g.
@@ -170,6 +175,7 @@ jobs:
   optional-features:
     name: Optional feature build gate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Compile-gates the pure-Rust optional features that have no dedicated job, so a
     # dependency bump that isn't migrated in-source (e.g. ureq for ingest-esp32, tract
     # for backend-tract) fails CI instead of silently breaking an off-by-default feature.
@@ -196,6 +202,7 @@ jobs:
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Compile-gate for the rtsp-gstreamer feature, which needs the GStreamer dev
     # libraries and so cannot live in the optional-features job above.
     steps:
@@ -214,6 +221,7 @@ jobs:
   status-grid:
     name: witness-kernel status grid matches the code
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v7
     # The public "Implementation status" grid in docs/witness-kernel.html is a
