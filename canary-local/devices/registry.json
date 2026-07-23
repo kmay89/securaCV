@@ -552,6 +552,117 @@
       }
     },
     {
+      "id": "canary-ranger",
+      "family": "canary-ranger",
+      "kind": "concept",
+      "name": "Canary Ranger",
+      "tagline": "Watches the open approach — 'a large mover is coming up the drive' — camera-free, months on a battery, over the mesh. Coming soon.",
+      "board": "XIAO ESP32-S3 + low-power Doppler radar (I/Q) + Wio-SX1262 (Meshtastic)",
+      "senses": [
+        "Doppler motion + radial speed (concept)",
+        "approaching vs receding direction, needs an I/Q part (concept)",
+        "coarse size/type class: large vs small mover (concept)"
+      ],
+      "shows": [],
+      "modality": "mesh",
+      "network": {
+        "mdns": "none — the approach is past the WiFi by design",
+        "web": "none",
+        "mqtt": "via mesh gateway (concept): coarse mover/direction claims, signed chain"
+      },
+      "docs": [
+        "docs/hardware/canary_ranger_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A cheap, camera-free radar node that watches an open approach — a driveway, a gate, a yard, a trail — sips microwatts so it runs for months on a battery or forever on a little solar, and reports coarse 'something's moving, this way, roughly this big' claims to the mesh. Drawn from studying Samraksh's BumbleBee Doppler mote: it replicates the CIVILIAN 'virtual fence' capability (motion + direction + coarse class, off-grid, low power) and hard-stops the MILITARY half (tracking, per-target IDs, gait identity) that the same sensing was funded to do. It's the motion counterpart to Fence Guard's vibration and the low-power outdoor sibling of Canary Sense's rich indoor radar.",
+        "points": [
+          {
+            "k": "Why it's more than a PIR",
+            "v": "Doppler reads DIRECTION (a car arriving vs leaving, someone walking up the path vs away) and ignores the thermal ghosts — sun on pavement, an HVAC plume — that plague PIR; it works through darkness, light foliage and rain where a camera is blinded or would feel creepy."
+          },
+          {
+            "k": "The line we draw",
+            "v": "it says 'a LARGE mover is approaching zone X' (a physical predicate) and never who, never a path, never a per-target ID or gait signature. Coarse class is a fact about your property; a track or an identity is surveillance of a person — it inherits Canary Sense's §2.2 privacy contract wholesale."
+          },
+          {
+            "k": "Fills the one real gap",
+            "v": "our 60 GHz FMCW radar (Sense) is a better sensor indoors in every way EXCEPT power — it can't live on a fencepost for a season. A pulsed low-GHz Doppler front-end can. Ranger is the tier Sense's power budget can't reach, not a downgrade of it."
+          },
+          {
+            "k": "Direction needs an I/Q part",
+            "v": "a single-channel HB100/CDM324 gives motion + speed but not the sign of the Doppler shift; approaching-vs-receding needs a quadrature (two-IF) part like the InnoSenT IPM-165 — the true BumbleBee analog. Budget it if direction matters."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Radar front-end",
+            "v": "commodity Doppler: HB100 (10.525 GHz, ~2 mA at 5% pulse duty, 2-16 m) or CDM324 (24 GHz) for motion-only; InnoSenT IPM-165-class I/Q part for approach/recede direction; all far cheaper and lower-power than an FMCW chip"
+          },
+          {
+            "k": "Richer-tier alternative",
+            "v": "Seeed MR24HPC1 (24 GHz FMCW 'human static presence Lite') adds still-presence + distance at the perimeter — a cheaper cousin of Sense, if you want presence-while-motionless outdoors"
+          },
+          {
+            "k": "Host + edge math",
+            "v": "XIAO ESP32-S3 amplifies the radar IF into its ADC and runs a windowed FFT for speed/direction/coarse-class on-device (BumbleBee did displacement detection on a tiny FPGA; the S3 + ADC is comfortably enough for coarse Doppler features)"
+          },
+          {
+            "k": "Transport",
+            "v": "same XIAO + Wio-SX1262 Meshtastic kit as Fence Guard (SKU 102010611); coarse claims leave as an Ed25519-signed chain over LoRa, position broadcast off — a virtual fence must not map the fence"
+          },
+          {
+            "k": "Power plane",
+            "v": "the whole point of the tier: pulse/duty-cycle the front-end (avoid 30-40 mA continuous-wave) + ESP32 asleep between looks -> uW-mW average -> months on a LiPo, indefinite on small solar with Fence Guard's charge-controller guidance"
+          }
+        ],
+        "sources": [
+          {
+            "name": "Samraksh BumbleBee specs (MDPI Sensors 2012, peer-reviewed)",
+            "url": "https://www.mdpi.com/1424-8220/12/2/1336"
+          },
+          {
+            "name": "NSF 'Virtual Fences for Sustainable Protection' (the civilian grant)",
+            "url": "https://www.nsf.gov/awardsearch/showAward?AWD_ID=1648337"
+          },
+          {
+            "name": "HB100 / CDM324 / RCWL-0516 Doppler part comparison",
+            "url": "https://antennatestlab.com/antenna-examples/radar-antenna-pattern-rcwl-0516-hb100-cdm324"
+          },
+          {
+            "name": "Seeed MR24HPC1 24 GHz FMCW module (richer-tier alt)",
+            "url": "https://wiki.seeedstudio.com/Radar_MR24HPC1/"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_ranger_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0, cheap and coarse: an HB100/CDM324 IF into the XIAO ESP32-S3 ADC + a windowed FFT + stock Meshtastic -> a real battery/solar approach witness emitting large-vs-small-mover claims, measuring the outdoor false-alarm floor (wind-blown branch vs deer vs person vs car).",
+          "Add direction with an I/Q (IPM-165-class) part; decide how approaching/receding is represented (a claim attribute vs a new approach_detected kind).",
+          "Reuse boundary_crossing_object_large/_small for the coarse type claims; keep walk/run/crawl activity as a local dashboard hint, never a sealed claim.",
+          "Parallel, hardware-free: apply the same micro-Doppler classifier to Canary Sense's existing 60 GHz radar for an indoor coarse-class claim (§6) — the 'do it with what we have' win.",
+          "Enclosure: a weatherproof radome (radar sees through plastic, not metal) aimed along the approach; reuse Fence Guard's solar/antenna-standoff guidance, printed and validated like every Canary shell."
+        ],
+        "request_title": "Concept request: Canary Ranger (low-power Doppler approach witness)",
+        "request_body": "Seen the Ranger concept card. What I'd want from a camera-free approach/perimeter radar:\n\n- what approach (driveway / gate / yard / trail):\n- do you need direction (approaching vs receding) or just motion:\n- battery or solar, and how far to the nearest mesh node:\n- any interest in the coarse animal-vs-person-vs-vehicle class:\n"
+      },
+      "persona": {
+        "name": "Vale the Range Watcher",
+        "accent": "dawn grey and far-sight blue",
+        "shape": "keen-eyed canary perched high on a post, head tilted down the lane, faint radar rings fanning out ahead",
+        "story": "Vale sits at the edge of things and watches the way in. It cannot see faces and does not want to — it only knows 'something large is coming this way' from 'something small just left', and it says so in one quiet signed word over the mesh, then dozes again to save its wings for the season. Vale wears a concept ribbon because honest products say what is real, and it would rather miss a squirrel than ever learn to tell one person from another.",
+        "specialty": "Low-power approach radar concept",
+        "good_for": [
+          "A driveway or gate that's past the WiFi and off mains power",
+          "Direction-aware motion where PIR false-alarms or a camera feels wrong",
+          "Coarse large-vs-small mover alerts without tracking or identifying anyone"
+        ],
+        "catchphrase": "I watch the way in, not the people on it."
+      }
+    },
+    {
       "id": "canary-vision-pro",
       "family": "canary-vision-pro",
       "kind": "concept",
