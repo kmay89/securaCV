@@ -104,8 +104,7 @@ impl SyncStorage for std::fs::File {
         use std::os::unix::io::AsRawFd;
         // Evict this handle's clean pages so the verify pass re-reads the
         // medium instead of being satisfied from cache.
-        let rc =
-            unsafe { libc::posix_fadvise(self.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
+        let rc = unsafe { libc::posix_fadvise(self.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
         if rc == 0 {
             Ok(())
         } else {
