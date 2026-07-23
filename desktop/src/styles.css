@@ -40,6 +40,42 @@ a:hover { text-decoration: underline; }
 
 main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
 
+/* the Canary ↔ Hub mode switch */
+.mode-tabs {
+  display: flex; gap: 6px; max-width: 720px; margin: 0 auto 14px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 5px;
+}
+.mode-tab {
+  flex: 1; font: inherit; font-weight: 600; font-size: 13.5px;
+  border: none; border-radius: 8px; padding: 8px 10px; cursor: pointer;
+  background: transparent; color: var(--text-secondary);
+  transition: background .15s, color .15s;
+}
+.mode-tab.active { background: var(--canary-soft); color: var(--canary-dark); }
+
+/* hub write progress */
+.hub-progress { margin-top: 14px; }
+.hub-progress .bar {
+  margin-top: 6px; height: 10px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border); overflow: hidden;
+}
+.hub-progress .bar-fill {
+  height: 100%; width: 0%;
+  background: var(--brand); transition: width .25s linear;
+}
+.confirm-input {
+  font: inherit; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  width: 110px; padding: 8px 10px; text-transform: uppercase;
+  border: 1px solid var(--border-strong); border-radius: 9px;
+  background: var(--surface); color: var(--text);
+}
+.check { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); font-size: 13.5px; }
+.hidden-disk { font-size: 13px; color: var(--text-secondary); padding: 6px 0; border-top: 1px solid var(--border); }
+.hidden-disk:first-child { border-top: none; }
+.hidden-disk .mono { color: var(--text-muted); }
+.p-warn { font-size: 12.5px; color: var(--canary-dark); margin-top: 3px; }
+
 .card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 14px; padding: 18px 20px;

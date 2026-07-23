@@ -712,4 +712,242 @@ function esc(s) {
   );
 }
 
-window.addEventListener("DOMContentLoaded", boot);
+// ── The Hub (Raspberry Pi) flow ────────────────────────────────────────────
+//
+// Same philosophy as the Canary flow — plugging the thing in is what advances
+// the UI — but the safety posture is inverted: an ESP32 flash can't hit the
+// wrong device; a raw disk write can. So every disk decision comes from the
+// Rust hub-core gate and is SHOWN, never re-derived here: eligible disks are
+// picker rows, refused disks appear under "hidden because…", and the write
+// button only arms after a typed ERASE on a still-eligible target.
+
+const hub = {
+  active: false,
+  targets: [],
+  selected: null, // device path
+  plan: null,
+  pollTimer: null,
+  busy: false,
+  done: false,
+};
+
+const HUB_STAGE_COPY = {
+  download: "Downloading Home Assistant OS…",
+  decompress: "Unpacking the image…",
+  write: "Writing to the card — don't remove it…",
+  verify: "Reading every byte back to prove the write…",
+  seed: "Seeding your Wi-Fi onto the card…",
+};
+
+function hubInit() {
+  $("mode-canary").addEventListener("click", () => hubSetMode(false));
+  $("mode-hub").addEventListener("click", () => hubSetMode(true));
+  $("hub-flash-btn").addEventListener("click", hubFlash);
+  $("hub-confirm").addEventListener("input", hubArm);
+  $("hub-ethernet").addEventListener("change", () => {
+    const wired = $("hub-ethernet").checked;
+    $("hub-ssid").disabled = wired;
+    $("hub-pass").disabled = wired;
+    $("hub-hidden-net").disabled = wired;
+    hubArm();
+  });
+  ["hub-ssid", "hub-pass"].forEach((id) => $(id).addEventListener("input", hubArm));
+
+  listen("hub:log", (e) => {
+    const el = $("hub-console");
+    el.classList.remove("hidden");
+    el.textContent += e.payload + "\n";
+    el.scrollTop = el.scrollHeight;
+  });
+  listen("hub:progress", (e) => {
+    const { stage, done, total } = e.payload;
+    $("hub-progress-wrap").classList.remove("hidden");
+    $("hub-stage").textContent = HUB_STAGE_COPY[stage] || stage;
+    const fill = $("hub-bar-fill");
+    if (total) {
+      fill.style.width = Math.min(100, Math.round((done / total) * 100)) + "%";
+    } else {
+      fill.style.width = "100%";
+    }
+  });
+}
+
+function hubSetMode(showHub) {
+  hub.active = showHub;
+  $("canary-view").classList.toggle("hidden", showHub);
+  $("hub-view").classList.toggle("hidden", !showHub);
+  $("mode-canary").classList.toggle("active", !showHub);
+  $("mode-hub").classList.toggle("active", showHub);
+  $("mode-canary").setAttribute("aria-selected", String(!showHub));
+  $("mode-hub").setAttribute("aria-selected", String(showHub));
+  if (showHub) {
+    hubLoadPlan();
+    hubPollTargets();
+    if (!hub.pollTimer) hub.pollTimer = setInterval(hubPollTargets, 2000);
+  } else if (hub.pollTimer) {
+    clearInterval(hub.pollTimer);
+    hub.pollTimer = null;
+  }
+}
+
+async function hubLoadPlan() {
+  if (hub.plan) return;
+  try {
+    hub.plan = await invoke("hub_plan", { boardId: null });
+    $("hub-os-label").textContent = hub.plan.os_label;
+    $("hub-pin-state").textContent = hub.plan.pinned
+      ? "against this release's pinned checksum"
+      : "against Home Assistant's published checksum";
+    const gb = Math.round(hub.plan.min_card_bytes / 1024 ** 3);
+    $("hub-card-req").textContent =
+      "You'll need a " + (gb + 4) + " GB or larger card — 64 GB recommended.";
+  } catch (e) {
+    setStatus("hub-result", "Couldn't load the hub catalog: " + e, "err");
+  }
+}
+
+async function hubPollTargets() {
+  if (!hub.active || hub.busy) return;
+  let targets = [];
+  try {
+    targets = await invoke("list_hub_targets");
+  } catch (e) {
+    $("hub-target-sub").textContent = "Couldn't read this computer's disks: " + e;
+    return;
+  }
+  hub.targets = targets;
+  const eligible = targets.filter((t) => t.eligible);
+  const refused = targets.filter((t) => !t.eligible);
+
+  // Keep (or auto-pick) the selection: a single eligible disk selects itself —
+  // plugging in the card IS the choice.
+  if (hub.selected && !eligible.some((t) => t.path === hub.selected)) hub.selected = null;
+  if (!hub.selected && eligible.length === 1) hub.selected = eligible[0].path;
+
+  const list = $("hub-target-list");
+  list.innerHTML = eligible.length
+    ? eligible
+        .map((t) => {
+          const sel = t.path === hub.selected;
+          const warns = t.warnings.map((w) => `<div class="p-warn">⚠ ${esc(w)}</div>`).join("");
+          return `<label class="product${sel ? " selected" : ""}">
+            <input type="radio" name="hub-target" value="${esc(t.path)}" ${sel ? "checked" : ""}>
+            <div><div class="p-name">${esc(t.model)}</div>
+            <div class="p-tag">${esc(t.path)} · ${hubFmtBytes(t.size_bytes)}</div>${warns}</div>
+          </label>`;
+        })
+        .join("")
+    : `<p class="muted">Waiting for a card or external drive…</p>`;
+  list.querySelectorAll("input[name=hub-target]").forEach((r) =>
+    r.addEventListener("change", (ev) => {
+      hub.selected = ev.target.value;
+      hubPollTargets();
+    })
+  );
+
+  const hiddenBox = $("hub-hidden");
+  if (refused.length) {
+    hiddenBox.classList.remove("hidden");
+    $("hub-hidden-summary").textContent =
+      refused.length + (refused.length === 1 ? " disk is" : " disks are") + " hidden — here's why";
+    $("hub-hidden-list").innerHTML = refused
+      .map(
+        (t) =>
+          `<div class="hidden-disk"><strong>${esc(t.model)}</strong>
+           <span class="mono">${esc(t.path)}</span> — ${esc(t.refused_because || "")}</div>`
+      )
+      .join("");
+  } else {
+    hiddenBox.classList.add("hidden");
+  }
+
+  $("hub-step-wifi").classList.toggle("disabled", !hub.selected);
+  $("hub-step-write").classList.toggle("disabled", !hub.selected);
+  hubArm();
+}
+
+function hubWifiValue() {
+  if ($("hub-ethernet").checked) return null;
+  return {
+    ssid: $("hub-ssid").value.trim(),
+    passphrase: $("hub-pass").value,
+    hidden: $("hub-hidden-net").checked,
+  };
+}
+
+function hubArm() {
+  const target = hub.targets.find((t) => t.path === hub.selected);
+  const wifi = hubWifiValue();
+  const wifiOk = wifi === null || (wifi.ssid.length > 0 && wifi.passphrase.length >= 8);
+  const armed =
+    !!target && wifiOk && $("hub-confirm").value.trim().toUpperCase() === "ERASE" && !hub.busy;
+  $("hub-flash-btn").disabled = !armed;
+  $("hub-write-summary").textContent = target
+    ? `${hub.plan ? hub.plan.os_label : "Home Assistant OS"} → ${target.model} ` +
+      `(${target.path}, ${hubFmtBytes(target.size_bytes)})` +
+      (wifi === null ? " · wired ethernet" : "")
+    : "Pick a disk above first.";
+}
+
+async function hubFlash() {
+  const target = hub.targets.find((t) => t.path === hub.selected);
+  if (!target || hub.busy) return;
+  hub.busy = true;
+  state.busy = true; // pause the Canary port watcher during the heavy write
+  $("hub-flash-btn").disabled = true;
+  $("hub-console").textContent = "";
+  $("hub-console").classList.remove("hidden");
+  setStatus("hub-result", "", "");
+  try {
+    const receipt = await invoke("hub_flash", {
+      boardId: hub.plan ? hub.plan.board_id : "rpi5-64",
+      diskPath: target.path,
+      confirmed: true,
+      wifi: hubWifiValue(),
+    });
+    hub.done = true;
+    setStatus("hub-result", "Done — written, read back, and verified.", "ok");
+    hubShowHatch(receipt);
+  } catch (e) {
+    setStatus("hub-result", String(e), "err");
+  } finally {
+    hub.busy = false;
+    state.busy = false;
+    $("hub-confirm").value = "";
+    hubArm();
+  }
+}
+
+function hubShowHatch(receipt) {
+  $("hub-hatch").classList.remove("hidden");
+  $("hub-hatch-body").textContent =
+    `${receipt.os_label} is on ${receipt.target_path} — every byte read back and matched ` +
+    `(SHA-256 ${receipt.sha256.slice(0, 16)}…).` +
+    (receipt.wifi_seeded
+      ? " Your Wi-Fi rides along on the card."
+      : " Plug in ethernet before you power it on.");
+  const steps = [
+    "Put the card in your Raspberry Pi (or connect the SSD) and power it on.",
+    "First boot takes 10–20 minutes while Home Assistant sets itself up — the LED activity is normal.",
+    "Open http://homeassistant.local:8123 on any device in your home and create your account.",
+    "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
+  ];
+  $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");
+}
+
+function hubFmtBytes(n) {
+  if (!n) return "unknown size";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let u = 0;
+  let v = n;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u++;
+  }
+  return (u ? v.toFixed(1) : v) + " " + units[u];
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  boot();
+  hubInit();
+});

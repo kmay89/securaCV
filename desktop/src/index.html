@@ -32,7 +32,15 @@
     </div>
   </header>
 
-  <main>
+  <!-- What are we flashing today? A Canary over USB, or the Raspberry Pi hub's
+       card. Plugging either one in while its tab is open is what advances the
+       flow — recognition, not configuration. -->
+  <nav class="mode-tabs" role="tablist" aria-label="What to flash">
+    <button id="mode-canary" class="mode-tab active" role="tab" aria-selected="true">Canary</button>
+    <button id="mode-hub" class="mode-tab" role="tab" aria-selected="false">The Hub · Raspberry Pi</button>
+  </nav>
+
+  <main id="canary-view" class="view">
     <!-- Live connection status — always on, updates itself (no Connect button) -->
     <div id="conn" class="connbar" role="status" aria-live="polite">
       <span class="dot" id="conn-dot"></span>
@@ -118,6 +126,79 @@
         <h3 id="hatch-title">It is alive.</h3>
         <p id="hatch-body"></p>
         <ol id="hatch-steps"></ol>
+      </section>
+    </section>
+  </main>
+
+  <!-- The Hub flow: turn a card/SSD into a ready-to-boot Home Assistant hub.
+       Unlike a Canary flash this CAN hit the wrong disk, so the safety story
+       is on screen: only external/removable disks are offered, every hidden
+       disk says why, and the write only runs after an explicit typed confirm.
+       All decisions live in the Rust hub-core crate; this UI just shows them. -->
+  <main id="hub-view" class="view hidden">
+    <section class="card" id="hub-step-what">
+      <div class="step-head"><span class="step-n">1</span><h2>What you're making</h2></div>
+      <p class="muted">A <strong>Home Assistant hub</strong> for your Canaries: we download the
+        official <span id="hub-os-label" class="mono">Home Assistant OS</span> image,
+        verify it <span id="hub-pin-state"></span>, write it to your card, read every byte
+        back to prove the write, and seed your Wi-Fi so the Pi joins your network on
+        its own. <span id="hub-card-req"></span></p>
+      <details class="hint">
+        <summary>What happens on first boot?</summary>
+        <p>Home Assistant OS keeps itself updated and heals itself (A/B rollback if an
+          update ever goes wrong). First boot takes 10–20 minutes while it sets up —
+          then it appears on your network as
+          <span class="mono">homeassistant.local:8123</span>.</p>
+      </details>
+    </section>
+
+    <section class="card" id="hub-step-target">
+      <div class="step-head"><span class="step-n">2</span><h2>Plug in your card or SSD</h2></div>
+      <p class="muted" id="hub-target-sub">Insert a microSD card (or plug in a USB SSD — the durable
+        choice for a Pi 5). It's picked up automatically.</p>
+      <div id="hub-target-list" class="product-list" role="radiogroup" aria-label="Write target"></div>
+      <details id="hub-hidden" class="hint hidden">
+        <summary id="hub-hidden-summary">Some disks are hidden</summary>
+        <div id="hub-hidden-list"></div>
+      </details>
+    </section>
+
+    <section class="card disabled" id="hub-step-wifi">
+      <div class="step-head"><span class="step-n">3</span><h2>Your Wi-Fi</h2></div>
+      <p class="muted">Written onto the card only — never logged, never sent anywhere.
+        The hub joins this network the moment it boots.</p>
+      <div class="form-grid">
+        <label>Wi-Fi name<input id="hub-ssid" maxlength="32" autocomplete="off"></label>
+        <label>Wi-Fi password<input id="hub-pass" type="password" maxlength="64" autocomplete="new-password"></label>
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="hub-hidden-net"> Hidden network</label>
+        <label class="check"><input type="checkbox" id="hub-ethernet"> I'll plug in ethernet instead</label>
+      </div>
+    </section>
+
+    <section class="card disabled" id="hub-step-write">
+      <div class="step-head"><span class="step-n">4</span><h2>Write it</h2></div>
+      <p class="muted" id="hub-write-summary"></p>
+      <p class="muted"><strong>Everything on the chosen disk will be erased.</strong>
+        Type <span class="mono">ERASE</span> to arm the button.</p>
+      <div class="row">
+        <input id="hub-confirm" class="confirm-input" autocomplete="off" spellcheck="false"
+               placeholder="ERASE" aria-label="Type ERASE to confirm">
+        <button id="hub-flash-btn" class="btn btn-primary" disabled>Make my hub</button>
+      </div>
+      <div id="hub-progress-wrap" class="hub-progress hidden">
+        <p id="hub-stage" class="muted"></p>
+        <div class="bar"><div id="hub-bar-fill" class="bar-fill"></div></div>
+      </div>
+      <pre id="hub-console" class="console hidden" aria-live="polite"></pre>
+      <p id="hub-result" class="status"></p>
+
+      <section id="hub-hatch" class="hatch hidden" aria-live="polite">
+        <p class="hatch-kicker">Hub ready</p>
+        <h3>The card verifiably holds Home Assistant.</h3>
+        <p id="hub-hatch-body"></p>
+        <ol id="hub-hatch-steps"></ol>
       </section>
     </section>
   </main>
