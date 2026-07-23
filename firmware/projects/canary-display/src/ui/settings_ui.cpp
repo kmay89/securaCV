@@ -11,8 +11,20 @@
 #include <lvgl.h>
 #include <stdio.h>
 #include <time.h>
-#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-#include <Preferences.h>   // the dev-mode latch (Settings -> "dev mode" -> reboot)
+#if (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE) ||       \
+    (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||   \
+    (defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE) || \
+    (defined(FEATURE_ARCADE) && FEATURE_ARCADE)
+// The modes doorway (docs/hardware/display_modes.md): Settings lists the
+// non-fleet gears this build carries; entering one is a confirm-gated
+// latch-and-reboot through the mode glue (which owns the NVS grammar).
+#define CD_SET_MODES 1
+#include "canary/mode/mode_glue.h"
+#endif
+// Arcade is dash-first (mode_glue compiles its gear on the dash only);
+// the Settings row must not offer a gear the dispatcher can't enter.
+#if defined(FEATURE_ARCADE) && FEATURE_ARCADE && defined(CD_FLAVOR_DASH)
+#define CD_SET_ROW_ARCADE 1
 #endif
 
 #include "canary/ui/settings_ui.h"
@@ -67,8 +79,9 @@ enum class Page {
   CalWarn,
   CalDone,
   ResetConfirm,
-#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-  DevConfirm,   // dash + FEATURE_DEVMODE: reboot into the peripheral bench
+#ifdef CD_SET_MODES
+  ModesList,    // the non-fleet gears this build carries
+  ModeConfirm,  // confirm-gated: latch the chosen gear + reboot into it
 #endif
 };
 
@@ -81,8 +94,9 @@ enum : int {
 #if defined(HAS_ISOLATED_IO) && HAS_ISOLATED_IO
   IT_ROW_SIREN,
 #endif
-#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-  IT_ROW_DEV,
+#ifdef CD_SET_MODES
+  IT_ROW_DEV,   // the root doorway row ("modes" / "dev mode")
+  IT_ROW_MBENCH, IT_ROW_MDEMO, IT_ROW_MDEBUG, IT_ROW_MARCADE,
 #endif
   IT_MINUS, IT_PLUS, IT_OPT_A, IT_OPT_B, IT_PEEK, IT_GO,
   IT_YES, IT_NO,
@@ -292,8 +306,13 @@ void build_root() {
   char v[24];
 #ifdef CD_FLAVOR_WATCH
   // Nine rows since the style row joined — the editor spacing would run
-  // off the round glass, so the root alone packs tighter.
+  // off the round glass, so the root alone packs tighter. (Ten with the
+  // modes doorway: tighter still, and the last row stays clear of the rim.)
+#ifdef CD_SET_MODES
+  const int y0 = 32, step = 20;
+#else
   const int y0 = 36, step = 22;
+#endif
 #else
   const int y0 = ROOT_Y0, step = ROW_H;
 #endif
@@ -334,10 +353,17 @@ void build_root() {
   y += step;
 #endif
   mk_row(y, "reset", nullptr, IT_ROW_RESET);
-#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-  // The 4.3B dash doubles as a bench: reboot into the peripheral test suite.
+#ifdef CD_SET_MODES
+  // The glass has gears (display_modes.md): the doorway to the non-fleet
+  // modes this build carries. One gear keeps the familiar dev-mode row.
   y += step;
+#if (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||   \
+    (defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE) || \
+    (defined(FEATURE_ARCADE) && FEATURE_ARCADE)
+  mk_row(y, "modes", nullptr, IT_ROW_DEV);
+#else
   mk_row(y, "dev mode", "bench", IT_ROW_DEV);
+#endif
 #endif
 }
 
@@ -616,12 +642,60 @@ void build_reset_confirm() {
   add_item(no, IT_NO);
 }
 
+#ifdef CD_SET_MODES
+// Which gear is awaiting its confirm tap (ModesList -> ModeConfirm).
+canary::mode::Mode s_pending_mode = canary::mode::Mode::Fleet;
+
+void build_modes_list() {
+  mk_back("modes");
+#ifdef CD_FLAVOR_WATCH
+  const int y0 = 48, step = 26;
+#else
+  const int y0 = ROOT_Y0, step = ROW_H;
+#endif
+  int y = y0;
 #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-void build_dev_confirm() {
-  mk_back("dev mode");
+  mk_row(y, "bench", "peripheral test", IT_ROW_MBENCH);
+  y += step;
+#endif
+#if defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE
+  mk_row(y, "demo", "scripted fleet", IT_ROW_MDEMO);
+  y += step;
+#endif
+#if defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE
+  mk_row(y, "debug", "diagnostics", IT_ROW_MDEBUG);
+  y += step;
+#endif
+#ifdef CD_SET_ROW_ARCADE
+  mk_row(y, "arcade", "touch QA", IT_ROW_MARCADE);
+  y += step;
+#endif
+  (void)y;
+}
+
+void build_mode_confirm() {
+  using canary::mode::Mode;
+  const char* title = canary::mode::mode_token(s_pending_mode);
+  const char* blurb = "";
+  switch (s_pending_mode) {
+    case Mode::Bench:
+      blurb = "Enter dev mode?\nReboots into the peripheral\nbench - no fleet, no network.";
+      break;
+    case Mode::Demo:
+      blurb = "Enter demo mode?\nA scripted household plays on\nthis glass - no fleet, no network.";
+      break;
+    case Mode::Debug:
+      blurb = "Enter debug mode?\nOn-glass diagnostics - network\nup, no updates, read-mostly.";
+      break;
+    case Mode::Arcade:
+      blurb = "Enter arcade mode?\nCanary Catch, the touch QA\nround - no fleet, no network.";
+      break;
+    default:
+      break;
+  }
+  mk_back(title);
   lv_obj_t* body = mk_label(s_host, font_body(), col_text());
-  lv_label_set_text(body,
-      "Enter dev mode?\nReboots into the peripheral\nbench - no fleet, no network.");
+  lv_label_set_text(body, blurb);
   lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(body, LV_ALIGN_CENTER, 0, -26);
   lv_obj_t* yes = mk_label(s_host, font_body(), col_signed());
@@ -657,8 +731,9 @@ void build(Page pg) {
     case Page::CalWarn:      build_cal_warn(); break;
     case Page::CalDone:      build_cal_done(); break;
     case Page::ResetConfirm: build_reset_confirm(); break;
-#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-    case Page::DevConfirm:   build_dev_confirm(); break;
+#ifdef CD_SET_MODES
+    case Page::ModesList:    build_modes_list(); break;
+    case Page::ModeConfirm:  build_mode_confirm(); break;
 #endif
   }
 }
@@ -751,9 +826,9 @@ void dispatch(int id) {
           close_instant();
           commission_ui_open();
           return;
-#if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
+#ifdef CD_SET_MODES
         case IT_ROW_DEV:
-          build(Page::DevConfirm);
+          build(Page::ModesList);
           return;
 #endif
       }
@@ -893,23 +968,46 @@ void dispatch(int id) {
       build(Page::Root);
       return;
 
+#ifdef CD_SET_MODES
+    case Page::ModesList:
+      switch (id) {
+        case IT_BACK: build(Page::Root); return;
 #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-    case Page::DevConfirm:
+        case IT_ROW_MBENCH:
+          s_pending_mode = canary::mode::Mode::Bench;
+          build(Page::ModeConfirm);
+          return;
+#endif
+#if defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE
+        case IT_ROW_MDEMO:
+          s_pending_mode = canary::mode::Mode::Demo;
+          build(Page::ModeConfirm);
+          return;
+#endif
+#if defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE
+        case IT_ROW_MDEBUG:
+          s_pending_mode = canary::mode::Mode::Debug;
+          build(Page::ModeConfirm);
+          return;
+#endif
+#ifdef CD_SET_ROW_ARCADE
+        case IT_ROW_MARCADE:
+          s_pending_mode = canary::mode::Mode::Arcade;
+          build(Page::ModeConfirm);
+          return;
+#endif
+      }
+      return;
+
+    case Page::ModeConfirm:
       if (id == IT_YES) {
-        // Latch dev mode for the NEXT boot, then reboot into the bench. It
-        // comes up network-silent (main.cpp reads this latch and skips
-        // WiFi/MQTT/OTA); the bench's own "exit dev mode" clears it and
-        // reboots back to the fleet face.
-        Preferences p;
-        if (p.begin("securacv", /*readOnly=*/false)) {
-          p.putBool("devmode", true);
-          p.end();
-        }
-        delay(60);
-        ESP.restart();   // does not return
+        // Latch the chosen gear for the NEXT boot and reboot into it. The
+        // glue owns the NVS grammar (token + the legacy devmode bool for
+        // the bench); every gear's own 3 s long-press exits back here.
+        canary::mode::mode_request(s_pending_mode);  // does not return
         return;
       }
-      build(Page::Root);  // "stay" / back
+      build(Page::ModesList);  // "stay" / back
       return;
 #endif
   }

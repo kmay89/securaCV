@@ -18,11 +18,14 @@ enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
 
 The playground/dev-mode pair is the first citizen of a five-gear **mode
 system** (fleet / bench / demo / debug / arcade —
-[`display_modes.md`](../../../docs/hardware/display_modes.md)): the registry
-core and the demo storyline core are implemented + host-tested
-(`include/canary/mode/`, `tests_host/test_mode_registry.cpp` /
-`test_demo_script.cpp`); the runtime glue and per-mode faces land in waves.
-What plugs into the 4.3B's terminals — and why — is catalogued in
+[`display_modes.md`](../../../docs/hardware/display_modes.md)), now **built
+and compile-gated**: pure cores host-tested (`include/canary/mode/`,
+`tests_host/test_{mode_registry,demo_script,arcade_logic}.cpp`), gear
+runtimes in `src/mode/`, the Settings → modes doorway, and dedicated CI envs
+(`canary-display-dash-modes` / `-watch-modes`). Every flag defaults off —
+default builds are byte-identical — and each gear is bench-pending per the
+spec's Waves ledger. What plugs into the 4.3B's terminals — and why — is
+catalogued in
 [`display_peripheral_catalog.md`](../../../docs/hardware/display_peripheral_catalog.md).
 
 > ⚠️ **DEV STATUS (v0.1):** compile/CI-verified; **not yet validated on

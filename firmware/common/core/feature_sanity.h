@@ -135,6 +135,24 @@
   #endif
 #endif
 
+// ─── On-glass modes: demo / debug / arcade ──────────────────────────────
+//
+// The bench's siblings (docs/hardware/display_modes.md) are tap-driven
+// full-screen faces: they need glass and touch, nothing more — the
+// isolated-IO contract belongs to the bench pair above, not here. These
+// follow the standard both-sides-defined convention (adoption-safe on
+// boards that predate the flags).
+#if (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||   \
+    (defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE) || \
+    (defined(FEATURE_ARCADE) && FEATURE_ARCADE)
+  #if defined(HAS_DISPLAY) && !HAS_DISPLAY
+    #error "FEATURE_DEMO_MODE / FEATURE_DEBUG_MODE / FEATURE_ARCADE but this board has no display (HAS_DISPLAY=0) — the modes are full-screen faces. Build a canary-display modes env (see docs/hardware/display_modes.md), or drop the mode flag."
+  #endif
+  #if defined(HAS_TOUCH) && !HAS_TOUCH
+    #error "FEATURE_DEMO_MODE / FEATURE_DEBUG_MODE / FEATURE_ARCADE but this board has no touch controller (HAS_TOUCH=0) — every mode is tap-driven and exits by long-press. Pick a touch display board, or drop the mode flag."
+  #endif
+#endif
+
 // ─── Sensors & inputs ───────────────────────────────────────────────────
 
 #if defined(FEATURE_GNSS) && FEATURE_GNSS && defined(HAS_GNSS_UART) && !HAS_GNSS_UART
