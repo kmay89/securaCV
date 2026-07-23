@@ -33,6 +33,11 @@ posture as flash.json shipping an all-zero release key until the signing
 ceremony. The writer verifies the download against HA's published .sha256 in the
 meantime.
 
+  5. canary-local/devices/hub_image_pins.json .. the pin ceremony's output
+     (pin_hub_image.py): double-sourced sha256 per board. Folded in ONLY
+     while it names the current haos_version — a version bump honestly
+     un-pins the catalog until the ceremony re-runs.
+
 Run:  python3 canary-local/tools/gen_hub_image.py
 CI:   the same command + `git diff --exit-code canary-local/devices/hub_image.json`.
 """
@@ -45,6 +50,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 OUT_JSON = REPO / "canary-local/devices/hub_image.json"
+PINS_JSON = REPO / "canary-local/devices/hub_image_pins.json"
 
 HA_JSON = REPO / "canary-local/devices/homeassistant.json"
 HUB_DISK_RS = REPO / "desktop/hub-core/src/hub_disk.rs"
@@ -87,6 +93,29 @@ def load_ha_json() -> dict:
     if not HA_JSON.exists():
         die(f"missing {HA_JSON.relative_to(REPO)} — run gen_homeassistant.py first")
     return json.loads(HA_JSON.read_text(encoding="utf-8"))
+
+
+def load_pins(version: str) -> dict[str, str]:
+    """The pin ceremony's committed hashes, as {board_id: sha256} — but only
+    when they were minted for exactly this HAOS version. Stale pins (the
+    version moved, the ceremony hasn't re-run) are ignored, not trusted; a
+    malformed pins file is a hard error, because a flasher will act on these.
+    """
+    if not PINS_JSON.exists():
+        return {}
+    try:
+        pins = json.loads(PINS_JSON.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001 — a corrupt pins file must fail loud
+        die(f"unreadable {PINS_JSON.relative_to(REPO)} ({e}) — fix or delete it")
+    if pins.get("haos_version") != version:
+        return {}  # honest: pins for another version vouch for nothing here
+    out = {}
+    for board_id, pin in pins.get("boards", {}).items():
+        sha = str(pin.get("sha256", ""))
+        if not re.fullmatch(r"[0-9a-f]{64}", sha):
+            die(f"pin for {board_id} is not a lowercase SHA-256 hex — refusing to emit it")
+        out[board_id] = sha
+    return out
 
 
 def parse_card_bytes() -> tuple[int, int]:
@@ -204,6 +233,7 @@ def main() -> None:
     integration = ha.get("integration", {})
     min_bytes, recommended_bytes = parse_card_bytes()
     slug, name = addon_slug_name()
+    pins = load_pins(version)
 
     boards = [
         {
@@ -214,10 +244,14 @@ def main() -> None:
             "image_asset": f"{b['asset_stem']}-{version}.img.xz",
             "image_url": f"{HAOS_RELEASE}/{version}/{b['asset_stem']}-{version}.img.xz",
             # Honest-before-pin: derivable URL, empty hash until the pin ceremony.
-            "sha256": "",
+            "sha256": pins.get(b["id"], ""),
         }
         for b in BOARDS
     ]
+    # Pinned means pinned: every supported board carries a ceremony hash for
+    # THIS version. One missing board and the whole catalog stays unpinned —
+    # partial trust is not a state the writer should have to reason about.
+    pinned = all(b["sha256"] for b in boards)
 
     out = {
         "$generated_by": "canary-local/tools/gen_hub_image.py — do not edit by hand",
@@ -242,11 +276,16 @@ def main() -> None:
             "version": version,
             "version_source": "canary-local/devices/homeassistant.json:upstream.haos_version",
             "arch": "aarch64",
-            "pinned": False,
+            "pinned": pinned,
             "pin_note": (
-                "sha256 is set by the pin ceremony (a refresh step, mirroring the OTA signing "
-                "ceremony). Until then the writer verifies the download against HA's published "
-                ".sha256 and these stay empty."
+                "sha256 was double-sourced by the pin ceremony (pin_hub_image.py: HA's published "
+                ".sha256 + GitHub's asset digest, required to agree) and is re-verified weekly by "
+                "--verify in the freshness workflow. A HAOS version bump un-pins until the "
+                "ceremony re-runs."
+                if pinned
+                else "sha256 is set by the pin ceremony (pin_hub_image.py, mirroring the OTA "
+                "signing ceremony). Until then the writer verifies the download against HA's "
+                "published .sha256 and these stay empty."
             ),
             "boards": boards,
         },
@@ -307,6 +346,7 @@ def main() -> None:
                 "homeassistant/lovelace/*.yaml",
                 "homeassistant/automations/*.yaml",
                 "docs/blueprints/*.yaml",
+                *(["canary-local/devices/hub_image_pins.json"] if pinned else []),
             ],
         },
     }
@@ -314,7 +354,8 @@ def main() -> None:
     OUT_JSON.write_text(json.dumps(out, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
     payload = out["payload"]
     print(
-        f"wrote {OUT_JSON.relative_to(REPO)} — HAOS {version}, "
+        f"wrote {OUT_JSON.relative_to(REPO)} — HAOS {version} "
+        f"({'pinned' if pinned else 'unpinned'}), "
         f"min card {min_bytes // 1024**3} GiB, "
         f"{len(payload['add_ons'])} add-ons, {len(payload['dashboards'])} dashboards, "
         f"{len(payload['automations'])} automations, {len(payload['blueprints'])} blueprints"

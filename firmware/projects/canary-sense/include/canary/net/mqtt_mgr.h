@@ -48,4 +48,18 @@ namespace canary::net {
   bool take_pending_identify();  // true exactly once per inbound request
   bool publish_identify_echo(const Topics& topics, bool active);
 
+  // ── Runtime radar reflexes (sense_config ↔ HA number entities) ────────
+  // Retained snapshot on cfg/state; one command topic per knob (cfg/*/set).
+  // The callback latches inbound values; main.cpp drains them, applies via
+  // the clamping setters, reconfigures the FSMs, and republishes. Same
+  // latch-and-drain contract as the OTA commands. -1 = nothing pending.
+  bool publish_sense_cfg_retained(const Topics& topics);
+  long take_pending_cfg_debounce();
+  long take_pending_cfg_clear();
+  long take_pending_cfg_stall();
+  long take_pending_cfg_near();
+  long take_pending_cfg_mid();
+  long take_pending_cfg_vlock();
+  long take_pending_cfg_vlost();
+
 } // namespace

@@ -126,6 +126,21 @@ When adding any of these, follow the ritual above **and** update the pin tracker
 
 ---
 
+## TODO — the mode system (the bench's next of kin)
+
+The bench is now spec'd as one gear of a five-mode system —
+[`display_modes.md`](./display_modes.md): fleet / bench / demo / debug /
+arcade, one NVS `mode` token replacing the `devmode` bool (legacy bool
+honored forever — host-tested migration). The registry core
+(`include/canary/mode/mode_registry.h`) and the demo storyline core
+(`include/canary/mode/demo_script.h`) are implemented + host-tested
+(`tests_host/test_mode_registry.cpp`, `test_demo_script.cpp`, both in CI).
+Next up is wave 1 (runtime glue: `main.cpp` branch via `resolve_boot_mode`,
+Settings row → modes list) — see the spec's Waves table before touching the
+latch code here.
+
+---
+
 ## TODO — the real gating work (not playground code)
 
 Everything the fieldbus/latent-capability PRs added is **`Built · bench-gated`**:

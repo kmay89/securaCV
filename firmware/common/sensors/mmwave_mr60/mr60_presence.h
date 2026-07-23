@@ -74,6 +74,14 @@ class PresenceFSM {
 public:
     explicit PresenceFSM(const PresenceConfig& cfg) : cfg_(cfg) { reset(0); }
 
+    // Swap in new thresholds at runtime (HA/flasher-tuned reflexes). State
+    // resets — deadlines measured under the old config would be misleading —
+    // and the next frames rebuild it within one debounce window.
+    void reconfigure(const PresenceConfig& cfg, uint32_t now_ms) {
+        cfg_ = cfg;
+        reset(now_ms);
+    }
+
     // Clear all state. `now_ms` seeds the deadline clocks.
     void reset(uint32_t now_ms);
 

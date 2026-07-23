@@ -3,6 +3,7 @@
 const https = require('node:https');
 const http = require('node:http');
 const { URL } = require('node:url');
+const { validateWebhookUrl } = require('./webhook-url');
 
 const TIMEOUT_MS = 5000;
 const MAX_RETRIES = 2;
@@ -10,12 +11,11 @@ const RETRY_DELAY_MS = 1000;
 
 function sendWebhook(url, payload, attempt = 0) {
   return new Promise((resolve, reject) => {
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return reject(new Error('Invalid webhook URL'));
+    const validation = validateWebhookUrl(url);
+    if (!validation.ok) {
+      return reject(new Error(validation.error));
     }
+    const parsed = new URL(validation.url);
 
     const transport = parsed.protocol === 'https:' ? https : http;
     const body = JSON.stringify(payload);

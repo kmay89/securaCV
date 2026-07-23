@@ -22,6 +22,17 @@ struct Topics {
   // the device card in sync with the physical LED.
   char identify_cmd[96];
   char identify_echo[96];
+  // Runtime radar reflexes (sense_config): retained snapshot + one command
+  // topic per knob — the same cfg/* schema canary-vision's dials speak, so
+  // HA blueprints and the flasher treat both families identically.
+  char cfg_state[96];
+  char cfg_debounce_cmd[96];
+  char cfg_clear_cmd[96];
+  char cfg_stall_cmd[96];
+  char cfg_near_cmd[96];
+  char cfg_mid_cmd[96];
+  char cfg_vlock_cmd[96];
+  char cfg_vlost_cmd[96];
 };
 
 // device_id comes from canary::cfg::get() — NVS-backed, so topics stay
@@ -39,5 +50,13 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.update_auto_cmd, sizeof(t.update_auto_cmd), "securacv/%s/update/auto/cmd", device_id);
   snprintf(t.identify_cmd,  sizeof(t.identify_cmd),  "securacv/%s/identify/set", device_id);
   snprintf(t.identify_echo, sizeof(t.identify_echo), "securacv/%s/identify",     device_id);
+  snprintf(t.cfg_state,        sizeof(t.cfg_state),        "securacv/%s/cfg/state",           device_id);
+  snprintf(t.cfg_debounce_cmd, sizeof(t.cfg_debounce_cmd), "securacv/%s/cfg/debounce/set",    device_id);
+  snprintf(t.cfg_clear_cmd,    sizeof(t.cfg_clear_cmd),    "securacv/%s/cfg/clear/set",       device_id);
+  snprintf(t.cfg_stall_cmd,    sizeof(t.cfg_stall_cmd),    "securacv/%s/cfg/stall/set",       device_id);
+  snprintf(t.cfg_near_cmd,     sizeof(t.cfg_near_cmd),     "securacv/%s/cfg/near/set",        device_id);
+  snprintf(t.cfg_mid_cmd,      sizeof(t.cfg_mid_cmd),      "securacv/%s/cfg/mid/set",         device_id);
+  snprintf(t.cfg_vlock_cmd,    sizeof(t.cfg_vlock_cmd),    "securacv/%s/cfg/vitals_lock/set", device_id);
+  snprintf(t.cfg_vlost_cmd,    sizeof(t.cfg_vlost_cmd),    "securacv/%s/cfg/vitals_lost/set", device_id);
   return t;
 }
