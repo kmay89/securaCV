@@ -53,6 +53,22 @@ test("flash.json: hatch moments are privacy-safe and product-specific", () => {
   assert.ok(wellbeing.hatch.steps.some((s) => /breathing\/heartbeat/.test(s)), "Wellbeing gets its own settling instruction");
 });
 
+test("flash.json: live-receipt capability follows the firmware command", () => {
+  const receiptIds = catalog.products
+    .filter((p) => p.serial_receipt)
+    .map((p) => p.id)
+    .sort();
+  assert.deepStrictEqual(receiptIds, [
+    "securacv-canary",
+    "securacv-canary-vision",
+    "securacv-canary-vision-xiao-c3",
+    "securacv-canary-vision-xiao-s3",
+  ]);
+  for (const p of catalog.products) {
+    assert.strictEqual(typeof p.serial_receipt, "boolean", `${p.id}: capability missing`);
+  }
+});
+
 test("flash.json: the no-brick promise and recovery ladder are present", () => {
   assert.ok(catalog.no_brick && catalog.no_brick.headline && catalog.no_brick.points.length);
   assert.ok(Array.isArray(catalog.recovery) && catalog.recovery.length >= 2);

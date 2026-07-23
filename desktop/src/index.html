@@ -64,12 +64,55 @@
     <!-- Step 3 — flash -->
     <section class="card disabled" id="step-flash">
       <div class="step-head"><span class="step-n">3</span><h2>Flash it</h2></div>
-      <div class="row">
+      <section id="provisioning" class="provision hidden" aria-labelledby="provision-title">
+        <h3 id="provision-title">First-boot connection</h3>
+        <p class="muted">The verified Vision release image is generic. These values are written directly
+          into this board’s settings partition, never logged and never saved by the app.</p>
+        <div class="form-grid">
+          <label>Canary name<input id="device-id" maxlength="47" autocomplete="off" required></label>
+          <label>Wi-Fi name<input id="wifi-ssid" maxlength="32" autocomplete="off" required></label>
+          <label>Wi-Fi password<input id="wifi-pass" type="password" maxlength="63" autocomplete="new-password"></label>
+          <label>Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off" required></label>
+          <label>MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883" required></label>
+          <label>MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
+          <label>MQTT password<input id="mqtt-pass" type="password" maxlength="64" autocomplete="new-password"></label>
+        </div>
+      </section>
+      <div class="row" id="host-flash-controls">
         <button id="flash-btn" class="btn btn-primary" disabled>Flash my Canary</button>
         <span id="flash-target" class="muted"></span>
       </div>
+      <section id="module-flow" class="module-flow hidden">
+        <h3>Grove Vision AI V2 module</h3>
+        <p class="muted">CH343 / WiseEye2 recognized. This writes the pinned, SHA-256-verified
+          person model to <span class="mono">0x400000</span>, then requires an AT response and one real inference.</p>
+        <div class="row">
+          <button id="module-flash-btn" class="btn btn-primary">Flash &amp; prove the Vision module</button>
+          <span id="module-progress" class="muted"></span>
+        </div>
+        <img id="module-preview" class="module-preview hidden" alt="One attended local inference frame from the Vision module">
+      </section>
       <pre id="console" class="console hidden" aria-live="polite"></pre>
       <p id="flash-result" class="status"></p>
+
+      <section id="receipts" class="receipts hidden" aria-live="polite">
+        <h3>Installation receipts</h3>
+        <div id="receipt-host-image" class="receipt pending"><span>Host firmware</span><strong>waiting</strong></div>
+        <div id="receipt-host-boot" class="receipt pending"><span>Host boot + Vision I²C</span><strong>waiting</strong></div>
+        <div id="receipt-module" class="receipt pending"><span>Vision module model + inference</span><strong>waiting</strong></div>
+      </section>
+
+      <section id="serial-monitor" class="monitor hidden">
+        <div class="row monitor-head">
+          <h3>Serial monitor</h3>
+          <button id="monitor-start" class="btn btn-small">Start</button>
+          <button id="monitor-stop" class="btn btn-small" disabled>Stop</button>
+          <button id="monitor-manifest" class="btn btn-small" disabled>Print receipt (j)</button>
+        </div>
+        <p id="monitor-status" class="muted">Not connected.</p>
+        <pre id="serial-console" class="console" aria-live="polite"></pre>
+      </section>
+
       <section id="hatch-card" class="hatch hidden" aria-live="polite">
         <p class="hatch-kicker">Canary hatched</p>
         <h3 id="hatch-title">It is alive.</h3>
@@ -81,7 +124,7 @@
 
   <footer class="fineprint">
     <p>
-      Images come from the project's <strong>signed</strong> GitHub releases.
+      Images come from the project's <strong>verified</strong> GitHub releases.
       The flashing engine is
       <span class="mono">espflash</span>, bundled — nothing is fetched from a
       CDN. <a href="#" data-open="https://github.com/kmay89/securaCV">source</a> ·

@@ -44,7 +44,8 @@
           "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
           "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
         ]
-      }
+      },
+      "serial_receipt": true
     },
     {
       "id": "securacv-canary-wap",
@@ -64,7 +65,8 @@
           "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
           "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
         ]
-      }
+      },
+      "serial_receipt": false
     },
     {
       "id": "securacv-canary-vision",
@@ -84,7 +86,8 @@
           "Put the board where it can see a doorway, then walk through once.",
           "Open Home Assistant and watch the presence entity flip to detected, then clear."
         ]
-      }
+      },
+      "serial_receipt": true
     },
     {
       "id": "securacv-canary-vision-xiao-c3",
@@ -104,7 +107,8 @@
           "Put the board where it can see a doorway, then walk through once.",
           "Open Home Assistant and watch the presence entity flip to detected, then clear."
         ]
-      }
+      },
+      "serial_receipt": true
     },
     {
       "id": "securacv-canary-vision-xiao-s3",
@@ -124,7 +128,8 @@
           "Put the board where it can see a doorway, then walk through once.",
           "Open Home Assistant and watch the presence entity flip to detected, then clear."
         ]
-      }
+      },
+      "serial_receipt": true
     },
     {
       "id": "securacv-canary-sense",
@@ -144,7 +149,8 @@
           "Stand still for a breath, then walk past it at normal speed.",
           "Watch presence flip in Home Assistant."
         ]
-      }
+      },
+      "serial_receipt": false
     },
     {
       "id": "securacv-canary-sense-wellbeing",
@@ -164,7 +170,8 @@
           "Walk past it once and watch presence flip in Home Assistant.",
           "Sit still after the presence card is stable; then watch the wellbeing tile settle into its first breathing/heartbeat reading."
         ]
-      }
+      },
+      "serial_receipt": false
     }
   ],
   "we2_module": {

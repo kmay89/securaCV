@@ -344,6 +344,31 @@ def board_for_env(project: str, env: str) -> str:
     return found
 
 
+def supports_serial_receipt(project: str) -> bool:
+    """Derive the native flasher's post-write receipt gate from firmware.
+
+    A product supports the live receipt only when its own compiled sources wire
+    the shared self-manifest builder to the public ``j`` serial command.  This
+    deliberately is not another product capability table: adding or removing
+    the command in firmware changes flash.json on the next generator run, and
+    the existing catalog drift check makes that change visible in CI.
+    """
+    project_dir = REPO / project
+    source = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in sorted(project_dir.rglob("*"))
+        if path.is_file()
+        and not {".pio", "build", "dist"}.intersection(path.relative_to(project_dir).parts)
+        and path.suffix.lower() in {".c", ".cc", ".cpp", ".h", ".hpp", ".ino"}
+    )
+    has_builder = 'attest/self_manifest.h' in source and "emit_self_manifest" in source
+    has_command = bool(re.search(
+        r"case\s+'j'|\{\s*'j'\s*,\s*\"self_manifest\"",
+        source,
+    ))
+    return has_builder and has_command
+
+
 def main() -> None:
     registry = json.loads(read(CANARY_LOCAL / "devices/registry.json"))
     fw_train = registry.get("fw_train")
@@ -387,6 +412,7 @@ def main() -> None:
             "provisioning": p["provisioning"],
             "provisioning_note": PROVISIONING[p["provisioning"]],
             "hatch": hatch,
+            "serial_receipt": supports_serial_receipt(p["project"]),
         })
 
     doc = {

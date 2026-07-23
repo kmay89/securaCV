@@ -3,10 +3,10 @@
 
 namespace canary::net {
 
-// Boot-time connect: blocking, with a hard timeout that reboots the device
-// (a witness that can't reach its broker is better off retrying from a clean
-// slate than half-running). Applies the WiFi power policy (modem sleep / TX
-// power cap from canary/config.h) once the link is up.
+// Boot-time connect: bounded. A generic/unprovisioned release continues
+// offline immediately; a configured network that misses the timeout also
+// continues offline so USB serial, identity, and Vision I2C proof stay usable.
+// wifi_loop() owns later reconnect attempts.
 void wifi_init_or_reboot();
 
 // Steady-state STA supervision — call every loop() pass. Non-blocking:
@@ -18,6 +18,9 @@ void wifi_loop(uint32_t now_ms);
 
 // True while the STA link is up.
 bool wifi_connected();
+
+// False when the generic release placeholders are still active.
+bool wifi_configured();
 
 // Current RSSI in dBm (0 when not connected) — surfaced as an HA
 // diagnostic sensor via the status heartbeat.

@@ -18,5 +18,10 @@ describe('webhook SSRF guard', () => {
     assert.equal(validateWebhookUrl('http://homeassistant.local/hook').ok, true);
     assert.equal(validateWebhookUrl('http://8.8.8.8/hook').ok, false);
     assert.equal(validateWebhookUrl('http://169.254.169.254/hook').ok, false);
+    // DNS names that merely start with a private prefix are public hosts.
+    assert.equal(validateWebhookUrl('http://192.168.attacker.example/hook').ok, false);
+    assert.equal(validateWebhookUrl('http://10.evil.example/hook').ok, false);
+    assert.equal(validateWebhookUrl('http://172.16.evil.example/hook').ok, false);
+    assert.equal(validateWebhookUrl('http://192.168.1.999/hook').ok, false);
   });
 });
