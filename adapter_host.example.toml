@@ -285,7 +285,6 @@ zone = "back_gate"
 [[adapter]]
 type = "can_bus"
 interface = "can0"
-# sandbox = true
 
 # Each route matches (can_id, byte_offset, mask, equals) to a claim kind in a zone. can_id and
 # equals accept decimal or 0x-hex (paste straight from candump's hex dump). Multiple routes MAY

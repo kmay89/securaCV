@@ -33,6 +33,7 @@
 //! drains whatever has arrived and matches it against the routing table — no
 //! socket, no serial port, no I/O of its own.
 
+use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use anyhow::Result;
@@ -122,32 +123,85 @@ impl CanRoute {
 /// Shared, hot-reloadable route table.
 pub type SharedCanRoutes = std::sync::Arc<std::sync::Mutex<Vec<CanRoute>>>;
 
-/// Pure, I/O-free transform: match one frame against the routing table.
+/// Stable identity of a route's condition — `(can_id, byte_offset, mask, equals)` — used as the
+/// edge-detection state key instead of a vector index, so tracked state survives a SIGHUP route
+/// reload as long as the route itself is unchanged.
+type RouteKey = (u32, usize, u8, u8);
+
+fn route_key(route: &CanRoute) -> RouteKey {
+    (route.can_id, route.byte_offset, route.mask, route.equals)
+}
+
+fn route_matches(route: &CanRoute, data: &[u8]) -> bool {
+    data.get(route.byte_offset)
+        .is_some_and(|&byte| (byte & route.mask) == route.equals)
+}
+
+/// Pure, I/O-free transform: match one frame against the routing table, **level-triggered** (a
+/// frame already sitting in a matched state matches every time, with no memory of prior frames).
+/// This is what you want for a one-shot check; [`CanBusAdapter::poll`] wraps this in edge
+/// detection (below) so a continuously-broadcast status frame doesn't mint a fresh claim every
+/// poll cycle.
 ///
-/// Multiple routes MAY share a `can_id` (e.g. one route for "ignition on",
-/// a second for "ignition off" on the same frame, distinguished by
-/// `byte_offset`/`equals`) — every matching-ID route is checked in order
-/// and the first whose byte condition passes wins. A frame that matches no
-/// route's byte condition (or is shorter than `byte_offset`) yields no
-/// claim, silently — an unrecognized frame is normal bus traffic, not an
-/// error.
+/// Multiple routes MAY share a `can_id` (e.g. one route for "ignition on", a second for
+/// "ignition off" on the same frame, distinguished by `byte_offset`/`equals`) — every
+/// matching-ID route is checked in order and the first whose byte condition passes wins. A frame
+/// that matches no route's byte condition (or is shorter than `byte_offset`) yields no claim,
+/// silently — an unrecognized frame is normal bus traffic, not an error.
 pub fn route_frame(routes: &[CanRoute], can_id: u32, data: &[u8]) -> Option<Claim> {
+    routes
+        .iter()
+        .filter(|r| r.can_id == can_id)
+        .find(|r| route_matches(r, data))
+        .map(|r| Claim::new(r.kind, r.zone_label.clone(), r.confidence))
+}
+
+/// Edge-triggered wrapper around [`route_frame`]'s matching logic: emits a claim only on the
+/// transition INTO a route's matched state, never while a frame already sitting in that state
+/// keeps arriving. Vehicles broadcast status frames continuously (often multiple times a
+/// second) — without this, a parked-and-running vehicle would mint a fresh arrival claim every
+/// bucket, and a naive "emit on every match" would make the "ignition off" sibling of an
+/// "ignition on" route on the same `can_id` impossible to trust as a discrete event (both would
+/// fire on every frame that happens to carry either byte value).
+///
+/// Every route sharing `can_id` has its tracked state updated on every call — not just the one
+/// that ends up emitting — so the next differing frame correctly detects the next transition.
+/// `last_state` is keyed by [`route_key`], not position, so it stays correct across a live route
+/// reload (SIGHUP).
+fn route_frame_edge_triggered(
+    routes: &[CanRoute],
+    last_state: &mut HashMap<RouteKey, bool>,
+    can_id: u32,
+    data: &[u8],
+) -> Option<Claim> {
+    let mut claim = None;
     for route in routes.iter().filter(|r| r.can_id == can_id) {
-        if let Some(&byte) = data.get(route.byte_offset) {
-            if (byte & route.mask) == route.equals {
-                return Some(Claim::new(route.kind, route.zone_label.clone(), route.confidence));
-            }
+        let key = route_key(route);
+        let matches = route_matches(route, data);
+        let was_matched = last_state.insert(key, matches).unwrap_or(false);
+        if matches && !was_matched && claim.is_none() {
+            claim = Some(Claim::new(
+                route.kind,
+                route.zone_label.clone(),
+                route.confidence,
+            ));
         }
     }
-    None
+    claim
 }
 
 /// Vehicle CAN bus adapter. Construct with [`CanBusAdapter::new`] and feed
 /// it via the returned [`Sender`].
+///
+/// Frame matching here is trivial fixed-width byte comparison on data the kernel's own CAN
+/// driver has already framed — unlike the JSON/MQTT-payload adapters, there's no meaningful
+/// parser attack surface to sandbox, and the seccomp sandbox's fork-per-call model would silently
+/// discard the edge-detection state this adapter needs to carry between polls. So, deliberately,
+/// no `with_sandbox` here.
 pub struct CanBusAdapter {
     rx: Receiver<CanFrame>,
     routes: SharedCanRoutes,
-    sandbox: bool,
+    last_state: HashMap<RouteKey, bool>,
 }
 
 impl CanBusAdapter {
@@ -157,18 +211,10 @@ impl CanBusAdapter {
             Self {
                 rx,
                 routes: std::sync::Arc::new(std::sync::Mutex::new(routes)),
-                sandbox: false,
+                last_state: HashMap::new(),
             },
             tx,
         )
-    }
-
-    /// Opt in to running frame matching inside the seccomp sandbox (requires
-    /// the `adapter-sandbox` feature; no effect otherwise). Matching is pure
-    /// byte comparison, so this is cheap insurance for a bus-facing adapter.
-    pub fn with_sandbox(mut self, enabled: bool) -> Self {
-        self.sandbox = enabled;
-        self
     }
 
     /// Handle to the live route table, for SIGHUP hot-reload by the host.
@@ -187,7 +233,6 @@ impl SensorAdapter for CanBusAdapter {
     }
 
     fn poll(&mut self) -> Result<Vec<Claim>> {
-        let _ = self.sandbox; // read unconditionally; only consulted under `adapter-sandbox`.
         let mut frames = Vec::new();
         while let Ok(frame) = self.rx.try_recv() {
             frames.push(frame);
@@ -196,22 +241,15 @@ impl SensorAdapter for CanBusAdapter {
             return Ok(Vec::new());
         }
         let routes = self.routes.lock_tolerant().clone();
-        let match_all = || {
-            let mut out = Vec::new();
-            for frame in &frames {
-                if let Some(claim) = route_frame(&routes, frame.can_id, &frame.data) {
-                    out.push(claim);
-                }
-            }
-            Ok(out)
-        };
-        #[cfg(feature = "adapter-sandbox")]
-        {
-            if self.sandbox {
-                return crate::adapter::sandbox::parse_in_sandbox(match_all);
+        let mut out = Vec::new();
+        for frame in &frames {
+            if let Some(claim) =
+                route_frame_edge_triggered(&routes, &mut self.last_state, frame.can_id, &frame.data)
+            {
+                out.push(claim);
             }
         }
-        match_all()
+        Ok(out)
     }
 }
 
@@ -264,14 +302,11 @@ mod tests {
     #[test]
     fn mask_isolates_a_single_flag_bit() {
         // Only bit 0 matters; bit 3 (0x08) being set must not block the match.
-        let routes = vec![CanRoute::new(
-            0x3E8,
-            0,
-            0x01,
-            ClaimKind::VehicleArrivalDeparture,
-            "garage",
-        )
-        .with_mask(0x01)];
+        let routes =
+            vec![
+                CanRoute::new(0x3E8, 0, 0x01, ClaimKind::VehicleArrivalDeparture, "garage")
+                    .with_mask(0x01),
+            ];
         assert!(route_frame(&routes, 0x3E8, &[0x09]).is_some());
         assert!(route_frame(&routes, 0x3E8, &[0x08]).is_none());
     }
@@ -287,6 +322,73 @@ mod tests {
         let claims = adapter.poll().expect("poll");
         assert_eq!(claims.len(), 1);
         assert!(adapter.poll().expect("poll2").is_empty());
+    }
+
+    #[test]
+    fn repeated_status_broadcast_fires_only_once_not_every_poll() {
+        // A vehicle left running broadcasts its ignition-on frame continuously — this must NOT
+        // mint a fresh arrival claim on every poll cycle (the bug the Codex review caught).
+        let (mut adapter, tx) = CanBusAdapter::new(ignition_routes());
+        for _ in 0..5 {
+            tx.send(CanFrame {
+                can_id: 0x3E8,
+                data: vec![0x01, 0, 0, 0],
+            })
+            .unwrap();
+        }
+        let claims = adapter.poll().expect("poll");
+        assert_eq!(
+            claims.len(),
+            1,
+            "5 identical frames in one poll -> exactly 1 claim"
+        );
+
+        tx.send(CanFrame {
+            can_id: 0x3E8,
+            data: vec![0x01, 0, 0, 0],
+        })
+        .unwrap();
+        assert!(
+            adapter.poll().expect("poll2").is_empty(),
+            "still-on frame on a later poll must not re-fire"
+        );
+    }
+
+    #[test]
+    fn ignition_on_then_off_then_on_again_fires_three_times() {
+        let (mut adapter, tx) = CanBusAdapter::new(ignition_routes());
+        for byte in [0x01u8, 0x00, 0x01] {
+            tx.send(CanFrame {
+                can_id: 0x3E8,
+                data: vec![byte, 0, 0, 0],
+            })
+            .unwrap();
+            assert_eq!(adapter.poll().expect("poll").len(), 1, "byte {byte:#x}");
+        }
+    }
+
+    #[test]
+    fn edge_triggered_state_survives_a_route_table_reload() {
+        let (mut adapter, tx) = CanBusAdapter::new(ignition_routes());
+        tx.send(CanFrame {
+            can_id: 0x3E8,
+            data: vec![0x01, 0, 0, 0],
+        })
+        .unwrap();
+        assert_eq!(adapter.poll().expect("poll").len(), 1);
+
+        // Simulate a SIGHUP reload that rebuilds an identical route list (same keys, new Vec).
+        *adapter.routes_handle().lock().unwrap() = ignition_routes();
+
+        tx.send(CanFrame {
+            can_id: 0x3E8,
+            data: vec![0x01, 0, 0, 0],
+        })
+        .unwrap();
+        assert!(
+            adapter.poll().expect("poll2").is_empty(),
+            "still-on after a reload of the SAME route set must not re-fire"
+        );
     }
 
     #[test]

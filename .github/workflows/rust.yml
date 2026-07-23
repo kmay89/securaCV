@@ -92,7 +92,7 @@ jobs:
     # adapter_cannot_bypass_enforcer suite and the parser fuzz-lite — compile
     # under the clippy-only optional-features job but never execute.
     - name: Test with all adapter features
-      run: cargo test --verbose --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-sandbox
+      run: cargo test --verbose --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-can-bus,adapter-sandbox
 
   ingest-ffmpeg:
     name: Ingest (ffmpeg file decode)
@@ -193,7 +193,7 @@ jobs:
     - name: Clippy (ingest-esp32)
       run: cargo clippy --all-targets --features ingest-esp32 -- -D warnings
     - name: Clippy (adapters)
-      run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-sandbox -- -D warnings
+      run: cargo clippy --all-targets --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-can-bus,adapter-sandbox -- -D warnings
     - name: Clippy (backend-tract)
       run: cargo clippy --all-targets --features backend-tract -- -D warnings
     - name: Clippy (ingest-v4l2)

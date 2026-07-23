@@ -311,8 +311,6 @@ struct CanBusCfg {
     interface: String,
     #[serde(default)]
     route: Vec<CanRouteCfg>,
-    #[serde(default)]
-    sandbox: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -727,21 +725,21 @@ fn main() -> Result<()> {
             AdapterCfg::CanBus(cc) => {
                 let routes = build_can_routes(&cc.route)?;
                 let (adapter, tx) = CanBusAdapter::new(routes);
-                let adapter = adapter.with_sandbox(cc.sandbox);
                 let handle = adapter.routes_handle();
                 reloaders.push(Box::new(move |c| {
                     let AdapterCfg::CanBus(cc) = c else {
                         return Err(anyhow!("adapter type changed at this position"));
                     };
-                    *handle.lock().unwrap_or_else(|p| p.into_inner()) = build_can_routes(&cc.route)?;
+                    *handle.lock().unwrap_or_else(|p| p.into_inner()) =
+                        build_can_routes(&cc.route)?;
                     Ok(())
                 }));
                 spawn_socketcan_reader(cc.interface.clone(), tx);
                 host.register(adapter);
                 log::info!(
-                    "registered can_bus adapter #{idx} on {} (sandbox={}, read-only)",
-                    cc.interface,
-                    cc.sandbox
+                    "registered can_bus adapter #{idx} on {} (read-only, no sandbox — see \
+                     can_bus.rs's CanBusAdapter doc comment for why)",
+                    cc.interface
                 );
             }
         }
@@ -886,9 +884,8 @@ fn spawn_socketcan_reader(iface: String, tx: Sender<can_bus::CanFrame>) {
                 log::info!("[can_bus:{iface}] listening (read-only)");
                 let mut buf = [0u8; std::mem::size_of::<libc::can_frame>()];
                 loop {
-                    let n = unsafe {
-                        libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-                    };
+                    let n =
+                        unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
                     if n < 0 {
                         log::warn!(
                             "[can_bus:{iface}] read error: {}",
