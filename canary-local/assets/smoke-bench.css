@@ -1,0 +1,114 @@
+/* canary-local/assets/smoke-bench.css — the "listen for a smoke alarm" bench.
+   Uses the shared palette (canary-local.css :root vars). */
+
+#smoke { max-width: 720px; margin: 0 auto; padding: 0 16px 48px; }
+
+.smoke-disclaimer {
+  border: 1px solid rgba(229,57,53,0.4);
+  background: rgba(229,57,53,0.07);
+  border-radius: 12px; padding: 11px 15px; margin: 14px 0 18px;
+  font-size: 13px; line-height: 1.5; color: #f0c9c7;
+}
+.smoke-disclaimer strong { color: #ffb3ae; }
+
+.smoke-card {
+  border: 1px solid var(--edge, #262626);
+  background: linear-gradient(180deg, #16160f 0%, #0e0e10 100%);
+  border-radius: var(--radius, 18px); padding: 20px 22px;
+}
+.smoke-card h2 { margin: 0 0 10px; font-size: 19px; color: var(--canary, #ffd44f); }
+
+.smoke-how { margin: 0 0 14px; padding-left: 20px; color: #cfcfcf; line-height: 1.6; font-size: 14px; }
+.smoke-how strong { color: #fff; }
+
+.smoke-priv {
+  display: flex; gap: 8px; align-items: flex-start;
+  background: rgba(3,169,244,0.06); border: 1px solid rgba(3,169,244,0.22);
+  border-radius: 10px; padding: 10px 13px; font-size: 12.5px; line-height: 1.5;
+  color: #bcd; margin: 0 0 16px;
+}
+.smoke-priv-key { font-size: 15px; }
+
+.smoke-warn {
+  background: rgba(251,140,0,0.08); border: 1px solid rgba(251,140,0,0.3);
+  border-radius: 10px; padding: 11px 14px; font-size: 13.5px; color: #f0cfa0; line-height: 1.5;
+}
+
+.smoke-start, .smoke-stop {
+  border: none; border-radius: 12px; cursor: pointer; font-weight: 640;
+  font-size: 15px; padding: 12px 20px;
+}
+.smoke-start { background: var(--canary, #ffd44f); color: #141414; }
+.smoke-start:hover { background: #ffdf73; }
+.smoke-start:disabled { opacity: 0.6; cursor: default; }
+.smoke-stop { background: #2a2a2a; color: #eee; font-size: 13.5px; padding: 8px 14px; }
+.smoke-stop:hover { background: #383838; }
+
+.smoke-live-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 14px; color: #ddd; }
+.smoke-live-head span:nth-child(2) { flex: 1; }
+.smoke-listening-dot {
+  width: 11px; height: 11px; border-radius: 50%; background: var(--alert, #e53935);
+  box-shadow: 0 0 0 0 rgba(229,57,53,0.6); animation: smoke-pulse 1.4s ease-out infinite;
+}
+@keyframes smoke-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(229,57,53,0.55); }
+  70% { box-shadow: 0 0 0 9px rgba(229,57,53,0); }
+  100% { box-shadow: 0 0 0 0 rgba(229,57,53,0); }
+}
+
+.smoke-field { margin: 14px 0; }
+.smoke-field-label { font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted, #8a8a8a); margin-bottom: 6px; }
+
+.smoke-meter {
+  position: relative; height: 20px; border-radius: 10px;
+  background: #1c1c1c; border: 1px solid #2a2a2a; overflow: hidden;
+}
+.smoke-meter-fill {
+  height: 100%; width: 0%; border-radius: 10px 0 0 10px;
+  background: linear-gradient(90deg, #3a7d44, #6fbf73); transition: width 60ms linear;
+}
+.smoke-meter-fill.smoke-meter-hot { background: linear-gradient(90deg, var(--canary-deep, #e3b33c), var(--canary, #ffd44f)); }
+.smoke-meter-on {
+  position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; opacity: 0.55;
+}
+
+.smoke-trace {
+  display: flex; align-items: flex-end; gap: 5px; min-height: 66px;
+  padding: 8px 10px; background: #121212; border: 1px solid #262626; border-radius: 10px;
+}
+.smoke-trace-empty { color: var(--faint, #4a4a4a); font-size: 13px; align-self: center; }
+.smoke-bar {
+  width: 16px; border-radius: 3px 3px 0 0; background: #3a3a3a; flex: 0 0 auto;
+  transition: height 80ms ease-out;
+}
+.smoke-bar-band { background: linear-gradient(180deg, var(--canary, #ffd44f), var(--canary-deep, #e3b33c)); }
+
+.smoke-banner {
+  margin: 16px 0 4px; padding: 13px 16px; border-radius: 12px; text-align: center;
+  font-size: 14px; color: var(--muted, #8a8a8a); background: #141414; border: 1px solid #262626;
+}
+.smoke-banner-hit {
+  color: #141414; font-weight: 700; font-size: 15px;
+  background: var(--canary, #ffd44f); border-color: var(--canary, #ffd44f);
+}
+.smoke-banner-flash { animation: smoke-flash 0.7s ease-out 3; }
+@keyframes smoke-flash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,212,79,0); }
+  50% { box-shadow: 0 0 22px 3px rgba(255,212,79,0.55); }
+}
+
+.smoke-sens { display: flex; align-items: center; gap: 10px; margin-top: 18px; font-size: 12.5px; color: var(--muted); }
+.smoke-sens-label { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+.smoke-sens input[type=range] { flex: 1; accent-color: var(--canary, #ffd44f); }
+.smoke-sens-val { min-width: 120px; text-align: right; color: #bbb; }
+
+.smoke-facts { margin: 18px 0 4px; border: 1px solid #222; border-radius: 10px; background: #101010; }
+.smoke-facts summary { cursor: pointer; padding: 11px 14px; font-size: 13px; color: var(--canary-deep, #e3b33c); }
+.smoke-facts-body { padding: 4px 14px 12px; }
+.smoke-fact { display: flex; gap: 10px; padding: 5px 0; border-top: 1px solid #1c1c1c; font-size: 12.5px; }
+.smoke-fact-k { flex: 0 0 140px; color: var(--muted, #8a8a8a); }
+.smoke-fact-v { color: #ccc; }
+
+@media (prefers-reduced-motion: reduce) {
+  .smoke-listening-dot, .smoke-banner-flash, .smoke-bar, .smoke-meter-fill { animation: none !important; transition: none !important; }
+}

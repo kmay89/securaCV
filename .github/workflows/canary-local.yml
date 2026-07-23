@@ -120,6 +120,7 @@ jobs:
           node --test canary-local/tests/homeassistant.test.js
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/audio.test.js
           node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
           node --test canary-local/tests/senselab.test.js
@@ -312,6 +313,8 @@ jobs:
         run: node canary-local/tests/sense_probe.mjs
       - name: Sense Lab probe — placement bench, pipeline, cards, stall path
         run: node canary-local/tests/senselab_probe.mjs
+      - name: Audio probe — smoke bench renders, real wasm detects T3 / rejects off-band, mic path
+        run: node canary-local/tests/audio_probe.mjs
       - name: Vault probe — seal walkthrough + real Ed25519 break-glass quorum
         run: node canary-local/tests/vault_probe.mjs
       - name: Operator probe — setup ceremony (draft → live quorum), drill + doctor
