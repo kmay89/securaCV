@@ -97,6 +97,16 @@ class ExceptionKinds(unittest.TestCase):
         self.assertIn("price-jump",
                       [x["kind"] for x in bp.find_exceptions(old, spike)])
 
+    def test_price_jump_needs_real_money_not_just_percent(self):
+        # A $0.02 passive doubling to $0.04 is 100% but $0.02 — never an
+        # exception. The noise floor keeps the queue meaningful.
+        old = snapshot(unit=0.02)
+        doubled = bp.assemble(part(), old,
+                              {"MR60BHA2": dict(HIT, unit_usd=0.04)},
+                              "n", attempted={"MR60BHA2"})
+        self.assertEqual(
+            [x["kind"] for x in bp.find_exceptions(old, doubled)], [])
+
     def test_lifecycle_fires_on_nrnd(self):
         old = snapshot()
         hit = dict(HIT, lifecycle="Not For New Designs")
