@@ -562,33 +562,59 @@ fn hub_flash_blocking(
         .map(|d| d.join(cache_name(&plan.image_url)));
 
     // Try the cache first: hash the local file and see if it still verifies
-    // against the plan (a HAOS re-release or a corrupt cache simply misses).
+    // against the plan.
     let mut used_cache = false;
-    let (xz_path, verified) = 'image: {
+    let (xz_path, xz_is_temp, verified) = 'image: {
         if let Some(cp) = cached_path.as_ref().filter(|p| p.exists()) {
             log("→ found a local copy — re-verifying it instead of downloading…".to_string());
-            if let Ok(sha) = hub_io::fetch::sha256_file(cp, cancel) {
-                if let Ok(v) =
-                    hub_core::hub_image::verify_download(&plan, &sha, published.as_deref())
-                {
-                    log("✓ local copy verified — skipping the download".to_string());
-                    used_cache = true;
-                    break 'image (cp.clone(), v);
+            match hub_io::fetch::sha256_file(cp, cancel) {
+                // A cancel during the hash is a cancel, not a bad cache: stop
+                // cleanly and KEEP the file.
+                Err(e) if e.starts_with(hub_io::CANCELLED) => return Err(e),
+                Err(_) => {
+                    // Couldn't even read it — treat as absent and re-download.
+                    log("→ couldn't read the local copy; downloading a fresh one".to_string());
+                    let _ = std::fs::remove_file(cp);
+                }
+                Ok(sha) => {
+                    match hub_core::hub_image::verify_download(&plan, &sha, published.as_deref()) {
+                        Ok(v) => {
+                            log("✓ local copy verified — skipping the download".to_string());
+                            used_cache = true;
+                            break 'image (cp.clone(), false, v);
+                        }
+                        // No checksum to verify against (e.g. offline + unpinned) is
+                        // TRANSIENT — don't destroy a possibly-good cache over it.
+                        Err(hub_core::hub_image::VerifyError::NoChecksumAvailable) => {
+                            return Err(
+                            "you're offline and this image isn't pinned yet, so the local copy \
+                             can't be verified — connect to the internet once and try again (your \
+                             download is kept)"
+                                .to_string(),
+                        );
+                        }
+                        // A genuine content mismatch: the cache is bad, replace it.
+                        Err(e) => {
+                            log(format!(
+                                "→ the local copy didn't match ({}); downloading a fresh one",
+                                e.message()
+                            ));
+                            let _ = std::fs::remove_file(cp);
+                        }
+                    }
                 }
             }
-            log("→ the local copy didn't check out; downloading a fresh one".to_string());
-            let _ = std::fs::remove_file(cp);
         }
 
         // Download to the cache location when we have one (so it survives for
-        // next time), else to a temp file.
-        let staging = staging_dir();
+        // next time), else to a temp file we must clean up ourselves.
+        let is_temp = cache_dir.is_none();
         let dest = match cache_dir.as_ref() {
             Some(d) => {
                 let _ = std::fs::create_dir_all(d);
                 d.join(cache_name(&plan.image_url))
             }
-            None => staging.join(cache_name(&plan.image_url)),
+            None => staging_dir().join(cache_name(&plan.image_url)),
         };
         log(format!("→ downloading {}", plan.image_url));
         let dl = match hub_io::fetch::download(&plan.image_url, &dest, cancel, &mut progress) {
@@ -612,7 +638,14 @@ fn hub_flash_blocking(
                 let _ = std::fs::remove_file(&dest);
                 e.message()
             })?;
-        break 'image (dest, v);
+        break 'image (dest, is_temp, v);
+    };
+    // A .xz downloaded to the OS temp dir (no app cache dir available) is ours
+    // to clean up; a cached one is kept for reuse. The raw image is always
+    // temporary. Both delete on drop — success path and every `?` below.
+    let _xz_cleanup = CleanupPath {
+        path: xz_path.clone(),
+        active: xz_is_temp,
     };
     log(format!(
         "✓ image verified against {}",
@@ -623,12 +656,13 @@ fn hub_flash_blocking(
         }
     ));
 
-    // 5) Decompress to a raw image in a private temp file that we delete when
-    //    this function returns (it's ~2.5 GB — the cached .xz is the artifact
-    //    worth keeping, not the expanded image). RaiiPath removes it on drop,
-    //    on the success path and on every `?` below.
-    let raw_path = RaiiPath(staging_dir().join(format!("securacv-hub-{}.img", std::process::id())));
-    let raw = hub_io::xz::decompress(&xz_path, &raw_path.0, cancel, &mut progress)?;
+    // 5) Decompress to a raw image in a private temp file (it's ~2.5 GB — the
+    //    cached .xz is the artifact worth keeping, not the expanded image).
+    let raw_path = CleanupPath {
+        path: staging_dir().join(format!("securacv-hub-{}.img", std::process::id())),
+        active: true,
+    };
+    let raw = hub_io::xz::decompress(&xz_path, &raw_path.path, cancel, &mut progress)?;
     log(format!("✓ raw image ready: {} bytes", raw.bytes));
     if raw.bytes > target.size_bytes {
         return Err(format!(
@@ -671,7 +705,7 @@ fn hub_flash_blocking(
         target.path
     ));
     let receipt =
-        hub_io::write::write_image(authz, &raw_path.0, &raw.sha256, cancel, &mut progress)?;
+        hub_io::write::write_image(authz, &raw_path.path, &raw.sha256, cancel, &mut progress)?;
     log("✓ written and read back — the card verifiably holds the image".to_string());
 
     // 8) Seed the card in ONE mount — Wi-Fi and (opt-in) the account store —
@@ -708,12 +742,22 @@ fn hub_flash_blocking(
                             .to_string(),
                     );
                 }
-                (
-                    o.wifi_written,
-                    o.wifi_note,
-                    o.account_written,
-                    o.account_note,
-                )
+                // An eject stumble doesn't undo a written seed — attach it to
+                // whichever note we're already surfacing (or Wi-Fi's) as a
+                // "please eject it yourself" tail.
+                let mut wifi_note = o.wifi_note;
+                if let Some(ej) = o.eject_note {
+                    log(format!("→ settings written, but: {ej}"));
+                    match wifi_note.as_mut() {
+                        Some(n) => {
+                            n.push_str(" — also: ");
+                            n.push_str(&ej);
+                        }
+                        None if o.wifi_written || !want_account => wifi_note = Some(ej),
+                        None => {}
+                    }
+                }
+                (o.wifi_written, wifi_note, o.account_written, o.account_note)
             }
             Err(e) => {
                 // Couldn't even mount — the card is still good; say so plainly.
@@ -774,10 +818,19 @@ fn hub_flash_blocking(
 
 /// A path that deletes its file when dropped — used for the ~2.5 GB raw image
 /// so it never lingers, on the happy path or any early return.
-struct RaiiPath(std::path::PathBuf);
-impl Drop for RaiiPath {
+/// A path whose file is deleted on drop when `active` — used for the ~2.5 GB
+/// raw image (always) and a temp-dir `.xz` fallback (only when there's no
+/// persistent cache dir to keep it in). Cleans up on the happy path and on
+/// every early return alike.
+struct CleanupPath {
+    path: std::path::PathBuf,
+    active: bool,
+}
+impl Drop for CleanupPath {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        if self.active {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 

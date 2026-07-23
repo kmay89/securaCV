@@ -114,6 +114,10 @@ pub struct SeedOutcome {
     pub wifi_note: Option<String>,
     /// Non-fatal note about the account seed, if requested and it stumbled.
     pub account_note: Option<String>,
+    /// Set when the settings were written but the card wouldn't cleanly
+    /// eject — the seed still succeeded, so this is "eject it yourself", not
+    /// a failure. (A busy mount right after write is common on Linux.)
+    pub eject_note: Option<String>,
 }
 
 /// Seed a freshly-written card in ONE mount: re-probe the partition table,
@@ -152,10 +156,13 @@ pub fn seed_card(
         }
     }
 
-    // Always try to unmount/eject, even after a partial write — never leave the
-    // operator holding a card the OS thinks is busy.
-    let ejected = eject(device, &partition);
-    ejected?;
+    // Always try to unmount/eject — but the settings are already written, so an
+    // eject stumble is a note, NOT a failure that discards the outcome (a mount
+    // is often momentarily busy right after write+sync). Never demote a card
+    // whose settings physically made it on.
+    if let Err(e) = eject(device, &partition) {
+        outcome.eject_note = Some(e);
+    }
     progress(Progress {
         stage: Stage::Seed,
         done: 1,

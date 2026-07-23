@@ -749,7 +749,7 @@ const HUB_STAGE_COPY = {
   decompress: "Unpacking the image…",
   write: "Writing to the card — don't remove it…",
   verify: "Reading every byte back to prove the write…",
-  seed: "Seeding your Wi-Fi onto the card…",
+  seed: "Adding your settings to the card…",
 };
 
 function hubInit() {
@@ -1155,7 +1155,15 @@ function hubRestoreSettings() {
     if (s.acctName) $("hub-acct-name").value = s.acctName;
     if (s.acctUser) $("hub-acct-user").value = s.acctUser;
     if (s.boardId) hub.boardId = s.boardId; // applied when the board list renders
+    // Restored account fields must re-validate, or the panel reads as
+    // "untouched" and the account is silently skipped despite showing values.
+    hubValidateAccount();
   } catch (_) {}
+}
+
+// UTF-8 byte length (SSID limit is 32 *bytes*, not characters).
+function hubByteLen(s) {
+  return new TextEncoder().encode(s).length;
 }
 
 // ── preflight (free space + platform hint) ──────────────────────────────────
@@ -1268,7 +1276,16 @@ function hubChime() {
 function hubArm() {
   const target = hub.targets.find((t) => t.path === hub.selected);
   const wifi = hubWifiValue();
-  const wifiOk = wifi === null || (wifi.ssid.length > 0 && wifi.passphrase.length >= 8);
+  // Mirror the backend's WPA bounds so the button never arms on input the
+  // Rust side will reject: SSID 1–32 bytes, passphrase 8–63 chars (or a
+  // 64-hex PMK, which the backend also accepts).
+  const wifiOk =
+    wifi === null ||
+    (wifi.ssid.length > 0 &&
+      hubByteLen(wifi.ssid) <= 32 &&
+      (wifi.passphrase.length === 64
+        ? /^[0-9a-fA-F]{64}$/.test(wifi.passphrase)
+        : wifi.passphrase.length >= 8 && wifi.passphrase.length <= 63));
   // If the account panel has been started, it must be valid to arm — but an
   // untouched panel never blocks the flash.
   const accountOk = !hub.accountRequested || hub.accountValid;
