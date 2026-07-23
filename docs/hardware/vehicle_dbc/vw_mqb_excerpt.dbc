@@ -1,0 +1,32 @@
+VERSION ""
+
+NS_ :
+
+BS_:
+
+BU_: Gateway_MQB Getriebe_DQ_Hybrid_MQB Airbag_MQB BMS_MQB Waehlhebel_MQB Vector__XXX
+
+// Excerpt of opendbc/dbc/vw_mqb.dbc — Klemmen_Status_01 (terminal/ignition state), Gateway_72
+// (door/trunk open), Getriebe_06 (gear position). See SOURCES.md for provenance.
+//
+// ZAS_Kl_15 is "Klemme 15" — the standard VAG/German-OEM electrical term for switched ignition
+// power (as opposed to Kl.30 permanent battery power, or Kl.50 starter). This is the closest
+// thing to a textbook "ignition on" signal found across all three excerpts in this directory.
+//
+// MQB is a shared VW Group platform (VW/Audi/SEAT/Škoda, most 2015+ models via the J533 gateway)
+// — these messages are believed common across MQB vehicles, but no specific VW model/year has
+// been bench-confirmed against this excerpt yet.
+
+BO_ 960 Klemmen_Status_01: 4 Gateway_MQB
+ SG_ ZAS_Kl_15 : 17|1@1+ (1,0) [0|1] "" Airbag_MQB,BMS_MQB
+ SG_ ZAS_Kl_50 : 19|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 987 Gateway_72: 8 Gateway_MQB
+ SG_ ZV_HFS_offen : 20|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ZV_HBFS_offen : 21|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ZV_BT_offen : 24|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ZV_FT_offen : 26|1@1+ (1,0) [0|1] "" Getriebe_DQ_Hybrid_MQB
+ SG_ ZV_HD_offen : 30|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 296 Getriebe_06: 3 Getriebe_DQ_Hybrid_MQB
+ SG_ GE_Ist_Fahrstufe : 4|4@1+ (1,0) [0|15] "" Waehlhebel_MQB
