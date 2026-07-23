@@ -127,6 +127,7 @@ async function boot() {
   const flow = el("div", "flash-flow");
   flow.id = "flash-flow";
   mount.append(flow);
+  mountJourney(flow);
   mount.append(renderReassurance());
 
   renderVersionStrip();
@@ -146,12 +147,52 @@ function renderVersionStrip() {
   strip.append(pill("engine", "esptool-js (vendored, offline)"));
 }
 
+// ── the journey bar: where am I on the path? ────────────────────────────────
+// Five calm waypoints above the flow. Phases opt in via node.dataset.step;
+// a phase without one (sub-cards, tools, the module flow) keeps the bar
+// where it was — the bar never guesses.
+const JOURNEY = ["Connect", "Meet it", "Choose", "Install", "First flight"];
+let journeyEl = null;
+function renderJourney(step) {
+  if (!journeyEl) return;
+  journeyEl.querySelectorAll(".flash-journey-step").forEach((n, i) => {
+    n.classList.toggle("flash-journey-on", i + 1 === step);
+    n.classList.toggle("flash-journey-done", i + 1 < step);
+    n.setAttribute("aria-current", i + 1 === step ? "step" : "false");
+  });
+}
+function mountJourney(before) {
+  journeyEl = el("nav", "flash-journey");
+  journeyEl.setAttribute("aria-label", "Nursery progress");
+  JOURNEY.forEach((label, i) => {
+    if (i) journeyEl.append(el("span", "flash-journey-sep", "·"));
+    const s = el("span", "flash-journey-step");
+    s.append(el("span", "flash-journey-dot"), document.createTextNode(label));
+    journeyEl.append(s);
+  });
+  before.parentNode.insertBefore(journeyEl, before);
+  renderJourney(1);
+}
+
+// One check, used everywhere motion is decorative rather than informative.
+function prefersCalm() {
+  try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
+}
+
 // The flow is a single swappable panel; the reassurance strip persists below.
 function setPhase(node) {
   const flow = $("#flash-flow");
   flow.innerHTML = "";
   flow.append(node);
-  flow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (node.dataset && node.dataset.step) renderJourney(Number(node.dataset.step));
+  // Land screen-reader / keyboard focus on the new phase's heading, so a
+  // phase change is announced instead of silently swapping content.
+  const h = node.querySelector("h2, h3");
+  if (h) {
+    h.setAttribute("tabindex", "-1");
+    try { h.focus({ preventScroll: true }); } catch { /* older engines */ }
+  }
+  flow.scrollIntoView({ behavior: prefersCalm() ? "auto" : "smooth", block: "nearest" });
 }
 
 // ── the persistent "you can't mess up" strip (compact, below the flow) ──────
@@ -430,6 +471,7 @@ function modeBadge(mode) {
 // ── phase: connect ──────────────────────────────────────────────────────────
 function phaseConnect() {
   const box = el("section", "flash-card flash-connect");
+  box.dataset.step = "1";
   box.append(el("div", "flash-big-emoji flash-plug", "🔌"));
   box.append(el("h2", null, "Plug in your Canary, then let’s meet it"));
   box.append(el("p", "muted",
@@ -609,6 +651,7 @@ async function onConnect() {
   state.connecting = false;
   state.busy = true;
   const box = el("section", "flash-card flash-working");
+  box.dataset.step = "1";
   box.append(el("div", "flash-spinner", ""));
   const status = el("h2", null, "Waking up your Canary…");
   const detail = el("p", "muted", "Reaching the board’s bootloader. This takes a few seconds.");
@@ -906,6 +949,7 @@ async function readPassport() {
 // ── phase: connected — chip card + firmware picker ──────────────────────────
 function phaseConnected() {
   const wrap = el("div", "flash-connected");
+  wrap.dataset.step = "2";
 
   // The chip hello card.
   const info = core.chipInfo(state.catalog, state.chip) || {};
@@ -1069,15 +1113,38 @@ function fact(label, val) {
 // touch it, what the default means. Copy comes from catalog.settings_help
 // (generated from the firmware's own values), looked up via core.helpTopic —
 // so a control without a topic simply has no dot, never a broken one.
+// Only one ⓘ open at a time; Escape and any outside click close it —
+// pro-grade popover manners, wired up once, lazily.
+let openHelp = null; // { pop, btn }
+function closeHelp() {
+  if (!openHelp) return;
+  openHelp.pop.classList.add("flash-hidden");
+  openHelp.btn.setAttribute("aria-expanded", "false");
+  openHelp = null;
+}
+let helpManagersInstalled = false;
+function installHelpManagers() {
+  if (helpManagersInstalled) return;
+  helpManagersInstalled = true;
+  document.addEventListener("click", (ev) => {
+    if (openHelp && !ev.target.closest(".flash-help")) closeHelp();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeHelp();
+  });
+}
+
 function helpDot(topicId) {
   const t = core.helpTopic(state.catalog, topicId);
   if (!t) return null;
+  installHelpManagers();
   const wrap = el("span", "flash-help");
   const btn = el("button", "flash-help-dot", "?");
   btn.type = "button";
   btn.setAttribute("aria-label", `About: ${t.label}`);
   btn.setAttribute("aria-expanded", "false");
   const pop = el("span", "flash-help-pop flash-hidden");
+  pop.setAttribute("role", "note");
   pop.append(el("strong", "flash-help-title", t.label));
   pop.append(el("span", "flash-help-what", t.what));
   if (t.when) {
@@ -1095,8 +1162,13 @@ function helpDot(topicId) {
     // checkbox the label wraps.
     ev.preventDefault();
     ev.stopPropagation();
-    const hidden = pop.classList.toggle("flash-hidden");
-    btn.setAttribute("aria-expanded", String(!hidden));
+    const wasOpen = openHelp && openHelp.pop === pop;
+    closeHelp();
+    if (!wasOpen) {
+      pop.classList.remove("flash-hidden");
+      btn.setAttribute("aria-expanded", "true");
+      openHelp = { pop, btn };
+    }
   });
   wrap.append(btn, pop);
   return wrap;
@@ -1182,7 +1254,12 @@ async function takeBackup(box) {
 
 async function onBackup() {
   if (state.busy || !state.flashBytes) return;
-  if (!state.session && !(await ensureSession())) return;
+  if (!state.session && !(await ensureSession())) {
+    setPhase(errorRetry("Couldn’t reach the bootloader for the backup",
+      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
+      phaseConnect));
+    return;
+  }
   state.busy = true;
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
@@ -1382,6 +1459,7 @@ function displayBenchUrl(d) {
 
 function phaseDisplayBench(d, back) {
   const box = el("section", "flash-card flash-displaybench");
+  box.dataset.step = "2";
   box.append(el("h2", null, `${d.name} — a board that SHOWS`));
   const sub = el("p", "muted",
     `${d.tagline} Its firmware (v${d.emulator.fw_version}, LVGL ${d.emulator.lvgl}) ` +
@@ -1439,6 +1517,7 @@ async function openSenseBench(product) {
 function phaseSenseBench(port, product) {
   const wellbeing = /wellbeing/.test((product && product.id) || "");
   const box = el("section", "flash-card flash-sensebench");
+  box.dataset.step = "5";
   box.append(el("h2", null, "👋 The radar bench — hold still, then don’t"));
   box.append(el("p", "muted",
     "This is the radar’s own senses, live off the USB cable — the same coarse " +
@@ -1447,7 +1526,9 @@ function phaseSenseBench(port, product) {
     "feel the clear timeout breathe out."));
 
   const status = el("div", "flash-sense-status", "listening for the radar…");
+  status.setAttribute("role", "status");
   box.append(status);
+  const calm = prefersCalm(); // decorative motion politely sits out
 
   const aura = document.createElement("canvas");
   aura.className = "flash-sense-aura";
@@ -1460,6 +1541,7 @@ function phaseSenseBench(port, product) {
   const vit = el("div", "flash-sense-vitals");
   const vitHead = el("div", "flash-sense-vitals-head");
   const vitBadge = el("span", "flash-passport-chip", wellbeing ? "waiting for a lock…" : "PREVIEW — simulated");
+  vitBadge.setAttribute("role", "status");
   vitHead.append(el("strong", null, "Breathing & heartbeat"), vitBadge);
   vit.append(vitHead);
   const wave = document.createElement("canvas");
@@ -1576,7 +1658,9 @@ function phaseSenseBench(port, product) {
 
   function draw(now) {
     if (!model.alive) return;
-    const t = (now - t0) / 1000;
+    // Under prefers-reduced-motion the informative state still renders and
+    // updates — only the decorative time-based motion freezes.
+    const t = calm ? 0 : (now - t0) / 1000;
     const W = aura.width, H = aura.height;
     const cx = W / 2, cy = H - 14, R = H - 40;
     actx.clearRect(0, 0, W, H);
@@ -1840,6 +1924,7 @@ function phaseConfirm(product, entry) {
   const skipBackup = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
 
   const box = el("section", "flash-card flash-confirm");
+  box.dataset.step = "3";
   box.append(el("h2", null, `Install ${product.name}?`));
   box.append(el("p", "muted", state.current && state.current.unknown
     ? "This is the one-time first setup — after it, the board is a Canary."
@@ -2290,6 +2375,7 @@ async function startFlash(opts) {
   const label = opts.product ? `${opts.product.name} v${opts.entry.version}` : opts.label;
 
   const box = progressCard(`Installing ${label}`, "Getting the image ready…");
+  box.card.dataset.step = "4";
   setPhase(box.card);
 
   // The layers tour rides along for the whole install — backup included —
@@ -2550,6 +2636,7 @@ function flashError(e, opts) {
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
+  box.dataset.step = "5";
   confettiBurst();
   box.append(el("div", "flash-done-bird", "🎉"));
   const hatchNo = !opts.isBackup && !opts.isLocal && opts.product && state.roster.length
@@ -2745,6 +2832,7 @@ function phaseDone(opts) {
 // image for the chip in hand.
 function phaseRescue() {
   const box = el("section", "flash-card flash-rescue");
+  box.dataset.step = "3";
   box.append(el("h2", null, "Rescue this board"));
   box.append(el("p", "muted",
     "For a Canary that’s acting wrong and you just want it back to known-good. " +
@@ -2845,7 +2933,12 @@ async function onRestoreFile(ev) {
 // ── the health check (triage without changing a byte) ───────────────────────
 async function runHealthCheck() {
   if (state.busy) return;
-  if (!state.session && !(await ensureSession())) return;
+  if (!state.session && !(await ensureSession())) {
+    setPhase(errorRetry("Couldn’t reach the bootloader for the health check",
+      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
+      phaseConnect));
+    return;
+  }
   state.busy = true;
   const { esploader } = state.session;
   const box = progressCard("Reading your board’s story", "Partition map, firmware slots, crash dumps, witness chain — read-only, nothing is changed.");
@@ -2964,6 +3057,7 @@ function reportRow(label, value, tone) {
 
 function renderReport(r) {
   const box = el("section", "flash-card flash-report");
+  box.dataset.step = "2";
   box.append(el("h2", null, "Board report"));
   box.append(el("p", "muted", "Read straight off the flash — nothing was changed, and nothing left this page."));
 
@@ -3215,6 +3309,7 @@ async function openMonitor(opts = {}) {
 
 function phaseMonitor(port, opts = {}) {
   const box = el("section", "flash-card flash-monitor");
+  box.dataset.step = "5";
   box.append(el("h2", null, "Serial monitor"));
   box.append(modeBadge("running"));
   box.append(el("p", "muted",
@@ -3955,6 +4050,7 @@ function macStamp() {
 }
 
 function confettiBurst() {
+  if (prefersCalm()) return; // celebration stays; the motion politely doesn't
   const layer = el("div", "flash-confetti");
   document.body.append(layer);
   const bits = ["🐤", "✨", "🎉", "🟡", "💛"];
