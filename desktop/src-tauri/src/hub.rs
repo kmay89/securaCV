@@ -91,6 +91,10 @@ pub struct HubReceipt {
     account_seeded: bool,
     /// Non-fatal note about the account seed, if requested.
     account_note: Option<String>,
+    /// Set when the card wouldn't cleanly auto-eject — an "eject it yourself"
+    /// instruction shown INDEPENDENT of seed success (the settings are on the
+    /// card, so pulling it while still mounted risks a half-written CONFIG).
+    eject_note: Option<String>,
     /// True when a locally-cached, re-verified image was reused (no download).
     used_cache: bool,
 }
@@ -721,63 +725,71 @@ fn hub_flash_blocking(
     let want_wifi = wifi_seed.is_some();
     let want_account = !account_files.is_empty();
 
-    let (wifi_seeded, mut wifi_note, account_seeded, mut account_note) = if want_wifi
-        || want_account
-    {
-        match hub_io::seed::seed_card(
-            &receipt.target_path,
-            wifi_seed.as_ref(),
-            &account_files,
-            &mut progress,
-        ) {
-            Ok(o) => {
-                if o.wifi_written {
-                    log(
-                        "✓ Wi-Fi seeded — the hub will join your network on first boot".to_string(),
-                    );
-                }
-                if o.account_written {
-                    log(
-                        "✓ account seeded (experimental) — first visit should be a login page"
-                            .to_string(),
-                    );
-                }
-                // An eject stumble doesn't undo a written seed — attach it to
-                // whichever note we're already surfacing (or Wi-Fi's) as a
-                // "please eject it yourself" tail.
-                let mut wifi_note = o.wifi_note;
-                if let Some(ej) = o.eject_note {
-                    log(format!("→ settings written, but: {ej}"));
-                    match wifi_note.as_mut() {
-                        Some(n) => {
-                            n.push_str(" — also: ");
-                            n.push_str(&ej);
-                        }
-                        None if o.wifi_written || !want_account => wifi_note = Some(ej),
-                        None => {}
+    // eject_note is tracked SEPARATELY from seed success and surfaced on its
+    // own always-shown receipt field: a card whose settings wrote fine but
+    // wouldn't cleanly unmount still needs a "eject it yourself before pulling
+    // it" instruction, or the operator may yank a still-mounted card before
+    // the CONFIG writes flush.
+    let (wifi_seeded, mut wifi_note, account_seeded, mut account_note, mut eject_note) =
+        if want_wifi || want_account {
+            match hub_io::seed::seed_card(
+                &receipt.target_path,
+                wifi_seed.as_ref(),
+                &account_files,
+                &mut progress,
+            ) {
+                Ok(o) => {
+                    if o.wifi_written {
+                        log(
+                            "✓ Wi-Fi seeded — the hub will join your network on first boot"
+                                .to_string(),
+                        );
                     }
+                    if o.account_written {
+                        log(
+                            "✓ account seeded (experimental) — first visit should be a login page"
+                                .to_string(),
+                        );
+                    }
+                    if let Some(ej) = o.eject_note.as_ref() {
+                        log(format!("→ settings written, but: {ej}"));
+                    }
+                    (
+                        o.wifi_written,
+                        o.wifi_note,
+                        o.account_written,
+                        o.account_note,
+                        o.eject_note,
+                    )
                 }
-                (o.wifi_written, wifi_note, o.account_written, o.account_note)
+                Err(e) => {
+                    // Couldn't even mount — the card is still good; say so plainly.
+                    log(format!(
+                        "→ the image is on the card and verified, but the card couldn't be \
+                         re-mounted to add settings: {e}"
+                    ));
+                    (
+                        false,
+                        if want_wifi { Some(e.clone()) } else { None },
+                        false,
+                        if want_account { Some(e) } else { None },
+                        None,
+                    )
+                }
             }
-            Err(e) => {
-                // Couldn't even mount — the card is still good; say so plainly.
-                log(format!(
-                    "→ the image is on the card and verified, but the card couldn't be re-mounted \
-                     to add settings: {e}"
-                ));
-                (
-                    false,
-                    if want_wifi { Some(e.clone()) } else { None },
-                    false,
-                    if want_account { Some(e) } else { None },
-                )
-            }
-        }
-    } else {
-        log("→ no Wi-Fi or account to seed (wired ethernet assumed)".to_string());
-        true_eject(&receipt.target_path, &log);
-        (false, None, false, None)
-    };
+        } else {
+            log("→ no Wi-Fi or account to seed (wired ethernet assumed)".to_string());
+            true_eject(&receipt.target_path, &log);
+            (false, None, false, None, None)
+        };
+
+    // Turn a raw eject stumble into a plain, alarming-enough instruction.
+    if let Some(ej) = eject_note.take() {
+        eject_note = Some(format!(
+            "Your settings are on the card, but it wouldn't auto-eject — please eject it in your \
+             file manager before removing it, so nothing is left half-written. ({ej})"
+        ));
+    }
 
     // Turn the raw seed notes into calm, actionable copy.
     if want_wifi && !wifi_seeded {
@@ -812,6 +824,7 @@ fn hub_flash_blocking(
         wifi_note,
         account_seeded,
         account_note,
+        eject_note,
         used_cache,
     })
 }

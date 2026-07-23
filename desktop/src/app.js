@@ -1120,11 +1120,20 @@ function hubValidateAccount() {
   const user = $("hub-acct-user").value.trim();
   const pass = $("hub-acct-pass").value;
   const pass2 = $("hub-acct-pass2").value;
-  // "Requested" = they've started filling it in. Empty panel → skipped entirely.
-  hub.accountRequested = !!(name || user || pass || pass2);
+  const hint = $("hub-acct-hint");
+  // Intent to pre-make an account is signalled by a PASSWORD — a name or
+  // username alone can't make a login and must never block a plain flash
+  // (they may be remembered from last time). And because the password field
+  // lives inside the collapsed panel, "requested" can only ever become true
+  // while the panel is open — so any blocking hint below is always visible.
+  hub.accountRequested = pass.length > 0 || pass2.length > 0;
   if (!hub.accountRequested) {
     hub.accountValid = false;
-    $("hub-acct-hint").textContent = "";
+    // A gentle, non-blocking nudge if they've started a name/username.
+    hint.textContent =
+      name || user
+        ? "Add a password to pre-make your login and skip Home Assistant's setup wizard — or leave it blank to set up on first boot."
+        : "";
     return;
   }
   let msg = "";
@@ -1144,7 +1153,7 @@ function hubValidateAccount() {
     msg = `Looks good — password strength: ${strength}. First boot will be a login page.`;
   }
   hub.accountValid = ok;
-  $("hub-acct-hint").textContent = msg;
+  hint.textContent = msg;
 }
 
 // ── remember non-secret settings (never passwords) ──────────────────────────
@@ -1395,9 +1404,13 @@ function hubShowHatch(receipt) {
       : " Plug in ethernet before you power it on.";
   const acctLine = receipt.account_note ? " " + receipt.account_note : "";
   const cacheLine = receipt.used_cache ? " (reused your verified local copy — no re-download.)" : "";
+  // The eject note is shown ALWAYS when present — independent of whether the
+  // Wi-Fi/account seed succeeded — because a still-mounted card must be
+  // ejected before it's pulled, or a CONFIG write can be left half-flushed.
+  const ejectLine = receipt.eject_note ? " ⚠ " + receipt.eject_note : "";
   $("hub-hatch-body").textContent =
     `${receipt.os_label} is on ${receipt.target_path} — every byte read back and matched ` +
-    `(SHA-256 ${receipt.sha256.slice(0, 16)}…).${cacheLine}${wifiLine}${acctLine}`;
+    `(SHA-256 ${receipt.sha256.slice(0, 16)}…).${cacheLine}${wifiLine}${acctLine}${ejectLine}`;
   // If the account was pre-made, the third step is "log in", not "create".
   const accountMade = receipt.account_seeded;
   const steps = [
