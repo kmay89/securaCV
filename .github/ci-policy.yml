@@ -16,3 +16,7 @@ unfiltered_ok:
 
 # R6: workflows whose push and pull_request path lists may differ.
 paths_parity_ok: []
+
+# R3 (publish half): tag/release-triggered workflows allowed to keep a
+# bare `cancel-in-progress: true` despite publishing.
+publish_cancel_ok: []

@@ -27,7 +27,7 @@ on:
 concurrency:
   group: csi-module-disable-${{ github.ref }}
   # Cancel superseded PR runs only; pushes to main keep full signal
-  # (repo-wide convention, same as rust.yml / firmware.yml).
+  # (same conditional-cancel pattern as rust.yml).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Minimal token scope. The matrix only checks out the repo and runs
