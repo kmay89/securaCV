@@ -21,6 +21,7 @@ jobs:
   scripts:
     name: scripts/lint_*.sh
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       # Conformance + hygiene lints that previously had no CI gate.

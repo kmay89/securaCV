@@ -233,7 +233,7 @@ function benchView(entry) {
     h("div", { class: "c-h" },
       h("h1", {}, bench.noun),
       real ? h("span", { class: "badge" }, "Real firmware") : null),
-    stage.fork ? h("div", { class: "forknote" }, "⑃ Stage 4 forks here — camera or radar. Both paths rejoin at Home.") : null,
+    (stage.options || stage.fork) ? h("div", { class: "forknote" }, "✦ " + (stage.optionsNote || "Options at this stage — pick the sense your Canary carries. The line runs straight on to Home.")) : null,
     depths ? h("div", { class: "seg", role: "tablist" },
       ...depths.map((d, i) => h("button", { class: i === di ? "on" : "", role: "tab", "aria-selected": i === di,
         onclick: () => { depthSel[bench.slug] = i; navigate(bench.slug, false); } }, d.label))) : null,
@@ -265,7 +265,7 @@ function overviewView() {
         h("span", { class: "circ", style: `border-color:${s.accent};color:${s.accent}` }, String(s.n)),
         h("h3", {}, s.name)),
       h("div", { class: "verb" }, s.verb),
-      h("div", { class: "cnt" }, n + (n === 1 ? " bench" : " benches") + (s.fork ? " · forks" : "")));
+      h("div", { class: "cnt" }, n + (n === 1 ? " bench" : " benches") + ((s.options || s.fork) ? " · options" : "")));
   });
   return h("div", { class: "ov" },
     h("div", { class: "room-wrap" },

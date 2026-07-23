@@ -38,31 +38,26 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR branch supersedes the in-flight audit build.
+concurrency:
+  group: ram-audit-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ram-audit:
     name: DRAM static-symbol ranking (FULL/S3)
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
+      - name: Install Arduino CLI + ESP32 core (cached)
+        uses: ./.github/actions/setup-arduino-esp32
         with:
-          version: 1.x
-
-      - name: Configure Arduino CLI
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-
-      - name: Install libraries
-        run: |
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          arduino-cli lib install "NimBLE-Arduino"
+          libraries: |
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino
 
       - name: Compile firmware (same flags as the CI build job)
         run: |

@@ -1,4 +1,4 @@
-# 19 — The self-running company: one human, GitHub, Claude — the rest is systems
+# 20 — The self-running company: one human, GitHub, Claude — the rest is systems
 
 **Thesis.** SecuraCV is operated as a company of one, and stays that way on
 purpose. The design goal is not "small team efficiency" — it is that the
@@ -66,7 +66,7 @@ Engine Room shows what the *company* does.
 | **Docs integrity** | `lint_docs_index.py`: no stragglers, no dead links | running |
 | **Storefront** | `store.json` (single source: SKUs, prices, stock caps) → `store.js`; live mode = Stripe Payment Links, $0 fixed cost | preview mode by design |
 | **Margin guard** | nightly (website repo): kit COGS from this repo's `build.json` via each SKU's `cogs` recipe in `store.json` → deduplicated issue when margin sinks under the floor | running |
-| **Fulfillment** | weekly batch runbook (`store-README.md`): Payment Links → PirateShip labels → batch print/flash evenings | systemized, human-executed (physical) |
+| **Fulfillment** | weekly batch runbook (`store-README.md`): Payment Links → PirateShip labels → batch print/flash evenings; doc 19 designs the founder-independent network that eventually replaces the human in this row | systemized, human-executed (physical) |
 | **Support & community** | GitHub issues as the single front door; `builds.json` gallery; docs written to be self-serve | running |
 | **Marketing site** | static pages + facts tests + screenshot workflow; every claim drift-tested against the repo | running |
 | **Operations window** | the Engine Room page: the system map, live workflow links, this doctrine — public | **this PR** |

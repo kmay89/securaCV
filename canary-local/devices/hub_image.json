@@ -9,7 +9,7 @@
     "version_source": "canary-local/devices/homeassistant.json:upstream.haos_version",
     "arch": "aarch64",
     "pinned": false,
-    "pin_note": "sha256 is set by the pin ceremony (a refresh step, mirroring the OTA signing ceremony). Until then the writer verifies the download against HA's published .sha256 and these stay empty.",
+    "pin_note": "sha256 is set by the pin ceremony (pin_hub_image.py, mirroring the OTA signing ceremony). Until then the writer verifies the download against HA's published .sha256 and these stay empty.",
     "boards": [
       {
         "id": "rpi5-64",

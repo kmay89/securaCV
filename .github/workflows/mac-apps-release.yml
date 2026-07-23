@@ -22,10 +22,17 @@ permissions:
   actions: write
   contents: read
 
+# One launcher per ref; a double-click on "Run workflow" queues rather than
+# dispatching the two build pipelines twice in parallel.
+concurrency:
+  group: mac-apps-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   launch:
     name: Launch Flasher + Lab workflows
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Dispatch desktop app workflows
         uses: actions/github-script@v8

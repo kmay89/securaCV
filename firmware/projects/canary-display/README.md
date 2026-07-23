@@ -16,6 +16,15 @@ Companion docs: [BOM](../../../docs/hardware/display_bom.md) ·
 [UX design goals](../../../docs/hardware/display_ux_design.md) ·
 enclosures `canary_watch_station.scad` / `canary_dash_display.scad`.
 
+The playground/dev-mode pair is the first citizen of a five-gear **mode
+system** (fleet / bench / demo / debug / arcade —
+[`display_modes.md`](../../../docs/hardware/display_modes.md)): the registry
+core and the demo storyline core are implemented + host-tested
+(`include/canary/mode/`, `tests_host/test_mode_registry.cpp` /
+`test_demo_script.cpp`); the runtime glue and per-mode faces land in waves.
+What plugs into the 4.3B's terminals — and why — is catalogued in
+[`display_peripheral_catalog.md`](../../../docs/hardware/display_peripheral_catalog.md).
+
 > ⚠️ **DEV STATUS (v0.1):** compile/CI-verified; **not yet validated on
 > bench hardware** — same status as the matching enclosures. Pin maps carry
 > VERIFY notes where vendor documentation is thin (CH422G bits, RGB
@@ -189,6 +198,11 @@ src/                  implementations; hal+ui TUs are flavor-gated
 ```
 
 ## Roadmap (post-v0.2)
+
+- **Mode system waves 1–4** ([spec](../../../docs/hardware/display_modes.md)):
+  runtime glue for the mode registry (NVS `mode` token, legacy `devmode`
+  migration), then demo / debug / arcade gears — each feature-gated,
+  default off, with a dedicated CI env.
 
 - ~~LVGL migration~~ — shipped ("Quiet Glass", see the UX doc's Design
   language section).

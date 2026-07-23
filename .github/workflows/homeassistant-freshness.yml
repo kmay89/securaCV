@@ -4,10 +4,13 @@
 # Weekly (and on demand), this refreshes the page's upstream snapshot —
 # the current Home Assistant OS + Core versions from
 # version.home-assistant.io — via gen_homeassistant.py --refresh-upstream,
-# and opens a PR when anything moved. Everything else on the page already
-# regenerates from in-repo sources and is drift-gated by canary-local.yml;
-# upstream versions are the one fact that ages on its own, so it gets its
-# own clock.
+# re-runs the hub-image pin ceremony (pin_hub_image.py) for whatever HAOS
+# version the snapshot now names, and opens a PR when anything moved.
+# Everything else on the page already regenerates from in-repo sources and
+# is drift-gated by canary-local.yml; upstream versions and the pins that
+# vouch for their images are the facts that age on their own, so they
+# share one clock. A separate pin-alarm job re-verifies the committed pins
+# and fails loudly on link rot or a moved hash.
 #
 # Self-healing posture, end to end:
 #   · the generator survives a dead/misshapen feed by keeping the previous
@@ -30,9 +33,16 @@ permissions:
   contents: write
   pull-requests: write
 
+# Two refresh runs racing would fight over the bot/homeassistant-freshness
+# branch push — queue them, never cancel mid-PR-ceremony.
+concurrency:
+  group: homeassistant-freshness
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       # FRESHNESS_PAT (optional repo secret: fine-grained PAT, contents +
       # pull-requests write): pushes/PRs made with the default GITHUB_TOKEN
@@ -50,29 +60,49 @@ jobs:
           # version feed's CDN 403s anonymous/default user agents)
           GH_TOKEN: ${{ github.token }}
         run: python3 canary-local/tools/gen_homeassistant.py --refresh-upstream
+      # The hub-image pin ceremony rides the same clock: re-pin (or, on a
+      # HAOS bump the ceremony can't double-source yet, honestly un-pin) the
+      # base-OS image hashes right after the snapshot moves. Same
+      # self-healing posture as the refresh — a flaky week degrades to "no
+      # diff", never to a wrong pin; a hash that MOVES under a pinned
+      # version fails this run loudly instead (see pin_hub_image.py).
+      - name: Re-run the hub image pin ceremony
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 canary-local/tools/pin_hub_image.py
       - name: Verify against the honesty gate before proposing anything
         run: node --test canary-local/tests/homeassistant.test.js
       - name: Open a PR if upstream moved
         env:
           GH_TOKEN: ${{ secrets.FRESHNESS_PAT || github.token }}
         run: |
-          if git diff --quiet -- canary-local/devices/homeassistant.json; then
+          # status --porcelain, not diff --quiet: the first ceremony CREATES
+          # hub_image_pins.json, and an untracked file is invisible to diff.
+          FRESHNESS_PATHS=(canary-local/devices/homeassistant.json canary-local/devices/hub_image.json canary-local/devices/hub_image_pins.json)
+          if [ -z "$(git status --porcelain -- "${FRESHNESS_PATHS[@]}")" ]; then
             echo "upstream unchanged — nothing to do"
             exit 0
           fi
           BRANCH="bot/homeassistant-freshness"
           HAOS=$(python3 -c "import json;print(json.load(open('canary-local/devices/homeassistant.json'))['upstream']['haos_version'])")
           HA=$(python3 -c "import json;print(json.load(open('canary-local/devices/homeassistant.json'))['upstream']['ha_version'])")
+          PIN=$(python3 -c "import json;print('pinned' if json.load(open('canary-local/devices/hub_image.json'))['base_os']['pinned'] else 'unpinned')")
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
-          git add canary-local/devices/homeassistant.json
-          git commit -m "chore(canary-local): Hub upstream snapshot → HA OS ${HAOS} / Core ${HA}"
+          # Stage only what exists: on an unpinned refresh (a HAOS bump the
+          # ceremony couldn't double-source yet) hub_image_pins.json may not
+          # exist, and git add on a missing pathspec is a hard error that
+          # would break exactly the self-healing path.
+          for p in "${FRESHNESS_PATHS[@]}"; do
+            if [ -e "$p" ]; then git add "$p"; fi
+          done
+          git commit -m "chore(canary-local): Hub upstream snapshot → HA OS ${HAOS} / Core ${HA} (hub image ${PIN})"
           git push -f origin "$BRANCH"
           if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
             gh pr create \
-              --title "The Hub: upstream snapshot → HA OS ${HAOS} / Core ${HA}" \
-              --body "Weekly freshness run: version.home-assistant.io moved, so the Hub page's terminal scripts and version strip re-line themselves from this snapshot. Generated by \`gen_homeassistant.py --refresh-upstream\`; validated by \`tests/homeassistant.test.js\` before this PR was opened." \
+              --title "The Hub: upstream snapshot → HA OS ${HAOS} / Core ${HA} (hub image ${PIN})" \
+              --body "Weekly freshness run: version.home-assistant.io moved, so the Hub page's terminal scripts and version strip re-line themselves from this snapshot, and the hub-image pin ceremony re-ran for the new base OS (currently **${PIN}**). Generated by \`gen_homeassistant.py --refresh-upstream\` + \`pin_hub_image.py\`; validated by \`tests/homeassistant.test.js\` before this PR was opened." \
             || {
               # Run 2 hit this: the default token can push but may not open
               # PRs ("GitHub Actions is not permitted to create or approve
@@ -82,3 +112,20 @@ jobs:
               exit 1
             }
           fi
+
+  # The alarm half of the pin ceremony, independent of the refresh so a
+  # transient snapshot problem can't mask it (and vice versa). Re-fetches
+  # both checksum channels for the COMMITTED pins and fails the workflow
+  # on link rot (the image or its .sha256 went away) or a hash that moved
+  # under a pinned version (upstream re-release or tampering). Either way
+  # the failure is the feature: the pipeline tells on itself weekly
+  # instead of a user's flash discovering the rot months later.
+  pin-alarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Re-verify the committed hub image pins on both channels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 canary-local/tools/pin_hub_image.py --verify

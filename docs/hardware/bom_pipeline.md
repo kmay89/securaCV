@@ -2,7 +2,7 @@
 
 How the bills of materials stay **correct without anyone checking them**.
 This is the engineering half of the self-running-company doctrine
-([`docs/strategy/19-self-running-company.md`](../strategy/19-self-running-company.md));
+([`docs/strategy/20-self-running-company.md`](../strategy/20-self-running-company.md));
 the design borrows deliberately from the two systems that do this best:
 
 - **Flux.ai's lesson** — a part is a live object, not a row in a file.

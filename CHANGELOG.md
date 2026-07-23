@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### canary-display — the glass gets gears (mode architecture) + the 4.3B peripheral catalog
+
+- **Mode system spec'd, registry implemented.** New
+  `docs/hardware/display_modes.md` defines the five-gear mode architecture —
+  fleet / bench (the existing playground) / demo / debug / arcade — with a
+  no-bloat contract (a mode must be a tool with an operator story, reuse the
+  product's organs, and ship as a host-tested pure core behind a default-off
+  gate), a per-mode policy table (only fleet takes OTA; only fleet arms the
+  watchdog; debug is the one non-fleet gear with the network up), and a
+  uniform entry/exit choreography (Settings doorway in, 3 s long-press out).
+  The registry core is implemented pure + host-tested
+  (`include/canary/mode/mode_registry.h`, `tests_host/test_mode_registry.cpp`,
+  CI step added): NVS `mode`-token round-trip, the build-capability gate, and
+  boot resolution that **fails safe to the fleet face** on anything
+  unknown/uncarried and **migrates the legacy `devmode` bool** (a unit
+  latched under old firmware still lands in the bench it asked for). Zero
+  behavior change to any existing build — runtime glue is wave 1.
+- **Demo mode's storyline core, drift-locked to the real vocabulary.**
+  `include/canary/mode/demo_script.h` — a four-canary synthetic cast
+  (reserved `demo-` ids) and a ~2½-minute looping storyline meant to be fed
+  through the REAL fleet model into the REAL faces. Host test
+  (`test_demo_script.cpp`, CI step added) links `src/fleet/fleet_model.cpp`
+  and pins every beat's intended severity to `classify_event()` — the demo
+  can never tell a story the product vocabulary doesn't — plus timeline
+  invariants (covers every severity tier, the alarm beat holds ≥ 15 s for
+  the hold-to-ack demo, the loop resolves to all-quiet before wrapping) and
+  wrap-safe fires-once-per-lap stepping.
+- **The peripheral catalog.** New `docs/hardware/display_peripheral_catalog.md`
+  — the curated what-plugs-into-the-4.3B ledger by wiring surface (isolated
+  DI/DO, I²C, RS485/Modbus, CAN, radios): why each peripheral and what it's
+  for (PIR/reed/break-beam/glass-break/panic on DI; siren, strobe, and the
+  alert-gated **night-vision IR illuminator** on DO; lux/ToF/RTC/environment
+  on I²C; zone-expansion DI modules and energy meters on RS485), a
+  simplicity contract (≤ 3 screw-terminal wires, bench-provable, one
+  paragraph of docs), an honest **"not this board"** section (cameras/RTSP
+  stay out by promise — vision witnesses and the HA/viewer layer own them),
+  and the ATM-security combination plays (two-technology confirmation,
+  fail-loud NC loops, the bait asset, witnessing the utilities).
+
 ### supply-chain — signed build provenance on release artifacts
 
 - **Every published firmware binary and browser-flasher factory image now
