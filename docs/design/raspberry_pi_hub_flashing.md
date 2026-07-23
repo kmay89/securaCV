@@ -248,6 +248,26 @@ Raspberry Pi Imager.
     PWK add-on + Frigate/go2rtc + dashboards + blueprints) so first boot comes
     up pre-wired — until then the hub boots as stock HAOS + Wi-Fi and the
     guide carries the user from `homeassistant.local:8123`.
+  - *Account pre-seed (designed 2026-07-23; build with the curated backup):*
+    the flasher collects the operator's name/username/password alongside the
+    Wi-Fi, mints Home Assistant's auth store locally (`.storage/auth` +
+    `.storage/auth_provider.homeassistant`, bcrypt-hashed ON THE OPERATOR'S
+    computer — the password gets the same custody as the Wi-Fi secret: onto
+    the card, never logged, never sent), and folds it into the curated backup.
+    First contact with `homeassistant.local:8123` is then a LOGIN page, not a
+    setup wizard — nothing left to type after the flasher. Zero-touch restore
+    mechanisms to validate on hardware, in order of preference:
+      1. **data-partition injection at flash time** — write the backup (or the
+         pre-expanded `.storage` + add-on containers, which also collapses the
+         10–20 min first boot toward ~2–3 min) into the image's ext4 data
+         partition before/while writing the card. Trivial from Linux; macOS
+         needs an ext4-write story, so this may start Linux-only;
+      2. **boot-partition CONFIG import** — if current HAOS's `hassos-config`
+         can be made to carry the backup in from FAT, it works from every OS;
+      3. **onboarding "restore backup"** — the fallback: still zero typing,
+         one click on first visit.
+    The validation session picks the mechanism; the auth-store minting and
+    backup assembly land in hub-core/hub-io (pure, host-tested) either way.
 - **Step 6 — the card-reader-less path: flash the Pi through its own USB-C.**
   Accepted 2026-07-23. Many laptops (every recent MacBook) have no SD reader —
   but the Pi 5 doesn't need one: the BCM2712 boot ROM has a USB *device* boot
