@@ -147,8 +147,9 @@ vent_pad_depth = 0.8;
 vent_hole_d    = 1.6;
 vent_ring_d    = 6.0;
 vent_holes     = 6;
-vent_dx        = -8.0;
-vent_dy        = -8.0;
+vent_dx        = 0.0;    // vent/sound cluster ON the face's vertical axis — the
+vent_dy        = -8.0;   // camera → grille → button rhythm of a real doorbell
+                         // (off-axis it read as an accidental drill pattern)
 mag_d  = 6.0;
 mag_h  = 3.2;
 mag_dx = 8.0;
