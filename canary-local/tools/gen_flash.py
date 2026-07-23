@@ -348,37 +348,110 @@ SENSE_CFG = {
     "wellbeing": REPO / "firmware/configs/canary-sense/wellbeing/config.h",
 }
 
+SENSE_CONFIG_H = REPO / "firmware/projects/canary-sense/include/canary/sense_config.h"
+
 SENSE_KNOBS = [
-    # (id, macro, unit, flavor) — flavor None = both builds carry it
-    ("present_debounce_ms", "CS_PRESENT_DEBOUNCE_MS", "ms", None),
-    ("clear_timeout_ms", "CS_CLEAR_TIMEOUT_MS", "ms", None),
-    ("stall_timeout_ms", "CS_RADAR_STALL_MS", "ms", None),
-    ("range_near_cm", "CS_RANGE_NEAR_CM", "cm", None),
-    ("range_mid_cm", "CS_RANGE_MID_CM", "cm", None),
-    ("vitals_lock_ms", "CS_VITALS_LOCK_MS", "ms", "wellbeing"),
-    ("vitals_lost_ms", "CS_VITALS_LOST_MS", "ms", "wellbeing"),
+    # (id, macro, nvs key, bounds macros stem, unit, flavor)
+    # flavor None = both builds carry it. The NVS keys and bounds come from
+    # sense_config.{h,cpp} — the runtime twin of vision's detect_config.
+    ("present_debounce_ms", "CS_PRESENT_DEBOUNCE_MS", "sns_debounce", "SENSE_DEBOUNCE_MS", "ms", None),
+    ("clear_timeout_ms", "CS_CLEAR_TIMEOUT_MS", "sns_clear", "SENSE_CLEAR_MS", "ms", None),
+    ("stall_timeout_ms", "CS_RADAR_STALL_MS", "sns_stall", "SENSE_STALL_MS", "ms", None),
+    ("range_near_cm", "CS_RANGE_NEAR_CM", "sns_near", "SENSE_NEAR_CM", "cm", None),
+    ("range_mid_cm", "CS_RANGE_MID_CM", "sns_mid", "SENSE_MID_CM", "cm", None),
+    ("vitals_lock_ms", "CS_VITALS_LOCK_MS", "sns_vlock", "SENSE_VLOCK_MS", "ms", "wellbeing"),
+    ("vitals_lost_ms", "CS_VITALS_LOST_MS", "sns_vlost", "SENSE_VLOST_MS", "ms", "wellbeing"),
+]
+
+# Room presets for the radar — authored here (like the hatch moments), values
+# guided by the Sense pages' raise-it-when/lower-it-when playbook and bounded
+# by sense_config.h (asserted below, so an out-of-range preset can't ship).
+# "As it ships" is prepended at build time and writes nothing.
+SENSE_PRESETS = [
+    {
+        "id": "bedside", "icon": "🛏",
+        "title": "Bedside / sleep watch",
+        "blurb": "Slow to alarm, steady through stillness. Longer debounce and clear "
+                 "ride out turning-over; tighter bands match a bed two steps away; "
+                 "vitals lock waits for a genuinely settled signal.",
+        "values": {"present_debounce_ms": 500, "clear_timeout_ms": 5000,
+                   "range_near_cm": 100, "range_mid_cm": 250,
+                   "vitals_lock_ms": 6000, "vitals_lost_ms": 8000},
+    },
+    {
+        "id": "living", "icon": "🛋",
+        "title": "Living room / shared space",
+        "blurb": "Occupancy over motion: a long clear timeout rides through reading "
+                 "and TV stillness; wider bands cover the whole room.",
+        "values": {"present_debounce_ms": 300, "clear_timeout_ms": 4000,
+                   "range_near_cm": 200, "range_mid_cm": 450},
+    },
+    {
+        "id": "hall", "icon": "🚶",
+        "title": "Hallway / corridor",
+        "blurb": "People transit fast — a short debounce catches them, a snappy "
+                 "clear frees the room the moment they’re gone.",
+        "values": {"present_debounce_ms": 200, "clear_timeout_ms": 800,
+                   "range_near_cm": 150, "range_mid_cm": 350},
+    },
+    {
+        "id": "workshop", "icon": "🧰",
+        "title": "Garage / workshop",
+        "blurb": "Machinery shakes the air: a longer debounce shrugs off vibration "
+                 "phantoms; a far mid band covers the long room.",
+        "values": {"present_debounce_ms": 600, "clear_timeout_ms": 2000,
+                   "range_near_cm": 150, "range_mid_cm": 500},
+    },
 ]
 
 
 def sense_reflexes_block(flavor: str) -> dict:
-    """The radar build's reflexes — read straight from the CS_* config the
-    build compiles in. Honest about the mechanism: these are compile-time
-    today (no NVS setters in canary-sense yet), so the flasher SHOWS them
-    and teaches, it doesn't pretend to write them."""
+    """The radar build's reflexes — now RUNTIME dials. Compiled CS_* values
+    seed the first boot; after that the seven numbers live in NVS
+    (sense_config.cpp), are HA-tunable over cfg/*/set, and the flasher can
+    bake a room preset at install time — the exact posture the Vision's
+    detect dials established. Defaults parsed from the flavor config,
+    bounds from sense_config.h, so no surface can drift from the firmware."""
     cfg = SENSE_CFG[flavor]
     knobs = []
-    for kid, macro, unit, only in SENSE_KNOBS:
+    for kid, macro, nvs_key, bstem, unit, only in SENSE_KNOBS:
         if only and only != flavor:
             continue
-        knobs.append({"id": kid, "macro": macro, "unit": unit,
-                      "value": read_const(cfg, macro)})
+        knobs.append({
+            "id": kid, "macro": macro, "unit": unit,
+            "value": read_const(cfg, macro),
+            "nvs": nvs_key,
+            "bounds": [read_const(SENSE_CONFIG_H, bstem + "_LO"),
+                       read_const(SENSE_CONFIG_H, bstem + "_HI")],
+        })
+    by_id = {k["id"]: k for k in knobs}
+    presets = [{
+        "id": "ships", "icon": "🐤",
+        "title": "As it ships",
+        "blurb": "The firmware’s own reflexes — balanced for a first bring-up. "
+                 "Pick nothing and this is what you get.",
+        "values": {k["id"]: k["value"] for k in knobs},
+    }]
+    for pr in SENSE_PRESETS:
+        values = {kid: v for kid, v in pr["values"].items() if kid in by_id}
+        for kid, v in values.items():
+            lo, hi = by_id[kid]["bounds"]
+            if not (lo <= v <= hi):
+                die(f"sense preset {pr['id']}: {kid}={v} outside [{lo},{hi}]")
+        # A preset only overrides what it names; unnamed knobs keep defaults.
+        presets.append({**{k: pr[k] for k in ("id", "icon", "title", "blurb")},
+                        "values": {**presets[0]["values"], **values}})
     return {
-        "applies": "compile-time",
-        "note": "This build’s reflexes ship inside the firmware itself — the radar "
-                "module is a black box, so the host does the judging. Changing them "
-                "is a rebuild (the Sense Lab lets you feel any value live first).",
+        "applies": "runtime",
+        "nvs": {"namespace": "securacv",
+                "keys": {k["id"]: k["nvs"] for k in knobs}},
+        "note": "These are live numbers now: they persist in the chip’s settings "
+                "region and Home Assistant can retune every one of them later "
+                "(cfg/*/set). Baking a preset here just means the Canary is already "
+                "dialed for its room on first boot — nothing is locked in.",
         "lab": "senselab.html",
         "knobs": knobs,
+        "presets": presets,
     }
 
 

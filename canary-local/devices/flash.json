@@ -473,39 +473,141 @@
       "serial_receipt": false,
       "role": "sense",
       "reflexes": {
-        "applies": "compile-time",
-        "note": "This build’s reflexes ship inside the firmware itself — the radar module is a black box, so the host does the judging. Changing them is a rebuild (the Sense Lab lets you feel any value live first).",
+        "applies": "runtime",
+        "nvs": {
+          "namespace": "securacv",
+          "keys": {
+            "present_debounce_ms": "sns_debounce",
+            "clear_timeout_ms": "sns_clear",
+            "stall_timeout_ms": "sns_stall",
+            "range_near_cm": "sns_near",
+            "range_mid_cm": "sns_mid"
+          }
+        },
+        "note": "These are live numbers now: they persist in the chip’s settings region and Home Assistant can retune every one of them later (cfg/*/set). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "lab": "senselab.html",
         "knobs": [
           {
             "id": "present_debounce_ms",
             "macro": "CS_PRESENT_DEBOUNCE_MS",
             "unit": "ms",
-            "value": 300
+            "value": 300,
+            "nvs": "sns_debounce",
+            "bounds": [
+              0,
+              3000
+            ]
           },
           {
             "id": "clear_timeout_ms",
             "macro": "CS_CLEAR_TIMEOUT_MS",
             "unit": "ms",
-            "value": 1500
+            "value": 1500,
+            "nvs": "sns_clear",
+            "bounds": [
+              200,
+              10000
+            ]
           },
           {
             "id": "stall_timeout_ms",
             "macro": "CS_RADAR_STALL_MS",
             "unit": "ms",
-            "value": 5000
+            "value": 5000,
+            "nvs": "sns_stall",
+            "bounds": [
+              1000,
+              20000
+            ]
           },
           {
             "id": "range_near_cm",
             "macro": "CS_RANGE_NEAR_CM",
             "unit": "cm",
-            "value": 150
+            "value": 150,
+            "nvs": "sns_near",
+            "bounds": [
+              50,
+              400
+            ]
           },
           {
             "id": "range_mid_cm",
             "macro": "CS_RANGE_MID_CM",
             "unit": "cm",
-            "value": 350
+            "value": 350,
+            "nvs": "sns_mid",
+            "bounds": [
+              100,
+              600
+            ]
+          }
+        ],
+        "presets": [
+          {
+            "id": "ships",
+            "icon": "🐤",
+            "title": "As it ships",
+            "blurb": "The firmware’s own reflexes — balanced for a first bring-up. Pick nothing and this is what you get.",
+            "values": {
+              "present_debounce_ms": 300,
+              "clear_timeout_ms": 1500,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 350
+            }
+          },
+          {
+            "id": "bedside",
+            "icon": "🛏",
+            "title": "Bedside / sleep watch",
+            "blurb": "Slow to alarm, steady through stillness. Longer debounce and clear ride out turning-over; tighter bands match a bed two steps away; vitals lock waits for a genuinely settled signal.",
+            "values": {
+              "present_debounce_ms": 500,
+              "clear_timeout_ms": 5000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 100,
+              "range_mid_cm": 250
+            }
+          },
+          {
+            "id": "living",
+            "icon": "🛋",
+            "title": "Living room / shared space",
+            "blurb": "Occupancy over motion: a long clear timeout rides through reading and TV stillness; wider bands cover the whole room.",
+            "values": {
+              "present_debounce_ms": 300,
+              "clear_timeout_ms": 4000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 200,
+              "range_mid_cm": 450
+            }
+          },
+          {
+            "id": "hall",
+            "icon": "🚶",
+            "title": "Hallway / corridor",
+            "blurb": "People transit fast — a short debounce catches them, a snappy clear frees the room the moment they’re gone.",
+            "values": {
+              "present_debounce_ms": 200,
+              "clear_timeout_ms": 800,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 350
+            }
+          },
+          {
+            "id": "workshop",
+            "icon": "🧰",
+            "title": "Garage / workshop",
+            "blurb": "Machinery shakes the air: a longer debounce shrugs off vibration phantoms; a far mid band covers the long room.",
+            "values": {
+              "present_debounce_ms": 600,
+              "clear_timeout_ms": 2000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 500
+            }
           }
         ]
       }
@@ -532,51 +634,175 @@
       "serial_receipt": false,
       "role": "sense",
       "reflexes": {
-        "applies": "compile-time",
-        "note": "This build’s reflexes ship inside the firmware itself — the radar module is a black box, so the host does the judging. Changing them is a rebuild (the Sense Lab lets you feel any value live first).",
+        "applies": "runtime",
+        "nvs": {
+          "namespace": "securacv",
+          "keys": {
+            "present_debounce_ms": "sns_debounce",
+            "clear_timeout_ms": "sns_clear",
+            "stall_timeout_ms": "sns_stall",
+            "range_near_cm": "sns_near",
+            "range_mid_cm": "sns_mid",
+            "vitals_lock_ms": "sns_vlock",
+            "vitals_lost_ms": "sns_vlost"
+          }
+        },
+        "note": "These are live numbers now: they persist in the chip’s settings region and Home Assistant can retune every one of them later (cfg/*/set). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "lab": "senselab.html",
         "knobs": [
           {
             "id": "present_debounce_ms",
             "macro": "CS_PRESENT_DEBOUNCE_MS",
             "unit": "ms",
-            "value": 300
+            "value": 300,
+            "nvs": "sns_debounce",
+            "bounds": [
+              0,
+              3000
+            ]
           },
           {
             "id": "clear_timeout_ms",
             "macro": "CS_CLEAR_TIMEOUT_MS",
             "unit": "ms",
-            "value": 1500
+            "value": 1500,
+            "nvs": "sns_clear",
+            "bounds": [
+              200,
+              10000
+            ]
           },
           {
             "id": "stall_timeout_ms",
             "macro": "CS_RADAR_STALL_MS",
             "unit": "ms",
-            "value": 5000
+            "value": 5000,
+            "nvs": "sns_stall",
+            "bounds": [
+              1000,
+              20000
+            ]
           },
           {
             "id": "range_near_cm",
             "macro": "CS_RANGE_NEAR_CM",
             "unit": "cm",
-            "value": 150
+            "value": 150,
+            "nvs": "sns_near",
+            "bounds": [
+              50,
+              400
+            ]
           },
           {
             "id": "range_mid_cm",
             "macro": "CS_RANGE_MID_CM",
             "unit": "cm",
-            "value": 350
+            "value": 350,
+            "nvs": "sns_mid",
+            "bounds": [
+              100,
+              600
+            ]
           },
           {
             "id": "vitals_lock_ms",
             "macro": "CS_VITALS_LOCK_MS",
             "unit": "ms",
-            "value": 4000
+            "value": 4000,
+            "nvs": "sns_vlock",
+            "bounds": [
+              500,
+              15000
+            ]
           },
           {
             "id": "vitals_lost_ms",
             "macro": "CS_VITALS_LOST_MS",
             "unit": "ms",
-            "value": 6000
+            "value": 6000,
+            "nvs": "sns_vlost",
+            "bounds": [
+              1000,
+              20000
+            ]
+          }
+        ],
+        "presets": [
+          {
+            "id": "ships",
+            "icon": "🐤",
+            "title": "As it ships",
+            "blurb": "The firmware’s own reflexes — balanced for a first bring-up. Pick nothing and this is what you get.",
+            "values": {
+              "present_debounce_ms": 300,
+              "clear_timeout_ms": 1500,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 350,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000
+            }
+          },
+          {
+            "id": "bedside",
+            "icon": "🛏",
+            "title": "Bedside / sleep watch",
+            "blurb": "Slow to alarm, steady through stillness. Longer debounce and clear ride out turning-over; tighter bands match a bed two steps away; vitals lock waits for a genuinely settled signal.",
+            "values": {
+              "present_debounce_ms": 500,
+              "clear_timeout_ms": 5000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 100,
+              "range_mid_cm": 250,
+              "vitals_lock_ms": 6000,
+              "vitals_lost_ms": 8000
+            }
+          },
+          {
+            "id": "living",
+            "icon": "🛋",
+            "title": "Living room / shared space",
+            "blurb": "Occupancy over motion: a long clear timeout rides through reading and TV stillness; wider bands cover the whole room.",
+            "values": {
+              "present_debounce_ms": 300,
+              "clear_timeout_ms": 4000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 200,
+              "range_mid_cm": 450,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000
+            }
+          },
+          {
+            "id": "hall",
+            "icon": "🚶",
+            "title": "Hallway / corridor",
+            "blurb": "People transit fast — a short debounce catches them, a snappy clear frees the room the moment they’re gone.",
+            "values": {
+              "present_debounce_ms": 200,
+              "clear_timeout_ms": 800,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 350,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000
+            }
+          },
+          {
+            "id": "workshop",
+            "icon": "🧰",
+            "title": "Garage / workshop",
+            "blurb": "Machinery shakes the air: a longer debounce shrugs off vibration phantoms; a far mid band covers the long room.",
+            "values": {
+              "present_debounce_ms": 600,
+              "clear_timeout_ms": 2000,
+              "stall_timeout_ms": 5000,
+              "range_near_cm": 150,
+              "range_mid_cm": 500,
+              "vitals_lock_ms": 4000,
+              "vitals_lost_ms": 6000
+            }
           }
         ]
       }

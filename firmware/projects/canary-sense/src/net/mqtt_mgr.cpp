@@ -11,6 +11,7 @@
 #include "canary/log.h"
 #include "canary/version.h"
 #include "canary/runtime_config.h"  // NVS-backed identity + broker credentials
+#include "canary/sense_config.h"    // NVS-backed radar reflexes (cfg/* dials)
 #include "canary/diagnostics.h"     // heap health for the status heartbeat
 #include "canary/witness.h"         // chain head/length for the trust surface
 #include "canary/net/wifi_mgr.h"    // RSSI + link state
@@ -49,6 +50,40 @@ static int s_update_auto_cache = -1;
 // install command; main.cpp owns the blink window.
 static volatile bool s_pending_identify = false;
 
+// Inbound runtime radar reflexes (HA number entities → sense_config).
+// Latched by the callback, drained from the main loop — the exact pattern
+// canary-vision's detection dials use. -1 = nothing pending.
+static volatile long s_pending_cfg_debounce = -1;
+static volatile long s_pending_cfg_clear = -1;
+static volatile long s_pending_cfg_stall = -1;
+static volatile long s_pending_cfg_near = -1;
+static volatile long s_pending_cfg_mid = -1;
+static volatile long s_pending_cfg_vlock = -1;
+static volatile long s_pending_cfg_vlost = -1;
+
+// Parse a small non-negative integer from an MQTT payload (HA number
+// entities send plain decimals, possibly as "12.0", possibly quoted).
+// Returns -1 on junk, non-finite, or out-of-range input so a mangled
+// payload can never latch a value. Mirrors canary-vision's parser.
+static long parse_cfg_number(const uint8_t* payload, unsigned int len, long max_value) {
+  char buf[24];
+  unsigned int n = 0;
+  for (unsigned int i = 0; i < len && n < sizeof(buf) - 1; i++) {
+    const char c = (char)payload[i];
+    if (c == ' ' || c == '\t' || c == '"' || c == '\r' || c == '\n') continue;
+    buf[n++] = c;
+  }
+  buf[n] = '\0';
+  if (!n) return -1;
+  char* end = nullptr;
+  const double d = strtod(buf, &end);
+  if (!end || end == buf) return -1;
+  // Accept a trailing ".0" tail strtod consumed; reject other trailing junk.
+  if (*end != '\0') return -1;
+  if (!(d >= 0) || d != d || d > (double)max_value) return -1;
+  return (long)d;
+}
+
 static bool token_at(const char* p, int n, const char* tok, int tok_len) {
   auto boundary = [](char c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
@@ -60,6 +95,37 @@ static bool token_at(const char* p, int n, const char* tok, int tok_len) {
 
 static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
   if (!topic || !payload) return;
+
+  // Runtime radar reflexes (HA number entities). Max values here are only the
+  // parser's sanity ceiling; sense_config's setters clamp to the real bounds.
+  if (strcmp(topic, g_topics.cfg_debounce_cmd) == 0) {
+    s_pending_cfg_debounce = parse_cfg_number(payload, len, 3000);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_clear_cmd) == 0) {
+    s_pending_cfg_clear = parse_cfg_number(payload, len, 10000);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_stall_cmd) == 0) {
+    s_pending_cfg_stall = parse_cfg_number(payload, len, 20000);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_near_cmd) == 0) {
+    s_pending_cfg_near = parse_cfg_number(payload, len, 400);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_mid_cmd) == 0) {
+    s_pending_cfg_mid = parse_cfg_number(payload, len, 600);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_vlock_cmd) == 0) {
+    s_pending_cfg_vlock = parse_cfg_number(payload, len, 15000);
+    return;
+  }
+  if (strcmp(topic, g_topics.cfg_vlost_cmd) == 0) {
+    s_pending_cfg_vlost = parse_cfg_number(payload, len, 20000);
+    return;
+  }
 
   const bool is_install = (strcmp(topic, g_topics.update_cmd) == 0);
   const bool is_auto = (strcmp(topic, g_topics.update_auto_cmd) == 0);
@@ -107,6 +173,20 @@ bool take_pending_identify() {
   s_pending_identify = false;
   return true;
 }
+
+static long take_pending(volatile long& slot) {
+  const long v = slot;
+  slot = -1;
+  return v;
+}
+
+long take_pending_cfg_debounce() { return take_pending(s_pending_cfg_debounce); }
+long take_pending_cfg_clear()    { return take_pending(s_pending_cfg_clear); }
+long take_pending_cfg_stall()    { return take_pending(s_pending_cfg_stall); }
+long take_pending_cfg_near()     { return take_pending(s_pending_cfg_near); }
+long take_pending_cfg_mid()      { return take_pending(s_pending_cfg_mid); }
+long take_pending_cfg_vlock()    { return take_pending(s_pending_cfg_vlock); }
+long take_pending_cfg_vlost()    { return take_pending(s_pending_cfg_vlost); }
 
 static bool publish_checked(const char* tag, const char* topic, const char* payload, bool retain) {
   const bool ok = mqtt.publish(topic, payload, retain);
@@ -377,6 +457,17 @@ bool mqtt_connect_attempt() {
   // Identify button: re-subscribe so the wizard's blink request always
   // reaches a connected device.
   mqtt.subscribe(g_topics.identify_cmd, 1);
+
+  // Runtime radar reflexes: re-subscribe the command topics and reconcile
+  // the retained snapshot from the NVS-backed values.
+  mqtt.subscribe(g_topics.cfg_debounce_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_clear_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_stall_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_near_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_mid_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_vlock_cmd, 1);
+  mqtt.subscribe(g_topics.cfg_vlost_cmd, 1);
+  publish_sense_cfg_retained(g_topics);
   if (s_update_state_set) {
     publish_checked("OTA", g_topics.update_state, s_update_state_cache, true);
   }
@@ -385,6 +476,30 @@ bool mqtt_connect_attempt() {
                     s_update_auto_cache ? "ON" : "OFF", true);
   }
   return true;
+}
+
+bool publish_sense_cfg_retained(const Topics& topics) {
+  if (!mqtt.connected()) return false;
+  const auto& s = canary::cfg::sense();
+  char msg[224];
+  snprintf(msg, sizeof(msg),
+           "{"
+           "\"debounce_ms\":%lu,"
+           "\"clear_ms\":%lu,"
+           "\"stall_ms\":%lu,"
+           "\"near_cm\":%lu,"
+           "\"mid_cm\":%lu,"
+           "\"vitals_lock_ms\":%lu,"
+           "\"vitals_lost_ms\":%lu"
+           "}",
+           (unsigned long)s.present_debounce_ms,
+           (unsigned long)s.clear_timeout_ms,
+           (unsigned long)s.stall_timeout_ms,
+           (unsigned long)s.near_cm,
+           (unsigned long)s.mid_cm,
+           (unsigned long)s.vitals_lock_ms,
+           (unsigned long)s.vitals_lost_ms);
+  return publish_checked("CFG", topics.cfg_state, msg, true);
 }
 
 bool publish_identify_echo(const Topics& topics, bool active) {

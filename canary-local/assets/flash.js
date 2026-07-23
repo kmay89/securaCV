@@ -464,6 +464,125 @@ function phaseConnect() {
   return box;
 }
 
+// Sync the ROM and open an esptool session on an already-granted port —
+// the baud ladder from the original connect flow, extracted so the live
+// voice can hand the port back to the bootloader without a new chooser.
+// statusCb narrates ("Trying a gentler speed…"); throws the last error.
+async function openEsptool(port, statusCb) {
+  const top = state.catalog.flash_baud || core.FLASH_BAUDS[0];
+  // Start at the ceiling — lowered a rung by any prior write-time failure so
+  // the retry's large transfer runs at a gentler speed — and step down. Keep
+  // the slowest rung so the list is never empty.
+  const ceil = state.baudCeiling || top;
+  const baudList = [top, ...core.FLASH_BAUDS.filter((b) => b !== top)].filter((b) => b <= ceil);
+  if (!baudList.length) baudList.push(core.FLASH_BAUDS[core.FLASH_BAUDS.length - 1]);
+  let esploader = null, transport = null, lastErr = null;
+  for (let i = 0; i < baudList.length; i++) {
+    const baud = baudList[i];
+    if (i > 0 && statusCb) statusCb(`Trying a gentler speed (${baud})…`);
+    transport = new Transport(port, false);
+    esploader = new ESPLoader({
+      transport, baudrate: baud,
+      romBaudrate: state.catalog.console_baud || 115200,
+      terminal: makeTerminal(),
+    });
+    try {
+      state.chipDesc = await esploader.main();
+      state.usedBaud = baud;
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      esploader = null;
+      try { await transport.disconnect(); } catch {}
+    }
+  }
+  if (!esploader) throw lastErr || new Error("could not connect");
+  return { esploader, transport };
+}
+
+// ── the live voice: the board's own serial console, before anything is
+// written ─────────────────────────────────────────────────────────────────
+// When the connect reads find real firmware on the board, the flasher lets
+// it BOOT and streams its console right on the hello card — the board talks
+// first, flashing comes second. Any bootloader action (install, health
+// check, backup, rescue) calls ensureSession(), which quietly hands the
+// port back to the bootloader. No chooser, no gestures.
+async function startVoice(consoleEl, onIdentity) {
+  if (!state.session || state.voice) return;
+  const { port } = state.session;
+  try { await state.session.esploader.after("hard_reset"); } catch {}
+  try { await state.session.transport.disconnect(); } catch {}
+  state.session = null;
+  const v = { port, alive: true, reader: null, writer: null, identity: null };
+  state.voice = v;
+  try {
+    await port.open({ baudRate: state.catalog.console_baud || 115200 });
+    v.reader = port.readable.getReader();
+    try { v.writer = port.writable.getWriter(); } catch { /* read-only is fine */ }
+  } catch (e) {
+    state.voice = null;
+    consoleEl.textContent = "(the console didn’t open — " + String(e.message || e) +
+      " — installing still works)";
+    return;
+  }
+  // Ask for the signed self-manifest once the app settles: health, boots,
+  // temperature — the live story, before a byte is written. Twice, in case
+  // the first lands mid-boot.
+  const ask = () => {
+    if (!state.voice || v.identity || !v.writer) return;
+    try { v.writer.write(new TextEncoder().encode("j\n")); } catch { /* quiet build */ }
+  };
+  setTimeout(ask, 900);
+  setTimeout(ask, 2600);
+  const dec = new TextDecoder();
+  let buf = "";
+  (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await v.reader.read();
+        if (done || !v.alive) break;
+        buf = (buf + dec.decode(value, { stream: true })).slice(-8000);
+        consoleEl.textContent = buf;
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+        if (!v.identity) {
+          const m = core.parseSelfManifest(buf);
+          if (m) { v.identity = m; if (onIdentity) onIdentity(m); }
+        }
+      }
+    } catch { /* unplug/re-enumeration — ensureSession or reconnect recovers */ }
+  })();
+}
+
+async function stopVoice() {
+  const v = state.voice;
+  if (!v) return null;
+  state.voice = null;
+  v.alive = false;
+  try { v.reader && await v.reader.cancel(); } catch {}
+  try { v.reader && v.reader.releaseLock(); } catch {}
+  try { v.writer && v.writer.releaseLock(); } catch {}
+  try { await v.port.close(); } catch {}
+  return v.port;
+}
+
+// Guarantee an esptool session for a bootloader action. If the live voice
+// holds the port, it is closed and the SAME port re-synced — the flasher
+// flips the board back into download mode itself, no gesture needed.
+async function ensureSession(statusCb) {
+  if (state.session) return true;
+  const port = await stopVoice();
+  if (!port) return false;
+  try {
+    const { esploader, transport } = await openEsptool(port, statusCb);
+    esploader.FLASH_READ_TIMEOUT = 15000;
+    state.session = { port, transport, esploader };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function onConnect() {
   if (state.busy || state.connecting) return;
   state.connecting = true;   // synchronous guard: a double-click can't open two choosers
@@ -499,40 +618,17 @@ async function onConnect() {
   // flaky cables, unpowered hubs, and long USB runs sync fine but choke the
   // high-speed transfer. Walking down heals "it won't connect" silently
   // instead of dead-ending.
-  const top = state.catalog.flash_baud || core.FLASH_BAUDS[0];
-  // Start at the ceiling — lowered a rung by any prior write-time failure so
-  // the retry's large transfer runs at a gentler speed — and step down. Keep
-  // the slowest rung so the list is never empty.
-  const ceil = state.baudCeiling || top;
-  const baudList = [top, ...core.FLASH_BAUDS.filter((b) => b !== top)].filter((b) => b <= ceil);
-  if (!baudList.length) baudList.push(core.FLASH_BAUDS[core.FLASH_BAUDS.length - 1]);
-  let esploader = null, transport = null, lastErr = null;
-  for (let i = 0; i < baudList.length; i++) {
-    const baud = baudList[i];
-    if (i > 0) detail.textContent = `Trying a gentler speed (${baud})…`;
-    transport = new Transport(port, false);
-    esploader = new ESPLoader({
-      transport, baudrate: baud,
-      romBaudrate: state.catalog.console_baud || 115200,
-      terminal: makeTerminal(),
-    });
-    try {
-      state.chipDesc = await esploader.main();
-      state.usedBaud = baud;
-      lastErr = null;
-      break;
-    } catch (e) {
-      lastErr = e;
-      esploader = null;
-      try { await transport.disconnect(); } catch {}
-    }
-  }
-  clearTimeout(nudgeTimer);
-  if (!esploader) {
+  let opened;
+  try {
+    opened = await openEsptool(port, (t) => { detail.textContent = t; });
+  } catch (e) {
+    clearTimeout(nudgeTimer);
     state.busy = false;
-    setPhase(connectFailed(lastErr || new Error("could not connect"), state.portInfo));
+    setPhase(connectFailed(e || new Error("could not connect"), state.portInfo));
     return;
   }
+  clearTimeout(nudgeTimer);
+  const { esploader, transport } = opened;
 
   try {
     state.chip = esploader.chip.CHIP_NAME;
@@ -875,6 +971,46 @@ function phaseConnected() {
   hello.append(toolsNote);
   wrap.append(hello);
 
+  // The live voice: a board that carries real firmware BOOTS and talks,
+  // right here, before anything is written. (A brand-new board has nothing
+  // to say — the bootloader keeps the port and this card doesn't appear.)
+  if (state.current && !state.current.unknown) {
+    const voice = el("section", "flash-card flash-voice");
+    voice.append(el("h3", null, "🎙 Its live voice — before anything is written"));
+    voice.append(el("p", "fineprint",
+      "The flasher let the board boot; this is its own serial console, live " +
+      "over the cable. Install below whenever you’re ready — the flasher " +
+      "flips it back into download mode by itself."));
+    const idSlot = el("div", "flash-voice-id");
+    voice.append(idSlot);
+    const vcon = el("pre", "flash-console flash-voice-console", "listening…");
+    voice.append(vcon);
+    wrap.append(voice);
+    startVoice(vcon, (m) => {
+      idSlot.innerHTML = "";
+      const chips = el("div", "flash-passport");
+      const hv = core.healthVerdict(m.health);
+      const scored = typeof m.health === "number" && Number.isFinite(m.health);
+      const hchip = el("span", `flash-passport-chip flash-passport-${hv.level === "ok" ? "ok" : "warn"}`);
+      hchip.append(el("strong", null, "Self-check "),
+        document.createTextNode(scored ? `${hv.icon} ${m.health}/100` : hv.label));
+      chips.append(hchip);
+      if (typeof m.temp_c === "number" && Number.isFinite(m.temp_c) &&
+          m.temp_c > -40 && m.temp_c < 150) {
+        const warm = m.temp_c >= 70;
+        const tchip = el("span", `flash-passport-chip${warm ? " flash-passport-warn" : ""}`);
+        tchip.append(el("strong", null, "Heat "),
+          document.createTextNode(`${Math.round(m.temp_c)} °C${warm ? " — give it air" : ""}`));
+        chips.append(tchip);
+      }
+      if (m.tamper) {
+        chips.append(el("span", "flash-passport-chip flash-passport-warn",
+          "tamper flag raised"));
+      }
+      idSlot.append(chips);
+    });
+  }
+
   // Firmware picker (chip-guarded).
   wrap.append(renderPicker());
 
@@ -982,6 +1118,7 @@ async function takeBackup(box) {
 
 async function onBackup() {
   if (state.busy || !state.flashBytes) return;
+  if (!state.session && !(await ensureSession())) return;
   state.busy = true;
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
@@ -1286,6 +1423,27 @@ function refreshManifestState() {
     note.textContent = "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same key but not yet promoted to stable. Remove ?channel=dev from the address bar to go back to release firmware.";
     banner.append(note);
   }
+  // The headline answer, before any list: should THIS board be updated?
+  // Compares what the board runs against the release for that same product.
+  if (state.current && !state.current.unknown) {
+    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    const entry = curProd && core.manifestEntry(m, curProd, state.chip);
+    if (entry && !entry.error) {
+      const v = installVerdictFor(curProd, entry.version);
+      const text =
+        v.kind === "update"
+          ? `⬆ An update is waiting — ${curProd.name} ${state.current.version} → ${entry.version}. One click below installs it.`
+          : v.kind === "same"
+            ? `✓ Up to date — this board already runs the latest ${curProd.name} (${entry.version}).`
+            : v.kind === "downgrade"
+              ? `This board runs ${curProd.name} ${state.current.version} — newer than the published ${entry.version}. Probably a dev build; installing the release would be a downgrade.`
+              : null;
+      if (text) {
+        banner.append(el("p", `flash-headline flash-verdict-line flash-verdict-${v.kind}`, text));
+      }
+    }
+  }
+
   // Fill versions + enable buttons for available products.
   document.querySelectorAll(".flash-product").forEach((row) => {
     const id = row.dataset.id;
@@ -1405,9 +1563,10 @@ function phaseConfirm(product, entry) {
   const dials = core.detectDials(state.catalog, product);
   if (dials) dialsUI = renderDetectDials(box, dials);
 
-  // The radar builds carry their reflexes in the firmware itself — show them
-  // honestly (with the ⓘs), don't pretend they're writable from here.
-  if (product && product.reflexes) renderReflexes(box, product);
+  // Flash-time reflexes (Sense): room presets + fine-tune for the radar's
+  // seven NVS-backed live numbers — same posture as the Vision dials.
+  let reflexUI = null;
+  if (product && product.reflexes) reflexUI = renderReflexes(box, product);
 
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
@@ -1420,9 +1579,12 @@ function phaseConfirm(product, entry) {
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
     const dialSel = dialsUI ? dialsUI.selection() : null;
+    const reflexSel = reflexUI ? reflexUI.selection() : null;
     startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi,
       detect: dialSel ? dialSel.values : null,
-      detectPreset: dialSel ? dialSel.presetTitle : null });
+      detectPreset: dialSel ? dialSel.presetTitle : null,
+      reflex: reflexSel ? reflexSel.values : null,
+      reflexPreset: reflexSel ? reflexSel.presetTitle : null });
   });
   const cancel = el("button", "ghost", "not yet");
   cancel.addEventListener("click", () => setPhase(phaseConnected()));
@@ -1523,35 +1685,124 @@ function renderDetectDials(box, dials) {
   };
 }
 
-// ── the radar build's reflexes (Sense): shown, explained, never faked ───────
+// ── the radar build's reflexes (Sense): room presets + fine-tune ────────────
+// The same posture as the Vision dials: seven NVS-backed live numbers, room
+// presets first, sliders one click deeper, "as it ships" writes nothing —
+// and Home Assistant can retune every knob later.
 function renderReflexes(box, product) {
-  const r = product.reflexes;
-  const sec = el("details", "flash-reflexes");
-  const sum = el("summary", null, "This build’s reflexes — how it judges presence");
-  sec.append(sum);
-  const body = el("div", "flash-reflexes-body");
+  const r = core.reflexDials(state.catalog, product) || product.reflexes;
+  const runtime = r.applies === "runtime" && Array.isArray(r.presets);
+  const sec = el("div", "flash-dials");
+  sec.append(el("h3", null, runtime
+    ? "Dial its reflexes for the room (optional)"
+    : "This build’s reflexes — how it judges presence"));
   const note = el("p", "fineprint", r.note);
   const fh = helpDot("sense_flavor");
   if (fh) note.append(fh);
-  body.append(note);
+  sec.append(note);
+
+  // Static fallback for an old catalog: the read-only knob list.
+  if (!runtime) {
+    r.knobs.forEach((k) => {
+      const t = core.helpTopic(state.catalog, k.id);
+      const row = el("div", "flash-knob");
+      const lab = el("span", "flash-knob-label", (t && t.label) || k.id);
+      const hd = helpDot(k.id);
+      if (hd) lab.append(hd);
+      row.append(lab, el("span", "flash-knob-val", `${k.value} ${k.unit}`));
+      sec.append(row);
+    });
+    box.append(sec);
+    return null;
+  }
+
+  const defaults = r.presets[0].values; // "ships" leads by construction
+  const chosen = { preset: "ships", values: { ...defaults } };
+  const fmtVal = (k, v) => k.unit === "ms"
+    ? ((v / 1000) % 1 ? (v / 1000).toFixed(2) + "s" : (v / 1000) + "s")
+    : `${v} ${k.unit}`;
+
+  const grid = el("div", "flash-preset-grid");
+  const cards = [];
+  r.presets.forEach((pr) => {
+    const b = el("button", "flash-preset");
+    b.type = "button";
+    b.append(el("span", "flash-preset-icon", pr.icon));
+    b.append(el("span", "flash-preset-title", pr.title));
+    b.append(el("span", "flash-preset-blurb", pr.blurb));
+    const deb = r.knobs.find((k) => k.id === "present_debounce_ms");
+    const clr = r.knobs.find((k) => k.id === "clear_timeout_ms");
+    b.append(el("span", "flash-preset-vals",
+      `debounce ${fmtVal(deb, pr.values.present_debounce_ms)} · clear ${fmtVal(clr, pr.values.clear_timeout_ms)}`));
+    b.addEventListener("click", () => {
+      chosen.preset = pr.id;
+      chosen.values = { ...defaults, ...pr.values };
+      sync();
+    });
+    grid.append(b);
+    cards.push([b, pr]);
+  });
+  sec.append(grid);
+
+  const adv = el("details", "flash-dials-adv");
+  adv.append(el("summary", null, "fine-tune the reflexes"));
+  const sliders = {};
   r.knobs.forEach((k) => {
+    const [lo, hi] = k.bounds;
     const t = core.helpTopic(state.catalog, k.id);
-    const row = el("div", "flash-knob");
-    const lab = el("span", "flash-knob-label", (t && t.label) || k.id);
+    const row = el("div", "flash-dial-row");
+    const lab = el("span", "flash-dial-label");
+    lab.append(document.createTextNode((t && t.label) || k.id));
     const hd = helpDot(k.id);
     if (hd) lab.append(hd);
-    row.append(lab);
-    row.append(el("span", "flash-knob-val", `${k.value} ${k.unit}`));
-    body.append(row);
+    const val = el("span", "flash-dial-val");
+    const input = el("input");
+    input.type = "range";
+    input.min = String(lo); input.max = String(hi);
+    input.step = String(k.unit === "cm" ? 10 : 50);
+    input.addEventListener("input", () => {
+      chosen.values[k.id] = Number(input.value);
+      chosen.preset = "custom";
+      sync({ skipSlider: k.id });
+    });
+    row.append(lab, input, val);
+    adv.append(row);
+    sliders[k.id] = { input, val, knob: k };
   });
+  sec.append(adv);
+
   const lb = el("p", "fineprint");
   lb.append(document.createTextNode("Want to feel these live before committing? "));
   const a = el("a", null, "Open the Sense Lab →");
   a.href = r.lab;
   lb.append(a);
-  body.append(lb);
-  sec.append(body);
+  sec.append(lb);
+
+  function sync(opts = {}) {
+    for (const [b, pr] of cards) {
+      const on = chosen.preset === pr.id;
+      b.classList.toggle("flash-preset-on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    for (const [id, s] of Object.entries(sliders)) {
+      if (opts.skipSlider !== id) s.input.value = String(chosen.values[id]);
+      s.val.textContent = fmtVal(s.knob, chosen.values[id]);
+    }
+  }
+  sync();
+
   box.append(sec);
+  return {
+    selection() {
+      const same = Object.entries(defaults).every(([k, v]) => chosen.values[k] === v);
+      if (same) return null;
+      const pr = r.presets.find((p) => p.id === chosen.preset);
+      return {
+        values: { ...chosen.values },
+        presetTitle: pr && pr.id !== "ships" ? pr.title : null,
+      };
+    },
+  };
 }
 
 // ── optional WiFi fields (confirm card) ─────────────────────────────────────
@@ -1670,6 +1921,17 @@ function renderWifiFields(box) {
 async function startFlash(opts) {
   if (state.busy) return;
   state.busy = true;
+  // The live voice may hold the port — hand it back to the bootloader first.
+  if (!state.session) {
+    const okSession = await ensureSession();
+    if (!okSession) {
+      state.busy = false;
+      setPhase(errorRetry("Couldn’t reach the bootloader again",
+        new Error("the board didn’t re-enter download mode — unplug, replug, reconnect"),
+        phaseConnect));
+      return;
+    }
+  }
   const { esploader } = state.session;
   const eraseAll = !!opts.eraseAll;
   const label = opts.product ? `${opts.product.name} v${opts.entry.version}` : opts.label;
@@ -1787,20 +2049,23 @@ async function startFlash(opts) {
     // settings region in the same pass as the firmware. If we can't locate
     // that region, the install continues — never block a flash on a
     // convenience.
-    let wifiFile = null, wifiSsid = null, seededDials = null;
-    if ((opts.wifi || opts.detect) && !opts.isBackup) {
+    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null;
+    if ((opts.wifi || opts.detect || opts.reflex) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
           bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
         const nvs = entries.find(core.isNvsPart);
         if (!nvs) throw new Error("no settings region in this image");
         const dials = opts.detect ? core.detectDials(state.catalog, opts.product) : null;
-        const ints = opts.detect ? core.detectValuesToNvs(opts.detect, dials) : { u8: {}, u32: {} };
+        const dInts = opts.detect ? core.detectValuesToNvs(opts.detect, dials) : { u8: {}, u32: {} };
+        const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
+        const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
         const nvsImg = core.buildNvsSeedImage(
-          { wifi: opts.wifi || null, u8: ints.u8, u32: ints.u32 }, nvs.size);
+          { wifi: opts.wifi || null, u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
         seededDials = opts.detect || null;
+        seededReflex = opts.reflex || null;
       } catch (e) {
         box.stage("Couldn’t bake the settings (" + String(e.message || e) +
           ") — continuing; everything is still tunable after boot");
@@ -1850,7 +2115,7 @@ async function startFlash(opts) {
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
-      wifiSsid, seededDials, wifi: null }));
+      wifiSsid, seededDials, seededReflex, wifi: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -1940,6 +2205,18 @@ function phaseDone(opts) {
       ` Dialed in${opts.detectPreset ? ` for ${opts.detectPreset}` : ""} — ` +
       `confidence ${d.score}, lost ${fmtS(d.lost_ms)}, dwell ${fmtS(d.dwell_ms)} are ` +
       `baked into its settings. Home Assistant can retune all of them live, any time.`));
+    box.append(line);
+  }
+  if (opts.seededReflex) {
+    const rv = opts.seededReflex;
+    const fmtS = (ms) => (ms / 1000) % 1 ? (ms / 1000).toFixed(2) + "s" : (ms / 1000) + "s";
+    const line = el("p", "muted");
+    line.append(el("span", "flash-check", "✓"));
+    line.append(document.createTextNode(
+      ` Reflexes dialed in${opts.reflexPreset ? ` for ${opts.reflexPreset}` : ""} — ` +
+      `debounce ${fmtS(rv.present_debounce_ms)}, clear ${fmtS(rv.clear_timeout_ms)}, ` +
+      `bands ${rv.range_near_cm}/${rv.range_mid_cm} cm — baked into its settings. ` +
+      `Home Assistant can retune every one of them live.`));
     box.append(line);
   }
   // The ONE obvious next step for THIS board — tailored to how it sets up and
@@ -2184,7 +2461,8 @@ async function onRestoreFile(ev) {
 
 // ── the health check (triage without changing a byte) ───────────────────────
 async function runHealthCheck() {
-  if (state.busy || !state.session) return;
+  if (state.busy) return;
+  if (!state.session && !(await ensureSession())) return;
   state.busy = true;
   const { esploader } = state.session;
   const box = progressCard("Reading your board’s story", "Partition map, firmware slots, crash dumps, witness chain — read-only, nothing is changed.");
@@ -2542,6 +2820,7 @@ const MONITOR_CMDS = [
 async function openMonitor(opts = {}) {
   if (state.busy) return;
   let port = state.session && state.session.port;
+  if (!port && state.voice) port = await stopVoice(); // hand the voice's port to the full monitor
   if (state.session) {
     // Leave the bootloader: reset into the app, then let go of the port.
     if (!opts.skipReset) { try { await state.session.esploader.after("hard_reset"); } catch {} }
@@ -3262,6 +3541,7 @@ function errorRetry(title, e, backPhase) {
 }
 
 async function onDisconnect(silent) {
+  try { await stopVoice(); } catch {}
   try { if (state.session) await state.session.transport.disconnect(); } catch {}
   state.session = null;
   state.chip = state.mac = state.flashBytes = state.current = null;
