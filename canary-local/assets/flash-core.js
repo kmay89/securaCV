@@ -86,13 +86,25 @@ export function parsePartitionTable(bytes) {
 }
 
 // Which app partition to read a version out of: prefer ota_0, then factory,
-// then whatever app comes first. (Reading otadata to know the *live* slot is
-// deliberately out of scope — for a first-flash tool "there's canary-wap
-// ~2.1.0 on here" is the honest, useful signal, and it never blocks flashing.)
+// then whatever app comes first. Used when otadata could not be read — the
+// install verdict compares against the booted slot via pickBootedAppPartition.
 export function pickAppPartition(apps) {
   if (!apps || !apps.length) return null;
   const byName = (n) => apps.find((a) => APP_SUBTYPE[a.subtype] === n);
   return byName("ota_0") || byName("factory") || apps[0];
+}
+
+// The slot the bootloader will actually run, given parsed otadata: fresh
+// otadata boots factory (else ota_0); otherwise ota_<activeOta>. A board that
+// OTA'd into ota_1 must be judged by ota_1's descriptor, or the install
+// verdict compares against a stale inactive app and can call a downgrade an
+// update.
+export function pickBootedAppPartition(apps, otadata) {
+  if (!apps || !apps.length) return null;
+  if (!otadata) return pickAppPartition(apps);
+  const byName = (n) => apps.find((a) => APP_SUBTYPE[a.subtype] === n);
+  if (otadata.fresh) return byName("factory") || byName("ota_0") || apps[0];
+  return byName(`ota_${otadata.activeOta}`) || pickAppPartition(apps);
 }
 
 // ── esp_app_desc_t (256 bytes, at app_offset + 0x20) ──────────────────────
@@ -750,14 +762,33 @@ function nvsWr32(page, o, v) {
   page[o + 2] = (v >>> 16) & 0xff; page[o + 3] = (v >>> 24) & 0xff;
 }
 
-export function buildNvsWifiImage(ssid, pass, partitionSize) {
+// General seed builder: the same one valid NVS page, carrying any mix of
+// WiFi credentials (blobs, the wap/canary scheme) and small integer settings
+// (the Preferences putUChar/putULong scheme detect_config.cpp reads — u8 is
+// item type 0x01, u32 is 0x04). One writer so the two families can't drift.
+//   opts.wifi   { ssid, pass }                     — optional
+//   opts.u8     { key: value, … }  (0-255)         — optional
+//   opts.u32    { key: value, … }  (0-2^32-1)      — optional
+export function buildNvsSeedImage(opts, partitionSize) {
+  const wifi = opts && opts.wifi;
+  const u8s = (opts && opts.u8) || {};
+  const u32s = (opts && opts.u32) || {};
   const enc = new TextEncoder();
-  const ssidB = enc.encode(String(ssid));
-  const passB = enc.encode(String(pass || ""));
-  if (ssidB.length < 1 || ssidB.length > 32)
-    throw new Error("WiFi name must be 1-32 bytes");
-  if (passB.length !== 0 && (passB.length < 8 || passB.length > 63))
-    throw new Error("WiFi password must be 8-63 characters (or empty for an open network)");
+  let ssidB = null, passB = null;
+  if (wifi) {
+    ssidB = enc.encode(String(wifi.ssid));
+    passB = enc.encode(String(wifi.pass || ""));
+    if (ssidB.length < 1 || ssidB.length > 32)
+      throw new Error("WiFi name must be 1-32 bytes");
+    if (passB.length !== 0 && (passB.length < 8 || passB.length > 63))
+      throw new Error("WiFi password must be 8-63 characters (or empty for an open network)");
+  }
+  for (const [k, v] of [...Object.entries(u8s), ...Object.entries(u32s)]) {
+    if (!k || k.length > 15) throw new Error(`NVS key "${k}" must be 1-15 chars`);
+    if (!Number.isInteger(v) || v < 0) throw new Error(`NVS value for "${k}" must be a non-negative integer`);
+  }
+  for (const v of Object.values(u8s)) if (v > 0xff) throw new Error("u8 value out of range");
+  for (const v of Object.values(u32s)) if (v > 0xffffffff) throw new Error("u32 value out of range");
   if (!(partitionSize >= NVS_PAGE)) throw new Error("nvs partition too small");
 
   const img = new Uint8Array(partitionSize).fill(0xff);
@@ -802,15 +833,24 @@ export function buildNvsWifiImage(ssid, pass, partitionSize) {
     finishItem(idx); markWritten(idx); idx++;
   };
 
-  writeBlob("wifi_ssid", ssidB);
-  writeBlob("wifi_pass", passB);
+  // Small integers, the Preferences scheme: putUChar → type 0x01 (1 byte),
+  // putULong → type 0x04 (4 bytes LE), value inline in the data field.
+  const writeInt = (key, type, size, value) => {
+    const o = itemBase(idx);
+    writeHeader(o, 1, type, 1, 0xff, key);
+    for (let i = 0; i < 8; i++) {
+      page[o + 24 + i] = i < size ? (value >>> (8 * i)) & 0xff : 0xff;
+    }
+    finishItem(idx); markWritten(idx); idx++;
+  };
 
-  // wifi_en = true (u8). Preferences putBool stores a u8.
-  const oe = itemBase(idx);
-  writeHeader(oe, 1, 0x01, 1, 0xff, "wifi_en");
-  page[oe + 24] = 1;
-  for (let i = 1; i < 8; i++) page[oe + 24 + i] = 0xff;
-  finishItem(idx); markWritten(idx); idx++;
+  if (wifi) {
+    writeBlob("wifi_ssid", ssidB);
+    writeBlob("wifi_pass", passB);
+    writeInt("wifi_en", 0x01, 1, 1); // Preferences putBool stores a u8
+  }
+  for (const [k, v] of Object.entries(u8s)) writeInt(k, 0x01, 1, v);
+  for (const [k, v] of Object.entries(u32s)) writeInt(k, 0x04, 4, v);
 
   // Page header: ACTIVE, seq 0, version 0xFE (v2); CRC over bytes 4..27.
   nvsWr32(page, 0, 0xfffffffe);
@@ -819,6 +859,12 @@ export function buildNvsWifiImage(ssid, pass, partitionSize) {
   for (let i = 9; i < 28; i++) page[i] = 0xff;
   nvsWr32(page, 28, crc32EspRom(page.subarray(4, 28)));
   return img;
+}
+
+// The original WiFi-only entry point, kept verbatim in behavior — every
+// existing caller and test goes through the general builder above.
+export function buildNvsWifiImage(ssid, pass, partitionSize) {
+  return buildNvsSeedImage({ wifi: { ssid, pass } }, partitionSize);
 }
 
 // The standard WiFi-QR payload (WPA assumed unless the password is empty).
@@ -1159,11 +1205,19 @@ export function postFlashNextStep(product, opts = {}) {
   const wifiJoined = !!(opts && opts.wifiJoined);
 
   // Coarse role from the id — only picks which "watch it prove itself" hint fits.
-  const role =
-    /sense/.test(id) ? "sense" :
-    /vision/.test(id) ? "vision" :
-    /wap/.test(id) ? "wap" :
-    "canary";
+  const role = productRole(id);
+
+  // A display board's proof isn't in the console — it's on the glass.
+  if (role === "display") {
+    return {
+      kind: "watch-glass",
+      title: "Watch the glass",
+      body: "This board SHOWS — after the splash you’ll see its face come up, " +
+            "exactly like the emulator preview. If the screen stays dark, the " +
+            "firmware keeps running headless so the serial monitor can tell you why.",
+      cta: "Open the live monitor",
+    };
+  }
 
   // "ap" boards raise their own phone Wi-Fi portal on first boot — unless we
   // already wrote the home Wi-Fi during the flash, in which case they just join.
@@ -1315,4 +1369,236 @@ export function buildDiagnosticReport(info = {}) {
     lines.push(String(info.logTail).split("\n").slice(-12).join("\n"));
   }
   return lines.join("\n") + "\n";
+}
+
+// ── the install verdict: is this an update, a downgrade, or a sidestep? ─────
+// The board already told us what it runs (readCurrentFirmware); the manifest
+// says what we're about to write. Saying "this is an update from 2.1.0" out
+// loud is the difference between a tool and a mystery box. Pure + tested.
+
+// "2.2.0", "v2.2.0", "2.2.0-rc1" → { parts:[2,2,0], pre:"rc1" }; null if it
+// doesn't lead with digits (git hashes, "not-embedded", "").
+export function parseVersion(v) {
+  const m = /^v?(\d+(?:\.\d+)*)(?:[-+](.*))?$/.exec(String(v || "").trim());
+  if (!m) return null;
+  return { parts: m[1].split(".").map(Number), pre: m[2] || null };
+}
+
+// -1 a<b · 0 equal · 1 a>b · null when either side is unparseable.
+// A prerelease sorts before its own release (2.2.0-rc1 < 2.2.0).
+export function compareVersions(a, b) {
+  const pa = parseVersion(a), pb = parseVersion(b);
+  if (!pa || !pb) return null;
+  const n = Math.max(pa.parts.length, pb.parts.length);
+  for (let i = 0; i < n; i++) {
+    const x = pa.parts[i] || 0, y = pb.parts[i] || 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  if (!!pa.pre !== !!pb.pre) return pa.pre ? -1 : 1;
+  if (pa.pre && pb.pre && pa.pre !== pb.pre) return pa.pre < pb.pre ? -1 : 1;
+  return 0;
+}
+
+// The one-line verdict for a candidate install, given what the board runs now.
+//   current       state.current ({version, projectName, productName} | {unknown} | null)
+//   currentProduct the catalog product matched off the board (may be null)
+//   product       the catalog product about to be installed
+//   version       the candidate version string (manifest entry)
+// Returns { kind, icon, label, detail } — kind ∈ fresh | update | downgrade |
+// same | switch | unknown. Copy is calm and factual; a downgrade is allowed
+// (that's what backups and rescue are for), just never silent.
+export function installVerdict({ current, currentProduct, product, version }) {
+  if (!current || current.unknown) {
+    return {
+      kind: "fresh", icon: "✦", label: "First install",
+      detail: "Nothing SecuraCV is on this board yet — this is the one-time first setup.",
+    };
+  }
+  const sameFamily = currentProduct && product && currentProduct.id === product.id;
+  if (currentProduct && product && !sameFamily) {
+    return {
+      kind: "switch", icon: "⇄", label: `Switch from ${currentProduct.name}`,
+      detail: `The board runs ${currentProduct.name} ${current.version || ""} today. `.replace("  ", " ") +
+              `Installing ${product.name} changes what this Canary is — settings from the old role don’t carry over.`,
+    };
+  }
+  const cmp = compareVersions(current.version, version);
+  if (cmp === null) {
+    return {
+      kind: "unknown", icon: "•", label: "Version unknown",
+      detail: "The board’s current version couldn’t be compared — the install itself is unaffected.",
+    };
+  }
+  if (cmp < 0) {
+    return {
+      kind: "update", icon: "↑", label: `Update · ${current.version} → ${version}`,
+      detail: "A newer build of the same firmware. Your settings region is left alone unless the map below says otherwise.",
+    };
+  }
+  if (cmp > 0) {
+    return {
+      kind: "downgrade", icon: "↓", label: `Downgrade · ${current.version} → ${version}`,
+      detail: "This is OLDER than what the board runs now. That’s allowed — useful when a release misbehaves — " +
+              "but newer settings may not be understood by older firmware. The automatic safety copy is your way back.",
+    };
+  }
+  return {
+    kind: "same", icon: "=", label: `Reinstall · already on ${version}`,
+    detail: "The board already runs this exact version. Installing again rewrites it byte-for-byte — " +
+            "harmless, and occasionally exactly what a misbehaving board needs.",
+  };
+}
+
+// ── roles: what a board IS, in one word — and what it does, in another ──────
+// The same loose id sniff postFlashNextStep always used, promoted to a named
+// helper (and taught about displays) so every surface agrees on the answer.
+export function productRole(productOrId) {
+  const id = typeof productOrId === "string" ? productOrId : (productOrId && productOrId.id) || "";
+  if (/display|watch|dash/.test(id)) return "display";
+  if (/sense/.test(id)) return "sense";
+  if (/vision/.test(id)) return "vision";
+  if (/wap/.test(id)) return "wap";
+  return "canary";
+}
+
+// The one-word verb for the role — a display SHOWS, everything else SENSES.
+export function roleVerb(role) {
+  return role === "display" ? "shows" : "senses";
+}
+
+// A firmware project name read off a bare board → does it look like one of
+// the display builds? (The app descriptor is the only voice a board in
+// download mode has; "canary_display" / "canary-display-*" both count.)
+export function looksLikeDisplayProject(projectName) {
+  return /display/i.test(String(projectName || ""));
+}
+
+// ── per-setting help: the ⓘ registry (catalog-driven, Merlin/Cura style) ───
+// Every dial and toggle in the flasher can explain itself: what it is, when
+// to change it, and what the shipped default means. The copy lives in the
+// generated catalog (settings_help), so firmware truth and help text can't
+// drift apart — this is just the lookup. Pure + tested.
+export function helpTopic(catalog, id) {
+  const reg = catalog && catalog.settings_help;
+  if (!reg || typeof reg !== "object") return null;
+  const t = reg[id];
+  return t && t.label && t.what ? t : null;
+}
+
+// ── flash-time detection dials (Vision): catalog → NVS seed ────────────────
+// The Vision firmware reads four runtime numbers from NVS (detect_config.cpp:
+// namespace "securacv", det_target u8, det_score u8, det_lost u32, det_dwell
+// u32) — the exact keys Home Assistant tunes later. The flasher can seed the
+// same keys at install time, so a room preset is baked in before first boot.
+
+// The product's dial description from the catalog, or null when this product
+// has no flash-time dials (only Vision does today — honesty over symmetry).
+export function detectDials(catalog, product) {
+  if (!product || !catalog) return null;
+  const p = (catalog.products || []).find((x) => x.id === product.id);
+  return (p && p.detect) || null;
+}
+
+// Clamp one dial set against the catalog bounds and shape it for the NVS
+// builder. Returns { u8:{…}, u32:{…} } — only the keys actually provided.
+export function detectValuesToNvs(values, dials) {
+  const b = (dials && dials.bounds) || {};
+  const clamp = (v, [lo, hi] = [0, 0xffffffff]) =>
+    Math.min(Math.max(Math.round(v), lo), hi);
+  const out = { u8: {}, u32: {} };
+  if (values == null) return out;
+  if (Number.isFinite(values.target)) out.u8.det_target = clamp(values.target, b.target || [0, 255]);
+  if (Number.isFinite(values.score)) out.u8.det_score = clamp(values.score, b.score || [0, 100]);
+  if (Number.isFinite(values.lost_ms)) out.u32.det_lost = clamp(values.lost_ms, b.lost_ms);
+  if (Number.isFinite(values.dwell_ms)) out.u32.det_dwell = clamp(values.dwell_ms, b.dwell_ms);
+  return out;
+}
+
+// ── displays: the boards that SHOW — known to the flasher, honestly ─────────
+// Display builds aren't published over the release channel (yet), so they are
+// deliberately not flashable products. But the flasher should still KNOW them:
+// name the board when it reads a display build off the wire, and offer the
+// 1:1 firmware emulator (the same WASM build fleet.html boots) as the honest
+// preview of what the glass will show. catalog.displays carries the facts.
+export function displaysIn(catalog) {
+  return (catalog && Array.isArray(catalog.displays)) ? catalog.displays : [];
+}
+
+// Match a board-read project name (or an explicit id) to a catalog display —
+// an exact id wins; otherwise the loose match string ("display") names the
+// family off a bare project name (first entry is fine for naming).
+export function displayFor(catalog, projectNameOrId) {
+  const s = String(projectNameOrId || "").toLowerCase();
+  if (!s) return null;
+  const all = displaysIn(catalog);
+  return all.find((d) => s === d.id) ||
+         all.find((d) => d.match && s.includes(d.match)) || null;
+}
+
+// ── the board passport: pre-flash story rows from the read-only probes ─────
+// Everything here comes from reads the connect phase already performs (or
+// cheap extras): the app descriptor, otadata, the coredump header, and the
+// NVS witness counters. Pure formatting so the card is testable.
+export function passportRows({ otadata, witness, coredump } = {}) {
+  const rows = [];
+  if (otadata && typeof otadata.updatesSeen === "number" && otadata.updatesSeen > 0) {
+    rows.push({ id: "updates", label: "Updates seen", value: `${otadata.updatesSeen}`, tone: "ok" });
+  }
+  if (witness && typeof witness.boots === "number") {
+    rows.push({ id: "boots", label: "Lifetime boots", value: `${witness.boots}`, tone: "ok" });
+  }
+  if (witness && typeof witness.seq === "number") {
+    rows.push({ id: "seq", label: "Witness records", value: `${witness.seq}`, tone: "ok" });
+  }
+  if (witness && witness.tamper) {
+    rows.push({ id: "tamper", label: "Tamper flag", value: "raised — expected if you’ve opened it", tone: "warn" });
+  }
+  if (coredump) {
+    rows.push(coredump.present
+      ? { id: "crash", label: "Crash record", value: "one saved crash dump on board", tone: "warn" }
+      : { id: "crash", label: "Crash record", value: "none — it has never hard-crashed", tone: "ok" });
+  }
+  return rows;
+}
+
+// Optional shape guard for the new catalog blocks (settings_help, displays,
+// products[].detect / reflexes / role). Separate from validateCatalog on
+// purpose: these blocks are additive and the page degrades gracefully without
+// them, so their guard belongs to the drift tests, not the runtime gate.
+export function validateEpicCatalog(cat) {
+  const errs = [];
+  if (!cat || typeof cat !== "object") return ["catalog is not an object"];
+  const help = cat.settings_help;
+  if (!help || typeof help !== "object" || Array.isArray(help)) {
+    errs.push("settings_help must be an object of topics");
+  } else {
+    for (const [id, t] of Object.entries(help)) {
+      if (!t || !t.label || !t.what) errs.push(`settings_help.${id}: label + what are required`);
+    }
+  }
+  if (!Array.isArray(cat.displays)) errs.push("displays must be an array");
+  for (const d of Array.isArray(cat.displays) ? cat.displays : []) {
+    if (!d.id || !d.name || !d.panel || !d.emulator || !d.emulator.module || !d.emulator.factory) {
+      errs.push(`displays.${d && d.id}: id, name, panel, emulator{module,factory} required`);
+    }
+  }
+  for (const p of Array.isArray(cat.products) ? cat.products : []) {
+    if (!p.role) errs.push(`product ${p.id}: missing role`);
+    if (p.detect) {
+      const b = p.detect.bounds || {};
+      for (const k of ["score", "target", "lost_ms", "dwell_ms"]) {
+        if (!Array.isArray(b[k]) || b[k].length !== 2) errs.push(`product ${p.id}: detect.bounds.${k} must be [lo, hi]`);
+      }
+      if (!Array.isArray(p.detect.presets) || !p.detect.presets.length) {
+        errs.push(`product ${p.id}: detect.presets must be a non-empty array`);
+      }
+      for (const pr of p.detect.presets || []) {
+        if (!pr.id || !pr.title || !pr.values) errs.push(`product ${p.id}: preset ${pr && pr.id}: id, title, values required`);
+      }
+    }
+    if (p.reflexes && (!Array.isArray(p.reflexes.knobs) || !p.reflexes.knobs.length)) {
+      errs.push(`product ${p.id}: reflexes.knobs must be a non-empty array`);
+    }
+  }
+  return errs;
 }

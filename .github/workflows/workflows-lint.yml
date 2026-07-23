@@ -1,21 +1,34 @@
 name: Workflow Lint
 
-# Lints .github/workflows/** with actionlint (incl. shellcheck on every
-# run: block), so a broken expression, an impossible `if:`, or an unquoted
-# shell variable in CI config fails the PR that introduces it instead of
-# silently mis-running later. With ~20 workflows in this repo, the CI
-# config is code too.
+# The CI config is code too — two gates keep it honest:
+#
+#   · actionlint — syntax, expressions, impossible `if:`s, and shellcheck
+#     on every run: block, so a broken workflow fails the PR that
+#     introduces it instead of silently mis-running later.
+#   · CI policy — .github/scripts/ci_policy_check.py enforces the general
+#     rules in .github/CI.md (permissions, timeouts, concurrency, pinned
+#     actions, path filters) on every workflow, current and FUTURE. New
+#     workflows can't regress the conventions; exemptions live in
+#     .github/ci-policy.yml where review can see them.
 on:
   push:
     branches: [main]
     paths:
       - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.github/scripts/**'
+      - '.github/ci-policy.yml'
+      - '.github/CI.md'
       - '.github/actionlint.yaml'
       - '.github/actionlint.yml'
   pull_request:
     branches: [main]
     paths:
       - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.github/scripts/**'
+      - '.github/ci-policy.yml'
+      - '.github/CI.md'
       - '.github/actionlint.yaml'
       - '.github/actionlint.yml'
 
@@ -30,6 +43,7 @@ jobs:
   actionlint:
     name: actionlint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       # Pinned image; bundles shellcheck + pyflakes for run: block linting.
@@ -37,3 +51,14 @@ jobs:
         uses: docker://rhysd/actionlint:1.7.7
         with:
           args: -color
+
+  ci-policy:
+    name: CI policy (.github/CI.md)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+      - name: Enforce the CI ground rules on every workflow
+        run: python3 .github/scripts/ci_policy_check.py

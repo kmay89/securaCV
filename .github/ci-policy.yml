@@ -1,0 +1,18 @@
+# Exemptions from the CI policy rules (.github/CI.md), enforced by
+# .github/scripts/ci_policy_check.py in the Workflow Lint check.
+#
+# Every entry needs a comment saying WHY the rule doesn't fit — an
+# exemption without a reason is a policy violation waiting to be copied.
+
+# R2: upper bound for any job's timeout-minutes. Raise deliberately if a
+# job genuinely needs more; don't work around it per-job.
+timeout_max: 120
+
+# R5: pull_request workflows allowed to run on every PR, unfiltered.
+unfiltered_ok:
+  - lint.yml           # cheap repo-wide greps; any file can violate them
+  - secrets-scan.yml   # a secret can land in any file type
+  - review-threads.yml # gates on review-thread state, not file contents
+
+# R6: workflows whose push and pull_request path lists may differ.
+paths_parity_ok: []

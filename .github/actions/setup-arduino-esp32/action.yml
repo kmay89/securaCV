@@ -1,0 +1,86 @@
+name: Set up Arduino CLI + ESP32 core (cached)
+description: >
+  One shared setup path for every Arduino-CLI build job. Installs
+  arduino-cli, restores the ESP32 Boards-Manager core from the Actions
+  cache (the toolchain is a >1 GB download that used to be re-fetched by
+  every job and matrix leg), then installs the requested libraries.
+  Change how Arduino builds are provisioned HERE, once — not in six
+  workflows.
+
+inputs:
+  core-version:
+    description: >
+      esp32:esp32 core version to install (e.g. "3.3.10"). Empty means
+      "latest": the cache key then carries the ISO week, so a cached
+      "latest" can never go stale for more than a week and the first run
+      of each week refreshes it.
+    required: false
+    default: ""
+  libraries:
+    description: >
+      Newline-separated arduino-cli library specs, with optional pins
+      ("ArduinoJson" or "lvgl@8.4.0"). Libraries are small and installed
+      fresh each run on purpose — keeping them OUT of the cache key lets
+      every latest-core job share one toolchain cache entry.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Arduino CLI
+      uses: arduino/setup-arduino-cli@v2
+      with:
+        # Pinned to the 1.x line: "latest" crossing a major would change
+        # CLI flags under every firmware job at once.
+        version: 1.x
+
+    - name: Compute toolchain cache key
+      id: key
+      shell: bash
+      env:
+        CORE_VERSION: ${{ inputs.core-version }}
+      run: |
+        set -euo pipefail
+        if [ -n "$CORE_VERSION" ]; then
+          echo "key=arduino-esp32-${{ runner.os }}-core-$CORE_VERSION" >> "$GITHUB_OUTPUT"
+        else
+          # %G/%V = ISO year/week: rotates the "latest" cache weekly.
+          echo "key=arduino-esp32-${{ runner.os }}-core-latest-$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Cache the ESP32 core + toolchain
+      uses: actions/cache@v6
+      with:
+        # staging/ holds the downloaded archives — dead weight once the
+        # tools are extracted, and it roughly doubles the cache entry.
+        path: |
+          ~/.arduino15
+          !~/.arduino15/staging
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Configure Arduino CLI + install the ESP32 core
+      shell: bash
+      env:
+        CORE_VERSION: ${{ inputs.core-version }}
+      run: |
+        set -euo pipefail
+        arduino-cli config init --overwrite
+        arduino-cli config add board_manager.additional_urls \
+          https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+        arduino-cli core update-index
+        # No-op seconds on a warm cache; the full download only on a cold
+        # one (new week, new pinned version, or cache eviction).
+        arduino-cli core install "esp32:esp32${CORE_VERSION:+@$CORE_VERSION}"
+
+    - name: Install libraries
+      if: inputs.libraries != ''
+      shell: bash
+      env:
+        LIBRARIES: ${{ inputs.libraries }}
+      run: |
+        set -euo pipefail
+        while IFS= read -r lib; do
+          [ -n "$lib" ] || continue
+          arduino-cli lib install "$lib"
+        done <<< "$LIBRARIES"

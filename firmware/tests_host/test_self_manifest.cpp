@@ -185,6 +185,26 @@ static void test_unknown_health_and_tamper() {
   CHECK(has(std::string(buf), "\"health\":100"));
 }
 
+// ── die temperature: null by default, a bare (possibly negative) int when set ─
+static void test_temperature() {
+  char buf[1024];
+  manifest::Facts f = sample();          // temp untouched → unknown
+  manifest::build(f, buf, sizeof buf);
+  CHECK(has(std::string(buf), "\"temp_c\":null"));
+
+  f.temp_c = 43;
+  manifest::build(f, buf, sizeof buf);
+  CHECK(has(std::string(buf), "\"temp_c\":43"));
+
+  f.temp_c = -12;                        // a cold shed is a real place
+  manifest::build(f, buf, sizeof buf);
+  CHECK(has(std::string(buf), "\"temp_c\":-12"));
+
+  f.temp_c = -400;                       // below absolute zero = sensor nonsense
+  manifest::build(f, buf, sizeof buf);
+  CHECK(has(std::string(buf), "\"temp_c\":null"));
+}
+
 // ── string values are escaped (never trust an input into a wire format) ─────
 static void test_escaping() {
   char buf[1024];
@@ -250,6 +270,7 @@ int main() {
   test_no_fleet();
   test_worst_case_fleet_fits();
   test_unknown_health_and_tamper();
+  test_temperature();
   test_escaping();
   test_no_features();
   test_null_fields_safe();
