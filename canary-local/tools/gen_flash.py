@@ -901,6 +901,64 @@ def we2_module_block(release_base: str) -> dict:
                   "WebSerial, the same wire protocol Seeed’s open-source flasher speaks, "
                   "clean-room implemented and pinned by tests/we2.test.js.",
         "docs": "docs/hardware/grove_vision_ai_v2_guide.md",
+        # The live bench: how to get the camera preview working, start to
+        # finish, plus the fixes for every way it usually goes sideways.
+        # Threshold defaults come from the drift-gated vision lab data (the
+        # SSCMA model-zoo YOLO defaults), never typed here.
+        "bench": bench_block(),
+    }
+
+
+VISION_LAB_WIRE_KEYS = ("tscore_default", "tiou_default")
+
+
+def bench_block() -> dict:
+    wire = json.loads(read(VISION_LAB))["model_load"]["wire"]
+    for k in VISION_LAB_WIRE_KEYS:
+        if not isinstance(wire.get(k), int):
+            die(f"vision.json model_load.wire.{k} missing — bench defaults would lie")
+    return {
+        "defaults": {"tscore": wire["tscore_default"], "tiou": wire["tiou_default"]},
+        "steps": [
+            "Plug the MODULE’s own USB-C port into this computer — the big port on "
+            "the camera carrier board, next to the Grove connector. The XIAO’s port "
+            "can’t reach the camera.",
+            "Click Connect and pick “USB Single Serial” (the CH343). If the model "
+            "isn’t on the module yet, burn it first — one click, verified.",
+            "Press “Start live preview”. Frames appear within a second or two, with "
+            "a box and a confidence score on everything the model finds.",
+            "Aim and light it like the real spot: face the camera, two to four "
+            "meters, light on you rather than behind you. Watch the meter climb.",
+            "Tune if needed: Confidence (TSCORE) is the module’s reporting floor — "
+            "raise it to shrug off weak phantoms, lower it to catch more. IoU (TIOU) "
+            "merges overlapping boxes of the same object.",
+            "Press Stop when done. Day-to-day aiming stays boxes-only over MQTT — "
+            "the video stream exists only on this attended bench.",
+        ],
+        "troubleshooting": [
+            {"when": "No port shows up in the picker",
+             "fix": "Wrong port (the XIAO’s instead of the module’s), a charge-only "
+                    "cable, or Linux missing the one udev rule — device guide §7. "
+                    "Unplug, replug into the module’s port, use a data cable."},
+            {"when": "Connected, but Start shows no frames",
+             "fix": "The module may still be in its bootloader — power-cycle it "
+                    "(unplug/replug), reconnect, start again. If it persists, the "
+                    "module might run non-SSCMA firmware; reflash the model here."},
+            {"when": "Frames, but never a box",
+             "fix": "Check the model is burned (the header above says so), then step "
+                    "back — Swift-YOLO wants the whole person in frame, not a face "
+                    "filling it. Try more light, or lower Confidence a notch."},
+            {"when": "The image is black or very dark",
+             "fix": "Peel the lens film if it’s still on, add light in front of the "
+                    "camera, and give the sensor a second to auto-expose."},
+            {"when": "Boxes flicker or split in two",
+             "fix": "Raise IoU (TIOU) slightly so overlapping candidates merge, or "
+                    "raise Confidence so marginal duplicates drop."},
+            {"when": "Scores feel low",
+             "fix": "Confidence is a reporting floor, not a grade — a steady 60-80% "
+                    "on a well-lit person is normal and plenty. Chase framing and "
+                    "light before chasing 99%."},
+        ],
     }
 
 
