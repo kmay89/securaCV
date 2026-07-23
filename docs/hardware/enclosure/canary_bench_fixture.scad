@@ -131,6 +131,9 @@ module slider() {
             translate([0, 0, 1.7 - 0.01]) cylinder(d = 8, h = 6);   // grip knob
         }
         translate([0, 0, -0.1]) cylinder(d = mag_d + 2*tol_press, h = mag_h + 0.1);
+        // underside relief channel: the reed's glass body protrudes ~1.1 mm
+        // above the groove floor — without this the first slide crushes it
+        translate([0, 0, 0.55]) cube([20.2, reed_d + 1.0, 1.3], center = true);
     }
 }
 

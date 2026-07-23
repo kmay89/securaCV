@@ -61,10 +61,16 @@ module dock() {
                 translate([0, -pocket_d/2, board_l*0.35]) rotate([90, 0, 0])
                     translate([0, 0, -6]) cylinder(d = thumb_d, h = 12);
             }
-            // bay number on the front face
-            translate([bx, -base_d/2 + 0.01, bh*0.35]) rotate([90, 0, 0])
-                translate([0, 0, -label_depth]) linear_extrude(label_depth + 0.1)
-                    text(str(i + 1), size = 7, font = label_font, halign = "center", valign = "center");
+            // bay number, debossed into the RECLINED front face — the face is a
+            // slope from (y=-base_d/2, z=4) to (y=base_d/2-8, z=bh), so the cut
+            // must sit on that plane (a vertical cut at the base floated ~7 mm
+            // in front of the surface and printed docks had no numbers)
+            translate([bx,
+                       -base_d/2 + (bh*0.35 - 4)*(base_d - 8)/(bh - 4),
+                       bh*0.35])
+                rotate([atan2(bh - 4, base_d - 8), 0, 0])
+                    translate([0, 0, -label_depth]) linear_extrude(label_depth + 1)
+                        text(str(i + 1), size = 7, font = label_font, halign = "center", valign = "center");
         }
         // cable channel along the back base (route to the hub)
         translate([0, base_d/2 - 3, -0.1]) linear_extrude(6) rrect2d(bw - 16, 5, 2);
