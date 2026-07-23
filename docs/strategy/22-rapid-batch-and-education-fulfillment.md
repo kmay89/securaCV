@@ -97,49 +97,79 @@ variance a fixed deadline can't absorb.
 Everything else (XIAO stock, flashing, kitting, ground shipping) is fast and
 low-variance.
 
-## 5. Sustainable education pricing (recommendation)
+## 5. Sustainable pricing — normal markup, no at-cost tier
 
-The rule that keeps it honest *and* survivable: **never sell below COGS + channel
-fees**, and publish the tiers (the [`/LICENSING.md`](../../LICENSING.md)
-commitment). Three rungs per device:
+**We mark up; we do not sell at cost.** An earlier draft floated a Title-I
+"at-cost" rung — that was wrong and is dropped. Assembled hardware carries real
+per-unit costs *beyond parts* that a zero-margin price silently eats: outbound
+shipping, payment processing, a returns/DOA reserve, product-liability insurance,
+and support time. Below any healthy margin, one bad return wipes a whole batch.
 
-| Tier | WAP (COGS ~$26) | Vision (COGS ~$34) | Rationale |
+Grounded in standard practice (sources §Sources):
+
+- **Keystone (2× cost ⇒ 50% gross margin) is the retail rule-of-thumb, but for
+  DTC consumer electronics it's a *floor, not a target*** — healthy brands run a
+  **33–45% gross margin** after real costs.
+- **Electronics return ~10%**, and each return **costs $30–65 to process** — so a
+  returns/DOA reserve is a line item, not an afterthought.
+- **Education pricing is a discount *off a marked-up list*, never a sale below
+  cost** — exactly how the majors do it (Apple ~10%, Logitech 25%, Samsung 30%,
+  HP up to 40% off list). We give a normal channel discount; we don't give away
+  hardware.
+
+**Fully-loaded per-unit cost** (what a unit actually costs us to put in a box and
+support):
+
+| | Base COGS | +Ship | +Fees ~3% | +Returns/DOA reserve | +Insurance/overhead | **Loaded** |
+|---|---|---|---|---|---|---|
+| **WAP** | $26 | ~$4 | ~$1.8 | ~$5 | ~$2 | **~$39** |
+| **Vision** | $34 | ~$4 | ~$2.7 | ~$6 | ~$3 | **~$50** |
+
+**Tiers (all marked up; GM = gross margin on price *after* the loaded cost):**
+
+| Tier | WAP | Vision | |
 |---|---|---|---|
-| **Retail R2** | $69 | ~$99 *(down from $119 as Grove fell)* | curation + firmware + support margin |
-| **Education batch (10+)** | **~$45** | **~$65** | ≈ COGS × 1.5–1.9; funds DOA units, restock, flat-rate shipping |
-| **Title I / public-interest at-cost** | **~$33** | **~$49** | COGS + fees, ~zero margin — the doc's public-interest tier, made real |
+| **Retail** (1–9) | **$69** (~43% GM) | **$99** (~49% GM) | list; keystone-ish |
+| **Education / volume** (10–49) | **$59** (~34% GM) | **$85** (~41% GM) | ~15% off list — normal EDU discount |
+| **District / large volume** (50+) | **$55** (~29% GM) | **$79** (~37% GM) | floor tier; still ≥ ~28% GM and ≥ 1.8× base COGS |
 
-Worked contribution (after ~8% processing + ~$2 shipping allowance):
-- **24× WAP @ $45 education:** revenue ~$1,080, COGS ~$625, **contribution ~$320.**
-- **60× Vision @ $65 education:** revenue ~$3,900, COGS ~$2,040, **contribution ~$1,470.**
-- **At-cost tier** nets a few dollars/unit — a DOA/shipping buffer, not profit.
-  That's the point: at-cost is a real offer we can sustain, not a loss leader.
+The floor rule (from doc 16): **never below ~1.8× base COGS or ~28% gross margin**,
+whichever binds. Below that the returns reserve stops being covered.
 
-None of these touch the software, the firmware, the STLs, or the verifier — all
-free at any scale (doc 16 §0, LICENSING §1). A school that prints its own cases and
-sources its own XIAO boards pays us **$0** and is a marketing asset, not a lost
-sale.
+Worked contribution:
+- **30× WAP @ $59:** revenue ~$1,770, loaded ~$1,170, **contribution ~$600 (34%).**
+- **60× Vision @ $79:** revenue ~$4,740, loaded ~$3,000, **contribution ~$1,740 (37%).**
 
-## 6. Rush economics — what "quickly" actually costs *us*
+**Where "free" actually lives — the self-build path, not at-cost hardware.** A
+cash-strapped school prints its own cases and sources its own boards and pays us
+**$0**, and the software, firmware, STLs, and verifier are free at any scale (doc
+16 §0, LICENSING §1). That is the honest free tier and it's a marketing asset, not
+a lost sale. Selling assembled hardware below cost is not sustainable and we don't
+pretend it is.
 
-A true quick-turn erodes margin in three specific ways; price a rush order at
-**retail (not education) or quote it**, rather than discounting it:
+## 6. Rush economics — a rush eats the margin, so it's retail or a quote
+
+A true quick-turn adds cost in three specific ways, each of which comes straight
+out of the gross margin above — so **a rush order is priced at retail or quoted,
+never at the education discount**:
 
 - **Buying modules fast** (Amazon / US distributor, no time for the qty-10 break)
   ≈ +$1–3/unit.
 - **Service-printed enclosures** instead of in-house ≈ +$7–18/set.
 - **Express outbound + (if overseas) customs/duty** ≈ +$30–60/box + tariff.
 
-So: **small in-house batches (Scenario A) hold their education price even on a
-1–2-week turn** — COGS is stable and the work is a weekend. **Large or Vision
-batches on a rush** should carry a rush line or move to retail pricing, because
-the enclosure-service and express-shipping deltas are real. The honest promise to
-a school is *"education price at 4–6 weeks' notice; rush is quotable."*
+So: **small in-house batches (Scenario A) can hold the education price even on a
+1–2-week turn** — the loaded cost barely moves and the work is a weekend. **Large
+or Vision batches on a rush** move to retail pricing or a per-order quote, because
+the enclosure-service and express-shipping deltas are real and would otherwise
+erase the margin. The honest promise to a school is *"education price at 4–6
+weeks' notice; rush is quotable at retail."*
 
 ## 7. Open items (human decisions + follow-ups)
 
-- [ ] **Maintainer to set the published education price points** (§5) before any
-      number lands in `/LICENSING.md`. Prices stay human (doc 20).
+- [ ] **Maintainer to set/confirm the published price points** (§5) before any
+      number lands in `/LICENSING.md`. Prices stay human (doc 20); the tiers above
+      are a research-grounded recommendation, not a committed rate.
 - [ ] **Refresh `bom_canary_vision.csv` + `pricing.json`** for the Grove $29→$16
       drop and re-run `scripts/bom_pricing.py`.
 - [ ] **Verify Round Display SKU** 104040143 vs 104030087.

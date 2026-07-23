@@ -65,25 +65,30 @@ Pre-flashed Canaries and kits, for the people who can't (or don't want to) solde
 and flash an ESP32. You're paying for parts, assembly, and shipping — atoms —
 plus an honest margin, not for the software riding on them.
 
-- **Education, nonprofit, and public-interest pricing is published**, not
-  negotiated in a back room. A school district and a Fortune 500 see the same
-  list.
+- **Education and volume pricing is posted publicly** — a published list once it's
+  set, not a price negotiated in a back room. A school district and a Fortune 500
+  read the same list. (Prices are marked up like any honest hardware line — they
+  cover parts, shipping, returns, and support; the *free* option is always to
+  build it yourself, never below-cost hardware.)
 - **Free path, always:** build it yourself from the open designs. The
   self-built device is not a lesser citizen — it runs the identical firmware and
   earns the identical verified badge.
 
-### b) Court-grade attestation
+### b) Court-grade attestation *(planned)*
 
-An optional service that adds *third-party* corroboration to a sealed record —
-RFC-3161-style trusted timestamping, notarized and C2PA-interoperable export
-bundles — so a clip is self-authenticating against a deepfake challenge. It runs
-on **hashes and signatures only, never your footage**, so it can't see your
-space and neither can we.
+An optional service that adds *third-party* corroboration to a sealed record, so a
+clip is self-authenticating against a deepfake challenge. It runs on **hashes and
+signatures only, never your footage**, so it can't see your space and neither can
+we. Honest status, so nobody buys a promise: **trusted timestamping (RFC-3161
+anchoring) ships today**; **notarized and C2PA / Content-Credentials-interoperable
+export bundles are planned, not yet available** — tracked in the roadmap, and this
+line updates when they land.
 
-- **A free public-interest tier** covers individuals, at-risk users, journalists,
-  nonprofits, tenant groups, and classroom/research use up to a fair monthly
-  volume. The people who most need proof that holds are the people least able to
-  pay for it, and the model is built around that, not against it.
+- **A free public-interest tier** — when the service launches — will cover
+  individuals, at-risk users, journalists, nonprofits, tenant groups, and
+  classroom/research use up to a fair monthly volume. The people who most need
+  proof that holds are the people least able to pay for it, and the model is built
+  around that, not against it.
 - **Metered above that** for high-volume commercial use, because each
   attestation carries a real cost from the timestamping authority.
 - **Free path, always:** you don't need us for tamper-evidence at all. The local
@@ -116,9 +121,9 @@ what. The full rules and the always-free "Works with SecuraCV" badge are in
 
 | You are… | Do you pay to use SecuraCV? | When, if ever, does money enter? |
 |---|---|---|
-| **A K-12 school or district** | No. Self-host on any number of cameras and sites, free. | Only if you *buy* pre-flashed Canaries (education pricing) or want a support SLA. Attestation for incident records is free at classroom volume. |
+| **A K-12 school or district** | No. Self-host on any number of cameras and sites, free. | Only if you *buy* pre-flashed Canaries (education pricing) or want a support SLA. Attestation (once the service launches, §2b) is free for incident records at classroom volume. |
 | **A university** | No — including research, teaching, and campus-wide deployment. | Only for bought hardware, an optional large-fleet SLA, or commercial-volume attestation from a spinout. Academic use stays free. |
-| **A nonprofit, tenant union, newsroom, or mutual-aid group** | No — and you're the public-interest tier, so attestation is free too, within a fair monthly volume. | Realistically, never — unless you'd rather buy hardware than build it. This is who the product is *for*. |
+| **A nonprofit, tenant union, newsroom, or mutual-aid group** | No — and you're the public-interest tier, so attestation (once it launches, §2b) is free too, within a fair monthly volume. | Realistically, never — unless you'd rather buy hardware than build it. This is who the product is *for*. |
 | **A business or enterprise** | No, to run it — any size, any number of sites. | For bought hardware, a support SLA, high-volume attestation, or using our brand to resell (a free-but-recorded grant). |
 | **A government or public agency** | No. Same free self-host grant, and the survival promises in §4 are written with you in mind. | Same as a business: hardware, support, or high-volume attestation — never a per-seat license. |
 
@@ -144,9 +149,9 @@ staying friendly, or staying independent. These are commitments, not vibes:
    the verifier is standalone and free. If every server we own went dark tomorrow,
    a lawyer could still verify your five-year-old export on a laptop with no
    network. Proof that depends on a vendor's servers isn't proof.
-4. **No secret deals.** Education and volume pricing is published; trademark
-   grants are recorded by pull request. Nobody gets a quiet better price or a
-   quiet exemption you can't see.
+4. **No secret deals.** Education and volume pricing is posted publicly once set;
+   trademark grants are recorded by pull request. Nobody gets a quiet better price
+   or a quiet exemption you can't see.
 5. **Paid services are month-to-month with a documented fallback.** Attestation
    falls back to the local log + verifier; support falls back to the community;
    hardware is always re-flashable to stock. You can leave any paid tier without
