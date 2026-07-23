@@ -88,7 +88,7 @@ Every night (09:13 UTC) the workflow:
 | `out-of-stock` | live stock hits 0 | check the other distributor / LCSC column; pick an ALT part into the CSV |
 | `price-jump` | unit price moved >15% vs the last snapshot | re-check kit margins (strategy doc 16/18); reprice or absorb |
 | `lifecycle` | status no longer Active (NRND/EOL/obsolete) | qualify the CSV's ALT row, or find a substitute and PR the CSV |
-| `no-match` | an MPN that used to resolve no longer does | renamed or delisted — fix the MPN or treat as EOL |
+| `no-match` | an MPN that used to resolve no longer does (its entry is demoted to provenance `carried` — kept for reference, no longer shown live) | renamed or delisted — fix the MPN or treat as EOL |
 
 Silence means healthy. There is no "check the BOM" chore anywhere in the
 company; the BOM checks itself and *summons* a human with a specific,
@@ -137,7 +137,11 @@ fetched history.
       "sourcing": "orderable | generic",
       "seed_usd": 24.90,          // the CSV's indicative price (bootstrap)
       "unit_usd": 24.90,          // best current unit price
-      "provenance": "digikey | mouser | csv-seed",
+      // digikey/mouser = distributor-verified this run · carried = a
+      // previously-live MPN an attempted fetch MISSED (last-known numbers
+      // retained for reference, no longer shown as live; fires no-match
+      // on the transition) · csv-seed = never distributor-verified
+      "provenance": "digikey | mouser | carried | csv-seed",
       "stock": 4213,              // null when not distributor-verified
       "lifecycle": "Active",
       "sku": { "digikey": "…", "mouser": "…", "lcsc": "…" },

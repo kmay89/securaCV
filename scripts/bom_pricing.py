@@ -206,8 +206,18 @@ def load_existing():
     return {}
 
 
-def assemble(parts, old, fetched, note):
-    """CSV intent + previous snapshot + fresh fetches → the new snapshot."""
+def assemble(parts, old, fetched, note, attempted=None):
+    """CSV intent + previous snapshot + fresh fetches → the new snapshot.
+
+    `attempted` is the set of MPNs actually queried this run (None on
+    --seed / no-fetch runs). A previously-live MPN that was ATTEMPTED and
+    missed must not keep its distributor provenance — that would hide the
+    miss, suppress the documented no-match exception, and republish stale
+    stock/prices as if fresh. Instead it becomes provenance "carried":
+    last-known numbers retained for reference, but no longer trusted as
+    live anywhere downstream (the Build-it overlay only honours
+    digikey/mouser provenance).
+    """
     old_parts = old.get("parts") or {}
     out_parts = {}
     for mpn in sorted(parts):
@@ -228,13 +238,23 @@ def assemble(parts, old, fetched, note):
             "url": None,
             "boms": p["boms"],
         }
-        carry = hit or (prev if prev.get("provenance") in ("digikey", "mouser")
-                        else None)
+        prev_has_data = prev.get("provenance") in ("digikey", "mouser",
+                                                   "carried")
+        carry = None
+        provenance = None
+        if hit:
+            carry, provenance = hit, hit["provenance"]
+        elif prev_has_data and (attempted is None or mpn not in attempted):
+            # seed / no-fetch run: preserve the previous snapshot verbatim
+            carry, provenance = prev, prev["provenance"]
+        elif prev_has_data:
+            # attempted and missed: keep last-known numbers, demote them
+            carry, provenance = prev, "carried"
         if carry:
             entry.update({
                 "unit_usd": (carry["unit_usd"] if carry.get("unit_usd")
                              is not None else p["seed_usd"]),
-                "provenance": carry["provenance"],
+                "provenance": provenance,
                 "stock": carry.get("stock"),
                 "lifecycle": carry.get("lifecycle"),
                 "breaks": carry.get("breaks") or [],
@@ -270,13 +290,18 @@ def find_exceptions(old, new):
         prev = old_parts.get(mpn) or {}
         live = e["provenance"] in ("digikey", "mouser")
         expected = bool(e["sku"].get("digikey") or e["sku"].get("mouser"))
-        if not live and expected and prev.get("provenance") in ("digikey",
-                                                                "mouser"):
+        # Fires exactly on the live→carried transition (an attempted fetch
+        # missed a previously-matching MPN); repeats are deduped by the
+        # workflow's open-issue check.
+        if (e["provenance"] == "carried" and expected
+                and prev.get("provenance") in ("digikey", "mouser")):
             exceptions.append({
                 "kind": "no-match", "mpn": mpn,
                 "detail": f"{mpn} ({e['desc']}) previously matched at a "
                           f"distributor but no longer does — renamed, "
-                          f"delisted, or API trouble."})
+                          f"delisted, or API trouble. Last-known numbers "
+                          f"are retained with provenance 'carried' and no "
+                          f"longer shown as live."})
         if live and e.get("stock") == 0:
             exceptions.append({
                 "kind": "out-of-stock", "mpn": mpn,
@@ -315,6 +340,7 @@ def main() -> int:
     mouser_key = os.environ.get("MOUSER_API_KEY")
 
     fetched = {}
+    attempted = None
     if not seed_only:
         if not (dk_id and dk_secret) and not mouser_key:
             print("bom_pricing.py: no distributor credentials in the "
@@ -323,8 +349,13 @@ def main() -> int:
                   "docs/hardware/bom_pipeline.md).")
             return 0
         token = digikey_token(dk_id, dk_secret) if dk_id and dk_secret else None
+        if dk_id and dk_secret and token is None and not mouser_key:
+            print("bom_pricing.py: Digi-Key token request failed and no "
+                  "Mouser key configured — snapshot left untouched.")
+            return 1
         orderable = [m for m, p in parts.items()
                      if p["sourcing"] == "orderable"]
+        attempted = set(orderable)
         print(f"bom_pricing.py: fetching {len(orderable)} orderable MPNs "
               f"(digikey={'yes' if token else 'no'}, "
               f"mouser={'yes' if mouser_key else 'no'})")
@@ -335,13 +366,22 @@ def main() -> int:
             if hit:
                 fetched[mpn] = hit
             time.sleep(0.35)  # polite pacing — both APIs allow far more
+        prev_live = sum(1 for p in (old.get("parts") or {}).values()
+                        if p.get("provenance") in ("digikey", "mouser"))
+        if not fetched and prev_live:
+            # Zero matches across the board is an API/auth outage, not
+            # fifty simultaneous delistings — don't demote the world.
+            print(f"bom_pricing.py: fetch matched nothing while the "
+                  f"previous snapshot holds {prev_live} live parts — "
+                  f"treating as an outage; snapshot left untouched.")
+            return 1
 
     note = ("Offline seed from the BOM CSVs — prices are the CSVs' "
             "indicative values until distributor credentials are configured."
             if seed_only or not fetched else
             "Nightly distributor snapshot; provenance marks which rows are "
             "distributor-verified vs csv-seed.")
-    new = assemble(parts, old, fetched, note)
+    new = assemble(parts, old, fetched, note, attempted)
 
     exceptions = find_exceptions(old, new) if not seed_only else []
     if exc_out:

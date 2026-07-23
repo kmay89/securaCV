@@ -1,6 +1,6 @@
 {
  "generated_by": "scripts/bom_pricing.py",
- "as_of": "2026-07-23T02:10:06Z",
+ "as_of": "2026-07-23T08:30:23Z",
  "note": "Offline seed from the BOM CSVs — prices are the CSVs' indicative values until distributor credentials are configured.",
  "sources": {
   "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
