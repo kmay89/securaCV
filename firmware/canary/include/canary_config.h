@@ -332,9 +332,21 @@
 // ════════════════════════════════════════════════════════════════
 // SD CARD SPI SPEEDS
 // ════════════════════════════════════════════════════════════════
-
-#define SD_SPI_FAST              4000000   // 4 MHz
-#define SD_SPI_SLOW              1000000   // 1 MHz fallback
+//
+// FAST is the normal operating clock; the storage driver falls back to SLOW
+// (and retries the whole SD.begin ladder) if a card fails to init at FAST, so
+// a card that can't sustain FAST degrades gracefully rather than failing to
+// mount. 20 MHz is well within SD-SPI limits on the short XIAO-Sense expansion
+// traces (SPI mode tops out at 25 MHz per the SD spec) and cuts the
+// synchronous per-record FAT-append window on the loop task ~5x vs the old
+// 4 MHz. Hardware bench validation across a range of cards is recommended
+// before treating 20 MHz as verified — see firmware/CONFIG_CHANGES.md.
+#ifndef SD_SPI_FAST
+  #define SD_SPI_FAST            20000000  // 20 MHz normal operation
+#endif
+#ifndef SD_SPI_SLOW
+  #define SD_SPI_SLOW            1000000   // 1 MHz init/recovery fallback
+#endif
 
 // ════════════════════════════════════════════════════════════════
 // WIFI PROVISIONING

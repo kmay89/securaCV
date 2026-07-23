@@ -1302,8 +1302,17 @@ void setup() {
   }
 #endif
 
-  // Enable WiFi modem sleep when running on battery to save ~20 mA
-#if FEATURE_WIFI_AP && FEATURE_POWER_MONITOR
+  // Enable WiFi modem sleep when running on battery to save ~20 mA.
+  //
+  // Only when NEITHER the power policy engine NOR CSI is compiled in:
+  //   • With FEATURE_POWER_POLICY, the policy engine OWNS wifi power-save and
+  //     is now CSI-aware (it forces PS off while CSI is capturing), so a manual
+  //     boot-time enable here would just fight it.
+  //   • With FEATURE_CSI (and no policy), CSI needs every RX frame, so modem
+  //     sleep must stay off regardless of battery state.
+  // This removes the old unconditional boot-time MIN_MODEM that silently
+  // collapsed CSI capture on battery.
+#if FEATURE_WIFI_AP && FEATURE_POWER_MONITOR && !FEATURE_POWER_POLICY && !FEATURE_CSI
   {
     power_state_t pwr_ps;
     if (power_get_state(&pwr_ps) &&
@@ -1574,6 +1583,7 @@ void loop() {
 #if FEATURE_POWER_POLICY
   policy_process();
 
+#if FEATURE_DEEP_SLEEP
   if (policy_should_deep_sleep() && !power_is_charging()) {
     uint32_t sleep_sec = policy_get_sleep_duration_sec();
     {
@@ -1600,7 +1610,19 @@ void loop() {
   } else if (policy_should_deep_sleep()) {
     policy_ack_deep_sleep();
   }
-#endif
+#else
+  /* FEATURE_DEEP_SLEEP=0 — "compiled in but never sleeps" (canary_config.h).
+   * Honor the policy's sleep bookkeeping so it does not spin re-requesting a
+   * sleep that never happens, but never actually enter deep sleep. This is the
+   * documented contract of the flag; the previous code gated this block on
+   * FEATURE_POWER_POLICY alone, so a default (FEATURE_DEEP_SLEEP=0) build would
+   * still deep-sleep on a LOW_POWER duty cycle. Critical-battery deep-sleep
+   * protection likewise requires FEATURE_DEEP_SLEEP=1 (securacv_power.cpp). */
+  if (policy_should_deep_sleep()) {
+    policy_ack_deep_sleep();
+  }
+#endif  /* FEATURE_DEEP_SLEEP */
+#endif  /* FEATURE_POWER_POLICY */
 
 #if FEATURE_DIAGNOSTICS
   diag_process();
