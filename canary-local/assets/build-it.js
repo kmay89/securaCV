@@ -46,21 +46,84 @@ export function buildBuildIt(buildData, dev) {
       wrap.append(asOf);
     }
 
+    // ── Pick your build ──
+    // Required rows are always in; every optional row is a checkbox. The
+    // running total, and the order panel below, follow the selection —
+    // and the CSV's own recipe rows become one-click presets, so "the
+    // sealed outdoor build" is a single tap, not a parts-catalog hunt.
+    const sel = new Set();
+    const extOf = (r) => r.live
+      ? r.live.unit_usd * (Number(r.qty) || 1) : (r.usd || 0);
+    const reqBase = d.bom.required_usd_live != null
+      ? d.bom.required_usd_live : d.bom.required_usd;
+
+    const yourBuild = el("p", "bom-yourbuild");
+    const updateBuild = () => {
+      let total = reqBase;
+      for (const r of d.bom.rows || []) {
+        if (!r.required && sel.has(r.ref)) total += extOf(r);
+      }
+      yourBuild.textContent = "";
+      yourBuild.append(
+        el("strong", null, `Your build: $${total.toFixed(2)}`),
+        el("span", "muted",
+          sel.size ? ` — required parts + ${sel.size} option${
+            sel.size === 1 ? "" : "s"}` : " — required parts only")
+      );
+    };
+    wrap.append(yourBuild);
+
     const optToggle = el("label", "over-toggle bom-toggle");
     const cb = document.createElement("input");
     cb.type = "checkbox";
     optToggle.append(cb, document.createTextNode(" show optional parts"));
+
+    if ((d.bom.recipes || []).length) {
+      const chips = el("div", "bom-recipes");
+      chips.append(el("span", "muted", "Build recipes:"));
+      for (const rec of d.bom.recipes) {
+        const b = el("button", "btn ghost bom-recipe", rec.label);
+        b.type = "button";
+        if (rec.note) b.title = rec.note;
+        b.addEventListener("click", () => {
+          sel.clear();
+          for (const ref of rec.refs || []) sel.add(ref);
+          if (sel.size) cb.checked = true;
+          render();
+          updateBuild();
+          updateStat();
+        });
+        chips.append(b);
+      }
+      wrap.append(chips);
+    }
     wrap.append(optToggle);
 
     const table = el("div", "bom-table");
     const render = () => {
       table.innerHTML = "";
       for (const r of d.bom.rows || []) {
-        if (!r.required && !cb.checked) continue;
-        const row = el("div", "bom-row" + (r.required ? "" : " bom-opt"));
+        if (!r.required && !cb.checked && !sel.has(r.ref)) continue;
+        const row = el("div", "bom-row" + (r.required ? "" : " bom-opt") +
+                       (sel.has(r.ref) ? " bom-picked" : ""));
         const liveExt = r.live
           ? r.live.unit_usd * (Number(r.qty) || 1) : null;
         const top = el("div", "bom-row-top");
+        if (!r.required) {
+          const pick = document.createElement("input");
+          pick.type = "checkbox";
+          pick.className = "bom-pick";
+          pick.checked = sel.has(r.ref);
+          pick.title = "add to your build";
+          pick.addEventListener("click", (ev) => ev.stopPropagation());
+          pick.addEventListener("change", () => {
+            if (pick.checked) sel.add(r.ref); else sel.delete(r.ref);
+            row.classList.toggle("bom-picked", pick.checked);
+            updateBuild();
+            updateStat();
+          });
+          top.append(pick);
+        }
         top.append(
           el("code", "bom-ref", r.ref),
           el("span", "bom-desc", r.desc),
@@ -94,6 +157,7 @@ export function buildBuildIt(buildData, dev) {
     };
     cb.addEventListener("change", render);
     render();
+    updateBuild();
     wrap.append(table);
     const src = el("p", "muted fineprint");
     src.append("Generated from ");
@@ -106,10 +170,12 @@ export function buildBuildIt(buildData, dev) {
 
     // ── Order the parts ──
     // No unverified APIs, no accounts, no magic that can silently break:
-    // one click copies distributor-ready "MPN,qty" lines and opens the
-    // distributor's own list/BOM page — paste, and the cart prices itself.
-    const orderRows = () => (d.bom.rows || []).filter(
-      r => r.orderable && (r.required || cb.checked));
+    // one click copies distributor-ready "MPN,qty" lines for exactly the
+    // build picked above and opens the distributor's own list/BOM page —
+    // paste, and the cart prices itself.
+    const buildRows = () => (d.bom.rows || []).filter(
+      r => r.required || sel.has(r.ref));
+    const orderRows = () => buildRows().filter(r => r.orderable);
     const orderLines = () => orderRows()
       .map(r => `${r.mpn},${r.qty}`).join("\n");
 
@@ -118,14 +184,14 @@ export function buildBuildIt(buildData, dev) {
     const ostat = el("p", "muted fineprint");
     const updateStat = () => {
       const n = orderRows().length;
+      const g = buildRows().length - n;
       ostat.textContent =
-        `${n} orderable part number${n === 1 ? "" : "s"} in the current view ` +
-        `(${cb.checked ? "required + optional" : "required only"} — the ` +
-        `toggle above controls this). Generic hardware (cables, screws, ` +
-        `filament) isn't sent; any hardware store has it.`;
+        `${n} orderable part number${n === 1 ? "" : "s"} in your build` +
+        (g ? ` (+${g} generic item${g === 1 ? "" : "s"} — cables, screws, ` +
+             `filament — any hardware store has them; they're in the CSV ` +
+             `download)` : "") + `.`;
     };
     updateStat();
-    cb.addEventListener("change", updateStat);
 
     const feedback = el("p", "muted fineprint");
     const manual = el("textarea", "bom-order-manual");
@@ -165,7 +231,7 @@ export function buildBuildIt(buildData, dev) {
       mkBtn("ghost", "Copy list + open Mouser BOM tool", () =>
         copyThenOpen("Mouser's BOM tool", "https://www.mouser.com/bom/")),
       mkBtn("ghost", "Download CSV", () => {
-        const rows = orderRows();
+        const rows = buildRows();
         const csv = ["MPN,Quantity,RefDes,Manufacturer,Description"]
           .concat(rows.map(r =>
             [r.mpn, r.qty, r.ref, r.mfr, `"${(r.desc || "").replace(/"/g, '""')}"`]
