@@ -1647,6 +1647,27 @@ export function parseSenseLine(line) {
   return null;
 }
 
+// ── the WiFi field's live voice: parse the WAP console telemetry ───────────
+// The wap firmware prints one transition-gated line per RF event —
+// "[wap] rf_presence_started devices=2 confidence=high dwell=transient stir=42"
+// — the same coarse vocabulary its RfEvent exports (no MACs, no raw RSSI;
+// stir is the 0-100 CSI motion score). The Nursery's field bench reads it.
+export function parseWapLine(line) {
+  const m = /\[wap\]\s+(\w+)\s+devices=(\d+)\s+confidence=(\w+)\s+dwell=(\w+)\s+stir=(\d+)/
+    .exec(String(line || "").trim());
+  if (!m) return null;
+  return {
+    kind: "wap",
+    event: m[1],
+    devices: Number(m[2]),
+    confidence: m[3],
+    dwell: m[4],
+    stir: Math.min(100, Number(m[5])),
+    present: /started|sustained|dwell/i.test(m[1]),
+    departed: /departed|ended|clear/i.test(m[1]),
+  };
+}
+
 // ── the Nursery roster: don't get lost flashing a batch ────────────────────
 // Every successful install becomes a hatchling entry; the connect card can
 // then say "this one's already done" and the session shows its progression.

@@ -467,6 +467,34 @@
       {
         "suffix": "identify/set",
         "payload": "\"identify\""
+      },
+      {
+        "suffix": "cfg/debounce/set",
+        "payload": "ms (clamped by sense_config)"
+      },
+      {
+        "suffix": "cfg/clear/set",
+        "payload": "ms"
+      },
+      {
+        "suffix": "cfg/stall/set",
+        "payload": "ms"
+      },
+      {
+        "suffix": "cfg/near/set",
+        "payload": "cm"
+      },
+      {
+        "suffix": "cfg/mid/set",
+        "payload": "cm"
+      },
+      {
+        "suffix": "cfg/vitals_lock/set",
+        "payload": "ms (wellbeing)"
+      },
+      {
+        "suffix": "cfg/vitals_lost/set",
+        "payload": "ms (wellbeing)"
       }
     ],
     "offline_note": "no broker? the witness keeps sensing and chaining \u2014 every transition still advances the NVS-persisted hash chain; an outage shows up as a jump in seq/chain length, never lost tamper evidence",
@@ -797,7 +825,7 @@
     ]
   },
   "tuning": {
-    "goal": "maximum detection, minimum error \u2014 every knob below is a host-side firmware constant (the radar module itself is a black box), so tuning is transparent, versioned, and OTA-updatable.",
+    "goal": "maximum detection, minimum error \u2014 every knob below is a LIVE host-side number now (the radar module itself stays a black box): NVS-backed, tunable from Home Assistant's number entities (cfg/*/set), and bakeable as a room preset in the browser flasher. The compiled value seeds the first boot.",
     "knobs": [
       {
         "name": "present_debounce_ms",

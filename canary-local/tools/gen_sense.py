@@ -520,7 +520,21 @@ SUBSCRIBED = [
     {"suffix": "update/cmd", "payload": '"install"'},
     {"suffix": "update/auto/cmd", "payload": '"ON" | "OFF"'},
     {"suffix": "identify/set", "payload": '"identify"'},
+    # Runtime radar reflexes (sense_config): one command topic per knob, the
+    # same cfg/* schema canary-vision's detection dials speak. Validated
+    # against topics.h below so this list can't outlive the firmware.
+    {"suffix": "cfg/debounce/set", "payload": "ms (clamped by sense_config)"},
+    {"suffix": "cfg/clear/set", "payload": "ms"},
+    {"suffix": "cfg/stall/set", "payload": "ms"},
+    {"suffix": "cfg/near/set", "payload": "cm"},
+    {"suffix": "cfg/mid/set", "payload": "cm"},
+    {"suffix": "cfg/vitals_lock/set", "payload": "ms (wellbeing)"},
+    {"suffix": "cfg/vitals_lost/set", "payload": "ms (wellbeing)"},
 ]
+TOPICS_H = PRJ / "include/canary/topics.h"
+for t in SUBSCRIBED:
+    if t["suffix"].startswith("cfg/"):
+        must(TOPICS_H, t["suffix"], f"cfg topic {t['suffix']}")
 must(MQTT_CPP, '\\"status\\":\\"offline\\"', "LWT payload")
 
 # HA discovery entities, validated against ha_discovery.cpp object ids + names.
@@ -681,7 +695,7 @@ PLACEMENT = {
 }
 
 TUNING = {
-    "goal": "maximum detection, minimum error — every knob below is a host-side firmware constant (the radar module itself is a black box), so tuning is transparent, versioned, and OTA-updatable.",
+    "goal": "maximum detection, minimum error — every knob below is a LIVE host-side number now (the radar module itself stays a black box): NVS-backed, tunable from Home Assistant's number entities (cfg/*/set), and bakeable as a room preset in the browser flasher. The compiled value seeds the first boot.",
     "knobs": [
         {"name": "present_debounce_ms", "value": D["debounce_ms"],
          "does": "how long a target must persist before Present fires",

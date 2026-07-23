@@ -484,6 +484,20 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
 
   s_last_event = event_name;
 
+  const ConfidenceClass conf = calc_confidence(device_count, s_probe_burst_count,
+                                               rssi_mean, csi_m, csi_b);
+  const DwellClass dwell = calc_dwell_class(state_duration);
+
+  // One compact, machine-parseable console line per transition — the browser
+  // flasher's live field bench reads it off the attended USB console. Every
+  // field is already coarse-by-construction (the same vocabulary RfEvent
+  // exports: no MAC, no raw RSSI; `stir` is the 0-100 CSI motion score).
+  Serial.printf("[wap] %s devices=%u confidence=%s dwell=%s stir=%u\n",
+                event_name, (unsigned)device_count, confidence_name(conf),
+                dwell == DWELL_SUSTAINED ? "sustained"
+                  : dwell == DWELL_LINGERING ? "lingering" : "transient",
+                (unsigned)csi_m);
+
   // Deliver to the registered event callback if any. This is a purely
   // external side channel; the internal pipeline below does not depend
   // on it.
@@ -491,12 +505,11 @@ static void emit_event(const char* event_name, SignalSource sig, int8_t count_de
     RfEvent event = {
       .event_name = event_name,
       .signal = sig,
-      .confidence = calc_confidence(device_count, s_probe_burst_count, rssi_mean,
-                                    csi_m, csi_b),
+      .confidence = conf,
       .count_delta = count_delta,
-      .dwell_class = calc_dwell_class(state_duration),
+      .dwell_class = dwell,
       .time_bucket = get_time_bucket(),
-      .narrative_hint = get_narrative_hint(s_state, calc_dwell_class(state_duration), get_time_bucket())
+      .narrative_hint = get_narrative_hint(s_state, dwell, get_time_bucket())
     };
     s_event_callback(&event);
   }

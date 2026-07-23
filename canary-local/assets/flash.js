@@ -1082,9 +1082,14 @@ function phaseConnected() {
     // A Sense on the wire gets its bench one click away — the console is its
     // voice, but the radar bench is its senses.
     const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
-    if (curProd && core.productRole(curProd.id) === "sense") {
+    const curRole = curProd && core.productRole(curProd.id);
+    if (curRole === "sense") {
       const rb = el("button", "ghost small", "👋 open the radar bench — feel it sense");
       rb.addEventListener("click", () => openSenseBench(curProd));
+      voice.append(rb);
+    } else if (curRole === "wap") {
+      const rb = el("button", "ghost small", "🌊 open the field bench — feel the room");
+      rb.addEventListener("click", () => openWapBench(curProd));
       voice.append(rb);
     }
     wrap.append(voice);
@@ -1527,7 +1532,7 @@ function phaseDisplayBench(d, back) {
 // same ones MQTT carries). The wellbeing senses render as a clearly-labeled
 // preview on the presence-only build — what's POSSIBLE, never faked as live.
 
-async function openSenseBench(product) {
+async function openConsoleBench(product, makePhase) {
   if (state.busy || state.opening) return;
   state.opening = true; // synchronous — see openMonitor
   try {
@@ -1539,11 +1544,13 @@ async function openSenseBench(product) {
       state.session = null;
     }
     if (!port) { setPhase(phaseConnect()); return; }
-    setPhase(phaseSenseBench(port, product));
+    setPhase(makePhase(port, product));
   } finally {
     state.opening = false;
   }
 }
+const openSenseBench = (product) => openConsoleBench(product, phaseSenseBench);
+const openWapBench = (product) => openConsoleBench(product, phaseWapBench);
 
 function phaseSenseBench(port, product) {
   const wellbeing = /wellbeing/.test((product && product.id) || "");
@@ -1786,6 +1793,192 @@ function phaseSenseBench(port, product) {
     wctx.fillStyle = `hsl(345 85% 64% / ${alpha})`;
     wctx.fillText(`heart ${live ? model.heart : "~" + heartBpm} bpm`, 10, WH - 10);
 
+    raf = requestAnimationFrame(draw);
+  }
+  raf = requestAnimationFrame(draw);
+  setStatus();
+
+  back.addEventListener("click", async () => {
+    model.alive = false;
+    cancelAnimationFrame(raf);
+    try { reader && await reader.cancel(); } catch {}
+    try { reader && reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
+    setPhase(phaseConnect());
+  });
+  return box;
+}
+
+// ── the field bench: feel a freshly-hatched WAP feel the room ───────────────
+// The WAP senses presence in the WiFi field itself — no camera, no mic, no
+// radar module. Its console prints one coarse line per RF transition
+// ([wap] … devices/confidence/dwell/stir); the bench turns that into a
+// living field: ripples on every event, a stir meter for the CSI motion
+// score, and the honest vocabulary underneath. Same attended-USB posture
+// as the radar bench.
+function phaseWapBench(port, product) {
+  const box = el("section", "flash-card flash-sensebench");
+  box.dataset.step = "5";
+  box.append(el("h2", null, "🌊 The field bench — the room’s WiFi, felt"));
+  box.append(el("p", "muted",
+    "This Canary reads the WiFi field itself: phones announcing themselves, " +
+    "and the way a moving body stirs the radio reflections (CSI). Below is " +
+    "its live verdict off the USB cable — the same coarse vocabulary it " +
+    "publishes: an event name, a device count, a confidence word, a dwell " +
+    "class. Never a MAC, never a raw signal."));
+
+  const status = el("div", "flash-sense-status", "listening for the field…");
+  status.setAttribute("role", "status");
+  box.append(status);
+  const calm = prefersCalm();
+
+  const field = document.createElement("canvas");
+  field.className = "flash-sense-aura";
+  field.width = 640; field.height = 300;
+  box.append(field);
+
+  // The stir meter: the CSI motion score, decaying between events.
+  const meter = el("div", "we2-meter");
+  const track = el("div", "we2-meter-track");
+  const fill = el("div", "we2-meter-fill");
+  track.append(fill);
+  const meterLabel = el("div", "we2-meter-label", "field stir — how much a body is moving the radio");
+  meter.append(track, meterLabel);
+  box.append(meter);
+
+  const script = el("div", "flash-nextstep");
+  script.append(el("div", "flash-nextstep-title", "Make it magic — the 60-second tour"));
+  const ol = el("ol", "we2-guide-steps");
+  [
+    "Walk into the room with your phone in your pocket — an arrival event fires and the field ripples.",
+    "Leave the phone outside and walk back in: the CSI stir meter still moves — the field feels the BODY, not the phone.",
+    "Stand statue-still and watch the stir settle; linger a couple of minutes and the dwell class climbs to “sustained”.",
+    "Bring a second phone — the device count follows, as a count, never an identity.",
+    "Everything here publishes the same way to Home Assistant — this bench is the field’s honest voice.",
+  ].forEach((s) => ol.append(el("li", null, s)));
+  script.append(ol);
+  box.append(script);
+
+  const conWrap = el("details", "flash-displaybench-serial");
+  conWrap.append(el("summary", null, "the raw console under the magic"));
+  const con = el("pre", "flash-console");
+  conWrap.append(con);
+  box.append(conWrap);
+
+  const row = el("div", "flash-row");
+  const back = el("button", "ghost", "← back to the Nursery");
+  row.append(back);
+  box.append(row);
+
+  const model = {
+    present: false, devices: 0, confidence: null, dwell: null,
+    stir: 0, lastEvent: null, lastSeenMs: 0, alive: true,
+  };
+  const ripples = []; // {born, strength}
+
+  function setStatus() {
+    status.className = "flash-sense-status " +
+      (model.present ? "flash-sense-present" : "flash-sense-clear");
+    status.textContent = model.present
+      ? `● someone stirs the field — ${model.devices} device${model.devices === 1 ? "" : "s"} heard` +
+        `${model.confidence ? ` · ${model.confidence} confidence` : ""}${model.dwell ? ` · ${model.dwell}` : ""}`
+      : model.lastEvent ? "○ the field is calm again"
+      : "◌ listening for the field…";
+  }
+
+  let reader = null;
+  (async () => {
+    try {
+      await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      reader = port.readable.getReader();
+    } catch (e) {
+      status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
+      return;
+    }
+    const dec = new TextDecoder();
+    let buf = "", tail = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || !model.alive) break;
+        const text = dec.decode(value, { stream: true });
+        buf = (buf + text).slice(-8000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        tail += text;
+        const lines = tail.split("\n");
+        tail = lines.pop() || "";
+        for (const line of lines) {
+          const ev = core.parseWapLine(line);
+          if (!ev) continue;
+          model.lastSeenMs = performance.now();
+          model.lastEvent = ev.event;
+          model.devices = ev.devices;
+          model.confidence = ev.confidence;
+          model.dwell = ev.dwell;
+          model.stir = Math.max(model.stir, ev.stir);
+          if (ev.present) model.present = true;
+          if (ev.departed) model.present = false;
+          ripples.push({ born: performance.now(), strength: Math.max(0.35, ev.stir / 100) });
+          if (ripples.length > 8) ripples.shift();
+          setStatus();
+        }
+      }
+    } catch { /* unplugged — the back button is right there */ }
+  })();
+
+  const fctx = field.getContext("2d");
+  let raf = 0, t0 = performance.now();
+  function draw(now) {
+    if (!model.alive) return;
+    const t = calm ? 0 : (now - t0) / 1000;
+    const W = field.width, H = field.height, cx = W / 2, cy = H / 2;
+    fctx.clearRect(0, 0, W, H);
+    // the ambient field: faint standing rings, breathing very slightly
+    for (let i = 1; i <= 4; i++) {
+      fctx.beginPath();
+      fctx.arc(cx, cy, i * 34 + Math.sin(t * 0.8 + i) * 2, 0, 2 * Math.PI);
+      fctx.lineWidth = 1;
+      fctx.strokeStyle = `hsl(205 60% 55% / ${model.present ? 0.18 : 0.1})`;
+      fctx.stroke();
+    }
+    // event ripples: expanding, fading, strength-scaled
+    const nowMs = performance.now();
+    for (const r of ripples) {
+      const age = (nowMs - r.born) / 1000;
+      if (age > 3) continue;
+      const p = calm ? 0.6 : age / 3;
+      fctx.beginPath();
+      fctx.arc(cx, cy, 20 + p * (H / 2 - 10), 0, 2 * Math.PI);
+      fctx.lineWidth = 2.5 * r.strength;
+      fctx.strokeStyle = `hsl(${model.present ? 140 : 205} 85% 62% / ${(1 - p) * 0.8 * r.strength})`;
+      fctx.stroke();
+    }
+    // the emitter
+    fctx.beginPath();
+    fctx.arc(cx, cy, 6, 0, 2 * Math.PI);
+    fctx.fillStyle = model.present ? "#7CFF9B" : "#7db8e8";
+    fctx.fill();
+    // device count chips orbiting when present
+    if (model.present && model.devices > 0) {
+      for (let i = 0; i < Math.min(model.devices, 5); i++) {
+        const a = (i / Math.min(model.devices, 5)) * 2 * Math.PI + t * 0.4;
+        fctx.beginPath();
+        fctx.arc(cx + Math.cos(a) * 60, cy + Math.sin(a) * 60, 4, 0, 2 * Math.PI);
+        fctx.fillStyle = "hsl(140 90% 70% / 0.9)";
+        fctx.fill();
+      }
+    }
+    const stale = model.lastSeenMs && nowMs - model.lastSeenMs > 30000;
+    if (stale) {
+      fctx.font = "600 12px ui-monospace, Menlo, monospace";
+      fctx.fillStyle = "#f0a860";
+      fctx.fillText("no field lines lately — the WAP only speaks on transitions; walk past it", 14, 18);
+    }
+    // the stir meter, decaying gently between events
+    model.stir = Math.max(0, model.stir - (calm ? 0.4 : 0.15));
+    fill.style.width = Math.round(model.stir) + "%";
+    fill.dataset.level = model.stir >= 55 ? "ok" : model.stir >= 25 ? "soft" : "faint";
     raf = requestAnimationFrame(draw);
   }
   raf = requestAnimationFrame(draw);
@@ -2836,10 +3029,14 @@ function phaseDone(opts) {
   const row = el("div", "flash-row");
   const watch = doneRole === "sense"
     ? el("button", "primary", "👋 Feel it sense — the live radar bench →")
-    : el("button", "primary", "Watch it boot & prove itself →");
+    : doneRole === "wap"
+      ? el("button", "primary", "🌊 Feel the field — the live WiFi bench →")
+      : el("button", "primary", "Watch it boot & prove itself →");
   watch.addEventListener("click", () => doneRole === "sense"
     ? openSenseBench(opts.product)
-    : openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
+    : doneRole === "wap"
+      ? openWapBench(opts.product)
+      : openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
   const again = el("button", "ghost", "Set up another board");
   // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
   // half-done Vision can't carry a stale flag into the next board (else its other

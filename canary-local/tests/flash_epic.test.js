@@ -406,3 +406,18 @@ test("roster: add, find, and the progression lines", async () => {
   assert.deepStrictEqual(Object.keys(found).sort(),
     ["mac", "n", "preset", "product", "t", "version", "wifi"]);
 });
+
+test("parseWapLine: the field bench reads the WAP's transition lines", async () => {
+  const c = await core();
+  const ev = c.parseWapLine("[wap] rf_presence_started devices=2 confidence=high dwell=transient stir=42");
+  assert.deepStrictEqual(ev, {
+    kind: "wap", event: "rf_presence_started", devices: 2, confidence: "high",
+    dwell: "transient", stir: 42, present: true, departed: false,
+  });
+  const gone = c.parseWapLine("[wap] rf_presence_departed devices=0 confidence=low dwell=sustained stir=3");
+  assert.strictEqual(gone.departed, true);
+  assert.strictEqual(gone.present, false);
+  assert.strictEqual(c.parseWapLine("[wap] sustained_presence devices=1 confidence=moderate dwell=sustained stir=180").stir, 100);
+  assert.strictEqual(c.parseWapLine("[sense] present count=1 range=near"), null);
+  assert.strictEqual(c.parseWapLine(""), null);
+});
