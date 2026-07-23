@@ -22,7 +22,7 @@
 - A journalist protecting source meeting evidence in a hostile state
 - An activist recording police presence at a protest
 - A domestic abuse survivor documenting patterns
-- A whistleblower who needs tamper-proof records
+- A whistleblower who needs tamper-evident records
 - A human rights observer in a conflict zone
 
 **Every design decision must be evaluated against the most vulnerable
