@@ -1302,8 +1302,17 @@ void setup() {
   }
 #endif
 
-  // Enable WiFi modem sleep when running on battery to save ~20 mA
-#if FEATURE_WIFI_AP && FEATURE_POWER_MONITOR
+  // Enable WiFi modem sleep when running on battery to save ~20 mA.
+  //
+  // Only when NEITHER the power policy engine NOR CSI is compiled in:
+  //   • With FEATURE_POWER_POLICY, the policy engine OWNS wifi power-save and
+  //     is now CSI-aware (it forces PS off while CSI is capturing), so a manual
+  //     boot-time enable here would just fight it.
+  //   • With FEATURE_CSI (and no policy), CSI needs every RX frame, so modem
+  //     sleep must stay off regardless of battery state.
+  // This removes the old unconditional boot-time MIN_MODEM that silently
+  // collapsed CSI capture on battery.
+#if FEATURE_WIFI_AP && FEATURE_POWER_MONITOR && !FEATURE_POWER_POLICY && !FEATURE_CSI
   {
     power_state_t pwr_ps;
     if (power_get_state(&pwr_ps) &&

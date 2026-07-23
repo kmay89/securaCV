@@ -22,6 +22,14 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 
+#if FEATURE_CSI
+/* Forward-declared (deliberately NOT #included): PlatformIO's LDF chain scanner
+ * ignores #if guards on #include lines, so #including securacv_csi.h here would
+ * drag the whole CSI lib into non-CSI builds. This C-ABI predicate is defined
+ * in securacv_csi when FEATURE_CSI is built. */
+extern "C" bool csi_is_running(void);
+#endif
+
 namespace policy {
 
 static bool s_initialized = false;
@@ -176,6 +184,16 @@ static void set_cpu_freq(uint16_t mhz) {
 static uint8_t s_current_wifi_ps = 0;
 
 static void set_wifi_ps(uint8_t mode) {
+#if FEATURE_CSI
+  /* WiFi CSI capture needs every RX frame; modem sleep drops asynchronous RX
+   * and collapses the CSI feature stream (which then trips the 5 s CSI
+   * watchdog into a radio-toggle loop that never fixes the root cause). Force
+   * power-save OFF whenever CSI is actually capturing, overriding whatever
+   * sleep mode the current power mode requested — e.g. BATTERY_NORMAL asks for
+   * MIN_MODEM *and* keeps csi=true, the exact conflict this resolves. When CSI
+   * stops, the next policy_process re-apply restores the requested mode. */
+  if (mode != 0 && csi_is_running()) mode = 0;
+#endif
   if (mode == s_current_wifi_ps) return;
   wifi_ps_type_t ps;
   switch (mode) {
@@ -294,6 +312,16 @@ bool policy_process(void) {
 
   power_state_t pwr;
   if (!power_get_state(&pwr)) return false;
+
+  /* Re-apply the current mode's WiFi power-save every tick so the CSI-aware
+   * clamp in set_wifi_ps() self-corrects when CSI starts or stops WITHOUT a
+   * mode transition — CSI defers its start until WiFi is up, i.e. after the
+   * initial mode's PS was already applied. Cheap: set_wifi_ps() early-returns
+   * unless the *effective* (post-clamp) mode changes, so esp_wifi_set_ps()
+   * only runs on a real transition, not every loop. */
+  if (s_features.wifi_ap || s_features.wifi_sta) {
+    set_wifi_ps(s_features.wifi_ps_mode);
+  }
 
   if (!s_cfg.auto_mode) return false;
 
