@@ -126,6 +126,15 @@ CSI_FEAT_BIN     = test_csi_features
 CSI_FEAT_SOURCES = test_csi_features.cpp \
                    $(SRC_DIR)/csi_features.cpp
 
+# wifi.channel_activity: ambient, unattributed channel-activity burst detector.
+# Compiles the REAL staged module against stub chokepoint/settings symbols and
+# pins the privacy contract — emits only CSI_CATEGORY_AMBIENT (never persisted),
+# a coarse P0 allow-list (no identity field), and a fixed literal + bounded
+# intensity regardless of input. See spec/canary_free_signals_v0.md A/E/F.
+WCA_BIN     = test_wifi_channel_activity_privacy
+WCA_SOURCES = test_wifi_channel_activity_privacy.cpp \
+              $(SRC_DIR)/wifi_channel_activity.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -201,6 +210,9 @@ $(AUDIO_BIN): $(AUDIO_SOURCES)
 $(CSI_FEAT_BIN): $(CSI_FEAT_SOURCES)
 	$(CXX) $(CXXFLAGS) -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES)
 
+$(WCA_BIN): $(WCA_SOURCES)
+	$(CXX) $(CXXFLAGS) -I $(SRC_DIR) -o $@ $(WCA_SOURCES)
+
 $(FLEET_BEACON_BIN): $(FLEET_BEACON_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(FLEET_BEACON_SRC)
 
@@ -210,7 +222,7 @@ $(EVDRIVE_BIN): $(EVDRIVE_SOURCES)
 $(EVVERIFY_BIN): $(EVVERIFY_SOURCES)
 	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(EVVERIFY_SOURCES) -lcrypto
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -227,9 +239,10 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(GNSS_TIME_BIN)
 	./$(AUDIO_BIN)
 	./$(CSI_FEAT_BIN)
+	./$(WCA_BIN)
 	./$(FLEET_BEACON_BIN)
 	./$(EVDRIVE_BIN)
 	./$(EVVERIFY_BIN)
 
 clean:
-	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)
+	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN)

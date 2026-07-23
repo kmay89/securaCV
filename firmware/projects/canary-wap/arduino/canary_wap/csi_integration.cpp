@@ -63,6 +63,7 @@
 #include <meta_quiet_hours.h>
 #include <meta_empty_room_baseline.h>
 #include <anomaly_baseline.h>
+#include <wifi_channel_activity.h>
 #include <ble_events_module.h>
 #include "acoustic_events_module.h"
 
@@ -2326,6 +2327,14 @@ void register_v1_modules() {
    * stream the four core modules see. */
 #ifndef CSI_DISABLE_MODULE_ANOMALY_BASELINE
   csi_module_register(anomaly_baseline_module());
+#endif
+
+  /* wifi.channel_activity — ambient, unattributed "airwaves got busy" glow.
+   * Identity-free CSI aggregates only; emits CSI_CATEGORY_AMBIENT (never
+   * persisted, live UI only). See spec/canary_free_signals_v0.md Invariants
+   * A/E/F. */
+#ifndef CSI_DISABLE_MODULE_WIFI_CHANNEL_ACTIVITY
+  csi_module_register(wifi_channel_activity_module());
 #endif
 
   /* PR 3 — core.multilink_fusion: 2-link motion-confirmation gate.
