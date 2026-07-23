@@ -163,8 +163,15 @@ jobs:
         # platform + libs; profiles install their own isolated core). Without
         # this step the out-of-band rebuild would silently drop the display
         # products from the flasher — build_flash_manifest only packages the
-        # build dirs that exist. Non-blocking for the same reason as there.
+        # build dirs that exist. Non-blocking for the same reason as there —
+        # and tolerant of OLDER TAGS: this workflow checks out an existing
+        # fw-v* tag, which may predate the display sketch or a given profile;
+        # a missing dir or profile is a warning, never a failed rebuild.
         run: |
+          if [ ! -d firmware/projects/canary-display/arduino/canary_display ]; then
+            echo "::warning::this tag predates the display sketch — display products absent from this rebuild"
+            exit 0
+          fi
           cd firmware/projects/canary-display/arduino/canary_display
           for P in watch dash modes; do
             if ! arduino-cli compile --profile "$P" \

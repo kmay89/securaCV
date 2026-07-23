@@ -52,6 +52,10 @@ bool s_begun = false;
 uint16_t s_level = 0;
 uint32_t s_last_snap_ms = 0;
 uint32_t s_last_event_ms = 0;
+// The cooldown only exists BETWEEN events — the first detection must land
+// immediately, even inside the first 30 s after boot (an alarm already
+// sounding at power-up is the urgent case, not the ignorable one).
+bool s_event_fired = false;
 lv_obj_t* s_chip = nullptr;
 
 void say_evt(const char* fmt, ...) {
@@ -213,7 +217,9 @@ void mic_loop(uint32_t now) {
     const bool loud = s_env.update(rms);
     const Detection d = s_det.update(loud, now);
     if (d.event != Event::None &&
-        (int32_t)(now - s_last_event_ms) >= (int32_t)REDETECT_MS) {
+        (!s_event_fired ||
+         (int32_t)(now - s_last_event_ms) >= (int32_t)REDETECT_MS)) {
+      s_event_fired = true;
       s_last_event_ms = now;
       const char* name = event_wire_name(d.event);
       canary::fleet::the_fleet().on_event(s_self_id, name,

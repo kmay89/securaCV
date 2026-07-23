@@ -150,9 +150,25 @@ static constexpr uint32_t HEAP_HYSTERESIS      = 5000;
 // build, which has no per-env flags), derive them from the flavor macro so a
 // watch never polls/accepts a dash image and vice versa. The flavor config is
 // already included above, so CD_FLAVOR_* is known here.
+// A gear-carrying image must never identify as a plain flavor: the plain
+// image has no gears (and, on the 4.3B, a different pin map), so accepting
+// its OTA would silently strip both. When the build system passes no
+// explicit product (the Arduino path — including the release train's
+// `--profile modes` build), derive the modes identity from the gear flags
+// themselves. flavor_local.h always defines them as 0/1, and #if treats an
+// undefined macro as 0, so this is safe on every path.
+#if (FEATURE_DEVMODE || FEATURE_DEMO_MODE || FEATURE_DEBUG_MODE || FEATURE_ARCADE)
+#  define CD_GEARS_COMPILED_IDENTITY 1
+#endif
 #ifndef SECURACV_OTA_PRODUCT
-#  if defined(CD_FLAVOR_WATCH)
+#  if defined(CD_FLAVOR_WATCH) && defined(CD_GEARS_COMPILED_IDENTITY)
+     // CI-compile flavor, never released: polls a manifest that does not
+     // exist, so it can never cross-grade to the gearless watch image.
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display-watch-modes"
+#  elif defined(CD_FLAVOR_WATCH)
 #    define SECURACV_OTA_PRODUCT "securacv-canary-display-watch"
+#  elif defined(CD_FLAVOR_DASH) && defined(CD_GEARS_COMPILED_IDENTITY)
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display-dash-modes"
 #  elif defined(CD_FLAVOR_DASH)
 #    define SECURACV_OTA_PRODUCT "securacv-canary-display-dash"
 #  else
@@ -161,9 +177,15 @@ static constexpr uint32_t HEAP_HYSTERESIS      = 5000;
 #endif
 static constexpr const char* OTA_PRODUCT = SECURACV_OTA_PRODUCT;
 #ifndef SECURACV_OTA_MANIFEST_URL
-#  if defined(CD_FLAVOR_WATCH)
+#  if defined(CD_FLAVOR_WATCH) && defined(CD_GEARS_COMPILED_IDENTITY)
+#    define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-watch-modes.json"
+#  elif defined(CD_FLAVOR_WATCH)
 #    define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-watch.json"
+#  elif defined(CD_FLAVOR_DASH) && defined(CD_GEARS_COMPILED_IDENTITY)
+#    define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-dash-modes.json"
 #  elif defined(CD_FLAVOR_DASH)
 #    define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-dash.json"
