@@ -35,6 +35,10 @@ jobs:
         run: bash scripts/lint_version_sync.sh
       - name: Witness Dictionary sync (Rust / Python / JS / firmware)
         run: python3 scripts/lint_dictionary_sync.py
+      - name: Vehicle DBC signal math (golden vectors)
+        run: python3 scripts/dbc_signal_resolve.py selftest
+      - name: Vehicle profiles match their vendored DBC excerpts
+        run: python3 scripts/dbc_signal_resolve.py check-profiles
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
       - name: Build matrix matches platformio.ini + config.h

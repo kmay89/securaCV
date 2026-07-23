@@ -1,0 +1,154 @@
+# Canary Vehicle — per-vehicle CAN signal profiles.
+#
+# Every (can_id, byte_offset, mask) below was RESOLVED from the vendored DBC excerpts by
+# scripts/dbc_signal_resolve.py, never hand-typed — `check-profiles` re-derives them on every CI
+# run and fails if a profile drifts from what its DBC actually says. See
+# docs/hardware/canary_vehicle_profiles.md for the full picture, and SOURCES.md for where each
+# DBC excerpt came from.
+#
+# `status` is honest, not aspirational — same discipline as firmware/boards/boards.json's
+# compile-tested -> verified tiers:
+#   "documented"                — signal exists in a real, sourced DBC; nothing bench-confirmed
+#   "documented-platform-mismatch" — signal exists in a DBC that may not match this exact
+#                                     vehicle's actual generation/platform; treat with more doubt
+#   "bench-confirmed"           — measured against a real vehicle (none yet — this file has none)
+#
+# Regenerate a resolve line for any signal:
+#   python3 scripts/dbc_signal_resolve.py resolve <dbc> <message> <signal>
+
+[[vehicle]]
+id = "honda-pilot-2016-2022"
+make = "Honda"
+model = "Pilot"
+years = "2016-2022"
+dbc = "docs/hardware/vehicle_dbc/honda_common_excerpt.dbc"
+status = "documented"
+notes = """
+Honda Sensing trim, per openpilot's own CARS.md (comma.ai) — a good cross-check that this
+generation's CAN bus is well-trodden territory, though that doc describes ADAS support, not this
+project's presence-claim usage. DOORS_STATUS is from the shared Honda body-CAN template
+(_honda_common.dbc) used broadly across this era's Honda/Acura lineup — believed to apply, not
+confirmed on an actual Pilot yet. A single door bit is a proxy for "someone is getting in or out,"
+not a clean arrival/departure split by itself — see the doc's §4 roadmap for pairing it with a
+second signal.
+"""
+
+[[vehicle.signal]]
+name = "driver_door_open"
+message = "DOORS_STATUS"
+signal = "DOOR_OPEN_FL"
+can_id = "0x405"
+byte_offset = 4
+mask = "0x20"
+kind = "vehicle_arrival_departure"
+zone = "garage"
+
+# ---------------------------------------------------------------------------
+
+[[vehicle]]
+id = "honda-odyssey-2011-2017-gen4"
+make = "Honda"
+model = "Odyssey (4th gen)"
+years = "2011-2017"
+dbc = "docs/hardware/vehicle_dbc/honda_common_excerpt.dbc"
+status = "documented-platform-mismatch"
+notes = """
+⚠️ A 2017 Odyssey is 4th-generation (2011-2017) — a DIFFERENT platform generation from the
+5th-gen redesign that started at MY2018. Don't assume this profile and the 2018+ profile below
+share a bus layout just because both say "Odyssey." The _honda_common.dbc template this excerpt
+comes from is dated to Honda's more recent (~2016+) body-CAN convention (EON/BDY naming matches
+comma.ai's Honda Bosch/Nidec-era ports); whether a 2017 Gen4 Odyssey's body module actually
+matches it is UNCONFIRMED — more likely to need bench correction than the newer Gen5 profile.
+Treat every byte/mask here as a starting hypothesis for the bench, not a working config.
+"""
+
+[[vehicle.signal]]
+name = "driver_door_open"
+message = "DOORS_STATUS"
+signal = "DOOR_OPEN_FL"
+can_id = "0x405"
+byte_offset = 4
+mask = "0x20"
+kind = "vehicle_arrival_departure"
+zone = "garage"
+
+# ---------------------------------------------------------------------------
+
+[[vehicle]]
+id = "honda-odyssey-2018-newer-gen5"
+make = "Honda"
+model = "Odyssey (5th gen)"
+years = "2018-newer"
+dbc = "docs/hardware/vehicle_dbc/honda_common_excerpt.dbc"
+status = "documented"
+notes = """
+5th-gen Odyssey (2018 redesign onward). openpilot's CARS.md lists 2018-20 (Honda Sensing
+required) and 2021-26 (all trims) as supported — again, ADAS support, not this project's usage,
+but a real signal this platform's body-CAN is well-understood elsewhere.
+"""
+
+[[vehicle.signal]]
+name = "driver_door_open"
+message = "DOORS_STATUS"
+signal = "DOOR_OPEN_FL"
+can_id = "0x405"
+byte_offset = 4
+mask = "0x20"
+kind = "vehicle_arrival_departure"
+zone = "garage"
+
+# ---------------------------------------------------------------------------
+
+[[vehicle]]
+id = "toyota-corolla-2020-newer"
+make = "Toyota"
+model = "Corolla"
+years = "2020-newer"
+dbc = "docs/hardware/vehicle_dbc/toyota_2017_pt_excerpt.dbc"
+status = "documented-platform-mismatch"
+notes = """
+⚠️ The only Toyota powertrain excerpt sourced so far is upstream-named "2017_ref" — a reference
+template, not confirmed to match the TNGA-platform Corolla (a substantial redesign starting
+MY2020). B_P ("boolean Park") is a transmission-range flag on the ECT1S92 message; if it exists
+on a 2020+ Corolla's bus at all, the CAN ID/byte/mask may well differ. This is the LEAST confident
+profile in this file — bench-sniffing (candump while shifting through P/R/N/D) is the honest next
+step before trusting any of it, not an optional nice-to-have like the Honda/VW entries.
+"""
+
+[[vehicle.signal]]
+name = "transmission_in_park"
+message = "ECT1S92"
+signal = "B_P"
+can_id = "0x3BC"
+byte_offset = 1
+mask = "0x20"
+kind = "vehicle_arrival_departure"
+zone = "garage"
+
+# ---------------------------------------------------------------------------
+
+[[vehicle]]
+id = "volkswagen-mqb-2015-newer"
+make = "Volkswagen"
+model = "MQB platform (generic — VW/Audi/SEAT/Škoda, most 2015+ via the J533 gateway)"
+years = "2015-newer"
+dbc = "docs/hardware/vehicle_dbc/vw_mqb_excerpt.dbc"
+status = "documented"
+notes = """
+Generic MQB platform profile — no specific VW model/year was given, so this targets the shared
+gateway messages common across the platform family rather than one model. ZAS_Kl_15 ("Klemme 15")
+is the standard VAG term for switched ignition power — the closest thing to a textbook "ignition
+on" signal found across any of the three brands researched here, and the strongest single-signal
+candidate in this whole file. Tell Claude your exact VW model/year for a tighter, less-generic
+profile.
+"""
+
+[[vehicle.signal]]
+name = "ignition_on"
+message = "Klemmen_Status_01"
+signal = "ZAS_Kl_15"
+can_id = "0x3C0"
+byte_offset = 2
+mask = "0x02"
+kind = "vehicle_arrival_departure"
+zone = "garage"

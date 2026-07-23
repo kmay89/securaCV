@@ -1,0 +1,37 @@
+VERSION ""
+
+NS_ :
+
+BS_:
+
+BU_: EON BDY PCM XXX
+
+// Excerpt of opendbc/dbc/generator/honda/_honda_common.dbc — DOORS_STATUS, SEATBELT_STATUS —
+// and _gearbox_common.dbc — GEARBOX_CVT, GEARBOX_AUTO. See SOURCES.md for provenance. Shared
+// across the Honda "common" body/gearbox template used by many Honda/Acura models generated
+// from this file, including the Pilot and Odyssey families — confirm on your specific vehicle;
+// the generator selects which template a given model/year actually uses.
+
+BO_ 773 SEATBELT_STATUS: 7 BDY
+ SG_ SEATBELT_DRIVER_LAMP : 7|1@0+ (1,0) [0|1] "" EON
+ SG_ SEATBELT_PASS_UNLATCHED : 10|1@0+ (1,0) [0|1] "" EON
+ SG_ SEATBELT_PASS_LATCHED : 11|1@0+ (1,0) [0|1] "" EON
+ SG_ SEATBELT_DRIVER_UNLATCHED : 12|1@0+ (1,0) [0|1] "" EON
+ SG_ SEATBELT_DRIVER_LATCHED : 13|1@0+ (1,0) [0|1] "" EON
+
+BO_ 1029 DOORS_STATUS: 8 BDY
+ SG_ DOOR_OPEN_FL : 37|1@0+ (1,0) [0|1] "" EON
+ SG_ DOOR_OPEN_FR : 38|1@0+ (1,0) [0|1] "" EON
+ SG_ DOOR_OPEN_RL : 39|1@0+ (1,0) [0|1] "" EON
+ SG_ DOOR_OPEN_RR : 40|1@0+ (1,0) [0|1] "" EON
+ SG_ TRUNK_OPEN : 41|1@0+ (1,0) [0|1] "" EON
+
+BO_ 401 GEARBOX_CVT: 8 PCM
+ SG_ SELECTED_P : 0|1@0+ (1,0) [0|1] "" XXX
+ SG_ SELECTED_R : 1|1@0+ (1,0) [0|1] "" XXX
+ SG_ SELECTED_N : 2|1@0+ (1,0) [0|1] "" XXX
+ SG_ SELECTED_D : 3|1@0+ (1,0) [0|1] "" XXX
+ SG_ GEAR_SHIFTER : 44|5@0+ (1,0) [0|31] "" XXX
+
+BO_ 419 GEARBOX_AUTO: 8 PCM
+ SG_ GEAR_SHIFTER : 35|4@0+ (1,0) [0|15] "" EON

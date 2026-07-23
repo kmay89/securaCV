@@ -92,8 +92,15 @@ new code.
 
 ## 5 · Finding YOUR vehicle's ignition frame
 
-There is no universal answer — this is the one step every install does differently. With `can0`
-up (§4) and `can-utils` installed:
+**Check [`canary_vehicle_profiles.md`](./canary_vehicle_profiles.md) first.** A real,
+sourced-from-opendbc signal matrix now exists for Honda Pilot, Honda Odyssey (both generations),
+Toyota Corolla, and Volkswagen MQB — `python3 scripts/dbc_signal_resolve.py emit-routes
+<vehicle-id>` prints ready-to-paste routes for those. None are bench-confirmed yet, but starting
+from a sourced signal beats a cold `candump` guess. If your vehicle isn't one of those (or the
+sourced signal turns out wrong on the bench), hand-sniffing is still the fallback:
+
+There is no universal answer for everything else — this is the one step every install does
+differently. With `can0` up (§4) and `can-utils` installed:
 
 ```bash
 candump can0
