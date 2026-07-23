@@ -323,7 +323,7 @@ test("flash.json: every product declares its wifi NVS scheme, honestly", () => {
 
 test("flash.json: the display boards are flashable products now", () => {
   const displays = catalog.products.filter((p) => p.role === "display");
-  assert.strictEqual(displays.length, 2, "watch + dash");
+  assert.strictEqual(displays.length, 3, "watch + dash + dash-modes");
   for (const p of displays) {
     assert.strictEqual(p.chip, "ESP32-S3");
     assert.strictEqual(p.provisioning, "on-glass");
