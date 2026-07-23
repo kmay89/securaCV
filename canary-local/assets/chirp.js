@@ -31,8 +31,20 @@ function audio() {
   if (!ctx) {
     try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; }
   }
-  if (ctx && ctx.state === "suspended") { try { ctx.resume(); } catch { /* gesture-gated */ } }
+  if (ctx && ctx.state === "suspended") {
+    try { ctx.resume().catch(() => { /* gesture-gated */ }); } catch { /* older engines */ }
+  }
   return ctx;
+}
+
+// A returning user with chirps already ON needs the AudioContext created
+// INSIDE a real gesture — the first chirp often fires seconds after the
+// click that caused it (post-esptool-sync), outside Chrome's activation
+// window, and a context minted there starts suspended and stays silent.
+// So any pointer press primes it while the toggle says on. Cheap, passive.
+if (typeof document !== "undefined") {
+  document.addEventListener("pointerdown", () => { if (chirpsEnabled()) audio(); },
+    { passive: true });
 }
 
 // One note: a sine that sweeps f0→f1 over `dur`, with a fast attack and a
