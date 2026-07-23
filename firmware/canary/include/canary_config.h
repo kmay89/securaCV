@@ -277,6 +277,19 @@
 #define AP_CHANNEL           1
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
 
+// Radio defaults applied once at network bring-up. Pinning the PHY to HT20 +
+// 11bgn keeps the WiFi-CSI subcarrier count constant — an HT40 association or
+// rate renegotiation would change it and destabilize the fixed 32-dim CSI
+// feature vector. The country code sets the correct regulatory channel set / TX
+// ceiling; with 802.11d enabled the STA adapts it to the associated AP, so the
+// world-safe "01" default never blocks a router on ch 12/13.
+#ifndef CANARY_WIFI_COUNTRY
+  #define CANARY_WIFI_COUNTRY  "01"   // world-safe; 802.11d adapts to the AP
+#endif
+#ifndef CANARY_WIFI_TX_QDBM
+  #define CANARY_WIFI_TX_QDBM  78     // quarter-dBm (~19.5 dBm); ESP32-S3 range 8..84
+#endif
+
 // ════════════════════════════════════════════════════════════════
 // BLE DEFAULTS
 // ════════════════════════════════════════════════════════════════
