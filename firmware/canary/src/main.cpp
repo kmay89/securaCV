@@ -9,6 +9,8 @@
  */
 
 #include <Arduino.h>
+#include <sys/time.h>
+#include <cstdlib>
 #include "canary_config.h"
 #include "log_level.h"
 
@@ -205,6 +207,59 @@ static void print_boot_welcome();   // the friendly char-box hello on connect
 
 static GpsManager s_gps;
 static uint32_t g_last_record_ms = 0;
+
+// ════════════════════════════════════════════════════════════════════════════
+// GPS-DERIVED SYSTEM CLOCK
+// ════════════════════════════════════════════════════════════════════════════
+//
+// This project has no SNTP path — no WiFi-based time sync exists anywhere in
+// canary/canary-wap firmware. Without it the system clock never leaves its
+// post-boot state, so wall-clock seconds since 1970 stay meaninglessly small
+// (well under WALL_CLOCK_FLOOR) for the device's entire life. GPS is the one
+// clock source these devices actually have that isn't derived from an
+// untrusted network peer: the L76K reports UTC directly from the satellite
+// constellation. syncClockFromGps() seeds the system clock from it once a
+// fix carries a validated RMC date/time, and re-checks periodically to correct
+// crystal drift over long uptimes. GpsUtcTime.valid latches true on the first
+// good RMC and is never cleared by a later void/stale sentence (other
+// diagnostics consumers rely on that latch), so this checks last_seen_ms
+// itself — a fix isn't "available" for a resync once GPS has been lost, or
+// this would keep replaying a stale epoch every 10 minutes and freeze/rewind
+// wall time after ordinary GNSS loss.
+static const time_t WALL_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, "unset"
+static const uint32_t CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;  // drift correction
+static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
+
+static void syncClockFromGps() {
+  static uint32_t s_last_sync_attempt_ms = 0;
+  uint32_t now_ms = millis();
+
+  time_t sys_now = time(nullptr);
+  bool clock_set = (sys_now >= WALL_CLOCK_FLOOR);
+  if (clock_set && (now_ms - s_last_sync_attempt_ms) < CLOCK_RESYNC_INTERVAL_MS) {
+    return;  // already trustworthy and not due for a drift-correction check
+  }
+
+  const GpsUtcTime& utc = s_gps.getUtcTime();
+  if (!utc.valid) return;
+  if ((now_ms - utc.last_seen_ms) > GPS_FIX_STALE_MS) return;  // GPS lost
+
+  time_t gps_epoch;
+  if (!gps_utc_to_epoch(utc, &gps_epoch)) return;
+  if (gps_epoch < WALL_CLOCK_FLOOR) return;  // receiver clock itself looks unset/wrong
+
+  s_last_sync_attempt_ms = now_ms;
+
+  // First sync, or periodic drift correction: only step the clock when GPS
+  // disagrees by more than a second, so this isn't calling settimeofday()
+  // on every 10-minute tick once the two clocks agree.
+  if (clock_set && llabs((long long)(gps_epoch - sys_now)) < 2) return;
+
+  struct timeval tv = { .tv_sec = gps_epoch, .tv_usec = 0 };
+  settimeofday(&tv, nullptr);
+  Serial.printf("[CLOCK] system clock %s from GPS (epoch=%lld)\n",
+                clock_set ? "corrected" : "set", (long long)gps_epoch);
+}
 
 #if FEATURE_HA_MQTT
 static uint32_t g_last_mqtt_status_ms = 0;
@@ -1437,6 +1492,12 @@ void loop() {
 
   // Update GPS
   s_gps.update();
+
+  // No SNTP path exists in this project — GPS is the only wall-clock source
+  // available. Seed/correct the system clock from it once RMC has a
+  // validated date/time (cheap: bails out immediately once synced and not
+  // due for a drift-correction check).
+  syncClockFromGps();
 
   // Update state machine
   const GnssFix& fix = s_gps.getFix();

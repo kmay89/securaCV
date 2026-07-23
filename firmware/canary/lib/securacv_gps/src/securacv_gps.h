@@ -12,7 +12,9 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+#include <ctime>
 #include "canary_config.h"
+#include "../../../../common/gnss/gnss_time.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -167,5 +169,17 @@ float knots_to_mps(float knots);
 
 // Convert knots to km/h
 float knots_to_kmh(float knots);
+
+// Convert a fix's GpsUtcTime to a Unix epoch second, gated on RMC-derived
+// calendar validity (see gnss_time.h). Returns false — and leaves *out
+// untouched — if utc.valid is false or the calendar fields don't pass
+// gnss_calendar_valid() (defense in depth: parseNmea() already screens this
+// before setting valid=true, but callers about to trust this for a
+// system-clock sync should not have to re-derive that guarantee).
+inline bool gps_utc_to_epoch(const GpsUtcTime& utc, time_t* out) {
+  if (!utc.valid) return false;
+  return securacv::gnss::gnss_utc_to_unix(utc.year, utc.month, utc.day,
+                                           utc.hour, utc.minute, utc.second, out);
+}
 
 #endif // SECURACV_GPS_H

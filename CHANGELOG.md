@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### GPS/GNSS — RMC status-flag fix + GPS-derived system clock
+
+- **RMC 'V' (void) sentences no longer trusted as fixes.** Both NMEA parsers
+  (`firmware/canary/lib/securacv_gps` and the canary-wap sketch's inline
+  parser) parsed the RMC status field into a local `status` variable and then
+  never read it — a void sentence (no fix, or a warm-up sentence some
+  receivers emit before ephemeris loads) still updated speed, course, time,
+  and date, and still flipped the UTC time to `valid = true`. Both parsers now
+  gate all of that on `status == 'A'`.
+- **New `firmware/common/gnss/gnss_time.h`.** Pure, header-only NMEA UTC
+  date/time -> validated Unix epoch conversion: `gnss_calendar_valid()`
+  rejects out-of-range fields (a corrupt-but-checksum-valid sentence, or a
+  receiver emitting all-zeros before it has ephemeris) with a leap-year-aware
+  day-of-month check and a century-wide trust window; `days_from_civil()` is
+  Howard Hinnant's exact civil-calendar epoch algorithm, used instead of
+  `mktime`/`timegm` (unreliable across ESP32 Arduino cores, and TZ-sensitive).
+  Host-tested in `firmware/projects/canary-wap/tests_host/test_gnss_time.cpp`
+  against known reference epochs and the validity guardrails. Staged into the
+  canary-wap sketch (`arduino/canary_wap/gnss_time.h`) following the existing
+  device_pseudonym/witness_store single-source pattern, with a
+  `check_csi_sync.sh` drift guard.
+- **GPS now actually sets the system clock.** Neither `firmware/canary` nor
+  canary-wap has an SNTP path — the UTC time GPS already parsed was surfaced
+  in diagnostics but never fed to `settimeofday()`, so `time(nullptr)` never
+  left its post-boot state. That silently dead-ended wall-clock-gated
+  features already in the code (canary-wap's NFPA-72 monthly self-test
+  chirp's waking-hours check and 30-day NVS-persisted cadence both gate on
+  `time(nullptr) >= 1700000000`, a condition that could never become true).
+  Both trees now seed/correct the system clock from a validated GPS fix when
+  one is available — floored against the same "clock looks unset" epoch,
+  re-checked periodically to correct crystal drift, and only stepping the
+  clock when it disagrees by more than a second so a synced clock isn't
+  re-written every cycle.
 ### canary-display — the gears turn: full mode runtime + the browser twin
 
 - **The mode system is now end-to-end firmware** (Built · compile-gated ·
