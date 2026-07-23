@@ -38,6 +38,15 @@ That reframing is the whole design. Everything below follows from "the phone is
 a **remote control and a key ring over data you already own**," never "the phone
 is where your footage lives."
 
+And it is the **hero** of everything we built. The invariants, the on-sensor
+detection, the signed chain, the fleet — all of that is *invisible virtue* until
+something makes it *felt*. The phone is where it becomes felt: the calm "all's
+well" green, the one moment of magic when a Canary you just tapped appears on its
+own, and — the emotional peak of the entire product — a **smoke-alarm-grade alert
+that reaches you anywhere, running on our cheapest device, for $0/month** while
+the cloud cameras charge a subscription for less. Get the alert right and the app
+is the reason people trust the whole system. That is §5b, and it is the point.
+
 ---
 
 ## 1. The five things you asked it to be, mapped to what the system already is
@@ -238,6 +247,81 @@ content is fetched from your own store, never the relay).
 
 ---
 
+## 5b. The alert *is* the hero — smoke-alarm-grade, on a $12 Canary
+
+The away-from-home alert is the feature people pay Ring/Nest **$60–240 a year**
+for, and our cheapest Canary — a XIAO ESP32-S3 that already runs person
+detection on its NPU, signs with Ed25519, and carries a TLS stack — can do the
+whole job for **$0/month**. But "it can send a push" is the easy 20%. The hard,
+*heroic* 80% is making that push behave like a **smoke alarm**: silent for
+months, unmissable when it matters, and *provably alive* the entire time in
+between. A security alert you aren't certain will fire is worse than none — it is
+false comfort. So the design borrows the four properties that make a smoke alarm
+something you actually trust with your life:
+
+**1. Silent almost always — so you believe it when it speaks.** Push is a scarce,
+sacred channel and we refuse to abuse it. Only a tiny, *user-armed* set of events
+may ever push: tamper, a Canary going dark unexpectedly, and the specific
+critical zone events you opted into. Everything else — normal comings and goings,
+the daily digest, "package at the door" — is **pull, never push**: it waits in
+the app for when you choose to look; it never buzzes your pocket. iOS interruption
+levels map this one-to-one: `passive` for digests, `time-sensitive` for the
+things that matter, and — for genuine life-safety — Apple's **Critical Alert**
+level, the one that pierces silent mode and a Focus. That is the literal
+smoke-alarm bypass, and Apple gates it behind an entitlement you must justify
+(§10).
+
+**2. Provably alive — the chirp that earns the trust.** A smoke alarm chirps to
+prove its battery; ours proves the *entire delivery path*. The Canary sends a
+signed **heartbeat** along the same remote route a real alarm would take. The app
+shows "last verified end-to-end: 4 min ago" and offers a one-tap **Test Alert**
+that round-trips device → relay → APNs → your phone and lights a green check. This
+is the single most important reliability feature and almost nobody ships it: you
+learn the alarm works *before* the emergency, not during it. It is also what makes
+the app the hero — it turns an invisible promise into a green check you can press.
+
+**3. Fails loud, never silent.** Low battery, weak Wi-Fi, an unreachable relay, a
+certificate about to lapse, a heartbeat that stopped — each surfaces as a calm,
+proactive "your watch has a gap" nudge. Quiet degradation is the one thing a
+life-safety device may never do.
+
+**4. Trips on silence, not only on sight — the dead-man's-switch.** A cheap camera
+that pushes only when it *sees* something is defeated by unplugging it. Ours
+inverts that: **the absence of the heartbeat is itself the alarm.** Cut the power,
+jam the Wi-Fi, smash the device — the *silence* trips it. Who notices that silence
+while your phone sleeps is the one thing a lone $12 device can't do by itself, and
+the fleet already answers it: **Canaries witness each other.** The mesh's existing
+beacons/chirps (`spec/beacon_channel_v0.md`) are exactly this off-grid liveness —
+any surviving peer with connectivity escalates the "a sibling went dark" alert.
+Where a home hub (HA / Pi) exists it watches too; the relay can watch as a last
+resort. No single point whose failure is silent.
+
+**5. Escalates like interconnected alarms.** An unacknowledged critical re-alerts,
+then reaches a second household member or trustee. One ignored buzz is not the end
+of the chain.
+
+### The honest hardware/relay split (so we never oversell it)
+
+The ESP32-S3 genuinely does the whole part that matters — **detect, decide, sign,
+trigger, heartbeat** — on-device, no cloud, no subscription. The *one* thing it
+cannot do alone is present an **Apple-authenticated** push to *your specific
+phone* across the open internet, because APNs demands the app publisher's signing
+key — which must **never** ship on a $12 device (leaking it would be
+catastrophic). That final leg needs the tiny, stateless **relay** from §5, and it
+is **untrusted by construction**: because every alert is **Ed25519-signed by the
+device and content-free**, the relay can *drop* a message but can neither *read*
+nor *forge* one — the phone verifies the device's signature, so a compromised
+relay cannot inject a fake 3 a.m. alarm. It is **self-hostable** on the same Pi
+hub many owners already run, so away-alerts can involve **zero** third party; a
+default hosted instance — trivial, content-free, cheap — covers everyone else.
+Either way: **$0/month, forever**, against the subscription the cloud cams charge
+for a strictly weaker guarantee.
+
+> The line to hold: the Canary earns the alert; the relay only carries it, blind;
+> the phone proves it — and proves, every few minutes, that it still works.
+
+---
+
 ## 6. Apps to model after — and the exact thing to borrow from each
 
 You asked to copy the ones that pulled "works forever, beautifully" off. The
@@ -334,3 +418,13 @@ only you hold.
    headaches = longer life between updates.
 5. **Android.** CloudKit is Apple-only; the private-DB-as-backend trick needs a
    different answer (self-hosted sync, or none) on Android. In scope now or later?
+6. **Critical Alert entitlement (§5b).** Apply to Apple for the smoke-alarm
+   "pierce silent mode" entitlement (must justify life-safety), or ship with
+   `time-sensitive` only at first? (Recommendation: launch time-sensitive, pursue
+   the entitlement in parallel — it's the literal hero capability.)
+7. **Who watches the heartbeat (§5b).** Default silence-detector: home hub when
+   present, else fleet peers (mesh mutual-watch), else the relay as last resort —
+   confirm the precedence and the miss-window (how many missed beats = "dark").
+8. **Relay economics/abuse.** A free hosted relay needs a cheap anti-abuse story
+   (rate limits, per-install token revocation) that stays content-free and adds
+   no identity — spec it before turning the default instance on.
