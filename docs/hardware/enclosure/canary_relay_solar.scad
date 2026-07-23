@@ -10,6 +10,16 @@
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated. Measure
 //     your LoRa board, battery holder and panel.
+//
+//  ⚠️ THERMAL: a dark sealed pod charging at solar noon can exceed the 18650's
+//     0..45 °C charge window — print in a LIGHT colour, rely on the roof shade,
+//     and set a charge-temperature cutoff in firmware (see field_ratings.md).
+//     bh_l = 78 suits unprotected 65 mm cells; protected cells run to 69 mm.
+//  ⚠️ SEAL HONESTY: four corner screws clamp ~85 mm gasket spans — that is
+//     CER-2 (splash) hardware by the project's own clamp-spacing rule; claim
+//     CER-3 only after a verified W-2 pass. Antenna: keep the panel's lower
+//     edge >= 2 cm above the SMA and prefer a whip whose radiating half
+//     clears the roof plane — a panel 17 mm off the feedpoint detunes it.
 // ============================================================================
 
 /* [What to render] */
@@ -47,9 +57,9 @@ strap_t = 2.0;       // channel depth
 wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  lip_h = 4.0;  lip_t = 1.2;  corner_r = 3.0;
 tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
 post_d = 5.0;  screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 2.0;
-gasket_w = 1.2;  gasket_groove = 1.0;  gasket_proud = 0.6;  skirt_h = 3.0;  skirt_t = 1.6;
+gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;  skirt_h = 3.0;  skirt_t = 1.6;
 usb_w = 10.5;  usb_h = 6.5;   // service USB opening, bottom wall (plug when deployed)
-clip_w = 6.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 standoff_h = 3.0;
 lid_edge = 0.8;  lid_edge2 = 0.0;
 foot_cham = 0.5;
@@ -123,9 +133,16 @@ module body() {
                 translate([0, 0, -strap_t]) rrect(out_x, out_y, corner_r, strap_t + 0.01);
             }
             translate([0, 0, floor_t]) rrect(inner_x, inner_y, max(0.1, corner_r - wall_eff), cav_d + 1);
-            // SMA bulkhead, top wall, over the LoRa column
+            // SMA bulkhead, top wall, over the LoRa column. D-FLAT bore: the
+            // 1/4-36 thread is Ø6.35, and nut torque on a plain round bore
+            // spins the jack and chews the print. Fit an EPDM sealing washer
+            // under the external nut — this is the sky-facing wall.
             translate([lb_cx, out_y/2, floor_t + cav_d/2])
-                rotate([-90, 0, 0]) translate([0, 0, -wall_eff*2]) cylinder(d = sma_d, h = wall_eff*4);
+                rotate([-90, 0, 0]) translate([0, 0, -wall_eff*2])
+                    linear_extrude(wall_eff*4) intersection() {
+                        circle(d = sma_d);
+                        translate([-sma_d/2, -sma_d/2]) square([sma_d - 0.6, sma_d]);
+                    }
             // service USB, bottom wall (silicone plug when deployed)
             translate([lb_cx, -out_y/2, usb_zc]) cube([usb_w, wall_eff*3, usb_h], center = true);
             if (e_seal)
@@ -192,6 +209,12 @@ module lid() {
             }
             // panel-lead gland hole (fit an M8 cable gland or silicone-seal)
             translate([bh_cx, inner_y/2 - 8, -1]) cylinder(d = 8.2, h = lid_t + 2);
+            // pressure vent: Ø3 hole + inner spot-face for an adhesive ePTFE
+            // patch (Ø10) — the most thermally-cycled design in the folder
+            // pumps ~14 % of its volume past the gasket per day/night cycle
+            // without a membrane (field_ratings.md rule). Roof-shaded face.
+            translate([lb_cx, -inner_y/4, -1]) cylinder(d = 3.0, h = lid_t + 2);
+            translate([lb_cx, -inner_y/4, lid_t - 0.9]) cylinder(d = 5.4, h = 1.0);
         }
         difference() {   // lip
             translate([0, 0, -lip_h]) difference() {
@@ -226,25 +249,35 @@ module roof() {
                 translate([-pan_w/2 - 3, 0, 0]) cube([pan_w + 6, pan_l * 0.75, 2]);       // bed
                 for (s = [1, -1]) translate([s*(pan_w/2 + tol_slide) + (s < 0 ? -3 : 0), 0, 2 - 0.01])
                     cube([3, pan_l * 0.75, pan_t + 2]);                                     // side rails
-                for (s = [1, -1]) translate([s*(pan_w/2 + 1.5) + (s < 0 ? -1.5 - 1.2 : 1.5 - 1.8), 0, 2 + pan_t + 0.2])
-                    cube([1.8, pan_l * 0.75, 1.4]);                                         // retaining lips
-                translate([-pan_w/2 - 3, -2, 0]) cube([pan_w + 6, 2, 8]);                   // lower stop
+                for (s = [1, -1]) translate([s*(pan_w/2 - 1.2) + (s < 0 ? -1.8 : 0), 0, 2 + pan_t + 0.2])
+                    cube([1.8, pan_l * 0.75, 1.4]);   // retaining lips: 1.2 mm OVER the panel edge,
+                                                      // rooted in the rails (were floating outboard)
+                // lower stop: a ridge ON TOP of the bed's low end that the panel
+                // butts against (the old below-bed wedge poked past the foot
+                // plane into the lid and detached when cropped)
+                translate([-pan_w/2 - 3, 0, 2 - 0.01]) cube([pan_w + 6, 3, pan_t + 2.01]);
             }
-            // struts from the feet up to the bed
+            // struts from the feet up INTO the panel bed's underside — the
+            // apex must embed in the bed plane or the whole panel load path
+            // runs through the 2 mm lower stop
             for (p = [post_xy()[0], post_xy()[1]])
                 hull() {
                     translate([p[0], p[1], 0]) cylinder(d = 8, h = 3);
-                    translate([p[0]*0.8, inner_y/2 - 4, 12]) cylinder(d = 8, h = 3);
+                    translate([p[0]*0.8, inner_y/2 + 6, 8]) cylinder(d = 8, h = 3);
                 }
         }
         for (p = [post_xy()[0], post_xy()[1]]) {
             translate([p[0], p[1], -0.1]) cylinder(d = screw_d + 2*tol_hole, h = 30);
             translate([p[0], p[1], 3 - 1.4]) cylinder(d = screw_head_d + 0.6, h = 30);
         }
+        // crop everything below the foot plane: the tilted lower stop otherwise
+        // protrudes ~2.7 mm below z=0 and digs into the lid on assembly
+        // (crop top sits 0.01 below the feet so no coincident faces)
+        translate([-100, -100, -50.01]) cube([200, 200, 50]);
     }
 }
 
-module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.1); }
+module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.5); }
 
 if      (part == "body")   body();
 else if (part == "lid")    translate([0, 0, lid_t]) rotate([180, 0, 0]) lid();

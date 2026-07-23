@@ -27,11 +27,13 @@ lid_edge = 1.0;      // face edge chamfer
 vm_l     = 44.0;
 vm_w     = 36.0;
 stack_sock_h = 11.5;
+vm_front_h   = 3.5;   // carrier front-side TALLEST part (connectors etc.) — MEASURE
 pcb_t    = 1.0;
 board_clear = 0.6;
 
 /* [Radome window] */
-radome_t  = 1.0;
+radome_t  = 1.5;   // ≈ half-wave in PETG/ASA at 60 GHz — the low-reflection optimum;
+                   // AVOID 0.7–1.1 mm (quarter-wave band, ~20 % reflection)
 rad_win_x = 24.0;
 rad_win_y = 24.0;
 rad_dx    = 0.0;
@@ -42,7 +44,7 @@ lp_d   = 3.0;  lp_dx  = 13.0;  lp_dy  = -14.0;   // WS2812 light pipe
 lux_d  = 3.5;  lux_dx = -13.0; lux_dy = -14.0;   // BH1750 aperture
 
 /* [Board snap clips] */
-clip_w = 6.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 
 /* [Print tolerances] */
 tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
@@ -50,8 +52,9 @@ tol_slide = 0.20;  tol_press = 0.10;  tol_hole = 0.30;
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-vm_standoff = 3.0;                    // carrier rides close to the plate; XIAO hangs into the box
-rail_h  = vm_standoff;
+vm_standoff = 4.5;                    // rails hold the carrier's front parts (vm_front_h) clear of the
+rail_h  = vm_standoff;                // solid plate back; the XIAO hangs deeper into the box
+assert(vm_standoff > vm_front_h, "vm_standoff must clear the carrier's front-side parts (vm_front_h)");
 assert(radome_t >= 0.6 && radome_t < plate_t, "radome_t must be printable and thinner than plate_t");
 assert(vm_w + 2*(clip_clear + clip_t) + 2 < plate_w, "carrier too wide for the plate");
 echo(str("Canary Sense single-gang plate v0.1-dev — ", plate_w, " x ", plate_h,
@@ -95,7 +98,7 @@ module plate() {
             translate([lp_dx, lp_dy, -0.1]) cylinder(d = lp_d + 2*tol_press, h = plate_t + 1);
             translate([lux_dx, lux_dy, -0.1]) cylinder(d = lux_d, h = plate_t + 1);
         }
-        // carrier rails + clips on the BACK (single-gang box opening is ~44.5 x 75:
+        // carrier rails + clips on the BACK (single-gang box device opening is ~45 x 65:
         // the carrier + XIAO recess into the box; rails only need to clear the clips)
         for (s = [1, -1]) {
             difference() {
@@ -109,5 +112,7 @@ module plate() {
     }
 }
 
-if (part == "plate") plate();
-else plate();
+// export face-down so the radome membrane prints flat on the bed in one
+// uniform stack of layers (same convention as the sense front)
+if (part == "plate") translate([0, 0, plate_t]) rotate([180, 0, 0]) plate();
+else translate([0, 0, plate_t]) rotate([180, 0, 0]) plate();

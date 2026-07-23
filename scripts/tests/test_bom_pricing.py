@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""scripts/tests/test_bom_pricing.py — the pricing engine's contract, pinned.
+
+The nightly supply-chain pipeline only earns "no humans managing it" if its
+edge cases are locked down: a distributor miss must demote (never silently
+republish stale data as live), a seed run must never destroy fetched
+history, a recovery must go quiet, and every exception kind must fire when
+— and only when — its condition holds. These tests run in Repo Lints on
+every PR, so the contract can't regress unnoticed.
+
+Run:  python3 scripts/tests/test_bom_pricing.py
+CI:   .github/workflows/lint.yml (Repo Lints)
+"""
+import importlib.util
+import json
+import sys
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+spec = importlib.util.spec_from_file_location(
+    "bom_pricing", REPO / "scripts/bom_pricing.py")
+bp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(bp)
+
+
+def part(mpn="MR60BHA2", **over):
+    base = {"mfr": "Seeed Studio", "desc": "kit", "sourcing": "orderable",
+            "seed_usd": 24.9, "sku": {"digikey": "X-ND"}, "boms": ["bom_canary_sense.csv"]}
+    base.update(over)
+    return {mpn: base}
+
+
+def snapshot(provenance="digikey", unit=23.5, stock=100, lifecycle="Active"):
+    return {"parts": {"MR60BHA2": {
+        "provenance": provenance, "unit_usd": unit, "stock": stock,
+        "lifecycle": lifecycle, "sku": {"digikey": "X-ND"},
+        "breaks": [], "url": "u"}}}
+
+
+HIT = {"provenance": "digikey", "unit_usd": 23.9, "stock": 50,
+       "lifecycle": "Active", "sku_digikey": "X-ND", "breaks": [], "url": "u"}
+
+
+class CarryDemote(unittest.TestCase):
+    """An attempted fetch miss must demote, fire once, and recover quietly."""
+
+    def test_attempted_miss_demotes_and_fires_no_match(self):
+        old = snapshot()
+        new = bp.assemble(part(), old, {}, "n", attempted={"MR60BHA2"})
+        e = new["parts"]["MR60BHA2"]
+        self.assertEqual(e["provenance"], "carried")
+        self.assertEqual(e["unit_usd"], 23.5)  # last-known retained
+        kinds = [x["kind"] for x in bp.find_exceptions(old, new)]
+        self.assertEqual(kinds, ["no-match"])
+
+    def test_repeat_miss_stays_carried_no_refire(self):
+        old = snapshot("carried")
+        new = bp.assemble(part(), old, {}, "n", attempted={"MR60BHA2"})
+        self.assertEqual(new["parts"]["MR60BHA2"]["provenance"], "carried")
+        self.assertEqual(bp.find_exceptions(old, new), [])
+
+    def test_seed_preserves_live_and_carried_verbatim(self):
+        for prov in ("digikey", "carried"):
+            new = bp.assemble(part(), snapshot(prov), {}, "n", attempted=None)
+            self.assertEqual(new["parts"]["MR60BHA2"]["provenance"], prov)
+
+    def test_recovery_returns_live_silently(self):
+        old = snapshot("carried")
+        new = bp.assemble(part(), old, {"MR60BHA2": HIT}, "n",
+                          attempted={"MR60BHA2"})
+        self.assertEqual(new["parts"]["MR60BHA2"]["provenance"], "digikey")
+        self.assertEqual(bp.find_exceptions(old, new), [])
+
+    def test_never_seen_part_seeds_quietly(self):
+        new = bp.assemble(part(), {}, {}, "n", attempted={"MR60BHA2"})
+        self.assertEqual(new["parts"]["MR60BHA2"]["provenance"], "csv-seed")
+        self.assertEqual(bp.find_exceptions({}, new), [])
+
+
+class ExceptionKinds(unittest.TestCase):
+    def test_out_of_stock_fires_on_live_zero(self):
+        old = snapshot()
+        hit = dict(HIT, stock=0)
+        new = bp.assemble(part(), old, {"MR60BHA2": hit}, "n",
+                          attempted={"MR60BHA2"})
+        kinds = [x["kind"] for x in bp.find_exceptions(old, new)]
+        self.assertIn("out-of-stock", kinds)
+
+    def test_price_jump_fires_over_15pct_only(self):
+        old = snapshot(unit=20.0)
+        calm = bp.assemble(part(), old, {"MR60BHA2": dict(HIT, unit_usd=22.0)},
+                           "n", attempted={"MR60BHA2"})
+        self.assertEqual([x["kind"] for x in bp.find_exceptions(old, calm)], [])
+        spike = bp.assemble(part(), old, {"MR60BHA2": dict(HIT, unit_usd=24.0)},
+                            "n", attempted={"MR60BHA2"})
+        self.assertIn("price-jump",
+                      [x["kind"] for x in bp.find_exceptions(old, spike)])
+
+    def test_lifecycle_fires_on_nrnd(self):
+        old = snapshot()
+        hit = dict(HIT, lifecycle="Not For New Designs")
+        new = bp.assemble(part(), old, {"MR60BHA2": hit}, "n",
+                          attempted={"MR60BHA2"})
+        self.assertIn("lifecycle",
+                      [x["kind"] for x in bp.find_exceptions(old, new)])
+
+    def test_generic_parts_never_flag(self):
+        p = part(sourcing="generic")
+        old = snapshot()
+        new = bp.assemble(p, old, {}, "n", attempted={"MR60BHA2"})
+        self.assertEqual(bp.find_exceptions(old, new), [])
+
+
+class GenericDetection(unittest.TestCase):
+    def test_rules(self):
+        self.assertTrue(bp.is_generic("Generic", "USB-C-DATA-1M"))
+        self.assertTrue(bp.is_generic("SecuraCV", "canary_wap_enclosure.scad"))
+        self.assertTrue(bp.is_generic("Seeed/Generic", "A / B"))  # spaced MPN
+        self.assertFalse(bp.is_generic("Seeed Studio", "MR60BHA2"))
+        self.assertFalse(bp.is_generic("Littelfuse", "59140-1-S-02-A"))
+
+
+class RealData(unittest.TestCase):
+    """The committed CSVs and snapshot stay coherent with the engine."""
+
+    def test_read_boms_covers_all_csvs(self):
+        parts = bp.read_boms()
+        self.assertGreater(len(parts), 50)
+        self.assertIn("MR60BHA2", parts)
+        self.assertEqual(parts["MR60BHA2"]["sourcing"], "orderable")
+        self.assertEqual(parts["USB-C-DATA-1M"]["sourcing"], "generic")
+        self.assertTrue(all(m.strip() for m in parts))
+
+    def test_committed_snapshot_schema(self):
+        snap = json.loads((REPO / "docs/hardware/pricing.json").read_text())
+        self.assertEqual(snap["generated_by"], "scripts/bom_pricing.py")
+        self.assertIn("as_of", snap)
+        for mpn, e in snap["parts"].items():
+            for key in ("mfr", "desc", "sourcing", "seed_usd", "unit_usd",
+                        "provenance", "stock", "lifecycle", "sku", "breaks",
+                        "url", "boms"):
+                self.assertIn(key, e, f"{mpn} missing {key}")
+            self.assertIn(e["sourcing"], ("orderable", "generic"))
+            self.assertIn(e["provenance"],
+                          ("digikey", "mouser", "carried", "csv-seed"))
+            self.assertTrue(e["boms"], f"{mpn} belongs to no BOM")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)

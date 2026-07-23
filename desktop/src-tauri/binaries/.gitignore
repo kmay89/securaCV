@@ -1,1 +1,3 @@
-espflash-*
+# CI-populated sidecars (espflash, rpiboot) — never committed
+*
+!.gitignore

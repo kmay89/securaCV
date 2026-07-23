@@ -35,6 +35,70 @@
   re-checked periodically to correct crystal drift, and only stepping the
   clock when it disagrees by more than a second so a synced clock isn't
   re-written every cycle.
+### canary-display — the gears turn: full mode runtime + the browser twin
+
+- **The mode system is now end-to-end firmware** (Built · compile-gated ·
+  bench-pending — `docs/hardware/display_modes.md` §Waves). The glue
+  (`src/mode/mode_glue.cpp`) resolves every boot through the host-tested
+  registry (NVS `mode` token, legacy `devmode` migration, fail-safe to the
+  fleet face) and dispatches the gears this build carries; `main.cpp`'s
+  bench-only branch is generalized to it, and the playground's 3 s exit now
+  clears both latches via the registry's uniform `mode_exit_to_fleet()`.
+- **Three new gears, each an empty TU without its flag** (default builds and
+  the emulator stay byte-identical):
+  - `FEATURE_DEMO_MODE` (`src/mode/demo_mode.cpp`, both flavors): the
+    host-pinned storyline feeds the REAL `FleetModel` and renders the REAL
+    faces under an unmissable DEMO chip on LVGL's top layer; tap = face
+    nav, long-press = the ack demo, tamper beats raise/clear the witness
+    tamper flag; `DM1` serial. Badges deliberately stay honest — synthetic
+    events carry no signature, the verified ✓ is never faked.
+  - `FEATURE_DEBUG_MODE` (`src/mode/debug_mode.cpp`, both flavors): five
+    tap-to-page diagnostic faces (system+link / fleet raw / events / touch
+    crosshair / I²C census). The one non-fleet gear with the network UP —
+    WiFi comes up non-blocking (a dead AP is a finding, never a reboot
+    loop), the broker is attempted on a bounded 5 s cadence so the retained
+    fleet repopulates the raw table; SSID on the glass, the password never;
+    `DBG1` 1 Hz snapshots.
+  - `FEATURE_ARCADE` (`src/mode/arcade_mode.cpp`, dash): Canary Catch on
+    the new pure core `canary/mode/arcade_logic.h` (host-tested,
+    `test_arcade_logic.cpp` + CI step) — a seeded shuffle that visits every
+    touch zone exactly once and replays from its printed seed, in-cell
+    target placement, and a PASS/FAIL verdict that fails on a dead zone, a
+    slow zone, or a stray tap. The score screen is the factory report;
+    `ARC1` serial.
+- **The Settings doorway grew up:** the "dev mode" row becomes a **modes**
+  list (bench / demo / debug / arcade, each confirm-gated through
+  `mode_request()`); a bench-only build keeps the familiar row verbatim.
+- **CI coverage without touching any default build:** new
+  `canary-display-dash-modes` (all four gears, 4.3B pins) and
+  `canary-display-watch-modes` (demo + debug) envs in `flavors.json`;
+  `feature_sanity.h` gains the display+touch contract for the new flags
+  (+ test cases); `./setup.sh arduino modes` + a `modes` sketch profile
+  stage the Arduino twin.
+- **The browser twin ("emulator" for the mode system):**
+  `canary-local/assets/mode-sim.js` — a DOM-free port of the registry,
+  latch semantics, and demo storyline — drift-locked by
+  `canary-local/tests/mode.test.js` (10 tests, wired into canary-local CI)
+  against the committed Arduino mirror, playground-style. The twin is ready
+  to be carried to the website as **`/modes`** (the five gears, the policy
+  matrix rendered from the sim, a live latch simulator, and the storyline
+  player) — the website page itself is a pending follow-up in the
+  securacv_website repo.
+- **Polish: the storyline reaches the real firmware in the browser.** The
+  canary-local emulator page grows a **"play the demo storyline"** control:
+  the same drift-locked beats stream through the page's staged witnesses
+  (`witnessEvent`/`witnessTamper` — real Ed25519-signed chains where the
+  browser supports it) into the actual compiled wasm firmware, at 6×, with
+  a coached note line ("hold the glass to acknowledge") — no dist rebuild,
+  player state survives view rebuilds, and stopping never leaves a staged
+  tamper standing. Demo mode gains its missing signature moment — the
+  **hold-to-ack ring** now sweeps closed exactly as the fleet face does
+  (fires during the hold, not on release) — plus believable RSSI/comfort
+  seeding on the cast and an exit hint on the dash's DEMO chip; debug's
+  System page states its own exit. And wave 6 became executable:
+  `board_43b_activation_bench.md` **§6 "The mode system"** is the on-bench
+  checklist (doorway/latch/migration, per-gear pass signals, exits) whose
+  pass moves each gear from Built · compile-gated toward Driven.
 
 ### canary-display — the glass gets gears (mode architecture) + the 4.3B peripheral catalog
 

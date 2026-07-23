@@ -25,7 +25,8 @@ stalk_tilt = 12;     // stalk lean (degrees, toward the front)  // [0:2:20]
 
 /* [Ballast pockets] (coin / washer discs, glued in) */
 bal_d    = 25.6;     // disc diameter (US quarter 24.26 + fit; M10 washer ~ 20-30)
-bal_t    = 2.2;      // pocket depth per disc (stack two if thinner)
+bal_t    = 4.0;      // pocket depth ABOVE the lid recess — fits two stacked quarters (2 x 1.75)
+                     // per pocket (~45 g total); a cantilevered case + USB cable needs the mass
 bal_n    = 4;        // pocket count on a ring
 bal_r    = 28.0;     // pocket ring radius
 
@@ -47,8 +48,8 @@ $fa = 3; $fs = 0.4;
 
 hinge_hole = hinge_bolt_d + 0.4;
 assert(bal_r + bal_d/2 < base_d/2 - 3, "ballast ring exceeds the base — shrink bal_r/bal_d");
-echo(str("Canary Sense bedside stand v0.1-dev — base ", base_d, " mm, head at ~",
-         base_t + stalk_h, " mm  (IN DEVELOPMENT)"));
+echo(str("Canary Sense bedside stand v0.1-dev — base ", base_d, " mm, head axis at ~",
+         base_t - 2 + stalk_h*cos(stalk_tilt) + head_off, " mm  (IN DEVELOPMENT)"));
 
 module teeth2d() {
     step = 360 / teeth_n;
@@ -80,13 +81,17 @@ module hinge_head() {
     difference() {
         union() {
             head_fin(0); head_fin(-prong_pitch); head_fin(prong_pitch);
-            if (hinge_teeth) {
-                xi = prong_pitch - prong_t/2;
-                translate([ xi, 0, head_off]) rotate([0, -90, 0]) linear_extrude(teeth_h) teeth2d();
-                translate([-xi, 0, head_off]) rotate([0,  90, 0]) linear_extrude(teeth_h) teeth2d();
-            }
         }
         tearbore_x(-prong_pitch - prong_t, 0, head_off, 2*(prong_pitch + prong_t), hinge_hole);
+        // detent tooth POCKETS in the outer fins' inner faces — the case fins
+        // carry the male teeth (same female convention as the Vision bracket)
+        if (hinge_teeth) {
+            xi = prong_pitch - prong_t/2;
+            translate([ xi - 0.05, 0, head_off]) rotate([0,  90, 0])
+                linear_extrude(teeth_h + 0.15) offset(delta = 0.12) teeth2d();
+            translate([-xi + 0.05, 0, head_off]) rotate([0, -90, 0])
+                linear_extrude(teeth_h + 0.15) offset(delta = 0.12) teeth2d();
+        }
     }
 }
 
@@ -99,8 +104,10 @@ module base() {
                 translate([0, 0, base_t - 2 - 0.01]) cylinder(d1 = base_d, d2 = base_d - 6, h = 2);
             }
             // ballast pockets, from below, with a retaining rim for the lid
+            // pocket depth is referenced to the RECESS floor (z = 1.21), not z = 0 —
+            // otherwise the lid recess swallows the bottom 1.2 mm of every pocket
             for (i = [0 : bal_n - 1]) rotate([0, 0, i * 360 / bal_n])
-                translate([bal_r, 0, -0.1]) cylinder(d = bal_d, h = bal_t + 0.1);
+                translate([bal_r, 0, -0.1]) cylinder(d = bal_d, h = bal_t + 1.41);
             translate([0, 0, -0.1]) cylinder(d = 2*bal_r + bal_d + 2, h = 1.31);  // 1.2 lid recess covers the pockets fully
         }
         // tilted stalk + hinge head (fins rise off the stalk top; bolt axis along X)

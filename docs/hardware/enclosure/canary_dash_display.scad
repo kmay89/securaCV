@@ -56,7 +56,7 @@ pilot_d = 1.7;  screw_c = 2.4;  cb_d = 4.4;  cb_h = 1.4;
 // tall) — the back carries a 75 mm HORIZONTAL M4 pair on the centreline
 // (matches Waveshare's case-back spacing) plus two through-keyholes.
 mnt_pair = 75.0;     // horizontal M4 pair spacing
-kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;
+kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // Ø8 passes a real #6/#8 pan head after FDM shrink
 
 /* [Vents] */
 vent_n = 8;  vent_w = 1.2;  vent_l = 16.0;
@@ -73,7 +73,9 @@ inner_l = panel_l + 2*tol_slide;
 inner_w = panel_w + 2*tol_slide;
 out_l = inner_l + 2*frame_w;
 out_w = inner_w + 2*frame_w;
-cav_t = glass_t + stack_t;              // frame interior depth
+cav_t = glass_t + stack_t + 3.0;        // frame interior depth: +3 mm rear clearance so the
+                                        // back plate, keyhole screw heads and VESA-arm screw
+                                        // tips land in AIR, not on the electronics stack
 frame_h = face_t + cav_t;               // frame total height
 total_t = frame_h + back_t;
 view_l = panel_l - 2*bez_lip;
@@ -106,6 +108,11 @@ module frame() {
         translate([0, 0, -0.1]) linear_extrude(face_t + 0.2) rrect2d(view_l, view_w, 2);
         // panel cavity behind the face
         translate([0, 0, face_t]) linear_extrude(cav_t + 0.1) rrect2d(inner_l, inner_w, 2);
+        // corner reliefs: the panel has SHARP glass corners (see header) and a
+        // rounded pocket corner (r2) interferes 0.55 mm — drill the corners out
+        for (sx = [1, -1], sy = [1, -1])
+            translate([sx*inner_l/2, sy*inner_w/2, face_t])
+                cylinder(d = 3.4, h = cav_t + 0.1);
         // USB-C slot in the bottom wall (glass side down = -Y wall), at stack
         // depth — cubes are corner-anchored, so centre them on their _dx
         translate([usb_dx - usb_w/2, -out_w/2 - 0.1, face_t + glass_t + 0.5])
@@ -134,9 +141,11 @@ module back() {
             translate([0, 0, -0.1]) cylinder(d = cb_d, h = cb_h + 0.1);
             translate([0, 0, -0.1]) cylinder(d = screw_c, h = back_t + 0.2);
         }
-        // 75 mm horizontal M4 pair on the centreline
+        // 75 mm horizontal M4 pair on the centreline. NOTE: arm screws max
+        // M4 x (arm plate + 2.4) — longer tips enter the cavity; the +3 mm
+        // rear clearance in cav_t is the buffer, not an invitation
         for (sx = [1, -1])
-            translate([sx*mnt_pair/2, 0, -0.1]) cylinder(d = 4.4, h = back_t + 0.2);
+            translate([sx*mnt_pair/2, 0, -0.1]) cylinder(d = 4.5, h = back_t + 0.2);
         // two through-keyholes on the vertical centreline (hang direction: up)
         for (yc = [18, -18]) translate([0, yc, 0]) {
             translate([0, -kh_slot_l/2, -0.1]) cylinder(d = kh_head_d, h = back_t + 0.2);

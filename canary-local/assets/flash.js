@@ -39,8 +39,20 @@ const el = (tag, cls, text) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── the Nursery roster: the session's hatchlings, so a batch never loses
+// its place. sessionStorage only (gone when the tab closes), public facts
+// only (product, version, preset names, MAC) — never credentials.
+const ROSTER_KEY = "nursery.roster.v1";
+function loadRoster() {
+  try { return JSON.parse(sessionStorage.getItem(ROSTER_KEY)) || []; } catch { return []; }
+}
+function saveRoster(list) {
+  try { sessionStorage.setItem(ROSTER_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+}
+
 const state = {
   catalog: null,
+  roster: loadRoster(),   // this session's hatchlings
   manifest: null,       // release manifest, or {__missing:true}
   session: null,        // { port, transport, esploader }
   chip: null,           // "ESP32-S3"
@@ -115,6 +127,7 @@ async function boot() {
   const flow = el("div", "flash-flow");
   flow.id = "flash-flow";
   mount.append(flow);
+  mountJourney(flow);
   mount.append(renderReassurance());
 
   renderVersionStrip();
@@ -134,12 +147,52 @@ function renderVersionStrip() {
   strip.append(pill("engine", "esptool-js (vendored, offline)"));
 }
 
+// ── the journey bar: where am I on the path? ────────────────────────────────
+// Five calm waypoints above the flow. Phases opt in via node.dataset.step;
+// a phase without one (sub-cards, tools, the module flow) keeps the bar
+// where it was — the bar never guesses.
+const JOURNEY = ["Connect", "Meet it", "Choose", "Install", "First flight"];
+let journeyEl = null;
+function renderJourney(step) {
+  if (!journeyEl) return;
+  journeyEl.querySelectorAll(".flash-journey-step").forEach((n, i) => {
+    n.classList.toggle("flash-journey-on", i + 1 === step);
+    n.classList.toggle("flash-journey-done", i + 1 < step);
+    n.setAttribute("aria-current", i + 1 === step ? "step" : "false");
+  });
+}
+function mountJourney(before) {
+  journeyEl = el("nav", "flash-journey");
+  journeyEl.setAttribute("aria-label", "Nursery progress");
+  JOURNEY.forEach((label, i) => {
+    if (i) journeyEl.append(el("span", "flash-journey-sep", "·"));
+    const s = el("span", "flash-journey-step");
+    s.append(el("span", "flash-journey-dot"), document.createTextNode(label));
+    journeyEl.append(s);
+  });
+  before.parentNode.insertBefore(journeyEl, before);
+  renderJourney(1);
+}
+
+// One check, used everywhere motion is decorative rather than informative.
+function prefersCalm() {
+  try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
+}
+
 // The flow is a single swappable panel; the reassurance strip persists below.
 function setPhase(node) {
   const flow = $("#flash-flow");
   flow.innerHTML = "";
   flow.append(node);
-  flow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (node.dataset && node.dataset.step) renderJourney(Number(node.dataset.step));
+  // Land screen-reader / keyboard focus on the new phase's heading, so a
+  // phase change is announced instead of silently swapping content.
+  const h = node.querySelector("h2, h3");
+  if (h) {
+    h.setAttribute("tabindex", "-1");
+    try { h.focus({ preventScroll: true }); } catch { /* older engines */ }
+  }
+  flow.scrollIntoView({ behavior: prefersCalm() ? "auto" : "smooth", block: "nearest" });
 }
 
 // ── the persistent "you can't mess up" strip (compact, below the flow) ──────
@@ -418,6 +471,7 @@ function modeBadge(mode) {
 // ── phase: connect ──────────────────────────────────────────────────────────
 function phaseConnect() {
   const box = el("section", "flash-card flash-connect");
+  box.dataset.step = "1";
   box.append(el("div", "flash-big-emoji flash-plug", "🔌"));
   box.append(el("h2", null, "Plug in your Canary, then let’s meet it"));
   box.append(el("p", "muted",
@@ -509,20 +563,44 @@ async function openEsptool(port, statusCb) {
 // check, backup, rescue) calls ensureSession(), which quietly hands the
 // port back to the bootloader. No chooser, no gestures.
 async function startVoice(consoleEl, onIdentity) {
-  if (!state.session || state.voice) return;
+  // Re-entering the connected phase while a voice is already running (e.g.
+  // "not yet" from the confirm card): re-bind the LIVE stream to the fresh
+  // console element instead of leaving it talking to a detached node.
+  if (state.voice) {
+    const v0 = state.voice;
+    v0.consoleEl = consoleEl;
+    v0.onIdentity = onIdentity;
+    consoleEl.textContent = v0.buf || "listening…";
+    if (v0.identity && onIdentity) onIdentity(v0.identity);
+    return;
+  }
+  if (!state.session) return;
   const { port } = state.session;
+  // Claim the voice slot SYNCHRONOUSLY, before any await — a concurrent
+  // second call must see it and take the re-bind path above, not race the
+  // port open.
+  const v = { port, alive: true, reader: null, writer: null, identity: null,
+              buf: "", consoleEl, onIdentity };
+  state.voice = v;
   try { await state.session.esploader.after("hard_reset"); } catch {}
   try { await state.session.transport.disconnect(); } catch {}
   state.session = null;
-  const v = { port, alive: true, reader: null, writer: null, identity: null };
-  state.voice = v;
+  if (state.voice !== v || !v.alive) return; // stopVoice won the race — it owns cleanup
   try {
     await port.open({ baudRate: state.catalog.console_baud || 115200 });
+    if (state.voice !== v || !v.alive) { // superseded mid-open: nothing may own this port
+      try { await port.close(); } catch {}
+      return;
+    }
     v.reader = port.readable.getReader();
     try { v.writer = port.writable.getWriter(); } catch { /* read-only is fine */ }
   } catch (e) {
+    // Never strand an owner-less open port: close it so ensureSession (or a
+    // fresh Connect) can take it back.
+    try { v.reader && v.reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
     state.voice = null;
-    consoleEl.textContent = "(the console didn’t open — " + String(e.message || e) +
+    v.consoleEl.textContent = "(the console didn’t open — " + String(e.message || e) +
       " — installing still works)";
     return;
   }
@@ -536,18 +614,19 @@ async function startVoice(consoleEl, onIdentity) {
   setTimeout(ask, 900);
   setTimeout(ask, 2600);
   const dec = new TextDecoder();
-  let buf = "";
   (async () => {
     try {
       for (;;) {
         const { value, done } = await v.reader.read();
         if (done || !v.alive) break;
-        buf = (buf + dec.decode(value, { stream: true })).slice(-8000);
-        consoleEl.textContent = buf;
-        consoleEl.scrollTop = consoleEl.scrollHeight;
+        // Everything goes through v.* so a phase re-render can re-bind the
+        // console element and identity callback mid-stream.
+        v.buf = (v.buf + dec.decode(value, { stream: true })).slice(-8000);
+        v.consoleEl.textContent = v.buf;
+        v.consoleEl.scrollTop = v.consoleEl.scrollHeight;
         if (!v.identity) {
-          const m = core.parseSelfManifest(buf);
-          if (m) { v.identity = m; if (onIdentity) onIdentity(m); }
+          const m = core.parseSelfManifest(v.buf);
+          if (m) { v.identity = m; if (v.onIdentity) v.onIdentity(m); }
         }
       }
     } catch { /* unplug/re-enumeration — ensureSession or reconnect recovers */ }
@@ -597,6 +676,7 @@ async function onConnect() {
   state.connecting = false;
   state.busy = true;
   const box = el("section", "flash-card flash-working");
+  box.dataset.step = "1";
   box.append(el("div", "flash-spinner", ""));
   const status = el("h2", null, "Waking up your Canary…");
   const detail = el("p", "muted", "Reaching the board’s bootloader. This takes a few seconds.");
@@ -894,6 +974,7 @@ async function readPassport() {
 // ── phase: connected — chip card + firmware picker ──────────────────────────
 function phaseConnected() {
   const wrap = el("div", "flash-connected");
+  wrap.dataset.step = "2";
 
   // The chip hello card.
   const info = core.chipInfo(state.catalog, state.chip) || {};
@@ -915,6 +996,19 @@ function phaseConnected() {
     cur.append(document.createTextNode(`Looks like it’s running ${name}${ver}${built} right now.`));
   }
   ht.append(cur);
+  // Batch guard: if THIS exact board already hatched this session, say so
+  // before anything else — the repeated-actions trap is plugging in a board
+  // you already did and not being sure.
+  const prev = core.rosterFind(state.roster, state.mac ? core.formatMac(state.mac) : null);
+  if (prev) {
+    const again = el("p", "flash-role flash-already");
+    again.append(document.createTextNode(
+      `🐣 Already hatched this session — #${prev.n}, ${prev.product}` +
+      `${prev.version ? " v" + prev.version : ""}` +
+      `${prev.preset ? ", dialed " + prev.preset : ""}. ` +
+      `Plug in the next board, or reflash this one freely.`));
+    ht.append(again);
+  }
   const role = renderRoleLine();
   if (role) ht.append(role);
   ht.append(modeBadge("download"));
@@ -985,6 +1079,14 @@ function phaseConnected() {
     voice.append(idSlot);
     const vcon = el("pre", "flash-console flash-voice-console", "listening…");
     voice.append(vcon);
+    // A Sense on the wire gets its bench one click away — the console is its
+    // voice, but the radar bench is its senses.
+    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    if (curProd && core.productRole(curProd.id) === "sense") {
+      const rb = el("button", "ghost small", "👋 open the radar bench — feel it sense");
+      rb.addEventListener("click", () => openSenseBench(curProd));
+      voice.append(rb);
+    }
     wrap.append(voice);
     startVoice(vcon, (m) => {
       idSlot.innerHTML = "";
@@ -1014,6 +1116,10 @@ function phaseConnected() {
   // Firmware picker (chip-guarded).
   wrap.append(renderPicker());
 
+  // The session's progression — a batch never loses its place.
+  const roster = renderRosterStrip();
+  if (roster) wrap.append(roster);
+
   const disconnect = el("button", "ghost small flash-disconnect", "disconnect");
   disconnect.addEventListener("click", onDisconnect);
   wrap.append(disconnect);
@@ -1032,15 +1138,38 @@ function fact(label, val) {
 // touch it, what the default means. Copy comes from catalog.settings_help
 // (generated from the firmware's own values), looked up via core.helpTopic —
 // so a control without a topic simply has no dot, never a broken one.
+// Only one ⓘ open at a time; Escape and any outside click close it —
+// pro-grade popover manners, wired up once, lazily.
+let openHelp = null; // { pop, btn }
+function closeHelp() {
+  if (!openHelp) return;
+  openHelp.pop.classList.add("flash-hidden");
+  openHelp.btn.setAttribute("aria-expanded", "false");
+  openHelp = null;
+}
+let helpManagersInstalled = false;
+function installHelpManagers() {
+  if (helpManagersInstalled) return;
+  helpManagersInstalled = true;
+  document.addEventListener("click", (ev) => {
+    if (openHelp && !ev.target.closest(".flash-help")) closeHelp();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeHelp();
+  });
+}
+
 function helpDot(topicId) {
   const t = core.helpTopic(state.catalog, topicId);
   if (!t) return null;
+  installHelpManagers();
   const wrap = el("span", "flash-help");
   const btn = el("button", "flash-help-dot", "?");
   btn.type = "button";
   btn.setAttribute("aria-label", `About: ${t.label}`);
   btn.setAttribute("aria-expanded", "false");
   const pop = el("span", "flash-help-pop flash-hidden");
+  pop.setAttribute("role", "note");
   pop.append(el("strong", "flash-help-title", t.label));
   pop.append(el("span", "flash-help-what", t.what));
   if (t.when) {
@@ -1058,11 +1187,43 @@ function helpDot(topicId) {
     // checkbox the label wraps.
     ev.preventDefault();
     ev.stopPropagation();
-    const hidden = pop.classList.toggle("flash-hidden");
-    btn.setAttribute("aria-expanded", String(!hidden));
+    const wasOpen = openHelp && openHelp.pop === pop;
+    closeHelp();
+    if (!wasOpen) {
+      pop.classList.remove("flash-hidden");
+      btn.setAttribute("aria-expanded", "true");
+      openHelp = { pop, btn };
+    }
   });
   wrap.append(btn, pop);
   return wrap;
+}
+
+// ── the Nursery roster strip: the session's progression, at a glance ────────
+function renderRosterStrip() {
+  if (!state.roster.length) return null;
+  const sec = el("details", "flash-roster");
+  if (state.roster.length <= 3) sec.open = true;
+  const plural = state.roster.length === 1 ? "hatchling" : "hatchlings";
+  sec.append(el("summary", null,
+    `🐣 This session’s nursery — ${state.roster.length} ${plural} so far`));
+  const list = el("div", "flash-roster-list");
+  core.rosterLines(state.roster, Date.now()).forEach((l) => {
+    const row = el("div", "flash-roster-row");
+    row.append(el("span", "flash-roster-n", `#${l.n}`));
+    const main = el("span", "flash-roster-main");
+    main.append(el("strong", null, l.label));
+    if (l.mac) main.append(document.createTextNode(` ${l.mac}`));
+    if (l.extras) main.append(el("span", "flash-roster-extras", ` · ${l.extras}`));
+    row.append(main);
+    row.append(el("span", "flash-roster-ago", l.ago));
+    list.append(row);
+  });
+  sec.append(list);
+  sec.append(el("p", "fineprint",
+    "Kept for this tab only, and only public facts — which firmware, which " +
+    "dials, whether WiFi was baked (never the network itself)."));
+  return sec;
 }
 
 // ── role: what this board IS, read from what it RUNS ────────────────────────
@@ -1118,8 +1279,14 @@ async function takeBackup(box) {
 
 async function onBackup() {
   if (state.busy || !state.flashBytes) return;
-  if (!state.session && !(await ensureSession())) return;
-  state.busy = true;
+  state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
+  if (!state.session && !(await ensureSession())) {
+    state.busy = false;
+    setPhase(errorRetry("Couldn’t reach the bootloader for the backup",
+      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
+      phaseConnect));
+    return;
+  }
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
   try {
@@ -1286,10 +1453,10 @@ function displaysTeaser() {
   const sum = el("summary", null, "Building a Canary with a screen? Meet the displays");
   sec.append(sum);
   const intro = el("p", "muted",
-    "Two of the family SHOW instead of sense. Their firmware isn’t on the " +
-    "signed release channel yet (it builds from source) — but the real " +
-    "firmware boots in your browser, 1:1, so you can try the glass before " +
-    "you build it.");
+    "Two of the family SHOW instead of sense — and both flash right here " +
+    "(they’re in the picker above, chip-guarded like everything else). " +
+    "Before you commit, the REAL firmware boots in your browser, 1:1: try " +
+    "the glass first.");
   const hd = helpDot("display_emulator");
   if (hd) intro.append(hd);
   sec.append(intro);
@@ -1318,6 +1485,7 @@ function displayBenchUrl(d) {
 
 function phaseDisplayBench(d, back) {
   const box = el("section", "flash-card flash-displaybench");
+  box.dataset.step = "2";
   box.append(el("h2", null, `${d.name} — a board that SHOWS`));
   const sub = el("p", "muted",
     `${d.tagline} Its firmware (v${d.emulator.fw_version}, LVGL ${d.emulator.lvgl}) ` +
@@ -1335,8 +1503,9 @@ function phaseDisplayBench(d, back) {
   box.append(facts);
 
   box.append(el("p", "fineprint", d.build_note +
-    " (The glass boots on the fleet page — this flasher page runs under a " +
-    "stricter security policy that deliberately can’t execute the emulator.)"));
+    " (The emulator boots on the fleet page — the Nursery itself runs under a " +
+    "stricter security policy that deliberately can’t execute it. Flashing the " +
+    "real board happens right here: it’s in the picker.)"));
 
   const row = el("div", "flash-row");
   const go = el("a", "primary flash-go", "boot its screen — live, 1:1 →");
@@ -1347,6 +1516,289 @@ function phaseDisplayBench(d, back) {
   done.addEventListener("click", () => setPhase(back()));
   row.append(go, done);
   box.append(row);
+  return box;
+}
+
+// ── the radar bench: feel a freshly-hatched Sense sensing, live ─────────────
+// The moment after the flash IS the product: walk past and presence flips,
+// step through the bands and the aura follows, sit statue-still and the
+// clear timeout breathes out. Everything drawn here comes off the board's
+// own console lines ([sense]/[presence]/[vitals] — coarse fields only, the
+// same ones MQTT carries). The wellbeing senses render as a clearly-labeled
+// preview on the presence-only build — what's POSSIBLE, never faked as live.
+
+async function openSenseBench(product) {
+  if (state.busy || state.opening) return;
+  state.opening = true; // synchronous — see openMonitor
+  try {
+    let port = state.session && state.session.port;
+    if (!port && state.voice) port = await stopVoice();
+    if (state.session) {
+      try { await state.session.esploader.after("hard_reset"); } catch {}
+      try { await state.session.transport.disconnect(); } catch {}
+      state.session = null;
+    }
+    if (!port) { setPhase(phaseConnect()); return; }
+    setPhase(phaseSenseBench(port, product));
+  } finally {
+    state.opening = false;
+  }
+}
+
+function phaseSenseBench(port, product) {
+  const wellbeing = /wellbeing/.test((product && product.id) || "");
+  const box = el("section", "flash-card flash-sensebench");
+  box.dataset.step = "5";
+  box.append(el("h2", null, "👋 The radar bench — hold still, then don’t"));
+  box.append(el("p", "muted",
+    "This is the radar’s own senses, live off the USB cable — the same coarse " +
+    "truths it publishes (present/clear, 0/1/2+, near/mid/far), never raw " +
+    "centimetres. Walk past it. Stand in each band. Then sit statue-still and " +
+    "feel the clear timeout breathe out."));
+
+  const status = el("div", "flash-sense-status", "listening for the radar…");
+  status.setAttribute("role", "status");
+  box.append(status);
+  const calm = prefersCalm(); // decorative motion politely sits out
+
+  const aura = document.createElement("canvas");
+  aura.className = "flash-sense-aura";
+  aura.width = 640; aura.height = 340;
+  box.append(aura);
+
+  // The wellbeing senses: LIVE numbers on the wellbeing build, an explicit
+  // possibility preview on presence-only — the user asked to SEE what this
+  // hardware can feel, so show it, labeled for exactly what it is.
+  const vit = el("div", "flash-sense-vitals");
+  const vitHead = el("div", "flash-sense-vitals-head");
+  const vitBadge = el("span", "flash-passport-chip", wellbeing ? "waiting for a lock…" : "PREVIEW — simulated");
+  vitBadge.setAttribute("role", "status");
+  vitHead.append(el("strong", null, "Breathing & heartbeat"), vitBadge);
+  vit.append(vitHead);
+  const wave = document.createElement("canvas");
+  wave.className = "flash-sense-wave";
+  wave.width = 640; wave.height = 110;
+  vit.append(wave);
+  vit.append(el("p", "fineprint", wellbeing
+    ? "The Wellbeing build senses breathing (6–30 bpm) and heart rate (40–130 bpm) " +
+      "by radar — no camera, no mic, no contact. Vitals lock only when exactly ONE " +
+      "person is present: sit alone in the near band, settle, and watch it latch."
+    : "This build watches presence only — but the SAME radar underneath can feel " +
+      "breathing and heartbeat. The waves below are a simulated preview of what the " +
+      "Canary Sense · Wellbeing firmware senses here; flash that build and they go live."));
+  box.append(vit);
+
+  const script = el("div", "flash-nextstep");
+  script.append(el("div", "flash-nextstep-title", "Make it magic — the 60-second tour"));
+  const ol = el("ol", "we2-guide-steps");
+  [
+    "Walk past it — presence flips to “someone’s here” within about a second, and the aura lights.",
+    "Step closer, then away: near → mid → far, the ring follows you.",
+    "Bring a friend — the count climbs to 2+ (and vitals politely refuse: one person only).",
+    wellbeing ? "Sit alone, still, a couple of meters away — breathing locks, then the numbers appear."
+              : "Sit statue-still — presence holds through the debounce, then clears when you leave.",
+    "Everything you just felt publishes the same way to Home Assistant — this bench is the radar’s honest voice.",
+  ].forEach((s) => ol.append(el("li", null, s)));
+  script.append(ol);
+  box.append(script);
+
+  const conWrap = el("details", "flash-displaybench-serial");
+  conWrap.append(el("summary", null, "the raw console under the magic"));
+  const con = el("pre", "flash-console");
+  conWrap.append(con);
+  box.append(conWrap);
+
+  const row = el("div", "flash-row");
+  const back = el("button", "ghost", "← back to the Nursery");
+  row.append(back);
+  box.append(row);
+
+  // ── the live model, fed by the console lines ──
+  const model = {
+    presence: "unknown", count: "0", range: "unknown",
+    breath: null, heart: null, locked: false,
+    lastSeenMs: 0, frameErrs: null, alive: true,
+  };
+
+  function setStatus() {
+    const p = model.presence;
+    status.className = "flash-sense-status flash-sense-" + p;
+    status.textContent =
+      p === "present"
+        ? `● someone’s here — ${model.count === "2+" ? "two or more" : model.count === "1" ? "one person" : "movement"} · ${model.range}`
+        : p === "clear" ? "○ clear — the room is empty"
+        : "◌ listening for the radar…";
+  }
+
+  // reader loop (the voice engine pattern — attended bench, no supervisor)
+  let reader = null;
+  (async () => {
+    try {
+      await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      reader = port.readable.getReader();
+    } catch (e) {
+      status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
+      return;
+    }
+    const dec = new TextDecoder();
+    let buf = "", tail = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || !model.alive) break;
+        const text = dec.decode(value, { stream: true });
+        buf = (buf + text).slice(-8000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        tail += text;
+        const lines = tail.split("\n");
+        tail = lines.pop() || "";
+        for (const line of lines) {
+          const ev = core.parseSenseLine(line);
+          if (!ev) continue;
+          model.lastSeenMs = performance.now();
+          if (ev.kind === "sense") {
+            model.presence = ev.presence; model.count = ev.count; model.range = ev.range;
+          } else if (ev.kind === "presence") {
+            model.presence = ev.presence;
+          } else if (ev.kind === "bpm") {
+            model.breath = ev.breath; model.heart = ev.heart; model.locked = true;
+            vitBadge.textContent = `LIVE · breathing ${ev.breath} bpm · heart ${ev.heart} bpm`;
+            vitBadge.className = "flash-passport-chip flash-passport-ok";
+          } else if (ev.kind === "vitals") {
+            model.locked = ev.locked;
+            if (!ev.locked && wellbeing) {
+              vitBadge.textContent = "lock lost — settle again";
+              vitBadge.className = "flash-passport-chip";
+            }
+          } else if (ev.kind === "health") {
+            model.frameErrs = ev.frame_errs;
+          }
+          setStatus();
+        }
+      }
+    } catch { /* unplugged — the back button is right there */ }
+  })();
+
+  // ── the aura: bands, sweep, and the target ──
+  const actx = aura.getContext("2d");
+  const wctx = wave.getContext("2d");
+  let raf = 0, t0 = performance.now();
+  const BAND_R = { near: 0.36, mid: 0.62, far: 0.88, unknown: 0.62 };
+  let targetR = 0, targetA = 0; // eased radius/alpha of the presence blob
+
+  function draw(now) {
+    if (!model.alive) return;
+    // Under prefers-reduced-motion the informative state still renders and
+    // updates — only the decorative time-based motion freezes.
+    const t = calm ? 0 : (now - t0) / 1000;
+    const W = aura.width, H = aura.height;
+    const cx = W / 2, cy = H - 14, R = H - 40;
+    actx.clearRect(0, 0, W, H);
+    const present = model.presence === "present";
+    const stale = model.lastSeenMs && now - model.lastSeenMs > 15000;
+
+    // band arcs
+    for (const [name, r] of [["near", BAND_R.near], ["mid", BAND_R.mid], ["far", BAND_R.far]]) {
+      const active = present && model.range === name;
+      actx.beginPath();
+      actx.arc(cx, cy, r * R, Math.PI, 2 * Math.PI);
+      actx.lineWidth = active ? 5 : 1.5;
+      actx.strokeStyle = active
+        ? `hsl(140 90% 62% / ${0.75 + 0.25 * Math.sin(t * 4)})`
+        : "rgba(160,180,200,0.25)";
+      actx.stroke();
+      actx.font = "600 11px ui-monospace, Menlo, monospace";
+      actx.fillStyle = active ? "#7CFF9B" : "rgba(160,180,200,0.5)";
+      actx.fillText(name, cx + r * R - 26, cy - 8);
+    }
+    // the sweep — a quiet metronome when clear, eager when someone's there
+    const sweepT = (t * (present ? 0.55 : 0.22)) % 1;
+    const sweepR = sweepT * R;
+    actx.beginPath();
+    actx.arc(cx, cy, sweepR, Math.PI, 2 * Math.PI);
+    actx.lineWidth = 2;
+    actx.strokeStyle = `hsl(${present ? 140 : 205} 80% 60% / ${0.5 * (1 - sweepT)})`;
+    actx.stroke();
+    // the emitter
+    actx.beginPath();
+    actx.arc(cx, cy, 6, 0, 2 * Math.PI);
+    actx.fillStyle = stale ? "#f0a860" : present ? "#7CFF9B" : "#7db8e8";
+    actx.fill();
+    // the target blob — eases into its band, breathes gently
+    const wantR = present ? (BAND_R[model.range] || BAND_R.mid) * R : 0;
+    targetR += (wantR - targetR) * 0.08;
+    targetA += ((present ? 1 : 0) - targetA) * 0.1;
+    if (targetA > 0.02) {
+      const bob = Math.sin(t * 2.2) * 4;
+      const tx = cx, ty = cy - targetR + bob;
+      const glow = actx.createRadialGradient(tx, ty, 2, tx, ty, 26);
+      glow.addColorStop(0, `hsl(140 90% 66% / ${0.9 * targetA})`);
+      glow.addColorStop(1, "hsl(140 90% 66% / 0)");
+      actx.fillStyle = glow;
+      actx.beginPath(); actx.arc(tx, ty, 26, 0, 2 * Math.PI); actx.fill();
+      actx.fillStyle = `hsl(140 90% 70% / ${targetA})`;
+      actx.beginPath(); actx.arc(tx, ty, 7, 0, 2 * Math.PI); actx.fill();
+      if (model.count === "2+") {
+        actx.fillStyle = `hsl(140 90% 70% / ${0.8 * targetA})`;
+        actx.beginPath(); actx.arc(tx + 22, ty + 6, 5, 0, 2 * Math.PI); actx.fill();
+        actx.font = "700 12px ui-monospace, Menlo, monospace";
+        actx.fillText("2+", tx + 32, ty + 10);
+      }
+    }
+    if (stale) {
+      actx.font = "600 12px ui-monospace, Menlo, monospace";
+      actx.fillStyle = "#f0a860";
+      actx.fillText("no radar lines lately — is it still plugged in?", 14, 18);
+    }
+
+    // ── the vitals waves ──
+    const WW = wave.width, WH = wave.height;
+    wctx.clearRect(0, 0, WW, WH);
+    const live = wellbeing && model.locked && model.breath;
+    const breathBpm = live ? model.breath : 14;
+    const heartBpm = live ? model.heart : 64;
+    const alpha = live ? 0.95 : 0.5;
+    // breath: a slow full-height sine
+    wctx.beginPath();
+    for (let x = 0; x < WW; x++) {
+      const ph = (t - (WW - x) / 90) * (breathBpm / 60) * 2 * Math.PI;
+      const y = WH * 0.32 - Math.sin(ph) * WH * 0.2;
+      x ? wctx.lineTo(x, y) : wctx.moveTo(x, y);
+    }
+    wctx.lineWidth = 2.5;
+    wctx.strokeStyle = `hsl(175 80% 60% / ${alpha})`;
+    wctx.stroke();
+    // heart: a sharp pulse train
+    wctx.beginPath();
+    for (let x = 0; x < WW; x++) {
+      const ph = ((t - (WW - x) / 90) * (heartBpm / 60)) % 1;
+      const spike = ph < 0.08 ? Math.sin((ph / 0.08) * Math.PI) : ph < 0.16 ? -0.35 * Math.sin(((ph - 0.08) / 0.08) * Math.PI) : 0;
+      const y = WH * 0.78 - spike * WH * 0.17;
+      x ? wctx.lineTo(x, y) : wctx.moveTo(x, y);
+    }
+    wctx.lineWidth = 2;
+    wctx.strokeStyle = `hsl(345 85% 64% / ${alpha})`;
+    wctx.stroke();
+    wctx.font = "600 11px ui-monospace, Menlo, monospace";
+    wctx.fillStyle = `hsl(175 80% 60% / ${alpha})`;
+    wctx.fillText(`breath ${live ? model.breath : "~" + breathBpm} bpm`, 10, 16);
+    wctx.fillStyle = `hsl(345 85% 64% / ${alpha})`;
+    wctx.fillText(`heart ${live ? model.heart : "~" + heartBpm} bpm`, 10, WH - 10);
+
+    raf = requestAnimationFrame(draw);
+  }
+  raf = requestAnimationFrame(draw);
+  setStatus();
+
+  back.addEventListener("click", async () => {
+    model.alive = false;
+    cancelAnimationFrame(raf);
+    try { reader && await reader.cancel(); } catch {}
+    try { reader && reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
+    setPhase(phaseConnect());
+  });
   return box;
 }
 
@@ -1503,6 +1955,7 @@ function phaseConfirm(product, entry) {
   const skipBackup = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
 
   const box = el("section", "flash-card flash-confirm");
+  box.dataset.step = "3";
   box.append(el("h2", null, `Install ${product.name}?`));
   box.append(el("p", "muted", state.current && state.current.unknown
     ? "This is the one-time first setup — after it, the board is a Canary."
@@ -1549,12 +2002,13 @@ function phaseConfirm(product, entry) {
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
   box.append(promise);
 
-  // WiFi (optional): fill it in and it's baked into the chip during the
-  // install; leave it empty and nothing changes. Either way the setup
-  // network is the safety net.
+  // WiFi (optional) — for EVERY board now: fill it in and it's baked into
+  // the chip's settings region during the install, in whichever NVS scheme
+  // this firmware actually reads (catalog wifi_nvs, derived from the
+  // firmware source). Leave it empty and nothing changes.
   let wifiUI = null;
-  if (product && product.provisioning === "ap") {
-    wifiUI = renderWifiFields(box);
+  if (product) {
+    wifiUI = renderWifiFields(box, product);
   }
 
   // Flash-time dials (Vision): pick the room, or fine-tune — the same four
@@ -1571,10 +2025,14 @@ function phaseConfirm(product, entry) {
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
   go.addEventListener("click", () => {
+    // Double-click guard: a second pass would re-read the now-cleared
+    // password field and remember an empty one over the real network.
+    if (state.busy) return;
+    go.disabled = true;
     let wifi = null;
     if (wifiUI) {
       const r = wifiUI.credentials();
-      if (!r.ok) return; // invalid input — the field showed why
+      if (!r.ok) { go.disabled = false; return; } // invalid input — the field showed why
       wifi = r.wifi;
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
@@ -1806,7 +2264,7 @@ function renderReflexes(box, product) {
 }
 
 // ── optional WiFi fields (confirm card) ─────────────────────────────────────
-function renderWifiFields(box) {
+function renderWifiFields(box, product) {
   const sec = el("div", "flash-wifi");
   const wh = el("h3", null, "WiFi (optional)");
   const whd = helpDot("wifi_bake");
@@ -1833,12 +2291,27 @@ function renderWifiFields(box) {
 
   const err = el("p", "flash-note flash-note-soft flash-hidden");
   sec.append(err);
-  sec.append(el("p", "fineprint",
-    "Fill this in and it’s written into the chip during the install, so the " +
-    "Canary joins your WiFi on its very first boot. If it can’t connect — " +
-    "or you leave this empty — it simply broadcasts its own setup network " +
-    "to connect to and finish setup there. What you type stays on this " +
-    "page and goes only to the chip over the cable."));
+  const prov = (product && product.provisioning) || "usb-secrets";
+  sec.append(el("p", "fineprint", {
+    "ap":
+      "Fill this in and it’s written into the chip during the install, so the " +
+      "Canary joins your WiFi on its very first boot. If it can’t connect — " +
+      "or you leave this empty — it simply broadcasts its own setup network " +
+      "to connect to and finish setup there. What you type stays on this " +
+      "page and goes only to the chip over the cable.",
+    "on-glass":
+      "Fill this in and it’s written into the chip’s settings region during " +
+      "the install — the glass then skips its WiFi wizard and goes straight " +
+      "to meeting your Canaries. Leave it empty and the on-screen wizard " +
+      "walks you through it on first boot. What you type stays on this page " +
+      "and goes only to the chip over the cable.",
+    "usb-secrets":
+      "Fill this in and it’s written into the chip’s settings region during " +
+      "the install — the signed generic release then joins YOUR network on " +
+      "first boot, no custom build needed. Leave it empty and the firmware " +
+      "keeps its compiled defaults. What you type stays on this page and " +
+      "goes only to the chip over the cable.",
+  }[prov] || ""));
 
   // Type it once, provision a whole batch. By default the network is kept in
   // memory for this tab only (gone when you close it, never written to disk);
@@ -1937,6 +2410,7 @@ async function startFlash(opts) {
   const label = opts.product ? `${opts.product.name} v${opts.entry.version}` : opts.label;
 
   const box = progressCard(`Installing ${label}`, "Getting the image ready…");
+  box.card.dataset.step = "4";
   setPhase(box.card);
 
   // The layers tour rides along for the whole install — backup included —
@@ -2061,7 +2535,9 @@ async function startFlash(opts) {
         const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
         const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
         const nvsImg = core.buildNvsSeedImage(
-          { wifi: opts.wifi || null, u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
+          { wifi: opts.wifi || null,
+            wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
+            u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
         seededDials = opts.detect || null;
@@ -2112,6 +2588,19 @@ async function startFlash(opts) {
     // camera-module flow can insist on both ports.
     if (opts.product && !opts.isBackup && core.isVisionBoard(opts.product)) {
       visionSession.markDone("esp32");
+    }
+    // The Nursery roster: one hatchling per successful install, so a batch
+    // session always knows which boards are done and what they got.
+    if (opts.product && !opts.isBackup && !opts.isLocal) {
+      state.roster = core.rosterAdd(state.roster, {
+        t: Date.now(),
+        mac: state.mac ? core.formatMac(state.mac) : null,
+        product: opts.product.name,
+        version: opts.entry ? opts.entry.version : null,
+        preset: opts.detectPreset || opts.reflexPreset || null,
+        wifi: !!wifiSsid,
+      });
+      saveRoster(state.roster);
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
@@ -2182,9 +2671,13 @@ function flashError(e, opts) {
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
+  box.dataset.step = "5";
   confettiBurst();
   box.append(el("div", "flash-done-bird", "🎉"));
+  const hatchNo = !opts.isBackup && !opts.isLocal && opts.product && state.roster.length
+    ? state.roster[state.roster.length - 1].n : null;
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
+    : hatchNo ? `Hatchling #${hatchNo} — your Canary is awake`
     : "Installed — your Canary is awake"));
 
   const product = opts.product;
@@ -2332,9 +2825,21 @@ function phaseDone(opts) {
     box.append(rec);
   }
 
+  // The radar wow: a freshly-hatched Sense proves itself on the live bench —
+  // presence, bands, and the wellbeing senses — not in a text console.
+  const doneRole = opts.product && !opts.isBackup ? core.productRole(opts.product.id) : null;
+
+  // The session's progression, right where the next board gets plugged in.
+  const rosterStrip = renderRosterStrip();
+  if (rosterStrip) box.append(rosterStrip);
+
   const row = el("div", "flash-row");
-  const watch = el("button", "primary", "Watch it boot & prove itself →");
-  watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
+  const watch = doneRole === "sense"
+    ? el("button", "primary", "👋 Feel it sense — the live radar bench →")
+    : el("button", "primary", "Watch it boot & prove itself →");
+  watch.addEventListener("click", () => doneRole === "sense"
+    ? openSenseBench(opts.product)
+    : openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
   const again = el("button", "ghost", "Set up another board");
   // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
   // half-done Vision can't carry a stale flag into the next board (else its other
@@ -2362,6 +2867,7 @@ function phaseDone(opts) {
 // image for the chip in hand.
 function phaseRescue() {
   const box = el("section", "flash-card flash-rescue");
+  box.dataset.step = "3";
   box.append(el("h2", null, "Rescue this board"));
   box.append(el("p", "muted",
     "For a Canary that’s acting wrong and you just want it back to known-good. " +
@@ -2462,8 +2968,14 @@ async function onRestoreFile(ev) {
 // ── the health check (triage without changing a byte) ───────────────────────
 async function runHealthCheck() {
   if (state.busy) return;
-  if (!state.session && !(await ensureSession())) return;
-  state.busy = true;
+  state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
+  if (!state.session && !(await ensureSession())) {
+    state.busy = false;
+    setPhase(errorRetry("Couldn’t reach the bootloader for the health check",
+      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
+      phaseConnect));
+    return;
+  }
   const { esploader } = state.session;
   const box = progressCard("Reading your board’s story", "Partition map, firmware slots, crash dumps, witness chain — read-only, nothing is changed.");
   setPhase(box.card);
@@ -2581,6 +3093,7 @@ function reportRow(label, value, tone) {
 
 function renderReport(r) {
   const box = el("section", "flash-card flash-report");
+  box.dataset.step = "2";
   box.append(el("h2", null, "Board report"));
   box.append(el("p", "muted", "Read straight off the flash — nothing was changed, and nothing left this page."));
 
@@ -2818,7 +3331,11 @@ const MONITOR_CMDS = [
 ];
 
 async function openMonitor(opts = {}) {
-  if (state.busy) return;
+  if (state.busy || state.opening) return;
+  state.opening = true; // synchronous — a double-click can't spawn two port consumers
+  try { return await openMonitorInner(opts); } finally { state.opening = false; }
+}
+async function openMonitorInner(opts = {}) {
   let port = state.session && state.session.port;
   if (!port && state.voice) port = await stopVoice(); // hand the voice's port to the full monitor
   if (state.session) {
@@ -2832,6 +3349,7 @@ async function openMonitor(opts = {}) {
 
 function phaseMonitor(port, opts = {}) {
   const box = el("section", "flash-card flash-monitor");
+  box.dataset.step = "5";
   box.append(el("h2", null, "Serial monitor"));
   box.append(modeBadge("running"));
   box.append(el("p", "muted",
@@ -3031,10 +3549,14 @@ function phaseMonitor(port, opts = {}) {
     return new Promise((resolve) => {
       let settled = false;
       const finish = (p) => {
-        if (settled || !mon.alive) return;
+        // Always tear down — guarding on mon.alive here used to leak the
+        // 1 Hz poll (which OPENS the port to test it) forever after leaving
+        // the monitor mid-wait, fighting every later connect for the port.
+        if (settled) return;
         settled = true; clearInterval(poll);
         navigator.serial.removeEventListener("connect", tryGrant);
-        mon.waiting = null; resolve(p);
+        mon.waiting = null;
+        resolve(mon.alive ? p : null);
       };
       const tryGrant = async () => {
         if (settled) return;
@@ -3572,6 +4094,7 @@ function macStamp() {
 }
 
 function confettiBurst() {
+  if (prefersCalm()) return; // celebration stays; the motion politely doesn't
   const layer = el("div", "flash-confetti");
   document.body.append(layer);
   const bits = ["🐤", "✨", "🎉", "🟡", "💛"];

@@ -42,6 +42,12 @@ MODE_SRC = test_mode_registry.cpp
 DEMO_BIN     = test_demo_script
 DEMO_SOURCES = test_demo_script.cpp ../src/fleet/fleet_model.cpp
 
+# Arcade QA core (canary/mode/arcade_logic.h): the seeded every-zone-once
+# shuffle (factory-replayable), in-cell target placement, and the pass/fail
+# verdict (dead zone / slow zone / stray tap all fail the panel).
+ARCADE_BIN = test_arcade_logic
+ARCADE_SRC = test_arcade_logic.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -60,12 +66,16 @@ $(MODE_BIN): $(MODE_SRC)
 $(DEMO_BIN): $(DEMO_SOURCES)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DEMO_SOURCES)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN)
+$(ARCADE_BIN): $(ARCADE_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(ARCADE_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
 	./$(MODE_BIN)
 	./$(DEMO_BIN)
+	./$(ARCADE_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN)

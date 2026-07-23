@@ -23,8 +23,8 @@ stack = "wap";       // ["wap","vision","sense"]
 boss_dx = 147.0;     // boss spacing (X)
 boss_dy = 77.0;      // boss spacing (Y)
 boss_screw_d = 4.2;  // Hammond lid/boss screws are typically M4/#6 into inserts
-plate_l = 154.0;     // plate outline (fits inside the box walls)
-plate_w = 84.0;
+plate_l = 158.0;     // plate outline (fits inside the box walls) — MEASURE your box
+plate_w = 88.0;
 plate_t = 2.4;
 
 /* [Boards] — nominal; MEASURE (same meanings as the device enclosures) */
@@ -36,7 +36,7 @@ pcb_t = 1.0;
 standoff_h = 3.0;
 
 /* [Board snap clips] */
-clip_w = 6.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 
 /* [Extras] */
 tie_slots = true;    // zip-tie slots for cable dressing / battery strap
@@ -51,7 +51,8 @@ b_w  = (stack == "wap") ? wap_w : (stack == "vision") ? vm_w : sm_w;
 b_t  = (stack == "wap") ? wap_pcb : pcb_t;
 soff = (stack == "wap") ? standoff_h : stack_sock_h + 1.5;
 assert(b_w + 6 < plate_w && b_l + 6 < plate_l, "board exceeds the plate — grow plate_l/w");
-assert(boss_dx < plate_l && boss_dy < plate_w, "boss grid exceeds the plate outline");
+assert(boss_dx/2 + 1 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_l/2 && boss_dy/2 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_w/2,
+       "boss slots too close to the plate edge (need >= 2 mm web) — grow plate_l/plate_w");
 echo(str("Canary Hammond chassis v0.1-dev — plate ", plate_l, "x", plate_w,
          ", stack=", stack, " on ", soff, " mm rails  (IN DEVELOPMENT)"));
 

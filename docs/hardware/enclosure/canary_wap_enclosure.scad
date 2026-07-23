@@ -37,9 +37,10 @@ opt_antenna = false;  // external u.FL antenna -> side bulkhead hole
 
 /* [Weather sealing — opt-in; the default case stays simple/indoor] */
 opt_seal    = false;  // perimeter TPU gasket + drip-edge lid + USB plug recess (splash-resistant, NOT immersion)
-gasket_w      = 1.2;  // gasket groove width (the printed gasket is 0.1 narrower)
-gasket_groove = 1.0;  // groove depth into the base rim
-gasket_proud  = 0.6;  // uncompressed gasket stand-proud (~35 % squeeze under the lid screws)
+gasket_w      = 1.6;  // gasket groove width (the printed gasket is 0.5 narrower)
+gasket_groove = 1.2;  // groove depth into the base rim
+gasket_proud  = 0.3;  // uncompressed gasket stand-proud (~20 % squeeze under the lid screws;
+                      // TPU is incompressible — groove fill is ~86 %, leaving room to flow)
 skirt_h       = 3.0;  // drip-edge skirt drop over the base wall (sheds water off the seam)
 skirt_t       = 1.6;  // skirt wall thickness
 usb_cover     = true; // (seal mode) shallow recess framing the USB port for a flanged silicone plug
@@ -161,12 +162,13 @@ standoff_d     = 4.0;
 post_d         = 5.0;   // corner screw posts (lid screws thread into these)
 screw_d        = 1.6;   // M2 self-tapping pilot — 1.6 mm so threads bite (2.0 = no grip)
 screw_head_d   = 4.0;   // countersink on lid
-screw_head_h   = 2.0;
+screw_head_h   = 1.2;   // countersink depth — the cone below is a true 90° seat for an M2 flat head
 
 /* [USB-C port] — on the board's USB end (-X short wall) */
-usb_w          = 10.5;  // opening width: clears a typical USB-C cable boot (connector body ~8.9 mm)
+usb_w          = 12.0;  // opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)
 usb_h          = 6.5;   // opening height: boot clearance (connector body ~3.2 mm) — slim if cable is bare
-usb_z          = 0.0;   // extra lift relative to PCB-top centring
+usb_z          = -1.65; // centres the opening on the connector AXIS: the C shell is 3.2 mm tall on the
+                        // PCB, so the axis sits at PCB-top + 1.6; a boot needs equal room below the axis
 
 /* [Lid features] — offsets are measured FROM THE BOARD CENTRE (mm). Measure your board! */
 // Camera / sensor window + recessed seat for a glued clear disc (12 x 1 mm PMMA/PC)
@@ -195,15 +197,17 @@ touch_dy       = -5.0;
 
 /* [Tamper magnet] — blind pocket on the LID underside, over the board's reed/Hall switch */
 mag_d          = 6.0;   // MAGNET diameter (pocket = mag_d + 2*tol_press — press fit; add a drop of glue)
-mag_h          = 3.2;
+mag_h          = 2.2;   // pocket depth — a 6 x 2 mm disc is standard; keep parts under
+                        // (mag_dx, mag_dy) shorter than cav_h - mag_h above the floor
 mag_dx         = -6.0;
 mag_dy         = 5.0;
 
 /* [Board snap clips] — press-fit retention so the PCB clicks in with NO screws */
 board_clips    = true;  // cantilever tabs hook over the board's two long edges
 clip_w         = 6.0;   // tab width (along the board edge)
-clip_t         = 1.5;   // beam thickness — thinner = easier flex (tune to your material)
-clip_hook      = 0.8;   // how far the lip overhangs the board top
+clip_t         = 1.0;   // beam thickness — thinner = easier flex (tune to your material)
+                        // (1.0/0.5 keeps insertion strain ~4 % — vertical-print PETG cracks near 1.5/0.8)
+clip_hook      = 0.5;   // how far the lip overhangs the board top
 clip_hook_h    = 1.2;   // lip + 45° lead-in height above the board top
 clip_clear     = 0.25;  // gap between tab inner face and the board edge (a fit — tune on the coupon)
 
@@ -287,6 +291,8 @@ assert(lid_edge2 >= 0 && (lid_edge > 0 || lid_edge2 == 0) && lid_edge + lid_edge
 assert(label_text == "" || (label_depth > 0 && label_depth < lid_t),
        "label_depth must be between 0 and lid_t");
 assert(batt_wire_w >= 0, "batt_wire_w must be non-negative");
+assert(!e_tamper || cav_h - mag_h >= standoff_h + board_h + 2.2,
+       "tamper pocket dips within 2.2 mm of the PCB — shorten mag_h or raise the stack");
 echo(str("Canary WAP enclosure v0.7 — outer ", out_l, " x ", out_w, " x ",
          base_h + lid_t + mount_extra, " mm  (preset=", preset, ", seal=", e_seal, ", mount=", e_mount, ")"));
 if (e_seal && wall_eff > wall_t)
@@ -436,8 +442,13 @@ module base() {
             }
             translate([0, 0, floor_t])
                 rrect(inner_l, inner_w, max(0.1, corner_r - wall_eff), cav_h + 1);
-            translate([-out_l/2, board_cy, pcb_z + board_h + usb_h/2 + usb_z])
-                cube([wall_eff*3, usb_w, usb_h], center = true);
+            // USB opening: 45°-chamfered top corners halve the unsupported bridge in the
+            // upright-printed wall and keep any droop out of the plug envelope
+            translate([-out_l/2 - wall_eff*1.5, board_cy, pcb_z + board_h + usb_h/2 + usb_z])
+                rotate([90, 0, 90]) linear_extrude(wall_eff*3)
+                    polygon([[-usb_w/2, -usb_h/2], [usb_w/2, -usb_h/2],
+                             [usb_w/2, usb_h/2 - 2.5], [usb_w/2 - 2.5, usb_h/2],
+                             [-usb_w/2 + 2.5, usb_h/2], [-usb_w/2, usb_h/2 - 2.5]]);
             // external antenna bulkhead hole on the far (+X) wall
             if (e_antenna)
                 translate([out_l/2, board_cy, pcb_z + 2])
@@ -459,12 +470,13 @@ module base() {
             if (mount_extra > 0)
                 for (xc = kh_xs) keyhole_pocket(xc);
             // anti-lift knockouts: blind bores leaving a 0.6 mm web at the back face —
-            // after hanging, pierce with #4/M3 screws into the wall so the case cannot
-            // be lifted off the keyholes. The web stays sealed until deliberately used.
+            // after hanging, pierce with M3 countersunk screws into the wall so the case
+            // cannot be lifted off the keyholes. The web stays sealed until deliberately
+            // used. The 90° head seat keeps the head flush under the battery bay.
             if (mount_extra > 0 && kh_lock)
                 for (sx = [1, -1]) translate([sx*10, -inner_w/2 + 5, 0]) {
                     translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
-                    translate([0, 0, floor_t - 1.2]) cylinder(d1 = 3.2, d2 = 6.0, h = 1.21);  // head seat, inside
+                    translate([0, 0, floor_t - 1.7]) cylinder(d1 = 3.2, d2 = 6.6, h = 1.71);  // 90° head seat, flush inside
                 }
             // 45° bottom-edge chamfer: kills elephant-foot and the sharp first-layer
             // edge where impact delamination starts
@@ -521,13 +533,17 @@ module base() {
             divrib(batt_cx + batt_l/2 + 0.6);
         }
 
-        // GPS module cradle rim (narrow module, so a proper rim is fine)
+        // GPS module cradle rim (narrow module, so a proper rim is fine).
+        // A lead notch on the board side lets the wires exit at floor level
+        // instead of cresting the rim and holding the module proud.
         if (e_gps)
             translate([gps_cx, 0, floor_t])
                 difference() {
                     rrect(min(gps_l + 2.4, gps_zone_l - 0.5),
                           min(gps_w + 2.4, inner_w - 0.5), 1.0, 1.4);
                     rrect(gps_l + 0.8, gps_w + 0.8, 0.5, 3);
+                    translate([-(gps_l + 2.4)/2, 0, 0.7])
+                        cube([4, batt_wire_w, 1.7], center = true);   // lead notch, -X (board) side
                 }
     }
 }
@@ -596,7 +612,9 @@ module lid() {
             for (p = post_xy()) {
                 translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
                 translate([p[0], p[1], lid_t - screw_head_h])
-                    cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
+                    cylinder(d1 = screw_d + 2*tol_hole,
+                             d2 = screw_d + 2*tol_hole + 2*screw_head_h,   // true 90° seat for a flat head
+                             h = screw_head_h + 0.1);
             }
 
             // debossed label on the outer face (prints face-down -> crisp first-layer voids)
@@ -679,10 +697,12 @@ module lid() {
 
 // ----------------------------------------------------------------------------
 //  GASKET — TPU seal ring matching the base groove (seal mode).
-//  Print in TPU 90–95A, 2 perimeters, 100 % infill. Squeezes ~35 % under the screws.
+//  Print in TPU 85–95A, 2 perimeters, 100 % infill. Squeezes ~20 % under the
+//  screws; the ring is 0.5 narrower than the groove (~86 % fill) so the
+//  incompressible TPU has somewhere to flow instead of propping the lid open.
 // ----------------------------------------------------------------------------
 module gasket() {
-    linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.1);
+    linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.5);
 }
 
 // ----------------------------------------------------------------------------
