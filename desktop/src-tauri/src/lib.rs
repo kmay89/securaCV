@@ -108,6 +108,35 @@ fn load_catalog() -> Result<Value, String> {
     serde_json::from_str(EMBEDDED_CATALOG).map_err(|e| format!("bundled catalog is corrupt: {e}"))
 }
 
+/// What build am I? The version, the exact git rev, the moment it was compiled,
+/// and the firmware train it embeds — everything the About/Health panel needs
+/// to say "this is the build you're running" with no guessing. Build stamps are
+/// baked in by build.rs; the firmware train comes from the embedded catalog.
+#[derive(Serialize)]
+struct AppInfo {
+    version: String,
+    build_rev: String,
+    build_epoch: u64,
+    fw_train: Option<String>,
+}
+
+#[tauri::command]
+fn app_info() -> AppInfo {
+    let fw_train = serde_json::from_str::<Value>(EMBEDDED_CATALOG)
+        .ok()
+        .and_then(|c| {
+            c.get("fw_train")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        build_rev: env!("SECURACV_BUILD_REV").to_string(),
+        build_epoch: env!("SECURACV_BUILD_EPOCH").parse::<u64>().unwrap_or(0),
+        fw_train,
+    }
+}
+
 /// Serial ports the OS can see this instant. No Web Serial permission prompt,
 /// no Chromium — just the platform enumerating its own devices.
 #[tauri::command]
@@ -663,6 +692,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             load_catalog,
+            app_info,
             list_ports,
             detect_chip,
             fetch_manifest,
