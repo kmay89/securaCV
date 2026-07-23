@@ -730,11 +730,15 @@ face, no side openings at all — the only penetrations are the sealed lens
 disc, the IP65 button, and the rear exit against the wall. Same honest ~IP54
 rating; a porch or doorway soffit is its natural habitat.
 
-**Assembly:** camera to the face posts + bond the disc → seat the XIAO in the
-module (**USB-Cs same direction!**) and click the stack into the rails →
-mount the button through the face, wire button/LED to the XIAO → gasket in
-the groove, face on, 4 × M2 (black-oxide looks best) → plate on the frame,
-cable through, hang the body on the studs, drive the security screw.
+**Assembly:** camera to the face posts + bond the disc → **stick an adhesive
+GORE/ePTFE membrane patch over the vent cluster on the face's INNER side**
+(the default face has the vent holes — without the membrane they defeat the
+seal; a Ø1.5 weep at the cavity's low point drains any condensate) → seat
+the XIAO in the module (**USB-Cs same direction!**) and click the stack into
+the rails → mount the button through the face, wire button/LED to the XIAO →
+gasket in the groove, face on, 4 × M2 (black-oxide looks best) → plate on
+the frame, cable through, hang the body on the studs, drive the security
+screw.
 
 | Param | Default | Why you'd change it |
 |-------|--------:|---------------------|
@@ -743,7 +747,7 @@ cable through, hang the body on the studs, drive the security screw.
 | `stack_sock_h`, `lens_dx/dy` | 11.5 / 0, 2.5 | **measure** your stack and lens, as with the Vision case |
 | `usb_exit_*` | 12×7 oval | cable exit size/position (guarded against the stud pocket) |
 | `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
-| `opt_vent` | false | GORE vent cluster for wet climates |
+| `opt_vent` | **true** | vent/sound cluster on the face — **an adhesive GORE/ePTFE membrane over it (inner face) is REQUIRED**: unmembraned holes defeat the seal; a membraned vent is what stops day/night thermal cycling from pumping moist air past it |
 | engineering trio | on | `lid_ribs`, `foot_cham`, `screw_insert` as on the other cases |
 
 > ⚠️ **v0.1 — verify before printing.** Same rules as the Vision case: measure
