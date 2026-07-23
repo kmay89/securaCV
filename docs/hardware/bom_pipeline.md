@@ -153,18 +153,32 @@ fetched history.
 }
 ```
 
+## Ordering — the "just works" path (shipped)
+
+The Build-it page carries an **Order the parts** panel: one click copies
+distributor-ready `MPN,qty` lines (only rows the snapshot marks
+`orderable` — generic screws/cables are excluded on purpose) and opens
+Digi-Key myLists or Mouser's BOM tool, where a paste prices the cart
+instantly with no account. A CSV download covers every other tool. This
+path is deliberately **deterministic**: no third-party API call that can
+silently break, an honest manual-copy fallback when the browser blocks
+the clipboard, and the row set always matches what's on screen
+(required-only vs. with-options toggle).
+
 ## Roadmap (in adoption order)
 
-1. **"Buy this build" button** — Digi-Key's *myLists third-party API*
-   (`POST https://www.digikey.com/mylists/api/thirdparty`, no auth) turns a
-   Build-it parts list into a single-use URL that lands the visitor in a
-   prefilled Digi-Key list/cart. Each click needs a fresh POST; if browser
-   CORS blocks it, a ~20-line Cloudflare Worker fronts it. Mouser's cart
-   API is the second target.
-2. **Margin guard** — compute kit COGS from `pricing.json` + the printed
-   parts estimate and warn when a `store.json` price (website repo) falls
-   under target margin. Pricing stays a human call; drift becomes visible
-   automatically.
+1. **One-click myLists deep-link** — Digi-Key's *myLists third-party API*
+   (`POST https://www.digikey.com/mylists/api/thirdparty`, no auth)
+   returns a single-use URL that lands the visitor in a prefilled list.
+   It upgrades the shipped copy/paste panel over the same data — but only
+   after its exact request envelope is verified against the DigiKey
+   TechForum reference (unreachable from the build environment at
+   authoring time). Never ship a guessed API shape.
+2. **Margin guard** — **shipped, in the website repo**: a nightly
+   workflow fetches this repo's `build.json`, computes each store SKU's
+   parts cost from the `cogs` recipe in `store.json`, and opens a
+   deduplicated issue when margin sinks under the floor. Pricing stays a
+   human call; the noticing is automatic.
 3. **Batch-buy quotes** — Digi-Key's quoting/price-locking and Ordering
    APIs can turn "build 25 Witness Pairs" into a placed order with price
    breaks and attrition computed. Deliberately *not* automated until batch

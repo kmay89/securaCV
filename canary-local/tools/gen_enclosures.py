@@ -385,6 +385,9 @@ def parse_bom(name, prefix=None):
                 "mfr": r.get("Manufacturer", ""),
                 "usd": ext,
                 "notes": r.get("Notes", ""),
+                # a real manufacturer part number a distributor can resolve
+                # (drives the Build-it page's order-the-parts copy panel)
+                "orderable": bool(part) and part["sourcing"] == "orderable",
                 **({"live": live} if live else {}),
             })
     return {
