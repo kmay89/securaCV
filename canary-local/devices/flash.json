@@ -1306,6 +1306,42 @@
       "body": "After the install, press the monitor’s “self-manifest” key (j): the running firmware answers with a signed statement of what it is — version, identity, health score, even its temperature."
     }
   ],
+  "about": {
+    "product": "The Canary Nursery — the SecuraCV browser flasher",
+    "copyright": "© 2026 Errer Labs / SecuraCV",
+    "license": {
+      "name": "Apache-2.0",
+      "file": "LICENSE"
+    },
+    "source": "https://github.com/kmay89/securaCV",
+    "privacy": "Everything on this page runs locally: firmware images come from the pinned signed release, and nothing about you or your board is sent anywhere. What this page remembers (an optional saved WiFi, the session roster, the chirps choice) lives only in this browser and is yours to clear below.",
+    "vendors": [
+      {
+        "name": "esptool-js",
+        "package": "esptool-js@0.5.4",
+        "license": "Apache-2.0",
+        "file": "assets/vendor/esptool-js/PROVENANCE.txt"
+      },
+      {
+        "name": "md5",
+        "package": "blueimp JavaScript-MD5",
+        "license": "MIT",
+        "file": "assets/vendor/md5/md5.js"
+      },
+      {
+        "name": "ed25519",
+        "package": "@noble/ed25519@2.1.0",
+        "license": "MIT",
+        "file": "assets/vendor/ed25519/PROVENANCE.txt"
+      },
+      {
+        "name": "qrcode",
+        "package": "qrcode-generator@2.0.4",
+        "license": "MIT",
+        "file": "assets/vendor/qrcode/PROVENANCE.txt"
+      }
+    ]
+  },
   "we2_module": {
     "name": "Grove Vision AI V2 — the Vision’s camera module",
     "chip": "Himax HX6538 (WiseEye2) · Ethos-U55 NPU · CH343 USB-serial",

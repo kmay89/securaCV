@@ -855,3 +855,30 @@ button.flash-map-key:hover { color: var(--text); }
 
 /* the emulated-twin link sits beside the real proof, styled as its equal */
 .flash-twin { text-decoration: none; text-align: center; }
+
+/* ── the settings & about panel: a native <dialog>, one tidy home ── */
+.flash-settings-open {
+  border: none; background: none; cursor: pointer; padding: 2px 6px;
+  font-size: 15px; line-height: 1; color: var(--muted, #9aa39a);
+  border-radius: 8px;
+}
+.flash-settings-open:hover { color: #ffd44f; background: rgba(255,212,79,0.08); }
+.flash-settings {
+  max-width: 560px; width: min(560px, calc(100vw - 36px));
+  max-height: min(82vh, 720px); overflow-y: auto;
+  border: 1px solid rgba(255,212,79,0.25); border-radius: 14px;
+  background: #10130f; color: #cfd8cf;
+  padding: 18px 22px 20px; box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+}
+.flash-settings::backdrop { background: rgba(4,6,4,0.62); backdrop-filter: blur(2px); }
+.flash-settings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.flash-settings-head h2 { margin: 0 0 4px; font-size: 17px; color: #ffe8a3; }
+.flash-settings-sec { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.07); }
+.flash-settings-sec h3 {
+  margin: 0 0 6px; font-size: 11.5px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: #d8bc6a; font-weight: 640;
+}
+.flash-settings-sec p { margin: 6px 0; }
+.flash-settings .flash-row { margin-top: 8px; }
+.flash-settings-vendors { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 4px; }
+.flash-settings-vendors .flash-knob { margin: 0; }

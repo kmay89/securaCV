@@ -131,6 +131,14 @@ async function boot() {
   mountJourney(flow);
   mount.append(renderReassurance());
 
+  // The footer's opener stays hidden until the catalog (and its about block)
+  // actually loaded — a dead settings button would be worse than none.
+  const footBtn = $("#foot-settings");
+  if (footBtn && state.catalog && state.catalog.about) {
+    footBtn.hidden = false;
+    footBtn.addEventListener("click", openSettings);
+  }
+
   renderVersionStrip();
   setPhase(phaseConnect());
 }
@@ -173,11 +181,137 @@ function mountJourney(before) {
   });
   const side = el("span", "flash-journey-side");
   side.append(chirpToggle());
+  const gear = el("button", "flash-settings-open", "⚙︎");
+  gear.type = "button";
+  gear.title = "About & settings — version, legal, sound, and what this page remembers";
+  gear.setAttribute("aria-label", "About and settings");
+  gear.addEventListener("click", openSettings);
+  side.append(gear);
   const jh = helpDot("journey");
   if (jh) side.append(jh);
   journeyEl.append(side);
   before.parentNode.insertBefore(journeyEl, before);
   renderJourney(1);
+}
+
+// ── the settings & about panel: one tidy home for the meta ─────────────────
+// Version, provenance, legal, sound, lessons, and the page's local memory —
+// everything that isn't the flashing itself, in one native <dialog>. Facts
+// come from catalog.about (parsed from LICENSE + vendor provenance at
+// generation time), so the credits can't drift from the files of record.
+function openSettings() {
+  const about = (state.catalog && state.catalog.about) || null;
+  if (!about) return;
+  const old = $("#nursery-settings");
+  if (old) old.remove(); // rebuild fresh each open — toggles reflect NOW
+  const dlg = el("dialog", "flash-settings");
+  dlg.id = "nursery-settings";
+  dlg.setAttribute("aria-label", "About & settings");
+
+  const head = el("div", "flash-settings-head");
+  head.append(el("h2", null, "⚙︎ About & settings"));
+  const close = el("button", "ghost small", "close ✕");
+  close.addEventListener("click", () => dlg.close());
+  head.append(close);
+  dlg.append(head);
+
+  const sec = (title) => {
+    const s = el("section", "flash-settings-sec");
+    s.append(el("h3", null, title));
+    dlg.append(s);
+    return s;
+  };
+
+  // ── about ──
+  const sAbout = sec("The Nursery");
+  sAbout.append(el("p", "muted", about.product + " — where Canaries hatch: " +
+    "first flash, updates, triage, and the live benches, all in the browser."));
+  sAbout.append(el("p", "fineprint", about.privacy));
+  const src = el("p", "fineprint");
+  const srcA = el("a", null, "source & issues on GitHub →");
+  srcA.href = about.source; srcA.target = "_blank"; srcA.rel = "noopener";
+  src.append(srcA);
+  sAbout.append(src);
+
+  // ── versions & provenance ──
+  const sVer = sec("Versions & provenance");
+  const facts = el("div", "flash-facts");
+  facts.append(fact("Firmware train", state.catalog.fw_train));
+  const engine = (about.vendors || []).find((v) => v.name === "esptool-js");
+  if (engine) facts.append(fact("Flashing engine", engine.package + " (vendored, offline)"));
+  sVer.append(facts);
+  sVer.append(el("p", "fineprint",
+    "The device catalog on this page is generated from the firmware tree " +
+    "(tools/gen_flash.py) and drift-checked in CI — the facts here can’t be " +
+    "typed wrong, only parsed wrong loudly."));
+
+  // ── sound & lessons ──
+  const sPref = sec("Sound & lessons");
+  const prefRow = el("div", "flash-row");
+  prefRow.append(chirpToggle());
+  if (coachDismissed()) {
+    const coachBtn = el("button", "ghost small", "☕ bring back the lessons");
+    coachBtn.addEventListener("click", () => {
+      try { sessionStorage.removeItem(COACH_KEY); } catch { /* private mode */ }
+      coachBtn.textContent = "☕ lessons will ride the next install ✓";
+      coachBtn.disabled = true;
+    });
+    prefRow.append(coachBtn);
+  } else {
+    prefRow.append(el("span", "fineprint", "☕ lessons ride every install (hide them with the × on the card)"));
+  }
+  sPref.append(prefRow);
+  sPref.append(el("p", "fineprint",
+    "Motion follows your system’s reduce-motion setting automatically — " +
+    "nothing to configure here."));
+
+  // ── this page's memory ──
+  const sData = sec("What this page remembers");
+  const dataRow = el("div", "flash-row");
+  const forget = el("button", "ghost small", "forget saved WiFi");
+  forget.addEventListener("click", () => {
+    wifiMemory.forget();
+    forget.textContent = "saved WiFi forgotten ✓";
+    forget.disabled = true;
+  });
+  const clearRoster = el("button", "ghost small",
+    state.roster.length ? `clear the session roster (${state.roster.length})` : "session roster is empty");
+  clearRoster.disabled = !state.roster.length;
+  clearRoster.addEventListener("click", () => {
+    state.roster = [];
+    saveRoster(state.roster);
+    clearRoster.textContent = "roster cleared ✓";
+    clearRoster.disabled = true;
+  });
+  dataRow.append(forget, clearRoster);
+  sData.append(dataRow);
+  sData.append(el("p", "fineprint",
+    "Both live only in this browser: the WiFi copy so a batch provisions " +
+    "without retyping, the roster so a batch keeps its place (public facts " +
+    "only — never credentials). Neither ever leaves this page."));
+
+  // ── legal ──
+  const sLegal = sec("Legal");
+  sLegal.append(el("p", "muted", `${about.copyright} · ${about.license.name}`));
+  const legalList = el("div", "flash-settings-vendors");
+  (about.vendors || []).forEach((v) => {
+    const row = el("div", "flash-knob");
+    const lab = el("span", "flash-knob-label");
+    const a = el("a", null, v.package);
+    a.href = v.file; a.target = "_blank"; a.rel = "noopener";
+    lab.append(a);
+    row.append(lab, el("span", "flash-knob-val", v.license));
+    legalList.append(row);
+  });
+  sLegal.append(legalList);
+  sLegal.append(el("p", "fineprint",
+    "Vendored into this site on purpose — no CDNs, no third-party requests. " +
+    "Each credit links its provenance file; the whole page ships under " +
+    `${about.license.name} (LICENSE in the repository).`));
+
+  dlg.addEventListener("click", (ev) => { if (ev.target === dlg) dlg.close(); });
+  document.body.append(dlg);
+  dlg.showModal();
 }
 
 // One check, used everywhere motion is decorative rather than informative.
