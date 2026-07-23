@@ -24,7 +24,7 @@
   -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-EktR3SFf0lLCbyovl7Zr3tGJNxikCFvtZ3djuXGsas0='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://github.com https://*.githubusercontent.com http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Flash a Canary — in your browser · canary.local</title>
+  <title>The Canary Nursery — flash &amp; first flight · canary.local</title>
   <meta name="description" content="Flash SecuraCV Canary firmware straight from a Chromium browser over USB-C — no Arduino, no PlatformIO, no terminal. It detects your ESP32 chip, backs the board up automatically before writing, flashes a signed release image, and verifies it against the chip's own checksum. It's a triage bench too: a read-only health check reports firmware slots, update history, crash dumps and witness-chain state, and a built-in serial monitor talks to the firmware's console. Built so you can't pick the wrong image and can't brick the board: the ESP32's bootloader is mask ROM. Works offline; the flashing engine is served from this site, nothing phones anywhere." />
   <link rel="stylesheet" href="assets/canary-local.css" />
   <link rel="stylesheet" href="assets/flash.css" />
@@ -63,16 +63,18 @@
         <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
       </svg>
     </div>
-    <h1>Flash a Canary, right here</h1>
+    <h1>The Canary Nursery <span class="nursery-sub">— where Canaries hatch</span></h1>
     <p class="lede">
-      “Flashing” is just the word for loading firmware — the board's built-in
-      software — onto it. First-time setup of a brand-new Canary or an update
-      later: same two clicks, right here in the browser. No Arduino, no
-      PlatformIO, no terminal. It backs the board up by itself, installs a
-      signed image, and checks every byte against the chip. Built so you
+      Every Canary starts here: plug a bare board in and it leaves with a
+      name, a voice, and a job. “Flashing” is just the word for loading
+      firmware — the board's built-in software — and the Nursery does it in
+      two clicks, right in the browser. No Arduino, no PlatformIO, no
+      terminal. It backs the board up by itself, installs a signed image,
+      checks every byte against the chip, bakes in your WiFi and room dials,
+      and then makes the newborn <em>prove itself</em> — live. Built so you
       <em>can't</em> pick the wrong firmware, and <em>can't</em> brick the
-      board. It's a workbench too: run a health check or open a serial monitor
-      without leaving the page.
+      board. Raising a whole batch? The Nursery keeps the roster so you never
+      lose your place.
     </p>
     <div id="flash-versions" aria-live="polite"></div>
     <p class="fineprint">

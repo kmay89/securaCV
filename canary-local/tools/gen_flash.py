@@ -187,11 +187,26 @@ PROVISIONING = {
     "ap": "When it boots it hands you a WiFi network of its own — join it and a "
           "setup page opens automatically. Nothing to type here; no secrets ever "
           "touch the browser.",
-    "usb-secrets": "This sensor learns your WiFi from the firmware you flash. The signed "
-                   "release carries safe placeholders; to bake in your own network, build "
-                   "it once with your secrets (the guide shows how) — every later update "
-                   "inherits it from the device’s memory.",
+    "usb-secrets": "Fill in WiFi during the install and it’s written straight into the "
+                   "chip’s settings region — the signed generic release then joins YOUR "
+                   "network on first boot, no custom build needed. (Leave it empty and "
+                   "the firmware falls back to its compiled defaults, exactly as before.)",
 }
+
+
+def wifi_scheme(project: str) -> str:
+    """How this firmware reads its WiFi out of NVS — derived from the
+    project's own source, never guessed. sense/vision runtime_config use
+    Preferences getString (NVS string entries); the wap/canary family reads
+    blobs. The flasher's seed writer must match or the firmware reads ''."""
+    rc = REPO / project / "src/runtime_config.cpp"
+    if rc.exists():
+        text = rc.read_text(encoding="utf-8")
+        # The credential loader reads via Preferences getString (nvs string
+        # entries); "wifi_ssid" is the key it loads.
+        if ".getString(" in text and '"wifi_ssid"' in text:
+            return "string"
+    return "blob"
 
 # Post-flash "hatching" copy. This lives in the generated catalog instead of
 # desktop/web UI branches so every flasher surface can share the same first-use
@@ -830,6 +845,7 @@ def main() -> None:
             "asset_stem": p["asset_stem"],
             "provisioning": p["provisioning"],
             "provisioning_note": PROVISIONING[p["provisioning"]],
+            "wifi_nvs": wifi_scheme(p["project"]),
             "hatch": hatch,
             "serial_receipt": supports_serial_receipt(p["project"]),
             "role": role,

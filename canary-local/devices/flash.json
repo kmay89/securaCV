@@ -35,6 +35,7 @@
       "asset_stem": "canary",
       "provisioning": "ap",
       "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "wifi_nvs": "blob",
       "hatch": {
         "kicker": "Canary hatched",
         "title": "Your Canary is on its perch.",
@@ -57,6 +58,7 @@
       "asset_stem": "canary-wap",
       "provisioning": "ap",
       "provisioning_note": "When it boots it hands you a WiFi network of its own — join it and a setup page opens automatically. Nothing to type here; no secrets ever touch the browser.",
+      "wifi_nvs": "blob",
       "hatch": {
         "kicker": "Canary hatched",
         "title": "Your Canary is on its perch.",
@@ -78,7 +80,8 @@
       "board": "esp32-c3-devkitm-1",
       "asset_stem": "canary-vision",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -205,7 +208,8 @@
       "board": "seeed_xiao_esp32c3",
       "asset_stem": "canary-vision-xiao-c3",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -332,7 +336,8 @@
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-vision-xiao-s3",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
       "hatch": {
         "kicker": "Vision Canary hatched",
         "title": "Your Vision Canary is waking up.",
@@ -459,7 +464,8 @@
       "board": "seeed_xiao_esp32c6",
       "asset_stem": "canary-sense",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
       "hatch": {
         "kicker": "Sense Canary hatched",
         "title": "Your Sense Canary is listening with radar.",
@@ -620,7 +626,8 @@
       "board": "seeed_xiao_esp32c6",
       "asset_stem": "canary-sense-wellbeing",
       "provisioning": "usb-secrets",
-      "provisioning_note": "This sensor learns your WiFi from the firmware you flash. The signed release carries safe placeholders; to bake in your own network, build it once with your secrets (the guide shows how) — every later update inherits it from the device’s memory.",
+      "provisioning_note": "Fill in WiFi during the install and it’s written straight into the chip’s settings region — the signed generic release then joins YOUR network on first boot, no custom build needed. (Leave it empty and the firmware falls back to its compiled defaults, exactly as before.)",
+      "wifi_nvs": "string",
       "hatch": {
         "kicker": "Wellbeing Canary hatched",
         "title": "Your Sense Wellbeing Canary is listening with radar.",

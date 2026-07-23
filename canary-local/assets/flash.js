@@ -39,8 +39,20 @@ const el = (tag, cls, text) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── the Nursery roster: the session's hatchlings, so a batch never loses
+// its place. sessionStorage only (gone when the tab closes), public facts
+// only (product, version, preset names, MAC) — never credentials.
+const ROSTER_KEY = "nursery.roster.v1";
+function loadRoster() {
+  try { return JSON.parse(sessionStorage.getItem(ROSTER_KEY)) || []; } catch { return []; }
+}
+function saveRoster(list) {
+  try { sessionStorage.setItem(ROSTER_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+}
+
 const state = {
   catalog: null,
+  roster: loadRoster(),   // this session's hatchlings
   manifest: null,       // release manifest, or {__missing:true}
   session: null,        // { port, transport, esploader }
   chip: null,           // "ESP32-S3"
@@ -915,6 +927,19 @@ function phaseConnected() {
     cur.append(document.createTextNode(`Looks like it’s running ${name}${ver}${built} right now.`));
   }
   ht.append(cur);
+  // Batch guard: if THIS exact board already hatched this session, say so
+  // before anything else — the repeated-actions trap is plugging in a board
+  // you already did and not being sure.
+  const prev = core.rosterFind(state.roster, state.mac ? core.formatMac(state.mac) : null);
+  if (prev) {
+    const again = el("p", "flash-role flash-already");
+    again.append(document.createTextNode(
+      `🐣 Already hatched this session — #${prev.n}, ${prev.product}` +
+      `${prev.version ? " v" + prev.version : ""}` +
+      `${prev.preset ? ", dialed " + prev.preset : ""}. ` +
+      `Plug in the next board, or reflash this one freely.`));
+    ht.append(again);
+  }
   const role = renderRoleLine();
   if (role) ht.append(role);
   ht.append(modeBadge("download"));
@@ -985,6 +1010,14 @@ function phaseConnected() {
     voice.append(idSlot);
     const vcon = el("pre", "flash-console flash-voice-console", "listening…");
     voice.append(vcon);
+    // A Sense on the wire gets its bench one click away — the console is its
+    // voice, but the radar bench is its senses.
+    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    if (curProd && core.productRole(curProd.id) === "sense") {
+      const rb = el("button", "ghost small", "👋 open the radar bench — feel it sense");
+      rb.addEventListener("click", () => openSenseBench(curProd));
+      voice.append(rb);
+    }
     wrap.append(voice);
     startVoice(vcon, (m) => {
       idSlot.innerHTML = "";
@@ -1013,6 +1046,10 @@ function phaseConnected() {
 
   // Firmware picker (chip-guarded).
   wrap.append(renderPicker());
+
+  // The session's progression — a batch never loses its place.
+  const roster = renderRosterStrip();
+  if (roster) wrap.append(roster);
 
   const disconnect = el("button", "ghost small flash-disconnect", "disconnect");
   disconnect.addEventListener("click", onDisconnect);
@@ -1063,6 +1100,33 @@ function helpDot(topicId) {
   });
   wrap.append(btn, pop);
   return wrap;
+}
+
+// ── the Nursery roster strip: the session's progression, at a glance ────────
+function renderRosterStrip() {
+  if (!state.roster.length) return null;
+  const sec = el("details", "flash-roster");
+  if (state.roster.length <= 3) sec.open = true;
+  const plural = state.roster.length === 1 ? "hatchling" : "hatchlings";
+  sec.append(el("summary", null,
+    `🐣 This session’s nursery — ${state.roster.length} ${plural} so far`));
+  const list = el("div", "flash-roster-list");
+  core.rosterLines(state.roster, Date.now()).forEach((l) => {
+    const row = el("div", "flash-roster-row");
+    row.append(el("span", "flash-roster-n", `#${l.n}`));
+    const main = el("span", "flash-roster-main");
+    main.append(el("strong", null, l.label));
+    if (l.mac) main.append(document.createTextNode(` ${l.mac}`));
+    if (l.extras) main.append(el("span", "flash-roster-extras", ` · ${l.extras}`));
+    row.append(main);
+    row.append(el("span", "flash-roster-ago", l.ago));
+    list.append(row);
+  });
+  sec.append(list);
+  sec.append(el("p", "fineprint",
+    "Kept for this tab only, and only public facts — which firmware, which " +
+    "dials, whether WiFi was baked (never the network itself)."));
+  return sec;
 }
 
 // ── role: what this board IS, read from what it RUNS ────────────────────────
@@ -1350,6 +1414,278 @@ function phaseDisplayBench(d, back) {
   return box;
 }
 
+// ── the radar bench: feel a freshly-hatched Sense sensing, live ─────────────
+// The moment after the flash IS the product: walk past and presence flips,
+// step through the bands and the aura follows, sit statue-still and the
+// clear timeout breathes out. Everything drawn here comes off the board's
+// own console lines ([sense]/[presence]/[vitals] — coarse fields only, the
+// same ones MQTT carries). The wellbeing senses render as a clearly-labeled
+// preview on the presence-only build — what's POSSIBLE, never faked as live.
+
+async function openSenseBench(product) {
+  if (state.busy) return;
+  let port = state.session && state.session.port;
+  if (!port && state.voice) port = await stopVoice();
+  if (state.session) {
+    try { await state.session.esploader.after("hard_reset"); } catch {}
+    try { await state.session.transport.disconnect(); } catch {}
+    state.session = null;
+  }
+  if (!port) { setPhase(phaseConnect()); return; }
+  setPhase(phaseSenseBench(port, product));
+}
+
+function phaseSenseBench(port, product) {
+  const wellbeing = /wellbeing/.test((product && product.id) || "");
+  const box = el("section", "flash-card flash-sensebench");
+  box.append(el("h2", null, "👋 The radar bench — hold still, then don’t"));
+  box.append(el("p", "muted",
+    "This is the radar’s own senses, live off the USB cable — the same coarse " +
+    "truths it publishes (present/clear, 0/1/2+, near/mid/far), never raw " +
+    "centimetres. Walk past it. Stand in each band. Then sit statue-still and " +
+    "feel the clear timeout breathe out."));
+
+  const status = el("div", "flash-sense-status", "listening for the radar…");
+  box.append(status);
+
+  const aura = document.createElement("canvas");
+  aura.className = "flash-sense-aura";
+  aura.width = 640; aura.height = 340;
+  box.append(aura);
+
+  // The wellbeing senses: LIVE numbers on the wellbeing build, an explicit
+  // possibility preview on presence-only — the user asked to SEE what this
+  // hardware can feel, so show it, labeled for exactly what it is.
+  const vit = el("div", "flash-sense-vitals");
+  const vitHead = el("div", "flash-sense-vitals-head");
+  const vitBadge = el("span", "flash-passport-chip", wellbeing ? "waiting for a lock…" : "PREVIEW — simulated");
+  vitHead.append(el("strong", null, "Breathing & heartbeat"), vitBadge);
+  vit.append(vitHead);
+  const wave = document.createElement("canvas");
+  wave.className = "flash-sense-wave";
+  wave.width = 640; wave.height = 110;
+  vit.append(wave);
+  vit.append(el("p", "fineprint", wellbeing
+    ? "The Wellbeing build senses breathing (6–30 bpm) and heart rate (40–130 bpm) " +
+      "by radar — no camera, no mic, no contact. Vitals lock only when exactly ONE " +
+      "person is present: sit alone in the near band, settle, and watch it latch."
+    : "This build watches presence only — but the SAME radar underneath can feel " +
+      "breathing and heartbeat. The waves below are a simulated preview of what the " +
+      "Canary Sense · Wellbeing firmware senses here; flash that build and they go live."));
+  box.append(vit);
+
+  const script = el("div", "flash-nextstep");
+  script.append(el("div", "flash-nextstep-title", "Make it magic — the 60-second tour"));
+  const ol = el("ol", "we2-guide-steps");
+  [
+    "Walk past it — presence flips to “someone’s here” within about a second, and the aura lights.",
+    "Step closer, then away: near → mid → far, the ring follows you.",
+    "Bring a friend — the count climbs to 2+ (and vitals politely refuse: one person only).",
+    wellbeing ? "Sit alone, still, a couple of meters away — breathing locks, then the numbers appear."
+              : "Sit statue-still — presence holds through the debounce, then clears when you leave.",
+    "Everything you just felt publishes the same way to Home Assistant — this bench is the radar’s honest voice.",
+  ].forEach((s) => ol.append(el("li", null, s)));
+  script.append(ol);
+  box.append(script);
+
+  const conWrap = el("details", "flash-displaybench-serial");
+  conWrap.append(el("summary", null, "the raw console under the magic"));
+  const con = el("pre", "flash-console");
+  conWrap.append(con);
+  box.append(conWrap);
+
+  const row = el("div", "flash-row");
+  const back = el("button", "ghost", "← back to the Nursery");
+  row.append(back);
+  box.append(row);
+
+  // ── the live model, fed by the console lines ──
+  const model = {
+    presence: "unknown", count: "0", range: "unknown",
+    breath: null, heart: null, locked: false,
+    lastSeenMs: 0, frameErrs: null, alive: true,
+  };
+
+  function setStatus() {
+    const p = model.presence;
+    status.className = "flash-sense-status flash-sense-" + p;
+    status.textContent =
+      p === "present"
+        ? `● someone’s here — ${model.count === "2+" ? "two or more" : model.count === "1" ? "one person" : "movement"} · ${model.range}`
+        : p === "clear" ? "○ clear — the room is empty"
+        : "◌ listening for the radar…";
+  }
+
+  // reader loop (the voice engine pattern — attended bench, no supervisor)
+  let reader = null;
+  (async () => {
+    try {
+      await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      reader = port.readable.getReader();
+    } catch (e) {
+      status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
+      return;
+    }
+    const dec = new TextDecoder();
+    let buf = "", tail = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || !model.alive) break;
+        const text = dec.decode(value, { stream: true });
+        buf = (buf + text).slice(-8000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        tail += text;
+        const lines = tail.split("\n");
+        tail = lines.pop() || "";
+        for (const line of lines) {
+          const ev = core.parseSenseLine(line);
+          if (!ev) continue;
+          model.lastSeenMs = performance.now();
+          if (ev.kind === "sense") {
+            model.presence = ev.presence; model.count = ev.count; model.range = ev.range;
+          } else if (ev.kind === "presence") {
+            model.presence = ev.presence;
+          } else if (ev.kind === "bpm") {
+            model.breath = ev.breath; model.heart = ev.heart; model.locked = true;
+            vitBadge.textContent = `LIVE · breathing ${ev.breath} bpm · heart ${ev.heart} bpm`;
+            vitBadge.className = "flash-passport-chip flash-passport-ok";
+          } else if (ev.kind === "vitals") {
+            model.locked = ev.locked;
+            if (!ev.locked && wellbeing) {
+              vitBadge.textContent = "lock lost — settle again";
+              vitBadge.className = "flash-passport-chip";
+            }
+          } else if (ev.kind === "health") {
+            model.frameErrs = ev.frame_errs;
+          }
+          setStatus();
+        }
+      }
+    } catch { /* unplugged — the back button is right there */ }
+  })();
+
+  // ── the aura: bands, sweep, and the target ──
+  const actx = aura.getContext("2d");
+  const wctx = wave.getContext("2d");
+  let raf = 0, t0 = performance.now();
+  const BAND_R = { near: 0.36, mid: 0.62, far: 0.88, unknown: 0.62 };
+  let targetR = 0, targetA = 0; // eased radius/alpha of the presence blob
+
+  function draw(now) {
+    if (!model.alive) return;
+    const t = (now - t0) / 1000;
+    const W = aura.width, H = aura.height;
+    const cx = W / 2, cy = H - 14, R = H - 40;
+    actx.clearRect(0, 0, W, H);
+    const present = model.presence === "present";
+    const stale = model.lastSeenMs && now - model.lastSeenMs > 15000;
+
+    // band arcs
+    for (const [name, r] of [["near", BAND_R.near], ["mid", BAND_R.mid], ["far", BAND_R.far]]) {
+      const active = present && model.range === name;
+      actx.beginPath();
+      actx.arc(cx, cy, r * R, Math.PI, 2 * Math.PI);
+      actx.lineWidth = active ? 5 : 1.5;
+      actx.strokeStyle = active
+        ? `hsl(140 90% 62% / ${0.75 + 0.25 * Math.sin(t * 4)})`
+        : "rgba(160,180,200,0.25)";
+      actx.stroke();
+      actx.font = "600 11px ui-monospace, Menlo, monospace";
+      actx.fillStyle = active ? "#7CFF9B" : "rgba(160,180,200,0.5)";
+      actx.fillText(name, cx + r * R - 26, cy - 8);
+    }
+    // the sweep — a quiet metronome when clear, eager when someone's there
+    const sweepT = (t * (present ? 0.55 : 0.22)) % 1;
+    const sweepR = sweepT * R;
+    actx.beginPath();
+    actx.arc(cx, cy, sweepR, Math.PI, 2 * Math.PI);
+    actx.lineWidth = 2;
+    actx.strokeStyle = `hsl(${present ? 140 : 205} 80% 60% / ${0.5 * (1 - sweepT)})`;
+    actx.stroke();
+    // the emitter
+    actx.beginPath();
+    actx.arc(cx, cy, 6, 0, 2 * Math.PI);
+    actx.fillStyle = stale ? "#f0a860" : present ? "#7CFF9B" : "#7db8e8";
+    actx.fill();
+    // the target blob — eases into its band, breathes gently
+    const wantR = present ? (BAND_R[model.range] || BAND_R.mid) * R : 0;
+    targetR += (wantR - targetR) * 0.08;
+    targetA += ((present ? 1 : 0) - targetA) * 0.1;
+    if (targetA > 0.02) {
+      const bob = Math.sin(t * 2.2) * 4;
+      const tx = cx, ty = cy - targetR + bob;
+      const glow = actx.createRadialGradient(tx, ty, 2, tx, ty, 26);
+      glow.addColorStop(0, `hsl(140 90% 66% / ${0.9 * targetA})`);
+      glow.addColorStop(1, "hsl(140 90% 66% / 0)");
+      actx.fillStyle = glow;
+      actx.beginPath(); actx.arc(tx, ty, 26, 0, 2 * Math.PI); actx.fill();
+      actx.fillStyle = `hsl(140 90% 70% / ${targetA})`;
+      actx.beginPath(); actx.arc(tx, ty, 7, 0, 2 * Math.PI); actx.fill();
+      if (model.count === "2+") {
+        actx.fillStyle = `hsl(140 90% 70% / ${0.8 * targetA})`;
+        actx.beginPath(); actx.arc(tx + 22, ty + 6, 5, 0, 2 * Math.PI); actx.fill();
+        actx.font = "700 12px ui-monospace, Menlo, monospace";
+        actx.fillText("2+", tx + 32, ty + 10);
+      }
+    }
+    if (stale) {
+      actx.font = "600 12px ui-monospace, Menlo, monospace";
+      actx.fillStyle = "#f0a860";
+      actx.fillText("no radar lines lately — is it still plugged in?", 14, 18);
+    }
+
+    // ── the vitals waves ──
+    const WW = wave.width, WH = wave.height;
+    wctx.clearRect(0, 0, WW, WH);
+    const live = wellbeing && model.locked && model.breath;
+    const breathBpm = live ? model.breath : 14;
+    const heartBpm = live ? model.heart : 64;
+    const alpha = live ? 0.95 : 0.5;
+    // breath: a slow full-height sine
+    wctx.beginPath();
+    for (let x = 0; x < WW; x++) {
+      const ph = (t - (WW - x) / 90) * (breathBpm / 60) * 2 * Math.PI;
+      const y = WH * 0.32 - Math.sin(ph) * WH * 0.2;
+      x ? wctx.lineTo(x, y) : wctx.moveTo(x, y);
+    }
+    wctx.lineWidth = 2.5;
+    wctx.strokeStyle = `hsl(175 80% 60% / ${alpha})`;
+    wctx.stroke();
+    // heart: a sharp pulse train
+    wctx.beginPath();
+    for (let x = 0; x < WW; x++) {
+      const ph = ((t - (WW - x) / 90) * (heartBpm / 60)) % 1;
+      const spike = ph < 0.08 ? Math.sin((ph / 0.08) * Math.PI) : ph < 0.16 ? -0.35 * Math.sin(((ph - 0.08) / 0.08) * Math.PI) : 0;
+      const y = WH * 0.78 - spike * WH * 0.17;
+      x ? wctx.lineTo(x, y) : wctx.moveTo(x, y);
+    }
+    wctx.lineWidth = 2;
+    wctx.strokeStyle = `hsl(345 85% 64% / ${alpha})`;
+    wctx.stroke();
+    wctx.font = "600 11px ui-monospace, Menlo, monospace";
+    wctx.fillStyle = `hsl(175 80% 60% / ${alpha})`;
+    wctx.fillText(`breath ${live ? model.breath : "~" + breathBpm} bpm`, 10, 16);
+    wctx.fillStyle = `hsl(345 85% 64% / ${alpha})`;
+    wctx.fillText(`heart ${live ? model.heart : "~" + heartBpm} bpm`, 10, WH - 10);
+
+    raf = requestAnimationFrame(draw);
+  }
+  raf = requestAnimationFrame(draw);
+  setStatus();
+
+  back.addEventListener("click", async () => {
+    model.alive = false;
+    cancelAnimationFrame(raf);
+    try { reader && await reader.cancel(); } catch {}
+    try { reader && reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
+    setPhase(phaseConnect());
+  });
+  return box;
+}
+
 function productRow(p) {
   const row = el("div", "flash-product");
   row.dataset.id = p.id;
@@ -1549,12 +1885,13 @@ function phaseConfirm(product, entry) {
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
   box.append(promise);
 
-  // WiFi (optional): fill it in and it's baked into the chip during the
-  // install; leave it empty and nothing changes. Either way the setup
-  // network is the safety net.
+  // WiFi (optional) — for EVERY board now: fill it in and it's baked into
+  // the chip's settings region during the install, in whichever NVS scheme
+  // this firmware actually reads (catalog wifi_nvs, derived from the
+  // firmware source). Leave it empty and nothing changes.
   let wifiUI = null;
-  if (product && product.provisioning === "ap") {
-    wifiUI = renderWifiFields(box);
+  if (product) {
+    wifiUI = renderWifiFields(box, product);
   }
 
   // Flash-time dials (Vision): pick the room, or fine-tune — the same four
@@ -1806,7 +2143,7 @@ function renderReflexes(box, product) {
 }
 
 // ── optional WiFi fields (confirm card) ─────────────────────────────────────
-function renderWifiFields(box) {
+function renderWifiFields(box, product) {
   const sec = el("div", "flash-wifi");
   const wh = el("h3", null, "WiFi (optional)");
   const whd = helpDot("wifi_bake");
@@ -1833,12 +2170,18 @@ function renderWifiFields(box) {
 
   const err = el("p", "flash-note flash-note-soft flash-hidden");
   sec.append(err);
-  sec.append(el("p", "fineprint",
-    "Fill this in and it’s written into the chip during the install, so the " +
-    "Canary joins your WiFi on its very first boot. If it can’t connect — " +
-    "or you leave this empty — it simply broadcasts its own setup network " +
-    "to connect to and finish setup there. What you type stays on this " +
-    "page and goes only to the chip over the cable."));
+  const isAp = product && product.provisioning === "ap";
+  sec.append(el("p", "fineprint", isAp
+    ? "Fill this in and it’s written into the chip during the install, so the " +
+      "Canary joins your WiFi on its very first boot. If it can’t connect — " +
+      "or you leave this empty — it simply broadcasts its own setup network " +
+      "to connect to and finish setup there. What you type stays on this " +
+      "page and goes only to the chip over the cable."
+    : "Fill this in and it’s written into the chip’s settings region during " +
+      "the install — the signed generic release then joins YOUR network on " +
+      "first boot, no custom build needed. Leave it empty and the firmware " +
+      "keeps its compiled defaults. What you type stays on this page and " +
+      "goes only to the chip over the cable."));
 
   // Type it once, provision a whole batch. By default the network is kept in
   // memory for this tab only (gone when you close it, never written to disk);
@@ -2061,7 +2404,9 @@ async function startFlash(opts) {
         const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
         const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
         const nvsImg = core.buildNvsSeedImage(
-          { wifi: opts.wifi || null, u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
+          { wifi: opts.wifi || null,
+            wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
+            u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
         seededDials = opts.detect || null;
@@ -2112,6 +2457,19 @@ async function startFlash(opts) {
     // camera-module flow can insist on both ports.
     if (opts.product && !opts.isBackup && core.isVisionBoard(opts.product)) {
       visionSession.markDone("esp32");
+    }
+    // The Nursery roster: one hatchling per successful install, so a batch
+    // session always knows which boards are done and what they got.
+    if (opts.product && !opts.isBackup && !opts.isLocal) {
+      state.roster = core.rosterAdd(state.roster, {
+        t: Date.now(),
+        mac: state.mac ? core.formatMac(state.mac) : null,
+        product: opts.product.name,
+        version: opts.entry ? opts.entry.version : null,
+        preset: opts.detectPreset || opts.reflexPreset || null,
+        wifi: !!wifiSsid,
+      });
+      saveRoster(state.roster);
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
@@ -2184,7 +2542,10 @@ function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
   confettiBurst();
   box.append(el("div", "flash-done-bird", "🎉"));
+  const hatchNo = !opts.isBackup && !opts.isLocal && opts.product && state.roster.length
+    ? state.roster.length : null;
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
+    : hatchNo ? `Hatchling #${hatchNo} — your Canary is awake`
     : "Installed — your Canary is awake"));
 
   const product = opts.product;
@@ -2332,9 +2693,21 @@ function phaseDone(opts) {
     box.append(rec);
   }
 
+  // The radar wow: a freshly-hatched Sense proves itself on the live bench —
+  // presence, bands, and the wellbeing senses — not in a text console.
+  const doneRole = opts.product && !opts.isBackup ? core.productRole(opts.product.id) : null;
+
+  // The session's progression, right where the next board gets plugged in.
+  const rosterStrip = renderRosterStrip();
+  if (rosterStrip) box.append(rosterStrip);
+
   const row = el("div", "flash-row");
-  const watch = el("button", "primary", "Watch it boot & prove itself →");
-  watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
+  const watch = doneRole === "sense"
+    ? el("button", "primary", "👋 Feel it sense — the live radar bench →")
+    : el("button", "primary", "Watch it boot & prove itself →");
+  watch.addEventListener("click", () => doneRole === "sense"
+    ? openSenseBench(opts.product)
+    : openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
   const again = el("button", "ghost", "Set up another board");
   // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
   // half-done Vision can't carry a stale flag into the next board (else its other

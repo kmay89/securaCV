@@ -688,3 +688,37 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-voice-console { max-height: 180px; min-height: 64px; }
 .flash-voice-id { margin: 6px 0 2px; }
 .flash-headline { font-weight: 640; }
+
+/* ── the Nursery: branding, roster, and the radar bench ──────────────────── */
+.nursery-sub { font-size: 0.55em; font-weight: 500; color: var(--muted, #9aa39a); }
+
+.flash-roster { margin-top: 12px; }
+.flash-roster-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
+.flash-roster-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 7px 11px; border-radius: 10px; font-size: 13px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626);
+}
+.flash-roster-n { color: #ffd44f; font-weight: 700; font-variant-numeric: tabular-nums; }
+.flash-roster-main { flex: 1; color: #cfd8cf; }
+.flash-roster-extras { color: var(--muted, #9aa39a); }
+.flash-roster-ago { color: var(--muted, #9aa39a); font-size: 12px; white-space: nowrap; }
+.flash-already { color: #f0dca0; }
+
+.flash-sensebench .flash-sense-aura,
+.flash-sensebench .flash-sense-wave {
+  display: block; width: 100%; height: auto;
+  background: #08090b; border: 1px solid var(--edge, #262626); border-radius: 14px;
+}
+.flash-sense-status {
+  margin: 10px 0; padding: 10px 15px; border-radius: 999px; display: inline-block;
+  font-weight: 640; font-size: 15px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--edge, #262626);
+  color: var(--muted, #9aa39a);
+}
+.flash-sense-present { background: rgba(67,160,71,0.12); border-color: rgba(67,160,71,0.5); color: #7CFF9B; }
+.flash-sense-clear { background: rgba(3,169,244,0.08); border-color: rgba(3,169,244,0.35); color: #bfe6fb; }
+.flash-sense-vitals { margin: 12px 0 6px; }
+.flash-sense-vitals-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 14px;
+}
