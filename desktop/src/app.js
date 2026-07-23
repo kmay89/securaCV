@@ -752,6 +752,27 @@ const HUB_STAGE_COPY = {
   seed: "Adding your settings to the card…",
 };
 
+// The stages a flash walks, in order — rendered as pills that light up as
+// each one passes, so there's always a visible sense of where you are.
+const HUB_STAGE_ORDER = ["download", "decompress", "write", "verify", "seed"];
+const HUB_STAGE_PILL = {
+  download: "Download",
+  decompress: "Unpack",
+  write: "Write",
+  verify: "Verify",
+  seed: "Settings",
+};
+
+function hubRenderPills(activeStage) {
+  const box = $("hub-pills");
+  if (!box) return;
+  const activeIdx = HUB_STAGE_ORDER.indexOf(activeStage);
+  box.innerHTML = HUB_STAGE_ORDER.map((s, i) => {
+    const cls = i < activeIdx ? "done" : i === activeIdx ? "active" : "";
+    return `<span class="stage-pill ${cls}">${HUB_STAGE_PILL[s]}</span>`;
+  }).join("");
+}
+
 function hubInit() {
   $("mode-canary").addEventListener("click", () => hubSetMode(false));
   $("mode-hub").addEventListener("click", () => hubSetMode(true));
@@ -803,6 +824,7 @@ function hubInit() {
     hub.stage = stage;
     $("hub-progress-wrap").classList.remove("hidden");
     $("hub-stage").textContent = HUB_STAGE_COPY[stage] || stage;
+    hubRenderPills(stage);
 
     // A one-time, calm heads-up that macOS is about to ask for disk permission,
     // so a walked-away user knows the flash isn't frozen — it's waiting on them.
@@ -1196,7 +1218,7 @@ function hubStartFirstBoot() {
   panel.classList.remove("hidden");
   $("hub-fb-dot").className = "dot reading";
   $("hub-fb-text").textContent =
-    "Put the card in your Pi and power it on. Watching for it to come online — this takes 10–20 minutes on first boot, and that's normal.";
+    "Put the card in your Pi and power it on — watching for it to come online. First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. You can walk away, we'll ping you.";
   $("hub-fb-open").classList.add("hidden");
   hubRenderQr();
   hubStopFirstBoot(true); // clear any prior timer without hiding the panel
@@ -1208,8 +1230,12 @@ function hubStartFirstBoot() {
     if (up) {
       hubStopFirstBoot(true);
       $("hub-fb-dot").className = "dot connected";
-      $("hub-fb-text").textContent = "It's alive! Your hub is up.";
-      $("hub-fb-open").classList.remove("hidden");
+      $("hub-fb-text").textContent = "It's alive! Your hub is up. 🐤";
+      const openBtn = $("hub-fb-open");
+      openBtn.classList.remove("hidden");
+      openBtn.classList.remove("alive-pop");
+      void openBtn.offsetWidth;
+      openBtn.classList.add("alive-pop");
       hubNotify("Your hub is ready", "Open " + HUB_HOST + " to log in.");
       hubChime();
     }
@@ -1351,7 +1377,17 @@ async function hubFlash() {
 }
 
 function hubShowHatch(receipt) {
-  $("hub-hatch").classList.remove("hidden");
+  // All stages complete — light every pill green, then the gentle reveal.
+  const box = $("hub-pills");
+  if (box)
+    box.innerHTML = HUB_STAGE_ORDER.map(
+      (s) => `<span class="stage-pill done">${HUB_STAGE_PILL[s]}</span>`
+    ).join("");
+  const hatch = $("hub-hatch");
+  hatch.classList.remove("hidden");
+  hatch.classList.remove("alive-pop");
+  void hatch.offsetWidth; // restart the animation each success
+  hatch.classList.add("alive-pop");
   const wifiLine = receipt.wifi_seeded
     ? " Your Wi-Fi rides along on the card."
     : receipt.wifi_note

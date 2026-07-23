@@ -219,8 +219,17 @@
       <div class="step-head"><span class="step-n">4</span><h2>Write it</h2></div>
       <p class="muted" id="hub-write-summary"></p>
       <p id="hub-preflight" class="muted"></p>
-      <p class="muted"><strong>Everything on the chosen disk will be erased.</strong>
-        Type <span class="mono">ERASE</span> to arm the button.</p>
+
+      <div class="reassure">
+        <span class="reassure-i" aria-hidden="true">✓</span>
+        <span><strong>Nothing to worry about here.</strong> We only ever write to the card you picked —
+          your computer's own drives are never even offered — and we read every byte back to prove it
+          worked. You can stop at any moment; the card just needs a fresh flash if you do. Even a
+          counterfeit card that lies about the write gets caught right here, at your desk.</span>
+      </div>
+
+      <p class="muted" style="margin-top:12px">To be sure, type <span class="mono">ERASE</span> —
+        everything on the chosen card will be replaced.</p>
       <div class="row">
         <input id="hub-confirm" class="confirm-input" autocomplete="off" spellcheck="false"
                placeholder="ERASE" aria-label="Type ERASE to confirm">
@@ -233,6 +242,7 @@
           <p id="hub-eta" class="muted"></p>
         </div>
         <div class="bar"><div id="hub-bar-fill" class="bar-fill"></div></div>
+        <div id="hub-pills" class="stage-pills" aria-hidden="true"></div>
       </div>
       <pre id="hub-console" class="console hidden" aria-live="polite"></pre>
       <p id="hub-result" class="status"></p>
