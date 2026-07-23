@@ -1,190 +1,45 @@
-# Canary Car Mode — a stock Meshtastic node in your car's USB port
+# Canary Car Mode — retired (superseded by Canary Vehicle Guard)
 
-**Status:** concept — real, tested Rust support (`ClaimKind::VehicleArrivalDeparture` is now
-allowed through `src/adapter/meshtastic.rs`), zero custom firmware or circuitry required, **no
-bench validation yet**. Same honesty tier as every other unbuilt hardware idea in this repo: the
-design is sound and sourced, nothing has touched a real car.
-
-**The one-sentence version:** plug a stock, unmodified [Meshtastic](https://meshtastic.org) node
-into your car's ignition-switched USB port. It boots when the car does, tells the mesh "I'm here,"
-and goes silent — with nothing left to configure wrong — the instant the car turns off.
+**Status:** retired concept. Superseded by
+[Canary Vehicle Guard](./canary_vehicle_guard_research.md). This page is kept as an honest record
+of what we tried and why we changed our minds — not as a live product.
 
 ---
 
-## 1 · Why this needs no firmware and no circuit
+## What Car Mode was
 
-Every other Canary variant in this repo trades off some combination of custom firmware, custom
-wiring, or bench-unverified timing. Car Mode doesn't have to, because of one structural fact:
-**the node's own power supply already *is* the ignition signal.**
+Plug a stock, unmodified [Meshtastic](https://meshtastic.org) node into a car's **ignition-switched
+USB port**. It booted when the car did, its Detection Sensor Module read "the chip has power" as a
+detection, and it announced arrival to the mesh; departure was inferred from the heartbeats going
+silent when the ignition (and the USB power) cut out.
 
-- The node is powered directly from the car's ignition/ACC-switched USB port — not a battery, not
-  a separate sensing circuit off the CAN bus. When the car is off, the node has no power, full
-  stop.
-- Its Detection Sensor Module — [`meshtastic_integration.md`](../meshtastic_integration.md)'s
-  already-shipped inbound path — needs a GPIO to monitor. Configure it with `use_pullup = true`,
-  leave the pin **unconnected**: it reads HIGH the instant the chip has power, with no external
-  resistor, no soldering, nothing to wire wrong. "The node exists" becomes "the monitored pin is
-  triggered," for free.
-- Result: **zero custom firmware** (stock Meshtastic, actively maintained upstream — it cannot rot
-  the way a bespoke sketch would) and **zero custom circuitry** (one off-the-shelf USB cable). The
-  entire "build" is a config screen and a cable.
+## Why it was retired
 
-This is a genuine repurposing of the Detection Sensor Module — it's designed for a real switch
-that can go either way, not a permanently-pulled-high "I exist" flag — so it's marked concept, not
-confirmed, until someone bench-tests that the first boot-time transition actually fires a
-detection alert the way a real switch closing would.
+The rethink was simple and damning: **Car Mode sensed the one state that barely matters — the car
+running, with you in it — and drew power from a port that is dead exactly when a parked-car witness
+would need it.** The states worth witnessing are the ones you're *not* present for:
 
----
+- **Parked and moved without you** (theft, tow, a break-in shove).
+- **Parked somewhere you'll need to find again** (a vast lot, a strange city, after a blackout).
 
-## 2 · Arrival: the easy half
+Both happen with the car *off* and the ignition-USB *unpowered*. A witness for the parked,
+owner-absent car has to run on **always-hot or battery power** and watch for **motion**, not power.
+Once you accept that, the design flips entirely — from "announce I'm powered" to "watch a still car
+and report movement."
 
-On boot, the pinned-high GPIO reads as a fresh not-triggered→triggered transition — the Detection
-Sensor Module's normal "something happened" case — and fires a detection alert immediately (or
-within `minimum_broadcast_interval`, tunable; see §4's firmware-behavior caveat). Configure
-`state_broadcast_interval` (e.g. every 120 s) so the node also re-affirms "still running"
-periodically for the whole drive — cheap insurance against a missed single packet, and it's what
-makes departure detection possible at all (§3).
+## What replaced it
 
-`src/adapter/meshtastic.rs` already turns an active detection or an active heartbeat into a
-[`vehicle_arrival_departure`](../spec/event_contract.md) claim — the exact same claim kind
-[Canary Vehicle](./canary_vehicle_can.md)'s CAN adapter emits, so the rest of your fleet reacts
-identically regardless of which sensing method produced it.
+**[Canary Vehicle Guard](./canary_vehicle_guard_research.md)** — an onboard-IMU + LoRa witness that
+deep-sleeps until the parked car *moves* (theft/tow), and carries a coarse **find-my-car** last-seen
+over the off-grid mesh. It never taps the car's own systems (we checked: the car's BLE is locked, and
+the only OBD data path transmits onto the diagnostic bus and needs the ignition on — off-thesis).
+Hot-car child/pet safety stays with **[Canary Sense](./mr60bha2_radar_notes.md)**'s mmWave radar, not
+a WiFi/CSI guess.
 
----
+## What survives from Car Mode
 
-## 3 · Departure: inferred from silence, on purpose
-
-This is the design decision worth explaining, because the obvious approach is wrong. The obvious
-idea — detect the GPIO going LOW as the car turns off, fire one last packet before the node
-dies — was the original plan for [Canary Vehicle's CAN adapter](./canary_vehicle_profiles.md), and
-it doesn't survive contact with real Meshtastic firmware:
-
-- [meshtastic/firmware#8977](https://github.com/meshtastic/firmware/issues/8977): the Detection
-  Sensor Module has shipped with a documented bug where it "repeatedly sends ON and does not send
-  OFF." Building a departure signal on top of an open bug in someone else's firmware is exactly
-  the kind of thing that looks like it works on the bench and silently fails in the field.
-- Even setting the bug aside: the node loses power the same instant the transition would need to
-  fire. There's no time budget for "detect the drop, then transmit" without a supercap holding the
-  rail up — timing-critical hardware this design deliberately avoids (see §1).
-
-**The fix: don't try to detect departure at all — infer it from silence.** The node sends active
-heartbeats every `state_broadcast_interval` while it has power (§2); `state_broadcast_state()`
-(the adapter code already shipped for every Meshtastic-sourced claim, not just this one) already
-never asserts on an inactive state — presence in this codebase has always meant "an active signal
-keeps arriving," never "an explicit inactive signal announced it stopped." Silence for longer than
-a couple of heartbeat intervals means the car lost power, full stop, no separate mechanism needed.
-
-**What this gets you today, no new code:** set a Home Assistant presence/`binary_sensor`'s
-availability timeout to ~2× your `state_broadcast_interval`. The entity goes "away" when the
-heartbeats stop — the same pattern HA already uses for any presence integration. That's a complete
-arrival/departure story with the adapter as it ships right now.
-
-**What it doesn't get you: a departure event in the *sealed* witness log.** HA's inferred
-"away" state is real and useful, but it's not a signed claim in the tamper-evident chain the way
-the arrival packet is. Getting that would mean a stale-node watchdog — something in
-`AdapterHost` or the meshtastic adapter that tracks last-active-per-node and emits one
-`ObjectRemovedFromZone` claim after a configured silence window. That's a real, scoped, buildable
-follow-up (not vaporware — the shape is clear), just not built yet. Flag it if you want it; it's a
-clean addition to an already-tested adapter, not a redesign.
-
----
-
-## 4 · Setup
-
-1. **Read [`meshtastic_integration.md`](../meshtastic_integration.md) first** — this doc doesn't
-   repeat how Meshtastic/the gateway/the adapter work in general, only what's specific to Car
-   Mode. You need a gateway node at home (MQTT module, `mqtt.enabled = true`,
-   `mqtt.json_enabled = true`) before any of this does anything.
-2. **Hardware:** the same kit already researched for
-   [Canary Fence Guard](./canary_fence_guard_research.md) — Seeed XIAO ESP32S3 + Wio-SX1262 kit,
-   SKU 102010611, ~$9.90, Meshtastic pre-flashed on units shipped after Oct 2024. No case needed
-   for a glovebox/console deployment; the case-kit variant (SKU 113110064) if you want one.
-3. **Check your car's USB port is actually ignition-switched** before trusting any of this — not
-   all are. Many vehicles keep at least one USB port "always hot" for phone charging even with the
-   engine off, specifically because owners expect that. Test it: plug in any USB device, turn the
-   car off, wait a few minutes (some vehicles have a delayed cutoff, not instant), and see if it
-   loses power. If your only ports are always-hot, this design doesn't work on this vehicle without
-   finding a genuinely switched circuit (a wired ACC-tap add-a-fuse, out of scope for "no
-   soldering," but a legitimate fallback).
-4. **Join the private channel** — same non-default PSK discipline as every Meshtastic node in
-   this repo; see `meshtastic_integration.md`'s node-side runbook §1.
-5. **Configure the Detection Sensor Module:**
-   - `enabled = true`
-   - `monitor_pin` — any free GPIO not claimed by the radio's B2B connector (D0–D3 are free per
-     [Fence Guard's pin research](./canary_fence_guard_research.md#4)); leave it physically
-     unconnected.
-   - `use_pullup = true`, `detection_triggered_high = true`
-   - `name = "Car Mode"` (or similar — used only for matching if you ever fall back to the
-     `text`-frame path; not required for the primary `detection` path)
-   - `minimum_broadcast_interval` — tune for responsiveness vs. spam; a car doesn't arrive/depart
-     rapidly, so 10-30 s is reasonable (contrast Fence Guard's 45 s+ spam-guard floor for a
-     twitchier vibration sensor)
-   - `state_broadcast_interval` — e.g. 120 s; this is what makes departure inference (§3) work at
-     all — don't leave it at 0 (change-only)
-6. **`adapter_host.toml`:** one `[[adapter.node]]` block,
-   `kind = "vehicle_arrival_departure"` — worked example in
-   [`adapter_host.example.toml`](../../adapter_host.example.toml).
-7. **Home Assistant:** set the resulting presence entity's availability timeout per §3.
-
----
-
-## 5 · Never let it rot
-
-- **No custom firmware, ever.** Stock Meshtastic gets upstream's own maintenance, bug fixes, and
-  security patches — including, eventually, a fix for the OFF-transition bug this design was
-  written to route around entirely rather than depend on.
-- **No custom circuit to go stale, drift, or need re-tuning.** One resistor's worth of complexity
-  (zero, actually — the internal pull-up needs none) can't rot.
-- **One canonical Meshtastic doc.** Every mechanic — gateway setup, channel PSK discipline, the
-  adapter's parsing rules, the firmware-bug caveat — lives in
-  [`meshtastic_integration.md`](../meshtastic_integration.md); this doc only adds what's specific
-  to reading a car's power state through it. Fence Guard and Car Mode both point at the same
-  source instead of each carrying their own copy to drift out of sync.
-- **Same hardware research as Fence Guard, not a second dossier.** Kit specs, pin map, and
-  Meshtastic firmware notes are cited from
-  [`canary_fence_guard_research.md`](./canary_fence_guard_research.md), not re-derived.
-
----
-
-## 6 · Troubleshooting
-
-Anticipated, not field-reported — no bench unit exists yet (§1's honesty caveat applies to all
-of this).
-
-<details>
-<summary><strong>Node never appears on the mesh at all</strong></summary>
-
-- Confirm the car's USB port is actually delivering power — check with any other USB device
-  first, separate from debugging the node itself.
-- Confirm the node joined the private channel (not the default public `LongFast` — see
-  `meshtastic_integration.md`'s node-side runbook) and that a gateway node is in range and
-  actually uplinking (`mosquitto_sub -t 'msh/#' -v` on the broker).
-
-</details>
-
-<details>
-<summary><strong>Arrival claim never fires</strong></summary>
-
-- Check the Detection Sensor Module is actually `enabled = true` and `monitor_pin` is set to a
-  genuinely free GPIO (§4's D0–D3 list) — a pin claimed by the radio's SPI bus will never read
-  the way you expect.
-- `minimum_broadcast_interval` gates transitions too (see the firmware caveat in
-  `meshtastic_integration.md`'s Risks section) — a very low value doesn't guarantee instant, only
-  bounds the delay.
-- Confirm `adapter_host.toml`'s `node_id` matches the Car Mode node's actual id, not a copy-pasted
-  placeholder — `!a1b2c3d4` in the example config is not a real node.
-
-</details>
-
-<details>
-<summary><strong>Home Assistant never shows "away" after the car leaves</strong></summary>
-
-- This is the §3 design working as intended, not a bug, if you haven't set an availability
-  timeout — the entity will otherwise just hold its last known state forever. Set the timeout to
-  roughly 2x `state_broadcast_interval`.
-- If heartbeats stop arriving well before the car actually left (i.e. false "away" while still
-  parked with the engine running), `state_broadcast_interval` may be set too long, or mesh
-  reception at the parking spot may be marginal — check gateway signal strength at that exact
-  location, not just "somewhere in the house."
-
-</details>
+The Meshtastic adapter's **`vehicle_arrival_departure`** claim path
+([`src/adapter/meshtastic.rs`](../../src/adapter/meshtastic.rs)) — including its edge-triggered
+heartbeat handling — remains a valid capability. It simply no longer headlines a concept of its own;
+any Meshtastic node configured for a vehicle can still emit that claim. See
+[`meshtastic_integration.md`](../meshtastic_integration.md).
