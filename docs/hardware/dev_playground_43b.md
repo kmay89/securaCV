@@ -29,6 +29,11 @@ There are two builds that reach this bench, both dash-flavor + 4.3B only
 Both share the same `canary::playground` code and the `PG1` serial protocol
 below; `FEATURE_DEVMODE` only adds the Settings doorway and the exit.
 
+> The bench is the first citizen of a larger **mode system** (fleet / bench /
+> demo / debug / arcade) — see [`display_modes.md`](./display_modes.md) for
+> the registry that generalizes the `devmode` latch (the legacy bool stays
+> honored) and the rules every mode obeys.
+
 Vendor documentation (the authoritative board references):
 
 - Wiki: <https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-4.3B>

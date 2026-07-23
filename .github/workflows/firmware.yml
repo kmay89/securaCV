@@ -821,6 +821,40 @@ jobs:
           /tmp/espnow_peer | tee /tmp/espnow_peer.log
           grep -q "ALL .* PASSED" /tmp/espnow_peer.log
 
+      - name: Build + run canary-display mode registry host test
+        # The glass's gears (docs/hardware/display_modes.md): boot-gear
+        # resolution from the NVS token + the legacy devmode-bool migration,
+        # the build-capability gate, and the policy invariants — fail-safe to
+        # Fleet on anything unknown/uncarried, OTA only under the product
+        # face, and every non-fleet gear exit-by-long-press + bannered. Pure
+        # core (canary/mode/mode_registry.h); the runtime latch/branch glue
+        # stays a thin shell around these tables.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_mode_registry.cpp \
+              -o /tmp/mode_registry
+          /tmp/mode_registry | tee /tmp/mode_registry.log
+          grep -q "ALL .* PASSED" /tmp/mode_registry.log
+
+      - name: Build + run canary-display demo script host test
+        # Demo mode's storyline (canary/mode/demo_script.h) is drift-locked to
+        # the REAL event vocabulary: this links src/fleet/fleet_model.cpp and
+        # pins every scripted beat's intended severity to classify_event(), so
+        # a vocabulary change can't quietly defang the demo's alarm beat. Also
+        # pins the timeline shape (ordered, in-loop, resolves to quiet) and
+        # the wrap-safe fires-once-per-lap stepping.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_demo_script.cpp \
+              firmware/projects/canary-display/src/fleet/fleet_model.cpp \
+              -o /tmp/demo_script
+          /tmp/demo_script | tee /tmp/demo_script.log
+          grep -q "ALL .* PASSED" /tmp/demo_script.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
