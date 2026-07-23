@@ -62,12 +62,14 @@ as they actually stand in mid-2026:
 | Rail | Fees | API? | Verdict |
 |---|---|---|---|
 | **Pirate Ship** | $0/mo, $0/label, cheapest USPS rates | ❌ No public API (only CSV upload + an unofficial reverse-engineered wrapper) | Great rates, but the automation is a fragile scrape — the manual step stays manual |
-| **Shippo** ✅ | $0/mo, **$0.05/label, first 30/mo free**, discounted USPS | ✅ Real, documented | **Chosen.** ~$0–2/mo at a weekly kit batch; one-click labels straight from the tool |
-| **EasyPost** | Raised 60% in Feb 2026: **+3% on USPS spend + $0.08/label** | ✅ | No longer cheap — skip |
+| **Shippo** ✅ | $0/mo, **30 labels/mo free then 7¢/label** (+2¢ optional US address validation), **no surcharge on postage**, discounted USPS | ✅ Real, documented | **Chosen.** ~$0–2/mo at a weekly kit batch; one-click labels straight from the tool |
+| **EasyPost** | 3,000 free labels/mo then $0.08 — **but +3% on all USPS postage spend** (Jun 2026) | ✅ | The 3% is levied on *postage*, not labels: on a postage-heavy kit batch it outweighs the free labels — dearer than Shippo here |
 | **USPS direct** | Free API calls; postage via an Enterprise Payment Account | ✅ Official, but enrollment + approval ceremony | Most "custom," heaviest setup — a later option, not the start |
 
 **Chosen: Shippo**, for the one-click "works like magic" the founder asked for
-at a cost that rounds to zero at this volume. Crucially, the tool validates the
+at a cost that rounds to zero at this volume — and, precisely because it does
+*not* tax postage, it stays cheaper than EasyPost's otherwise-generous free
+labels once you weigh the ~$5–8 of USPS postage each kit carries. Crucially, the tool validates the
 address and computes the weight **identically regardless of rail** — the rail
 only decides *how the label is bought*. So `fulfill.mjs` isolates the Shippo
 calls (`buyLabel`) behind a pure `shippoShipment()` payload builder; swapping in
@@ -121,7 +123,7 @@ printed from validated data, and neither passes through a keyboard.
 | Enclosure material (in-house PETG/ASA) | $1–2 |
 | Packaging + QR quick-start card | ~$2 |
 | Postage (USPS Ground Advantage, Shippo discounted) | ~$5–8 |
-| Label fee (Shippo) | $0.05 (first 30/mo free) |
+| Label fee (Shippo) | 7¢ (first 30/mo free) |
 
 All of this already sits inside `store.json`'s `cogs.extra_usd` (~$9/kit) and
 the fully-loaded costs in doc 22 — so the tool changes the *labor and accuracy*,
