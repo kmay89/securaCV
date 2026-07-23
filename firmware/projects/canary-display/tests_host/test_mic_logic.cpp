@@ -151,6 +151,77 @@ static void test_silence_resets_a_stale_streak() {
         "a stale streak lends no credibility after the room went quiet");
 }
 
+static void test_switching_alarm_type_needs_fresh_two_cycles() {
+  // One T3 cycle then a T4 group must NOT fire: the streak is type-scoped,
+  // so a different grammar resets the count to one. Only a second matching
+  // T4 cycle raises CO. (A room where a smoke horn and a CO horn each honk
+  // once should not be read as a confirmed CO alarm.)
+  Envelope env;
+  CadenceDetector det;
+  uint32_t t = 0;
+  play_group(env, det, t, 3, 500, 500, 1500);        // streak: SmokeT3 = 1
+  Detection d = play_group(env, det, t, 4, 100, 100, 5000);
+  CHECK(d.event == Event::None, "type switch resets the streak to one");
+  d = play_group(env, det, t, 4, 100, 100, 5000);
+  CHECK(d.event == Event::CoT4, "second matching T4 cycle raises CO");
+}
+
+static void test_count_and_duration_windows_are_disjoint() {
+  // The count collision (3 vs 4 beeps) is disambiguated by the duration
+  // window, so a miscount can't cross-classify:
+  Envelope env;
+  CadenceDetector det;
+  uint32_t t = 0;
+  // 3 SHORT beeps (T4-length): right count for T3, wrong duration -> neither.
+  play_group(env, det, t, 3, 100, 100, 1500);
+  Detection d = play_group(env, det, t, 3, 100, 100, 1500);
+  CHECK(d.event == Event::None, "3 short beeps are not T3 (duration window)");
+  // 4 LONG beeps (T3-length): right count for T4, wrong duration -> neither.
+  Envelope env2;
+  CadenceDetector det2;
+  uint32_t t2 = 0;
+  play_group(env2, det2, t2, 4, 500, 500, 5000);
+  d = play_group(env2, det2, t2, 4, 500, 500, 5000);
+  CHECK(d.event == Event::None, "4 long beeps are not T4 (duration window)");
+}
+
+static void test_collapsed_timing_fails_safe() {
+  // The runtime feeds this core one detection per 20 ms audio frame on the
+  // AUDIO clock. If a caller ever collapsed several frames onto one
+  // timestamp (the pre-fix runtime bug: a slow main loop draining a DMA
+  // batch with a single millis() stamp), every beep would measure ~0 ms.
+  // A zero-duration group must NEVER classify — the failure mode is a
+  // MISSED alarm, never a phantom one. This pins that safety property at
+  // the core so the bug cannot regress into false positives.
+  CadenceDetector det;
+  // Three beeps that rise and fall at the SAME instant (dur = 0), then a
+  // gap long enough to close the group.
+  for (int b = 0; b < 3; b++) {
+    det.update(true, 1000);   // rising, now == edge_ms after the prior edge
+    det.update(false, 1000);  // falling at the same now -> dur 0
+  }
+  Detection d;
+  const uint32_t close_at = 1000 + CadenceDetector::GROUP_GAP_MS + 100;
+  for (uint32_t q = 1000; q <= close_at; q += 25) d = det.update(false, q);
+  CHECK(d.event == Event::None, "zero-duration beeps never raise an alarm");
+}
+
+static void test_confidence_grows_and_caps() {
+  Envelope env;
+  CadenceDetector det;
+  uint32_t t = 0;
+  play_group(env, det, t, 3, 500, 500, 1500);  // cycle 1: no fire
+  uint8_t last_conf = 0;
+  for (int i = 0; i < 8; i++) {
+    Detection d = play_group(env, det, t, 3, 500, 500, 1500);
+    CHECK(d.event == Event::SmokeT3, "sustained T3 keeps firing");
+    CHECK(d.confidence >= last_conf, "confidence is non-decreasing");
+    CHECK(d.confidence <= 95, "confidence caps at 95 (never a bare 100)");
+    last_conf = d.confidence;
+  }
+  CHECK(last_conf == 95, "a long-standing alarm saturates confidence");
+}
+
 static void test_envelope_hysteresis() {
   Envelope env;
   CHECK(!env.update(800), "below on-threshold stays quiet");
@@ -181,6 +252,10 @@ int main() {
   test_t4_co_detects();
   test_doorbell_and_speech_never_alarm();
   test_silence_resets_a_stale_streak();
+  test_switching_alarm_type_needs_fresh_two_cycles();
+  test_count_and_duration_windows_are_disjoint();
+  test_collapsed_timing_fails_safe();
+  test_confidence_grows_and_caps();
   test_envelope_hysteresis();
   test_wire_names_match_the_real_classifier_vocabulary();
 

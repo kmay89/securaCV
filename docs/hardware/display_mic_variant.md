@@ -66,6 +66,17 @@ I2S frame (~20 ms) ──► one RMS scalar ──► buffer ZEROED ──► lo
 - Nothing acoustic is published raw: detections enter the same fleet event
   pipeline as every other witness signal and are journaled like any event.
 
+**The cadence detector runs on the audio clock, not the UI loop.** Each
+frame *is* 20 ms of sound; the runtime advances a frame-counted clock by
+that 20 ms per frame and feeds *that* to the detector — never `millis()`.
+This matters because the main loop redraws an 800×480 panel, so it runs far
+slower than the frame rate and drains several buffered frames at once. Timing
+those frames by wall-clock would collapse a beep group onto one instant and
+silently break the duration windows (a missed alarm, never a false one — but
+missed is the wrong way to fail for a smoke alarm). The DMA holds 160 ms of
+depth so a UI stall loses no audio, and each listening session resets the
+envelope + cadence state to silence (re-arming inherits nothing).
+
 ## You always know if it's on — three mechanisms, one bit
 
 The core design rule: **the indicator is not a second flag that could

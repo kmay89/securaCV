@@ -50,6 +50,13 @@ char s_self_id[48] = {0};
 bool s_display_ok = false;
 bool s_begun = false;
 uint16_t s_level = 0;
+// The cadence detector runs on the AUDIO stream's own clock, not the main
+// loop's: every 320-sample frame is 20 ms of sound regardless of when the
+// loop got around to reading it. Stamping frames with millis() would let a
+// UI stall (LVGL redraw, WiFi work) collapse several beeps into one edge
+// pair and break the duration windows. Anchored to millis() at Start and
+// re-anchored if the stream ever falls >1 s behind (dropped audio).
+uint32_t s_frame_ms = 0;
 uint32_t s_last_snap_ms = 0;
 uint32_t s_last_event_ms = 0;
 // The cooldown only exists BETWEEN events — the first detection must land
@@ -112,7 +119,10 @@ bool driver_install() {
   cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
   cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
   cfg.intr_alloc_flags = 0;
-  cfg.dma_buf_count = 4;
+  // 8 x 20 ms = 160 ms of DMA depth (~10 KB internal RAM): a main-loop
+  // stall shorter than that loses no audio — with only 80 ms, a long LVGL
+  // redraw could silently clip a beep mid-group.
+  cfg.dma_buf_count = 8;
   cfg.dma_buf_len = (int)FRAME_SAMPLES;
   if (i2s_driver_install(MIC_I2S_PORT, &cfg, 0, nullptr) != ESP_OK) {
     return false;
@@ -140,10 +150,28 @@ void driver_uninstall() {
   i2s_driver_uninstall(MIC_I2S_PORT);  // pins released — the hard mute
 }
 
+// Every session starts from silence and every stop forgets: envelope and
+// cadence state carry NOTHING across a mute. Without this, re-arming near
+// a sounding alarm would inherit a stale loud bit and a half-built beep
+// group from the last session, polluting the first new group and delaying
+// a real detection — and "disarm forgets everything it heard" is also the
+// honest reading of the privacy contract.
+void reset_acoustic_state() {
+  s_env = Envelope();
+  s_det = CadenceDetector();
+  s_level = 0;
+  // A fresh listening session earns a fresh "first detection is immediate":
+  // re-arming next to a sounding alarm should surface it now, not after the
+  // 30 s throttle it never entered.
+  s_event_fired = false;
+}
+
 // Perform the Gate's verdict: hardware and indicator together, always.
 void apply_action(Action a) {
   if (a == Action::Start) {
     if (driver_install()) {
+      reset_acoustic_state();
+      s_frame_ms = millis();
       chip_show();
       say_evt("start listening codec_ack=%d", codec_ack() ? 1 : 0);
     } else {
@@ -154,13 +182,15 @@ void apply_action(Action a) {
   } else if (a == Action::Stop) {
     driver_uninstall();
     chip_hide();
-    s_level = 0;
-    say_evt("stop (driver uninstalled, pins released)");
+    reset_acoustic_state();
+    say_evt("stop (driver uninstalled, pins released, state forgotten)");
   }
 }
 
-// One capture frame -> one scalar. Samples die here, every pass.
-bool read_frame_rms(uint16_t* rms_out) {
+// One capture frame -> one scalar (+ the frame's own duration, so the
+// caller can advance the audio-timeline clock). Samples die here, every
+// pass.
+bool read_frame_rms(uint16_t* rms_out, uint32_t* frame_ms_out) {
   static int16_t buf[FRAME_SAMPLES];
   size_t got = 0;
   if (i2s_read(MIC_I2S_PORT, buf, sizeof(buf), &got, 0) != ESP_OK ||
@@ -168,6 +198,7 @@ bool read_frame_rms(uint16_t* rms_out) {
     return false;
   }
   const size_t n = got / sizeof(int16_t);
+  *frame_ms_out = (uint32_t)(n / (SAMPLE_RATE_HZ / 1000));  // 320 -> 20 ms
   int64_t sum = 0;
   for (size_t i = 0; i < n; i++) sum += buf[i];
   const int32_t dc = (int32_t)(sum / (int64_t)n);
@@ -211,11 +242,18 @@ void mic_loop(uint32_t now) {
   apply_action(s_gate.update());
   if (!s_gate.running) return;
 
+  // If the stream fell far behind the wall clock (audio dropped during a
+  // very long stall), jump the audio clock forward rather than replaying
+  // the lost time as phantom silence-free continuity.
+  if ((int32_t)(now - s_frame_ms) > 1000) s_frame_ms = now;
+
   uint16_t rms = 0;
-  while (read_frame_rms(&rms)) {
+  uint32_t frame_ms = 0;
+  while (read_frame_rms(&rms, &frame_ms)) {
     s_level = rms;
+    s_frame_ms += frame_ms;
     const bool loud = s_env.update(rms);
-    const Detection d = s_det.update(loud, now);
+    const Detection d = s_det.update(loud, s_frame_ms);
     if (d.event != Event::None &&
         (!s_event_fired ||
          (int32_t)(now - s_last_event_ms) >= (int32_t)REDETECT_MS)) {

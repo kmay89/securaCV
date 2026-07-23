@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### canary-display — mic soundness pass (a fails-safe becomes a works-right)
+
+- **The acoustic cadence detector now runs on the audio clock, not the
+  main-loop clock.** The runtime drained a batch of buffered 20 ms frames
+  each `mic_loop`, but stamped every frame in the batch with the single
+  `millis()` value passed in — so whenever the loop ran slower than the
+  frame rate (i.e. always, once the 800×480 glass is rendering), a beep
+  group collapsed onto one instant, every beep measured ~0 ms, the T3/T4
+  duration windows rejected it, and a real smoke/CO alarm went
+  **undetected**. `read_frame_rms` now returns each frame's own duration
+  and the loop advances a frame-counted clock by it (re-anchored if the
+  stream ever falls >1 s behind); the detector is fed that. The old bug
+  failed safe (missed alarms, never phantom ones) — a new host test
+  (`test_collapsed_timing_fails_safe`) pins that safety property at the
+  core so it can't ever regress into a false positive.
+- **DMA depth doubled to 160 ms** (`dma_buf_count` 4→8) so a UI stall
+  shorter than that clips no beep; **each listening session resets the
+  envelope + cadence state to silence** so re-arming next to a sounding
+  alarm inherits no stale half-group; and the **"first detection is
+  immediate" property now re-applies per session** (the 30 s re-raise
+  throttle is scoped between events, and a fresh arm clears it).
+- Four new mic-core host tests beyond the timing one: switching alarm type
+  needs a fresh two cycles, the count/duration windows are disjoint (a
+  miscount can't cross-classify T3↔T4), and confidence grows monotonically
+  and caps at 95. Mic doc's privacy-barrier section gains the audio-clock
+  note.
+
 ### canary-display — the usability protocol (testing the promises on real people)
 
 - New `docs/hardware/display_usability_protocol.md` — the post-flash
