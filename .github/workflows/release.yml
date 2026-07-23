@@ -9,14 +9,23 @@ permissions:
   contents: write
   packages: write
 
+# One release pipeline per tag; never cancel mid-publish — concurrent tag
+# pushes queue instead.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      # Restores the default-branch cargo cache — tag builds start warm.
+      - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: sudo apt-get install -y libseccomp-dev
       - name: Check formatting
@@ -29,6 +38,7 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         include:
@@ -37,6 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: sudo apt-get install -y libseccomp-dev
       - name: Build release
@@ -59,6 +70,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -81,9 +93,13 @@ jobs:
   validate-hacs:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: HACS Validation
-        uses: hacs/action@main
+        # Pinned to the same SHA as validate.yml — @main is a mutable ref
+        # that can change under a release run.
+        uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
         with:
           category: integration
+          ignore: brands

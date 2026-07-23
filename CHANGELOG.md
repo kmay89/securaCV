@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ### canary-display — the gears turn: full mode runtime + the browser twin
 
 - **The mode system is now end-to-end firmware** (Built · compile-gated ·
@@ -52,6 +53,8 @@
   `tests/modes-facts.test.mjs`, a Lab stop, `_redirects`, and sitemap
   entries on the website side.
 
+=======
+>>>>>>> origin/main
 ### canary-display — the glass gets gears (mode architecture) + the 4.3B peripheral catalog
 
 - **Mode system spec'd, registry implemented.** New

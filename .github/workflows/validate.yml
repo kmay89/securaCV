@@ -33,6 +33,7 @@ jobs:
   validate-hacs:
     name: HACS Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
@@ -43,6 +44,7 @@ jobs:
   validate-hassfest:
     name: Hassfest Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: home-assistant/actions/hassfest@f4ca6f671bd429efb108c0f2fa0ae8af0215986c # master @ 2026-05-28

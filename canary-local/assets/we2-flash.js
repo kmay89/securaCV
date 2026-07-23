@@ -22,7 +22,8 @@
 // nothing here can brick the module — the burn menu lives in mask ROM.
 
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
-         formatDetections, detectionSummary, WE2_CLASSES } from "./we2-core.js";
+         stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
+import { helpTopic } from "./flash-core.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
 
@@ -255,8 +256,14 @@ function phaseModuleConnected(ctx, s) {
       "Its SHA-256 is shown before flashing — you’re trusting your file, not us."));
   const file = document.createElement("input");
   file.type = "file"; file.accept = ".tflite,.bin"; file.hidden = true;
-  src.append(pinned, local, file);
+  // Already carrying its model? The live bench needs no reflash.
+  const benchCard = el("button", "card we2-src-card");
+  benchCard.append(el("strong", null, "Just look through it (live bench)"),
+    el("span", "muted", "Model already on the module? Open the live preview — camera frames, " +
+      "bounding boxes, a confidence meter, and the two on-module dials. Nothing is written."));
+  src.append(pinned, local, benchCard, file);
   box.append(el("h3", "wap-col-h", "What goes on it"), src);
+  benchCard.addEventListener("click", () => ctx.setPhase(phaseModuleBench(ctx, s)));
 
   const note = el("p", "fineprint", "");
   box.append(note);
@@ -347,6 +354,318 @@ function phaseModuleFlash(ctx, s, job) {
   return box;
 }
 
+// ── the live bench: video preview + boxes + meter + thresholds + guide ──────
+// One implementation, mounted from two places: after a burn (phaseModuleDone)
+// and directly from "Module connected" for a module that already carries its
+// model — nobody should have to reflash just to see through the camera.
+//
+// What it renders, every event, from scratch (no ghost boxes):
+//   frame  — the module's JPEG still on a canvas (kept as lastFrame so
+//            boxes-only events repaint over the CURRENT image, not stack)
+//   boxes  — every detection, each with a stable identity color, an index
+//            badge, and its own confidence — multi-object is the normal case
+//   meter  — best-confidence bar with the module's TSCORE floor as a tick,
+//            so the threshold slider visibly MEANS something
+//   guide  — catalog-driven steps + troubleshooting (we2_module.bench)
+
+function benchHelpDot(ctx, topicId) {
+  const t = helpTopic(ctx.catalog, topicId);
+  if (!t) return null;
+  const wrap = el("span", "flash-help");
+  const btn = el("button", "flash-help-dot", "?");
+  btn.type = "button";
+  btn.setAttribute("aria-label", `About: ${t.label}`);
+  const pop = el("span", "flash-help-pop flash-hidden");
+  pop.append(el("strong", "flash-help-title", t.label));
+  pop.append(el("span", "flash-help-what", t.what));
+  if (t.default) {
+    const d = el("span", "flash-help-default");
+    d.append(el("em", null, "Default: "), document.createTextNode(t.default));
+    pop.append(d);
+  }
+  btn.addEventListener("click", (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    pop.classList.toggle("flash-hidden");
+  });
+  wrap.append(btn, pop);
+  return wrap;
+}
+
+function mountBench(ctx, at, opts = {}) {
+  const m = ctx.catalog.we2_module;
+  const guide = m.bench || { defaults: { tscore: 50, tiou: 45 }, steps: [], troubleshooting: [] };
+  const classes = opts.pinned ? WE2_CLASSES : [];
+
+  const bench = el("div", "we2-bench");
+  bench.append(el("h3", "wap-col-h", "Bench check — see what it sees"));
+  bench.append(el("p", "fineprint",
+    "This streams camera frames from the module to this page over your USB cable — the " +
+    "attended, one-time bench check the guide describes. Frames render below and go nowhere " +
+    "else. Mounted-and-deployed aiming stays boxes-only over MQTT (the Aim card)."));
+
+  // The guide: numbered steps + every usual failure, catalog-driven.
+  if (guide.steps.length) {
+    const how = el("details", "we2-guide");
+    how.append(el("summary", null, "How to get the live preview working"));
+    const ol = el("ol", "we2-guide-steps");
+    guide.steps.forEach((s2) => ol.append(el("li", null, s2)));
+    how.append(ol);
+    if (guide.troubleshooting.length) {
+      how.append(el("p", "we2-guide-fixh", "If it doesn’t behave:"));
+      const dl = el("div", "we2-guide-fixes");
+      guide.troubleshooting.forEach((f) => {
+        const row = el("div", "we2-guide-fix");
+        row.append(el("strong", null, f.when));
+        row.append(el("span", null, f.fix));
+        dl.append(row);
+      });
+      how.append(dl);
+    }
+    bench.append(how);
+  }
+
+  const startBtn = el("button", "primary", "Start live preview");
+  const stopBtn = el("button", "ghost", "Stop");
+  stopBtn.disabled = true;
+  const rowB = el("div", "we2-btnrow");
+  rowB.append(startBtn, stopBtn);
+
+  const seenBanner = el("div", "we2-seen flash-hidden");
+
+  // The stage: canvas + overlay chips (object count, fps).
+  const stage = el("div", "we2-preview");
+  const cv = document.createElement("canvas");
+  cv.className = "we2-preview-cv";
+  const countChip = el("span", "we2-chip we2-chip-count flash-hidden");
+  const fpsChip = el("span", "we2-chip we2-chip-fps flash-hidden");
+  stage.append(cv, countChip, fpsChip);
+
+  // The confidence meter: best score vs the module's own reporting floor.
+  const meter = el("div", "we2-meter");
+  const meterTrack = el("div", "we2-meter-track");
+  const meterFill = el("div", "we2-meter-fill");
+  const meterTick = el("div", "we2-meter-tick");
+  meterTrack.append(meterFill, meterTick);
+  const meterLabel = el("div", "we2-meter-label", "watching… nothing yet");
+  meter.append(meterTrack, meterLabel);
+
+  // Thresholds: initialized from the MODULE's live values (queried), with the
+  // model-zoo defaults as the fallback; the ⓘ explains each one.
+  const thr = { tscore: guide.defaults.tscore, tiou: guide.defaults.tiou };
+  const sliders = el("div", "vis-preview-controls");
+  const mkSlider = (label, cmd, key, helpId) => {
+    const boxS = el("label", "vis-slider");
+    const out = el("output", null, String(thr[key]));
+    const input = document.createElement("input");
+    input.type = "range"; input.min = "0"; input.max = "100"; input.value = String(thr[key]);
+    input.addEventListener("change", async () => {
+      await at.cmd(cmd + "=" + input.value, { timeoutMs: 2000 });
+      // Read back what the module actually holds — the slider never lies.
+      const q = await at.cmd(cmd + "?", { timeoutMs: 1500 });
+      const v = q && typeof q.data === "number" ? q.data : Number(input.value);
+      thr[key] = v;
+      input.value = String(v); out.value = String(v);
+      if (key === "tscore") positionTick();
+    });
+    const cap = el("span", null, label);
+    const hd = benchHelpDot(ctx, helpId);
+    if (hd) cap.append(hd);
+    boxS.append(cap, input, out);
+    return { node: boxS, input, out };
+  };
+  const sTscore = mkSlider("Confidence floor (TSCORE)", "TSCORE", "tscore", "tscore");
+  const sTiou = mkSlider("Overlap merge (TIOU)", "TIOU", "tiou", "tiou");
+  sliders.append(sTscore.node, sTiou.node);
+
+  const meta = el("p", "fineprint", "");
+  bench.append(rowB, seenBanner, stage, meter, sliders, meta);
+
+  function positionTick() {
+    meterTick.style.left = thr.tscore + "%";
+    meterTick.title = "the module’s reporting floor — TSCORE " + thr.tscore;
+  }
+  positionTick();
+
+  // Ask the module for its CURRENT thresholds so the sliders start honest.
+  (async () => {
+    for (const [cmd, key, s2] of [["TSCORE?", "tscore", sTscore], ["TIOU?", "tiou", sTiou]]) {
+      const q = await at.cmd(cmd, { timeoutMs: 1500 });
+      if (q && typeof q.data === "number" && q.data >= 0 && q.data <= 100) {
+        thr[key] = q.data;
+        s2.input.value = String(q.data);
+        s2.out.value = String(q.data);
+      }
+    }
+    positionTick();
+  })();
+
+  // ── the render loop: every event repaints frame + boxes from scratch ──
+  const ctx2 = cv.getContext("2d");
+  let lastFrame = null;      // the current camera still (Image)
+  let previewing = false, seen = false;
+  let streamed = false;      // any INVOKE event since the last Start press
+  let frames = 0, fpsT0 = performance.now();
+
+  function render(boxes) {
+    if (lastFrame) {
+      cv.width = lastFrame.width; cv.height = lastFrame.height;
+      ctx2.drawImage(lastFrame, 0, 0);
+    } else {
+      ctx2.fillStyle = "#08090b";
+      ctx2.fillRect(0, 0, cv.width || 240, cv.height || 240);
+    }
+    const dets = stylizeDetections(boxes, classes);
+    for (const d of dets) {
+      const x = d.x - d.w / 2, y = d.y - d.h / 2;
+      // the box — identity-colored, weight by confidence band
+      ctx2.lineWidth = d.band === "ok" ? 3 : 2;
+      ctx2.strokeStyle = d.color;
+      ctx2.strokeRect(x, y, d.w, d.h);
+      // corner ticks make thin boxes readable on busy frames
+      ctx2.lineWidth = d.band === "ok" ? 5 : 3;
+      const t = Math.min(14, d.w / 4, d.h / 4);
+      ctx2.beginPath();
+      for (const [cx, cy, dx, dy] of [[x, y, 1, 1], [x + d.w, y, -1, 1], [x, y + d.h, 1, -1], [x + d.w, y + d.h, -1, -1]]) {
+        ctx2.moveTo(cx + dx * t, cy); ctx2.lineTo(cx, cy); ctx2.lineTo(cx, cy + dy * t);
+      }
+      ctx2.stroke();
+      // the label: "#1 person · 92%"
+      const text = `#${d.n} ${d.text}`;
+      ctx2.font = "700 13px ui-monospace, Menlo, monospace";
+      const tw = ctx2.measureText(text).width + 10;
+      const ly = y - 20 >= 0 ? y - 20 : y + d.h + 1;
+      ctx2.fillStyle = d.fill;
+      ctx2.fillRect(x, ly, tw, 19);
+      ctx2.fillStyle = d.color;
+      ctx2.fillText(text, x + 5, ly + 14);
+    }
+    // meter + chips + summary
+    const mm = meterModel(boxes, classes, thr.tscore);
+    meterFill.style.width = (mm.count ? mm.top : 0) + "%";
+    meterFill.dataset.level = mm.level;
+    meterLabel.textContent = mm.count
+      ? `${mm.label} — clears the floor by ${mm.margin}`
+      : "watching… nothing above the floor";
+    meta.textContent = mm.label;
+    countChip.textContent = mm.count ? `${mm.count} in frame` : "";
+    countChip.classList.toggle("flash-hidden", !mm.count);
+    if (dets.length && !seen) {
+      seen = true;
+      seenBanner.textContent = opts.pinned
+        ? "👁 It sees you — the model is live and working ✓"
+        : "👁 It sees something — the model is live and working ✓";
+      seenBanner.classList.remove("flash-hidden");
+    }
+  }
+
+  at.onEvent((f) => {
+    if (!previewing || !f.data) return;
+    streamed = true;
+    if (f.data.image) {
+      const image = new Image();
+      image.onload = () => {
+        lastFrame = image;
+        frames++;
+        const now = performance.now();
+        if (now - fpsT0 >= 1000) {
+          fpsChip.textContent = `${Math.round((frames * 1000) / (now - fpsT0))} fps`;
+          fpsChip.classList.remove("flash-hidden");
+          frames = 0; fpsT0 = now;
+        }
+        render(f.data.boxes);
+      };
+      image.src = "data:image/jpeg;base64," + f.data.image;
+    } else if (f.data.boxes) {
+      render(f.data.boxes); // boxes-only event: repaint over the CURRENT frame
+    }
+  });
+
+  startBtn.addEventListener("click", async () => {
+    previewing = true;
+    streamed = false;
+    seen = false; seenBanner.classList.add("flash-hidden");
+    meta.textContent = "watching…";
+    startBtn.disabled = true; stopBtn.disabled = false;
+    // Continuous invoke, with frames. On SSCMA the stream itself arrives as
+    // type-1 INVOKE events (docs/hardware/grove_vision_ai_v2_guide.md §8) and
+    // a type-0 ack may or may not precede it depending on firmware build —
+    // so success is EITHER signal, and failure is only "nothing arrived".
+    const inv = await at.cmd("INVOKE=-1,0,0", { timeoutMs: 4000 });
+    if (streamed || (inv && inv.code === 0) || !previewing) return;
+    await sleep(1500); // one more beat — a slow first frame is not a failure
+    if (previewing && !streamed) {
+      meta.textContent = "The module didn’t start streaming — power-cycle it (unplug/replug), " +
+        "reconnect, and try again. The guide above lists the other usual causes.";
+      previewing = false;
+      startBtn.disabled = false; stopBtn.disabled = true;
+    }
+  });
+  stopBtn.addEventListener("click", async () => {
+    previewing = false;
+    startBtn.disabled = false; stopBtn.disabled = true;
+    fpsChip.classList.add("flash-hidden");
+    await at.cmd("BREAK", { timeoutMs: 2000 });
+  });
+
+  return {
+    node: bench,
+    async stop() {
+      previewing = false;
+      try { await at.cmd("BREAK", { timeoutMs: 800 }); } catch { /* leaving anyway */ }
+    },
+  };
+}
+
+// The bench as its own phase — for a module that ALREADY has its model, so
+// seeing through the camera never requires a reflash.
+function phaseModuleBench(ctx, s) {
+  const box = el("section", "flash-card we2-flow");
+  box.append(el("h2", null, "Live bench — no reflash needed"));
+  const idLine = el("p", "muted", "Asking the module what it carries…");
+  box.append(idLine);
+
+  const at = makeAtClient(s.t);
+  at.start();
+
+  let bench = null;
+  (async () => {
+    const ver = await at.cmd("VER?", { timeoutMs: 2500 });
+    if (!ver || ver.code !== 0) {
+      idLine.textContent = "The module didn’t answer AT — it may have no firmware/model yet, or " +
+        "be mid-state. Power-cycle it and retry; if it keeps refusing, burn the model first " +
+        "(one click back).";
+      return;
+    }
+    // What model is on it? Our stored model card answers — honesty decides the
+    // label map: only a card naming the person class earns "person" labels.
+    const info = await at.cmd("INFO?", { timeoutMs: 2000 });
+    let pinned = false, modelName = "";
+    try {
+      // the reply's data is the base64 card — bare, or nested as data.info
+      const raw = info && (typeof info.data === "string" ? info.data
+        : info.data && typeof info.data.info === "string" ? info.data.info : null);
+      const decoded = raw ? JSON.parse(atob(raw)) : null;
+      modelName = (decoded && decoded.name) || "";
+      pinned = !!(decoded && Array.isArray(decoded.classes) && decoded.classes.includes("person"));
+    } catch { /* no card or not ours — generic labels */ }
+    idLine.textContent = "SSCMA firmware " + ((ver.data && ver.data.software) || "?") +
+      (modelName ? " · model: " + modelName : " · no model card — labels will read “object”") +
+      ". Start the preview below.";
+    bench = mountBench(ctx, at, { pinned });
+    box.insertBefore(bench.node, backBtn);
+  })();
+
+  const backBtn = el("button", "ghost", "← back");
+  backBtn.addEventListener("click", async () => {
+    if (bench) await bench.stop();
+    at.stop();
+    await s.t.close();
+    ctx.back();
+  });
+  box.append(backBtn);
+  return box;
+}
+
 function phaseModuleDone(ctx, s, job) {
   const box = el("section", "flash-card we2-flow");
   box.append(el("div", "flash-big-emoji", "✅"));
@@ -390,107 +709,13 @@ function phaseModuleDone(ctx, s, job) {
     }
   })();
 
-  // ── the bench: live preview + the two on-module thresholds ──
-  const bench = el("div", "we2-bench");
-  bench.append(el("h3", "wap-col-h", "Bench check — see what it sees (optional)"));
-  bench.append(el("p", "fineprint",
-    "This streams camera frames from the module to this page over your USB cable — the " +
-    "attended, one-time bench check the guide describes. Frames render below and go nowhere " +
-    "else. Mounted-and-deployed aiming stays boxes-only over MQTT (the Aim card)."));
-  const startBtn = el("button", "primary", "Start live preview");
-  const stopBtn = el("button", "ghost", "Stop");
-  stopBtn.disabled = true;
-  const rowB = el("div", "we2-btnrow");
-  rowB.append(startBtn, stopBtn);
-  const stage = el("div", "we2-preview");
-  const img = document.createElement("canvas");
-  img.className = "we2-preview-cv";
-  stage.append(img);
-  const meta = el("p", "fineprint", "");
-  const seenBanner = el("div", "we2-seen flash-hidden");
-  const sliders = el("div", "vis-preview-controls");
-  const mkSlider = (label, cmd, init) => {
-    const boxS = el("label", "vis-slider");
-    const out = el("output", null, String(init));
-    const input = document.createElement("input");
-    input.type = "range"; input.min = "0"; input.max = "100"; input.value = String(init);
-    input.addEventListener("change", async () => {
-      out.value = input.value;
-      await at.cmd(cmd + "=" + input.value, { timeoutMs: 2000 });
-    });
-    boxS.append(el("span", null, label), input, out);
-    return boxS;
-  };
-  sliders.append(mkSlider("Confidence (TSCORE)", "TSCORE", 70), mkSlider("IoU (TIOU)", "TIOU", 45));
-  bench.append(rowB, seenBanner, stage, sliders, meta);
-  box.append(bench);
-
-  // Only the pinned model is known to be the person detector. A model the user
-  // brought can detect anything, so we don't claim its class is "person" (empty
-  // map → generic "object" labels) and the celebration stays honest below.
-  const previewClasses = job.pinned ? WE2_CLASSES : [];
-
-  let previewing = false, seen = false;
-  at.onEvent((f) => {
-    if (!previewing || !f.data) return;
-    const ctx2 = img.getContext("2d");
-    const draw = (boxes) => {
-      const dets = formatDetections(boxes, previewClasses);
-      for (const d of dets) {
-        // Confidence-tinted: a confident hit glows green, a marginal one stays amber.
-        const hot = d.score >= 60;
-        ctx2.lineWidth = 3;
-        ctx2.strokeStyle = hot ? "#7CFF9B" : "#FFD44F";
-        ctx2.strokeRect(d.x - d.w / 2, d.y - d.h / 2, d.w, d.h);
-        ctx2.font = "700 13px ui-monospace, Menlo, monospace";
-        const tw = ctx2.measureText(d.text).width + 10;
-        ctx2.fillStyle = hot ? "rgba(10,38,20,0.9)" : "rgba(20,20,20,0.85)";
-        ctx2.fillRect(d.x - d.w / 2, d.y - d.h / 2 - 20, tw, 19);
-        ctx2.fillStyle = hot ? "#7CFF9B" : "#FFD44F";
-        ctx2.fillText(d.text, d.x - d.w / 2 + 5, d.y - d.h / 2 - 6);
-      }
-      // A clean readout — "1 person · 92% confident" for the pinned model, or
-      // "1 object · 92% confident" for a custom one — never a raw JSON dump.
-      meta.textContent = detectionSummary(boxes, previewClasses);
-      // The wow: the first time it detects anything, celebrate once. Only the
-      // pinned person model earns "it sees you"; a custom model "sees something".
-      if (dets.length && !seen) {
-        seen = true;
-        seenBanner.textContent = job.pinned
-          ? "👁 It sees you — the model is live and working ✓"
-          : "👁 It sees something — the model is live and working ✓";
-        seenBanner.classList.remove("flash-hidden");
-      }
-    };
-    if (f.data.image) {
-      const image = new Image();
-      image.onload = () => {
-        img.width = image.width; img.height = image.height;
-        ctx2.drawImage(image, 0, 0);
-        draw(f.data.boxes);
-      };
-      image.src = "data:image/jpeg;base64," + f.data.image;
-    } else if (f.data.boxes) {
-      draw(f.data.boxes);
-    }
-  });
-  startBtn.addEventListener("click", async () => {
-    previewing = true;
-    seen = false; seenBanner.classList.add("flash-hidden");
-    meta.textContent = "watching…";
-    startBtn.disabled = true; stopBtn.disabled = false;
-    await at.cmd("INVOKE=-1,0,0", { timeoutMs: 4000 }); // continuous, with frames
-  });
-  stopBtn.addEventListener("click", async () => {
-    previewing = false;
-    startBtn.disabled = false; stopBtn.disabled = true;
-    await at.cmd("BREAK", { timeoutMs: 2000 });
-  });
+  // ── the bench: shared with phaseModuleBench — video, boxes, meter, guide ──
+  const bench = mountBench(ctx, at, { pinned: job.pinned });
+  box.append(bench.node);
 
   const done = el("button", "ghost", "Disconnect — I’m done");
   done.addEventListener("click", async () => {
-    previewing = false;
-    try { await at.cmd("BREAK", { timeoutMs: 800 }); } catch { /* leaving anyway */ }
+    await bench.stop();
     at.stop();
     await s.t.close();
     ctx.back();

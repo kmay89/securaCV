@@ -62,6 +62,7 @@ jobs:
   flavors:
     name: Load flavor manifest
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.load.outputs.matrix }}
     steps:
@@ -73,6 +74,7 @@ jobs:
     name: PlatformIO Build (${{ matrix.flavor.name }})
     needs: flavors
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -162,6 +164,7 @@ jobs:
     name: Static Analysis (${{ matrix.flavor.name }})
     needs: flavors
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -220,29 +223,21 @@ jobs:
   build-arduino-cli:
     name: Arduino CLI Build (Canary WAP)
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Configure Arduino CLI
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-
-      - name: Install libraries
-        run: |
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          # NimBLE-Arduino (2.x) is REQUIRED for the FULL profile's BLE stack.
-          # Without it the sketch's ble_config.h guard now errors instead of
-          # silently shipping "BLE unavailable in this build" — installing it
-          # here means BLE is actually compile-tested in CI.
-          arduino-cli lib install "NimBLE-Arduino"
+      - name: Install Arduino CLI + ESP32 core (cached)
+        # NimBLE-Arduino (2.x) is REQUIRED for the FULL profile's BLE stack.
+        # Without it the sketch's ble_config.h guard now errors instead of
+        # silently shipping "BLE unavailable in this build" — installing it
+        # here means BLE is actually compile-tested in CI.
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          libraries: |
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino
 
       - name: Compile firmware
         run: |
@@ -302,6 +297,7 @@ jobs:
   build-arduino-cli-display:
     name: Arduino CLI Build (Canary Display ${{ matrix.flavor.name }}, core ${{ matrix.core.name }})
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -342,25 +338,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Configure Arduino CLI (esp32 core ${{ matrix.core.version }})
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32@${{ matrix.core.version }}
-
-      - name: Install libraries (pinned per core line)
-        run: |
-          arduino-cli lib install "GFX Library for Arduino@${{ matrix.core.gfx }}"
-          arduino-cli lib install "lvgl@${{ matrix.core.lvgl }}"
-          arduino-cli lib install "PubSubClient"
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          arduino-cli lib install "NimBLE-Arduino@${{ matrix.core.nimble }}"
+      - name: Install Arduino CLI + ESP32 core ${{ matrix.core.version }} (cached, libs pinned per core line)
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          core-version: ${{ matrix.core.version }}
+          libraries: |
+            GFX Library for Arduino@${{ matrix.core.gfx }}
+            lvgl@${{ matrix.core.lvgl }}
+            PubSubClient
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino@${{ matrix.core.nimble }}
 
       - name: Profile build (arduino-cli --profile, core-3 row)
         # sketch.yaml profiles are what the CLI docs point users at, but
@@ -409,6 +397,7 @@ jobs:
   csi-sketch-sync:
     name: CSI Sketch Copy Sync
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -487,6 +476,7 @@ jobs:
   regression-check:
     name: Regression Guards
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -529,6 +519,7 @@ jobs:
   archive-guard:
     name: Archive Edit Guard
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -576,6 +567,7 @@ jobs:
   csi-invariants:
     name: CSI Privacy Invariants
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -668,6 +660,7 @@ jobs:
   mesh-scout-host-tests:
     name: Mesh + Scout Host Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -862,6 +855,7 @@ jobs:
           /tmp/demo_script | tee /tmp/demo_script.log
           grep -q "ALL .* PASSED" /tmp/demo_script.log
 
+<<<<<<< HEAD
       - name: Build + run canary-display arcade logic host test
         # Arcade mode's factory claim — one round exercises EVERY touch zone
         # and the score screen is the QA report — is pinned in the pure core
@@ -879,6 +873,8 @@ jobs:
           /tmp/arcade_logic | tee /tmp/arcade_logic.log
           grep -q "ALL .* PASSED" /tmp/arcade_logic.log
 
+=======
+>>>>>>> origin/main
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
@@ -1213,6 +1209,7 @@ jobs:
   microcopy-lint:
     name: Dashboard Microcopy Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -1255,6 +1252,7 @@ jobs:
   fleet-link-host-tests:
     name: Fleet-Link Host Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
