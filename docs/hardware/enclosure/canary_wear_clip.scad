@@ -36,7 +36,7 @@ nub_h     = 1.2;     // grip nub at the leaf tip
 
 /* [MOLLE plate] */
 mp_w = 55.0;  mp_l = 90.0;  mp_t = 3.0;
-slot_w = 27.0;  slot_h = 3.5;  slot_pitch = 32.0;   // 1" PALS webbing
+slot_w = 27.0;  slot_h = 3.5;  slot_pitch = 25.4;   // PALS grid: rows on 1" (25.4 mm) centres
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

@@ -458,10 +458,13 @@ are not, so do not rely on them alone.
 
 ## 11 · Sourcing & revision
 
-- Distributor SKUs in the CSVs (Mouser / DigiKey / LCSC) are **indicative** and
-  were not live-verified at authoring time — confirm availability, MOQ, and
-  current pricing before ordering, and update the `Lifecycle` column for any
-  NRND/EOL parts.
+- Sourcing is now **automated**: distributor SKUs, live stock, price breaks
+  and lifecycle are fetched nightly into
+  [`pricing.json`](./pricing.json) by the BOM pipeline
+  ([`bom_pipeline.md`](./bom_pipeline.md)), which raises a GitHub issue when
+  a part goes out of stock, jumps in price, or leaves Active lifecycle.
+  SKUs and prices typed in the CSVs are **indicative seed values** —
+  the snapshot's distributor-verified rows are the ones to trust.
 - The XIAO ESP32-S3 Sense, L76K, and Grove Vision AI V2 are most reliably
   sourced from **Seeed Studio** and its authorized resellers.
 

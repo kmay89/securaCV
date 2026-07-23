@@ -1,0 +1,1150 @@
+{
+ "generated_by": "scripts/bom_pricing.py",
+ "as_of": "2026-07-23T08:30:23Z",
+ "note": "Offline seed from the BOM CSVs — prices are the CSVs' indicative values until distributor credentials are configured.",
+ "sources": {
+  "csv": "docs/hardware/bom_*.csv (design intent + indicative seed prices)",
+  "digikey": false,
+  "mouser": false
+ },
+ "parts": {
+  "101021040": {
+   "mfr": "Seeed Studio",
+   "desc": "Grove Vision AI V2 (Himax WiseEye2 HX6538, Arm Cortex-M55 + Ethos-U55)",
+   "sourcing": "orderable",
+   "seed_usd": 29.0,
+   "unit_usd": 29.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "digikey": "114992866"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "102010469": {
+   "mfr": "Seeed Studio",
+   "desc": "XIAO ESP32-S3 Sense (ESP32-S3, 8MB flash, 8MB PSRAM, OV2640 camera, PDM mic)",
+   "sourcing": "orderable",
+   "seed_usd": 14.9,
+   "unit_usd": 14.9,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "713-102010469",
+    "digikey": "102010469-ND"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "104040143": {
+   "mfr": "Seeed Studio",
+   "desc": "Seeed Round Display for XIAO (1.28in 240x240 GC9A01, CST816S touch, PCF8563 RTC, microSD, LiPo charger, JST 1.25)",
+   "sourcing": "orderable",
+   "seed_usd": 18.0,
+   "unit_usd": 18.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "110990210": {
+   "mfr": "Seeed Studio",
+   "desc": "Grove 4-pin cable",
+   "sourcing": "orderable",
+   "seed_usd": 1.2,
+   "unit_usd": 1.2,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "713-110990210"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "113991114": {
+   "mfr": "Seeed Studio",
+   "desc": "XIAO ESP32-S3 (plain, 8MB flash / 8MB PSRAM) — WATCH build",
+   "sourcing": "orderable",
+   "seed_usd": 7.49,
+   "unit_usd": 7.49,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "digikey": "113991114"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "12V1A-DC-UL": {
+   "mfr": "Generic",
+   "desc": "12V/1A DC bench supply for the DI/DO field loop",
+   "sourcing": "generic",
+   "seed_usd": 9.0,
+   "unit_usd": 9.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "1554F2GYCL": {
+   "mfr": "Hammond",
+   "desc": "Polycarbonate enclosure w/ clear lid (Hammond 1554/1555 + clear lid); camera window",
+   "sourcing": "orderable",
+   "seed_usd": 18.0,
+   "unit_usd": 18.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "546-1554F2GYCL",
+    "digikey": "HM1276-ND"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "1N4148": {
+   "mfr": "onsemi",
+   "desc": "Flyback/clamp diode (small-signal) across magnetic buzzer",
+   "sourcing": "orderable",
+   "seed_usd": 0.05,
+   "unit_usd": 0.05,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "512-1N4148",
+    "digikey": "1N4148FS-ND",
+    "lcsc": "C81598"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "2.4G-UFL-WHIP": {
+   "mfr": "Generic",
+   "desc": "External 2.4GHz antenna, u.FL/IPEX (if onboard insufficient)",
+   "sourcing": "generic",
+   "seed_usd": 2.2,
+   "unit_usd": 2.2,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "2N7002": {
+   "mfr": "onsemi",
+   "desc": "N-channel MOSFET (only needed for MAGNETIC buzzers)",
+   "sourcing": "orderable",
+   "seed_usd": 0.1,
+   "unit_usd": 0.1,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "512-2N7002LT1G",
+    "digikey": "2N7002LT1GOSCT-ND",
+    "lcsc": "C8545"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "59140-1-S-02-A": {
+   "mfr": "Littelfuse",
+   "desc": "Reed switch, SPST normally-closed (tamper), hermetic glass",
+   "sourcing": "orderable",
+   "seed_usd": 1.8,
+   "unit_usd": 1.8,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "5V2A-USBC-UL": {
+   "mfr": "Generic",
+   "desc": "USB-C PSU 5V/2A wall adapter (UL/ETL listed)",
+   "sourcing": "generic",
+   "seed_usd": 8.0,
+   "unit_usd": 8.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv",
+    "bom_canary_sense.csv"
+   ]
+  },
+  "ADA-1317-CLASS": {
+   "mfr": "Adafruit/Generic",
+   "desc": "LiPo 302030 150mAh PROTECTED cell, JST 1.25 — battery-backed watch",
+   "sourcing": "orderable",
+   "seed_usd": 5.95,
+   "unit_usd": 5.95,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "ADA-1982-CLASS": {
+   "mfr": "Adafruit/Generic",
+   "desc": "MPR121 12-pad capacitive touch breakout (I2C 0x5A) — playground cap-touch station",
+   "sourcing": "orderable",
+   "seed_usd": 7.95,
+   "unit_usd": 7.95,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "ADA-3317-CLASS": {
+   "mfr": "Adafruit/Generic",
+   "desc": "VL53L0X time-of-flight breakout (I2C 0x29) — playground ToF / gap station",
+   "sourcing": "orderable",
+   "seed_usd": 9.95,
+   "unit_usd": 9.95,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "ADA-4162-CLASS": {
+   "mfr": "Adafruit/Generic",
+   "desc": "VEML7700 ambient light breakout (I2C 0x10) — playground light station",
+   "sourcing": "orderable",
+   "seed_usd": 4.95,
+   "unit_usd": 4.95,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "AH3572-P-B": {
+   "mfr": "Diodes Inc",
+   "desc": "ALT: Hall-effect switch (tamper) in place of reed",
+   "sourcing": "orderable",
+   "seed_usd": 0.45,
+   "unit_usd": 0.45,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "lcsc": "C460941"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "B3F-1000": {
+   "mfr": "Omron",
+   "desc": "Tactile push button 6mm momentary (multifunction)",
+   "sourcing": "orderable",
+   "seed_usd": 0.12,
+   "unit_usd": 0.12,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "653-B3F-1000",
+    "digikey": "SW400-ND",
+    "lcsc": "C72443"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "CHIME-12V": {
+   "mfr": "Generic",
+   "desc": "12V chime / buzzer / strobe candidates (≤450mA) — DO0/DO1 stations",
+   "sourcing": "generic",
+   "seed_usd": 6.0,
+   "unit_usd": 6.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "CL21B104KBCNNNC": {
+   "mfr": "Samsung",
+   "desc": "Capacitor 0.1uF 50V X7R 0805 (WS2812 decoupling)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.02,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "lcsc": "C49678"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "CPT-9019S-SMT-TR": {
+   "mfr": "CUI Devices",
+   "desc": "Passive piezo (UNPOPULATED in v0.1 firmware — future severity-tiered chime)",
+   "sourcing": "orderable",
+   "seed_usd": 0.55,
+   "unit_usd": 0.55,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "490-CPT-9019S-SMT-TR",
+    "digikey": "102-CPT-9019S-SMT-TRCT-ND"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv",
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "CU-FOIL-PAD": {
+   "mfr": "Generic",
+   "desc": "Capacitive touch electrode (Cu pad / adhesive foil)",
+   "sourcing": "generic",
+   "seed_usd": 0.2,
+   "unit_usd": 0.2,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "DISC-PMMA-12X1": {
+   "mfr": "Generic",
+   "desc": "Clear disc 12 x 1 mm, PMMA (acrylic) or polycarbonate (camera window)",
+   "sourcing": "generic",
+   "seed_usd": 0.6,
+   "unit_usd": 0.6,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "DISC-PMMA-14X1": {
+   "mfr": "Generic",
+   "desc": "Clear disc 14 x 1 mm, PMMA or polycarbonate (lens window)",
+   "sourcing": "generic",
+   "seed_usd": 0.6,
+   "unit_usd": 0.6,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "DOORBELL-NO": {
+   "mfr": "Generic",
+   "desc": "Momentary doorbell button (dry contact, any NO pushbutton) — DI0 station",
+   "sourcing": "generic",
+   "seed_usd": 3.0,
+   "unit_usd": 3.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "ESP32-C3-DevKitM-1": {
+   "mfr": "Espressif",
+   "desc": "ESP32-C3-DevKitM-1 (RISC-V single-core, 4MB flash)",
+   "sourcing": "orderable",
+   "seed_usd": 8.0,
+   "unit_usd": 8.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "356-ESP32C3DEVKITM1",
+    "digikey": "1965-ESP32-C3-DEVKITM-1ND"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "ESP32-S3-Touch-LCD-4.3": {
+   "mfr": "Waveshare",
+   "desc": "Waveshare ESP32-S3-Touch-LCD-4.3 (800x480 IPS, GT911 5-pt touch, CH422G expander, 16MB flash / 8MB octal PSRAM) — DASH build",
+   "sourcing": "orderable",
+   "seed_usd": 33.0,
+   "unit_usd": 33.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "ESP32-S3-Touch-LCD-4.3B": {
+   "mfr": "Waveshare",
+   "desc": "Waveshare ESP32-S3-Touch-LCD-4.3B (isolated DI/DO + RS485 + CAN + I2C terminal, 6-36V in) — DEV PLAYGROUND host",
+   "sourcing": "orderable",
+   "seed_usd": 36.99,
+   "unit_usd": 36.99,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "ESP32-S3-Touch-LCD-4.3C-BOX": {
+   "mfr": "Waveshare",
+   "desc": "ALT: Waveshare ESP32-S3-Touch-LCD-4.3C \"AI voice\" variant, BOX SKU ships WITH plastic case (resellers: XYGStudy etc.)",
+   "sourcing": "orderable",
+   "seed_usd": 45.0,
+   "unit_usd": 45.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "GORE PMF (adhesive series)": {
+   "mfr": "W. L. Gore",
+   "desc": "GORE adhesive acoustic/protective vent (ePTFE)",
+   "sourcing": "generic",
+   "seed_usd": 3.0,
+   "unit_usd": 3.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "GROMMET-12X7": {
+   "mfr": "Generic",
+   "desc": "Cable grommet / bushing for 12x7mm oval (or seal with neutral-cure silicone)",
+   "sourcing": "generic",
+   "seed_usd": 0.4,
+   "unit_usd": 0.4,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "L76K": {
+   "mfr": "Quectel/Seeed",
+   "desc": "L76K GNSS receiver module (UART), -40 to +85 C",
+   "sourcing": "orderable",
+   "seed_usd": 15.9,
+   "unit_usd": 15.9,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "LIFEPO4-14500-PCM+CTRL": {
+   "mfr": "Generic",
+   "desc": "ALT (outdoor cold/hot): LiFePO4 PROTECTED cell/pack + external LiFePO4 charger w/ temp cutoff",
+   "sourcing": "generic",
+   "seed_usd": 9.0,
+   "unit_usd": 9.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "LIFEPO4-PCM+CTRL or LiPo-PCM+TP4056": {
+   "mfr": "Generic",
+   "desc": "Battery (PROTECTED pack) + chemistry-matched external charger (C3 DevKit has NO charger)",
+   "sourcing": "generic",
+   "seed_usd": 11.0,
+   "unit_usd": 11.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "LP-503450-1100-PCM": {
+   "mfr": "Generic",
+   "desc": "Battery - chemistry per climate; default 3.7V LiPo (INDOOR/mild), PROTECTED PACK w/ PCM, JST-PH 2.0",
+   "sourcing": "generic",
+   "seed_usd": 7.5,
+   "unit_usd": 7.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "M2-HSI-3.5X4": {
+   "mfr": "Generic",
+   "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",
+   "sourcing": "generic",
+   "seed_usd": 0.1,
+   "unit_usd": 0.1,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv",
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "M2X10-SEC-TX": {
+   "mfr": "Generic",
+   "desc": "M2 x 10 security screw (Torx pin / tri-wing), self-tapping",
+   "sourcing": "generic",
+   "seed_usd": 0.3,
+   "unit_usd": 0.3,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "M2X8-ST": {
+   "mfr": "Generic",
+   "desc": "M2 x 8 self-tapping pan head (corner lobes, frame-to-back)",
+   "sourcing": "generic",
+   "seed_usd": 0.05,
+   "unit_usd": 0.05,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "M2X8-ST-CSK": {
+   "mfr": "Generic",
+   "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
+   "sourcing": "generic",
+   "seed_usd": 0.05,
+   "unit_usd": 0.05,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "M2X8-ST-MIX": {
+   "mfr": "Generic",
+   "desc": "M2 self-tapping screws, 6-10mm: 4x pan head (camera posts) + 4x head per case (front corners)",
+   "sourcing": "generic",
+   "seed_usd": 0.05,
+   "unit_usd": 0.05,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "M3.5-PAN-ANCHOR": {
+   "mfr": "Generic",
+   "desc": "#6 / M3.5 pan-head screw + wall anchor (keyhole mount)",
+   "sourcing": "generic",
+   "seed_usd": 0.3,
+   "unit_usd": 0.3,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "M4-CSK-ANCHOR": {
+   "mfr": "Generic",
+   "desc": "#8 / M4 countersunk screw + wall anchor (bracket fixing)",
+   "sourcing": "generic",
+   "seed_usd": 0.3,
+   "unit_usd": 0.3,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "M4X10": {
+   "mfr": "Generic",
+   "desc": "M4 x 10 machine screw (75mm-pair wall mount) or 2x #6 pan screws for keyholes",
+   "sourcing": "generic",
+   "seed_usd": 0.15,
+   "unit_usd": 0.15,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "M5X25+NUT": {
+   "mfr": "Generic",
+   "desc": "M5 x 25 bolt + nut (or GoPro-style M5 knurled thumbscrew)",
+   "sourcing": "generic",
+   "seed_usd": 1.2,
+   "unit_usd": 1.2,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "MR60BHA2": {
+   "mfr": "Seeed Studio",
+   "desc": "MR60BHA2 60GHz mmWave kit (radar module + XIAO ESP32-C6, onboard BH1750 lux + WS2812 LED)",
+   "sourcing": "orderable",
+   "seed_usd": 24.9,
+   "unit_usd": 24.9,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv"
+   ]
+  },
+  "NEO-6X3-NI": {
+   "mfr": "Generic",
+   "desc": "Magnet, Ni-coated neodymium disc for tamper",
+   "sourcing": "generic",
+   "seed_usd": 0.4,
+   "unit_usd": 0.4,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "NUT-1/4-20": {
+   "mfr": "Generic",
+   "desc": "1/4-20 hex nut (tripod mount, captive in bracket)",
+   "sourcing": "generic",
+   "seed_usd": 0.15,
+   "unit_usd": 0.15,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "OV5647-62": {
+   "mfr": "Seeed/Generic",
+   "desc": "OV5647 camera module, Raspberry Pi cam v1.3 form (25 x 24 mm, 21 x 12.5 mm M2 holes), FPC to CSI",
+   "sourcing": "orderable",
+   "seed_usd": 8.0,
+   "unit_usd": 8.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "PBM12-LED-IP65": {
+   "mfr": "Generic",
+   "desc": "12mm panel-mount illuminated momentary button, SHORT body, IP65, LED ring",
+   "sourcing": "generic",
+   "seed_usd": 2.5,
+   "unit_usd": 2.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "PIR-RELAY-12V": {
+   "mfr": "Generic",
+   "desc": "PIR or beam-break sensor with relay / open-collector output, 5-24V — DI1 intrusion station",
+   "sourcing": "generic",
+   "seed_usd": 8.0,
+   "unit_usd": 8.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "PLP1-250": {
+   "mfr": "Bivar",
+   "desc": "Light pipe, single, vertical (LED to face)",
+   "sourcing": "orderable",
+   "seed_usd": 0.45,
+   "unit_usd": 0.45,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "PTS645Sama (sealed) / panel dome": {
+   "mfr": "C&K",
+   "desc": "ALT: sealed IP67 tactile / panel button for outdoor",
+   "sourcing": "generic",
+   "seed_usd": 1.5,
+   "unit_usd": 1.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "RC0805FR-07100KL": {
+   "mfr": "Yageo",
+   "desc": "Resistor 100k ohm 1% 0805 (VBAT 2:1 divider, qty 2)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.02,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "603-RC0805FR-07100KL",
+    "lcsc": "C17407"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "RC0805FR-07100RL": {
+   "mfr": "Yageo",
+   "desc": "Resistor 100 ohm 1/8W 0805 (buzzer series/inrush)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.02,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "603-RC0805FR-07100RL",
+    "lcsc": "C17408"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "RC0805FR-071KL": {
+   "mfr": "Yageo",
+   "desc": "Resistor 1k ohm 1/8W 0805 (touch ESD series)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.02,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "603-RC0805FR-071KL",
+    "lcsc": "C17513"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "RC0805FR-07330RL": {
+   "mfr": "Yageo",
+   "desc": "Resistor 330 ohm 1/8W 0805 (WS2812 data series)",
+   "sourcing": "orderable",
+   "seed_usd": 0.02,
+   "unit_usd": 0.02,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "mouser": "603-RC0805FR-07330RL",
+    "lcsc": "C17630"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "SDSQQNR-032G-GN6IA": {
+   "mfr": "SanDisk",
+   "desc": "microSD high-endurance 32GB+ FAT32 (24/7 continuous-write rated)",
+   "sourcing": "orderable",
+   "seed_usd": 8.5,
+   "unit_usd": 8.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "SIL-NEUTRAL-CLR": {
+   "mfr": "Generic",
+   "desc": "Silicone adhesive/sealant, NEUTRAL-CURE (oxime/alkoxy), clear",
+   "sourcing": "generic",
+   "seed_usd": 6.0,
+   "unit_usd": 6.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "TL-5903": {
+   "mfr": "Tadiran",
+   "desc": "ALT (wide-temp, non-rechargeable): Li-SOCl2 primary cell + buck",
+   "sourcing": "orderable",
+   "seed_usd": 6.0,
+   "unit_usd": 6.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "TPU-95A": {
+   "mfr": "Generic",
+   "desc": "TPU filament 90-95A (printed gasket), ~5g per gasket",
+   "sourcing": "generic",
+   "seed_usd": 0.2,
+   "unit_usd": 0.2,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_sense.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "USB-C-DATA-1M": {
+   "mfr": "Generic",
+   "desc": "USB-C cable, data-capable (not charge-only), 1m",
+   "sourcing": "generic",
+   "seed_usd": 1.5,
+   "unit_usd": 1.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv",
+    "bom_canary_sense.csv",
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "USBC-PLUG-FLG": {
+   "mfr": "Generic",
+   "desc": "Silicone USB-C dust plug with flange",
+   "sourcing": "generic",
+   "seed_usd": 0.5,
+   "unit_usd": 0.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_wap.csv"
+   ]
+  },
+  "WS2812B": {
+   "mfr": "Worldsemi",
+   "desc": "WS2812B addressable RGB LED (5050)",
+   "sourcing": "orderable",
+   "seed_usd": 0.15,
+   "unit_usd": 0.15,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {
+    "lcsc": "C2761795"
+   },
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv",
+    "bom_canary_wap.csv"
+   ]
+  },
+  "XIAO-ESP32C3 / XIAO-ESP32S3": {
+   "mfr": "Seeed Studio",
+   "desc": "ALT (recommended): XIAO ESP32-C3 or ESP32-S3 + header pins, seated in U2's stacking socket",
+   "sourcing": "generic",
+   "seed_usd": 5.5,
+   "unit_usd": 5.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "canary_dash_display.scad": {
+   "mfr": "SecuraCV",
+   "desc": "3D-printed Dash case (bezel frame + vented back + 25deg stand)",
+   "sourcing": "generic",
+   "seed_usd": 2.5,
+   "unit_usd": 2.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  },
+  "canary_vision_enclosure.scad": {
+   "mfr": "SecuraCV",
+   "desc": "3D-printed Canary Vision enclosure (back + front + bracket + knob)",
+   "sourcing": "generic",
+   "seed_usd": 1.5,
+   "unit_usd": 1.5,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_vision.csv"
+   ]
+  },
+  "canary_watch_station.scad": {
+   "mfr": "SecuraCV",
+   "desc": "3D-printed Watch Station puck (drum + snap bezel + 25deg cradle stand)",
+   "sourcing": "generic",
+   "seed_usd": 1.0,
+   "unit_usd": 1.0,
+   "provenance": "csv-seed",
+   "stock": null,
+   "lifecycle": null,
+   "sku": {},
+   "breaks": [],
+   "url": null,
+   "boms": [
+    "bom_canary_display.csv"
+   ]
+  }
+ }
+}

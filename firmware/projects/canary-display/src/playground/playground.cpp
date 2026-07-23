@@ -24,7 +24,7 @@
 #include <string.h>
 #include <driver/twai.h>   // CAN station: ESP-IDF TWAI controller (GPIO15/16)
 #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-#include <Preferences.h>   // dev-mode latch: long-press exits back to the fleet
+#include "canary/mode/mode_glue.h"  // long-press exit: clear both latches, reboot
 #endif
 
 #include "pins.h"
@@ -562,13 +562,9 @@ void playground_loop() {
     if (held >= 3000) {
       do_drive(0, false);
       do_drive(1, false);
-      Preferences p;
-      if (p.begin("securacv", /*readOnly=*/false)) {
-        p.putBool("devmode", false);
-        p.end();
-      }
-      delay(60);
-      ESP.restart();   // does not return
+      // Clears the mode token AND the legacy devmode bool, then reboots to
+      // the fleet face (the registry's uniform exit).
+      canary::mode::mode_exit_to_fleet();   // does not return
     }
 #endif
     if (held < 600 && g.display_ok) {

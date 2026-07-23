@@ -1,6 +1,8 @@
 # Design: the Raspberry Pi hub, flashed in one shot
 
-**Status:** accepted — build in progress (§7 step 1 landed) · **Date:** 2026-07-22 · **Owner:** TBD
+**Status:** accepted — build in progress (§7 steps 1–5 implemented; hardware
+validation of the write + first boot outstanding, Windows backend + full-stack
+seed remaining) · **Date:** 2026-07-22 · **Owner:** TBD
 
 > *"Can our flashing tool support the Raspberry Pi with a custom flash that adds
 > all the tools they need for it to just work — they put in their Wi-Fi, flash it,
@@ -184,9 +186,12 @@ Raspberry Pi Imager.
     `APFSPhysicalStores` to the *physical* boot disk (refused as `system`),
     external means an explicit `Internal = false`, and container devices are
     never offered as raw targets. Host-tested like the Linux half.
-  - *Remaining:* the Windows backend (PowerShell `Get-Disk`); the read-only
-    `list_hub_targets` command; and the picker that shows eligible cards/SSDs,
-    *why* the rest are hidden, and an explicit size/model confirm.
+  - *Command + picker (landed):* `list_hub_targets` (src-tauri/src/hub.rs)
+    returns every disk with its verdict, and the app's Hub tab polls it live —
+    a lone eligible card selects itself, warnings ride each row, and refused
+    disks appear under "hidden — here's why" with hub-core's own reason. The
+    write only arms after a typed ERASE.
+  - *Remaining:* the Windows backend (PowerShell `Get-Disk`).
 - **Step 3 — acquire the image.**
   - *Resolver + verify decision (landed):* `hub_core::hub_image` turns the
     catalog into a typed `WritePlan` (board → image URL, the card-size
@@ -202,9 +207,12 @@ Raspberry Pi Imager.
     workflow re-runs the ceremony weekly after the upstream snapshot refresh, and
     a separate `--verify` job alarms on link rot or a hash that moves under a
     pinned version. A pin never moves silently under the same version.
-  - *Remaining (needs the Tauri build + new deps):* the I/O that feeds those —
-    the TLS download, computing the SHA-256, fetching HA's `.sha256`, and the
-    `.xz` decompress.
+  - *I/O (landed):* `desktop/hub-io` (`fetch`/`xz`) streams the download to
+    disk hashing as it arrives (no hash-after-download window), fetches HA's
+    published `.sha256` for the unpinned fallback, and stream-decompresses the
+    `.img.xz` hashing the raw bytes — the value the post-write read-back must
+    reproduce. Host-tested against a loopback HTTP server and real xz fixtures;
+    PR-gated by the Hub Core workflow alongside hub-core.
 - **Step 4 — the guarded write (hardware-validated before merge).**
   - *Authorization gate (landed):* `hub_core::hub_flash::authorize_write` is the
     only way to obtain a `WriteAuthorization`, and it demands a `VerifiedImage`
@@ -212,8 +220,16 @@ Raspberry Pi Imager.
     eligible, and explicit confirmation. The write entry point takes a
     `WriteAuthorization` by value — so "write without verify + an eligible target
     + confirm" is a compile error, not a bug you can introduce. Pure + host-tested.
-  - *Remaining (the footgun, hardware-validated):* the raw block-device write
-    itself, with progress + read-back verify. Does not merge on review alone.
+  - *Write + read-back (implemented; hardware validation OUTSTANDING):*
+    `hub_io::write::write_image` takes the `WriteAuthorization` by value,
+    streams 4 MiB chunks, then re-reads every byte off the device and demands
+    the verified hash — a lying/counterfeit card fails at the desk. The
+    device-agnostic core is host-tested (including a bit-flipping fake
+    device); platform opens are Linux `O_EXCL` (with best-effort pre-unmount)
+    and macOS `diskutil` unmount + raw `rdisk` via Apple's `authopen` (the
+    Raspberry Pi Imager / Etcher path — the app never runs as root). **A real
+    flash on real hardware must be validated before this ships in a tagged
+    flasher release.**
 - **Step 5 — seed the boot partition.**
   - *Wi-Fi keyfile generator (landed):* `hub_core::hub_seed::wifi_keyfile` builds
     the NetworkManager keyfile HAOS reads at first boot from the SSID +
@@ -221,12 +237,57 @@ Raspberry Pi Imager.
     validated to WPA rules, escaping handled. Pure + host-tested. (Real-HAOS
     acceptance still needs a flash to confirm — the crate tests the generation,
     not the boot.)
-  - *Remaining:* actually write the keyfile onto the boot partition (reuse the
-    flasher's "type Wi-Fi once" secret, `wifi-memory.js`; upgrade the persist
-    store to the OS keychain), and seed the curated **full-stack** securaCV backup
-    (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards + blueprints) so first
-    boot comes up wired.
-- **Step 6 — community + convergence.** Extract the SD-health add-on for upstream;
+  - *Seed drop (implemented; real-HAOS boot validation OUTSTANDING):*
+    `hub_io::seed` mounts the freshly written boot partition (udisks /
+    diskutil), writes `CONFIG/network/<id>` via the tested keyfile generator,
+    syncs, and ejects — the Wi-Fi form in the app's Hub tab feeds it, values
+    never logged. Whether the target HAOS build accepts the seed end-to-end
+    still needs a physical first boot to confirm.
+  - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS
+    keychain, and seed the curated **full-stack** securaCV backup (Mosquitto +
+    PWK add-on + Frigate/go2rtc + dashboards + blueprints) so first boot comes
+    up pre-wired — until then the hub boots as stock HAOS + Wi-Fi and the
+    guide carries the user from `homeassistant.local:8123`.
+- **Step 6 — the card-reader-less path: flash the Pi through its own USB-C.**
+  Accepted 2026-07-23. Many laptops (every recent MacBook) have no SD reader —
+  but the Pi 5 doesn't need one: the BCM2712 boot ROM has a USB *device* boot
+  mode (hold the power button while connecting USB-C to the computer → the Pi
+  enumerates as `0a5c:2712 "BCM2712 Boot"`), and Raspberry Pi's official
+  `usbboot`/`rpiboot` tool pushes their signed **mass-storage gadget** over
+  that cable — the Pi then presents its own SD card *and NVMe* to the host as
+  an ordinary USB disk (`RPi-MSD-…`). This is exactly how Raspberry Pi Imager
+  flashes Compute Modules; the host's USB-C also powers the board during the
+  flash, so the desk needs one cable, nothing else.
+
+  The reason this slots in almost for free: once the gadget is running, the
+  Pi-as-a-disk walks in through the pipeline's existing front door.
+  `hub_enumerate` sees an external USB mass-storage disk, `hub_disk::classify`
+  offers it (removable/external, size-checked — and it is the ONLY way our
+  flow can reach the Pi 5's NVMe, the durable default, without an enclosure),
+  and the verified write, read-back, and Wi-Fi seed run **unchanged**. The
+  only new machinery is the on-ramp:
+
+  - *Sidecar (implemented):* release CI builds `rpiboot` and vendors the
+    `mass-storage-gadget64` payload from one `raspberrypi/usbboot` checkout
+    (`USBBOOT_REF`, honest-before-pin: tracks upstream until the validation
+    session pins the exact tag it proved; every build logs the resolved SHA).
+    macOS bundles its own libusb (re-pointed into Resources) so nothing
+    depends on a user's Homebrew; the deb declares `libusb-1.0-0`.
+  - *On-ramp (implemented):* `hub_pi_boot_start`/`stop` commands spawn the
+    sidecar with the bundled gadget — rpiboot itself does the waiting, so no
+    separate USB watcher is needed; its narration streams to the UI and the
+    Pi-as-disk arrives through the ordinary target poll, badged "your Pi,
+    over USB-C" (`RPi-MSD…`). A build without the payload fails the panel
+    with a clear message and every other flow still works.
+  - *UI copy (implemented):* "No card reader? Use the Pi itself over USB-C" —
+    hold the power button, connect the cable, release; the cable powers the
+    board. When more than one LUN appears (SD + NVMe), the existing picker
+    handles the choice, warnings and all.
+  - *Hardware validation (OUTSTANDING):* same bar as the write itself — a
+    real Pi 5 over USB-C on macOS + Linux, then pin `USBBOOT_REF`, before any
+    tagged release claims the path.
+
+- **Step 7 — community + convergence.** Extract the SD-health add-on for upstream;
   submit the add-on repo to the community store; fold the hub image into the
   signed release train; converge with the §7.7 Canary onboarding (Improv /
   zeroconf) so hub and Canaries share one adoption flow.

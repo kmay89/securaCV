@@ -176,6 +176,57 @@ writing any monitor.
 
 ---
 
+## 6. The mode system — one flash, every gear
+
+The [display modes](./display_modes.md) waves ledger calls this **wave 6**:
+the code is compile-verified and the cores are host-tested; this session is
+what moves each gear from *Built · compile-gated* toward *Driven*. No
+terminal wiring needed — glass, touch, USB serial, and (for debug) the
+household WiFi/broker.
+
+**Build/flash:** `pio run -e canary-display-dash-modes -t upload` — the
+fleet face plus all four gears. (Watch twin: `canary-display-watch-modes`,
+demo + debug only.)
+
+**Walk each gear, in order:**
+
+1. **Doorway + latch.** Settings → **modes** lists bench / demo / debug /
+   arcade. Enter **bench**, confirm → reboots into the playground. Serial:
+   `PG1 HELLO`. Hold the glass 3 s → reboots to the fleet face. Power-cycle
+   mid-bench once: it must come back **in the bench** (the latch held).
+2. **Legacy migration.** On a unit that once latched old-firmware dev mode
+   (`devmode=true`, no token): first boot lands in the bench and rewrites
+   the latch in the token grammar (`mode` = `bench`). Exit; confirm NVS is
+   clean (re-entering Settings shows no phantom latch).
+3. **Demo.** Enter **demo** → `DM1 HELLO` on serial; the four `demo-`
+   witnesses appear with names, rooms, signal and comfort lines; the DEMO
+   chip is unmissable; the storyline walks Ok → Notice → Warn → Alert →
+   Tamper and resolves before the wrap (~2½ min). During the alarm beat,
+   hold the glass: the ack ring sweeps closed and the alarm quiets. Confirm
+   **no WiFi association and no broker connection** from the demo (router
+   logs / broker `$SYS`) — the gear is network-silent by policy.
+4. **Debug.** Enter **debug** → `DBG1 HELLO`; page through all five faces
+   (tap the top strip). With the household broker up, the Fleet page
+   repopulates from retained topics; the Touch page's dot lands under the
+   finger; the I²C census shows GT911 + CH422G (and 0x51 if the RTC is
+   real — feeds §5). Pull the AP mid-session: the System page must show
+   `wifi down` and keep rendering (no reboot loop). Photograph each page —
+   that's the support artifact this gear exists for.
+5. **Arcade.** Enter **arcade** → one full round: a target lands in every
+   zone (8×5), the report shows zones 40/40 with the seed, and PASS/FAIL
+   reacts honestly (deliberately skip-tap once to see a stray-tap FAIL).
+   `ARC1` report line on serial matches the glass.
+6. **Exit everywhere.** From each gear, the 3 s hold returns to the fleet
+   face, and the fleet face comes up with the network stack fully alive
+   (broker reconnects, OTA entity present).
+
+**Pass:** every numbered step above; then update the modes doc's Waves
+table (wave 6 → done, per-gear statuses → validated) and consider which
+flags earn a default flip (demo/debug on the dash-b image are the likely
+first).
+
+---
+
 ## What each pass retires
 
 | Section | VERIFY / flag it clears |
@@ -185,6 +236,7 @@ writing any monitor.
 | 3. CAN | `pins.h` CAN timing + 120 Ω terminator notes |
 | 4. Evidence vault | `FEATURE_TIME_MACHINE_PERSIST` (0 → 1) |
 | 5. RTC/battery | `HAS_RTC` / `HAS_BATTERY` (settle the "❓ verify") |
+| 6. Mode system | `display_modes.md` Waves wave 6 (Built · compile-gated → bench-validated) |
 
 When a section passes, edit the cited `VERIFY`/flag and note the result in the
 [capability map](./board_capability_map_43b.md) so its status column reflects

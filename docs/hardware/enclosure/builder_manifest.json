@@ -51,7 +51,7 @@
         "shield": "Solar radiation shield",
         "tray": "Desiccant tray"
       },
-      "sha256": "b08d2107c510e5a21af463849fa0c65ddeba34ec050a143ac7fbbfa03893844d",
+      "sha256": "95eb4cf9b4064deed26ee3d7f603693537a8d60058ddcec1844037304e224d4a",
       "groups": [
         {
           "name": "What to render",
@@ -155,20 +155,20 @@
             {
               "name": "gasket_w",
               "type": "number",
-              "default": 1.2,
-              "desc": "gasket groove width (the printed gasket is 0.1 narrower)"
+              "default": 1.6,
+              "desc": "gasket groove width (the printed gasket is 0.5 narrower)"
             },
             {
               "name": "gasket_groove",
               "type": "number",
-              "default": 1.0,
+              "default": 1.2,
               "desc": "groove depth into the base rim"
             },
             {
               "name": "gasket_proud",
               "type": "number",
-              "default": 0.6,
-              "desc": "uncompressed gasket stand-proud (~35 % squeeze under the lid screws)"
+              "default": 0.3,
+              "desc": "uncompressed gasket stand-proud (~20 % squeeze under the lid screws;"
             },
             {
               "name": "skirt_h",
@@ -666,7 +666,8 @@
             {
               "name": "screw_head_h",
               "type": "number",
-              "default": 2.0
+              "default": 1.2,
+              "desc": "countersink depth — the cone below is a true 90° seat for an M2 flat head"
             }
           ]
         },
@@ -676,8 +677,8 @@
             {
               "name": "usb_w",
               "type": "number",
-              "default": 10.5,
-              "desc": "opening width: clears a typical USB-C cable boot (connector body ~8.9 mm)"
+              "default": 12.0,
+              "desc": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)"
             },
             {
               "name": "usb_h",
@@ -688,8 +689,8 @@
             {
               "name": "usb_z",
               "type": "number",
-              "default": 0.0,
-              "desc": "extra lift relative to PCB-top centring"
+              "default": -1.65,
+              "desc": "centres the opening on the connector AXIS: the C shell is 3.2 mm tall on the"
             }
           ]
         },
@@ -809,7 +810,8 @@
             {
               "name": "mag_h",
               "type": "number",
-              "default": 3.2
+              "default": 2.2,
+              "desc": "pocket depth — a 6 x 2 mm disc is standard; keep parts under"
             },
             {
               "name": "mag_dx",
@@ -841,13 +843,13 @@
             {
               "name": "clip_t",
               "type": "number",
-              "default": 1.5,
+              "default": 1.0,
               "desc": "beam thickness — thinner = easier flex (tune to your material)"
             },
             {
               "name": "clip_hook",
               "type": "number",
-              "default": 0.8,
+              "default": 0.5,
               "desc": "how far the lip overhangs the board top"
             },
             {
@@ -912,7 +914,7 @@
         "bracket": "Wall bracket",
         "knob": "Hinge knob"
       },
-      "sha256": "7c74ee219aedd5f2030834eb0ff28cba5e63dd68f2bf6f339799bb7461cb651f",
+      "sha256": "0f67ba1c2504e96a87f4222beabb8ef0064ef1a0394618ef95731b3abfc1119d",
       "groups": [
         {
           "name": "What to render",
@@ -1495,17 +1497,17 @@
             {
               "name": "gasket_w",
               "type": "number",
-              "default": 1.2
+              "default": 1.6
             },
             {
               "name": "gasket_groove",
               "type": "number",
-              "default": 1.0
+              "default": 1.2
             },
             {
               "name": "gasket_proud",
               "type": "number",
-              "default": 0.6
+              "default": 0.3
             },
             {
               "name": "skirt_h",
@@ -1635,12 +1637,12 @@
             {
               "name": "clip_t",
               "type": "number",
-              "default": 1.5
+              "default": 1.0
             },
             {
               "name": "clip_hook",
               "type": "number",
-              "default": 0.8
+              "default": 0.5
             },
             {
               "name": "clip_hook_h",
@@ -1748,7 +1750,7 @@
         "plate": "Wall plate",
         "gasket": "Gasket ring — print in TPU"
       },
-      "sha256": "bf123e02f7eeb9a47e7fe2ed2e67283d898ff936822bd290546c204681d227ba",
+      "sha256": "06600eff056384856e815cf70983b9d28b7106fb51b2f6315d68374b4bf912e7",
       "groups": [
         {
           "name": "What to render",
@@ -1780,8 +1782,8 @@
             {
               "name": "opt_vent",
               "type": "bool",
-              "default": false,
-              "desc": "GORE vent cluster on the face (recommended in wet climates)"
+              "default": true,
+              "desc": "GORE vent cluster on the face — ON by default: a sealed outdoor"
             },
             {
               "name": "opt_led",
@@ -2130,17 +2132,17 @@
             {
               "name": "gasket_w",
               "type": "number",
-              "default": 1.2
+              "default": 1.6
             },
             {
               "name": "gasket_groove",
               "type": "number",
-              "default": 1.0
+              "default": 1.2
             },
             {
               "name": "gasket_proud",
               "type": "number",
-              "default": 0.6
+              "default": 0.3
             },
             {
               "name": "skirt_h",
@@ -2334,12 +2336,14 @@
             {
               "name": "vent_dx",
               "type": "number",
-              "default": -8.0
+              "default": 0.0,
+              "desc": "vent/sound cluster ON the face's vertical axis — the"
             },
             {
               "name": "vent_dy",
               "type": "number",
-              "default": -8.0
+              "default": -8.0,
+              "desc": "camera → grille → button rhythm of a real doorbell"
             },
             {
               "name": "mag_d",
@@ -2374,12 +2378,12 @@
             {
               "name": "clip_t",
               "type": "number",
-              "default": 1.5
+              "default": 1.0
             },
             {
               "name": "clip_hook",
               "type": "number",
-              "default": 0.8
+              "default": 0.5
             },
             {
               "name": "clip_hook_h",
@@ -2437,7 +2441,7 @@
         "bracket": "Wall bracket",
         "knob": "Hinge knob"
       },
-      "sha256": "930b96a818623dde392fe3010ee541729208581f4e7bbb3bc1bfcf376fbcbced",
+      "sha256": "02e93345b1bf0c796a3077fe94bb978b64605aa692bdd7c638609db5d8532262",
       "groups": [
         {
           "name": "What to render",
@@ -2591,11 +2595,8 @@
             {
               "name": "radome_t",
               "type": "number",
-              "default": 1.0,
-              "min": 0.8,
-              "step": 0.1,
-              "max": 2.0,
-              "desc": "membrane thickness (~1.0, or ~1.5 for a half-wave wall)"
+              "default": 1.5,
+              "desc": "membrane thickness — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection"
             },
             {
               "name": "rad_win_x",
@@ -2702,17 +2703,20 @@
             {
               "name": "mag_h",
               "type": "number",
-              "default": 3.2
+              "default": 2.2,
+              "desc": "pocket depth — a 6 x 2 mm disc is standard; the pocket ring descends"
             },
             {
               "name": "mag_dx",
               "type": "number",
-              "default": 13.0
+              "default": 13.0,
+              "desc": "mag_h below the front's inner face, so parts on the carrier under"
             },
             {
               "name": "mag_dy",
               "type": "number",
-              "default": 14.0
+              "default": 14.0,
+              "desc": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE"
             }
           ]
         },
@@ -2989,17 +2993,17 @@
             {
               "name": "gasket_w",
               "type": "number",
-              "default": 1.2
+              "default": 1.6
             },
             {
               "name": "gasket_groove",
               "type": "number",
-              "default": 1.0
+              "default": 1.2
             },
             {
               "name": "gasket_proud",
               "type": "number",
-              "default": 0.6
+              "default": 0.3
             },
             {
               "name": "skirt_h",
@@ -3090,12 +3094,12 @@
             {
               "name": "clip_t",
               "type": "number",
-              "default": 1.5
+              "default": 1.0
             },
             {
               "name": "clip_hook",
               "type": "number",
-              "default": 0.8
+              "default": 0.5
             },
             {
               "name": "clip_hook_h",
@@ -3140,7 +3144,7 @@
         "mate": "Mate — studs + slide rib",
         "strip": "Gasket bar — print in TPU"
       },
-      "sha256": "02dba5901654b72b310a725b362fcb9460f0b16a0ced2e0f00ca5c4cfc33f426",
+      "sha256": "42e241d785a8134851c22899cc62120cdc710a8bf9a56537ab0b64161034a4b0",
       "groups": [
         {
           "name": "What to render",
@@ -3220,12 +3224,12 @@
             {
               "name": "clip_t",
               "type": "number",
-              "default": 1.5
+              "default": 1.0
             },
             {
               "name": "clip_hook",
               "type": "number",
-              "default": 0.8
+              "default": 0.5
             },
             {
               "name": "clip_hook_h",
@@ -3290,17 +3294,17 @@
             {
               "name": "gasket_w",
               "type": "number",
-              "default": 1.2
+              "default": 1.6
             },
             {
               "name": "gasket_groove",
               "type": "number",
-              "default": 1.0
+              "default": 1.2
             },
             {
               "name": "gasket_proud",
               "type": "number",
-              "default": 0.6
+              "default": 0.3
             }
           ]
         },

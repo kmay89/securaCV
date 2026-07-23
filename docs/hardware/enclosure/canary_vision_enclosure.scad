@@ -157,9 +157,9 @@ kh_face    = 1.0;
 kh_inset   = 12.0;   // pocket centres at y = ±(inner_y/2 − kh_inset), on the X centreline
 
 /* [Weather sealing] */
-gasket_w      = 1.2;
-gasket_groove = 1.0;
-gasket_proud  = 0.6;
+gasket_w      = 1.6;
+gasket_groove = 1.2;
+gasket_proud  = 0.3;
 skirt_h       = 3.0;
 skirt_t       = 1.6;
 usb_cover     = true;
@@ -187,8 +187,8 @@ mag_dy = 8.0;
 
 /* [Board snap clips] */
 clip_w      = 6.0;
-clip_t      = 1.5;
-clip_hook   = 0.8;
+clip_t      = 1.0;
+clip_hook   = 0.5;
 clip_hook_h = 1.2;
 clip_clear  = 0.25;
 
@@ -257,7 +257,7 @@ usb_zc = floor_t + usb_soff + pcb_t + usb_h/2 + usb_z;        // and its centre 
 mount_extra = (e_mount && (m_style == "keyhole" || m_style == "both")) ? kh_extra : 0;
 kh_y  = inner_y/2 - kh_inset;
 kh_ys = (kh_y >= kh_slot_l/2 + kh_head_d/2 + 2) ? [-kh_y, kh_y] : [0];
-hinge_hole = hinge_bolt_d + 2*tol_hole/2 + 0.1;   // ~5.4 for M5: free pivot
+hinge_hole = hinge_bolt_d + tol_hole + 0.1;       // ~5.4 for M5: free pivot
 
 skirt_gap = tol_slide + 0.2;
 plate_x   = e_seal ? out_x + 2*(skirt_gap + skirt_t) : out_x;
@@ -507,16 +507,23 @@ module back() {
                 edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180);
             }
         } else {
-            // tall side rails, NOTCHED at the clip so the clip can flex
-            // (a continuous rail sits only clip_clear behind the beam and would fuse to it)
+            // module rails + clips, TOP HALF ONLY — the stacked XIAO (17.5 wide
+            // on the 20 mm module) hangs beneath the LOWER half, so full-length
+            // side rails would collide with it (same fix as the doorbell). Two
+            // bottom-corner pins catch the module's lower edge outboard of the
+            // XIAO and the down-facing USB ports. Rails are NOTCHED at the clip
+            // so the clip can flex.
             for (s = [1, -1]) {
+                rail_l = vm_l/2 - 4;
                 difference() {
-                    translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy - (vm_l - 1)/2, floor_t])
-                        cube([3, vm_l - 1, vm_standoff]);
-                    translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy, floor_t + vm_standoff/2])
+                    translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy + 2, floor_t])
+                        cube([3, rail_l, vm_standoff]);
+                    translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy + 2 + rail_l/2, floor_t + vm_standoff/2])
                         cube([5, clip_w + 2, vm_standoff + 1], center = true);
                 }
-                edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180, vm_standoff);
+                edgeclip(vm_cx + s*vm_w/2, vm_cy + 2 + rail_l/2, s > 0 ? 0 : 180, vm_standoff);
+                translate([vm_cx + s*(vm_w/2 + 0.1), vm_cy - vm_l/2 + 1.2, floor_t])
+                    cylinder(d = 2.0, h = vm_standoff);
             }
         }
     }
@@ -567,8 +574,10 @@ module front() {
             if (e_vent || e_buzzer) vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy);
             for (p = post_xy()) {
                 translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);
+                // flat counterbore: the BOM's PAN-head M2 screws seat flush
+                // (a cone this shallow left the head standing on the show face)
                 translate([p[0], p[1], lid_t - screw_head_h])
-                    cylinder(d1 = screw_d + 2*tol_hole, d2 = screw_head_d, h = screw_head_h + 0.1);
+                    cylinder(d = screw_head_d + 2*tol_hole, h = screw_head_h + 0.1);
             }
             if (label_text != "")
                 translate([label_dx, label_dy, lid_t - label_depth])
@@ -581,8 +590,10 @@ module front() {
         if (e_hood)
             translate([lens_x, lens_y, lid_t - 0.1]) linear_extrude(hood_len + 0.1)
                 difference() {
-                    circle(d = cam_disc_d + 3 + 2*hood_t);
-                    circle(d = cam_disc_d + 3);
+                    circle(d = cam_disc_d + 5 + 2*hood_t);
+                    circle(d = cam_disc_d + 5);   // +5 (was +3): keeps the hood outside the
+                                                  // OV5647's 72° diagonal FOV even with ±0.7 mm
+                                                  // lens decentration — no corner vignette
                     translate([-(cam_disc_d/2 + hood_t + 2), -2*(cam_disc_d + hood_t)])
                         square([cam_disc_d + 2*hood_t + 4, 2*(cam_disc_d + hood_t) - cam_disc_d*0.18]);
                 }
@@ -650,6 +661,11 @@ module front() {
                     }
                 translate([usb_cx, -(out_y/2 + skirt_gap + skirt_t/2), -skirt_h/2])
                     cube([usb_w + 6, skirt_t*3, skirt_h + 0.4], center = true);
+                // notch over the hinge root web (+Y wall) — on shallow (devkit)
+                // bodies the skirt band otherwise lands on the fins' root
+                if (e_mount && (m_style == "hinge" || m_style == "both"))
+                    translate([0, out_y/2 + skirt_gap + skirt_t/2, -skirt_h/2])
+                        cube([prong_pitch + prong_t + 2.5, skirt_t*3, skirt_h + 0.4], center = true);
             }
 
         // tamper magnet pocket (press fit; embedded 0.1 so the export is one shell)
@@ -664,7 +680,7 @@ module front() {
 // ----------------------------------------------------------------------------
 //  GASKET — TPU seal ring matching the back-shell groove (seal mode)
 // ----------------------------------------------------------------------------
-module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.1); }
+module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.5); }
 
 // ----------------------------------------------------------------------------
 //  BRACKET — wall plate with three prongs; countersunk screws, keyhole slots,
@@ -688,20 +704,26 @@ module bracket() {
             bracket_fin( prong_pitch);
             if (bracket_tripod)             // boss merges into the centre-fin root
                 translate([0, 0, br_t - 0.1]) rrect(18, 18, 2, 2.6);
-            if (hinge_teeth) {              // teeth on the OUTER fins' INNER faces
-                xi = prong_pitch - prong_t/2;
-                translate([ xi, 0, az]) rotate([0, -90, 0]) linear_extrude(teeth_h) teeth2d();
-                translate([-xi, 0, az]) rotate([0,  90, 0]) linear_extrude(teeth_h) teeth2d();
-            }
         }
         // M5 bolt bore through all three fins (teardrop roof — no crown sag)
         tearbore_x(-br_x/2, 0, az, br_x, hinge_hole);
+        // detent tooth POCKETS cut into the outer fins' inner faces — the case
+        // fins carry the male teeth. One side must be female: two protruding
+        // rings can't nest in the 0.175 mm fin gap, so male/male meshing would
+        // permanently spring the fins apart (creep -> detents loosen).
+        if (hinge_teeth) {
+            xi = prong_pitch - prong_t/2;   // outer fins' inner faces
+            translate([ xi - 0.05, 0, az]) rotate([0,  90, 0])
+                linear_extrude(teeth_h + 0.15) offset(delta = 0.12) teeth2d();
+            translate([-xi + 0.05, 0, az]) rotate([0, -90, 0])
+                linear_extrude(teeth_h + 0.15) offset(delta = 0.12) teeth2d();
+        }
         // countersunk wall screws at the corners
         for (sx = [1, -1], sy = [1, -1]) {
             translate([sx*(br_x/2 - 5), sy*(br_y/2 - 5), -0.1])
                 cylinder(d = br_screw_d, h = br_t + 0.2);
             translate([sx*(br_x/2 - 5), sy*(br_y/2 - 5), br_t - 2])
-                cylinder(d1 = br_screw_d, d2 = br_screw_d + 4, h = 2.1);
+                cylinder(d1 = br_screw_d, d2 = br_screw_d + 4.6, h = 2.1);  // #8 flat head (Ø8.3) seats flush
         }
         // keyhole slots (through-plate; hang-and-slide-down)
         for (sx = [1, -1]) translate([sx*14, 0, 0]) {
@@ -711,7 +733,7 @@ module bracket() {
         }
         // captive 1/4-20 nut pocket (insert from the wall side) + stud bore
         if (bracket_tripod) {
-            translate([0, 0, -0.1]) rotate([0, 0, 30]) cylinder(d = 11.4/cos(30), h = 5.2, $fn = 6);
+            translate([0, 0, -0.1]) rotate([0, 0, 30]) cylinder(d = 11.4/cos(30), h = 6.0, $fn = 6);  // full-height 1/4-20 nut (5.56) sits sub-flush
             translate([0, 0, -0.1]) cylinder(d = 6.8, h = br_t + 3);
         }
     }
@@ -727,7 +749,7 @@ module knob() {
         for (i = [0 : 11]) rotate([0, 0, i*30])
             translate([12.6, 0, -1]) cylinder(d = 5, h = 10);          // grip scallops
         translate([0, 0, -0.1]) rotate([0, 0, 30])
-            cylinder(d = 8.1/cos(30), h = 4.3, $fn = 6);               // M5 nut pocket
+            cylinder(d = 8.1/cos(30), h = 5.0, $fn = 6);               // M5 nut pocket (ISO 4032 m=4.7 fits)
         translate([0, 0, -0.1]) cylinder(d = hinge_bolt_d + 0.4, h = 10);
     }
 }

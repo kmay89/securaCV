@@ -13,8 +13,9 @@
 //      USB: open the case to charge/flash — the biggest leak path deleted.
 //    - A real Ø1.5 mm O-ring CORD in a machined-style groove on the body
 //      rim (27 % squeeze), not a printed TPU gasket.
-//    - Six M3 heat-set screw lobes (Pelican-style), max ~36 mm spacing,
-//      so the clamp is even along the whole seal line.
+//    - Six M3 heat-set screw lobes (Pelican-style), worst unsupported seal
+//      span ~41 mm (end lobe -> mid-side lobe along the seal line) — at the
+//      top of the ~40 mm clamp-spacing rule; verify compression in W-3.
 //    - 4 mm walls everywhere; the electronics never touch the shell —
 //      board on snap-clips, battery on a foam bed.
 //    - A TPU impact BOOT takes the drops; the shell takes the water.
@@ -80,7 +81,7 @@ vent_x = -15.0;  vent_y = 6.0;
 
 /* [Keyhole mounts] — blind, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
-kh_head_d = 7.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;
+kh_head_d = 8.0;  kh_shank_d = 4.2;  kh_slot_l = 8.0;   // Ø8 passes a #8 pan head too, not just the T-stud
 kh_head_h = 3.5;  kh_face = 1.0;    // 3.5 = catalog standard; fits the 3.4 mm T-stud
 
 /* [Lanyard] — paracord bore through the two -X lobes */
@@ -158,7 +159,7 @@ assert(lid_t - cb_h >= 1.8, "counterbore leaves < 1.8 mm lid web");
 assert(floor_t - kh_head_h >= 1.0, "keyhole pocket breaches the floor — seal-unsafe");
 assert(lob_off - wall_t - lan_d/2 >= 1.5, "lanyard bore too close to the pressure wall (< 1.5 mm surround) — raise lob_off");
 assert(insert_h + 1.5 <= base_h, "insert pocket too deep");
-assert(end_lob_y + lob_d/2 <= inner_w/2 - r_in + wall_t, "end lobes ride onto the corner radius");
+assert(end_lob_y + lob_d/2 <= inner_w/2 - r_in, "end lobes ride onto the corner radius");
 assert(wall_t >= 2.4 && floor_t >= 2.4 && lid_t >= 2.4, "field case needs >= 2.4 mm shell minimum");
 
 echo(str("Canary FIELD case v0.1-dev — outer ", out_l, " x ", out_w, " x ", total_h,
@@ -174,7 +175,13 @@ module rrect2d(l, w, r) { offset(r = r) offset(r = -r) square([l, w], center = t
 module cav2d() { rrect2d(inner_l, inner_w, r_in); }
 module outline2d() {
     rrect2d(out_l, out_w, r_out);
-    for (p = lobes()) translate(p) circle(d = lob_d);
+    // each lobe is hulled toward a copy pulled 18 % back into the wall — a
+    // gusset neck; a bare tangent circle hangs on a ~0.5 mm-deep sliver, the
+    // classic Z-weak FDM crack line under clamp preload / drop loads
+    for (p = lobes()) hull() {
+        translate(p) circle(d = lob_d);
+        translate([p[0]*0.82, p[1]*0.82]) circle(d = lob_d);
+    }
 }
 module grv_ring2d() {
     difference() {
@@ -273,9 +280,11 @@ module lid() {                          // z=0 is the OUTER face; print face-dow
         // bezel recess around the lens (press-fit trim ring hides the bond line)
         if (bez_on)
             translate([lens_x, lens_y, -0.1]) cylinder(d = bez_o, h = bez_recess + 0.1);
-        // vent hole (ePTFE patch adheres to the flat INNER face around it)
+        // vent hole (ePTFE patch adheres to the flat INNER face around it —
+        // spot-face the INNER side; an outer recess would expose the membrane
+        // to rain, UV and pokes)
         translate([vent_x, vent_y, -0.1]) cylinder(d = vent_d, h = lid_t + 0.2);
-        translate([vent_x, vent_y, -0.1]) cylinder(d = vent_d + 2.4, h = 0.9);
+        translate([vent_x, vent_y, lid_t - 0.9]) cylinder(d = vent_d + 2.4, h = 1.0);
         // debossed label on the outer face (mirrored: read from outside)
         if (label_text != "")
             translate([label_dx, label_dy, -0.1]) linear_extrude(label_depth + 0.1)

@@ -16,6 +16,11 @@
           "name": "espflash",
           "sidecar": true,
           "args": true
+        },
+        {
+          "name": "rpiboot",
+          "sidecar": true,
+          "args": true
         }
       ]
     }
