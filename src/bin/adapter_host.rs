@@ -40,6 +40,7 @@ use rumqttc::{Client, Event, Incoming, MqttOptions, QoS};
 use serde::Deserialize;
 
 use witness_kernel::adapter::ble_presence::{BlePresenceAdapter, BleRoom};
+use witness_kernel::adapter::can_bus::{self, CanBusAdapter, CanRoute};
 use witness_kernel::adapter::frigate::{FrigateAdapter, FrigateFilter};
 use witness_kernel::adapter::meshtastic::{self, MeshNode, MeshtasticAdapter};
 use witness_kernel::adapter::mqtt_sensor::{MqttSensorAdapter, SensorRoute};
@@ -167,6 +168,7 @@ enum AdapterCfg {
     Webhook(WebhookCfg),
     BlePresence(BleCfg),
     Meshtastic(MeshtasticCfg),
+    CanBus(CanBusCfg),
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,6 +301,75 @@ struct MeshNodeCfg {
     detection_name: Option<String>,
     #[serde(default)]
     min_snr: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CanBusCfg {
+    /// Linux SocketCAN interface name (e.g. "can0"). Bring it up first, outside
+    /// this process: `sudo ip link set can0 up type can bitrate 500000`.
+    interface: String,
+    #[serde(default)]
+    route: Vec<CanRouteCfg>,
+    #[serde(default)]
+    sandbox: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CanRouteCfg {
+    /// Arbitration ID: decimal or 0x-prefixed hex (e.g. "0x3E8" or "1000").
+    can_id: String,
+    /// Byte index into the frame's payload to inspect (0-based).
+    byte_offset: usize,
+    /// Masked value that triggers this route: decimal or 0x-prefixed hex.
+    equals: String,
+    /// Bitmask applied before comparison (default 0xFF — whole byte).
+    #[serde(default)]
+    mask: Option<String>,
+    kind: String,
+    zone: String,
+    /// Confidence stamped on the claim (default 0.9 — CAN frames carry no
+    /// natural score).
+    #[serde(default)]
+    confidence: Option<f32>,
+}
+
+/// Parse a decimal or `0x`-prefixed hex string into an integer (route configs use this for
+/// CAN IDs and byte values so a `candump` hex dump can be pasted in directly).
+fn parse_can_int<T>(s: &str, field: &str) -> Result<T>
+where
+    T: TryFrom<u64>,
+{
+    let s = s.trim();
+    let v = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16)
+    } else {
+        s.parse::<u64>()
+    }
+    .with_context(|| format!("parsing {field} '{s}' as decimal or 0x-hex"))?;
+    T::try_from(v).map_err(|_| anyhow!("{field} '{s}' out of range"))
+}
+
+/// Build a `CanRoute` list from config, validating claim kinds and ID/byte fields.
+fn build_can_routes(routes: &[CanRouteCfg]) -> Result<Vec<CanRoute>> {
+    routes
+        .iter()
+        .map(|r| {
+            let kind = ClaimKind::from_str_opt(&r.kind)
+                .ok_or_else(|| anyhow!("unknown claim kind '{}'", r.kind))?;
+            let can_id: u32 = parse_can_int(&r.can_id, "can_id")?;
+            let equals: u8 = parse_can_int(&r.equals, "equals")?;
+            let mut route = CanRoute::new(can_id, r.byte_offset, equals, kind, r.zone.clone());
+            if let Some(mask) = &r.mask {
+                route = route.with_mask(parse_can_int(mask, "mask")?);
+            }
+            if let Some(confidence) = r.confidence {
+                route = route.with_confidence(confidence);
+            }
+            Ok(route)
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -653,6 +724,26 @@ fn main() -> Result<()> {
                     mc.sandbox
                 );
             }
+            AdapterCfg::CanBus(cc) => {
+                let routes = build_can_routes(&cc.route)?;
+                let (adapter, tx) = CanBusAdapter::new(routes);
+                let adapter = adapter.with_sandbox(cc.sandbox);
+                let handle = adapter.routes_handle();
+                reloaders.push(Box::new(move |c| {
+                    let AdapterCfg::CanBus(cc) = c else {
+                        return Err(anyhow!("adapter type changed at this position"));
+                    };
+                    *handle.lock().unwrap_or_else(|p| p.into_inner()) = build_can_routes(&cc.route)?;
+                    Ok(())
+                }));
+                spawn_socketcan_reader(cc.interface.clone(), tx);
+                host.register(adapter);
+                log::info!(
+                    "registered can_bus adapter #{idx} on {} (sandbox={}, read-only)",
+                    cc.interface,
+                    cc.sandbox
+                );
+            }
         }
     }
 
@@ -780,6 +871,118 @@ fn connect(
     }
     let (client, connection) = rumqttc::ClientBuilder::new(options).capacity(10).build();
     Ok((client, connection))
+}
+
+/// Read raw frames off a Linux SocketCAN interface (`can0`, etc.) and forward them into the
+/// adapter's channel. **Read-only**: this function never calls `write`/`send` on the socket —
+/// see `docs/hardware/canary_vehicle_can.md` §3 for why passive-only is a deliberate design
+/// choice, not just an MVP gap. Reconnects (re-opens the interface) on any read error, exactly
+/// like `spawn_mqtt_forwarder` reconnects on a dropped broker.
+#[cfg(target_os = "linux")]
+fn spawn_socketcan_reader(iface: String, tx: Sender<can_bus::CanFrame>) {
+    thread::spawn(move || loop {
+        match open_socketcan(&iface) {
+            Ok(fd) => {
+                log::info!("[can_bus:{iface}] listening (read-only)");
+                let mut buf = [0u8; std::mem::size_of::<libc::can_frame>()];
+                loop {
+                    let n = unsafe {
+                        libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                    };
+                    if n < 0 {
+                        log::warn!(
+                            "[can_bus:{iface}] read error: {}",
+                            std::io::Error::last_os_error()
+                        );
+                        break;
+                    }
+                    if n as usize != buf.len() {
+                        continue; // short/partial read (e.g. a CAN FD frame) — skip, not fatal
+                    }
+                    // SAFETY: `buf` is exactly `size_of::<can_frame>()` bytes, just filled by a
+                    // full `read()` from a CAN_RAW socket, which only ever delivers whole frames.
+                    let frame: libc::can_frame =
+                        unsafe { std::ptr::read(buf.as_ptr() as *const libc::can_frame) };
+                    if frame.can_id & libc::CAN_ERR_FLAG != 0 {
+                        continue; // bus error frame, not vehicle data
+                    }
+                    if frame.can_id & libc::CAN_RTR_FLAG != 0 {
+                        continue; // remote-request frame, carries no data to match
+                    }
+                    let mask = if frame.can_id & libc::CAN_EFF_FLAG != 0 {
+                        libc::CAN_EFF_MASK
+                    } else {
+                        libc::CAN_SFF_MASK
+                    };
+                    let can_id = frame.can_id & mask;
+                    let dlc = (frame.can_dlc as usize).min(frame.data.len());
+                    let data = frame.data[..dlc].to_vec();
+                    if tx.send(can_bus::CanFrame { can_id, data }).is_err() {
+                        unsafe { libc::close(fd) };
+                        return; // host dropped the adapter; stop forwarding.
+                    }
+                }
+                unsafe { libc::close(fd) };
+            }
+            Err(e) => log::warn!("[can_bus:{iface}] open failed: {e}"),
+        }
+        thread::sleep(Duration::from_secs(3));
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn spawn_socketcan_reader(iface: String, _tx: Sender<can_bus::CanFrame>) {
+    log::error!(
+        "[can_bus:{iface}] SocketCAN is Linux-only; the can_bus adapter cannot run on this platform"
+    );
+}
+
+/// Open and bind a `CAN_RAW` socket on the named SocketCAN interface. Read-only by construction:
+/// the caller only ever `read()`s the returned fd.
+#[cfg(target_os = "linux")]
+fn open_socketcan(iface: &str) -> Result<libc::c_int> {
+    if iface.is_empty() || iface.len() >= libc::IFNAMSIZ {
+        return Err(anyhow!(
+            "interface name '{iface}' is empty or too long (max {} chars)",
+            libc::IFNAMSIZ - 1
+        ));
+    }
+    unsafe {
+        let fd = libc::socket(libc::AF_CAN, libc::SOCK_RAW, libc::CAN_RAW);
+        if fd < 0 {
+            return Err(anyhow!(
+                "socket(AF_CAN, SOCK_RAW, CAN_RAW) failed: {} — is the `can` kernel module loaded?",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut ifr: libc::ifreq = std::mem::zeroed();
+        for (dst, src) in ifr.ifr_name.iter_mut().zip(iface.bytes()) {
+            *dst = src as libc::c_char;
+        }
+        if libc::ioctl(fd, libc::SIOCGIFINDEX, &mut ifr) < 0 {
+            let err = std::io::Error::last_os_error();
+            libc::close(fd);
+            return Err(anyhow!(
+                "ioctl(SIOCGIFINDEX) on '{iface}' failed: {err} — is it up? \
+                 (sudo ip link set {iface} up type can bitrate 500000)"
+            ));
+        }
+        let mut addr: libc::sockaddr_can = std::mem::zeroed();
+        addr.can_family = libc::AF_CAN as libc::sa_family_t;
+        addr.can_ifindex = ifr.ifr_ifru.ifru_ifindex;
+        let addr_ptr = std::ptr::addr_of!(addr) as *const libc::sockaddr;
+        if libc::bind(
+            fd,
+            addr_ptr,
+            std::mem::size_of::<libc::sockaddr_can>() as libc::socklen_t,
+        ) < 0
+        {
+            let err = std::io::Error::last_os_error();
+            libc::close(fd);
+            return Err(anyhow!("bind() on '{iface}' failed: {err}"));
+        }
+        Ok(fd)
+    }
 }
 
 #[cfg(test)]

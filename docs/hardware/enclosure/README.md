@@ -79,7 +79,7 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_mount_adapters.scad`](./canary_mount_adapters.scad) | **Mount adapters**: corner wedge, magnet plate, pole plate, drill template — all on the shared stud interface |
 | [`canary_field_case.scad`](./canary_field_case.scad) | **Field case**: GoPro-class rugged witness — O-ring sealed, no external ports, TPU impact boot; the only CER‑4 (IP67 + drop) intent design ([ratings](./field_ratings.md)) |
 | [`canary_dash_display.scad`](./canary_dash_display.scad) | **Dashboard display case** for the Waveshare 4.3" touch panel ([display research](../display_research.md) Option B): bezel frame, vented back with keyholes + 75 mm pair, desk stand |
-| [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) | **Vehicle mounts**: VHB dash plate (10° riser) + air-vent louver clip, on the shared stud interface — USB power only, no batteries on a hot dash |
+| [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) | **Vehicle mounts**: VHB dash plate (10° riser) + air-vent louver clip, on the shared stud interface — USB power only, no batteries on a hot dash. Pairs with [Canary Vehicle](../canary_vehicle_can.md)'s passive CAN bus witness (arrival/departure claims) |
 | [`canary_wear_clip.scad`](./canary_wear_clip.scad) | **Body-worn carry**: belt leaf-spring clip + MOLLE/PALS adapter for the field case (or any keyhole case) |
 | [`canary_vision_pro_mount.scad`](./canary_vision_pro_mount.scad) | **Vision Pro mount**: bridges a reCamera Pro onto the shared stud interface — keyhole back, 1/4"-20 tripod counterbore and/or magnet pocket front (reCamera's confirmed mount options) |
 
