@@ -2799,11 +2799,13 @@
       },
       {
        "name": "vent_dx",
-       "default": "-8.0"
+       "default": "0.0",
+       "comment": "vent/sound cluster ON the face's vertical axis — the"
       },
       {
        "name": "vent_dy",
-       "default": "-8.0"
+       "default": "-8.0",
+       "comment": "camera → grille → button rhythm of a real doorbell"
       },
       {
        "name": "mag_d",
