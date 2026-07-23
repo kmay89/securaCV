@@ -56,11 +56,13 @@ static MESHTASTIC_DESCRIPTOR: AdapterDescriptor = AdapterDescriptor {
         ClaimKind::PresenceInRestrictedZone,
         ClaimKind::ContactStateChange,
         ClaimKind::AcousticImpulseInZone,
+        ClaimKind::VehicleArrivalDeparture,
     ],
     allowed_event_types: &[
         EventType::PresenceInRestrictedZone,
         EventType::ContactStateChange,
         EventType::AcousticImpulseInZone,
+        EventType::VehicleArrivalDeparture,
     ],
     requested_capabilities: &[],
 };
@@ -431,6 +433,31 @@ mod tests {
         assert!(adapter
             .message_to_claim(TOPIC, &detection_frame("strange state: open"))
             .is_some());
+    }
+
+    #[test]
+    fn vehicle_arrival_departure_node_asserts_on_active_heartbeat_only() {
+        // Canary Car Mode: a GPIO reading the vehicle's ignition-switched USB power, configured
+        // with state_broadcast_interval > 0 so it periodically re-affirms "still running." Only
+        // the active state may ever assert a claim — an inactive heartbeat (or the vehicle simply
+        // going silent because it lost power) must never seal an event on its own. Departure is
+        // deliberately NOT an explicit packet from the node (see
+        // docs/hardware/canary_car_mode.md §4 for why) — it's inferred from the ABSENCE of these
+        // heartbeats, the same pattern every other presence source in this adapter already uses.
+        let nodes = vec![MeshNode::new(
+            0x7d3a9f7f,
+            ClaimKind::VehicleArrivalDeparture,
+            "garage",
+        )];
+        let (adapter, _tx) = MeshtasticAdapter::new(nodes);
+        let claim = adapter
+            .message_to_claim(TOPIC, &detection_frame("Car Mode state: 1"))
+            .expect("active heartbeat asserts");
+        assert_eq!(claim.kind, ClaimKind::VehicleArrivalDeparture);
+        assert_eq!(claim.zone_label, "garage");
+        assert!(adapter
+            .message_to_claim(TOPIC, &detection_frame("Car Mode state: 0"))
+            .is_none());
     }
 
     #[test]

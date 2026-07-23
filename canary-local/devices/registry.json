@@ -667,6 +667,118 @@
         ],
         "catchphrase": "I don't need to be the best eye in the house — just one more honest one."
       }
+    },
+    {
+      "id": "canary-car-mode",
+      "family": "canary-car-mode",
+      "kind": "concept",
+      "name": "Canary Car Mode",
+      "tagline": "A stock mesh node in your car's USB port — no firmware, no wiring, no circuit to rot. Coming soon.",
+      "board": "Seeed XIAO ESP32S3 + Wio-SX1262 (Meshtastic, pre-flashed, stock)",
+      "senses": [
+        "vehicle power-on/off, via a stock Meshtastic Detection Sensor Module (concept)"
+      ],
+      "shows": [],
+      "modality": "mesh",
+      "network": {
+        "mdns": "none — a stock Meshtastic node, not a flashed Canary host (concept)",
+        "web": "none — no onboard config surface beyond stock Meshtastic's own app/CLI",
+        "mqtt": "via the meshtastic gateway + adapter (concept): coarse vehicle_arrival_departure claims + signed chain"
+      },
+      "docs": [
+        "docs/hardware/canary_car_mode.md"
+      ],
+      "status": "coming soon — concept, config-only design, no bench unit yet",
+      "concept": {
+        "idea": "Canary Car Mode is the zero-build answer to 'tell the fleet when I arrive or leave': a completely stock Meshtastic node, powered directly from the car's ignition-switched USB port, with nothing wired to it at all. The node's own power state IS the ignition signal — no CAN bus, no custom firmware, no custom circuit. Its Detection Sensor Module GPIO is left floating with an internal pull-up, so 'the chip has power' reads as 'triggered' for free. Arrival is a detection packet on boot; departure is never an explicit packet (a real Meshtastic firmware bug makes that unreliable) — it's inferred the same way every other presence source in this fleet already works: silence past a timeout means gone.",
+        "points": [
+          {
+            "k": "Why no firmware and no circuit",
+            "v": "the node's power supply already is the signal — it can only run while the car provides it. Stock Meshtastic firmware gets upstream's own maintenance forever; there is no bespoke sketch to rot."
+          },
+          {
+            "k": "Why departure is inferred, not announced",
+            "v": "a documented Meshtastic firmware bug (github.com/meshtastic/firmware#8977) means the Detection Sensor Module's OFF transition can't be trusted. Rather than build a last-gasp/supercap workaround around someone else's open bug, departure is read from the ABSENCE of periodic heartbeats — the same pattern this fleet's presence claims already use everywhere else."
+          },
+          {
+            "k": "The one real prerequisite",
+            "v": "the car's USB port must actually be ignition/ACC-switched, not always-hot for phone charging — check this on the bench before trusting the design at all."
+          },
+          {
+            "k": "Shares its research, doesn't duplicate it",
+            "v": "same $9.90 kit already researched for Canary Fence Guard, same Meshtastic mechanics documented once in docs/meshtastic_integration.md — this card and its doc only add what's specific to reading a car's power state."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Kit",
+            "v": "Seeed XIAO ESP32S3 + Wio-SX1262 (SKU 102010611, $9.90) — Meshtastic pre-flashed since Oct 2024, same kit as Canary Fence Guard"
+          },
+          {
+            "k": "Power",
+            "v": "USB-powered directly from the vehicle's ignition-switched port — no battery, nothing to charge or maintain"
+          },
+          {
+            "k": "Sensing mechanism",
+            "v": "Detection Sensor Module (Meshtastic firmware >= 2.2.2), GPIO left floating with use_pullup=true — reads triggered the instant the chip has power, no external components"
+          },
+          {
+            "k": "Departure detection",
+            "v": "inferred from heartbeat silence (state_broadcast_interval), not an explicit OFF packet — see the known firmware bug below"
+          },
+          {
+            "k": "Known firmware risk",
+            "v": "Detection Sensor Module OFF-transition reliability bug, tracked upstream — the whole reason this design avoids depending on a transition packet at all"
+          }
+        ],
+        "sources": [
+          {
+            "name": "Seeed Fence Guard kit research (same hardware)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_fence_guard_research.md"
+          },
+          {
+            "name": "Canonical Meshtastic integration doc (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/meshtastic_integration.md"
+          },
+          {
+            "name": "meshtastic/firmware issue #8977 — Detection Sensor OFF-transition bug",
+            "url": "https://github.com/meshtastic/firmware/issues/8977"
+          },
+          {
+            "name": "Meshtastic Detection Sensor Module docs",
+            "url": "https://meshtastic.org/docs/configuration/module/detection-sensor/"
+          }
+        ],
+        "plan": [
+          "Bench: confirm a floating, pulled-high GPIO actually fires a boot-time detection alert the way a real switch closing would — this is a repurposing of the module, not its documented use case.",
+          "Bench: pin the Meshtastic firmware version tested and confirm whether issue #8977 affects it before trusting anything about OFF transitions, even indirectly.",
+          "Bench: measure real heartbeat timing to size a sane Home Assistant availability timeout (the current design guesses ~2x state_broadcast_interval).",
+          "Verify the target vehicle's USB port is genuinely ignition-switched, not always-hot — per-vehicle, not assumable.",
+          "Scope and build the optional stale-node watchdog (sealed-log ObjectRemovedFromZone on silence) if a witnessed departure event — not just an HA-inferred one — turns out to matter."
+        ],
+        "radio_tab_label": "The hardware",
+        "plan_tab_label": "Integration plan",
+        "plan_intro": "No firmware stub either — stock Meshtastic needs none. What's left is bench validation of a repurposed module behavior, not new code.",
+        "plan_doc": {
+          "label": "read the setup guide → docs/hardware/canary_car_mode.md",
+          "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_car_mode.md"
+        },
+        "request_title": "Concept request: Canary Car Mode (Meshtastic ignition-power node)",
+        "request_body": "Seen the Car Mode concept card. What I'd want to know before trying this:\n\n- vehicle make/model/year and whether its USB port is confirmed ignition-switched:\n- do you already have a Meshtastic gateway node at home:\n- how important is a sealed witness-log departure event vs. an HA-inferred one being enough:\n"
+      },
+      "persona": {
+        "name": "Rally the Homecoming Scout",
+        "accent": "ignition amber and asphalt grey",
+        "shape": "a compact canary shaped like a USB stick, key-shaped tail feathers, and a small radio-mast crest",
+        "story": "Rally doesn't carry a single wire of its own — it just rides along in the one plug that only comes alive when you do. Rally never asks the car anything, never listens to its bus, never learns where it's been. It just says 'I'm awake' the moment you are, and goes quiet, honestly, the moment you're not.",
+        "specialty": "Mesh / vehicle ignition-power sensing",
+        "good_for": [
+          "Telling the fleet you're home or gone, with nothing to wire and nothing to flash",
+          "Households already running (or willing to run) a Meshtastic gateway",
+          "The most maintenance-free vehicle sensor in the fleet, by construction"
+        ],
+        "catchphrase": "I only ever say I'm here — and I mean it because I couldn't lie if I tried."
+      }
     }
   ]
 }

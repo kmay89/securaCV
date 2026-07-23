@@ -259,7 +259,8 @@ topic = "msh/+/2/json/+/+"      # JSON-mode uplinks; changing it needs a restart
 
 # Each node maps an originating sensor node (the packet's `from`, NOT the gateway) to a
 # coarse claim kind in a logical zone. kind must be one of:
-#   presence_in_restricted_zone, contact_state_change, acoustic_impulse_in_zone
+#   presence_in_restricted_zone, contact_state_change, acoustic_impulse_in_zone,
+#   vehicle_arrival_departure
 [[adapter.node]]
 node_id = "!7d3a9f7f"           # !hex, bare hex, or decimal node number
 kind = "presence_in_restricted_zone"
@@ -267,6 +268,17 @@ zone = "back_gate"
 # detection_name = "PIR"        # require the alert text to contain the sensor's configured
 #                               # name (also lets detection alerts ride plain text packets)
 # min_snr = -15.0               # optional RF quality floor; the value is never logged
+
+# Canary Car Mode: a stock Meshtastic node (NO custom firmware) wired so its Detection Sensor
+# Module GPIO reads the vehicle's ignition-switched USB power. `state_broadcast_interval` (set
+# on the node, e.g. every 120s) re-affirms "still running" the whole drive; departure is
+# deliberately NOT an explicit packet from the node (a documented firmware bug makes the OFF
+# transition unreliable — see docs/hardware/canary_car_mode.md §4) — it's inferred from the
+# ABSENCE of these heartbeats, same as any other presence source going quiet.
+[[adapter.node]]
+node_id = "!a1b2c3d4"           # your Car Mode node's id
+kind = "vehicle_arrival_departure"
+zone = "garage"
 
 # ---------------------------------------------------------------------------
 # Adapter: Vehicle CAN bus (Canary Vehicle — passive-only, read-only)
