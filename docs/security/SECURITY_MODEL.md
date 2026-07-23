@@ -13,7 +13,7 @@
 
 ## What This Device Does
 
-SecuraCV Canary is a witness device. It creates tamper-proof records of
+SecuraCV Canary is a witness device. It creates tamper-evident records of
 events — nearby wireless devices, GPS location, environmental changes —
 and chains them together cryptographically so that any alteration or
 deletion is detectable.
@@ -174,8 +174,8 @@ from established, audited libraries.
 The witness chain is append-only:
 
 - **Records can be added** — each new record extends the chain
-- **Records cannot be modified** — changing any record breaks the chain
-- **Records cannot be deleted** — missing sequence numbers are detectable
+- **Records cannot be modified undetectably** — changing any record breaks the chain
+- **Records cannot be deleted undetectably** — missing sequence numbers are detectable
 - **The chain break itself is evidence** — tampering is visible to anyone
   who checks
 
