@@ -281,7 +281,7 @@
     {
      "label": "Required-only",
      "formula": "U1+CBL1+SD1",
-     "usd": 26.9,
+     "usd": 25.99,
      "note": "Bench bring-up"
     },
     {
@@ -510,19 +510,19 @@
     {
      "label": "Required-only",
      "formula": "U1+U2+CBL2+CBL1",
-     "usd": 41.7,
-     "note": "Core Vision device"
+     "usd": 28.69,
+     "note": "Core Vision device (Grove AI V2 now $15.99)"
     },
     {
      "label": "Full build",
      "formula": "req + LED + button + battery + PC enclosure",
-     "usd": 71.0,
+     "usd": 57.99,
      "note": "Approx; buzzer unpopulated"
     },
     {
      "label": "Printed camera unit",
      "formula": "req + CAM1 + ENC2 + SCR5-7 + NUT1 + CW2",
-     "usd": 54.75,
+     "usd": 41.74,
      "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
     }
    ],
