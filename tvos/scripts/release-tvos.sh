@@ -26,14 +26,26 @@ fi
 
 : "${APPLE_API_KEY:?App Store Connect key ID missing}"
 : "${APPLE_API_ISSUER:?App Store Connect issuer ID missing}"
+: "${APPLE_API_KEY_PATH:?App Store Connect key path missing (workflow materializes it)}"
 : "${APPLE_DEVELOPMENT_TEAM:?Apple team ID missing}"
 export_method="${EXPORT_METHOD:-app-store-connect}"
+
+# A fresh CI runner has no Apple accounts or provisioning profiles, so signing
+# must authenticate with the App Store Connect API key — hand xcodebuild the
+# same .p8 the workflow materialized, and let it manage signing assets.
+asc_auth=(
+  -allowProvisioningUpdates
+  -authenticationKeyPath "$APPLE_API_KEY_PATH"
+  -authenticationKeyID "$APPLE_API_KEY"
+  -authenticationKeyIssuerID "$APPLE_API_ISSUER"
+)
 
 echo "Archiving WitnessWall (tvOS)…"
 xcodebuild -project WitnessWall/WitnessWall.xcodeproj \
   -scheme WitnessWall \
   -destination 'generic/platform=tvOS' \
   -archivePath build/WitnessWall.xcarchive \
+  "${asc_auth[@]}" \
   DEVELOPMENT_TEAM="$APPLE_DEVELOPMENT_TEAM" \
   archive
 
@@ -41,11 +53,13 @@ echo "Exporting ($export_method)…"
 xcodebuild -exportArchive \
   -archivePath build/WitnessWall.xcarchive \
   -exportOptionsPlist WitnessWall/ExportOptions-"$export_method".plist \
-  -exportPath build/export
+  -exportPath build/export \
+  "${asc_auth[@]}"
 
 if [ "$export_method" = "app-store-connect" ]; then
   echo "Uploading to App Store Connect…"
-  xcrun altool --upload-app --type tvos \
+  # altool's platform value for Apple TV is `appletvos` (not `tvos`).
+  xcrun altool --upload-app --type appletvos \
     --file build/export/*.ipa \
     --apiKey "$APPLE_API_KEY" \
     --apiIssuer "$APPLE_API_ISSUER"
