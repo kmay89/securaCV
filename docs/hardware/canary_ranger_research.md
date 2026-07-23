@@ -155,6 +155,11 @@ So the answer to "can we do what they do and more, with what we have?" is: **on 
 yes, in software**; the genuinely *new* build is the **low-power outdoor tier** (Ranger) that our FMCW
 part's power budget can't reach.
 
+This "with what we have" upgrade is now scoped in its own design doc:
+[**Coarse mover-class from the Sense radar**](../canary_sense_coarse_class_design.md) — features, the
+tiny classifier, the contract-respecting claim mapping (an attribute on the existing presence claim, no
+dictionary drift), the honest accuracy limits, and a phased plan.
+
 ---
 
 ## 7 · Claim vocabulary

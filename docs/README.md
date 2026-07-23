@@ -121,6 +121,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Network coexistence](network_coexistence.md) — being a good neighbor on 2.4 GHz
 - [WiFi CSI sensing quickstart](csi_quickstart.md) · [CSI modules](csi_modules.md) · [CSI developer API](csi_developer_api.md)
 - [mmWave radar design (MR60BHA2)](canary_sense_mr60bha2_design.md)
+- [Coarse mover-class from the Sense radar (design)](canary_sense_coarse_class_design.md) — the software-only "do it with what we have" upgrade: coarse large-vs-small mover class on the shipped 60 GHz radar, distilled from the BumbleBee micro-Doppler work, class-not-identity
 - [RF sensing HTTP routes](rf_sensing_phase12_http_routes.md)
 - [ESP32-S3 power resilience](esp32s3_power_resilience.md) · [thermal review](esp32s3_thermal_review.md) · [wireless review](seeed_xiao_esp32s3_wireless_review.md) · [BLE/WAP audit](esp32s3_ble_wap_audit.md)
 
