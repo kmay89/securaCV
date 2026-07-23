@@ -220,11 +220,15 @@ static uint32_t g_last_record_ms = 0;
 // untrusted network peer: the L76K reports UTC directly from the satellite
 // constellation. syncClockFromGps() seeds the system clock from it once a
 // fix carries a validated RMC date/time, and re-checks periodically to correct
-// crystal drift over long uptimes — but only ever moves the clock forward
-// from GPS, and only while GPS itself hasn't already been trusted (a receiver
-// glitch can't un-sync a clock that's already synced by re-triggering this).
+// crystal drift over long uptimes. GpsUtcTime.valid latches true on the first
+// good RMC and is never cleared by a later void/stale sentence (other
+// diagnostics consumers rely on that latch), so this checks last_seen_ms
+// itself — a fix isn't "available" for a resync once GPS has been lost, or
+// this would keep replaying a stale epoch every 10 minutes and freeze/rewind
+// wall time after ordinary GNSS loss.
 static const time_t WALL_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, "unset"
 static const uint32_t CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;  // drift correction
+static const uint32_t GPS_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 
 static void syncClockFromGps() {
   static uint32_t s_last_sync_attempt_ms = 0;
@@ -236,8 +240,12 @@ static void syncClockFromGps() {
     return;  // already trustworthy and not due for a drift-correction check
   }
 
+  const GpsUtcTime& utc = s_gps.getUtcTime();
+  if (!utc.valid) return;
+  if ((now_ms - utc.last_seen_ms) > GPS_FIX_STALE_MS) return;  // GPS lost
+
   time_t gps_epoch;
-  if (!gps_utc_to_epoch(s_gps.getUtcTime(), &gps_epoch)) return;
+  if (!gps_utc_to_epoch(utc, &gps_epoch)) return;
   if (gps_epoch < WALL_CLOCK_FLOOR) return;  // receiver clock itself looks unset/wrong
 
   s_last_sync_attempt_ms = now_ms;

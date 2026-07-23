@@ -1053,9 +1053,15 @@ static bool gps_utc_to_epoch(const GpsUtcTime& utc, time_t* out) {
 // only ever moves the clock from a GPS fix that has already passed the RMC
 // status + calendar-validity gate above, and only steps the clock when it
 // disagrees by more than a second (so this isn't calling settimeofday() on
-// every check once the two clocks agree).
+// every check once the two clocks agree). g_gps_utc.valid latches true on
+// the first good RMC and is never cleared by a later void/stale sentence
+// (other diagnostics consumers rely on that latch), so this checks
+// last_seen_ms itself — a fix isn't "available" for a resync once GPS has
+// been lost, or this would keep replaying a stale epoch every 10 minutes
+// and freeze/rewind wall time after ordinary GNSS loss.
 static const time_t GPS_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, "unset"
 static const uint32_t GPS_CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;
+static const uint32_t GPS_CLOCK_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
 
 static void sync_clock_from_gps() {
   static uint32_t s_last_sync_attempt_ms = 0;
@@ -1066,6 +1072,9 @@ static void sync_clock_from_gps() {
   if (clock_set && (now_ms - s_last_sync_attempt_ms) < GPS_CLOCK_RESYNC_INTERVAL_MS) {
     return;  // already trustworthy and not due for a drift-correction check
   }
+
+  if (!g_gps_utc.valid) return;
+  if ((now_ms - g_gps_utc.last_seen_ms) > GPS_CLOCK_FIX_STALE_MS) return;  // GPS lost
 
   time_t gps_epoch;
   if (!gps_utc_to_epoch(g_gps_utc, &gps_epoch)) return;
