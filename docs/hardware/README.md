@@ -50,6 +50,7 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`display_onboarding.md`](./display_onboarding.md) | On-glass onboarding flows. |
 | [`display_settings.md`](./display_settings.md) | On-glass settings — what's adjustable without an app. |
 | [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md) | Discovery & resilience — finding sensors, surviving outages. |
+| [`tv_display_design.md`](./tv_display_design.md) | **Canary TV** — a hub-free ambient security surface for any television: the no-hub `/api/glass` path, the Seeed reTerminal/TRMNL competitive picture, and the "Canary TV" HDMI-dongle proposal. Reference page served at `/tv` ([`canary-display/tv/`](../../firmware/projects/canary-display/tv/)). |
 | [`fleet_link_bench_checklist.md`](./fleet_link_bench_checklist.md) | Fleet link — hardware bench smoke-test gate for the direct BLE presence/GATT channel. |
 | [`canary_wap_wifi.md`](./canary_wap_wifi.md) | How the Canary WAP's WiFi works — the AP→STA link + provisioning, single-radio coexistence, and WiFi *as a sensor* (CSI presence + probe-request counting). |
 | [`display_bench_bringup.md`](./display_bench_bringup.md) | Display bench bring-up — from bare board to a beating face. |

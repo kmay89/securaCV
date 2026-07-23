@@ -10,6 +10,7 @@
 #include "canary/net/glass_web.h"
 #include "canary/net/wifi_mgr.h"
 #include "canary/net/mirror_html.h"
+#include "canary/net/tv_html.h"
 #include "canary/ui/character.h"
 #include "canary/glass_settings.h"
 #include "canary/runtime_config.h"
@@ -99,6 +100,15 @@ size_t bappend_jstr(char* buf, size_t cap, size_t off, const char* s) {
 
 void handle_root() {
   s_server->send_P(200, "text/html", MIRROR_HTML);
+}
+
+// The television surface: the same /api/glass snapshot, laid out for a
+// 10-foot glance instead of a phone in the hand. A TV on the home WiFi
+// pointed at http://<canary>.local/tv is a conformant Open Ambient Security
+// Display with no hub in the loop. Self-contained, same LAN promise as the
+// mirror. See tv/index.html (its source) and docs/hardware/tv_display_design.md.
+void handle_tv() {
+  s_server->send_P(200, "text/html", TV_HTML);
 }
 
 void handle_glass() {
@@ -282,6 +292,7 @@ void glass_web_init() {
   canary::g_log_sink = log_capture;  // browser serial monitor from here on
   s_server = new WebServer(80);
   s_server->on("/", HTTP_GET, handle_root);
+  s_server->on("/tv", HTTP_GET, handle_tv);
   s_server->on("/api/glass", HTTP_GET, handle_glass);
   s_server->on("/api/device", HTTP_GET, handle_device);
   s_server->on("/api/log", HTTP_GET, handle_log);
