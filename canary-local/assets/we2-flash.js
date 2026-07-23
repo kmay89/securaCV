@@ -24,6 +24,7 @@
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
 import { helpTopic } from "./flash-core.js";
+import { chirp } from "./chirp.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
 
@@ -41,6 +42,7 @@ export function makeTransport(port) {
   let reader = null;
   let closed = false;
   let pumping = null;
+  let writeChain = Promise.resolve();
 
   async function pump() {
     while (!closed && port.readable) {
@@ -67,10 +69,17 @@ export function makeTransport(port) {
     clear() { rx.length = 0; },
     async setRTS(v) { await port.setSignals({ requestToSend: v }); },
     async sleep(ms) { await sleep(ms); },
-    async write(bytes) {
-      const w = port.writable.getWriter();
-      try { await w.write(bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes)); }
-      finally { w.releaseLock(); }
+    // Writes are serialized through one chain: two concurrent cmd()s (the
+    // proof IIFE + the bench's threshold init) would otherwise collide on
+    // getWriter() and the loser's AT command would silently never leave.
+    write(bytes) {
+      const job = writeChain.then(async () => {
+        const w = port.writable.getWriter();
+        try { await w.write(bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes)); }
+        finally { w.releaseLock(); }
+      });
+      writeChain = job.catch(() => { /* keep the chain alive after a failed write */ });
+      return job;
     },
     writeString(s) { t.write(Uint8Array.from(s, (c) => c.charCodeAt(0))); },
     async readByte(timeoutMs) {
@@ -226,9 +235,14 @@ function phaseModuleConnected(ctx, s) {
   box.append(idLine);
 
   // a gentle AT probe — purely informative; the ROM bootloader path below
-  // works even if the running firmware answers nothing
+  // works even if the running firmware answers nothing. Kept in scope so
+  // every hand-off below STOPS it first: two consumers draining one byte
+  // stream steal each other's replies (a burn's ROM banner, the bench's
+  // VER?) and make good hardware look broken.
+  const probe = makeAtClient(s.t);
+  const stopProbe = () => { try { probe.stop(); } catch { /* already stopped */ } };
   (async () => {
-    const at = makeAtClient(s.t);
+    const at = probe;
     at.start();
     const ver = await at.cmd("VER?", { timeoutMs: 1600 });
     const id = ver ? await at.cmd("ID?", { timeoutMs: 1200 }) : null;
@@ -263,12 +277,13 @@ function phaseModuleConnected(ctx, s) {
       "bounding boxes, a confidence meter, and the two on-module dials. Nothing is written."));
   src.append(pinned, local, benchCard, file);
   box.append(el("h3", "wap-col-h", "What goes on it"), src);
-  benchCard.addEventListener("click", () => ctx.setPhase(phaseModuleBench(ctx, s)));
+  benchCard.addEventListener("click", () => { stopProbe(); ctx.setPhase(phaseModuleBench(ctx, s)); });
 
   const note = el("p", "fineprint", "");
   box.append(note);
 
   pinned.addEventListener("click", async () => {
+    stopProbe();
     note.textContent = "Fetching the release manifest…";
     try {
       const man = await fetch(m.manifest_url, { cache: "no-store" }).then((r) => {
@@ -302,6 +317,7 @@ function phaseModuleConnected(ctx, s) {
   file.addEventListener("change", async () => {
     const f = file.files && file.files[0];
     if (!f) return;
+    stopProbe();
     const bytes = new Uint8Array(await f.arrayBuffer());
     const hex = await sha256hex(bytes);
     ctx.setPhase(phaseModuleFlash(ctx, s, { bytes, label: f.name, sha256: hex, version: "", pinned: false }));
@@ -551,6 +567,7 @@ function mountBench(ctx, at, opts = {}) {
     countChip.classList.toggle("flash-hidden", !mm.count);
     if (dets.length && !seen) {
       seen = true;
+      chirp("seen");
       seenBanner.textContent = opts.pinned
         ? "👁 It sees you — the model is live and working ✓"
         : "👁 It sees something — the model is live and working ✓";

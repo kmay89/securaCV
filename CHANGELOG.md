@@ -2,7 +2,214 @@
 
 ## [Unreleased]
 
-### canary-display — the gears turn: full mode runtime + the browser twin
+### canary-display — mic detection presets, grounded in the standards
+
+- **The cadence windows are now derived from the alarm standards, not
+  guessed.** T3 = 0.5 s ±10% beeps (ISO 8201 / ANSI S3.41 / NFPA 72); T4 =
+  four 100 ms ±10 ms pulses + a 5 s ±0.5 s pause (UL 2034). The beep-duration
+  windows (T3 350–800 ms, T4 60–300 ms) stay disjoint so a miscount can't
+  cross-classify; the group-gap (900 ms) sits between T3's intra-beep and
+  inter-cycle gaps; the streak-reset (12 s) is proven to exceed T4's 5 s pause
+  (or a standing CO alarm would reset its own streak). Each constant carries
+  its derivation in a comment and is host-tested against the source timing.
+- **Level detection is now noise-floor-relative, so it's gain-independent.**
+  A UL alarm is ≥ 85 dBA @ 10 ft (≥ 79 dBA low-freq) — +14 dB over the worst
+  household ambient, +20–40 dB typically — so thresholds set as "N dB over the
+  tracked floor" are correct without knowing the ES7210's absolute gain (the
+  one thing the bench hasn't pinned). The envelope tracks the room with an
+  asymmetric follower (rises slowly toward loud, falls fast toward quiet) so a
+  standing alarm can never inflate the bar it must clear.
+- **Three sensitivity presets** (Settings → microphone → sensitivity,
+  NVS-persisted): **quiet** (bedroom, +9/+5 dB — catches a faint alarm),
+  **standard** (default, +10/+6 dB), **noisy** (kitchen/workshop, +13/+8 dB —
+  ignores clatter). The dB margins are gain-independent physics; only the
+  dead-silence clamp is a soft bench anchor that fails safe when low. The
+  `MIC1 SNAP` line now prints `floor`/`on`/`off` live as the bench's one-glance
+  calibration readout, and `HELLO`/`SNAP` report the active preset.
+- Nine new/updated mic-core host tests: adaptive floor tracks ambient and
+  freezes a beep out, self-calibration (the same RMS reads as a beep in
+  silence but as "the room" in a loud kitchen), the preset sensitivity ladder
+  is monotone, plus the standards-window and type-switch pins. Mic doc gains
+  the "how loud is a beep" section; usability protocol + serial appendix note
+  the new SNAP fields.
+
+### canary-display — mic soundness pass (a fails-safe becomes a works-right)
+
+- **The acoustic cadence detector now runs on the audio clock, not the
+  main-loop clock.** The runtime drained a batch of buffered 20 ms frames
+  each `mic_loop`, but stamped every frame in the batch with the single
+  `millis()` value passed in — so whenever the loop ran slower than the
+  frame rate (i.e. always, once the 800×480 glass is rendering), a beep
+  group collapsed onto one instant, every beep measured ~0 ms, the T3/T4
+  duration windows rejected it, and a real smoke/CO alarm went
+  **undetected**. `read_frame_rms` now returns each frame's own duration
+  and the loop advances a frame-counted clock by it (re-anchored if the
+  stream ever falls >1 s behind); the detector is fed that. The old bug
+  failed safe (missed alarms, never phantom ones) — a new host test
+  (`test_collapsed_timing_fails_safe`) pins that safety property at the
+  core so it can't ever regress into a false positive.
+- **DMA depth doubled to 160 ms** (`dma_buf_count` 4→8) so a UI stall
+  shorter than that clips no beep; **each listening session resets the
+  envelope + cadence state to silence** so re-arming next to a sounding
+  alarm inherits no stale half-group; and the **"first detection is
+  immediate" property now re-applies per session** (the 30 s re-raise
+  throttle is scoped between events, and a fresh arm clears it).
+- Four new mic-core host tests beyond the timing one: switching alarm type
+  needs a fresh two cycles, the count/duration windows are disjoint (a
+  miscount can't cross-classify T3↔T4), and confidence grows monotonically
+  and caps at 95. Mic doc's privacy-barrier section gains the audio-clock
+  note.
+
+### canary-display — the usability protocol (testing the promises on real people)
+
+- New `docs/hardware/display_usability_protocol.md` — the post-flash
+  counterpart to the bench runbooks: every product claim rewritten as a
+  think-aloud task a stranger either completes or doesn't. First light
+  with no phone in the loop; glance comprehension at 2 m; half-asleep
+  hold-to-ack + per-witness mute; night manners; settings without a
+  manual; the mode gears (including the strand-in-a-gear check on the 3 s
+  exit); the demo storyline narration; proof-on-glass; and the 4.3C's
+  **"is it listening?" battery (task H)** — where the two safety-critical
+  comprehension probes allow no assisted passes at all. Scoring
+  thresholds, a results ledger (failures filed with VERIFY-note honesty),
+  and a serial-grammar appendix (PG1/DM1/DBG1/ARC1/MIC1 in one table).
+- 4.3C power truth folded in (vendor-documented): the CS8501
+  charge/boost chip (~580 mA, single-cell 3.7 V → 5 V), the PWR/CHG/DONE
+  LEDs, and the **side switch = battery connect/disconnect** (USB powers
+  the board in either position; CHG-blink + DONE-lit with no pack is
+  normal). New POWER & BATTERY section in the 4.3C pin map +
+  "Power, the battery, and the side switch" in its README. `HAS_BATTERY`
+  stays 0 with the reason upgraded from "no charge silicon confirmed" to
+  "charging is hardware-managed; the firmware has no battery view" —
+  `BATTERY_PIN_ADC -1` (VERIFY) records the sense-pin conflict (series
+  demo says ADC1 ch3 = GPIO4, which this map carries as touch INT) that
+  only the schematic can arbitrate. The outage-witness follow-up is
+  staged in the README, not started.
+- Polish/honesty fixes found writing it: `mic_pins_ok()` now computes
+  from the pin map rather than gate state, so debug mode's System page
+  reports the board truthfully even though the gears never initialize the
+  mic (and "the gears never listen" is now stated in the mic contract);
+  the 4.3C README gains the dark-glass survival note — a dark panel is
+  the ST7701 init follow-up, not a brick, and the serial console + the
+  device's own web mirror remain the working screens.
+
+### canary-display — the mic-bearing dash (Waveshare 4.3C) and the listening contract
+
+- **First-class support for the one display SKU that physically carries
+  microphones** — the 4.3C "AI voice" (dual-MIC array behind an ES7210,
+  ES8311 alongside), previously documented only as "unsuitable". Handled as
+  a **distinct privacy surface** (the Sense-Wellbeing rule): its own board
+  map (`boards/waveshare-esp32s3-lcd43c`, registered compile-tested), its
+  own env (`canary-display-dash-mic`, in flavors.json so CI builds it), and
+  its own reserved OTA product — never cross-installed with the mic-free
+  dashes, which keep their unchanged "never microphone" promise.
+- **What the mics do — and only do:** `FEATURE_MIC_ALARM` hears the two
+  regulated alarm grammars (smoke **T3**, CO **T4**), each requiring two
+  consecutive on-grammar cycles, raising `acoustic_smoke_alarm` /
+  `acoustic_co_alarm` as UNSIGNED local events (Sev::Alert). The pipeline
+  is the WAP's privacy-barrier design as a pure core
+  (`canary/io/mic_logic.h`): one RMS scalar per ~20 ms frame, buffer zeroed
+  before the read returns, booleans-and-milliseconds downstream — no
+  spectra, no models, no recording, no streaming. Host-tested
+  (`test_mic_logic.cpp`, CI step + Makefile): grammar windows, two-cycle
+  rule, doorbell/speech/stale-streak rejection, envelope hysteresis.
+- **You always know if it's on — one bit, three surfaces:** the amber
+  ● MIC chip is lit exactly while the I2S driver is installed (the same
+  gate action does both; the host test proves no
+  listening-without-chip state is representable); Settings → microphone
+  says `off / listening / pins unset` in words with the contract as the
+  page caption; the `MIC1` serial grammar heartbeats 1 Hz only while
+  capturing. **Off is the default and off is real**: arming is on-glass
+  NVS opt-in only (no remote path), disarm = `i2s_driver_uninstall` (pins
+  released — the verifiable hard mute), and the shipped audio pins are
+  **-1 (VERIFY)** so the mics are provably un-driven until the bench fills
+  them from the vendor schematic (`feature_sanity` refuses the flag on any
+  board that never declared `HAS_MICROPHONE`). The dash transparency sheet
+  renders the live mic state instead of a stale promise.
+- Docs: `docs/hardware/display_mic_variant.md` (the listening contract +
+  status ledger), board README with the bench session, hardware index row,
+  sibling-note updates in the 4.3 map.
+
+### flasher — detection-led firmware selection (families + smartPick)
+
+- **The picker now scales to many boards and flavors without intimidating
+  anyone** — the Arduino-IDE lesson inverted: everything the flasher can
+  READ narrows the choice, and the human only answers what silicon can't.
+  New pure selection ladder `smartPick` (`flash-core.js`, 13 tests in
+  `tests/flash_select.test.js`): a `?product=` ask wins outright; else the
+  app descriptor already on the board ("This board already runs X —
+  installing keeps it, updated in place"); else the chip **plus the
+  measured flash size** — an ESP32-S3 with 16 MB flash can only be the
+  Waveshare panel module, with 8 MB it's the XIAO class — with the evidence
+  stated on the page; else the authored per-chip default. Where size
+  genuinely can't distinguish (both Vision C3 boards are 4 MB) the picker
+  claims nothing — honesty over cleverness.
+- **The family layer:** `flash.json` gains `families` (five stories:
+  Canary / WAP / Vision / Sense / Display) and per-product `family`,
+  `board_label`, `flash_mb` (derived from the firmware's board settings via
+  the new `BOARD_FLASH_MB` single-source table) and `pick_label`. The
+  "show all (developer)" browse renders grouped under family headers, each
+  multi-variant family asking one plain-language question ("Which glass is
+  in your hands?"). The generator refuses a family with no products, a
+  variant family with no question, or a product with no answer; adding a
+  board or flavor is one PRODUCTS entry + one family membership.
+- Docs: `browser_flasher.md` § How the picker chooses. All flasher suites
+  green (81 + 13).
+
+### flasher — the display family joins the release train (watch / dash / dash-modes)
+### flasher — the modes multi-tool joins the display release train
+- **`securacv-canary-display-dash-modes` is flashable** alongside the
+  watch and dash cards that already ride the train: the 4.3B multi-tool
+  that boots the fleet face and carries the bench / demo / debug / arcade
+  gears behind Settings → modes. Built like its siblings — an arduino-cli
+  `--profile modes` build (the sketch's committed profile pins the
+  Waveshare 4.3B FQBN), a signed per-product manifest, an entry in
+  `build_flash_manifest.py`'s BUILD map, and a `gen_flash.py` product row
+  regenerated into `flash.json`.
+- **Distinct OTA/flash product, on purpose.** A modes unit must never
+  cross-grade to the plain-dash image — that would silently strip the
+  gears. Same rule that keeps a watch image off a dash.
+- **Display-specific hatch moments:** the join-QR first light, plus a
+  "with gears" variant (`display-modes`) that points at the modes doorway.
+  The displays' emulator cards now cross-link their flashable product
+  (`flash_product`); the flash button still lights only when a release's
+  `manifest-flash.json` actually offers the image. Flasher docs gain
+  §The display family (`docs/browser_flasher.md`); the modes spec's Waves
+  ledger gains wave 7.
+
+### GPS/GNSS — RMC status-flag fix + GPS-derived system clock
+
+- **RMC 'V' (void) sentences no longer trusted as fixes.** Both NMEA parsers
+  (`firmware/canary/lib/securacv_gps` and the canary-wap sketch's inline
+  parser) parsed the RMC status field into a local `status` variable and then
+  never read it — a void sentence (no fix, or a warm-up sentence some
+  receivers emit before ephemeris loads) still updated speed, course, time,
+  and date, and still flipped the UTC time to `valid = true`. Both parsers now
+  gate all of that on `status == 'A'`.
+- **New `firmware/common/gnss/gnss_time.h`.** Pure, header-only NMEA UTC
+  date/time -> validated Unix epoch conversion: `gnss_calendar_valid()`
+  rejects out-of-range fields (a corrupt-but-checksum-valid sentence, or a
+  receiver emitting all-zeros before it has ephemeris) with a leap-year-aware
+  day-of-month check and a century-wide trust window; `days_from_civil()` is
+  Howard Hinnant's exact civil-calendar epoch algorithm, used instead of
+  `mktime`/`timegm` (unreliable across ESP32 Arduino cores, and TZ-sensitive).
+  Host-tested in `firmware/projects/canary-wap/tests_host/test_gnss_time.cpp`
+  against known reference epochs and the validity guardrails. Staged into the
+  canary-wap sketch (`arduino/canary_wap/gnss_time.h`) following the existing
+  device_pseudonym/witness_store single-source pattern, with a
+  `check_csi_sync.sh` drift guard.
+- **GPS now actually sets the system clock.** Neither `firmware/canary` nor
+  canary-wap has an SNTP path — the UTC time GPS already parsed was surfaced
+  in diagnostics but never fed to `settimeofday()`, so `time(nullptr)` never
+  left its post-boot state. That silently dead-ended wall-clock-gated
+  features already in the code (canary-wap's NFPA-72 monthly self-test
+  chirp's waking-hours check and 30-day NVS-persisted cadence both gate on
+  `time(nullptr) >= 1700000000`, a condition that could never become true).
+  Both trees now seed/correct the system clock from a validated GPS fix when
+  one is available — floored against the same "clock looks unset" epoch,
+  re-checked periodically to correct crystal drift, and only stepping the
+  clock when it disagrees by more than a second so a synced clock isn't
+  re-written every cycle.### canary-display — the gears turn: full mode runtime + the browser twin
 
 - **The mode system is now end-to-end firmware** (Built · compile-gated ·
   bench-pending — `docs/hardware/display_modes.md` §Waves). The glue

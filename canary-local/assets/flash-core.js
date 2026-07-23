@@ -432,7 +432,15 @@ export function parseNvs(bytes, allowBlobKeys = []) {
           if (allow.has(key)) item.bytes = bytes.slice(o + 32, o + 32 + Math.min(size, (span - 1) * 32));
           items.push(item);
         }
-        if (type === 0x21) items.push({ nsIndex: ns, key, type, size });
+        if (type === 0x21) {
+          const item = { nsIndex: ns, key, type, size };
+          // Strings surface content only for allow-listed keys (same privacy
+          // posture as blobs); size includes the NUL — strip it here.
+          if (allow.has(key)) {
+            item.bytes = bytes.slice(o + 32, o + 32 + Math.min(Math.max(size - 1, 0), (span - 1) * 32));
+          }
+          items.push(item);
+        }
       } else if (type === 0x48) { // v2 blob index: authoritative total size
         items.push({ nsIndex: ns, key, type: 0x42, size: u32le(bytes, o + 24) });
       }
@@ -799,6 +807,9 @@ export function buildNvsSeedImage(opts, partitionSize) {
   const itemBase = (j) => 64 + j * 32;
 
   const writeHeader = (o, ns, type, span, chunk, key) => {
+    // One 4 KB page = 126 slots. Current callers use ~16 worst-case, but a
+    // future seed must fail loud here rather than write past the page.
+    if (o + span * 32 > NVS_PAGE) throw new Error("NVS seed exceeds one page — too many settings");
     page[o] = ns; page[o + 1] = type; page[o + 2] = span; page[o + 3] = chunk;
     for (let i = 0; i < 16; i++) page[o + 8 + i] = i < key.length ? key.charCodeAt(i) : 0;
   };
@@ -844,10 +855,37 @@ export function buildNvsSeedImage(opts, partitionSize) {
     finishItem(idx); markWritten(idx); idx++;
   };
 
+  // ESP-IDF string entry (Preferences putString / nvs_set_str): type 0x21,
+  // size includes the terminating NUL, payload CRC over data+NUL. The
+  // usb-secrets firmwares (sense/vision runtime_config) read wifi via
+  // getString — a blob under the same key would read back empty.
+  const writeString = (key, bytes) => {
+    const total = bytes.length + 1; // + NUL
+    const payloadEntries = Math.ceil(total / 32);
+    const o = itemBase(idx);
+    writeHeader(o, 1, 0x21, 1 + payloadEntries, 0xff, key);
+    page[o + 24] = total & 0xff; page[o + 25] = (total >> 8) & 0xff;
+    page[o + 26] = 0xff; page[o + 27] = 0xff;               // reserved
+    const payload = new Uint8Array(total);
+    payload.set(bytes, 0);                                   // trailing 0x00 NUL
+    nvsWr32(page, o + 28, crc32EspRom(payload));             // payload CRC
+    finishItem(idx); markWritten(idx);
+    for (let i = 0; i < payloadEntries; i++) markWritten(idx + 1 + i);
+    page.set(payload, o + 32);
+    // clear the padding tail to 0xFF beyond the payload inside claimed entries
+    for (let i = o + 32 + total; i < o + 32 + payloadEntries * 32; i++) page[i] = 0xff;
+    idx += 1 + payloadEntries;
+  };
+
   if (wifi) {
-    writeBlob("wifi_ssid", ssidB);
-    writeBlob("wifi_pass", passB);
-    writeInt("wifi_en", 0x01, 1, 1); // Preferences putBool stores a u8
+    if ((opts.wifiScheme || "blob") === "string") {
+      writeString("wifi_ssid", ssidB);
+      writeString("wifi_pass", passB);
+    } else {
+      writeBlob("wifi_ssid", ssidB);
+      writeBlob("wifi_pass", passB);
+      writeInt("wifi_en", 0x01, 1, 1); // Preferences putBool stores a u8
+    }
   }
   for (const [k, v] of Object.entries(u8s)) writeInt(k, 0x01, 1, v);
   for (const [k, v] of Object.entries(u32s)) writeInt(k, 0x04, 4, v);
@@ -963,6 +1001,70 @@ export function preferredProductId(search) {
 // "recommended for you". null only if nothing targets this chip.
 export function recommendedProduct(catalog, detected) {
   return productsForChip(catalog, detected)[0] || null;
+}
+
+// ── detection-led selection (the Arduino-IDE lesson, minus the dropdown) ────
+// Arduino's board menu makes the human answer questions the tooling could
+// answer itself. Here, everything the flasher can READ narrows the choice:
+// the chip guard first, then the flash size it measured (XIAO-class S3 parts
+// are 8 MB; the Waveshare panel modules are 16 MB — catalog `flash_mb`, from
+// the firmware's own board settings), then whatever firmware is already on
+// the board. The human only ever answers what silicon can't.
+
+export function familiesIn(catalog) {
+  return (catalog && Array.isArray(catalog.families)) ? catalog.families : [];
+}
+
+// Chip + measured flash size → the products that could physically BE the
+// board in hand. Falls back to the plain chip set when the size is unknown
+// or matches nothing — an unexpected module must never empty the picker.
+export function productsForBoard(catalog, chip, flashBytes) {
+  const byChip = productsForChip(catalog, chip);
+  const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
+  if (!mb) return byChip;
+  const sized = byChip.filter((p) => p.flash_mb === mb);
+  return sized.length ? sized : byChip;
+}
+
+// The ONE card the picker leads with, plus the honest sentence for why.
+// Priority: what you asked for (?product=) → what the board already runs →
+// what the silicon says (chip + flash size) → the chip's authored default.
+// Every branch states its evidence in plain words — magic that explains
+// itself is trust; magic that doesn't is a guess.
+export function smartPick(catalog, opts = {}) {
+  const { chip, flashBytes, currentProject, preferredId } = opts;
+  const byChip = productsForChip(catalog, chip);
+  if (!byChip.length) return null;
+  const label = opts.chipLabel || chip || "this chip";
+
+  if (preferredId) {
+    const p = byChip.find((x) => x.id === preferredId);
+    if (p) {
+      return { product: p, kind: "picked",
+        why: `Showing ${p.name} — the firmware you picked.` };
+    }
+  }
+  if (currentProject) {
+    const cur = matchProjectToProduct(catalog, currentProject);
+    if (cur && byChip.some((x) => x.id === cur.id)) {
+      return { product: cur, kind: "current",
+        why: `This board already runs ${cur.name} — installing keeps it, ` +
+             `updated in place.` };
+    }
+  }
+  const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
+  if (mb) {
+    const sized = byChip.filter((p) => p.flash_mb === mb);
+    if (sized.length && sized.length < byChip.length) {
+      const p = sized[0];
+      return { product: p, kind: "board",
+        why: `Your board reads as an ${label} with ${mb} MB flash — that ` +
+             `looks like a ${p.board_label}. Recommended: ${p.name}.` };
+    }
+  }
+  const p = recommendedProduct(catalog, chip);
+  return p ? { product: p, kind: "chip",
+    why: `Recommended for your ${label}: ${p.name}.` } : null;
 }
 
 // ── catalog shape guard ─────────────────────────────────────────────────────
@@ -1586,6 +1688,121 @@ export function passportRows({ otadata, witness, coredump } = {}) {
       : { id: "crash", label: "Crash record", value: "none — it has never hard-crashed", tone: "ok" });
   }
   return rows;
+}
+
+// ── the radar's live voice: parse the Sense console telemetry ──────────────
+// The sense firmware prints one compact line on any sensing change —
+// "[sense] present count=1 range=near" — plus the older transition lines
+// ("[presence] -> present", "[vitals] breathing locked") and, on the
+// Wellbeing build, "[vitals] breath=14 heart=67 bpm". The Nursery's radar
+// bench reads them all. Pure + host-tested.
+export function parseSenseLine(line) {
+  const t = String(line || "").trim();
+  let m = /\[sense\]\s+(present|clear|unknown)\s+count=(0|1|2\+)\s+range=(near|mid|far|unknown)/.exec(t);
+  if (m) return { kind: "sense", presence: m[1], count: m[2], range: m[3] };
+  m = /\[presence\]\s+->\s+(present|clear|unknown)/.exec(t);
+  if (m) return { kind: "presence", presence: m[1], stalled: /radar stall/.test(t) };
+  m = /\[vitals\]\s+breath=(\d+)\s+heart=(\d+)\s+bpm/.exec(t);
+  if (m) return { kind: "bpm", breath: Number(m[1]), heart: Number(m[2]) };
+  m = /\[vitals\]\s+breathing\s+(locked|lost)/.exec(t);
+  if (m) return { kind: "vitals", locked: m[1] === "locked", stalled: /stall/.test(t) };
+  m = /\[health\]\s+up\s+(\d+)s\s+heap\s+(\d+)KB\s+frame_errs\s+(\d+)/.exec(t);
+  if (m) return { kind: "health", up_s: Number(m[1]), heap_kb: Number(m[2]), frame_errs: Number(m[3]) };
+  return null;
+}
+
+// ── the WiFi field's live voice: parse the WAP console telemetry ───────────
+// The wap firmware prints one transition-gated line per RF event —
+// "[wap] rf_presence_started devices=2 confidence=high dwell=transient stir=42"
+// — the same coarse vocabulary its RfEvent exports (no MACs, no raw RSSI;
+// stir is the 0-100 CSI motion score). The Nursery's field bench reads it.
+export function parseWapLine(line) {
+  const m = /\[wap\]\s+(\w+)\s+devices=(\d+)\s+confidence=(\w+)\s+dwell=(\w+)\s+stir=(\d+)/
+    .exec(String(line || "").trim());
+  if (!m) return null;
+  return {
+    kind: "wap",
+    event: m[1],
+    devices: Number(m[2]),
+    confidence: m[3],
+    dwell: m[4],
+    stir: Math.min(100, Number(m[5])),
+    present: /started|sustained|dwell/i.test(m[1]),
+    departed: /departed|ended|clear/i.test(m[1]),
+  };
+}
+
+// ── the coach: waiting is optional learning ────────────────────────────────
+// While a long operation runs, the progress card can teach — one bite-size
+// lesson at a time, stage-aware first (a backup teaches backups), generic
+// after, never repeating until the deck runs dry. The deck lives in the
+// generated catalog (catalog.lessons); this is just the pure picker.
+export function pickLesson(catalog, stageText, shownIds = []) {
+  const deck = (catalog && Array.isArray(catalog.lessons)) ? catalog.lessons : [];
+  if (!deck.length) return null;
+  const seen = new Set(shownIds);
+  const stage = String(stageText || "").toLowerCase();
+  // Stage-matched, unseen lessons first — "what's happening RIGHT NOW".
+  const staged = deck.find((l) => l.stage !== "any" && !seen.has(l.id) && stage.includes(l.stage));
+  if (staged) return staged;
+  // Then the generic pool, in authored order.
+  const generic = deck.find((l) => l.stage === "any" && !seen.has(l.id));
+  if (generic) return generic;
+  // Everything shown: any unseen at all (off-stage), else the deck is dry.
+  return deck.find((l) => !seen.has(l.id)) || null;
+}
+
+// ── the Nursery roster: don't get lost flashing a batch ────────────────────
+// Every successful install becomes a hatchling entry; the connect card can
+// then say "this one's already done" and the session shows its progression.
+// Pure list helpers — flash.js owns sessionStorage. Entries are public-only
+// facts (product, version, preset names, MAC) — never credentials.
+const ROSTER_MAX = 60;
+
+export function rosterAdd(list, entry) {
+  const e = {
+    t: entry.t,                              // epoch ms (caller supplies)
+    mac: entry.mac || null,
+    product: entry.product || null,          // display name
+    version: entry.version || null,
+    preset: entry.preset || null,            // dial/reflex preset title, if any
+    wifi: !!entry.wifi,                      // baked? (never the network name)
+    // Continue from the LAST entry's number, not the list length — the
+    // 60-entry cap trims the head, and hatchling #61 must not read #61 twice.
+    n: (Array.isArray(list) && list.length ? list[list.length - 1].n : 0) + 1,
+  };
+  return [...(Array.isArray(list) ? list : []), e].slice(-ROSTER_MAX);
+}
+
+export function rosterFind(list, mac) {
+  if (!mac || !Array.isArray(list)) return null;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].mac === mac) return list[i];
+  }
+  return null;
+}
+
+// Short MAC tail for a human label ("…a4:3b") — enough to tell boards apart
+// on a bench without shouting the full identifier.
+export function macTail(mac) {
+  const parts = String(mac || "").split(":");
+  return parts.length >= 2 ? "…" + parts.slice(-2).join(":") : String(mac || "");
+}
+
+// One line per hatchling for the progression strip; `now` passed in so the
+// "m ago" math stays pure.
+export function rosterLines(list, now) {
+  return (Array.isArray(list) ? list : []).map((e) => {
+    const ago = Math.max(0, Math.round((now - e.t) / 60000));
+    return {
+      n: e.n,
+      label: `${e.product || "firmware"}${e.version ? " v" + e.version : ""}`,
+      mac: macTail(e.mac),
+      extras: [e.preset ? `dialed: ${e.preset}` : null, e.wifi ? "WiFi baked ✓" : null]
+        .filter(Boolean).join(" · "),
+      ago: ago < 1 ? "just now" : ago === 1 ? "1 min ago" : `${ago} min ago`,
+    };
+  });
 }
 
 // Optional shape guard for the new catalog blocks (settings_help, displays,

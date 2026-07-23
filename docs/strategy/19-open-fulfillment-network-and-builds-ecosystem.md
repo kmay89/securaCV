@@ -298,9 +298,9 @@ lever if the catalog ever accumulates dead vendors.
 
 ## 10. Open items
 
-- [ ] Trademark/branding policy doc + "Works with SecuraCV" badge SVG (Meshtastic dual-logo pattern; "… for SecuraCV" naming clause).
+- [x] Trademark/branding policy doc + "Works with SecuraCV" badge SVG (Meshtastic dual-logo pattern; "… for SecuraCV" naming clause) — [`TRADEMARK.md`](../../TRADEMARK.md), [`docs/trademark-grants.md`](../trademark-grants.md), [`brands/works-with-securacv.svg`](../../brands/works-with-securacv.svg).
 - [ ] OSHWA self-certification for Canary WAP + Vision.
-- [ ] `vendors.json` + website page (alphabetical, neutral, no-ranking rule, gives-back badge).
+- [x] `vendors.json` + website page (alphabetical, neutral, no-ranking rule, gives-back badge) — website repo `/vendors`.
 - [ ] BOM CI: weekly Mouser/Digi-Key stock+EOL script → `bom-status.json` + auto-issue; lychee link-rot workflow.
 - [ ] Static one-click-cart page via Digi-Key myLists third-party POST; generated per-vendor buy links in docs.
 - [ ] PCBWay Shared Projects: publish WAP/Vision (and enclosure sets on PCBWay 3D); route the 10% to the collective.

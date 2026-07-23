@@ -29,7 +29,7 @@ wall_t = 2.2;  floor_t = 2.2;  lid_t = 2.4;
 inner_pad = 8.0;     // interior margin around the board (wiring room)
 corner_r = 2.0;      // squared, utilitarian
 lip_h = 3.0;  lip_t = 1.2;
-boss_d = 21.0;       // fake 1/2" conduit boss diameter
+boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true 1/2" boss needs a taller shell)
 boss_l = 6.0;        // boss protrusion
 screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.6;
 post_d = 5.0;
@@ -37,6 +37,8 @@ usb_w = 10.5;  usb_h = 6.5;
 
 /* [Camera knockout] */
 cam_ap_d   = 9.0;
+cam_dx     = 0.0;    // aperture offset from the board centre — MEASURE: the XIAO
+cam_dy     = 0.0;    // Sense camera sits toward the antenna end, not dead centre
 ko_ring_d  = 22.0;   // mock knockout ring (aperture recessed inside it)
 ko_depth   = 0.8;
 
@@ -44,7 +46,7 @@ ko_depth   = 0.8;
 tol_slide = 0.20;  tol_hole = 0.30;
 
 /* [Board snap clips] */
-clip_w = 6.0;  clip_t = 1.5;  clip_hook = 0.8;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
@@ -83,13 +85,19 @@ module body() {
         difference() {
             union() {
                 rrect(out_l, out_w, corner_r, base_h);
-                // fake conduit bosses: two per long wall, half-cylinders lying on the wall
+                // fake conduit bosses: two per long wall, half-cylinders lying on
+                // the wall, CENTRED on the body height so they stay inside the
+                // print envelope (a Ø21 boss poked 1.7 mm below the bed plane).
+                // Horizontal cylinders on vertical walls: print with a dab of
+                // support or accept a rough underside on the lower quarter.
                 for (sy = [1, -1], i = [-1, 1])
-                    translate([i*out_l/4, sy*(out_w/2 - 0.01), floor_t + cav_h/2])
+                    translate([i*out_l/4, sy*(out_w/2 - 0.01), base_h/2])
                         rotate([-sy*90, 0, 0]) cylinder(d = boss_d, h = boss_l);
             }
             translate([0, 0, floor_t]) rrect(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1);
-            // USB opening disguised at the bottom of one boss face (-X wall)
+            // USB pass-through slot, low on the -X short wall: route a pigtail
+            // through it (a plug cannot reach the recessed connector) and dress
+            // the cable as conduit. Sheltered mounting only - the slot is open.
             translate([-out_l/2, 0, floor_t + standoff_h + board_h + usb_h/2])
                 cube([wall_t*3, usb_w, usb_h], center = true);
         }
@@ -116,7 +124,7 @@ module lid() {
                 cylinder(d = ko_ring_d + 1.6, h = ko_depth + 0.1);
                 translate([0, 0, -0.1]) cylinder(d = ko_ring_d, h = ko_depth + 0.3);
             }
-            if (opt_camera) translate([0, 0, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
+            if (opt_camera) translate([cam_dx, cam_dy, -1]) cylinder(d = cam_ap_d, h = lid_t + 2);
             if (opt_led) translate([out_l/4, 0, -1]) cylinder(d = 1.8, h = lid_t + 2);
             for (p = post_xy()) {
                 translate([p[0], p[1], -1]) cylinder(d = screw_d + 2*tol_hole, h = lid_t + 2);

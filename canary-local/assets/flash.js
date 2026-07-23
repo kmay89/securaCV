@@ -26,6 +26,7 @@ import { phaseModule } from "./we2-flash.js";
 import { wifiMemory } from "./wifi-memory.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
+import { chirp, chirpToggle } from "./chirp.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -39,8 +40,20 @@ const el = (tag, cls, text) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── the Nursery roster: the session's hatchlings, so a batch never loses
+// its place. sessionStorage only (gone when the tab closes), public facts
+// only (product, version, preset names, MAC) — never credentials.
+const ROSTER_KEY = "nursery.roster.v1";
+function loadRoster() {
+  try { return JSON.parse(sessionStorage.getItem(ROSTER_KEY)) || []; } catch { return []; }
+}
+function saveRoster(list) {
+  try { sessionStorage.setItem(ROSTER_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+}
+
 const state = {
   catalog: null,
+  roster: loadRoster(),   // this session's hatchlings
   manifest: null,       // release manifest, or {__missing:true}
   session: null,        // { port, transport, esploader }
   chip: null,           // "ESP32-S3"
@@ -115,7 +128,16 @@ async function boot() {
   const flow = el("div", "flash-flow");
   flow.id = "flash-flow";
   mount.append(flow);
+  mountJourney(flow);
   mount.append(renderReassurance());
+
+  // The footer's opener stays hidden until the catalog (and its about block)
+  // actually loaded — a dead settings button would be worse than none.
+  const footBtn = $("#foot-settings");
+  if (footBtn && state.catalog && state.catalog.about) {
+    footBtn.hidden = false;
+    footBtn.addEventListener("click", openSettings);
+  }
 
   renderVersionStrip();
   setPhase(phaseConnect());
@@ -134,12 +156,183 @@ function renderVersionStrip() {
   strip.append(pill("engine", "esptool-js (vendored, offline)"));
 }
 
+// ── the journey bar: where am I on the path? ────────────────────────────────
+// Five calm waypoints above the flow. Phases opt in via node.dataset.step;
+// a phase without one (sub-cards, tools, the module flow) keeps the bar
+// where it was — the bar never guesses.
+const JOURNEY = ["Connect", "Meet it", "Choose", "Install", "First flight"];
+let journeyEl = null;
+function renderJourney(step) {
+  if (!journeyEl) return;
+  journeyEl.querySelectorAll(".flash-journey-step").forEach((n, i) => {
+    n.classList.toggle("flash-journey-on", i + 1 === step);
+    n.classList.toggle("flash-journey-done", i + 1 < step);
+    n.setAttribute("aria-current", i + 1 === step ? "step" : "false");
+  });
+}
+function mountJourney(before) {
+  journeyEl = el("nav", "flash-journey");
+  journeyEl.setAttribute("aria-label", "Nursery progress");
+  JOURNEY.forEach((label, i) => {
+    if (i) journeyEl.append(el("span", "flash-journey-sep", "·"));
+    const s = el("span", "flash-journey-step");
+    s.append(el("span", "flash-journey-dot"), document.createTextNode(label));
+    journeyEl.append(s);
+  });
+  const side = el("span", "flash-journey-side");
+  side.append(chirpToggle());
+  const gear = el("button", "flash-settings-open", "⚙︎");
+  gear.type = "button";
+  gear.title = "About & settings — version, legal, sound, and what this page remembers";
+  gear.setAttribute("aria-label", "About and settings");
+  gear.addEventListener("click", openSettings);
+  side.append(gear);
+  const jh = helpDot("journey");
+  if (jh) side.append(jh);
+  journeyEl.append(side);
+  before.parentNode.insertBefore(journeyEl, before);
+  renderJourney(1);
+}
+
+// ── the settings & about panel: one tidy home for the meta ─────────────────
+// Version, provenance, legal, sound, lessons, and the page's local memory —
+// everything that isn't the flashing itself, in one native <dialog>. Facts
+// come from catalog.about (parsed from LICENSE + vendor provenance at
+// generation time), so the credits can't drift from the files of record.
+function openSettings() {
+  const about = (state.catalog && state.catalog.about) || null;
+  if (!about) return;
+  const old = $("#nursery-settings");
+  if (old) old.remove(); // rebuild fresh each open — toggles reflect NOW
+  const dlg = el("dialog", "flash-settings");
+  dlg.id = "nursery-settings";
+  dlg.setAttribute("aria-label", "About & settings");
+
+  const head = el("div", "flash-settings-head");
+  head.append(el("h2", null, "⚙︎ About & settings"));
+  const close = el("button", "ghost small", "close ✕");
+  close.addEventListener("click", () => dlg.close());
+  head.append(close);
+  dlg.append(head);
+
+  const sec = (title) => {
+    const s = el("section", "flash-settings-sec");
+    s.append(el("h3", null, title));
+    dlg.append(s);
+    return s;
+  };
+
+  // ── about ──
+  const sAbout = sec("The Nursery");
+  sAbout.append(el("p", "muted", about.product + " — where Canaries hatch: " +
+    "first flash, updates, triage, and the live benches, all in the browser."));
+  sAbout.append(el("p", "fineprint", about.privacy));
+  const src = el("p", "fineprint");
+  const srcA = el("a", null, "source & issues on GitHub →");
+  srcA.href = about.source; srcA.target = "_blank"; srcA.rel = "noopener";
+  src.append(srcA);
+  sAbout.append(src);
+
+  // ── versions & provenance ──
+  const sVer = sec("Versions & provenance");
+  const facts = el("div", "flash-facts");
+  facts.append(fact("Firmware train", state.catalog.fw_train));
+  const engine = (about.vendors || []).find((v) => v.name === "esptool-js");
+  if (engine) facts.append(fact("Flashing engine", engine.package + " (vendored, offline)"));
+  sVer.append(facts);
+  sVer.append(el("p", "fineprint",
+    "The device catalog on this page is generated from the firmware tree " +
+    "(tools/gen_flash.py) and drift-checked in CI — the facts here can’t be " +
+    "typed wrong, only parsed wrong loudly."));
+
+  // ── sound & lessons ──
+  const sPref = sec("Sound & lessons");
+  const prefRow = el("div", "flash-row");
+  prefRow.append(chirpToggle());
+  if (coachDismissed()) {
+    const coachBtn = el("button", "ghost small", "☕ bring back the lessons");
+    coachBtn.addEventListener("click", () => {
+      try { sessionStorage.removeItem(COACH_KEY); } catch { /* private mode */ }
+      coachBtn.textContent = "☕ lessons will ride the next install ✓";
+      coachBtn.disabled = true;
+    });
+    prefRow.append(coachBtn);
+  } else {
+    prefRow.append(el("span", "fineprint", "☕ lessons ride every install (hide them with the × on the card)"));
+  }
+  sPref.append(prefRow);
+  sPref.append(el("p", "fineprint",
+    "Motion follows your system’s reduce-motion setting automatically — " +
+    "nothing to configure here."));
+
+  // ── this page's memory ──
+  const sData = sec("What this page remembers");
+  const dataRow = el("div", "flash-row");
+  const forget = el("button", "ghost small", "forget saved WiFi");
+  forget.addEventListener("click", () => {
+    wifiMemory.forget();
+    forget.textContent = "saved WiFi forgotten ✓";
+    forget.disabled = true;
+  });
+  const clearRoster = el("button", "ghost small",
+    state.roster.length ? `clear the session roster (${state.roster.length})` : "session roster is empty");
+  clearRoster.disabled = !state.roster.length;
+  clearRoster.addEventListener("click", () => {
+    state.roster = [];
+    saveRoster(state.roster);
+    clearRoster.textContent = "roster cleared ✓";
+    clearRoster.disabled = true;
+  });
+  dataRow.append(forget, clearRoster);
+  sData.append(dataRow);
+  sData.append(el("p", "fineprint",
+    "Both live only in this browser: the WiFi copy so a batch provisions " +
+    "without retyping, the roster so a batch keeps its place (public facts " +
+    "only — never credentials). Neither ever leaves this page."));
+
+  // ── legal ──
+  const sLegal = sec("Legal");
+  sLegal.append(el("p", "muted", `${about.copyright} · ${about.license.name}`));
+  const legalList = el("div", "flash-settings-vendors");
+  (about.vendors || []).forEach((v) => {
+    const row = el("div", "flash-knob");
+    const lab = el("span", "flash-knob-label");
+    const a = el("a", null, v.package);
+    a.href = v.file; a.target = "_blank"; a.rel = "noopener";
+    lab.append(a);
+    row.append(lab, el("span", "flash-knob-val", v.license));
+    legalList.append(row);
+  });
+  sLegal.append(legalList);
+  sLegal.append(el("p", "fineprint",
+    "Vendored into this site on purpose — no CDNs, no third-party requests. " +
+    "Each credit links its provenance file; the whole page ships under " +
+    `${about.license.name} (LICENSE in the repository).`));
+
+  dlg.addEventListener("click", (ev) => { if (ev.target === dlg) dlg.close(); });
+  document.body.append(dlg);
+  dlg.showModal();
+}
+
+// One check, used everywhere motion is decorative rather than informative.
+function prefersCalm() {
+  try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
+}
+
 // The flow is a single swappable panel; the reassurance strip persists below.
 function setPhase(node) {
   const flow = $("#flash-flow");
   flow.innerHTML = "";
   flow.append(node);
-  flow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (node.dataset && node.dataset.step) renderJourney(Number(node.dataset.step));
+  // Land screen-reader / keyboard focus on the new phase's heading, so a
+  // phase change is announced instead of silently swapping content.
+  const h = node.querySelector("h2, h3");
+  if (h) {
+    h.setAttribute("tabindex", "-1");
+    try { h.focus({ preventScroll: true }); } catch { /* older engines */ }
+  }
+  flow.scrollIntoView({ behavior: prefersCalm() ? "auto" : "smooth", block: "nearest" });
 }
 
 // ── the persistent "you can't mess up" strip (compact, below the flow) ──────
@@ -418,6 +611,7 @@ function modeBadge(mode) {
 // ── phase: connect ──────────────────────────────────────────────────────────
 function phaseConnect() {
   const box = el("section", "flash-card flash-connect");
+  box.dataset.step = "1";
   box.append(el("div", "flash-big-emoji flash-plug", "🔌"));
   box.append(el("h2", null, "Plug in your Canary, then let’s meet it"));
   box.append(el("p", "muted",
@@ -509,20 +703,44 @@ async function openEsptool(port, statusCb) {
 // check, backup, rescue) calls ensureSession(), which quietly hands the
 // port back to the bootloader. No chooser, no gestures.
 async function startVoice(consoleEl, onIdentity) {
-  if (!state.session || state.voice) return;
+  // Re-entering the connected phase while a voice is already running (e.g.
+  // "not yet" from the confirm card): re-bind the LIVE stream to the fresh
+  // console element instead of leaving it talking to a detached node.
+  if (state.voice) {
+    const v0 = state.voice;
+    v0.consoleEl = consoleEl;
+    v0.onIdentity = onIdentity;
+    consoleEl.textContent = v0.buf || "listening…";
+    if (v0.identity && onIdentity) onIdentity(v0.identity);
+    return;
+  }
+  if (!state.session) return;
   const { port } = state.session;
+  // Claim the voice slot SYNCHRONOUSLY, before any await — a concurrent
+  // second call must see it and take the re-bind path above, not race the
+  // port open.
+  const v = { port, alive: true, reader: null, writer: null, identity: null,
+              buf: "", consoleEl, onIdentity };
+  state.voice = v;
   try { await state.session.esploader.after("hard_reset"); } catch {}
   try { await state.session.transport.disconnect(); } catch {}
   state.session = null;
-  const v = { port, alive: true, reader: null, writer: null, identity: null };
-  state.voice = v;
+  if (state.voice !== v || !v.alive) return; // stopVoice won the race — it owns cleanup
   try {
     await port.open({ baudRate: state.catalog.console_baud || 115200 });
+    if (state.voice !== v || !v.alive) { // superseded mid-open: nothing may own this port
+      try { await port.close(); } catch {}
+      return;
+    }
     v.reader = port.readable.getReader();
     try { v.writer = port.writable.getWriter(); } catch { /* read-only is fine */ }
   } catch (e) {
+    // Never strand an owner-less open port: close it so ensureSession (or a
+    // fresh Connect) can take it back.
+    try { v.reader && v.reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
     state.voice = null;
-    consoleEl.textContent = "(the console didn’t open — " + String(e.message || e) +
+    v.consoleEl.textContent = "(the console didn’t open — " + String(e.message || e) +
       " — installing still works)";
     return;
   }
@@ -536,18 +754,19 @@ async function startVoice(consoleEl, onIdentity) {
   setTimeout(ask, 900);
   setTimeout(ask, 2600);
   const dec = new TextDecoder();
-  let buf = "";
   (async () => {
     try {
       for (;;) {
         const { value, done } = await v.reader.read();
         if (done || !v.alive) break;
-        buf = (buf + dec.decode(value, { stream: true })).slice(-8000);
-        consoleEl.textContent = buf;
-        consoleEl.scrollTop = consoleEl.scrollHeight;
+        // Everything goes through v.* so a phase re-render can re-bind the
+        // console element and identity callback mid-stream.
+        v.buf = (v.buf + dec.decode(value, { stream: true })).slice(-8000);
+        v.consoleEl.textContent = v.buf;
+        v.consoleEl.scrollTop = v.consoleEl.scrollHeight;
         if (!v.identity) {
-          const m = core.parseSelfManifest(buf);
-          if (m) { v.identity = m; if (onIdentity) onIdentity(m); }
+          const m = core.parseSelfManifest(v.buf);
+          if (m) { v.identity = m; if (v.onIdentity) v.onIdentity(m); }
         }
       }
     } catch { /* unplug/re-enumeration — ensureSession or reconnect recovers */ }
@@ -597,6 +816,7 @@ async function onConnect() {
   state.connecting = false;
   state.busy = true;
   const box = el("section", "flash-card flash-working");
+  box.dataset.step = "1";
   box.append(el("div", "flash-spinner", ""));
   const status = el("h2", null, "Waking up your Canary…");
   const detail = el("p", "muted", "Reaching the board’s bootloader. This takes a few seconds.");
@@ -648,6 +868,7 @@ async function onConnect() {
     await readCurrentFirmware();     // best-effort; never throws out
     await readPassport();            // the counters worth showing at hello
     ensureManifest();                // kick off (async) manifest load
+    chirp("hello");                  // the Nursery says hi (only if invited)
     setPhase(phaseConnected());
   } catch (e) {
     state.busy = false;
@@ -894,6 +1115,7 @@ async function readPassport() {
 // ── phase: connected — chip card + firmware picker ──────────────────────────
 function phaseConnected() {
   const wrap = el("div", "flash-connected");
+  wrap.dataset.step = "2";
 
   // The chip hello card.
   const info = core.chipInfo(state.catalog, state.chip) || {};
@@ -915,6 +1137,19 @@ function phaseConnected() {
     cur.append(document.createTextNode(`Looks like it’s running ${name}${ver}${built} right now.`));
   }
   ht.append(cur);
+  // Batch guard: if THIS exact board already hatched this session, say so
+  // before anything else — the repeated-actions trap is plugging in a board
+  // you already did and not being sure.
+  const prev = core.rosterFind(state.roster, state.mac ? core.formatMac(state.mac) : null);
+  if (prev) {
+    const again = el("p", "flash-role flash-already");
+    again.append(document.createTextNode(
+      `🐣 Already hatched this session — #${prev.n}, ${prev.product}` +
+      `${prev.version ? " v" + prev.version : ""}` +
+      `${prev.preset ? ", dialed " + prev.preset : ""}. ` +
+      `Plug in the next board, or reflash this one freely.`));
+    ht.append(again);
+  }
   const role = renderRoleLine();
   if (role) ht.append(role);
   ht.append(modeBadge("download"));
@@ -922,9 +1157,9 @@ function phaseConnected() {
   hello.append(head);
 
   const facts = el("div", "flash-facts");
-  facts.append(fact("Chip", state.chipDesc || state.chip));
-  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac)));
-  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes)));
+  facts.append(fact("Chip", state.chipDesc || state.chip, "chip"));
+  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac), "mac"));
+  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes), "flash_size"));
   hello.append(facts);
 
   // The passport strip: the board's story so far, read without changing a
@@ -932,11 +1167,15 @@ function phaseConnected() {
   // crash history. A brand-new board simply has no rows yet.
   const story = core.passportRows(state.passport || {});
   if (story.length) {
-    const strip = el("div", "flash-passport");
+    const strip = el("div", "flash-passport flash-passport-stagger");
+    const HELP_FOR = { updates: "updates_seen", boots: "boots", seq: "witness_records",
+                       tamper: "tamper_flag", crash: "crash_record" };
     story.forEach((r) => {
       const chip = el("span", `flash-passport-chip flash-passport-${r.tone || "ok"}`);
       chip.append(el("strong", null, r.label + " "));
       chip.append(document.createTextNode(r.value));
+      const hd = HELP_FOR[r.id] && helpDot(HELP_FOR[r.id]);
+      if (hd) chip.append(hd);
       strip.append(chip);
     });
     hello.append(strip);
@@ -962,7 +1201,8 @@ function phaseConnected() {
   const rescue = el("button", "ghost", "🚑 Rescue");
   rescue.title = "Board acting wrong? Wipe it and write the newest signed firmware — back to known-good.";
   rescue.addEventListener("click", () => setPhase(phaseRescue()));
-  tools.append(health, mon, rescue);
+  tools.append(health, helpDot("health_check") || "", mon, helpDot("serial_monitor") || "",
+               rescue, helpDot("rescue") || "");
   hello.append(tools);
   const toolsNote = el("p", "fineprint",
     "Health check reads the board’s story without changing a byte. The serial " +
@@ -985,6 +1225,19 @@ function phaseConnected() {
     voice.append(idSlot);
     const vcon = el("pre", "flash-console flash-voice-console", "listening…");
     voice.append(vcon);
+    // A Sense on the wire gets its bench one click away — the console is its
+    // voice, but the radar bench is its senses.
+    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    const curRole = curProd && core.productRole(curProd.id);
+    if (curRole === "sense") {
+      const rb = el("button", "ghost small", "👋 open the radar bench — feel it sense");
+      rb.addEventListener("click", () => openSenseBench(curProd));
+      voice.append(rb);
+    } else if (curRole === "wap") {
+      const rb = el("button", "ghost small", "🌊 open the field bench — feel the room");
+      rb.addEventListener("click", () => openWapBench(curProd));
+      voice.append(rb);
+    }
     wrap.append(voice);
     startVoice(vcon, (m) => {
       idSlot.innerHTML = "";
@@ -994,6 +1247,8 @@ function phaseConnected() {
       const hchip = el("span", `flash-passport-chip flash-passport-${hv.level === "ok" ? "ok" : "warn"}`);
       hchip.append(el("strong", null, "Self-check "),
         document.createTextNode(scored ? `${hv.icon} ${m.health}/100` : hv.label));
+      const hHelp = helpDot("self_check");
+      if (hHelp) hchip.append(hHelp);
       chips.append(hchip);
       if (typeof m.temp_c === "number" && Number.isFinite(m.temp_c) &&
           m.temp_c > -40 && m.temp_c < 150) {
@@ -1001,6 +1256,8 @@ function phaseConnected() {
         const tchip = el("span", `flash-passport-chip${warm ? " flash-passport-warn" : ""}`);
         tchip.append(el("strong", null, "Heat "),
           document.createTextNode(`${Math.round(m.temp_c)} °C${warm ? " — give it air" : ""}`));
+        const tHelp = helpDot("temperature");
+        if (tHelp) tchip.append(tHelp);
         chips.append(tchip);
       }
       if (m.tamper) {
@@ -1014,15 +1271,24 @@ function phaseConnected() {
   // Firmware picker (chip-guarded).
   wrap.append(renderPicker());
 
+  // The session's progression — a batch never loses its place.
+  const roster = renderRosterStrip();
+  if (roster) wrap.append(roster);
+
   const disconnect = el("button", "ghost small flash-disconnect", "disconnect");
   disconnect.addEventListener("click", onDisconnect);
   wrap.append(disconnect);
   return wrap;
 }
 
-function fact(label, val) {
+function fact(label, val, topicId) {
   const f = el("div", "flash-fact");
-  f.append(el("span", "flash-fact-label", label));
+  const lab = el("span", "flash-fact-label", label);
+  if (topicId) {
+    const hd = helpDot(topicId);
+    if (hd) lab.append(hd);
+  }
+  f.append(lab);
   f.append(el("span", "flash-fact-val", val));
   return f;
 }
@@ -1032,15 +1298,38 @@ function fact(label, val) {
 // touch it, what the default means. Copy comes from catalog.settings_help
 // (generated from the firmware's own values), looked up via core.helpTopic —
 // so a control without a topic simply has no dot, never a broken one.
+// Only one ⓘ open at a time; Escape and any outside click close it —
+// pro-grade popover manners, wired up once, lazily.
+let openHelp = null; // { pop, btn }
+function closeHelp() {
+  if (!openHelp) return;
+  openHelp.pop.classList.add("flash-hidden");
+  openHelp.btn.setAttribute("aria-expanded", "false");
+  openHelp = null;
+}
+let helpManagersInstalled = false;
+function installHelpManagers() {
+  if (helpManagersInstalled) return;
+  helpManagersInstalled = true;
+  document.addEventListener("click", (ev) => {
+    if (openHelp && !ev.target.closest(".flash-help")) closeHelp();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeHelp();
+  });
+}
+
 function helpDot(topicId) {
   const t = core.helpTopic(state.catalog, topicId);
   if (!t) return null;
+  installHelpManagers();
   const wrap = el("span", "flash-help");
   const btn = el("button", "flash-help-dot", "?");
   btn.type = "button";
   btn.setAttribute("aria-label", `About: ${t.label}`);
   btn.setAttribute("aria-expanded", "false");
   const pop = el("span", "flash-help-pop flash-hidden");
+  pop.setAttribute("role", "note");
   pop.append(el("strong", "flash-help-title", t.label));
   pop.append(el("span", "flash-help-what", t.what));
   if (t.when) {
@@ -1058,11 +1347,46 @@ function helpDot(topicId) {
     // checkbox the label wraps.
     ev.preventDefault();
     ev.stopPropagation();
-    const hidden = pop.classList.toggle("flash-hidden");
-    btn.setAttribute("aria-expanded", String(!hidden));
+    const wasOpen = openHelp && openHelp.pop === pop;
+    closeHelp();
+    if (!wasOpen) {
+      pop.classList.remove("flash-hidden");
+      btn.setAttribute("aria-expanded", "true");
+      openHelp = { pop, btn };
+    }
   });
   wrap.append(btn, pop);
   return wrap;
+}
+
+// ── the Nursery roster strip: the session's progression, at a glance ────────
+function renderRosterStrip() {
+  if (!state.roster.length) return null;
+  const sec = el("details", "flash-roster");
+  if (state.roster.length <= 3) sec.open = true;
+  const plural = state.roster.length === 1 ? "hatchling" : "hatchlings";
+  const sum = el("summary", null,
+    `🐣 This session’s nursery — ${state.roster.length} ${plural} so far`);
+  const rh = helpDot("roster");
+  if (rh) sum.append(rh);
+  sec.append(sum);
+  const list = el("div", "flash-roster-list");
+  core.rosterLines(state.roster, Date.now()).forEach((l) => {
+    const row = el("div", "flash-roster-row");
+    row.append(el("span", "flash-roster-n", `#${l.n}`));
+    const main = el("span", "flash-roster-main");
+    main.append(el("strong", null, l.label));
+    if (l.mac) main.append(document.createTextNode(` ${l.mac}`));
+    if (l.extras) main.append(el("span", "flash-roster-extras", ` · ${l.extras}`));
+    row.append(main);
+    row.append(el("span", "flash-roster-ago", l.ago));
+    list.append(row);
+  });
+  sec.append(list);
+  sec.append(el("p", "fineprint",
+    "Kept for this tab only, and only public facts — which firmware, which " +
+    "dials, whether WiFi was baked (never the network itself)."));
+  return sec;
 }
 
 // ── role: what this board IS, read from what it RUNS ────────────────────────
@@ -1118,10 +1442,19 @@ async function takeBackup(box) {
 
 async function onBackup() {
   if (state.busy || !state.flashBytes) return;
-  if (!state.session && !(await ensureSession())) return;
-  state.busy = true;
+  state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
+  if (!state.session && !(await ensureSession())) {
+    state.busy = false;
+    setPhase(errorRetry("Couldn’t reach the bootloader for the backup",
+      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
+      phaseConnect));
+    return;
+  }
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
+  // Name the stage so the coach deals its safety-copy lessons here too, not
+  // only during an install's embedded backup step.
+  box.stage("Saving a safety copy — reading every byte off the board. Nothing is changed.");
   try {
     await takeBackup(box);
     state.busy = false;
@@ -1148,32 +1481,70 @@ function renderPicker() {
   manifestState.id = "flash-manifest-state";
   card.append(manifestState);
 
-  // By default the flasher figures out what to install: it leads with ONE
-  // product — the one asked for via ?product=… (arriving from /checkup), or, if
-  // none, the recommended default for the detected chip. The chip guard still
-  // limits the set, so this only ever narrows within what's valid. The full
-  // list is one click away for the curious / for developers.
-  const preferredId = core.preferredProductId(location.search);
-  const explicit = preferredId ? matches.find((p) => p.id === preferredId) : null;
-  const focus = explicit || core.recommendedProduct(state.catalog, state.chip);
-  const isRecommendation = !explicit && !!focus;
+  // Selection is detection-led (the Arduino-IDE lesson, minus the 400-board
+  // dropdown): everything the flasher can READ — the chip, the measured
+  // flash size, the firmware already on the board, a ?product= ask — picks
+  // the ONE right card and says why in plain words. The full line hides
+  // behind a click, grouped by family with one plain-language question per
+  // variant axis, so ten products never read as a wall of SKUs.
+  const pick = core.smartPick(state.catalog, {
+    chip: state.chip,
+    chipLabel: info.label,
+    flashBytes: state.flashBytes,
+    currentProject: state.current && !state.current.unknown
+      ? state.current.projectName : null,
+    preferredId: core.preferredProductId(location.search),
+  });
+  const focus = pick && pick.product;
 
   const list = el("div", "flash-products");
-  const rows = matches.map((p) => { const r = productRow(p); list.append(r); return r; });
+  const rows = [];
+  const headers = [];
+  const fams = core.familiesIn(state.catalog);
+  const grouped = new Set();
+  for (const fam of fams) {
+    const inFam = matches.filter((p) => p.family === fam.id);
+    if (!inFam.length) continue;
+    const head = el("div", "flash-family");
+    head.append(el("div", "flash-family-name", fam.name));
+    head.append(el("div", "flash-family-pitch muted", fam.pitch));
+    if (inFam.length > 1 && fam.pick) {
+      head.append(el("div", "flash-family-pick fineprint", fam.pick));
+    }
+    headers.push(head);
+    list.append(head);
+    for (const p of inFam) {
+      grouped.add(p.id);
+      const r = productRow(p);
+      rows.push(r);
+      list.append(r);
+    }
+  }
+  // Defensive: a product outside every family still renders (catalog drift
+  // must degrade to "ungrouped", never to "invisible").
+  for (const p of matches.filter((x) => !grouped.has(x.id))) {
+    const r = productRow(p);
+    rows.push(r);
+    list.append(r);
+  }
   if (!matches.length) {
     list.append(el("p", "muted", "No published SecuraCV product targets this chip yet."));
   }
   if (focus && matches.length > 1) {
     // Hide the others, but keep their rows in the DOM so refreshManifestState
-    // still fills every version; one click reveals them.
+    // still fills every version; one click reveals the grouped browse.
     rows.forEach((r) => { if (r.dataset.id !== focus.id) r.style.display = "none"; });
+    headers.forEach((h) => { h.style.display = "none"; });
     const note = el("p", "fineprint flash-focus-note");
-    note.append(el("span", null, isRecommendation
-      ? `🪄 Recommended for your ${info.label || state.chip}: ${focus.name}. `
-      : `Showing ${focus.name} — the firmware you picked. `));
+    note.append(el("span", null,
+      (pick.kind === "picked" ? "" : "🪄 ") + pick.why + " "));
     const more = el("button", "ghost small",
       `show all ${matches.length} for this chip (developer)`);
-    more.addEventListener("click", () => { rows.forEach((r) => { r.style.display = ""; }); note.remove(); });
+    more.addEventListener("click", () => {
+      rows.forEach((r) => { r.style.display = ""; });
+      headers.forEach((h) => { h.style.display = ""; });
+      note.remove();
+    });
     note.append(more);
     card.append(note);
   }
@@ -1286,10 +1657,10 @@ function displaysTeaser() {
   const sum = el("summary", null, "Building a Canary with a screen? Meet the displays");
   sec.append(sum);
   const intro = el("p", "muted",
-    "Two of the family SHOW instead of sense. Their firmware isn’t on the " +
-    "signed release channel yet (it builds from source) — but the real " +
-    "firmware boots in your browser, 1:1, so you can try the glass before " +
-    "you build it.");
+    "Two of the family SHOW instead of sense — and both flash right here " +
+    "(they’re in the picker above, chip-guarded like everything else). " +
+    "Before you commit, the REAL firmware boots in your browser, 1:1: try " +
+    "the glass first.");
   const hd = helpDot("display_emulator");
   if (hd) intro.append(hd);
   sec.append(intro);
@@ -1318,6 +1689,7 @@ function displayBenchUrl(d) {
 
 function phaseDisplayBench(d, back) {
   const box = el("section", "flash-card flash-displaybench");
+  box.dataset.step = "2";
   box.append(el("h2", null, `${d.name} — a board that SHOWS`));
   const sub = el("p", "muted",
     `${d.tagline} Its firmware (v${d.emulator.fw_version}, LVGL ${d.emulator.lvgl}) ` +
@@ -1335,8 +1707,9 @@ function phaseDisplayBench(d, back) {
   box.append(facts);
 
   box.append(el("p", "fineprint", d.build_note +
-    " (The glass boots on the fleet page — this flasher page runs under a " +
-    "stricter security policy that deliberately can’t execute the emulator.)"));
+    " (The emulator boots on the fleet page — the Nursery itself runs under a " +
+    "stricter security policy that deliberately can’t execute it. Flashing the " +
+    "real board happens right here: it’s in the picker.)"));
 
   const row = el("div", "flash-row");
   const go = el("a", "primary flash-go", "boot its screen — live, 1:1 →");
@@ -1347,6 +1720,506 @@ function phaseDisplayBench(d, back) {
   done.addEventListener("click", () => setPhase(back()));
   row.append(go, done);
   box.append(row);
+  return box;
+}
+
+// ── the radar bench: feel a freshly-hatched Sense sensing, live ─────────────
+// The moment after the flash IS the product: walk past and presence flips,
+// step through the bands and the aura follows, sit statue-still and the
+// clear timeout breathes out. Everything drawn here comes off the board's
+// own console lines ([sense]/[presence]/[vitals] — coarse fields only, the
+// same ones MQTT carries). The wellbeing senses render as a clearly-labeled
+// preview on the presence-only build — what's POSSIBLE, never faked as live.
+
+async function openConsoleBench(product, makePhase) {
+  if (state.busy || state.opening) return;
+  state.opening = true; // synchronous — see openMonitor
+  try {
+    let port = state.session && state.session.port;
+    if (!port && state.voice) port = await stopVoice();
+    if (state.session) {
+      try { await state.session.esploader.after("hard_reset"); } catch {}
+      try { await state.session.transport.disconnect(); } catch {}
+      state.session = null;
+    }
+    if (!port) { setPhase(phaseConnect()); return; }
+    setPhase(makePhase(port, product));
+  } finally {
+    state.opening = false;
+  }
+}
+const openSenseBench = (product) => openConsoleBench(product, phaseSenseBench);
+const openWapBench = (product) => openConsoleBench(product, phaseWapBench);
+
+function phaseSenseBench(port, product) {
+  const wellbeing = /wellbeing/.test((product && product.id) || "");
+  const box = el("section", "flash-card flash-sensebench");
+  box.dataset.step = "5";
+  const senseH = el("h2", null, "👋 The radar bench — hold still, then don’t");
+  const shd = helpDot("radar_bench");
+  if (shd) senseH.append(shd);
+  box.append(senseH);
+  box.append(el("p", "muted",
+    "This is the radar’s own senses, live off the USB cable — the same coarse " +
+    "truths it publishes (present/clear, 0/1/2+, near/mid/far), never raw " +
+    "centimetres. Walk past it. Stand in each band. Then sit statue-still and " +
+    "feel the clear timeout breathe out."));
+
+  const status = el("div", "flash-sense-status", "listening for the radar…");
+  status.setAttribute("role", "status");
+  box.append(status);
+  const calm = prefersCalm(); // decorative motion politely sits out
+
+  const aura = document.createElement("canvas");
+  aura.className = "flash-sense-aura";
+  aura.width = 640; aura.height = 340;
+  box.append(aura);
+
+  // The wellbeing senses: LIVE numbers on the wellbeing build, an explicit
+  // possibility preview on presence-only — the user asked to SEE what this
+  // hardware can feel, so show it, labeled for exactly what it is.
+  const vit = el("div", "flash-sense-vitals");
+  const vitHead = el("div", "flash-sense-vitals-head");
+  const vitBadge = el("span", "flash-passport-chip", wellbeing ? "waiting for a lock…" : "PREVIEW — simulated");
+  vitBadge.setAttribute("role", "status");
+  vitHead.append(el("strong", null, "Breathing & heartbeat"), vitBadge);
+  vit.append(vitHead);
+  const wave = document.createElement("canvas");
+  wave.className = "flash-sense-wave";
+  wave.width = 640; wave.height = 110;
+  vit.append(wave);
+  vit.append(el("p", "fineprint", wellbeing
+    ? "The Wellbeing build senses breathing (6–30 bpm) and heart rate (40–130 bpm) " +
+      "by radar — no camera, no mic, no contact. Vitals lock only when exactly ONE " +
+      "person is present: sit alone in the near band, settle, and watch it latch."
+    : "This build watches presence only — but the SAME radar underneath can feel " +
+      "breathing and heartbeat. The waves below are a simulated preview of what the " +
+      "Canary Sense · Wellbeing firmware senses here; flash that build and they go live."));
+  box.append(vit);
+
+  const script = el("div", "flash-nextstep");
+  script.append(el("div", "flash-nextstep-title", "Make it magic — the 60-second tour"));
+  const ol = el("ol", "we2-guide-steps");
+  [
+    "Walk past it — presence flips to “someone’s here” within about a second, and the aura lights.",
+    "Step closer, then away: near → mid → far, the ring follows you.",
+    "Bring a friend — the count climbs to 2+ (and vitals politely refuse: one person only).",
+    wellbeing ? "Sit alone, still, a couple of meters away — breathing locks, then the numbers appear."
+              : "Sit statue-still — presence holds through the debounce, then clears when you leave.",
+    "Everything you just felt publishes the same way to Home Assistant — this bench is the radar’s honest voice.",
+  ].forEach((s) => ol.append(el("li", null, s)));
+  script.append(ol);
+  box.append(script);
+
+  const conWrap = el("details", "flash-displaybench-serial");
+  conWrap.append(el("summary", null, "the raw console under the magic"));
+  const con = el("pre", "flash-console");
+  conWrap.append(con);
+  box.append(conWrap);
+
+  const row = el("div", "flash-row");
+  const back = el("button", "ghost", "← back to the Nursery");
+  row.append(back);
+  const senseTwin = twinLink(product);
+  if (senseTwin) row.append(senseTwin);
+  box.append(row);
+
+  // ── the live model, fed by the console lines ──
+  const model = {
+    presence: "unknown", count: "0", range: "unknown",
+    breath: null, heart: null, locked: false,
+    lastSeenMs: 0, frameErrs: null, alive: true,
+  };
+
+  function setStatus() {
+    const p = model.presence;
+    status.className = "flash-sense-status flash-sense-" + p;
+    status.textContent =
+      p === "present"
+        ? `● someone’s here — ${model.count === "2+" ? "two or more" : model.count === "1" ? "one person" : "movement"} · ${model.range}`
+        : p === "clear" ? "○ clear — the room is empty"
+        : "◌ listening for the radar…";
+  }
+
+  // reader loop (the voice engine pattern — attended bench, no supervisor)
+  let reader = null;
+  (async () => {
+    try {
+      await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
+      reader = port.readable.getReader();
+      if (!model.alive) {
+        try { reader.releaseLock(); } catch {}
+        try { await port.close(); } catch {}
+        return;
+      }
+    } catch (e) {
+      status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
+      return;
+    }
+    const dec = new TextDecoder();
+    let buf = "", tail = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || !model.alive) break;
+        const text = dec.decode(value, { stream: true });
+        buf = (buf + text).slice(-8000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        tail += text;
+        const lines = tail.split("\n");
+        tail = lines.pop() || "";
+        for (const line of lines) {
+          const ev = core.parseSenseLine(line);
+          if (!ev) continue;
+          model.lastSeenMs = performance.now();
+          if (ev.kind === "sense") {
+            if (ev.presence === "present" && model.presence !== "present") chirp("found");
+            model.presence = ev.presence; model.count = ev.count; model.range = ev.range;
+          } else if (ev.kind === "presence") {
+            if (ev.presence === "present" && model.presence !== "present") chirp("found");
+            model.presence = ev.presence;
+          } else if (ev.kind === "bpm") {
+            model.breath = ev.breath; model.heart = ev.heart; model.locked = true;
+            vitBadge.textContent = `LIVE · breathing ${ev.breath} bpm · heart ${ev.heart} bpm`;
+            vitBadge.className = "flash-passport-chip flash-passport-ok";
+          } else if (ev.kind === "vitals") {
+            model.locked = ev.locked;
+            if (!ev.locked && wellbeing) {
+              vitBadge.textContent = "lock lost — settle again";
+              vitBadge.className = "flash-passport-chip";
+            }
+          } else if (ev.kind === "health") {
+            model.frameErrs = ev.frame_errs;
+          }
+          setStatus();
+        }
+      }
+    } catch { /* unplugged — the back button is right there */ }
+  })();
+
+  // ── the aura: bands, sweep, and the target ──
+  const actx = aura.getContext("2d");
+  const wctx = wave.getContext("2d");
+  let raf = 0, t0 = performance.now();
+  const BAND_R = { near: 0.36, mid: 0.62, far: 0.88, unknown: 0.62 };
+  let targetR = 0, targetA = 0; // eased radius/alpha of the presence blob
+
+  function draw(now) {
+    if (!model.alive) return;
+    // Under prefers-reduced-motion the informative state still renders and
+    // updates — only the decorative time-based motion freezes.
+    const t = calm ? 0 : (now - t0) / 1000;
+    const W = aura.width, H = aura.height;
+    const cx = W / 2, cy = H - 14, R = H - 40;
+    actx.clearRect(0, 0, W, H);
+    const present = model.presence === "present";
+    const stale = model.lastSeenMs && now - model.lastSeenMs > 15000;
+
+    // band arcs
+    for (const [name, r] of [["near", BAND_R.near], ["mid", BAND_R.mid], ["far", BAND_R.far]]) {
+      const active = present && model.range === name;
+      actx.beginPath();
+      actx.arc(cx, cy, r * R, Math.PI, 2 * Math.PI);
+      actx.lineWidth = active ? 5 : 1.5;
+      actx.strokeStyle = active
+        ? `hsl(140 90% 62% / ${0.75 + 0.25 * Math.sin(t * 4)})`
+        : "rgba(160,180,200,0.25)";
+      actx.stroke();
+      actx.font = "600 11px ui-monospace, Menlo, monospace";
+      actx.fillStyle = active ? "#7CFF9B" : "rgba(160,180,200,0.5)";
+      actx.fillText(name, cx + r * R - 26, cy - 8);
+    }
+    // the sweep — a quiet metronome when clear, eager when someone's there
+    const sweepT = (t * (present ? 0.55 : 0.22)) % 1;
+    const sweepR = sweepT * R;
+    actx.beginPath();
+    actx.arc(cx, cy, sweepR, Math.PI, 2 * Math.PI);
+    actx.lineWidth = 2;
+    actx.strokeStyle = `hsl(${present ? 140 : 205} 80% 60% / ${0.5 * (1 - sweepT)})`;
+    actx.stroke();
+    // the emitter
+    actx.beginPath();
+    actx.arc(cx, cy, 6, 0, 2 * Math.PI);
+    actx.fillStyle = stale ? "#f0a860" : present ? "#7CFF9B" : "#7db8e8";
+    actx.fill();
+    // the target blob — eases into its band, breathes gently
+    const wantR = present ? (BAND_R[model.range] || BAND_R.mid) * R : 0;
+    targetR += (wantR - targetR) * 0.08;
+    targetA += ((present ? 1 : 0) - targetA) * 0.1;
+    if (targetA > 0.02) {
+      const bob = Math.sin(t * 2.2) * 4;
+      const tx = cx, ty = cy - targetR + bob;
+      const glow = actx.createRadialGradient(tx, ty, 2, tx, ty, 26);
+      glow.addColorStop(0, `hsl(140 90% 66% / ${0.9 * targetA})`);
+      glow.addColorStop(1, "hsl(140 90% 66% / 0)");
+      actx.fillStyle = glow;
+      actx.beginPath(); actx.arc(tx, ty, 26, 0, 2 * Math.PI); actx.fill();
+      actx.fillStyle = `hsl(140 90% 70% / ${targetA})`;
+      actx.beginPath(); actx.arc(tx, ty, 7, 0, 2 * Math.PI); actx.fill();
+      if (model.count === "2+") {
+        actx.fillStyle = `hsl(140 90% 70% / ${0.8 * targetA})`;
+        actx.beginPath(); actx.arc(tx + 22, ty + 6, 5, 0, 2 * Math.PI); actx.fill();
+        actx.font = "700 12px ui-monospace, Menlo, monospace";
+        actx.fillText("2+", tx + 32, ty + 10);
+      }
+    }
+    if (stale) {
+      actx.font = "600 12px ui-monospace, Menlo, monospace";
+      actx.fillStyle = "#f0a860";
+      actx.fillText("no radar lines lately — is it still plugged in?", 14, 18);
+    }
+
+    // ── the vitals waves ──
+    const WW = wave.width, WH = wave.height;
+    wctx.clearRect(0, 0, WW, WH);
+    const live = wellbeing && model.locked && model.breath;
+    const breathBpm = live ? model.breath : 14;
+    const heartBpm = live ? model.heart : 64;
+    const alpha = live ? 0.95 : 0.5;
+    // breath: a slow full-height sine
+    wctx.beginPath();
+    for (let x = 0; x < WW; x++) {
+      const ph = (t - (WW - x) / 90) * (breathBpm / 60) * 2 * Math.PI;
+      const y = WH * 0.32 - Math.sin(ph) * WH * 0.2;
+      x ? wctx.lineTo(x, y) : wctx.moveTo(x, y);
+    }
+    wctx.lineWidth = 2.5;
+    wctx.strokeStyle = `hsl(175 80% 60% / ${alpha})`;
+    wctx.stroke();
+    // heart: a sharp pulse train
+    wctx.beginPath();
+    for (let x = 0; x < WW; x++) {
+      const ph = ((t - (WW - x) / 90) * (heartBpm / 60)) % 1;
+      const spike = ph < 0.08 ? Math.sin((ph / 0.08) * Math.PI) : ph < 0.16 ? -0.35 * Math.sin(((ph - 0.08) / 0.08) * Math.PI) : 0;
+      const y = WH * 0.78 - spike * WH * 0.17;
+      x ? wctx.lineTo(x, y) : wctx.moveTo(x, y);
+    }
+    wctx.lineWidth = 2;
+    wctx.strokeStyle = `hsl(345 85% 64% / ${alpha})`;
+    wctx.stroke();
+    wctx.font = "600 11px ui-monospace, Menlo, monospace";
+    wctx.fillStyle = `hsl(175 80% 60% / ${alpha})`;
+    wctx.fillText(`breath ${live ? model.breath : "~" + breathBpm} bpm`, 10, 16);
+    wctx.fillStyle = `hsl(345 85% 64% / ${alpha})`;
+    wctx.fillText(`heart ${live ? model.heart : "~" + heartBpm} bpm`, 10, WH - 10);
+
+    raf = requestAnimationFrame(draw);
+  }
+  raf = requestAnimationFrame(draw);
+  setStatus();
+
+  back.addEventListener("click", async () => {
+    model.alive = false;
+    cancelAnimationFrame(raf);
+    try { reader && await reader.cancel(); } catch {}
+    try { reader && reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
+    setPhase(phaseConnect());
+  });
+  return box;
+}
+
+// ── the field bench: feel a freshly-hatched WAP feel the room ───────────────
+// The WAP senses presence in the WiFi field itself — no camera, no mic, no
+// radar module. Its console prints one coarse line per RF transition
+// ([wap] … devices/confidence/dwell/stir); the bench turns that into a
+// living field: ripples on every event, a stir meter for the CSI motion
+// score, and the honest vocabulary underneath. Same attended-USB posture
+// as the radar bench.
+function phaseWapBench(port, product) {
+  const box = el("section", "flash-card flash-sensebench");
+  box.dataset.step = "5";
+  const wapH = el("h2", null, "🌊 The field bench — the room’s WiFi, felt");
+  const whd2 = helpDot("field_bench");
+  if (whd2) wapH.append(whd2);
+  box.append(wapH);
+  box.append(el("p", "muted",
+    "This Canary reads the WiFi field itself: phones announcing themselves, " +
+    "and the way a moving body stirs the radio reflections (CSI). Below is " +
+    "its live verdict off the USB cable — the same coarse vocabulary it " +
+    "publishes: an event name, a device count, a confidence word, a dwell " +
+    "class. Never a MAC, never a raw signal."));
+
+  const status = el("div", "flash-sense-status", "listening for the field…");
+  status.setAttribute("role", "status");
+  box.append(status);
+  const calm = prefersCalm();
+
+  const field = document.createElement("canvas");
+  field.className = "flash-sense-aura";
+  field.width = 640; field.height = 300;
+  box.append(field);
+
+  // The stir meter: the CSI motion score, decaying between events.
+  const meter = el("div", "we2-meter");
+  const track = el("div", "we2-meter-track");
+  const fill = el("div", "we2-meter-fill");
+  track.append(fill);
+  const meterLabel = el("div", "we2-meter-label", "field stir — how much a body is moving the radio");
+  meter.append(track, meterLabel);
+  box.append(meter);
+
+  const script = el("div", "flash-nextstep");
+  script.append(el("div", "flash-nextstep-title", "Make it magic — the 60-second tour"));
+  const ol = el("ol", "we2-guide-steps");
+  [
+    "Walk into the room with your phone in your pocket — an arrival event fires and the field ripples.",
+    "Leave the phone outside and walk back in: the CSI stir meter still moves — the field feels the BODY, not the phone.",
+    "Stand statue-still and watch the stir settle; linger a couple of minutes and the dwell class climbs to “sustained”.",
+    "Bring a second phone — the device count follows, as a count, never an identity.",
+    "Everything here publishes the same way to Home Assistant — this bench is the field’s honest voice.",
+  ].forEach((s) => ol.append(el("li", null, s)));
+  script.append(ol);
+  box.append(script);
+
+  const conWrap = el("details", "flash-displaybench-serial");
+  conWrap.append(el("summary", null, "the raw console under the magic"));
+  const con = el("pre", "flash-console");
+  conWrap.append(con);
+  box.append(conWrap);
+
+  const row = el("div", "flash-row");
+  const back = el("button", "ghost", "← back to the Nursery");
+  row.append(back);
+  const wapTwin = twinLink(product);
+  if (wapTwin) row.append(wapTwin);
+  box.append(row);
+
+  const model = {
+    present: false, devices: 0, confidence: null, dwell: null,
+    stir: 0, lastEvent: null, lastSeenMs: 0, alive: true,
+  };
+  const ripples = []; // {born, strength}
+
+  function setStatus() {
+    status.className = "flash-sense-status " +
+      (model.present ? "flash-sense-present" : "flash-sense-clear");
+    status.textContent = model.present
+      ? `● someone stirs the field — ${model.devices} device${model.devices === 1 ? "" : "s"} heard` +
+        `${model.confidence ? ` · ${model.confidence} confidence` : ""}${model.dwell ? ` · ${model.dwell}` : ""}`
+      : model.lastEvent ? "○ the field is calm again"
+      : "◌ listening for the field…";
+  }
+
+  let reader = null;
+  (async () => {
+    try {
+      await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
+      reader = port.readable.getReader();
+      if (!model.alive) {
+        try { reader.releaseLock(); } catch {}
+        try { await port.close(); } catch {}
+        return;
+      }
+    } catch (e) {
+      status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
+      return;
+    }
+    const dec = new TextDecoder();
+    let buf = "", tail = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || !model.alive) break;
+        const text = dec.decode(value, { stream: true });
+        buf = (buf + text).slice(-8000);
+        con.textContent = buf;
+        con.scrollTop = con.scrollHeight;
+        tail += text;
+        const lines = tail.split("\n");
+        tail = lines.pop() || "";
+        for (const line of lines) {
+          const ev = core.parseWapLine(line);
+          if (!ev) continue;
+          model.lastSeenMs = performance.now();
+          model.lastEvent = ev.event;
+          model.devices = ev.devices;
+          model.confidence = ev.confidence;
+          model.dwell = ev.dwell;
+          model.stir = Math.max(model.stir, ev.stir);
+          if (ev.present && !model.present) chirp("found");
+          if (ev.present) model.present = true;
+          if (ev.departed) model.present = false;
+          ripples.push({ born: performance.now(), strength: Math.max(0.35, ev.stir / 100) });
+          if (ripples.length > 8) ripples.shift();
+          setStatus();
+        }
+      }
+    } catch { /* unplugged — the back button is right there */ }
+  })();
+
+  const fctx = field.getContext("2d");
+  let raf = 0, t0 = performance.now(), lastFrame = t0;
+  function draw(now) {
+    if (!model.alive) return;
+    // dt-based decay: the stir reading is INFORMATIVE, so it must drain at
+    // the same rate on every display — 60 Hz, 144 Hz, or reduced-motion.
+    const dt = Math.min(0.1, Math.max(0, (now - lastFrame) / 1000));
+    lastFrame = now;
+    const t = calm ? 0 : (now - t0) / 1000;
+    const W = field.width, H = field.height, cx = W / 2, cy = H / 2;
+    fctx.clearRect(0, 0, W, H);
+    // the ambient field: faint standing rings, breathing very slightly
+    for (let i = 1; i <= 4; i++) {
+      fctx.beginPath();
+      fctx.arc(cx, cy, i * 34 + Math.sin(t * 0.8 + i) * 2, 0, 2 * Math.PI);
+      fctx.lineWidth = 1;
+      fctx.strokeStyle = `hsl(205 60% 55% / ${model.present ? 0.18 : 0.1})`;
+      fctx.stroke();
+    }
+    // event ripples: expanding, fading, strength-scaled
+    const nowMs = performance.now();
+    for (const r of ripples) {
+      const age = (nowMs - r.born) / 1000;
+      if (age > 3) continue;
+      const p = calm ? 0.6 : age / 3;
+      fctx.beginPath();
+      fctx.arc(cx, cy, 20 + p * (H / 2 - 10), 0, 2 * Math.PI);
+      fctx.lineWidth = 2.5 * r.strength;
+      fctx.strokeStyle = `hsl(${model.present ? 140 : 205} 85% 62% / ${(1 - p) * 0.8 * r.strength})`;
+      fctx.stroke();
+    }
+    // the emitter
+    fctx.beginPath();
+    fctx.arc(cx, cy, 6, 0, 2 * Math.PI);
+    fctx.fillStyle = model.present ? "#7CFF9B" : "#7db8e8";
+    fctx.fill();
+    // device count chips orbiting when present
+    if (model.present && model.devices > 0) {
+      for (let i = 0; i < Math.min(model.devices, 5); i++) {
+        const a = (i / Math.min(model.devices, 5)) * 2 * Math.PI + t * 0.4;
+        fctx.beginPath();
+        fctx.arc(cx + Math.cos(a) * 60, cy + Math.sin(a) * 60, 4, 0, 2 * Math.PI);
+        fctx.fillStyle = "hsl(140 90% 70% / 0.9)";
+        fctx.fill();
+      }
+    }
+    const stale = model.lastSeenMs && nowMs - model.lastSeenMs > 30000;
+    if (stale) {
+      fctx.font = "600 12px ui-monospace, Menlo, monospace";
+      fctx.fillStyle = "#f0a860";
+      fctx.fillText("no field lines lately — the WAP only speaks on transitions; walk past it", 14, 18);
+    }
+    // the stir meter, decaying gently between events (~9%/second everywhere)
+    model.stir = Math.max(0, model.stir - 9 * dt);
+    fill.style.width = Math.round(model.stir) + "%";
+    fill.dataset.level = model.stir >= 55 ? "ok" : model.stir >= 25 ? "soft" : "faint";
+    raf = requestAnimationFrame(draw);
+  }
+  raf = requestAnimationFrame(draw);
+  setStatus();
+
+  back.addEventListener("click", async () => {
+    model.alive = false;
+    cancelAnimationFrame(raf);
+    try { reader && await reader.cancel(); } catch {}
+    try { reader && reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
+    setPhase(phaseConnect());
+  });
   return box;
 }
 
@@ -1503,6 +2376,7 @@ function phaseConfirm(product, entry) {
   const skipBackup = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
 
   const box = el("section", "flash-card flash-confirm");
+  box.dataset.step = "3";
   box.append(el("h2", null, `Install ${product.name}?`));
   box.append(el("p", "muted", state.current && state.current.unknown
     ? "This is the one-time first setup — after it, the board is a Canary."
@@ -1528,6 +2402,8 @@ function phaseConfirm(product, entry) {
     const vline = el("p", `flash-verdict-line flash-verdict-${verdict.kind}`);
     vline.append(el("strong", null, `${verdict.icon} ${verdict.label}. `));
     vline.append(document.createTextNode(verdict.detail));
+    const vh = helpDot("verdict");
+    if (vh) vline.append(vh);
     box.append(vline);
   }
 
@@ -1549,12 +2425,13 @@ function phaseConfirm(product, entry) {
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
   box.append(promise);
 
-  // WiFi (optional): fill it in and it's baked into the chip during the
-  // install; leave it empty and nothing changes. Either way the setup
-  // network is the safety net.
+  // WiFi (optional) — for EVERY board now: fill it in and it's baked into
+  // the chip's settings region during the install, in whichever NVS scheme
+  // this firmware actually reads (catalog wifi_nvs, derived from the
+  // firmware source). Leave it empty and nothing changes.
   let wifiUI = null;
-  if (product && product.provisioning === "ap") {
-    wifiUI = renderWifiFields(box);
+  if (product) {
+    wifiUI = renderWifiFields(box, product);
   }
 
   // Flash-time dials (Vision): pick the room, or fine-tune — the same four
@@ -1571,10 +2448,14 @@ function phaseConfirm(product, entry) {
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
   go.addEventListener("click", () => {
+    // Double-click guard: a second pass would re-read the now-cleared
+    // password field and remember an empty one over the real network.
+    if (state.busy) return;
+    go.disabled = true;
     let wifi = null;
     if (wifiUI) {
       const r = wifiUI.credentials();
-      if (!r.ok) return; // invalid input — the field showed why
+      if (!r.ok) { go.disabled = false; return; } // invalid input — the field showed why
       wifi = r.wifi;
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
@@ -1806,7 +2687,7 @@ function renderReflexes(box, product) {
 }
 
 // ── optional WiFi fields (confirm card) ─────────────────────────────────────
-function renderWifiFields(box) {
+function renderWifiFields(box, product) {
   const sec = el("div", "flash-wifi");
   const wh = el("h3", null, "WiFi (optional)");
   const whd = helpDot("wifi_bake");
@@ -1833,12 +2714,27 @@ function renderWifiFields(box) {
 
   const err = el("p", "flash-note flash-note-soft flash-hidden");
   sec.append(err);
-  sec.append(el("p", "fineprint",
-    "Fill this in and it’s written into the chip during the install, so the " +
-    "Canary joins your WiFi on its very first boot. If it can’t connect — " +
-    "or you leave this empty — it simply broadcasts its own setup network " +
-    "to connect to and finish setup there. What you type stays on this " +
-    "page and goes only to the chip over the cable."));
+  const prov = (product && product.provisioning) || "usb-secrets";
+  sec.append(el("p", "fineprint", {
+    "ap":
+      "Fill this in and it’s written into the chip during the install, so the " +
+      "Canary joins your WiFi on its very first boot. If it can’t connect — " +
+      "or you leave this empty — it simply broadcasts its own setup network " +
+      "to connect to and finish setup there. What you type stays on this " +
+      "page and goes only to the chip over the cable.",
+    "on-glass":
+      "Fill this in and it’s written into the chip’s settings region during " +
+      "the install — the glass then skips its WiFi wizard and goes straight " +
+      "to meeting your Canaries. Leave it empty and the on-screen wizard " +
+      "walks you through it on first boot. What you type stays on this page " +
+      "and goes only to the chip over the cable.",
+    "usb-secrets":
+      "Fill this in and it’s written into the chip’s settings region during " +
+      "the install — the signed generic release then joins YOUR network on " +
+      "first boot, no custom build needed. Leave it empty and the firmware " +
+      "keeps its compiled defaults. What you type stays on this page and " +
+      "goes only to the chip over the cable.",
+  }[prov] || ""));
 
   // Type it once, provision a whole batch. By default the network is kept in
   // memory for this tab only (gone when you close it, never written to disk);
@@ -1937,6 +2833,7 @@ async function startFlash(opts) {
   const label = opts.product ? `${opts.product.name} v${opts.entry.version}` : opts.label;
 
   const box = progressCard(`Installing ${label}`, "Getting the image ready…");
+  box.card.dataset.step = "4";
   setPhase(box.card);
 
   // The layers tour rides along for the whole install — backup included —
@@ -2061,7 +2958,9 @@ async function startFlash(opts) {
         const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
         const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
         const nvsImg = core.buildNvsSeedImage(
-          { wifi: opts.wifi || null, u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
+          { wifi: opts.wifi || null,
+            wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
+            u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
         seededDials = opts.detect || null;
@@ -2113,6 +3012,19 @@ async function startFlash(opts) {
     if (opts.product && !opts.isBackup && core.isVisionBoard(opts.product)) {
       visionSession.markDone("esp32");
     }
+    // The Nursery roster: one hatchling per successful install, so a batch
+    // session always knows which boards are done and what they got.
+    if (opts.product && !opts.isBackup && !opts.isLocal) {
+      state.roster = core.rosterAdd(state.roster, {
+        t: Date.now(),
+        mac: state.mac ? core.formatMac(state.mac) : null,
+        product: opts.product.name,
+        version: opts.entry ? opts.entry.version : null,
+        preset: opts.detectPreset || opts.reflexPreset || null,
+        wifi: !!wifiSsid,
+      });
+      saveRoster(state.roster);
+    }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
       wifiSsid, seededDials, seededReflex, wifi: null }));
@@ -2131,6 +3043,7 @@ async function startFlash(opts) {
 }
 
 function flashError(e, opts) {
+  chirp("oops"); // one low, round note — never an alarm
   const msg = String(e && e.message ? e.message : e);
   const v = core.classifyFlashError(e);
   const box = errorBox(v.title || "The install didn’t complete",
@@ -2182,9 +3095,22 @@ function flashError(e, opts) {
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
+  box.dataset.step = "5";
   confettiBurst();
-  box.append(el("div", "flash-done-bird", "🎉"));
+  chirp("hatch");
+  // The hatch: egg wiggles, cracks, and the chick appears. Pure CSS
+  // (flash-hatch-* keyframes); under prefers-reduced-motion the chick
+  // simply IS — the celebration stays, the motion politely doesn't.
+  const hatch = el("div", "flash-hatch");
+  hatch.setAttribute("aria-hidden", "true");
+  hatch.append(el("span", "flash-hatch-egg", "🥚"),
+               el("span", "flash-hatch-cracked", "🐣"),
+               el("span", "flash-hatch-chick", "🐤"));
+  box.append(hatch);
+  const hatchNo = !opts.isBackup && !opts.isLocal && opts.product && state.roster.length
+    ? state.roster[state.roster.length - 1].n : null;
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
+    : hatchNo ? `Hatchling #${hatchNo} — your Canary is awake`
     : "Installed — your Canary is awake"));
 
   const product = opts.product;
@@ -2332,9 +3258,40 @@ function phaseDone(opts) {
     box.append(rec);
   }
 
+  // The radar wow: a freshly-hatched Sense proves itself on the live bench —
+  // presence, bands, and the wellbeing senses — not in a text console.
+  const doneRole = opts.product && !opts.isBackup ? core.productRole(opts.product.id) : null;
+
+  // The session's progression, right where the next board gets plugged in.
+  const rosterStrip = renderRosterStrip();
+  if (rosterStrip) box.append(rosterStrip);
+
+  // Prove it, two ways — the SAME shape for every Canary (parity is a
+  // tested guarantee): one real proof over the cable/glass, one emulated
+  // twin a click away. The catalog's prove block owns both.
+  const proveSpec = opts.product && !opts.isBackup
+    ? ((state.catalog.products.find((p) => p.id === opts.product.id) || {}).prove || null)
+    : null;
+  const proveReal = () => {
+    const kind = proveSpec ? proveSpec.real.kind : "monitor";
+    if (kind === "bench-radar") return openSenseBench(opts.product);
+    if (kind === "bench-field") return openWapBench(opts.product);
+    if (kind === "bench-camera") {
+      // The camera bench lives on the MODULE's port — route through the
+      // module flow (same hand-off the two-port checklist uses).
+      return onDisconnect(true).then(() => setPhase(phaseModule({
+        catalog: state.catalog, setPhase, back: () => setPhase(phaseConnect()),
+      })));
+    }
+    // "glass" and "monitor": the console is the honest window either way.
+    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true });
+  };
+
   const row = el("div", "flash-row");
-  const watch = el("button", "primary", "Watch it boot & prove itself →");
-  watch.addEventListener("click", () => openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
+  const watch = el("button", "primary",
+    proveSpec ? proveSpec.real.label : "Watch it boot & prove itself →");
+  if (proveSpec) watch.title = proveSpec.real.how;
+  watch.addEventListener("click", proveReal);
   const again = el("button", "ghost", "Set up another board");
   // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
   // half-done Vision can't carry a stale flag into the next board (else its other
@@ -2348,9 +3305,31 @@ function phaseDone(opts) {
     tourEl = installStory(() => state.lastImage);
     box.append(tourEl);
   });
-  row.append(watch, again, tour);
+  row.append(watch);
+  if (proveSpec) {
+    const twin = el("a", "ghost flash-twin", proveSpec.emulated.label);
+    twin.href = proveSpec.emulated.href;
+    twin.target = "_blank";
+    twin.rel = "noopener";
+    twin.title = proveSpec.emulated.how;
+    row.append(twin);
+  }
+  row.append(again, tour);
   box.append(row);
   return box;
+}
+
+// The emulated-twin link for a product, wherever a bench wants to offer it.
+function twinLink(product) {
+  const spec = product &&
+    ((state.catalog.products.find((p) => p.id === product.id) || {}).prove || null);
+  if (!spec) return null;
+  const a = el("a", "ghost small flash-twin", spec.emulated.label);
+  a.href = spec.emulated.href;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.title = spec.emulated.how;
+  return a;
 }
 
 // ── rescue: back to known-good, for any firmware past or future ─────────────
@@ -2362,6 +3341,7 @@ function phaseDone(opts) {
 // image for the chip in hand.
 function phaseRescue() {
   const box = el("section", "flash-card flash-rescue");
+  box.dataset.step = "3";
   box.append(el("h2", null, "Rescue this board"));
   box.append(el("p", "muted",
     "For a Canary that’s acting wrong and you just want it back to known-good. " +
@@ -2462,8 +3442,14 @@ async function onRestoreFile(ev) {
 // ── the health check (triage without changing a byte) ───────────────────────
 async function runHealthCheck() {
   if (state.busy) return;
-  if (!state.session && !(await ensureSession())) return;
-  state.busy = true;
+  state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
+  if (!state.session && !(await ensureSession())) {
+    state.busy = false;
+    setPhase(errorRetry("Couldn’t reach the bootloader for the health check",
+      new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
+      phaseConnect));
+    return;
+  }
   const { esploader } = state.session;
   const box = progressCard("Reading your board’s story", "Partition map, firmware slots, crash dumps, witness chain — read-only, nothing is changed.");
   setPhase(box.card);
@@ -2581,6 +3567,7 @@ function reportRow(label, value, tone) {
 
 function renderReport(r) {
   const box = el("section", "flash-card flash-report");
+  box.dataset.step = "2";
   box.append(el("h2", null, "Board report"));
   box.append(el("p", "muted", "Read straight off the flash — nothing was changed, and nothing left this page."));
 
@@ -2818,7 +3805,11 @@ const MONITOR_CMDS = [
 ];
 
 async function openMonitor(opts = {}) {
-  if (state.busy) return;
+  if (state.busy || state.opening) return;
+  state.opening = true; // synchronous — a double-click can't spawn two port consumers
+  try { return await openMonitorInner(opts); } finally { state.opening = false; }
+}
+async function openMonitorInner(opts = {}) {
   let port = state.session && state.session.port;
   if (!port && state.voice) port = await stopVoice(); // hand the voice's port to the full monitor
   if (state.session) {
@@ -2832,6 +3823,7 @@ async function openMonitor(opts = {}) {
 
 function phaseMonitor(port, opts = {}) {
   const box = el("section", "flash-card flash-monitor");
+  box.dataset.step = "5";
   box.append(el("h2", null, "Serial monitor"));
   box.append(modeBadge("running"));
   box.append(el("p", "muted",
@@ -3031,10 +4023,14 @@ function phaseMonitor(port, opts = {}) {
     return new Promise((resolve) => {
       let settled = false;
       const finish = (p) => {
-        if (settled || !mon.alive) return;
+        // Always tear down — guarding on mon.alive here used to leak the
+        // 1 Hz poll (which OPENS the port to test it) forever after leaving
+        // the monitor mid-wait, fighting every later connect for the port.
+        if (settled) return;
         settled = true; clearInterval(poll);
         navigator.serial.removeEventListener("connect", tryGrant);
-        mon.waiting = null; resolve(p);
+        mon.waiting = null;
+        resolve(mon.alive ? p : null);
       };
       const tryGrant = async () => {
         if (settled) return;
@@ -3426,6 +4422,91 @@ function installStory(getBytes) {
 }
 
 // ── shared UI bits ──────────────────────────────────────────────────────────
+// The coach: optional micro-lessons that ride every long wait. Stage-aware
+// (a backup teaches backups, a write teaches NVS and slots), one lesson at
+// a time, auto-advancing gently (never under prefers-reduced-motion), and
+// dismissible for the session — learning is offered, never imposed.
+const COACH_KEY = "nursery.coach";
+function coachDismissed() {
+  try { return sessionStorage.getItem(COACH_KEY) === "off"; } catch { return false; }
+}
+function attachCoach(card, afterEl) {
+  if (coachDismissed() || !state.catalog || !Array.isArray(state.catalog.lessons) ||
+      !state.catalog.lessons.length) return null;
+  const box = el("aside", "flash-coach");
+  box.setAttribute("aria-label", "Optional lesson while you wait");
+  const head = el("div", "flash-coach-head");
+  head.append(el("span", "flash-coach-kicker", "☕ while it works — a 20-second lesson"));
+  const close = el("button", "flash-coach-close", "×");
+  close.type = "button";
+  close.title = "Hide the lessons for this session";
+  close.setAttribute("aria-label", "Hide lessons for this session");
+  head.append(close);
+  box.append(head);
+  const titleEl = el("div", "flash-coach-title");
+  const bodyEl = el("p", "flash-coach-body");
+  box.append(titleEl, bodyEl);
+  const controls = el("div", "flash-coach-controls");
+  const next = el("button", "ghost small", "another →");
+  controls.append(next);
+  box.append(controls);
+  afterEl.after(box);
+
+  const shown = [];
+  let stageText = "";
+  let timer = null;
+  let alive = true;
+  function show(lesson) {
+    if (!lesson) { next.disabled = true; next.textContent = "that’s the deck ✓"; return; }
+    shown.push(lesson.id);
+    box.classList.remove("flash-coach-swap");
+    void box.offsetWidth; // restart the swap animation
+    box.classList.add("flash-coach-swap");
+    titleEl.textContent = lesson.title;
+    bodyEl.textContent = lesson.body;
+  }
+  function advance() {
+    // Detachment retires the coach: setPhase() swaps cards without telling
+    // us, and an immortal 14 s timer chain per progress card would pile up
+    // fast in a batch session. A dry deck stops the chain too.
+    if (!alive || !box.isConnected) {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      return;
+    }
+    const lesson = core.pickLesson(state.catalog, stageText, shown);
+    show(lesson);
+    if (lesson) arm();
+  }
+  function arm() {
+    if (timer) clearTimeout(timer);
+    // Auto-advance is decorative pacing — calm users page by hand.
+    if (!prefersCalm()) timer = setTimeout(advance, 14000);
+  }
+  next.addEventListener("click", advance);
+  close.addEventListener("click", () => {
+    alive = false;
+    if (timer) clearTimeout(timer);
+    try { sessionStorage.setItem(COACH_KEY, "off"); } catch { /* private mode */ }
+    box.remove();
+  });
+  advance();
+  return {
+    stage(s) {
+      // A new stage brings its own lesson — but only if it actually has one
+      // unseen; mid-lesson churn for nothing helps nobody.
+      stageText = s || "";
+      const staged = core.pickLesson(state.catalog, stageText, shown);
+      if (staged && staged.stage !== "any" &&
+          stageText.toLowerCase().includes(staged.stage)) {
+        show(staged);
+        arm();
+      }
+    },
+    retire() { alive = false; if (timer) clearTimeout(timer); },
+  };
+}
+
 function progressCard(title, subtitle) {
   const card = el("section", "flash-card flash-progress");
   card.append(el("h2", null, title));
@@ -3440,6 +4521,7 @@ function progressCard(title, subtitle) {
   const reassure = el("p", "flash-reassure-lite fineprint",
     "Safe to interrupt — you can’t brick it. If anything stops, just start again.");
   card.append(reassure);
+  const coach = attachCoach(card, reassure);
   // expose esptool log
   const log = el("details", "flash-log");
   log.append(el("summary", null, "show technical log"));
@@ -3449,7 +4531,10 @@ function progressCard(title, subtitle) {
   card.append(log);
   return {
     card,
-    stage(s) { stageEl.textContent = s; },
+    stage(s) {
+      stageEl.textContent = s;
+      if (coach) coach.stage(s);
+    },
     set(frac, metaText) {
       const pct = Math.max(0, Math.min(1, frac || 0)) * 100;
       fill.style.width = pct.toFixed(1) + "%";
@@ -3572,6 +4657,7 @@ function macStamp() {
 }
 
 function confettiBurst() {
+  if (prefersCalm()) return; // celebration stays; the motion politely doesn't
   const layer = el("div", "flash-confetti");
   document.body.append(layer);
   const bits = ["🐤", "✨", "🎉", "🟡", "💛"];

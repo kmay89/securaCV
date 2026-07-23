@@ -39,5 +39,43 @@ fn main() {
     fs::write(&hub_dst, hub_data).expect("write hub catalog to OUT_DIR");
     println!("cargo:rerun-if-changed={}", hub_src.display());
 
+    // Same never-rot contract for the Hatchery naming spec: the ONE shared
+    // canary-local/devices/hatch.json the website also ships, so the flasher's
+    // birth certificate names a Canary exactly the way the web Lab does, and a
+    // change to that file re-embeds here automatically.
+    let hatch_src = Path::new(&manifest).join("../../canary-local/devices/hatch.json");
+    let hatch_dst = Path::new(&out).join("hatch.json");
+    let hatch_data = fs::read(&hatch_src).unwrap_or_else(|e| {
+        panic!(
+            "cannot read the canonical Hatchery spec at {} ({e}). \
+             The desktop app must be built inside the securaCV repo so it can \
+             embed the current naming source of truth.",
+            hatch_src.display()
+        )
+    });
+    fs::write(&hatch_dst, hatch_data).expect("write hatch spec to OUT_DIR");
+    println!("cargo:rerun-if-changed={}", hatch_src.display());
+
+    // Build stamp: a real build number (short git rev) and a build timestamp,
+    // baked in at compile time so the About panel can show exactly which build
+    // is running and when it was cut — never a guess, never stale. Both fall
+    // back gracefully when built outside a git checkout.
+    let rev = std::process::Command::new("git")
+        .args(["rev-parse", "--short=9", "HEAD"])
+        .current_dir(&manifest)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "source".to_string());
+    println!("cargo:rustc-env=SECURACV_BUILD_REV={rev}");
+
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    println!("cargo:rustc-env=SECURACV_BUILD_EPOCH={epoch}");
+
     tauri_build::build()
 }

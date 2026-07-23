@@ -37,7 +37,7 @@ lid_edge = 0.8;
 /* [DIN rail] — 35 mm top-hat (EN 50022) */
 din = true;
 din_w = 35.2;        // rail width across the flanges
-din_lip = 5.0;       // flange depth engaged by the hooks
+din_lip = 1.2;       // hook capture depth behind each flange edge (TS35 lip ~1 mm)
 din_t = 1.5;         // rail metal + spring clearance
 
 /* [Venting] */
@@ -67,20 +67,30 @@ function holes() = [
     [-pi_l/2 + hole_off_x + hole_dx, -pi_w/2 + hole_off_y + hole_dy],
 ];
 
-// DIN clip on the tray underside: fixed hook (top) + printed spring hook (bottom)
+// DIN clip on the tray underside — v0.2. (v0.1 was a solid block: the riser
+// pad filled the rail channel, so hooks and "spring" were buried in plastic
+// and the arm's strain math never worked.) Now: two lands ride on the flange
+// FACES with the rail seated between them, a full-width fixed lip captures
+// the TOP flange, and a leaf spring running PARALLEL to the rail (free length
+// ~20-26 mm -> ~0.8 % PETG strain at 1 mm ride-over) latches the BOTTOM
+// flange, with a finger release tab at its free end. Hook underside bridges
+// print fine at this width; add supports if your bridging is poor.
 module din_clip() {
-    cw = 42;                                    // clip block width along the rail
+    cw  = 42;                                   // clip block width along the rail
+    gap = 1.6;                                  // land face -> lip top: clears 1.3 mm flange metal
+    hz  = -6 - gap - 1.6;                       // hook plates' bottom z
     translate([-cw/2, 0, 0]) {
-        // riser pad
-        translate([0, -din_w/2 - 8, -6]) cube([cw, din_w + 16, 6.01]);
-        // fixed hook over the top flange (lip points INWARD over the rail)
-        translate([0, din_w/2 + din_t - 4, -6]) cube([cw, 4 + 1.6, 3]);
-        translate([0, din_w/2 + din_t, -6]) cube([cw, 1.6, 6.01]);
-        // spring arm + hook under the bottom flange (flexes -Y to snap on)
-        translate([0, -din_w/2 - din_t - 1.6, -6]) cube([cw, 1.6, 6.01]);
-        translate([0, -din_w/2 - din_t - 1.6, -6]) cube([cw, 4 + 1.6, 1.8]);
-        // release tab
-        translate([0, -din_w/2 - din_t - 10, -6]) cube([cw, 8.5, 1.8]);
+        // riser lands OUTSIDE the rail span — the rail seats between them
+        translate([0,  din_w/2 + din_t, -6]) cube([cw, 9, 6.01]);
+        translate([0, -din_w/2 - din_t - 9, -6]) cube([cw, 9, 6.01]);
+        // fixed hook, full width, over the TOP flange: drop plate + inward lip
+        translate([0, din_w/2 + din_t, hz]) cube([cw, 1.8, gap + 3.21]);
+        translate([0, din_w/2 - din_lip, hz]) cube([cw, din_lip + din_t + 1.8, 1.6]);
+        // bottom latch: root block + leaf arm + mid hook + release tab
+        translate([0, -din_w/2 - din_t - 5, hz]) cube([5, 5, gap + 3.21]);          // root (ties to the land)
+        translate([5 - 0.01, -din_w/2 - 2.4, hz]) cube([cw - 5, 1.8, 1.6]);         // leaf arm
+        translate([cw*0.55, -din_w/2 - 2.0, hz]) cube([8, din_lip + 2.0, 1.6]);     // hook behind the flange
+        translate([cw - 4, -din_w/2 - 7, hz]) cube([4, 6.5, 1.6]);                  // release tab
     }
 }
 
@@ -138,6 +148,15 @@ module cover() {
             for (x = [-out_l/2 + 12 : 8 : out_l/2 - 12])
                 translate([x, (out_w + 3.2)/2 + 1, lid_t + 6]) rotate([90, 0, 0])
                     linear_extrude(6) rrect2d(3, ch - 10, 1.4);
+            // PORT WINDOWS: the closed skirt walled off every Pi connector.
+            // Notches matching the tray's three open port faces, cut OPEN to
+            // the skirt's free edge so the cover drops on with cables plugged.
+            // (Assembled world z 9.9..26 = cover-local total_h-26 upward.)
+            for (s = [1, -1])
+                translate([s*(out_l/2 + 2), 0, total_h - 26 + 15])
+                    cube([6, inner_w - 6, 30], center = true);
+            translate([0, -(out_w/2 + 2), total_h - 26 + 15])
+                cube([inner_l - 10, 6, 30], center = true);
             // lid screw tubes' holes
             for (sx = [1, -1], sy = [1, -1])
                 translate([sx*(inner_l/2 - post_d/2 - 0.2), sy*(inner_w/2 - post_d/2 - 0.2), -0.1]) {

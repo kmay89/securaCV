@@ -53,7 +53,11 @@ REPO = Path(__file__).resolve().parents[1]
 HW = REPO / "docs/hardware"
 OUT = HW / "pricing.json"
 
-PRICE_JUMP = 0.15  # |Δ|/old beyond this is an exception
+PRICE_JUMP = 0.15  # |Δ|/old beyond this is an exception…
+PRICE_JUMP_MIN_USD = 0.50  # …but only when the move itself is real money.
+# A $0.02 resistor doubling is a 100% "jump" worth $0.02 — waking a human
+# for that is how exception queues turn into noise and noise into a
+# maintenance headache. Both thresholds must trip.
 GENERIC_MFRS = ("generic", "securacv")
 
 DK_TOKEN_URL = "https://api.digikey.com/v1/oauth2/token"
@@ -321,8 +325,9 @@ def find_exceptions(old, new):
                           f"'{e['lifecycle']}' at {e['provenance']}."})
         if (live and prev.get("provenance") in ("digikey", "mouser")
                 and prev.get("unit_usd") and e.get("unit_usd")):
-            delta = abs(e["unit_usd"] - prev["unit_usd"]) / prev["unit_usd"]
-            if delta > PRICE_JUMP:
+            moved = abs(e["unit_usd"] - prev["unit_usd"])
+            delta = moved / prev["unit_usd"]
+            if delta > PRICE_JUMP and moved >= PRICE_JUMP_MIN_USD:
                 exceptions.append({
                     "kind": "price-jump", "mpn": mpn,
                     "detail": f"{mpn} ({e['desc']}) moved "

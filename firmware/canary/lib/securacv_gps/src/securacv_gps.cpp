@@ -6,6 +6,7 @@
  */
 
 #include "securacv_gps.h"
+#include "../../../../common/gnss/gnss_time.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -224,11 +225,18 @@ void GpsManager::parseNmea(char* line) {
   else if (strncmp(type, "RMC", 3) == 0) {
     m_rmc_count++;
     char* time_str = get_field(line, 1);
+    char* status = get_field(line, 2);
     char* speed = get_field(line, 7);
     char* course = get_field(line, 8);
     char* date_str = get_field(line, 9);
 
-    if (speed && *speed) {
+    // Status 'A' = active/valid fix, 'V' = void (no fix, or a warm-up
+    // sentence the receiver emits before it has one). A void RMC can still
+    // carry a stale or all-zero time/date/speed/course — those fields must
+    // not be trusted, or presented as a fix, when status isn't 'A'.
+    bool rmc_active = status && *status == 'A';
+
+    if (rmc_active && speed && *speed) {
       m_fix.speed_knots = parse_double(speed, 0);
       m_fix.speed_kmh = knots_to_kmh(m_fix.speed_knots);
       // Smooth raw speed for the motion filter so a single noisy RMC doesn't
@@ -238,28 +246,34 @@ void GpsManager::parseNmea(char* line) {
       m_speed_ema_mps = m_speed_ema_mps * (1.0f - alpha) + mps * alpha;
     }
 
-    if (course && *course) {
+    if (rmc_active && course && *course) {
       m_fix.course_deg = parse_double(course, 0);
     }
 
-    // Parse UTC time
-    if (time_str && strlen(time_str) >= 6) {
-      m_utc.hour = (time_str[0] - '0') * 10 + (time_str[1] - '0');
-      m_utc.minute = (time_str[2] - '0') * 10 + (time_str[3] - '0');
-      m_utc.second = (time_str[4] - '0') * 10 + (time_str[5] - '0');
-      if (strlen(time_str) > 7) {
-        m_utc.centisecond = parse_int(time_str + 7, 0);
-      }
-    }
+    if (rmc_active && time_str && strlen(time_str) >= 6 &&
+        date_str && strlen(date_str) >= 6) {
+      int hour = (time_str[0] - '0') * 10 + (time_str[1] - '0');
+      int minute = (time_str[2] - '0') * 10 + (time_str[3] - '0');
+      int second = (time_str[4] - '0') * 10 + (time_str[5] - '0');
+      int centisecond = (strlen(time_str) > 7) ? parse_int(time_str + 7, 0) : 0;
+      int day = (date_str[0] - '0') * 10 + (date_str[1] - '0');
+      int month = (date_str[2] - '0') * 10 + (date_str[3] - '0');
+      int year = 2000 + (date_str[4] - '0') * 10 + (date_str[5] - '0');
 
-    // Parse date
-    if (date_str && strlen(date_str) >= 6) {
-      m_utc.day = (date_str[0] - '0') * 10 + (date_str[1] - '0');
-      m_utc.month = (date_str[2] - '0') * 10 + (date_str[3] - '0');
-      int yy = (date_str[4] - '0') * 10 + (date_str[5] - '0');
-      m_utc.year = 2000 + yy;
-      m_utc.valid = true;
-      m_utc.last_seen_ms = millis();
+      // Guard against a corrupt-but-checksum-valid sentence, or a receiver
+      // that hasn't loaded ephemeris yet and emits all-zero fields, before
+      // this ever reaches getUtcTime() / a system-clock sync.
+      if (securacv::gnss::gnss_calendar_valid(year, month, day, hour, minute, second)) {
+        m_utc.hour = hour;
+        m_utc.minute = minute;
+        m_utc.second = second;
+        m_utc.centisecond = centisecond;
+        m_utc.day = day;
+        m_utc.month = month;
+        m_utc.year = year;
+        m_utc.valid = true;
+        m_utc.last_seen_ms = millis();
+      }
     }
 
     m_fix.last_rmc_ms = millis();

@@ -36,6 +36,7 @@
     contact_state_change: { label: "Contact state change", icon: "mdi:door" },
     object_removed_from_zone: { label: "Object removed from zone", icon: "mdi:package-variant-closed-remove" },
     tamper_detected: { label: "Tamper detected", icon: "mdi:shield-alert" },
+    vehicle_arrival_departure: { label: "Vehicle arrival/departure", icon: "mdi:car-side" },
   };
   const DEFAULT_EVENT_ICON = "mdi:shield-eye";
 

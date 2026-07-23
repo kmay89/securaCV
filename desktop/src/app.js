@@ -1,14 +1,22 @@
-// SecuraCV Flasher — front-end glue.
+// SecuraCV Lab — front-end glue.
 //
 // Plain JS on purpose: no framework, no build step. It talks to the Rust
 // backend through Tauri's global bridge (withGlobalTauri) and never touches
 // Web Serial — the OS-native flashing all happens in Rust.
 //
+// This file is two layers:
+//   1. The *shell* — a custom, native-feeling app (left rail, splash, health
+//      strip, day/night, and session memory so you land back where you left
+//      off). It wears the securacv.com skin.
+//   2. The *flows* — the Canary flasher, the Raspberry-Pi hub writer, the
+//      serial monitor and self-update. Every backend `invoke`/`listen` call
+//      and the whole state machine are unchanged from the original; the shell
+//      only reorganizes where they live on screen.
+//
 // The connection is watched *live*, IDE-style: a background poll enumerates the
 // USB ports every second and a persistent status bar reflects the state —
 // scanning → found → reading chip → connected → (or) unplugged — with no
-// "Connect" button to press. Chip identification (which momentarily talks to the
-// board) runs once per freshly-seen port, not on every poll.
+// "Connect" button to press.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -28,6 +36,8 @@ const WE2_PID = 0x55d3;
 const state = {
   catalog: null,
   manifest: null,
+  hatch: null,
+  appInfo: null,
   port: null,        // the port we're currently tracking
   portInfo: null,
   portKind: null,    // "esp32" | "we2"
@@ -37,6 +47,7 @@ const state = {
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
   busy: false,       // a flash is running — pause the watcher
   monitoring: false,
+  update: null,      // pending self-update, if any
   vision: {
     hostFlash: null,
     hostBoot: null,
@@ -44,16 +55,97 @@ const state = {
   },
 };
 
-// ── boot ───────────────────────────────────────────────────────────────────
+// ── session memory ───────────────────────────────────────────────────────────
+// A tiny, local, non-secret memory so the app makes sense session after
+// session. It never stores a Wi-Fi or MQTT *password* — only the harmless
+// facts that make jumping back in seamless.
+const PREFS_KEY = "securacv.lab.prefs.v2";
+const prefs = loadPrefs();
+
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* private mode / quota — memory is a nicety, never a requirement */
+  }
+}
+
+const PROV_FIELDS = ["device-id", "wifi-ssid", "mqtt-host", "mqtt-port", "mqtt-user"];
+function persistProv() {
+  prefs.prov = prefs.prov || {};
+  PROV_FIELDS.forEach((id) => { prefs.prov[id] = $(id).value; });
+  prefs.hubSsid = $("hub-ssid").value;
+  savePrefs();
+}
+function restoreProv() {
+  if (prefs.prov) PROV_FIELDS.forEach((id) => { if (prefs.prov[id]) $(id).value = prefs.prov[id]; });
+  if (prefs.hubSsid) $("hub-ssid").value = prefs.hubSsid;
+}
+
+function rosterAdd(entry) {
+  entry.ts = Date.now();
+  prefs.roster = prefs.roster || [];
+  prefs.roster.unshift(entry);
+  prefs.roster = prefs.roster.slice(0, 12);
+  savePrefs();
+}
+
+// A short, local event log — so a failure is visible and recoverable, never
+// silent. Powers the health story on the About page.
+function logEvent(kind, msg) {
+  prefs.log = prefs.log || [];
+  prefs.log.unshift({ t: Date.now(), kind, msg: String(msg).slice(0, 160) });
+  prefs.log = prefs.log.slice(0, 40);
+  savePrefs();
+  if (!$("about-view").classList.contains("hidden")) renderAbout();
+}
+
+// ── theme (day / night), applied before first paint ──────────────────────────
+(function applyStoredTheme() {
+  const t = prefs.theme;
+  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+})();
+
+function effectiveDark() {
+  const t = document.documentElement.getAttribute("data-theme");
+  if (t === "dark") return true;
+  if (t === "light") return false;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function toggleTheme() {
+  const next = effectiveDark() ? "light" : "dark";
+  prefs.theme = next;
+  savePrefs();
+  document.documentElement.setAttribute("data-theme", next);
+  logEvent("info", "Switched to " + next + " mode");
+}
+
+// ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
+  initShell();
+
   try {
     state.catalog = await invoke("load_catalog");
-    const tag = $("version-tag");
-    if (state.catalog.fw_train)
-      tag.textContent = "· firmware train " + state.catalog.fw_train;
   } catch (e) {
     setConn("failed", "Couldn't load the catalog: " + e);
+    logEvent("err", "Catalog load failed: " + e);
   }
+  try {
+    state.hatch = await invoke("load_hatch"); // shared Hatchery naming spec
+  } catch (_) {
+    state.hatch = null; // certificate degrades to name-less if unavailable
+  }
+
+  loadAppInfo();          // build number, rev, build date, firmware train
+  restoreProv();          // remember the non-secret fields from last time
+  restoreSession();       // land back where you left off
 
   document.querySelectorAll("[data-open]").forEach((a) =>
     a.addEventListener("click", (ev) => {
@@ -71,6 +163,8 @@ async function boot() {
       setStatus("monitor-status", String(e), "err"))
   );
   $("update-btn").addEventListener("click", onInstallUpdate);
+  const rerollBtn = $("cert-reroll");
+  if (rerollBtn) rerollBtn.addEventListener("click", rerollCertificate);
   $("update-dismiss").addEventListener("click", () =>
     $("update-banner").classList.add("hidden")
   );
@@ -91,6 +185,7 @@ async function boot() {
     resetSteps();
     pollPorts();
   });
+  PROV_FIELDS.forEach((id) => $(id).addEventListener("input", persistProv));
 
   await listen("serial:log", (ev) => appendConsole("serial-console", ev.payload));
   await listen("serial:status", (ev) => {
@@ -131,6 +226,143 @@ async function boot() {
   checkForUpdate();     // best-effort, in the background
   pollPorts();          // first tick now…
   setInterval(pollPorts, POLL_MS); // …then keep watching
+}
+
+// ── the shell: rail router, splash, health strip ─────────────────────────────
+const VIEWS = ["canary", "hub", "atlas", "about"];
+
+function initShell() {
+  document.querySelectorAll(".nav-item").forEach((b) =>
+    b.addEventListener("click", () => navigate(b.dataset.nav))
+  );
+  $("theme-toggle").addEventListener("click", toggleTheme);
+  $("health-about").addEventListener("click", () => navigate("about"));
+  $("health-update").addEventListener("click", () => navigate("about"));
+  $("splash").addEventListener("click", dismissSplash);
+  $("resume-go").addEventListener("click", () => {
+    navigate(prefs.view && VIEWS.includes(prefs.view) ? prefs.view : "canary");
+    $("resume").classList.add("hidden");
+  });
+  $("resume-dismiss").addEventListener("click", () => {
+    prefs.roster = [];
+    savePrefs();
+    $("resume").classList.add("hidden");
+  });
+
+  window.addEventListener("online", updateNet);
+  window.addEventListener("offline", updateNet);
+  updateNet();
+
+  requestAnimationFrame(() => $("app").classList.add("ready"));
+  // Splash lingers just long enough to read the build line, then fades.
+  setTimeout(dismissSplash, 1700);
+}
+
+function dismissSplash() {
+  $("splash").classList.add("gone");
+}
+
+function navigate(view) {
+  if (!VIEWS.includes(view)) view = "canary";
+  VIEWS.forEach((v) => $(v + "-view").classList.toggle("hidden", v !== view));
+  document.querySelectorAll(".nav-item").forEach((b) => {
+    const active = b.dataset.nav === view;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-selected", String(active));
+  });
+  document.body.dataset.view = view;
+
+  hub.active = view === "hub";
+  if (view === "hub") {
+    hubLoadPlan();
+    hubPreflight();
+    hubPollTargets();
+    if (!hub.pollTimer) hub.pollTimer = setInterval(hubPollTargets, 2000);
+  } else {
+    if (hub.pollTimer) {
+      clearInterval(hub.pollTimer);
+      hub.pollTimer = null;
+    }
+    // Don't leave a hidden rpiboot waiting forever behind another tab —
+    // stop it; the panel says how to start again.
+    if (hub.piUsbWaiting) invoke("hub_pi_boot_stop").catch(() => {});
+    // The first-boot watch keeps polling in the background either way, so it
+    // survives a tab switch — the user may leave to check other things.
+  }
+  if (view === "atlas") renderAtlas();
+  if (view === "about") renderAbout();
+
+  prefs.view = view;
+  savePrefs();
+}
+
+function restoreSession() {
+  // Re-open the section you were last in.
+  if (prefs.view && VIEWS.includes(prefs.view) && prefs.view !== "canary") {
+    navigate(prefs.view);
+  }
+  updateResumeState();
+}
+
+function updateResumeState() {
+  const roster = prefs.roster || [];
+  if (!roster.length) { $("resume").classList.add("hidden"); return; }
+  const last = roster[0];
+  const when = relativeTime(last.ts);
+  const what =
+    last.kind === "hub"
+      ? "you built a Home Assistant hub"
+      : `you hatched ${article(last.name)} ${esc(last.name)}${last.chip ? " (" + esc(last.chip) + ")" : ""}`;
+  $("resume-body").innerHTML =
+    `Last time ${what} — ${when}. ${roster.length} device${roster.length === 1 ? "" : "s"} in this session's roster.`;
+  $("resume").classList.remove("hidden");
+}
+
+// ── app info: build number, rev, build date, firmware train ──────────────────
+async function loadAppInfo() {
+  let info = null;
+  try {
+    info = await invoke("app_info");
+  } catch {
+    // Older backend without app_info — fall back to the Tauri app version.
+    let version = "0.0.0";
+    try { version = await window.__TAURI__.app.getVersion(); } catch {}
+    info = { version, build_rev: "source", build_epoch: 0, fw_train: null };
+  }
+  if (!info.fw_train && state.catalog) info.fw_train = state.catalog.fw_train || null;
+  state.appInfo = info;
+
+  // "Last updated": the moment we first saw this exact version run.
+  if (prefs.lastVersion !== info.version) {
+    if (prefs.lastVersion) logEvent("ok", `Updated to v${info.version}`);
+    prefs.lastVersion = info.version;
+    prefs.lastVersionAt = Date.now();
+    savePrefs();
+  }
+  renderBuildChrome();
+}
+
+function buildLabel() {
+  const i = state.appInfo;
+  if (!i) return "—";
+  return "v" + i.version + (i.build_rev && i.build_rev !== "source" ? " · " + i.build_rev : "");
+}
+
+function renderBuildChrome() {
+  const i = state.appInfo || {};
+  $("rail-build").innerHTML = `<b>v${esc(i.version || "—")}</b><br>${esc(i.build_rev || "build")}`;
+  $("health-build").textContent = buildLabel();
+  $("health-fw").textContent = i.fw_train || "—";
+  const meta = [];
+  meta.push(`SecuraCV Lab · ${buildLabel()}`);
+  if (i.build_epoch) meta.push(`built ${fmtDate(i.build_epoch * 1000)}`);
+  $("splash-meta").innerHTML = meta.map(esc).join("<br>") + `<br><b id="splash-upd">checking for updates…</b>`;
+}
+
+function updateNet() {
+  const online = navigator.onLine;
+  $("health-net").classList.toggle("off", !online);
+  $("health-net-text").textContent = online ? "online" : "offline";
 }
 
 // ── the live watcher ─────────────────────────────────────────────────────────
@@ -369,6 +601,7 @@ function showModuleFlow() {
 async function onFlash() {
   const provisioning = readProvisioning(state.product);
   if (state.product.provisioning === "usb-secrets" && !provisioning) return;
+  persistProv();
   const btn = $("flash-btn");
   const con = $("console");
   con.textContent = "";
@@ -407,6 +640,7 @@ async function onFlash() {
     }
   } catch (e) {
     setStatus("flash-result", String(e), "err");
+    logEvent("err", "Flash failed: " + e);
     hideHatchCard();
   } finally {
     unlisten();
@@ -477,6 +711,7 @@ async function onFlashModule() {
     maybeHatch();
   } catch (e) {
     setStatus("flash-result", String(e), "err");
+    logEvent("err", "Vision module flash failed: " + e);
   } finally {
     state.busy = false;
     btn.disabled = false;
@@ -600,16 +835,30 @@ function requiresLiveReceipt(product) {
 }
 
 // ── self-update ─────────────────────────────────────────────────────────────
-async function checkForUpdate() {
+async function checkForUpdate(manual = false) {
+  prefs.lastCheckedAt = Date.now();
+  savePrefs();
+  $("health-checked").textContent = fmtTime(prefs.lastCheckedAt);
   try {
     const up = await invoke("check_update");
+    state.update = up || null;
     if (up) {
       $("update-text").textContent = `Version ${up.version} is ready (you have ${up.current_version}).`;
       $("update-banner").classList.remove("hidden");
+      $("health-update").classList.remove("hidden");
+      const upd = $("splash-upd"); if (upd) { upd.textContent = "update ready → v" + up.version; }
+      logEvent("info", "Update available: v" + up.version);
+    } else {
+      $("health-update").classList.add("hidden");
+      const upd = $("splash-upd"); if (upd) { upd.textContent = "up to date ✓"; }
+      if (manual) logEvent("ok", "Checked — already up to date");
     }
-  } catch (_) {
-    // No signing key configured yet, or offline — stay quiet.
+  } catch (e) {
+    // No signing key configured yet, or offline — stay quiet on the surface.
+    const upd = $("splash-upd"); if (upd) { upd.textContent = navigator.onLine ? "update check unavailable" : "offline — will check later"; }
+    if (manual) logEvent("err", "Update check failed: " + e);
   }
+  if (!$("about-view").classList.contains("hidden")) renderAbout();
 }
 
 async function onInstallUpdate() {
@@ -622,10 +871,183 @@ async function onInstallUpdate() {
     await invoke("install_update"); // relaunches on success
   } catch (e) {
     $("update-text").textContent = "Update failed: " + e;
+    logEvent("err", "Update install failed: " + e);
     btn.disabled = false;
   } finally {
     unlisten();
   }
+}
+
+// ── Explore / Atlas ──────────────────────────────────────────────────────────
+// Two kinds of content, both organized so nothing rots: outbound links to the
+// live site (stable securacv.com paths), and the field knowledge *baked into
+// this build* from the embedded catalog — so it browses offline and refreshes
+// itself every time the app updates.
+const SITE = "https://securacv.com";
+const REPO = "https://github.com/kmay89/securaCV";
+const ATLAS_LINKS = [
+  ["Your Canaries on the web", [
+    ["Home", "The privacy-first witness, start to finish.", SITE + "/"],
+    ["Meet the fleet", "Every Canary and what each one witnesses.", SITE + "/fleet"],
+    ["Ecosystem", "How the Canaries, the Hub and Home Assistant fit.", SITE + "/ecosystem"],
+    ["Gallery", "Real installs and the events they caught.", SITE + "/gallery"],
+    ["Compare", "SecuraCV next to the subscription cameras.", SITE + "/compare"],
+  ]],
+  ["Learn & try", [
+    ["How it works", "The witness kernel, in plain language.", SITE + "/how-it-works"],
+    ["The Lab", "The browser flasher this app grew from.", SITE + "/lab"],
+    ["Playground", "Drive a simulated Canary — no hardware.", SITE + "/playground"],
+    ["Checkup", "Point it at a board and read its health.", SITE + "/checkup"],
+  ]],
+  ["Build & extend", [
+    ["Download", "Get this app for every platform.", SITE + "/download"],
+    ["Plugin", "Wire a Canary into your own stack.", SITE + "/plugin"],
+    ["Maker", "Roll your own from parts.", SITE + "/maker"],
+    ["Factory", "Batch-provision a whole run.", SITE + "/factory"],
+  ]],
+  ["The project", [
+    ["Source on GitHub", "Every line, open. Read it, fork it.", REPO],
+    ["Changelog", "What changed, release by release.", REPO + "/blob/main/CHANGELOG.md"],
+    ["Security", "How issues are handled and disclosed.", REPO + "/blob/main/SECURITY.md"],
+    ["Errer Labs", "The people behind the birds.", SITE + "/#about"],
+  ]],
+];
+
+function extIcon() {
+  return `<svg class="ac-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>`;
+}
+function linkIcon() {
+  return `<svg class="ac-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg>`;
+}
+
+function renderAtlas() {
+  const cat = state.catalog || {};
+  const parts = [];
+
+  ATLAS_LINKS.forEach(([title, items]) => {
+    parts.push(`<div class="atlas-group"><h2>${esc(title)}</h2><div class="atlas-grid">` +
+      items.map(([name, blurb, url]) =>
+        `<button class="atlas-card" data-url="${esc(url)}">
+           <div class="ac-top">${linkIcon()}<b>${esc(name)}</b>${extIcon()}</div>
+           <span>${esc(blurb)}</span>
+         </button>`).join("") +
+      `</div></div>`);
+  });
+
+  // Field notes — the embedded lessons, browsable offline.
+  const lessons = cat.lessons || [];
+  if (lessons.length) {
+    parts.push(`<div class="atlas-group"><h2>Field notes · baked into this build</h2>` +
+      lessons.map((l) =>
+        `<div class="note-card"><div class="n-stage">${esc(l.stage || "note")}</div>
+           <h3>${esc(l.title || "")}</h3><p>${esc(l.body || "")}</p></div>`).join("") +
+      `</div>`);
+  }
+
+  // If something's off — recovery + the can't-brick reassurance.
+  const recovery = cat.recovery || [];
+  const noBrick = cat.no_brick;
+  if (recovery.length || noBrick) {
+    let block = `<div class="atlas-group"><h2>If something's off</h2><div class="note-card">`;
+    if (noBrick) {
+      block += `<h3>${esc(noBrick.headline || "")}</h3><p>${esc(noBrick.why || "")}</p>`;
+      if (Array.isArray(noBrick.points))
+        block += `<ul class="hint" style="margin-top:8px">${noBrick.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`;
+    }
+    block += recovery.map((r) =>
+      `<div class="recovery-item"><div class="r-when">${esc(r.when || "")}</div><div class="r-do">${esc(r.do || "")}</div></div>`).join("");
+    block += `</div></div>`;
+    parts.push(block);
+  }
+
+  // Vision module bench guide.
+  const bench = cat.we2_module && cat.we2_module.bench;
+  if (bench && Array.isArray(bench.steps)) {
+    let block = `<div class="atlas-group"><h2>Vision module bench</h2><div class="note-card">
+      <h3>${esc(cat.we2_module.name || "Grove Vision AI V2")}</h3>
+      <p>${esc(cat.we2_module.chip || "")}</p>
+      <ol class="hint" style="margin-top:10px">${bench.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
+    if (Array.isArray(bench.troubleshooting))
+      block += bench.troubleshooting.map((t) =>
+        `<div class="recovery-item"><div class="r-when">${esc(t.when || "")}</div><div class="r-do">${esc(t.fix || "")}</div></div>`).join("");
+    block += `</div></div>`;
+    parts.push(block);
+  }
+
+  const body = $("atlas-body");
+  body.innerHTML = parts.join("");
+  body.querySelectorAll(".atlas-card").forEach((c) =>
+    c.addEventListener("click", () => openExternal(c.dataset.url))
+  );
+}
+
+// ── About & Health ───────────────────────────────────────────────────────────
+function renderAbout() {
+  const i = state.appInfo || {};
+  const specs = [
+    ["Version", "v" + (i.version || "—")],
+    ["Build", (i.build_rev && i.build_rev !== "source") ? i.build_rev : "source"],
+    ["Built", i.build_epoch ? fmtDate(i.build_epoch * 1000) : "—"],
+    ["Firmware train", i.fw_train || "—"],
+    ["Last updated", prefs.lastVersionAt ? relativeTime(prefs.lastVersionAt) : "just now"],
+    ["Last checked", prefs.lastCheckedAt ? relativeTime(prefs.lastCheckedAt) : "—"],
+  ];
+
+  const updState = state.update
+    ? `<p class="status ok">Version ${esc(state.update.version)} is ready to install.</p>
+       <div class="row"><button class="btn btn-primary btn-small" id="about-update">Update &amp; relaunch</button>
+       <button class="btn btn-ghost btn-small" id="about-check">Check again</button></div>`
+    : `<p class="status">You're on the newest build. The app checks on its own and heals forward — updates are signed and verified before they install.</p>
+       <div class="row"><button class="btn btn-ghost btn-small" id="about-check">Check now</button></div>`;
+
+  const log = (prefs.log || []);
+  const logHtml = log.length
+    ? log.map((e) =>
+        `<div class="log-row ${esc(e.kind || "")}"><time>${esc(fmtTime(e.t))}</time><span class="l-msg">${esc(e.msg)}</span></div>`).join("")
+    : `<div class="log-row"><span class="l-msg muted">Nothing logged yet — a clean run.</span></div>`;
+
+  $("about-body").innerHTML = `
+    <div class="brand-block">
+      <span class="bb-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="44" height="44"><circle cx="32" cy="36" r="17" fill="#FFD44F"/><circle cx="41" cy="24" r="10" fill="#FFD44F"/><circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/><path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/><ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/></svg>
+      </span>
+      <div>
+        <h2>SecuraCV&nbsp;Lab</h2>
+        <p>The Lab as a native app — by <span class="bb-lab">Errer Labs</span>. No browser, no terminal, and you can't brick the board.</p>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="step-head"><span class="step-n">i</span><h2>This build</h2></div>
+      <div class="spec-grid">
+        ${specs.map(([k, v]) => `<div class="spec"><div class="s-k">${esc(k)}</div><div class="s-v small">${esc(v)}</div></div>`).join("")}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="step-head"><span class="step-n">↻</span><h2>Self-update</h2></div>
+      ${updState}
+    </section>
+
+    <section class="card">
+      <div class="step-head"><span class="step-n">≡</span><h2>Recent activity</h2></div>
+      <p class="muted">A local record of what this app did — so a failure is visible and recoverable, never silent. Kept on this computer only.</p>
+      <div class="log-list">${logHtml}</div>
+      <div class="row"><button class="btn btn-ghost btn-small" id="about-reset">Reset the app's memory</button></div>
+    </section>`;
+
+  const check = $("about-check");
+  if (check) check.addEventListener("click", () => { check.disabled = true; check.textContent = "Checking…"; checkForUpdate(true); });
+  const upd = $("about-update");
+  if (upd) upd.addEventListener("click", onInstallUpdate);
+  const reset = $("about-reset");
+  if (reset) reset.addEventListener("click", () => {
+    prefs.roster = []; prefs.log = []; prefs.prov = {}; prefs.hubSsid = "";
+    savePrefs();
+    updateResumeState();
+    logEvent("info", "Memory reset");
+    renderAbout();
+  });
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -649,6 +1071,7 @@ function hideHatchCard() {
 }
 
 function showHatchCard(product) {
+  const wasHidden = $("hatch-card").classList.contains("hidden");
   const moment = hatchMoment(product);
   $("hatch-card").querySelector(".hatch-kicker").textContent = moment.kicker || "Canary hatched";
   $("hatch-title").textContent = moment.title;
@@ -661,6 +1084,104 @@ function showHatchCard(product) {
     steps.appendChild(li);
   });
   $("hatch-card").classList.remove("hidden");
+  if (wasHidden) {
+    const cert = mintCertificate(product); // a real birth certificate, once
+    renderCertificate(cert);
+    rosterAdd({ kind: "canary", name: cert ? cert.name : (product && product.name) || "Canary", chip: state.chip || "" });
+    logEvent("ok", `${cert ? cert.name : (product && product.name) || "Canary"} hatched`);
+    updateResumeState();
+  }
+}
+
+// ── the Hatchery: name + birth certificate (shared spec with the web Lab) ────
+// The whimsical name is a display layer only — the device's functional id
+// stays the stable slug written during provisioning; here it just becomes the
+// certificate's Ring ID. The same name parts, mottoes and copy come from the
+// embedded hatch.json the website also ships, so both surfaces hatch alike.
+let lastCert = null;
+
+function mintCertificate(product) {
+  const h = state.hatch;
+  if (!h || !Array.isArray(h.first) || !h.first.length) return null;
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  const base = pick(h.first);
+  const withTitle = Array.isArray(h.titles) && h.titles.length &&
+    Math.random() < (typeof h.title_chance === "number" ? h.title_chance : 0.6);
+  const house = (Array.isArray(h.house) && h.house.length) ? pick(h.house) : "";
+  // "Nth of its name" from how many Canaries with this base name you've hatched.
+  const fleet = prefs.fleet || [];
+  const nth = fleet.filter((c) => c.base === base).length + 1;
+  const ordinals = Array.isArray(h.ordinals) ? h.ordinals : [];
+  const ordinal = ordinals[nth] || ("the " + nth + "th");
+  // Ring ID = the real functional device-id if this board was provisioned,
+  // else a generated ring code — either way it identifies the actual bird.
+  const provisionedId = $("device-id") ? $("device-id").value.trim() : "";
+  const ringId = provisionedId || genRing(h.ring_prefix || "CNRY");
+
+  return {
+    base,
+    name: (withTitle ? pick(h.titles) + " " : "") + base + (house ? " " + house : ""),
+    species: (product && product.name) || "Canary",
+    lineage: ordinal + " of its name" + (house ? ", " + house.replace(/^the /, "") : ""),
+    ringId,
+    motto: (Array.isArray(h.mottoes) && h.mottoes.length) ? pick(h.mottoes) : "",
+    craft: (h.certificate && h.certificate.craft) || "",
+    ts: Date.now(),
+  };
+}
+
+function genRing(prefix) {
+  let hex;
+  try {
+    const b = crypto.getRandomValues(new Uint8Array(3));
+    hex = Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+  } catch (_) {
+    hex = Math.floor(Math.random() * 0xffffff).toString(16);
+  }
+  hex = (hex + "000000").slice(0, 6).toUpperCase();
+  return prefix + "-" + hex.slice(0, 3) + "-" + hex.slice(3);
+}
+
+function renderCertificate(cert) {
+  const fig = $("hatch-cert");
+  if (!fig) return;
+  if (!cert) { fig.hidden = true; return; }
+  lastCert = cert;
+  const h = state.hatch || {};
+  const c = (h.certificate) || {};
+  if (c.kicker) $("cert-kicker").textContent = c.kicker;
+  if (c.intro) $("cert-intro").textContent = c.intro;
+  if (c.foot) $("cert-foot").textContent = c.foot;
+  $("cert-name").textContent = cert.name;
+  $("cert-species").textContent = "Species · " + cert.species;
+  $("cert-lineage").textContent = cert.lineage;
+  $("cert-date").textContent = fmtDate(cert.ts);
+  $("cert-id").textContent = cert.ringId;
+  $("cert-craft").textContent = cert.craft || "shell pressed in the workshop · spirit woken in the hatchery";
+  $("cert-motto").textContent = cert.motto ? "“" + cert.motto + "”" : "";
+  fig.hidden = false;
+  // Remember this bird's lineage locally so ordinals climb across sessions.
+  prefs.fleet = prefs.fleet || [];
+  if (!prefs.fleet.some((x) => x.ringId === cert.ringId)) {
+    prefs.fleet.unshift({ name: cert.name, base: cert.base, species: cert.species, ringId: cert.ringId, ts: cert.ts });
+    prefs.fleet = prefs.fleet.slice(0, 40);
+    savePrefs();
+  }
+}
+
+// Roll a fresh name for the same freshly-hatched bird (does not re-count it).
+function rerollCertificate() {
+  if (!lastCert || !state.hatch) return;
+  const prev = lastCert;
+  // drop the just-recorded entry so a re-roll replaces rather than stacks
+  if (prefs.fleet && prefs.fleet[0] && prefs.fleet[0].ringId === prev.ringId) {
+    prefs.fleet.shift();
+    savePrefs();
+  }
+  const product = (state.catalog && state.catalog.products || [])
+    .find((p) => p.name === prev.species) || { name: prev.species };
+  const next = mintCertificate(product);
+  if (next) { next.ringId = prev.ringId; next.ts = prev.ts; renderCertificate(next); }
 }
 
 function hatchMoment(product) {
@@ -710,6 +1231,25 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
   );
+}
+function article(name) {
+  return /^[aeiou]/i.test(String(name || "")) ? "an" : "a";
+}
+function fmtTime(ms) {
+  try { return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+  catch { return "—"; }
+}
+function fmtDate(ms) {
+  try { return new Date(ms).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }); }
+  catch { return "—"; }
+}
+function relativeTime(ms) {
+  const d = Date.now() - ms;
+  if (d < 60e3) return "just now";
+  if (d < 3600e3) { const m = Math.round(d / 60e3); return m + " min ago"; }
+  if (d < 86400e3) { const h = Math.round(d / 3600e3); return h + (h === 1 ? " hour ago" : " hours ago"); }
+  const days = Math.round(d / 86400e3);
+  return days === 1 ? "yesterday" : days + " days ago";
 }
 
 // ── The Hub (Raspberry Pi) flow ────────────────────────────────────────────
@@ -779,8 +1319,6 @@ function hubRenderPills(activeStage) {
 }
 
 function hubInit() {
-  $("mode-canary").addEventListener("click", () => hubSetMode(false));
-  $("mode-hub").addEventListener("click", () => hubSetMode(true));
   $("hub-flash-btn").addEventListener("click", hubFlash);
   $("hub-confirm").addEventListener("input", hubArm);
   $("hub-ethernet").addEventListener("change", () => {
@@ -791,6 +1329,7 @@ function hubInit() {
     hubArm();
   });
   ["hub-ssid", "hub-pass"].forEach((id) => $(id).addEventListener("input", hubArm));
+  $("hub-ssid").addEventListener("input", persistProv);
   // Account fields: live-validate on every keystroke.
   ["hub-acct-name", "hub-acct-user", "hub-acct-pass", "hub-acct-pass2"].forEach((id) =>
     $(id).addEventListener("input", () => {
@@ -868,32 +1407,6 @@ function hubInit() {
       setStatus("hub-result", String(e), "err");
     }
   });
-}
-
-function hubSetMode(showHub) {
-  hub.active = showHub;
-  $("canary-view").classList.toggle("hidden", showHub);
-  $("hub-view").classList.toggle("hidden", !showHub);
-  $("mode-canary").classList.toggle("active", !showHub);
-  $("mode-hub").classList.toggle("active", showHub);
-  $("mode-canary").setAttribute("aria-selected", String(!showHub));
-  $("mode-hub").setAttribute("aria-selected", String(showHub));
-  if (showHub) {
-    hubLoadPlan();
-    hubPreflight();
-    hubPollTargets();
-    if (!hub.pollTimer) hub.pollTimer = setInterval(hubPollTargets, 2000);
-  } else {
-    if (hub.pollTimer) {
-      clearInterval(hub.pollTimer);
-      hub.pollTimer = null;
-    }
-    // Don't leave a hidden rpiboot waiting forever behind the Canary tab —
-    // stop it; the panel says how to start again.
-    if (hub.piUsbWaiting) invoke("hub_pi_boot_stop").catch(() => {});
-    // The first-boot watch keeps polling in the background either way, so it
-    // survives a tab switch — the user may leave to check other things.
-  }
 }
 
 // ── resume across a restart ──────────────────────────────────────────────────
@@ -985,165 +1498,6 @@ function hubPresentError(raw) {
       "The details are below; a retry sorts out most of these.";
   }
   setStatus("hub-result", friendly + "\n\n" + msg, "err");
-}
-
-async function hubLoadPlan() {
-  try {
-    // The board list renders once from the embedded catalog; the plan
-    // re-resolves whenever the operator picks a different Pi.
-    if (!hub.boards.length) {
-      const catalog = await invoke("load_hub_catalog");
-      hub.boards = catalog.base_os.boards || [];
-      const recommended = hub.boards.find((b) => b.recommended);
-      hub.boardId = hub.boardId || (recommended ? recommended.id : null);
-      $("hub-board-list").innerHTML = hub.boards
-        .map(
-          (b) => `<label class="product${b.id === hub.boardId ? " selected" : ""}">
-            <input type="radio" name="hub-board" value="${esc(b.id)}" ${
-              b.id === hub.boardId ? "checked" : ""
-            }>
-            <div><div class="p-name">${esc(b.name)}${
-              b.recommended ? '<span class="chip-badge">recommended</span>' : ""
-            }</div>
-            <div class="p-tag">also fits: ${esc((b.covers || []).join(" · "))}</div>
-            <div class="p-meta">${esc(b.durable_default || "")}</div></div>
-          </label>`
-        )
-        .join("");
-      $("hub-board-list")
-        .querySelectorAll("input[name=hub-board]")
-        .forEach((r) =>
-          r.addEventListener("change", (ev) => {
-            hub.boardId = ev.target.value;
-            hub.plan = null;
-            hubLoadPlan();
-          })
-        );
-      const excluded = catalog.base_os.excluded_boards || [];
-      $("hub-excluded-list").innerHTML = excluded
-        .map(
-          (x) =>
-            `<div class="hidden-disk"><strong>${esc(x.model)}</strong> — ${esc(x.why)}</div>`
-        )
-        .join("");
-    }
-    if (hub.plan) return;
-    hub.plan = await invoke("hub_plan", { boardId: hub.boardId });
-    // Reflect the picked board in the list highlight + explainer line.
-    $("hub-board-list")
-      .querySelectorAll(".product")
-      .forEach((el) =>
-        el.classList.toggle("selected", el.querySelector("input").value === hub.boardId)
-      );
-    $("hub-os-label").textContent = hub.plan.os_label + " · " + hub.plan.board_name;
-    $("hub-pin-state").textContent = hub.plan.pinned
-      ? "against this release's pinned checksum"
-      : "against Home Assistant's published checksum";
-    const gb = Math.round(hub.plan.min_card_bytes / 1024 ** 3);
-    $("hub-card-req").textContent =
-      "You'll need a " + (gb + 4) + " GB or larger card — 64 GB recommended.";
-    // The USB-C on-ramp hint is per-family (CMs use the IO-board jumper;
-    // the Pi 400 needs a reader) — say the right thing for the picked board.
-    const board = hub.boards.find((b) => b.id === hub.boardId);
-    if (board && board.usb_device_boot) {
-      $("hub-pi-usb-hint").textContent = "For this board: " + board.usb_device_boot + ".";
-    }
-    hubArm();
-  } catch (e) {
-    setStatus("hub-result", "Couldn't load the hub catalog: " + e, "err");
-  }
-}
-
-async function hubPollTargets() {
-  if (!hub.active || hub.busy) return;
-  let targets = [];
-  try {
-    targets = await invoke("list_hub_targets");
-  } catch (e) {
-    $("hub-target-sub").textContent = "Couldn't read this computer's disks: " + e;
-    return;
-  }
-  hub.targets = targets;
-  const eligible = targets.filter((t) => t.eligible);
-  const refused = targets.filter((t) => !t.eligible);
-
-  // Keep (or auto-pick) the selection: a single eligible disk selects itself —
-  // plugging in the card IS the choice.
-  if (hub.selected && !eligible.some((t) => t.path === hub.selected)) hub.selected = null;
-  if (!hub.selected && eligible.length === 1) hub.selected = eligible[0].path;
-
-  const list = $("hub-target-list");
-  list.innerHTML = eligible.length
-    ? eligible
-        .map((t) => {
-          const sel = t.path === hub.selected;
-          const isPi = /rpi[-_ ]?msd/i.test(t.model);
-          const warns = t.warnings.map((w) => `<div class="p-warn">⚠ ${esc(w)}</div>`).join("");
-          return `<label class="product${sel ? " selected" : ""}">
-            <input type="radio" name="hub-target" value="${esc(t.path)}" ${sel ? "checked" : ""}>
-            <div><div class="p-name">${esc(t.model)}${
-              isPi ? '<span class="chip-badge">your Pi, over USB-C</span>' : ""
-            }</div>
-            <div class="p-tag">${esc(t.path)} · ${hubFmtBytes(t.size_bytes)}</div>${warns}</div>
-          </label>`;
-        })
-        .join("")
-    : `<p class="muted">Waiting for a card or external drive…</p>`;
-  list.querySelectorAll("input[name=hub-target]").forEach((r) =>
-    r.addEventListener("change", (ev) => {
-      hub.selected = ev.target.value;
-      hubPollTargets();
-    })
-  );
-
-  const hiddenBox = $("hub-hidden");
-  if (refused.length) {
-    hiddenBox.classList.remove("hidden");
-    $("hub-hidden-summary").textContent =
-      refused.length + (refused.length === 1 ? " disk is" : " disks are") + " hidden — here's why";
-    $("hub-hidden-list").innerHTML = refused
-      .map(
-        (t) =>
-          `<div class="hidden-disk"><strong>${esc(t.model)}</strong>
-           <span class="mono">${esc(t.path)}</span> — ${esc(t.refused_because || "")}</div>`
-      )
-      .join("");
-  } else {
-    hiddenBox.classList.add("hidden");
-  }
-
-  $("hub-step-wifi").classList.toggle("disabled", !hub.selected);
-  $("hub-step-write").classList.toggle("disabled", !hub.selected);
-  hubArm();
-}
-
-async function hubPiUsbToggle() {
-  if (hub.piUsbWaiting) {
-    try {
-      await invoke("hub_pi_boot_stop");
-    } catch (e) {
-      $("hub-pi-usb-status").textContent = String(e);
-    }
-    return; // hub:pi-usb-done resets the button
-  }
-  try {
-    await invoke("hub_pi_boot_start");
-    hub.piUsbWaiting = true;
-    $("hub-pi-usb-btn").textContent = "Stop waiting";
-    $("hub-pi-usb-status").textContent =
-      "Waiting… hold the Pi's power button, connect USB-C, release.";
-  } catch (e) {
-    $("hub-pi-usb-status").textContent = String(e);
-  }
-}
-
-function hubWifiValue() {
-  if ($("hub-ethernet").checked) return null;
-  return {
-    ssid: $("hub-ssid").value.trim(),
-    passphrase: $("hub-pass").value,
-    hidden: $("hub-hidden-net").checked,
-  };
 }
 
 // ── ETA ─────────────────────────────────────────────────────────────────────
@@ -1372,6 +1726,165 @@ function hubChime() {
   } catch (_) {}
 }
 
+async function hubLoadPlan() {
+  try {
+    // The board list renders once from the embedded catalog; the plan
+    // re-resolves whenever the operator picks a different Pi.
+    if (!hub.boards.length) {
+      const catalog = await invoke("load_hub_catalog");
+      hub.boards = catalog.base_os.boards || [];
+      const recommended = hub.boards.find((b) => b.recommended);
+      hub.boardId = hub.boardId || (recommended ? recommended.id : null);
+      $("hub-board-list").innerHTML = hub.boards
+        .map(
+          (b) => `<label class="product${b.id === hub.boardId ? " selected" : ""}">
+            <input type="radio" name="hub-board" value="${esc(b.id)}" ${
+              b.id === hub.boardId ? "checked" : ""
+            }>
+            <div><div class="p-name">${esc(b.name)}${
+              b.recommended ? '<span class="chip-badge">recommended</span>' : ""
+            }</div>
+            <div class="p-tag">also fits: ${esc((b.covers || []).join(" · "))}</div>
+            <div class="p-meta">${esc(b.durable_default || "")}</div></div>
+          </label>`
+        )
+        .join("");
+      $("hub-board-list")
+        .querySelectorAll("input[name=hub-board]")
+        .forEach((r) =>
+          r.addEventListener("change", (ev) => {
+            hub.boardId = ev.target.value;
+            hub.plan = null;
+            hubLoadPlan();
+          })
+        );
+      const excluded = catalog.base_os.excluded_boards || [];
+      $("hub-excluded-list").innerHTML = excluded
+        .map(
+          (x) =>
+            `<div class="hidden-disk"><strong>${esc(x.model)}</strong> — ${esc(x.why)}</div>`
+        )
+        .join("");
+    }
+    if (hub.plan) return;
+    hub.plan = await invoke("hub_plan", { boardId: hub.boardId });
+    // Reflect the picked board in the list highlight + explainer line.
+    $("hub-board-list")
+      .querySelectorAll(".product")
+      .forEach((el) =>
+        el.classList.toggle("selected", el.querySelector("input").value === hub.boardId)
+      );
+    $("hub-os-label").textContent = hub.plan.os_label + " · " + hub.plan.board_name;
+    $("hub-pin-state").textContent = hub.plan.pinned
+      ? "against this release's pinned checksum"
+      : "against Home Assistant's published checksum";
+    const gb = Math.round(hub.plan.min_card_bytes / 1024 ** 3);
+    $("hub-card-req").textContent =
+      "You'll need a " + (gb + 4) + " GB or larger card — 64 GB recommended.";
+    // The USB-C on-ramp hint is per-family (CMs use the IO-board jumper;
+    // the Pi 400 needs a reader) — say the right thing for the picked board.
+    const board = hub.boards.find((b) => b.id === hub.boardId);
+    if (board && board.usb_device_boot) {
+      $("hub-pi-usb-hint").textContent = "For this board: " + board.usb_device_boot + ".";
+    }
+    hubArm();
+  } catch (e) {
+    setStatus("hub-result", "Couldn't load the hub catalog: " + e, "err");
+  }
+}
+
+async function hubPollTargets() {
+  if (!hub.active || hub.busy) return;
+  let targets = [];
+  try {
+    targets = await invoke("list_hub_targets");
+  } catch (e) {
+    $("hub-target-sub").textContent = "Couldn't read this computer's disks: " + e;
+    return;
+  }
+  hub.targets = targets;
+  const eligible = targets.filter((t) => t.eligible);
+  const refused = targets.filter((t) => !t.eligible);
+
+  // Keep (or auto-pick) the selection: a single eligible disk selects itself —
+  // plugging in the card IS the choice.
+  if (hub.selected && !eligible.some((t) => t.path === hub.selected)) hub.selected = null;
+  if (!hub.selected && eligible.length === 1) hub.selected = eligible[0].path;
+
+  const list = $("hub-target-list");
+  list.innerHTML = eligible.length
+    ? eligible
+        .map((t) => {
+          const sel = t.path === hub.selected;
+          const isPi = /rpi[-_ ]?msd/i.test(t.model);
+          const warns = t.warnings.map((w) => `<div class="p-warn">⚠ ${esc(w)}</div>`).join("");
+          return `<label class="product${sel ? " selected" : ""}">
+            <input type="radio" name="hub-target" value="${esc(t.path)}" ${sel ? "checked" : ""}>
+            <div><div class="p-name">${esc(t.model)}${
+              isPi ? '<span class="chip-badge">your Pi, over USB-C</span>' : ""
+            }</div>
+            <div class="p-tag">${esc(t.path)} · ${hubFmtBytes(t.size_bytes)}</div>${warns}</div>
+          </label>`;
+        })
+        .join("")
+    : `<p class="muted">Waiting for a card or external drive…</p>`;
+  list.querySelectorAll("input[name=hub-target]").forEach((r) =>
+    r.addEventListener("change", (ev) => {
+      hub.selected = ev.target.value;
+      hubPollTargets();
+    })
+  );
+
+  const hiddenBox = $("hub-hidden");
+  if (refused.length) {
+    hiddenBox.classList.remove("hidden");
+    $("hub-hidden-summary").textContent =
+      refused.length + (refused.length === 1 ? " disk is" : " disks are") + " hidden — here's why";
+    $("hub-hidden-list").innerHTML = refused
+      .map(
+        (t) =>
+          `<div class="hidden-disk"><strong>${esc(t.model)}</strong>
+           <span class="mono">${esc(t.path)}</span> — ${esc(t.refused_because || "")}</div>`
+      )
+      .join("");
+  } else {
+    hiddenBox.classList.add("hidden");
+  }
+
+  $("hub-step-wifi").classList.toggle("disabled", !hub.selected);
+  $("hub-step-write").classList.toggle("disabled", !hub.selected);
+  hubArm();
+}
+
+async function hubPiUsbToggle() {
+  if (hub.piUsbWaiting) {
+    try {
+      await invoke("hub_pi_boot_stop");
+    } catch (e) {
+      $("hub-pi-usb-status").textContent = String(e);
+    }
+    return; // hub:pi-usb-done resets the button
+  }
+  try {
+    await invoke("hub_pi_boot_start");
+    hub.piUsbWaiting = true;
+    $("hub-pi-usb-btn").textContent = "Stop waiting";
+    $("hub-pi-usb-status").textContent =
+      "Waiting… hold the Pi's power button, connect USB-C, release.";
+  } catch (e) {
+    $("hub-pi-usb-status").textContent = String(e);
+  }
+}
+
+function hubWifiValue() {
+  if ($("hub-ethernet").checked) return null;
+  return {
+    ssid: $("hub-ssid").value.trim(),
+    passphrase: $("hub-pass").value,
+    hidden: $("hub-hidden-net").checked,
+  };
+}
+
 function hubArm() {
   const target = hub.targets.find((t) => t.path === hub.selected);
   const wifi = hubWifiValue();
@@ -1428,12 +1941,14 @@ async function hubFlash() {
     });
     hub.done = true;
     setStatus("hub-result", "Done — written, read back, and verified.", "ok");
+    logEvent("ok", "Home Assistant hub written to " + target.model);
     hubShowHatch(receipt);
     hubNotify("Your card is ready", "Now boot it in your Pi — the app will tell you when it's online.");
     hubChime();
     hubStartFirstBoot();
   } catch (e) {
     hubPresentError(e);
+    logEvent("err", "Hub write failed: " + e);
   } finally {
     hub.busy = false;
     state.busy = false;
@@ -1450,6 +1965,7 @@ async function hubFlash() {
 }
 
 function hubShowHatch(receipt) {
+  const wasHidden = $("hub-hatch").classList.contains("hidden");
   // All stages complete — light every pill green, then the gentle reveal.
   const box = $("hub-pills");
   if (box)
@@ -1486,6 +2002,10 @@ function hubShowHatch(receipt) {
     "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
   ];
   $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");
+  if (wasHidden) {
+    rosterAdd({ kind: "hub", name: "Home Assistant hub", chip: "" });
+    updateResumeState();
+  }
 }
 
 function hubFmtBytes(n) {

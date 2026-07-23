@@ -65,6 +65,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 #include "esp_system.h"
 #include "esp_random.h"
@@ -128,6 +129,7 @@
 #include "log_level.h"
 #include "health_log.h"
 #include "sd_storage.h"
+#include "gnss_time.h"  // NMEA UTC date/time -> validated Unix epoch (GPS-derived system clock)
 #include "nvs_store.h"
 #include "api_auth.h"
 #include "wifi_provisioning_auth.h"  // WifiChangeAuth enum — must precede the
@@ -1021,6 +1023,70 @@ static void fix_init(GnssFix* f) {
 
 static void utc_init(GpsUtcTime* t) {
   memset(t, 0, sizeof(GpsUtcTime));
+}
+
+// Convert a fix's GpsUtcTime to a Unix epoch second, gated on RMC-derived
+// calendar validity (see gnss_time.h). Returns false — and leaves *out
+// untouched — if utc.valid is false or the calendar fields don't pass
+// gnss_calendar_valid(). Defense in depth: the RMC parser above already
+// screens this before setting valid=true.
+static bool gps_utc_to_epoch(const GpsUtcTime& utc, time_t* out) {
+  if (!utc.valid) return false;
+  return securacv::gnss::gnss_utc_to_unix(utc.year, utc.month, utc.day,
+                                           utc.hour, utc.minute, utc.second, out);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GPS-DERIVED SYSTEM CLOCK
+// ════════════════════════════════════════════════════════════════════════════
+//
+// This sketch has no SNTP path — no WiFi-based time sync exists anywhere in
+// canary-wap. Without it the system clock never leaves its post-boot state,
+// so every wall-clock-gated feature (the NFPA-72 monthly self-test chirp's
+// waking-hours check, its 30-day NVS-persisted cadence) is silently dead: the
+// `time(nullptr) >= 1700000000` guard those features already use to mean
+// "clock is synced" can never pass. GPS is the one clock source this device
+// actually has that isn't derived from an untrusted network peer — the L76K
+// reports UTC directly from the satellite constellation. sync_clock_from_gps()
+// seeds the system clock from it once RMC carries a validated date/time, and
+// re-checks periodically to correct crystal drift over long uptimes — but
+// only ever moves the clock from a GPS fix that has already passed the RMC
+// status + calendar-validity gate above, and only steps the clock when it
+// disagrees by more than a second (so this isn't calling settimeofday() on
+// every check once the two clocks agree). g_gps_utc.valid latches true on
+// the first good RMC and is never cleared by a later void/stale sentence
+// (other diagnostics consumers rely on that latch), so this checks
+// last_seen_ms itself — a fix isn't "available" for a resync once GPS has
+// been lost, or this would keep replaying a stale epoch every 10 minutes
+// and freeze/rewind wall time after ordinary GNSS loss.
+static const time_t GPS_CLOCK_FLOOR = 1700000000;  // ~2023-11-14; below this, "unset"
+static const uint32_t GPS_CLOCK_RESYNC_INTERVAL_MS = 10UL * 60UL * 1000UL;
+static const uint32_t GPS_CLOCK_FIX_STALE_MS = 30UL * 1000UL;  // RMC arrives ~1 Hz
+
+static void sync_clock_from_gps() {
+  static uint32_t s_last_sync_attempt_ms = 0;
+  uint32_t now_ms = millis();
+
+  time_t sys_now = time(nullptr);
+  bool clock_set = (sys_now >= GPS_CLOCK_FLOOR);
+  if (clock_set && (now_ms - s_last_sync_attempt_ms) < GPS_CLOCK_RESYNC_INTERVAL_MS) {
+    return;  // already trustworthy and not due for a drift-correction check
+  }
+
+  if (!g_gps_utc.valid) return;
+  if ((now_ms - g_gps_utc.last_seen_ms) > GPS_CLOCK_FIX_STALE_MS) return;  // GPS lost
+
+  time_t gps_epoch;
+  if (!gps_utc_to_epoch(g_gps_utc, &gps_epoch)) return;
+  if (gps_epoch < GPS_CLOCK_FLOOR) return;  // receiver clock itself looks unset/wrong
+
+  s_last_sync_attempt_ms = now_ms;
+  if (clock_set && llabs((long long)(gps_epoch - sys_now)) < 2) return;
+
+  struct timeval tv = { .tv_sec = gps_epoch, .tv_usec = 0 };
+  settimeofday(&tv, nullptr);
+  Serial.printf("[CLOCK] system clock %s from GPS (epoch=%lld)\n",
+                clock_set ? "corrected" : "set", (long long)gps_epoch);
 }
 
 static float knots_to_mps(float knots) {
@@ -2608,38 +2674,50 @@ static void parse_nmea(char* line, GnssFix* fx) {
     char* speed = get_field(line, 7);
     char* course = get_field(line, 8);
     char* date_str = get_field(line, 9);
-    
-    if (speed && *speed) {
+
+    // Status 'A' = active/valid fix, 'V' = void (no fix, or a warm-up
+    // sentence the receiver emits before it has one). A void RMC can still
+    // carry a stale or all-zero time/date/speed/course — those fields must
+    // not be trusted, or presented as a fix, when status isn't 'A'.
+    bool rmc_active = status && *status == 'A';
+
+    if (rmc_active && speed && *speed) {
       fx->speed_knots = parse_double(speed, 0);
       fx->speed_kmh = knots_to_kmh(fx->speed_knots);
       float mps = knots_to_mps(fx->speed_knots);
       g_speed_ema = g_speed_ema * (1.0f - SPEED_EMA_ALPHA) + mps * SPEED_EMA_ALPHA;
     }
-    
-    if (course && *course) {
+
+    if (rmc_active && course && *course) {
       fx->course_deg = parse_double(course, 0);
     }
-    
-    // Parse UTC time
-    if (time_str && strlen(time_str) >= 6) {
-      g_gps_utc.hour = (time_str[0] - '0') * 10 + (time_str[1] - '0');
-      g_gps_utc.minute = (time_str[2] - '0') * 10 + (time_str[3] - '0');
-      g_gps_utc.second = (time_str[4] - '0') * 10 + (time_str[5] - '0');
-      if (strlen(time_str) > 7) {
-        g_gps_utc.centisecond = parse_int(time_str + 7, 0);
+
+    if (rmc_active && time_str && strlen(time_str) >= 6 &&
+        date_str && strlen(date_str) >= 6) {
+      int hour = (time_str[0] - '0') * 10 + (time_str[1] - '0');
+      int minute = (time_str[2] - '0') * 10 + (time_str[3] - '0');
+      int second = (time_str[4] - '0') * 10 + (time_str[5] - '0');
+      int centisecond = (strlen(time_str) > 7) ? parse_int(time_str + 7, 0) : 0;
+      int day = (date_str[0] - '0') * 10 + (date_str[1] - '0');
+      int month = (date_str[2] - '0') * 10 + (date_str[3] - '0');
+      int year = 2000 + (date_str[4] - '0') * 10 + (date_str[5] - '0');
+
+      // Guard against a corrupt-but-checksum-valid sentence, or a receiver
+      // that hasn't loaded ephemeris yet and emits all-zero fields, before
+      // this ever reaches g_gps_utc / a system-clock sync.
+      if (securacv::gnss::gnss_calendar_valid(year, month, day, hour, minute, second)) {
+        g_gps_utc.hour = hour;
+        g_gps_utc.minute = minute;
+        g_gps_utc.second = second;
+        g_gps_utc.centisecond = centisecond;
+        g_gps_utc.day = day;
+        g_gps_utc.month = month;
+        g_gps_utc.year = year;
+        g_gps_utc.valid = true;
+        g_gps_utc.last_seen_ms = millis();
       }
     }
-    
-    // Parse date
-    if (date_str && strlen(date_str) >= 6) {
-      g_gps_utc.day = (date_str[0] - '0') * 10 + (date_str[1] - '0');
-      g_gps_utc.month = (date_str[2] - '0') * 10 + (date_str[3] - '0');
-      int yy = (date_str[4] - '0') * 10 + (date_str[5] - '0');
-      g_gps_utc.year = 2000 + yy;
-      g_gps_utc.valid = true;
-      g_gps_utc.last_seen_ms = millis();
-    }
-    
+
     fx->last_rmc_ms = millis();
   }
   else if (strncmp(type, "GSA", 3) == 0) {
@@ -10953,6 +11031,12 @@ void loop() {
     parse_nmea(line, &g_fix);
     got_valid_sentence = true;
   }
+
+  // No SNTP path exists in this sketch — GPS is the only wall-clock source
+  // available. Seed/correct the system clock from it once RMC has a
+  // validated date/time (cheap: bails out immediately once synced and not
+  // due for a drift-correction check).
+  sync_clock_from_gps();
 
   // Update GPS hardware state
   gps_update_state(gps_data_received, g_fix.valid);

@@ -29,7 +29,8 @@ screw_d = 4.2;       // wall screws (#8 / M4), counterbored
 /* [Magnet plate] */
 mag_d = 20.0;        // magnet pocket diameter (Ø20 x 3 neodymium discs)
 mag_t = 3.0;
-mag_n = 4;
+mag_n = 2;           // two Ø20 pockets fit the 56 mm plate (four overlapped into one
+                     // slot); glue the magnets in — the open backs alone don't retain them
 
 /* [Pole plate] */
 strap_w = 9.0;
@@ -69,23 +70,25 @@ module corner() {
             // prism body: right-isosceles cross-section, studs face the hypotenuse
             rotate([0, 0, 45]) linear_extrude(ap_l, center = false)
                 polygon([[0, 0], [ap_w*0.9, 0], [0, ap_w*0.9]]);
-            // stud face pad on the hypotenuse
-            rotate([0, 0, 45]) translate([0, 0, ap_l/2]) rotate([0, 0, 45])
-                translate([-ap_w/2, -1.0, -ap_l/2]) cube([ap_w, 1.01, ap_l]);
+            // stud face pad ON the hypotenuse plane (y = hyp after the 45°
+            // rotation — the old double-rotate composed to 90° and buried the
+            // pad inside the prism with the studs at the inside-corner vertex)
+            translate([-ap_w/2, ap_w*0.9/sqrt(2) - 1.0, 0]) cube([ap_w, 1.01, ap_l]);
         }
         // wall screws through each wing (two per wing)
         for (w = [0, 90]) rotate([0, 0, 45])
             for (zz = [ap_l*0.25, ap_l*0.75])
                 if (w == 0)
                     translate([ap_w*0.55, 3.5, zz]) rotate([90, 0, 0])
-                        { cylinder(d = screw_d, h = 8); translate([0,0,-2]) cylinder(d = screw_d + 4.4, h = 2.6); }
+                        { cylinder(d = screw_d, h = 8); translate([0,0,-14]) cylinder(d = screw_d + 4.4, h = 14.6); }
                 else
                     translate([3.5, ap_w*0.55, zz]) rotate([0, -90, 0])
-                        { cylinder(d = screw_d, h = 8); translate([0,0,-2]) cylinder(d = screw_d + 4.4, h = 2.6); }
+                        { cylinder(d = screw_d, h = 8); translate([0,0,-14]) cylinder(d = screw_d + 4.4, h = 14.6); }
     }
-    // studs on the hypotenuse face, spaced along the prism axis
-    rotate([0, 0, 45]) translate([0, 0, ap_l/2]) rotate([0, 0, 45]) rotate([90, 0, 0])
-        { tstud( stud_gap/2, 0.9); tstud(-stud_gap/2, 0.9); }
+    // studs OUT of the hypotenuse face, spaced across it (stud_gap apart, so a
+    // case's keyhole pair drops straight on)
+    translate([0, ap_w*0.9/sqrt(2) - 0.1, ap_l/2]) rotate([-90, 0, 0])
+        { tstud( stud_gap/2, 0); tstud(-stud_gap/2, 0); }
 }
 
 // flat plate with magnet pockets on the back, studs on the front.

@@ -43,12 +43,19 @@ MAKE_FACTORY = REPO_ROOT / "firmware/scripts/make_factory.py"
 # for PlatformIO builds and absolute for the arduino-cli output.
 BUILD = {
     "securacv-canary":                 {"toolchain": "pio", "dir": "firmware/canary/.pio/build/release_ha", "vsuffix": ""},
-    "securacv-canary-wap":             {"toolchain": "arduino", "dir": "/tmp/wap-build", "vsuffix": "-wap"},
+    "securacv-canary-wap":             {"toolchain": "arduino", "dir": "/tmp/wap-build", "sketch": "canary_wap", "vsuffix": "-wap"},
     "securacv-canary-vision":          {"toolchain": "pio", "dir": "firmware/projects/canary-vision/.pio/build/canary-vision-default", "vsuffix": ""},
     "securacv-canary-vision-xiao-c3":  {"toolchain": "pio", "dir": "firmware/projects/canary-vision/.pio/build/canary-vision-xiao-c3", "vsuffix": ""},
     "securacv-canary-vision-xiao-s3":  {"toolchain": "pio", "dir": "firmware/projects/canary-vision/.pio/build/canary-vision-xiao-s3", "vsuffix": ""},
     "securacv-canary-sense":           {"toolchain": "pio", "dir": "firmware/projects/canary-sense/.pio/build/canary-sense-default", "vsuffix": ""},
     "securacv-canary-sense-wellbeing": {"toolchain": "pio", "dir": "firmware/projects/canary-sense/.pio/build/canary-sense-wellbeing", "vsuffix": ""},
+    # The display flavors: arduino-cli --profile builds (sketch.yaml pins the
+    # platform + libs), exported by firmware-release.yml to these dirs. A
+    # missing dir just drops the product from the flasher — same per-variant
+    # resilience as everything else here.
+    "securacv-canary-display-watch":      {"toolchain": "arduino", "dir": "/tmp/display-watch-build", "sketch": "canary_display", "vsuffix": ""},
+    "securacv-canary-display-dash":       {"toolchain": "arduino", "dir": "/tmp/display-dash-build", "sketch": "canary_display", "vsuffix": ""},
+    "securacv-canary-display-dash-modes": {"toolchain": "arduino", "dir": "/tmp/display-modes-build", "sketch": "canary_display", "vsuffix": ""},
 }
 
 
@@ -82,9 +89,10 @@ def make_factory_cmd(product: dict, build: dict, out: pathlib.Path) -> list[str]
     if build["toolchain"] == "pio":
         cmd += ["--build-dir", str(d)]
     else:  # arduino-cli names its parts <sketch>.ino.*
-        cmd += ["--bootloader", str(d / "canary_wap.ino.bootloader.bin"),
-                "--partitions", str(d / "canary_wap.ino.partitions.bin"),
-                "--app", str(d / "canary_wap.ino.bin")]
+        sketch = build.get("sketch", "canary_wap")
+        cmd += ["--bootloader", str(d / f"{sketch}.ino.bootloader.bin"),
+                "--partitions", str(d / f"{sketch}.ino.partitions.bin"),
+                "--app", str(d / f"{sketch}.ino.bin")]
     return cmd
 
 

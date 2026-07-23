@@ -34,7 +34,10 @@ The pin map is expected to cover (bench-verify per SKU):
   initializes. ⚠️ The C variant carries a **dual-MIC array** — physically
   present even though untouched — so the "no microphone by construction"
   posture does **not** hold on that SKU. Prefer the plain 4.3/4.3B for the
-  canonical Canary Dash.
+  canonical Canary Dash. The C now has its **own first-class board map and
+  mic contract** as a distinct privacy surface —
+  [`waveshare-esp32s3-lcd43c`](../waveshare-esp32s3-lcd43c/README.md) +
+  [`display_mic_variant.md`](../../../docs/hardware/display_mic_variant.md).
 
 ## Support Status
 

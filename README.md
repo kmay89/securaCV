@@ -204,4 +204,20 @@ SecuraCV is independent, open source, and Apache-2.0 licensed. Helpful contribut
 
 Read [CONTRIBUTING](CONTRIBUTING.md), the [security policy](SECURITY.md), and the repo engineering guide in [AGENTS.md](AGENTS.md) before opening a PR.
 
+---
+
+## License & usage
+
+The software is **Apache-2.0** ([LICENSE](LICENSE)) — free to run, anywhere, at
+any scale, forever. Two short, plain-language companions cover the rest:
+
+- **[LICENSING.md](LICENSING.md)** — who pays, who doesn't, and why. Free for
+  schools, universities, nonprofits, groups, businesses, and governments to
+  self-host at any scale; the short list of things that cost money (bought
+  hardware, court-grade attestation, support SLAs) each has a free path; and the
+  survival promises (no phone-home, no kill switch, standalone verifier) that
+  make it safe to standardize on.
+- **[TRADEMARK.md](TRADEMARK.md)** — using the name, logo, and mascot: a free
+  "Works with SecuraCV" badge for anyone, primary marks by public grant.
+
 **SecuraCV** — calm local proof, without the surveillance archive.

@@ -1,11 +1,37 @@
-# Contributing to witness-kernel
+# Contributing to SecuraCV (the witness kernel)
 
 This is not a typical open-source project.
 
-`witness-kernel` is **infrastructure with constitutional guarantees**.  
-Contributions are welcome **only** if they preserve those guarantees.
+The **witness kernel** at the heart of SecuraCV is **infrastructure with
+constitutional guarantees**. Contributions to it are welcome **only** if they
+preserve those guarantees.
 
-If you are here to add features quickly, this is the wrong project.
+If you are here to add features to the kernel quickly, this is the wrong
+project. **But most of SecuraCV is not the kernel** — read the next section
+before you assume this wall is meant for you.
+
+---
+
+## Start here — your first contribution
+
+The constitutional bar below applies to `spec/`, `kernel/`, and `src/`. The
+rest of SecuraCV is built to be welcoming, and that's where a first-time
+contributor should start:
+
+- **Build a Canary in the browser** — no hardware, no soldering. Run the Lab
+  (`canary-local/`, hosted at the site's `/lab`), then add your virtual build
+  to the community gallery. That's a real, mergeable first PR.
+- **Port a board** — a new board is a **data-only PR** (pin map + capability
+  flags + build env + registry entry) that can't touch shared logic. Start
+  with [`firmware/PORTING.md`](firmware/PORTING.md).
+- **Improve a guide, an enclosure, or a translation** — content and design
+  PRs under `docs/`, `docs/hardware/enclosure/`, and the guides are low-risk
+  and high-value.
+- Look for issues labelled **`good first issue`** and **`help wanted`**.
+
+Who owns what — and which maintainer seats are open — is in
+[`MAINTAINERS.md`](MAINTAINERS.md). Be kind; see
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ---
 
@@ -140,7 +166,7 @@ add or update its row in the same PR (the lint fails otherwise).
 HACS validation requires the Git tag version to match the integration manifest.
 Before creating a release:
 
-1. Update `custom_components/secura_cv/manifest.json` `"version"` to the new release version.
+1. Update `custom_components/securacv/manifest.json` `"version"` to the new release version.
 2. Add a matching entry to `CHANGELOG.md` for the same version.
 3. Create a Git tag that **exactly** matches the manifest version (for example, `0.1.0` if the manifest says `0.1.0`).
 

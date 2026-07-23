@@ -872,6 +872,24 @@ jobs:
           /tmp/arcade_logic | tee /tmp/arcade_logic.log
           grep -q "ALL .* PASSED" /tmp/arcade_logic.log
 
+      - name: Build + run canary-display mic logic host test
+        # The mic-bearing dash's two promises (display_mic_variant.md),
+        # pinned without a board: the GATE (off by default; unset pins
+        # hard-block listening; the amber indicator IS the driver-running
+        # bit — no second flag exists to lie; disarm is a Stop the runtime
+        # maps to i2s_driver_uninstall) and the EARS (only the regulated
+        # smoke-T3 / CO-T4 grammars raise events, each needing two cycles;
+        # doorbells, speech-shaped noise, and stale streaks never do). The
+        # I2S runtime is compile-checked by canary-display-dash-mic.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_mic_logic.cpp \
+              -o /tmp/mic_logic
+          /tmp/mic_logic | tee /tmp/mic_logic.log
+          grep -q "ALL .* PASSED" /tmp/mic_logic.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown

@@ -86,6 +86,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+      # npm's quick-audit endpoint (used when node_modules is absent) is
+      # retired and now 400s; installing first makes npm audit use the bulk
+      # advisory endpoint against the real tree.
+      - name: Install deps for the audit tree
+        working-directory: canary-vision
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Audit npm deps (fail on high/critical)
         working-directory: canary-vision
         run: npm audit --audit-level=high

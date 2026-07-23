@@ -1,5 +1,6 @@
-# Rust build artifacts
+# Rust build artifacts (root and nested crates, e.g. desktop/hub-io/target/)
 /target/
+**/target/
 **/*.rs.bk
 
 # IDE

@@ -84,6 +84,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Browser flasher](browser_flasher.md) — flash a blank board from Chrome over USB, no toolchain
 - [The help ecosystem layout (design)](design/help_ecosystem_layout.md) — one map, every surface: the Lab → Playground → Factory story, the self-linking/never-rots rules the website now enforces in CI, and the write-once-wrap-thin platform strategy (web/PWA/Tauri)
 - [The Lab & Flasher experience (design)](design/flasher_experience.md) — the spine for the magical bring-up-and-tend arc: come-to-life receipt, two-port Vision flow, and the native-app fleet-view over the network (always know every Canary is up to date + healthy) — what to reuse, the browser-vs-native platform reality, and the security model
+- [The iPhone companion app (design)](design/iphone_companion_app.md) — RFC for the living-with-it native iOS surface (a witness console, not a camera app): a thin renderer over self-describing device contracts so it rarely needs an App Store update, two-tier alerts (local MQTT/SSE/BLE + an opt-in metadata-only wake relay), and own-nothing identity (no account locally, CloudKit private DB, Sign in with Apple / Hide My Email, Secure-Enclave key custody)
 - [Secure provisioning](secure_provisioning.md) — how a device earns its keys
 - [Hardware root of trust (design)](design/hardware_root_of_trust.md) — RFC: opt-in Secure Boot / flash encryption / attestation, tiered so the default Canary stays un-brickable
 - [Device settings access](canary_settings_access_validation.md) — who may change what, verified
@@ -131,6 +132,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [CI](ci.md) — what runs, what gates
 - [Feature flags](feature-flags.md) · [logging](logging.md) · [CLI UI conventions](cli_ui.md)
 - [Flight rules](FLIGHT_RULES.md) — the engineering constitution
+- [Tree map & consolidation](CONSOLIDATION.md) — what each similarly-named tree actually is (`src/` vs `kernel/` vs `privacy_witness_kernel/`, the desktop apps, the firmware lanes), plus open cleanup decisions
 - [Manual test plans](manual_test_plan_captive_portal.md) — captive portal · [MQTT](manual_test_plan_mqtt.md)
 - [The ambient display standard](standard/AMBIENT_DISPLAY_STANDARD.md) · [Canary Cards — the widget-card schema](standard/CANARY_CARDS.md)
 - Learnings from elsewhere: [Marlin & Klipper](marlin_klipper_learnings.md) · [OpenIPC](openipc_architecture_learnings.md)
@@ -141,11 +143,12 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <summary><strong>The engineering record</strong> — audits, reviews, research, and roadmaps</summary>
 
 - **v1:** [roadmap](v1-roadmap.md) · [launch review](V1_LAUNCH_REVIEW.md) · [bench-test runbook](V1_BENCH_TEST_RUNBOOK.md)
-- **Audits:** [firmware full audit 2026-07](audit/esp32s3_firmware_full_audit_2026-07.md) · [hardware verification checklist](audit/hardware_verification_checklist.md) · [mesh & chirp audit](audit/mesh_and_chirp_audit_v1.md) · [v0.3 closeout](audit/v0.3_closeout.md) · [WAP multi-device UX audit](audit/wap_multi_device_ux_audit.md) · [UX/UI audit 2026-06](ux_ui_audit_2026-06.md)
+- **Audits:** [firmware full audit 2026-07](audit/esp32s3_firmware_full_audit_2026-07.md) · [hardware verification checklist](audit/hardware_verification_checklist.md) · [mesh & chirp audit](audit/mesh_and_chirp_audit_v1.md) · [v0.3 closeout](audit/v0.3_closeout.md) · [WAP multi-device UX audit](audit/wap_multi_device_ux_audit.md) · [UX/UI audit 2026-06](ux_ui_audit_2026-06.md) · [legal, claims & risk audit 2026-07](legal-audit-2026-07.md)
 - **Code reviews:** [Docker container](reviews/2026-06-10_docker_container_review.md) · [full repo](reviews/2026-06-10_full_repo_code_review.md) · [HA setup audit](reviews/2026-07-11_home_assistant_setup_audit.md) · [flasher hatching](reviews/2026-07-22_flasher_hatching_review.md) · [Arduino demo commands](reviews/arduino_demo_review_commands.md) · [Arduino demo tasks](reviews/arduino_demo_review_tasks.md) · [frame-trigger pipeline plan](reviews/kernel_frame_trigger_pipeline_plan.md)
 - **Requirements review series:** [review/README](review/README.md)
 - **Research:** [bitchat protocol](research/bitchat_protocol_review.md) · [display market](research/display_market_research.md) · [harm-reduction prior art](research/harm_reduction_prior_art.md)
 - **Strategy series (01–17):** [strategy/README](strategy/README.md)
+- **Ecosystem & branding:** [brand & positioning](BRAND.md) — the canonical "the Canary" positioning, the one-line promise, and who we learn from · [trademark & branding policy](../TRADEMARK.md) · [trademark grants registry](trademark-grants.md) — the free "Works with SecuraCV" badge, the "… for SecuraCV" naming rule, and the public record of primary-mark grants (strategy doc 19 §5)
 - **Marketing:** [launch posts](marketing/launch_posts.md)
 
 </details>

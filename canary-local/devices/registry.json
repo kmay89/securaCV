@@ -88,7 +88,7 @@
         "name": "Pip the Bedside Conductor",
         "accent": "moonlit gold",
         "shape": "round songbird with a crescent chest, tiny baton tail, and a halo-ring perch",
-        "story": "Pip is the canary who learned to whisper instead of shout. At night, Pip curls into one calm ring beside you, counting the whole flock without filling the room with dashboards. If a sibling needs attention, Pip raises a gentle glow you can understand half-awake: safe, check, or help.",
+        "story": "Pip is the canary who learned to whisper instead of shout. At night, Pip curls into one calm ring beside you, counting the whole fleet without filling the room with dashboards. If a sibling needs attention, Pip raises a gentle glow you can understand half-awake: safe, check, or help.",
         "specialty": "Screen / bedside glance",
         "good_for": [
           "Seeing house status in one second",
@@ -197,7 +197,7 @@
           "Roll call for every witness",
           "Event timelines and proof sheets at a glance"
         ],
-        "catchphrase": "I make the flock readable."
+        "catchphrase": "I make the fleet readable."
       }
     },
     {
@@ -433,6 +433,504 @@
           "Future perimeter witness claims without GPS or PII"
         ],
         "catchphrase": "I turn the fence into a witness, not a billboard."
+      }
+    },
+    {
+      "id": "canary-guardian",
+      "family": "canary-guardian",
+      "kind": "concept",
+      "name": "Canary Guardian",
+      "tagline": "A witness you wear — press and hold and your people hear you, off-grid, no cell, no one else can see where you've been. Coming soon.",
+      "board": "XIAO nRF52840 + Wio-SX1262 (Meshtastic) — the low-power sibling of the Fence Guard kit",
+      "senses": [
+        "duress press (concept)",
+        "I'm-OK heartbeat, absence-inferred (concept)",
+        "coarse zone presence via anchor proximity (concept)"
+      ],
+      "shows": [],
+      "modality": "mesh",
+      "network": {
+        "mdns": "none — a worn node lives past the WiFi by design",
+        "web": "none",
+        "mqtt": "via mesh gateway (concept): duress_asserted + heartbeat/zone claims, signed chain"
+      },
+      "docs": [
+        "docs/hardware/canary_guardian_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A small, screenless LoRa node you *choose to wear*, asleep almost always. Press and hold and it signs a coarse 'I need help' claim and shouts it to your own people over the mesh; a quiet periodic 'I'm OK' heartbeat means its silence can raise the alarm on its own. It is the deliberate inverse of a tracking tag — it answers 'is this person alright?', asked only by the wearer, and is architecturally incapable of saying where they've been.",
+        "points": [
+          {
+            "k": "Who it's for",
+            "v": "the wearer, and only the wearer — they arm it, press it, and silence it; no one can turn it on from afar. A witness someone else controls is surveillance."
+          },
+          {
+            "k": "What would leave it",
+            "v": "an Ed25519-signed duress or heartbeat claim over the mesh, coarse zone + coarse time — never a location stream, never audio, never a fine coordinate. GPS (if ever fitted) ships off."
+          },
+          {
+            "k": "The honest limit",
+            "v": "a best-effort off-grid shout your people can hear, not a 911-grade guarantee — Meshtastic is ~1-3 s, retried, but not assured delivery. A BLE-to-phone fallback relays over cell when a paired phone is near."
+          },
+          {
+            "k": "Falls are a prompt, not a claim",
+            "v": "real-world accelerometer fall detection runs ~57% sensitivity with up to dozens of false alarms a day; a suspected impact starts an 'are you OK?' countdown the wearer can cancel — it never writes an unqualified 'fall' into the sealed log."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Kit",
+            "v": "Seeed XIAO nRF52840 + Wio-SX1262 Kit — the pin-incompatible low-power sibling of Fence Guard's ESP32-S3 kit; Meshtastic firmware family"
+          },
+          {
+            "k": "Why nRF52840 not ESP32",
+            "v": "the T-Echo (nRF52840) gets days of standby on 850 mAh where an ESP32 node on a bigger 2600 mAh cell lasts ~a day; nRF52 sleeps at single-digit uA vs the ESP32-S3's real ~14 uA+ — a worn safety device can't be a daily-charge device"
+          },
+          {
+            "k": "Transceiver",
+            "v": "Semtech SX1262 · 862-930 MHz, one hardware for EU868/US915 (region set in firmware) · up to +22 dBm · U.FL antenna"
+          },
+          {
+            "k": "Power plane",
+            "v": "TX-mostly, deep-sleep by default — ~150-300 uA average gives weeks on a 500 mAh LiPo; continuous LoRa RX would collapse that to ~1 day/100 mAh, so RX is event-gated"
+          },
+          {
+            "k": "Range reality",
+            "v": "a body-worn antenna underperforms bench figures — a few hundred m to ~1-2 km urban, 3-5 km suburban; lean on fixed fleet relays (home Canaries, a Fence Guard) to catch the shout"
+          }
+        ],
+        "sources": [
+          {
+            "name": "LILYGO T-Echo (nRF52840) battery/standby",
+            "url": "https://www.lorameshdevices.com/blog/meshtastic/the-fantastic-lilygo-t-echo-meshtastic-device.html"
+          },
+          {
+            "name": "ESP32 deep-sleep: datasheet vs measured",
+            "url": "https://hubble.com/community/guides/esp32-deep-sleep-current-what-the-datasheet-says-vs-what-you-ll-actually-measure/"
+          },
+          {
+            "name": "Meshtastic range — field data",
+            "url": "https://dev.to/vlad_avramut/understanding-meshtastic-range-what-field-data-really-shows-2l7n"
+          },
+          {
+            "name": "real-world fall-detection sensitivity / false alarms (PMC12431052)",
+            "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12431052/"
+          },
+          {
+            "name": "GPS-tracker / AirTag stalking (privacy cautionary tale)",
+            "url": "https://cybernews.com/editorial/airtag-stalking-explained/"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_guardian_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0, zero custom firmware: stock Meshtastic + the Detection Sensor Module on a button GPIO — a real press-and-hold duress burst on the nRF52840 kit, worn, measuring range-near-flesh and battery through real days.",
+          "Add the one new claim kind the flagship needs, duress_asserted, across the dictionary + both HA mirrors under the drift-linter; heartbeat stays absence-inferred (no new kind).",
+          "Define the BLE-to-phone fallback — the honest belt-and-braces for a best-effort mesh.",
+          "Then the check-in path: RTC heartbeat, coarse battery field so 'low battery' never reads as 'wearer down', and the IMU wired only as an 'are you OK?' prompt.",
+          "Coarse zone presence last, via anchor proximity — entered/left events, never a coordinate; settle its claim mapping then.",
+          "Enclosure: a screenless pendant/pocket puck, self-announcing (visible/haptic 'I'm on') — the anti-AirTag, printed and validated like every other Canary shell."
+        ],
+        "request_title": "Concept request: Canary Guardian (worn duress witness)",
+        "request_body": "Seen the Guardian concept card. What I'd want from a worn, off-grid duress beacon:\n\n- who would wear it (self / lone worker / kid / elder):\n- is there a home/neighbour fleet of nodes to hear it:\n- cell coverage where you'd rely on it:\n- check-in, zone-presence, or just the panic button:\n"
+      },
+      "persona": {
+        "name": "Pip the Pocket Sentry",
+        "accent": "signal red and quiet slate",
+        "shape": "tiny round canary the size of a pebble, one big press-feather on its chest and a soft glow that says 'I'm awake'",
+        "story": "Pip is small enough to ride in a pocket and shy by nature — it sleeps almost all the time. Squeeze it and it shouts for help to your own people over the mesh; the rest of the day it just whispers 'I'm OK' so its silence would speak for you. Pip wears a concept ribbon because honest products say what is real, and Pip would rather be quiet than pretend to be a 911 line.",
+        "specialty": "Worn duress mesh concept",
+        "good_for": [
+          "Off-grid personal safety where cell fails",
+          "Solo shifts and day-hike check-ins",
+          "Coarse 'made it home' presence without tracking every step"
+        ],
+        "catchphrase": "Squeeze me and your people hear you — no one else ever will."
+      }
+    },
+    {
+      "id": "canary-vision-pro",
+      "family": "canary-vision-pro",
+      "kind": "concept",
+      "name": "Canary Vision Pro",
+      "tagline": "The flagship eye — starlight imaging and on-chip sound classification, still speaking only in claims. Coming soon.",
+      "board": "Seeed reCamera Pro 2GB (Rockchip RV1126B, 3 TOPS NPU)",
+      "senses": [
+        "starlight low-light vision (concept)",
+        "on-device sound classification (concept)"
+      ],
+      "shows": [],
+      "modality": "camera-npu",
+      "network": {
+        "mdns": "none — an external adapter source, not a flashed Canary host (concept)",
+        "web": "vendor Web UI + flow editor (device-native; no Canary firmware runs on it)",
+        "mqtt": "none directly — reaches the fleet via the webhook sensor adapter (concept): coarse claims + signed chain"
+      },
+      "docs": [
+        "docs/hardware/canary_vision_pro_recamera.md"
+      ],
+      "status": "coming soon — concept, config-only integration designed, no bench unit yet",
+      "concept": {
+        "idea": "Canary Vision Pro asks a different question than the rest of the fleet: not 'can we afford a sensor here,' but 'what does the one chokepoint that actually matters deserve.' It runs its own on-chip NPU — vision and sound classification entirely local, no cloud, no pixels leaving the box — and reaches the fleet the same way Frigate or an ESPHome radar kit does: through the sensor adapter contract, not new firmware. Point its flow editor's HTTP action at the webhook adapter, and a $300 starlight camera becomes one more small, signed claim in the log — same discipline as a $10 sensor, sharper eyes.",
+        "points": [
+          {
+            "k": "Where it earns its price",
+            "v": "the 8 MP SC850SL starlight sensor resolves real detail after dark, where PIR/RF sensors can only say 'something moved'; on-device sound classification adds glass-break/alarm coverage no cheap sensor in the fleet offers."
+          },
+          {
+            "k": "What would leave it",
+            "v": "a classifier label and confidence score, and nothing else — the sensor adapter contract's Claim type has no field a free-text caption could occupy. The chip can run a VLM/LLM and describe a scene in words; that path is deliberately never wired to the webhook route."
+          },
+          {
+            "k": "How it would join the fleet",
+            "v": "zero new firmware. Its flow editor's HTTP action node POSTs to the existing webhook adapter (src/adapter/webhook.rs) — the same config-only pattern already proven for the MR60BHA2 kit's ESPHome bridge."
+          },
+          {
+            "k": "Hardware headroom",
+            "v": "the module ships with native CAN, GPIO, UART and PoE unused by this integration today — it pairs naturally with the 4.3B dev-playground's RS485/Modbus/CAN industrial story on a site that already runs that wiring."
+          }
+        ],
+        "radio": [
+          {
+            "k": "SoC",
+            "v": "Rockchip RV1126B — quad-core Arm Cortex-A53, 3 TOPS NPU (Rockchip RV1126B datasheet)"
+          },
+          {
+            "k": "Camera",
+            "v": "8 MP SC850SL starlight sensor, 4K30 fps (Seeed reCamera hardware wiki)"
+          },
+          {
+            "k": "Memory / storage",
+            "v": "2 GB RAM / 16 GB eMMC on this SKU (Seeed product page)"
+          },
+          {
+            "k": "Connectivity",
+            "v": "Gigabit Ethernet, 2.4G/5G WiFi, Bluetooth 5.4, USB-C 3.0, PoE (Seeed reCamera hardware wiki)"
+          },
+          {
+            "k": "I/O",
+            "v": "CAN, GPIO, UART, MIPI-DSI onboard — present on the module, unused by this integration today (Seeed reCamera hardware wiki)"
+          },
+          {
+            "k": "Audio",
+            "v": "dual onboard microphones — the sound-classification path this concept routes (Seeed reCamera hardware wiki)"
+          },
+          {
+            "k": "On-chip models",
+            "v": "vendor firmware supports CV, VLM, LLM, STT and TTS locally; Canary Vision Pro's route uses classification labels only (CNX Software coverage)"
+          }
+        ],
+        "sources": [
+          {
+            "name": "Seeed reCamera Pro 2GB — official product page",
+            "url": "https://www.seeedstudio.com/reCamera-Pro-2GB.html"
+          },
+          {
+            "name": "Seeed reCamera — hardware and specs (wiki)",
+            "url": "https://wiki.seeedstudio.com/recamera_hardware_and_specs/"
+          },
+          {
+            "name": "Rockchip RV1126B datasheet",
+            "url": "https://rockchip.fr/RV1126B%20datasheet%20V1.3.pdf"
+          },
+          {
+            "name": "CNX Software — reCamera Pro coverage",
+            "url": "https://www.cnx-software.com/2026/07/17/recamera-pro-open-ai-camera-supports-computer-vision-llm-vlm-stt-and-tts-workloads/"
+          }
+        ],
+        "plan": [
+          "Bench: confirm the flow editor's HTTP action node actually produces the documented {\"confidence\": ...} payload shape against a real webhook listener.",
+          "Bench: pin a SenseCraft audio-classification model for glass-break / alarm / raised-voice and confirm its class labels match the ClaimKind mapping in docs/hardware/canary_vision_pro_recamera.md.",
+          "Verify bearer/HMAC auth and TLS survive a device restart before calling this off-loopback-ready.",
+          "Print-fit canary_vision_pro_mount.scad (bridges reCamera's magnetic/1/4\"-20 mount onto the shared stud interface) against a real unit once one is on the bench — the mesh renders clean today but has never touched actual hardware.",
+          "Promote from 'concept' to 'released' only after a real unit's claims round-trip into the sealed log — the same bar as every other Canary."
+        ],
+        "radio_tab_label": "The hardware",
+        "plan_tab_label": "Integration plan",
+        "plan_intro": "No firmware stub for this one — the whole point is that it doesn't need one. What's left is bench validation against the existing webhook adapter, not new code.",
+        "plan_doc": {
+          "label": "read the integration doc → docs/hardware/canary_vision_pro_recamera.md",
+          "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_vision_pro_recamera.md"
+        },
+        "request_title": "Concept request: Canary Vision Pro (reCamera Pro flagship tier)",
+        "request_body": "Seen the Vision Pro concept card. What I'd want from a flagship starlight/sound-classification witness:\n\n- the one chokepoint it would watch (loading dock, back door, equipment yard, other):\n- lighting conditions after dark:\n- is sound classification (glass break / alarm) needed, or vision only:\n- does the site already run RS485/Modbus/CAN wiring:\n"
+      },
+      "persona": {
+        "name": "Nyx the Nightwatch",
+        "accent": "obsidian and starlight silver",
+        "shape": "a broad-winged canary in deep matte black with silver-speckled primaries like a clear night sky, a single crystalline lens-eye, and a small chip-medallion at its throat",
+        "story": "Nyx doesn't need the room to be bright to tell the truth about it. Where its siblings wait for daylight or read the radio field, Nyx watches in starlight and listens for the shape of sound — glass breaking, an alarm, a raised voice — and still only ever brings home a small signed claim, never a picture, never a caption. Nyx is expensive because Nyx is trusted with the one spot that can't afford to guess.",
+        "specialty": "Flagship edge AI vision + sound",
+        "good_for": [
+          "The one high-value chokepoint (loading dock, back door, equipment yard) worth a flagship sensor instead of several cheap ones",
+          "Genuinely dark places where a camera needs to actually see, not just guess",
+          "Sound-based claims — glass break, alarms — no other Canary can hear"
+        ],
+        "catchphrase": "I don't need more light to tell the truth."
+      }
+    },
+    {
+      "id": "canary-vision-lite",
+      "family": "canary-vision-lite",
+      "kind": "concept",
+      "name": "Canary Vision Lite",
+      "tagline": "Cheap enough to cover the mundane spots, not just the one that matters most. Coming soon.",
+      "board": "Seeed reCamera 2002w 8GB (SOPHGO SG2002, RISC-V, 1 TOPS)",
+      "senses": [
+        "daylight vision classifier (concept)"
+      ],
+      "shows": [],
+      "modality": "camera-npu",
+      "network": {
+        "mdns": "none — an external adapter source, not a flashed Canary host (concept)",
+        "web": "vendor Web UI + flow editor (device-native; no Canary firmware runs on it)",
+        "mqtt": "none directly — reaches the fleet via the webhook sensor adapter (concept): coarse claims + signed chain"
+      },
+      "docs": [
+        "docs/hardware/canary_vision_lite_recamera.md"
+      ],
+      "status": "coming soon — concept, config-only integration designed, no bench unit yet",
+      "concept": {
+        "idea": "Canary Vision Lite is the coverage counterpart to Canary Vision Pro: same zero-new-firmware pattern — its flow editor posts a classifier label and confidence to the existing webhook adapter — at roughly a tenth of the price and a fraction of the on-chip compute. Vision Pro earns a flagship spend by being the one sensor trusted with the chokepoint that can't afford to guess; Vision Lite earns its keep by being cheap enough that several mundane spots — a stockroom, a row of interior doors — can each get an actual camera instead of going without.",
+        "points": [
+          {
+            "k": "Where it earns its price",
+            "v": "a WiFi camera under $40 makes it reasonable to cover several ordinary spots that individually never justified a flagship sensor — not one showcase chokepoint, but coverage."
+          },
+          {
+            "k": "What it structurally can't do",
+            "v": "the SG2002's 1 TOPS budget has no published VLM/LLM support — unlike Vision Pro, there's no captioning capability to discipline here, because the chip can't run one in the first place."
+          },
+          {
+            "k": "How it would join the fleet",
+            "v": "identical integration to Vision Pro: the on-device flow editor's HTTP action node POSTs to the existing webhook adapter (src/adapter/webhook.rs) — zero new firmware."
+          },
+          {
+            "k": "Modular reality",
+            "v": "Core board + Sensor board + Baseboard — PoE and CAN bus are baseboard-dependent options, not guaranteed on every unit. Check which baseboard shipped before assuming those pins exist."
+          }
+        ],
+        "radio": [
+          {
+            "k": "SoC",
+            "v": "SOPHGO SG2002 — dual RISC-V C906 cores (1 GHz + 700 MHz) + 8051 MCU, 1 TOPS INT8 (CNX Software coverage)"
+          },
+          {
+            "k": "Camera",
+            "v": "OV5647, 5 MP (2592x1944) — no starlight/low-light claim, unlike Vision Pro (CNX Software coverage)"
+          },
+          {
+            "k": "Memory / storage",
+            "v": "256 MB RAM / 8 GB eMMC on this SKU (CNX Software coverage)"
+          },
+          {
+            "k": "Connectivity",
+            "v": "WiFi 2.4G/5G, Bluetooth 4.2/5.0 — the '2002w' wireless variant (CNX Software coverage)"
+          },
+          {
+            "k": "On-chip models",
+            "v": "YOLOv11 + a Node-RED-style flow editor ship built in, open-source (Seeed OSHW-reCamera-Series repo)"
+          },
+          {
+            "k": "Price",
+            "v": "roughly $35-55 depending on eMMC/wireless config — reseller-sourced estimate, not Seeed's own price page (OpenELAB listing)"
+          }
+        ],
+        "sources": [
+          {
+            "name": "CNX Software — reCamera SG2002 coverage",
+            "url": "https://www.cnx-software.com/2024/08/27/recamera-modular-ai-camera-features-sg2002-risc-v-ai-soc-supports-interchangeable-image-sensors-and-baseboards/"
+          },
+          {
+            "name": "Seeed Studio OSHW-reCamera-Series (GitHub)",
+            "url": "https://github.com/Seeed-Studio/OSHW-reCamera-Series"
+          },
+          {
+            "name": "OpenELAB — reCamera 2002w 8GB listing (price reference)",
+            "url": "https://openelab.io/products/seeed-studio-recamera-2002w-8gb"
+          }
+        ],
+        "plan": [
+          "Bench: confirm the 2002w's flow editor HTTP action node produces the documented {\"confidence\": ...} payload shape against a real webhook listener — same check as Vision Pro.",
+          "Bench: confirm which baseboard variant a real purchase ships with before assuming PoE/CAN pins exist.",
+          "Fit-check the existing canary_vision_pro_mount.scad against a real 2002w unit — same reCamera-family mount interface, different body, unverified.",
+          "Verify bearer/HMAC auth on the webhook route before any off-loopback deployment.",
+          "Promote from 'concept' to 'released' only after a real unit's claims round-trip into the sealed log."
+        ],
+        "radio_tab_label": "The hardware",
+        "plan_tab_label": "Integration plan",
+        "plan_intro": "No firmware stub for this one either — bench validation against the existing webhook adapter, not new code.",
+        "plan_doc": {
+          "label": "read the integration doc → docs/hardware/canary_vision_lite_recamera.md",
+          "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_vision_lite_recamera.md"
+        },
+        "request_title": "Concept request: Canary Vision Lite (reCamera 2002w coverage tier)",
+        "request_body": "Seen the Vision Lite concept card. What I'd want from a low-cost WiFi coverage camera:\n\n- how many spots / rooms:\n- lighting (daylight/well-lit only, or does it need to see in the dark):\n- is WiFi reachable at each spot:\n- do any of them need sound classification (that's a Vision Pro capability, not this one):\n"
+      },
+      "persona": {
+        "name": "Wren the Everywhere Scout",
+        "accent": "copper and olive",
+        "shape": "a small, practical canary with a satchel-shaped body, quick round eyes, and a modest single-lens goggle instead of a grand visor",
+        "story": "Wren doesn't try to be the fanciest bird in the fleet. Wren's whole idea is that watching one showcase spot perfectly is worth less than watching five ordinary ones honestly. So Wren costs little, carries a small classifier instead of a flagship brain, and still only ever brings home the same small signed claim as every other Canary — just from more places at once.",
+        "specialty": "Budget edge AI vision (coverage)",
+        "good_for": [
+          "Covering several mundane spots — stockrooms, interior doors, side entries — instead of one showcase chokepoint",
+          "WiFi-reachable rooms without an Ethernet run",
+          "Stretching a fleet budget across more doors, honestly"
+        ],
+        "catchphrase": "I don't need to be the best eye in the house — just one more honest one."
+      }
+    },
+    {
+      "id": "canary-vehicle-guard",
+      "family": "canary-vehicle-guard",
+      "kind": "concept",
+      "name": "Canary Vehicle Guard",
+      "tagline": "A witness for the parked car — did someone move it, and where did you last leave it? Off-grid, no tap into the car. Coming soon.",
+      "board": "XIAO ESP32-S3 (or nRF52840) + IMU + Wio-SX1262 (Meshtastic)",
+      "senses": [
+        "vehicle motion via onboard IMU, parked-state (concept)",
+        "coarse last-seen find-my-car beacon (concept)",
+        "cabin temperature threshold — a thermometer, not occupancy (concept)"
+      ],
+      "shows": [],
+      "modality": "mesh",
+      "network": {
+        "mdns": "none — a parked car is off the home WiFi by definition",
+        "web": "none",
+        "mqtt": "via mesh gateway (concept): vehicle-moved + last-seen claims, signed chain"
+      },
+      "docs": [
+        "docs/hardware/canary_vehicle_guard_research.md"
+      ],
+      "status": "coming soon — concept, supersedes Car Mode",
+      "concept": {
+        "idea": "A small IMU + LoRa node that lives in your parked car and witnesses the states you're NOT present for: 'someone moved my car' (theft/tow) and 'where did I last leave it' (off-grid find-my-car). It supersedes Car Mode, which sensed the one state that barely matters — the car running, with you in it — and drew power from the ignition-USB port that's dead exactly when a parked-car witness would need it. Value comes entirely from the node's own IMU and a long-range radio, never from tapping the car.",
+        "points": [
+          {
+            "k": "Why it beats Car Mode",
+            "v": "Car Mode announced 'I have power → the car is here'; but theft, tows and break-ins happen parked and owner-away, when ignition-USB is dead. A parked-car witness runs on always-hot or battery power and watches for MOTION, not power."
+          },
+          {
+            "k": "What would leave it",
+            "v": "a coarse signed 'vehicle moved' claim over the mesh, plus a low-rate last-seen — never a track, never the car's own data. GPS (if ever fitted) ships off and emits only coarse last-seen."
+          },
+          {
+            "k": "Why not talk to the car",
+            "v": "the car's BLE is locked (phone-as-key/audio only); the sole data path is an OBD dongle that TRANSMITS onto the diagnostic bus and needs the ignition on — off-thesis and useless parked. So: own IMU only."
+          },
+          {
+            "k": "Hot-car safety is radar, not this",
+            "v": "a child/pet in a hot car is a safety-critical occupancy problem the industry solves with 60 GHz mmWave radar — which the fleet already ships in Canary Sense. Vehicle Guard's temp sensor is a thermometer alert, never an occupancy claim."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Sensor",
+            "v": "an MPU/ICM/LSM-class IMU on the free I2C bus in hardware motion-wake mode — the MCU deep-sleeps until the car actually moves; reliability among in-car sensors runs IMU >> temperature > light > sound"
+          },
+          {
+            "k": "Host",
+            "v": "XIAO ESP32-S3 (fleet default, WiFi sync-when-home) or the nRF52840 sibling if battery-only is the priority; a car can usually give always-hot 12 V→USB, which relaxes the MCU choice vs the worn Guardian"
+          },
+          {
+            "k": "Transceiver",
+            "v": "Semtech SX1262 · 862-930 MHz · up to +22 dBm — LoRa mesh is the only transport that reaches a home node from a driveway or a strange lot with no cell"
+          },
+          {
+            "k": "Radio by job",
+            "v": "LoRa for the parked/off-grid witness (theft, find-my-car); BLE for the cheap short-range stuff at home (arrival, fleet discovery, BLE TPMS you own); WiFi only for bulk sync/OTA when home"
+          },
+          {
+            "k": "Heat & power",
+            "v": "a closed car exceeds +60 C, past most LiPos' safe range — always-hot vehicle power, light case, no baking battery; shares the existing canary_vehicle_mount.scad cabin mount and its heat warnings"
+          }
+        ],
+        "sources": [
+          {
+            "name": "ESP32 + MPU6050 vehicle motion/collision detection",
+            "url": "https://how2electronics.com/esp32-iot-vehicle-motion-analyzer-with-mpu6050-lis3mdl/"
+          },
+          {
+            "name": "ELM327 / ELMduino OBD-over-BLE (the active-bus path we avoid)",
+            "url": "https://github.com/PowerBroker2/ELMduino"
+          },
+          {
+            "name": "in-vehicle child-presence detection via mmWave radar (TI AWRL6432)",
+            "url": "https://www.ti.com/lit/SSZT046"
+          },
+          {
+            "name": "Meshtastic vehicle tracker (RAK WisMesh Tag)",
+            "url": "https://store.rakwireless.com/products/wismesh-tag-meshtastic-gps-lora-tracker-ip66"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_vehicle_guard_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: an IMU on the I2C bus in motion-wake mode + stock Meshtastic — a real parked-car move detector on always-hot power, measuring the false-alarm floor (theft vs a passing truck vs a car wash) on a real car.",
+          "Decide the move claim: reuse tamper_detected, or add a vehicle_moved kind so it reads as itself in the timeline (the one open dictionary call).",
+          "Add the low-rate find-my-car last-seen beacon (absence-inferred, no new kind); optional GPS off by default, coarse last-seen only.",
+          "Optional thermometer (BME280) as a temperature alert — explicitly NOT occupancy; point owners to Canary Sense radar for hot-car child/pet safety.",
+          "Retire the Car Mode concept in favor of this; keep its Meshtastic vehicle_arrival_departure code path as a plain capability.",
+          "Enclosure: reuse canary_vehicle_mount.scad, validate heat behavior on a sun-baked dash."
+        ],
+        "request_title": "Concept request: Canary Vehicle Guard (parked-car IMU + mesh witness)",
+        "request_body": "Seen the Vehicle Guard concept card. What I'd want from a parked-car witness:\n\n- theft/tow alert, find-my-car, or both:\n- always-hot fuse tap or internal battery:\n- is there a home/neighbour mesh to hear it park:\n- any interest in the cabin thermometer (temp only, not occupancy):\n"
+      },
+      "persona": {
+        "name": "Watchman the Wheel Warden",
+        "accent": "asphalt grey and amber hazard",
+        "shape": "sturdy little canary curled up asleep on a tiny wheel chock, one eye cracked open, a faint radio ring above",
+        "story": "Watchman naps in the parked car all day and does nothing at all — until the car moves without you, and then it sends one quiet signed word to your people over the mesh. It refuses to read the car's secrets or map where you go; it only knows 'still' from 'moved' and 'here' from 'gone'. Watchman wears a concept ribbon because honest products say what is real — and because it would rather guard a still car than pretend to guard a moving one.",
+        "specialty": "Parked-car mesh witness concept",
+        "good_for": [
+          "Theft and tow alerts when the car is off-grid and you're away",
+          "Finding a car parked past cell coverage",
+          "A vehicle witness that never taps the bus or maps your trips"
+        ],
+        "catchphrase": "I sleep in a still car and wake for a moving one."
+      }
+    },
+    {
+      "id": "canary-vehicle",
+      "family": "canary-vehicle",
+      "kind": "witness",
+      "name": "Canary Vehicle",
+      "tagline": "Reads your car's own ignition state, passively — never writes to the bus, never learns where you've been.",
+      "board": "Linux SBC (e.g. Raspberry Pi) + MCP2515 CAN HAT, SocketCAN",
+      "senses": [
+        "vehicle CAN bus (passive, read-only)"
+      ],
+      "shows": [],
+      "modality": "contact",
+      "network": {
+        "mdns": "none — runs adapter_host, not a flashed Canary firmware host",
+        "web": "none",
+        "mqtt": "via the can_bus sensor adapter: vehicle_arrival_departure claims + signed chain"
+      },
+      "enclosure": "docs/hardware/enclosure/canary_vehicle_mount.scad",
+      "docs": [
+        "docs/hardware/canary_vehicle_can.md",
+        "docs/hardware/canary_vehicle_profiles.md"
+      ],
+      "status": "adapter shipped & unit-tested (src/adapter/can_bus.rs, edge-triggered, 11 tests) — vehicle-specific signal profiles documented but not bench-confirmed against a real car",
+      "persona": {
+        "name": "Hush the Wire Listener",
+        "accent": "graphite and brake-light red",
+        "shape": "a low, alert canary with a single coiled antenna-whisker and folded, listening-only wings — no beak wide enough to speak",
+        "story": "Hush was built with no voice on purpose. It rides quietly on your car's own wire, hears the ignition switch the way every other module in the car already does, and says only ever one thing outward: here, or gone. Hush never asks the car a question, never sends it a command, and never once remembers where the car has been — only whether it's home.",
+        "specialty": "Vehicle CAN bus / arrival-departure witness",
+        "good_for": [
+          "Telling the household fleet when a car arrives or leaves, without a phone geofence",
+          "Households with a small always-on Linux hub (a Pi) willing to ride along in the vehicle",
+          "Proving, structurally, that a witness can listen to a car without ever tracking it"
+        ],
+        "catchphrase": "I only ever answer one question: are you home?"
       }
     }
   ]

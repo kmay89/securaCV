@@ -401,6 +401,54 @@ def parse_bom(name, prefix=None):
     }
 
 
+def parse_recipes(csv_name: str):
+    """The BOM CSV's own `# <name> (REF+REF+…)` summary rows — named build
+    recipes with their indicative subtotal and note, maintained in the CSV.
+    (Defined here, above build_main, because both the Build-it presets and
+    the workshop read them.)"""
+    recipes = []
+    with open(HW / csv_name, newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if not row or not row[0].startswith("#"):
+                continue
+            m = re.match(r"^#\s*(.+?)\s*\(([^)]+)\)\s*$", row[0])
+            if not m or "+" not in m.group(2):
+                continue
+            usd = next((c for c in row[1:] if re.fullmatch(r"\d+\.\d\d", c)), None)
+            note = next((c for c in reversed(row[1:]) if c and c != usd), "")
+            recipes.append({
+                "label": m.group(1), "formula": m.group(2),
+                **({"usd": float(usd)} if usd else {}),
+                **({"note": note} if note else {}),
+            })
+    return recipes
+
+
+def resolve_recipe(formula, refs):
+    """A recipe formula → the explicit optional-ref list it names, or None
+    when any token is prose ('LiPo', 'sealed input') rather than a RefDes.
+    'req' means the required rows (the page always includes those), and
+    simple ranges expand (SCR5-7 → SCR5, SCR6, SCR7). Resolved recipes
+    become one-click build presets on the Build-it page; prose ones stay
+    display-only in the workshop."""
+    out = []
+    for tok in (t.strip() for t in formula.split("+")):
+        if not tok or tok.lower() == "req":
+            continue
+        if tok in refs:
+            out.append(tok)
+            continue
+        m = re.match(r"^([A-Za-z]+)(\d+)-(\d+)$", tok)
+        if m:
+            span = [f"{m.group(1)}{n}"
+                    for n in range(int(m.group(2)), int(m.group(3)) + 1)]
+            if span and all(r in refs for r in span):
+                out.extend(span)
+                continue
+        return None
+    return out
+
+
 def parse_assembly(md):
     """Every '## Assembly' block → numbered steps; device inferred from the
     block's own vocabulary (deterministic keywords, tested)."""
@@ -443,7 +491,25 @@ def build_main():
     assembly = parse_assembly(md)
     devices = {}
     for name, dev_id, prefix in BOM_MAP:
-        devices.setdefault(dev_id, {})["bom"] = parse_bom(name, prefix)
+        bom = parse_bom(name, prefix)
+        # The CSV's own recipe rows, resolved to refs → one-click presets.
+        # Only optional refs matter (required rows are always in a build).
+        opt_refs = {r["ref"] for r in bom["rows"] if not r["required"]}
+        all_refs = {r["ref"] for r in bom["rows"]}
+        presets = []
+        for rec in parse_recipes(name):
+            refs = resolve_recipe(rec["formula"], all_refs)
+            if refs is None:
+                continue
+            presets.append({
+                "label": rec["label"],
+                "refs": [r for r in refs if r in opt_refs],
+                **({"usd": rec["usd"]} if "usd" in rec else {}),
+                **({"note": rec["note"]} if "note" in rec else {}),
+            })
+        if presets:
+            bom["recipes"] = presets
+        devices.setdefault(dev_id, {})["bom"] = bom
     for d, a in assembly.items():
         devices.setdefault(d, {})["assembly"] = a
     data = {
@@ -592,27 +658,6 @@ def parse_features(project: str, flavor: str):
     if not feats:
         raise SystemExit(f"workshop: no FEATURE_* flags parsed from {path}")
     return feats
-
-
-def parse_recipes(csv_name: str):
-    """The BOM CSV's own `# <name> (REF+REF+…)` summary rows — named build
-    recipes with their indicative subtotal and note, maintained in the CSV."""
-    recipes = []
-    with open(HW / csv_name, newline="", encoding="utf-8") as f:
-        for row in csv.reader(f):
-            if not row or not row[0].startswith("#"):
-                continue
-            m = re.match(r"^#\s*(.+?)\s*\(([^)]+)\)\s*$", row[0])
-            if not m or "+" not in m.group(2):
-                continue
-            usd = next((c for c in row[1:] if re.fullmatch(r"\d+\.\d\d", c)), None)
-            note = next((c for c in reversed(row[1:]) if c and c != usd), "")
-            recipes.append({
-                "label": m.group(1), "formula": m.group(2),
-                **({"usd": float(usd)} if usd else {}),
-                **({"note": note} if note else {}),
-            })
-    return recipes
 
 
 def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,

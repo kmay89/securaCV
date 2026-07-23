@@ -48,6 +48,11 @@ use tauri_plugin_updater::UpdaterExt;
 // this embed can never drift from the website/firmware source of truth.
 const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.json"));
 
+// The Hatchery naming spec — the same canary-local/devices/hatch.json the
+// website ships — embedded so the flasher's birth certificate names a Canary
+// identically to the web Lab, offline, and can never drift from it.
+const EMBEDDED_HATCH: &str = include_str!(concat!(env!("OUT_DIR"), "/hatch.json"));
+
 // The one sidecar we ship. This is the RUNTIME name: the bundler flattens the
 // `externalBin` "binaries/espflash-<triple>" to plain `espflash` next to the
 // app binary (Contents/MacOS/espflash), and Tauri resolves the sidecar by that
@@ -107,6 +112,43 @@ pub struct FlashReceipt {
 #[tauri::command]
 fn load_catalog() -> Result<Value, String> {
     serde_json::from_str(EMBEDDED_CATALOG).map_err(|e| format!("bundled catalog is corrupt: {e}"))
+}
+
+/// The Hatchery naming spec (name parts, mottoes, certificate copy), shared
+/// verbatim with the website. The UI mints the same whimsical names + birth
+/// certificate the web Lab does — offline, from this one embedded source.
+#[tauri::command]
+fn load_hatch() -> Result<Value, String> {
+    serde_json::from_str(EMBEDDED_HATCH).map_err(|e| format!("bundled hatch spec is corrupt: {e}"))
+}
+
+/// What build am I? The version, the exact git rev, the moment it was compiled,
+/// and the firmware train it embeds — everything the About/Health panel needs
+/// to say "this is the build you're running" with no guessing. Build stamps are
+/// baked in by build.rs; the firmware train comes from the embedded catalog.
+#[derive(Serialize)]
+struct AppInfo {
+    version: String,
+    build_rev: String,
+    build_epoch: u64,
+    fw_train: Option<String>,
+}
+
+#[tauri::command]
+fn app_info() -> AppInfo {
+    let fw_train = serde_json::from_str::<Value>(EMBEDDED_CATALOG)
+        .ok()
+        .and_then(|c| {
+            c.get("fw_train")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        build_rev: env!("SECURACV_BUILD_REV").to_string(),
+        build_epoch: env!("SECURACV_BUILD_EPOCH").parse::<u64>().unwrap_or(0),
+        fw_train,
+    }
 }
 
 /// Serial ports the OS can see this instant. No Web Serial permission prompt,
@@ -709,6 +751,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             load_catalog,
+            load_hatch,
+            app_info,
             list_ports,
             detect_chip,
             fetch_manifest,

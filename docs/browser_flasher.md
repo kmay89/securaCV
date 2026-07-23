@@ -205,6 +205,66 @@ world-class installer guards its own supply chain.
   map's own text, and walks the flasher's module graph so a *new, unpinned*
   vendored import fails CI. The hashes can't silently rot or be skipped.
 
+## How the picker chooses (the Arduino lesson)
+
+Arduino IDE's board menu and PlatformIO's env matrix are the two honest
+ways to support many boards — and both intimidate, because they make the
+human answer questions the tooling could answer itself (four hundred board
+entries; `PSRAM=opi`). The flasher inverts that: **everything it can READ
+narrows the choice, and the human only answers what silicon can't.**
+
+The selection ladder (`smartPick` in `flash-core.js`, pure + tested in
+`tests/flash_select.test.js`), highest first — every rung states its
+evidence in plain words on the page:
+
+1. **What you asked for** — `?product=…` (arriving from /checkup or a doc
+   link) wins outright: "Showing X — the firmware you picked."
+2. **What the board already runs** — the app descriptor read off the wire
+   names the product: "This board already runs X — installing keeps it,
+   updated in place."
+3. **What the silicon says** — the chip guard plus the *measured flash
+   size* (catalog `flash_mb`, derived from the firmware's own board
+   settings). An ESP32-S3 with 16 MB flash can only be the Waveshare panel
+   module; with 8 MB it's the XIAO class: "Your board reads as an ESP32-S3
+   with 16 MB flash — that looks like a Waveshare 4.3 panel module."
+   Where size genuinely can't distinguish (both Vision C3 boards are
+   4 MB), the picker says nothing rather than guessing — honesty over
+   cleverness.
+4. **The authored default** — the catalog is flagship-first per chip, so
+   the fallback is still a sensible single card.
+
+One card leads; the full line hides behind "show all N for this chip
+(developer)" — and that browse is grouped by **family** (`families` in
+`flash.json`), five stories instead of a wall of SKUs, each multi-variant
+family asking one plain-language question ("Which glass is in your
+hands?") that its products answer with `pick_label`s. Adding a board or
+flavor is one `PRODUCTS` entry + one family membership in `gen_flash.py` —
+the generator refuses to emit a family with no products, a variant family
+with no question, or a product with no answer.
+
+## The display family (watch / dash / dash-modes)
+
+Since the mode-system wave the flasher's product line includes the three
+**canary-display** images: `securacv-canary-display-watch` (the round
+bedside puck), `-dash` (the plain Waveshare 4.3 wall panel), and
+`-dash-modes` — the 4.3B multi-tool that boots the fleet face and carries
+the bench / demo / debug / arcade gears behind Settings → modes
+(`docs/hardware/display_modes.md`). Three deliberate properties:
+
+- **Three distinct OTA products.** A modes unit must never cross-grade to
+  the plain-dash image (it would silently strip the gears *and* swap the
+  4.3B pin map for the plain 4.3's) — same rule that keeps a watch image
+  off a dash.
+- **Provisioning is the glass itself** (`provisioning: "ap"`): a fresh
+  display shows a join QR on its own screen and walks the user through —
+  the release builds carry the same NVS-backed placeholder scheme as
+  vision/sense.
+- **The catalog can run ahead of the release.** Display cards appear in
+  the picker as soon as `flash.json` carries them; the flash button lights
+  up only when a release's `manifest-flash.json` actually offers the image
+  (`manifestEntry` returns nothing until then). The emulator preview on the
+  same page is live either way.
+
 ## Going live (owner steps)
 
 Everything is built; the official images light up when a release is cut:

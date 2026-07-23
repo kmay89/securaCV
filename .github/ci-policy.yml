@@ -13,6 +13,7 @@ unfiltered_ok:
   - lint.yml           # cheap repo-wide greps; any file can violate them
   - secrets-scan.yml   # a secret can land in any file type
   - review-threads.yml # gates on review-thread state, not file contents
+  - claude-review.yml  # advisory review bot must see every PR, any file type
 
 # R6: workflows whose push and pull_request path lists may differ.
 paths_parity_ok: []

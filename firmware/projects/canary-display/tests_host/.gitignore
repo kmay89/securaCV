@@ -6,3 +6,4 @@ test_fleet_cards
 test_mode_registry
 test_demo_script
 test_arcade_logic
+test_mic_logic
