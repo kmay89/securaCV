@@ -807,6 +807,9 @@ export function buildNvsSeedImage(opts, partitionSize) {
   const itemBase = (j) => 64 + j * 32;
 
   const writeHeader = (o, ns, type, span, chunk, key) => {
+    // One 4 KB page = 126 slots. Current callers use ~16 worst-case, but a
+    // future seed must fail loud here rather than write past the page.
+    if (o + span * 32 > NVS_PAGE) throw new Error("NVS seed exceeds one page — too many settings");
     page[o] = ns; page[o + 1] = type; page[o + 2] = span; page[o + 3] = chunk;
     for (let i = 0; i < 16; i++) page[o + 8 + i] = i < key.length ? key.charCodeAt(i) : 0;
   };
@@ -1659,7 +1662,9 @@ export function rosterAdd(list, entry) {
     version: entry.version || null,
     preset: entry.preset || null,            // dial/reflex preset title, if any
     wifi: !!entry.wifi,                      // baked? (never the network name)
-    n: (Array.isArray(list) ? list.length : 0) + 1,
+    // Continue from the LAST entry's number, not the list length — the
+    // 60-entry cap trims the head, and hatchling #61 must not read #61 twice.
+    n: (Array.isArray(list) && list.length ? list[list.length - 1].n : 0) + 1,
   };
   return [...(Array.isArray(list) ? list : []), e].slice(-ROSTER_MAX);
 }

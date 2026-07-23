@@ -563,20 +563,44 @@ async function openEsptool(port, statusCb) {
 // check, backup, rescue) calls ensureSession(), which quietly hands the
 // port back to the bootloader. No chooser, no gestures.
 async function startVoice(consoleEl, onIdentity) {
-  if (!state.session || state.voice) return;
+  // Re-entering the connected phase while a voice is already running (e.g.
+  // "not yet" from the confirm card): re-bind the LIVE stream to the fresh
+  // console element instead of leaving it talking to a detached node.
+  if (state.voice) {
+    const v0 = state.voice;
+    v0.consoleEl = consoleEl;
+    v0.onIdentity = onIdentity;
+    consoleEl.textContent = v0.buf || "listening…";
+    if (v0.identity && onIdentity) onIdentity(v0.identity);
+    return;
+  }
+  if (!state.session) return;
   const { port } = state.session;
+  // Claim the voice slot SYNCHRONOUSLY, before any await — a concurrent
+  // second call must see it and take the re-bind path above, not race the
+  // port open.
+  const v = { port, alive: true, reader: null, writer: null, identity: null,
+              buf: "", consoleEl, onIdentity };
+  state.voice = v;
   try { await state.session.esploader.after("hard_reset"); } catch {}
   try { await state.session.transport.disconnect(); } catch {}
   state.session = null;
-  const v = { port, alive: true, reader: null, writer: null, identity: null };
-  state.voice = v;
+  if (state.voice !== v || !v.alive) return; // stopVoice won the race — it owns cleanup
   try {
     await port.open({ baudRate: state.catalog.console_baud || 115200 });
+    if (state.voice !== v || !v.alive) { // superseded mid-open: nothing may own this port
+      try { await port.close(); } catch {}
+      return;
+    }
     v.reader = port.readable.getReader();
     try { v.writer = port.writable.getWriter(); } catch { /* read-only is fine */ }
   } catch (e) {
+    // Never strand an owner-less open port: close it so ensureSession (or a
+    // fresh Connect) can take it back.
+    try { v.reader && v.reader.releaseLock(); } catch {}
+    try { await port.close(); } catch {}
     state.voice = null;
-    consoleEl.textContent = "(the console didn’t open — " + String(e.message || e) +
+    v.consoleEl.textContent = "(the console didn’t open — " + String(e.message || e) +
       " — installing still works)";
     return;
   }
@@ -590,18 +614,19 @@ async function startVoice(consoleEl, onIdentity) {
   setTimeout(ask, 900);
   setTimeout(ask, 2600);
   const dec = new TextDecoder();
-  let buf = "";
   (async () => {
     try {
       for (;;) {
         const { value, done } = await v.reader.read();
         if (done || !v.alive) break;
-        buf = (buf + dec.decode(value, { stream: true })).slice(-8000);
-        consoleEl.textContent = buf;
-        consoleEl.scrollTop = consoleEl.scrollHeight;
+        // Everything goes through v.* so a phase re-render can re-bind the
+        // console element and identity callback mid-stream.
+        v.buf = (v.buf + dec.decode(value, { stream: true })).slice(-8000);
+        v.consoleEl.textContent = v.buf;
+        v.consoleEl.scrollTop = v.consoleEl.scrollHeight;
         if (!v.identity) {
-          const m = core.parseSelfManifest(buf);
-          if (m) { v.identity = m; if (onIdentity) onIdentity(m); }
+          const m = core.parseSelfManifest(v.buf);
+          if (m) { v.identity = m; if (v.onIdentity) v.onIdentity(m); }
         }
       }
     } catch { /* unplug/re-enumeration — ensureSession or reconnect recovers */ }
@@ -1254,13 +1279,14 @@ async function takeBackup(box) {
 
 async function onBackup() {
   if (state.busy || !state.flashBytes) return;
+  state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
   if (!state.session && !(await ensureSession())) {
+    state.busy = false;
     setPhase(errorRetry("Couldn’t reach the bootloader for the backup",
       new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
       phaseConnect));
     return;
   }
-  state.busy = true;
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
   try {
@@ -1502,16 +1528,21 @@ function phaseDisplayBench(d, back) {
 // preview on the presence-only build — what's POSSIBLE, never faked as live.
 
 async function openSenseBench(product) {
-  if (state.busy) return;
-  let port = state.session && state.session.port;
-  if (!port && state.voice) port = await stopVoice();
-  if (state.session) {
-    try { await state.session.esploader.after("hard_reset"); } catch {}
-    try { await state.session.transport.disconnect(); } catch {}
-    state.session = null;
+  if (state.busy || state.opening) return;
+  state.opening = true; // synchronous — see openMonitor
+  try {
+    let port = state.session && state.session.port;
+    if (!port && state.voice) port = await stopVoice();
+    if (state.session) {
+      try { await state.session.esploader.after("hard_reset"); } catch {}
+      try { await state.session.transport.disconnect(); } catch {}
+      state.session = null;
+    }
+    if (!port) { setPhase(phaseConnect()); return; }
+    setPhase(phaseSenseBench(port, product));
+  } finally {
+    state.opening = false;
   }
-  if (!port) { setPhase(phaseConnect()); return; }
-  setPhase(phaseSenseBench(port, product));
 }
 
 function phaseSenseBench(port, product) {
@@ -1994,10 +2025,14 @@ function phaseConfirm(product, entry) {
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
   go.addEventListener("click", () => {
+    // Double-click guard: a second pass would re-read the now-cleared
+    // password field and remember an empty one over the real network.
+    if (state.busy) return;
+    go.disabled = true;
     let wifi = null;
     if (wifiUI) {
       const r = wifiUI.credentials();
-      if (!r.ok) return; // invalid input — the field showed why
+      if (!r.ok) { go.disabled = false; return; } // invalid input — the field showed why
       wifi = r.wifi;
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
@@ -2640,7 +2675,7 @@ function phaseDone(opts) {
   confettiBurst();
   box.append(el("div", "flash-done-bird", "🎉"));
   const hatchNo = !opts.isBackup && !opts.isLocal && opts.product && state.roster.length
-    ? state.roster.length : null;
+    ? state.roster[state.roster.length - 1].n : null;
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
     : hatchNo ? `Hatchling #${hatchNo} — your Canary is awake`
     : "Installed — your Canary is awake"));
@@ -2933,13 +2968,14 @@ async function onRestoreFile(ev) {
 // ── the health check (triage without changing a byte) ───────────────────────
 async function runHealthCheck() {
   if (state.busy) return;
+  state.busy = true; // BEFORE the slow re-sync — a second click must bounce off
   if (!state.session && !(await ensureSession())) {
+    state.busy = false;
     setPhase(errorRetry("Couldn’t reach the bootloader for the health check",
       new Error("the board didn’t re-enter download mode — unplug, replug, then Connect again"),
       phaseConnect));
     return;
   }
-  state.busy = true;
   const { esploader } = state.session;
   const box = progressCard("Reading your board’s story", "Partition map, firmware slots, crash dumps, witness chain — read-only, nothing is changed.");
   setPhase(box.card);
@@ -3295,7 +3331,11 @@ const MONITOR_CMDS = [
 ];
 
 async function openMonitor(opts = {}) {
-  if (state.busy) return;
+  if (state.busy || state.opening) return;
+  state.opening = true; // synchronous — a double-click can't spawn two port consumers
+  try { return await openMonitorInner(opts); } finally { state.opening = false; }
+}
+async function openMonitorInner(opts = {}) {
   let port = state.session && state.session.port;
   if (!port && state.voice) port = await stopVoice(); // hand the voice's port to the full monitor
   if (state.session) {
@@ -3509,10 +3549,14 @@ function phaseMonitor(port, opts = {}) {
     return new Promise((resolve) => {
       let settled = false;
       const finish = (p) => {
-        if (settled || !mon.alive) return;
+        // Always tear down — guarding on mon.alive here used to leak the
+        // 1 Hz poll (which OPENS the port to test it) forever after leaving
+        // the monitor mid-wait, fighting every later connect for the port.
+        if (settled) return;
         settled = true; clearInterval(poll);
         navigator.serial.removeEventListener("connect", tryGrant);
-        mon.waiting = null; resolve(p);
+        mon.waiting = null;
+        resolve(mon.alive ? p : null);
       };
       const tryGrant = async () => {
         if (settled) return;
