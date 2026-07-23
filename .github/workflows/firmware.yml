@@ -855,7 +855,6 @@ jobs:
           /tmp/demo_script | tee /tmp/demo_script.log
           grep -q "ALL .* PASSED" /tmp/demo_script.log
 
-<<<<<<< HEAD
       - name: Build + run canary-display arcade logic host test
         # Arcade mode's factory claim — one round exercises EVERY touch zone
         # and the score screen is the QA report — is pinned in the pure core
@@ -873,8 +872,6 @@ jobs:
           /tmp/arcade_logic | tee /tmp/arcade_logic.log
           grep -q "ALL .* PASSED" /tmp/arcade_logic.log
 
-=======
->>>>>>> origin/main
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
