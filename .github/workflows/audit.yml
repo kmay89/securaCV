@@ -30,9 +30,24 @@ jobs:
   cargo-audit:
     name: cargo audit (Rust)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      # Compiling cargo-audit from source cost ~5 min of every run. Cache
+      # the built binary under a weekly key: at most one build per week,
+      # and "latest" can never go stale longer than that. The advisory DB
+      # itself is fetched fresh at run time either way.
+      - name: Weekly tool-cache stamp
+        id: week
+        run: echo "stamp=$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+      - name: Cache the cargo-audit binary
+        id: tool
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ steps.week.outputs.stamp }}
       - name: Install cargo-audit
+        if: steps.tool.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked
       - name: Audit Cargo.lock against the RustSec advisory DB
         run: cargo audit
@@ -40,9 +55,21 @@ jobs:
   cargo-deny:
     name: cargo deny (licenses / bans / sources)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      # Same weekly binary cache as cargo-audit above.
+      - name: Weekly tool-cache stamp
+        id: week
+        run: echo "stamp=$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+      - name: Cache the cargo-deny binary
+        id: tool
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-${{ runner.os }}-${{ steps.week.outputs.stamp }}
       - name: Install cargo-deny
+        if: steps.tool.outputs.cache-hit != 'true'
         run: cargo install cargo-deny --locked
       - name: Check licenses, duplicate versions, and source provenance
         # Advisories are gated by the cargo-audit job above (RustSec DB);
@@ -53,6 +80,7 @@ jobs:
   npm-audit:
     name: npm audit (canary-vision)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

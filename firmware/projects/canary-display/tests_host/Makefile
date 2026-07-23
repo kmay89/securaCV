@@ -30,6 +30,18 @@ MODEL_SOURCES = test_fleet_beacon_model.cpp ../src/fleet/fleet_model.cpp
 CARDS_BIN     = test_fleet_cards
 CARDS_SOURCES = test_fleet_cards.cpp ../src/fleet/fleet_cards.cpp
 
+# Mode registry (canary/mode/mode_registry.h): boot-gear resolution (NVS token
+# + legacy devmode migration), the capability gate, and the per-mode policy
+# invariants (fail-safe to Fleet; every non-fleet gear has an exit + banner).
+MODE_BIN = test_mode_registry
+MODE_SRC = test_mode_registry.cpp
+
+# Demo storyline (canary/mode/demo_script.h): links the REAL fleet_model.cpp so
+# every scripted beat's severity is drift-locked to classify_event(), plus the
+# loop-stepping (fires-once-per-lap, wrap-safe) invariants.
+DEMO_BIN     = test_demo_script
+DEMO_SOURCES = test_demo_script.cpp ../src/fleet/fleet_model.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -42,10 +54,18 @@ $(MODEL_BIN): $(MODEL_SOURCES)
 $(CARDS_BIN): $(CARDS_SOURCES)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(CARDS_SOURCES)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN)
+$(MODE_BIN): $(MODE_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(MODE_SRC)
+
+$(DEMO_BIN): $(DEMO_SOURCES)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DEMO_SOURCES)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
+	./$(MODE_BIN)
+	./$(DEMO_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN)

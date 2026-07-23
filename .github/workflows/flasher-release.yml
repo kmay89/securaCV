@@ -30,10 +30,17 @@ on:
 permissions:
   contents: write
 
+# One rebuild per target tag at a time; never cancel mid-upload — a second
+# dispatch for the same tag queues behind the first.
+concurrency:
+  group: flasher-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   factory-images:
     name: Build + attach browser-flasher factory images
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Resolve the target tag
         id: tag
@@ -134,19 +141,13 @@ jobs:
           HEADER
           pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Configure Arduino CLI + libraries
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          arduino-cli lib install "NimBLE-Arduino"
+      - name: Install Arduino CLI + ESP32 core (cached)
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          libraries: |
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino
 
       - name: Build canary-wap (arduino-cli)
         run: |
