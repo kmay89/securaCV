@@ -1,0 +1,29 @@
+{
+  "$doc": "The Hatchery — the single source of truth for how a Canary is named and certified when it hatches. Shared verbatim by the website Lab (fetched from GitHub Pages) and the desktop flasher (embedded at build time), so the birthing moment is identical on both and stays in sync when this file changes. Pure data: the tiny assembly logic (pick a title with title_chance, first + house, Nth-of-its-name ordinal) is mirrored in both clients. Names are whimsy only — the device's functional id stays a stable slug; this is a display/certificate layer.",
+  "$generated_by": "hand-maintained — safe to edit; it carries no device facts, only the birthday whimsy.",
+  "version": 1,
+  "ring_prefix": "CNRY",
+  "title_chance": 0.6,
+  "titles": ["Sir", "Lady", "Captain", "Professor", "Baron", "Dame", "Admiral", "Chief", "Saint", "Major", "Little", "Old", "Madam", "Count"],
+  "first": ["Pip", "Chirp", "Beaky", "Cluck", "Nib", "Quill", "Gizmo", "Pixel", "Byte", "Radar", "Perch", "Warble", "Trill", "Cheep", "Wren", "Robin", "Finch", "Sparrow", "Kestrel", "Merlin", "Hawkeye", "Aria", "Echo", "Vigil", "Sable", "Featherton", "Waddles", "Sprocket", "Biscuit", "Noodle", "Waffles", "Peck"],
+  "house": ["of Perchwood", "the Vigilant", "the Unblinking", "von Watchbird", "McSentinel", "of the Nest Eternal", "the Ever-Watchful", "Featherwatch", "of House Chirpington", "the Keen-Eyed", "Nightwarden", "of Roost Hall", "the Tamper-Evident", "of the Signed Ledger", "Quillsworth", "the Unbribable", "of Coop Hollow", "the Wide-Awake"],
+  "species": ["Canary Vision", "Canary Sense", "Canary WAP", "Canary Watch Station", "Canary Dash", "Canary Sense · Wellbeing"],
+  "mottoes": [
+    "Records what happened — never who.",
+    "Watches the door, forgets the face.",
+    "Sees all, tells only you.",
+    "On duty, never online.",
+    "Sworn to witness, never to surveil.",
+    "Small bird. Long memory. Sealed lips.",
+    "Trusts the math, not the masters.",
+    "Every claim signed, every secret kept.",
+    "A witness you can check, not one you must believe."
+  ],
+  "ordinals": ["", "the First", "the Second", "the Third", "the Fourth", "the Fifth", "the Sixth", "the Seventh", "the Eighth", "the Ninth", "the Tenth", "the Eleventh", "the Twelfth"],
+  "certificate": {
+    "kicker": "Certificate of Hatching",
+    "intro": "Be it known that on this day there hatched a witness true —",
+    "craft": "shell pressed in the workshop · spirit woken in the hatchery",
+    "foot": "Witnessed & sealed · records what happened, never who · Errer Labs"
+  }
+}

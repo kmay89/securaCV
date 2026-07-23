@@ -190,6 +190,33 @@
               <h3 id="hatch-title">It is alive.</h3>
               <p id="hatch-body"></p>
               <ol id="hatch-steps"></ol>
+
+              <!-- Birth certificate — the same naming + certificate the web Lab's
+                   Hatchery gives, now for the real Canary you just flashed. -->
+              <figure class="cert" id="hatch-cert" hidden>
+                <div class="cert-frame">
+                  <div class="cert-top">
+                    <span class="cert-kicker" id="cert-kicker">Certificate of Hatching</span>
+                    <span class="cert-seal" aria-hidden="true">
+                      <svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3"/><path d="M32 16l3.8 8.2 8.9 1-6.6 6.2 1.7 8.9-7.8-4.4-7.8 4.4 1.7-8.9-6.6-6.2 8.9-1z" fill="currentColor"/></svg>
+                    </span>
+                  </div>
+                  <p class="cert-intro" id="cert-intro">Be it known that on this day there hatched a witness true —</p>
+                  <h4 class="cert-name" id="cert-name">—</h4>
+                  <p class="cert-species" id="cert-species">—</p>
+                  <dl class="cert-facts">
+                    <div><dt>Lineage</dt><dd id="cert-lineage">—</dd></div>
+                    <div><dt>Hatched</dt><dd id="cert-date">—</dd></div>
+                    <div><dt>Ring ID</dt><dd class="mono" id="cert-id">—</dd></div>
+                    <div><dt>Craft</dt><dd id="cert-craft">—</dd></div>
+                  </dl>
+                  <p class="cert-motto" id="cert-motto">—</p>
+                  <p class="cert-foot" id="cert-foot">Witnessed &amp; sealed · Errer Labs</p>
+                </div>
+                <div class="row">
+                  <button id="cert-reroll" class="btn btn-small btn-ghost" type="button">🎲 Roll a new name</button>
+                </div>
+              </figure>
             </section>
           </section>
         </section>

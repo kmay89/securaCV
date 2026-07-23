@@ -39,6 +39,23 @@ fn main() {
     fs::write(&hub_dst, hub_data).expect("write hub catalog to OUT_DIR");
     println!("cargo:rerun-if-changed={}", hub_src.display());
 
+    // Same never-rot contract for the Hatchery naming spec: the ONE shared
+    // canary-local/devices/hatch.json the website also ships, so the flasher's
+    // birth certificate names a Canary exactly the way the web Lab does, and a
+    // change to that file re-embeds here automatically.
+    let hatch_src = Path::new(&manifest).join("../../canary-local/devices/hatch.json");
+    let hatch_dst = Path::new(&out).join("hatch.json");
+    let hatch_data = fs::read(&hatch_src).unwrap_or_else(|e| {
+        panic!(
+            "cannot read the canonical Hatchery spec at {} ({e}). \
+             The desktop app must be built inside the securaCV repo so it can \
+             embed the current naming source of truth.",
+            hatch_src.display()
+        )
+    });
+    fs::write(&hatch_dst, hatch_data).expect("write hatch spec to OUT_DIR");
+    println!("cargo:rerun-if-changed={}", hatch_src.display());
+
     // Build stamp: a real build number (short git rev) and a build timestamp,
     // baked in at compile time so the About panel can show exactly which build
     // is running and when it was cut — never a guess, never stale. Both fall
