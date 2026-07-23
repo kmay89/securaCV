@@ -1318,6 +1318,9 @@ async function onBackup() {
   }
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
+  // Name the stage so the coach deals its safety-copy lessons here too, not
+  // only during an install's embedded backup step.
+  box.stage("Saving a safety copy — reading every byte off the board. Nothing is changed.");
   try {
     await takeBackup(box);
     state.busy = false;
@@ -1671,7 +1674,13 @@ function phaseSenseBench(port, product) {
   (async () => {
     try {
       await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
       reader = port.readable.getReader();
+      if (!model.alive) {
+        try { reader.releaseLock(); } catch {}
+        try { await port.close(); } catch {}
+        return;
+      }
     } catch (e) {
       status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
       return;
@@ -1926,7 +1935,13 @@ function phaseWapBench(port, product) {
   (async () => {
     try {
       await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
       reader = port.readable.getReader();
+      if (!model.alive) {
+        try { reader.releaseLock(); } catch {}
+        try { await port.close(); } catch {}
+        return;
+      }
     } catch (e) {
       status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
       return;
@@ -1965,9 +1980,13 @@ function phaseWapBench(port, product) {
   })();
 
   const fctx = field.getContext("2d");
-  let raf = 0, t0 = performance.now();
+  let raf = 0, t0 = performance.now(), lastFrame = t0;
   function draw(now) {
     if (!model.alive) return;
+    // dt-based decay: the stir reading is INFORMATIVE, so it must drain at
+    // the same rate on every display — 60 Hz, 144 Hz, or reduced-motion.
+    const dt = Math.min(0.1, Math.max(0, (now - lastFrame) / 1000));
+    lastFrame = now;
     const t = calm ? 0 : (now - t0) / 1000;
     const W = field.width, H = field.height, cx = W / 2, cy = H / 2;
     fctx.clearRect(0, 0, W, H);
@@ -2012,8 +2031,8 @@ function phaseWapBench(port, product) {
       fctx.fillStyle = "#f0a860";
       fctx.fillText("no field lines lately — the WAP only speaks on transitions; walk past it", 14, 18);
     }
-    // the stir meter, decaying gently between events
-    model.stir = Math.max(0, model.stir - (calm ? 0.4 : 0.15));
+    // the stir meter, decaying gently between events (~9%/second everywhere)
+    model.stir = Math.max(0, model.stir - 9 * dt);
     fill.style.width = Math.round(model.stir) + "%";
     fill.dataset.level = model.stir >= 55 ? "ok" : model.stir >= 25 ? "soft" : "faint";
     raf = requestAnimationFrame(draw);
@@ -4275,9 +4294,17 @@ function attachCoach(card, afterEl) {
     bodyEl.textContent = lesson.body;
   }
   function advance() {
-    if (!alive) return;
-    show(core.pickLesson(state.catalog, stageText, shown));
-    arm();
+    // Detachment retires the coach: setPhase() swaps cards without telling
+    // us, and an immortal 14 s timer chain per progress card would pile up
+    // fast in a batch session. A dry deck stops the chain too.
+    if (!alive || !box.isConnected) {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      return;
+    }
+    const lesson = core.pickLesson(state.catalog, stageText, shown);
+    show(lesson);
+    if (lesson) arm();
   }
   function arm() {
     if (timer) clearTimeout(timer);

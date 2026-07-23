@@ -440,10 +440,13 @@ LESSONS = [
              "spare slot and only flip when it verifies — a failed update just boots "
              "the old one. The update counter you saw at hello counts those flips."},
     {"id": "write-witness", "stage": "writ",
-     "title": "The diary that survives",
-     "body": "The witness chain — this Canary’s tamper-evident hash diary — lives in "
-             "its own region. A normal install writes around it, so the board keeps "
-             "its memory across updates. Only a full erase starts it over."},
+     "title": "The diary and the deep install",
+     "body": "This Canary keeps a tamper-evident hash diary. Over-the-air updates "
+             "never touch it — they swap firmware slots and nothing else. A USB "
+             "factory install like this one is deeper: on some boards the diary’s "
+             "chain state rides the settings region and starts fresh here. Visible "
+             "by design — a new chain reads as a new chain, never as silently "
+             "missing evidence."},
     {"id": "any-chip-board", "stage": "any",
      "title": "Chip vs. board",
      "body": "The CHIP is the silicon (ESP32-S3, -C3, -C6); the BOARD is the little "
