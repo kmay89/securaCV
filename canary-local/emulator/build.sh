@@ -49,10 +49,11 @@ if [[ "$FLAVOR" == "all" ]]; then
   "$0" watch
   "$0" dash
   "$0" vision
+  "$0" audio
   exit 0
 fi
-[[ "$FLAVOR" == "watch" || "$FLAVOR" == "dash" || "$FLAVOR" == "vision" ]] || {
-  echo "usage: $0 [watch|dash|vision|all]" >&2
+[[ "$FLAVOR" == "watch" || "$FLAVOR" == "dash" || "$FLAVOR" == "vision" || "$FLAVOR" == "audio" ]] || {
+  echo "usage: $0 [watch|dash|vision|audio|all]" >&2
   exit 2
 }
 
@@ -148,6 +149,88 @@ if [[ "$FLAVOR" == "vision" ]]; then
 EOF
   ls -la "$DIST/$OUT_BASE.js"
   echo "OK: $OUT_BASE (real Canary Vision core $FW_VERSION @ $GIT_SHA)"
+  exit 0
+fi
+
+# ── Canary WAP acoustic core ───────────────────────────────────────────
+# The WAP's smoke/CO detector, exactly as it runs on-device: the real
+# securacv_audio.cpp (DC-removed RMS, the 3.4 kHz alarm-band tone gate,
+# envelope hysteresis, the NFPA-72 T3 / UL-2034 T4 cadence templates)
+# behind a browser ABI. The mic-fed bench stages PCM through the same
+# i2s_read seam the host test drives with synthesized audio. No LVGL, no
+# crypto, no third-party — like the Vision core, it links against the
+# proven audio stubs (the platform edges only: millis, Preferences, I2S).
+if [[ "$FLAVOR" == "audio" ]]; then
+  WAP_PROJ="$FW/projects/canary-wap/arduino/canary_wap"
+  WAP_STUBS="$FW/projects/canary-wap/tests_host/stubs/audio"
+  AUDIO_OBJ="$BUILD/audio"
+  OUT_BASE="canary-wap-audio"
+  mkdir -p "$AUDIO_OBJ" "$DIST"
+
+  AUDIO_INCLUDES=(
+    -I "$EMU_DIR/audio"
+    -I "$WAP_STUBS"
+    -I "$WAP_PROJ"
+  )
+  AUDIO_FLAGS=(
+    -std=gnu++17 -fno-exceptions -fno-rtti -O2 -Wall -Wextra
+    -DARDUINO=10812
+    -Wno-builtin-macro-redefined
+    '-D__DATE__="emu"'
+    '-D__TIME__="build"'
+    -ffile-prefix-map="$REPO_ROOT"=/securacv
+    -ffile-prefix-map="$EMU_DIR"=/securacv/canary-local/emulator
+    "${AUDIO_INCLUDES[@]}"
+  )
+  AUDIO_SRCS=(
+    "$WAP_PROJ/securacv_audio.cpp"
+    "$EMU_DIR/audio/audio_core_bindings.cpp"
+  )
+
+  AUDIO_NEWEST_HDR=""
+  while IFS= read -r -d '' h; do
+    if [[ -z "$AUDIO_NEWEST_HDR" || "$h" -nt "$AUDIO_NEWEST_HDR" ]]; then
+      AUDIO_NEWEST_HDR="$h"
+    fi
+  done < <(find "$WAP_STUBS" "$EMU_DIR/audio" -name '*.h' -print0; \
+           find "$WAP_PROJ" -maxdepth 1 -name 'securacv_audio.h' -o -maxdepth 1 -name 'log_level.h' -o -maxdepth 1 -name 'health_log.h' -print0)
+
+  AUDIO_OBJS=()
+  for src in "${AUDIO_SRCS[@]}"; do
+    rel="$(echo "$src" | sed 's|[/.]|_|g')"
+    obj="$AUDIO_OBJ/$rel.o"
+    AUDIO_OBJS+=("$obj")
+    if [[ -f "$obj" && "$obj" -nt "$src" &&
+          ( -z "$AUDIO_NEWEST_HDR" || "$obj" -nt "$AUDIO_NEWEST_HDR" ) ]]; then
+      continue
+    fi
+    em++ -c "$src" "${AUDIO_FLAGS[@]}" -o "$obj"
+  done
+
+  echo "── linking $OUT_BASE from Canary WAP acoustic firmware ──"
+  em++ "${AUDIO_OBJS[@]}" -O2 \
+    --no-entry \
+    -sALLOW_MEMORY_GROWTH \
+    -sINITIAL_MEMORY=8388608 \
+    -sMODULARIZE=1 \
+    -sEXPORT_NAME=createCanaryAudioCore \
+    -sENVIRONMENT=web,node \
+    -sSINGLE_FILE=1 \
+    -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,HEAP16 \
+    -o "$DIST/$OUT_BASE.js"
+
+  FW_VERSION="$(sed -n 's/.*FIRMWARE_VERSION *= *"\(.*\)".*/\1/p' "$FW/projects/canary-wap/arduino/canary_wap/canary_wap.ino" | head -1)"
+  GIT_SHA="$(git -C "$FW/.." rev-parse --short HEAD 2>/dev/null || echo dev)"
+  cat > "$DIST/$OUT_BASE.meta.json" <<EOF
+{
+  "flavor": "wap-audio",
+  "fw_version": "$FW_VERSION",
+  "git": "$GIT_SHA",
+  "source": "firmware/projects/canary-wap"
+}
+EOF
+  ls -la "$DIST/$OUT_BASE.js"
+  echo "OK: $OUT_BASE (real Canary WAP acoustic core $FW_VERSION @ $GIT_SHA)"
   exit 0
 fi
 
