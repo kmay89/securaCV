@@ -56,21 +56,65 @@ test("flash.json: vision detect dials — defaults inside bounds, presets too", 
   }
 });
 
-test("flash.json: sense reflexes are honest about being compile-time", () => {
+test("flash.json: sense reflexes are runtime dials — NVS-backed, bounded, preset", () => {
   const sense = catalog.products.filter((p) => p.role === "sense");
   assert.ok(sense.length >= 2, "expected default + wellbeing sense products");
   for (const p of sense) {
-    assert.ok(p.reflexes, `${p.id}: sense product without reflexes`);
-    assert.strictEqual(p.reflexes.applies, "compile-time");
-    for (const k of p.reflexes.knobs) {
+    const r = p.reflexes;
+    assert.ok(r, `${p.id}: sense product without reflexes`);
+    assert.strictEqual(r.applies, "runtime");
+    assert.strictEqual(r.nvs.namespace, "securacv");
+    for (const k of r.knobs) {
       assert.ok(k.id && k.macro && k.unit, `${p.id}: knob missing id/macro/unit`);
-      assert.ok(Number.isInteger(k.value) && k.value > 0, `${p.id}: knob ${k.id} value`);
+      assert.ok(k.nvs && k.nvs.startsWith("sns_"), `${p.id}: knob ${k.id} needs an sns_* NVS key`);
+      assert.ok(k.nvs.length <= 15, `${p.id}: NVS key ${k.nvs} too long`);
+      const [lo, hi] = k.bounds;
+      assert.ok(Number.isInteger(k.value) && k.value >= lo && k.value <= hi,
+        `${p.id}: knob ${k.id} default ${k.value} outside [${lo},${hi}]`);
       assert.ok(catalog.settings_help[k.id], `${p.id}: knob ${k.id} has no help topic`);
+      assert.strictEqual(r.nvs.keys[k.id], k.nvs, `${p.id}: nvs.keys map disagrees for ${k.id}`);
+    }
+    assert.strictEqual(r.presets[0].id, "ships", "first preset is the shipped defaults");
+    assert.deepStrictEqual(r.presets[0].values,
+      Object.fromEntries(r.knobs.map((k) => [k.id, k.value])));
+    const byId = Object.fromEntries(r.knobs.map((k) => [k.id, k]));
+    for (const pr of r.presets) {
+      for (const [kid, v] of Object.entries(pr.values)) {
+        const [lo, hi] = byId[kid].bounds;
+        assert.ok(v >= lo && v <= hi, `${p.id}: preset ${pr.id} ${kid}=${v} outside [${lo},${hi}]`);
+      }
     }
   }
   const wb = sense.find((p) => /wellbeing/.test(p.id));
   assert.ok(wb.reflexes.knobs.some((k) => k.id === "vitals_lock_ms"),
     "wellbeing build carries the vitals knobs");
+  const def = sense.find((p) => !/wellbeing/.test(p.id));
+  assert.ok(!def.reflexes.knobs.some((k) => k.id === "vitals_lock_ms"),
+    "presence-only build does not advertise vitals knobs");
+});
+
+test("reflexValuesToNvs: maps knob ids to sns_* keys, clamped to each knob's bounds", async () => {
+  const c = await core();
+  const sense = catalog.products.find((p) => p.id === "securacv-canary-sense-wellbeing");
+  const r = c.reflexDials(catalog, sense);
+  assert.ok(r, "wellbeing reflexes are runtime dials");
+  const nvs = c.reflexValuesToNvs({
+    present_debounce_ms: 500, clear_timeout_ms: 5000,
+    range_near_cm: 100, range_mid_cm: 250,
+    vitals_lock_ms: 999999,     // clamps to hi
+  }, r);
+  assert.strictEqual(nvs.u32.sns_debounce, 500);
+  assert.strictEqual(nvs.u32.sns_clear, 5000);
+  assert.strictEqual(nvs.u32.sns_near, 100);
+  assert.strictEqual(nvs.u32.sns_mid, 250);
+  const vlock = r.knobs.find((k) => k.id === "vitals_lock_ms");
+  assert.strictEqual(nvs.u32.sns_vlock, vlock.bounds[1]);
+  assert.ok(!("sns_vlost" in nvs.u32), "only provided knobs are carried");
+  assert.deepStrictEqual(c.reflexValuesToNvs(null, r), { u32: {} });
+  // a reflex preset seeds a valid NVS image end to end
+  const img = c.buildNvsSeedImage({ u32: nvs.u32 }, 0x6000);
+  const items = c.parseNvs(img);
+  assert.ok(items.some((i) => i.key === "sns_debounce" && i.value === 500 && i.namespace === "securacv"));
 });
 
 test("flash.json: displays name real emulator builds on disk", () => {

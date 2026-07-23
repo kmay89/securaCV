@@ -636,3 +636,55 @@ button.flash-map-key:hover { color: var(--text); }
 /* displays: the teaser + the hand-off card to the fleet page's live glass */
 .flash-displays { margin-top: 14px; }
 .flash-displaybench .flash-go { text-decoration: none; text-align: center; }
+
+/* ── the WE2 live bench: meter, chips, guide ─────────────────────────────── */
+.we2-preview { position: relative; }
+.we2-chip {
+  position: absolute; top: 10px; padding: 4px 11px; border-radius: 999px;
+  font: 700 12px ui-monospace, Menlo, monospace; letter-spacing: 0.02em;
+  background: rgba(8, 9, 11, 0.78); border: 1px solid rgba(255,255,255,0.16);
+  color: #e8f0e8; backdrop-filter: blur(4px);
+}
+.we2-chip-count { left: 10px; border-color: rgba(124,255,155,0.45); color: #7CFF9B; }
+.we2-chip-fps { right: 10px; color: var(--muted, #9aa39a); }
+
+.we2-meter { margin: 10px 0 2px; }
+.we2-meter-track {
+  position: relative; height: 12px; border-radius: 999px; overflow: visible;
+  background: rgba(255,255,255,0.06); border: 1px solid var(--edge, #262626);
+}
+.we2-meter-fill {
+  height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, #5a4a12, #FFD44F 55%, #7CFF9B 85%);
+  transition: width 180ms ease-out;
+}
+.we2-meter-fill[data-level="ok"] { box-shadow: 0 0 12px rgba(124,255,155,0.35); }
+.we2-meter-tick {
+  position: absolute; top: -4px; bottom: -4px; width: 2px; border-radius: 1px;
+  background: #e8f0e8; opacity: 0.85;
+}
+.we2-meter-tick::after {
+  content: "floor"; position: absolute; top: -15px; left: 50%; transform: translateX(-50%);
+  font: 600 10px ui-monospace, Menlo, monospace; color: var(--muted, #9aa39a);
+}
+.we2-meter-label { margin-top: 8px; font-size: 12.5px; color: var(--muted, #9aa39a); }
+
+.we2-guide { margin: 8px 0 10px; }
+.we2-guide-steps { margin: 8px 0 4px 4px; padding-left: 18px; }
+.we2-guide-steps li { margin: 6px 0; font-size: 13.5px; line-height: 1.5; color: #cfd8cf; }
+.we2-guide-fixh { margin: 10px 0 4px; font-weight: 640; font-size: 13.5px; }
+.we2-guide-fixes { display: flex; flex-direction: column; gap: 7px; }
+.we2-guide-fix {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 11px;
+  border-radius: 10px; background: rgba(255,255,255,0.03);
+  border: 1px solid var(--edge, #262626); font-size: 13px; line-height: 1.45;
+}
+.we2-guide-fix strong { color: #f0dca0; font-size: 12.5px; }
+.we2-guide-fix span { color: var(--muted, #9aa39a); }
+
+/* ── the live voice (pre-flash serial console on the hello card) ─────────── */
+.flash-voice { margin-top: 10px; }
+.flash-voice h3 { margin-bottom: 4px; }
+.flash-voice-console { max-height: 180px; min-height: 64px; }
+.flash-voice-id { margin: 6px 0 2px; }
+.flash-headline { font-weight: 640; }

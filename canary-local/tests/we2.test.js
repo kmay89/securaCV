@@ -350,3 +350,59 @@ test("the model-release workflow reads the burn address from flash.json", () => 
       "workflow hardcodes 0x400000 — read it from flash.json instead: " + line.trim());
   }
 });
+
+// ── the bench upgrade: identity colors, the confidence meter, the guide ─────
+test("stylizeDetections: stable identity per box, band by confidence", async () => {
+  const { stylizeDetections } = await core();
+  const dets = stylizeDetections([
+    [100, 80, 40, 60, 92, 0],
+    [200, 90, 30, 50, 45, 0],
+    [50, 50, 20, 20, 20, 0],
+  ]);
+  assert.strictEqual(dets.length, 3, "multi-object is the normal case");
+  assert.deepStrictEqual(dets.map((d) => d.n), [1, 2, 3]);
+  assert.deepStrictEqual(dets.map((d) => d.band), ["ok", "soft", "faint"]);
+  // each box gets its own color; the strongest keeps the lead hue
+  assert.strictEqual(new Set(dets.map((d) => d.color)).size, 3);
+  for (const d of dets) {
+    assert.match(d.color, /^hsl\(/);
+    assert.match(d.fill, /^hsl\(/);
+    assert.ok(d.text.includes("person"));
+  }
+  assert.deepStrictEqual(await (async () => stylizeDetections(null))(), []);
+});
+
+test("meterModel: best score vs the module's reporting floor", async () => {
+  const { meterModel } = await core();
+  const m = meterModel([[0, 0, 10, 10, 92, 0], [0, 0, 10, 10, 61, 0]], undefined, 50);
+  assert.strictEqual(m.count, 2);
+  assert.strictEqual(m.top, 92);
+  assert.strictEqual(m.threshold, 50);
+  assert.strictEqual(m.margin, 42);
+  assert.strictEqual(m.level, "ok");
+  assert.ok(m.label.includes("2 people"), m.label);
+
+  const idle = meterModel([], undefined, 50);
+  assert.strictEqual(idle.count, 0);
+  assert.strictEqual(idle.margin, null);
+  assert.strictEqual(idle.level, "idle");
+
+  // threshold is clamped and survives garbage
+  assert.strictEqual(meterModel([], undefined, 250).threshold, 100);
+  assert.strictEqual(meterModel([], undefined, "nope").threshold, 0);
+});
+
+test("flash.json: the we2 bench guide ships steps, fixes, and honest defaults", () => {
+  const catalog = JSON.parse(readFileSync(join(__dirname, "..", "devices/flash.json"), "utf8"));
+  const bench = catalog.we2_module.bench;
+  assert.ok(bench, "we2_module.bench missing");
+  assert.ok(bench.steps.length >= 4, "a guide needs real steps");
+  assert.ok(bench.troubleshooting.length >= 4, "and the usual failures");
+  for (const f of bench.troubleshooting) assert.ok(f.when && f.fix);
+  // defaults come from the drift-gated vision lab data, not typed by hand
+  const vision = JSON.parse(readFileSync(join(__dirname, "..", "devices/vision.json"), "utf8"));
+  assert.strictEqual(bench.defaults.tscore, vision.model_load.wire.tscore_default);
+  assert.strictEqual(bench.defaults.tiou, vision.model_load.wire.tiou_default);
+  // the port rule — the single most common failure — is step one
+  assert.match(bench.steps[0], /MODULE/i);
+});

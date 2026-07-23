@@ -15,7 +15,9 @@ an exemption must be visible and reviewable, with a comment saying why):
       360-minute default)
   R3  a workflow triggered by push or pull_request declares a
       `concurrency` group (supersede stale PR runs; queue — never
-      cancel — release publishes)
+      cancel — release publishes); a workflow that fires on tag pushes
+      or release events must not set a bare `cancel-in-progress: true`
+      (a run cancelled mid-publish leaves half-uploaded assets)
   R4  every action ref is pinned to a tag or SHA — never a mutable
       branch ref (@main/@master) or a floating docker :latest
   R5  pull_request workflows are path-filtered so unrelated PRs don't
@@ -119,6 +121,28 @@ def check_workflow(path: str, policy: dict) -> list[str]:
             f"`concurrency` group. PR workflows should cancel superseded runs "
             f"(cancel-in-progress on pull_request); publish/release workflows "
             f"should queue (cancel-in-progress: false)."
+        )
+
+    # R3 (publish half) — a workflow that fires on tag pushes or release
+    # events publishes artifacts; a bare `cancel-in-progress: true` can
+    # kill it mid-upload and leave half-published assets. `false` and
+    # conditional ${{ ... }} expressions pass — the robot catches the
+    # blunt footgun, reviewers judge the condition.
+    push_spec = triggers.get("push")
+    fires_on_publish = ("release" in triggers) or (
+        isinstance(push_spec, dict) and push_spec.get("tags") is not None
+    )
+    conc = wf.get("concurrency")
+    if (fires_on_publish and isinstance(conc, dict)
+            and name not in set(policy.get("publish_cancel_ok") or [])
+            and conc.get("cancel-in-progress") is True):
+        problems.append(
+            f"{name}: R3 — fires on tags/release but sets a bare "
+            f"`cancel-in-progress: true`; a cancelled run can die "
+            f"mid-publish with half-uploaded release assets. Use `false`, "
+            f"or a condition that excludes the publish path (see "
+            f"desktop-release.yml), or exempt in publish_cancel_ok with a "
+            f"comment."
         )
 
     # R4 — pinned action refs, in workflows AND composite actions (collected

@@ -262,9 +262,13 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
           /tmp/emsdk/emsdk install 6.0.3
-          /tmp/emsdk/emsdk activate 6.0.3
-      - name: Verify Emscripten (cached or fresh)
+      - name: Activate + verify Emscripten (cached or fresh)
+        # activate runs UNCONDITIONALLY: it's seconds of local config
+        # writing, and running it on warm-cache restores too means the
+        # build can never depend on which activation state the cache
+        # happened to capture.
         run: |
+          /tmp/emsdk/emsdk activate 6.0.3
           source /tmp/emsdk/emsdk_env.sh
           emcc --version | head -1
       - name: Cache third-party sources
