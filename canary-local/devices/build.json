@@ -7,7 +7,7 @@
  },
  "pricing": {
   "source": "docs/hardware/pricing.json",
-  "as_of": "2026-07-23T08:30:23Z",
+  "as_of": "2026-07-23T21:49:40Z",
   "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
  },
  "devices": {
@@ -23,8 +23,8 @@
       "desc": "XIAO ESP32-S3 Sense (ESP32-S3, 8MB flash, 8MB PSRAM, OV2640 camera, PDM mic)",
       "mpn": "102010469",
       "mfr": "Seeed Studio",
-      "usd": 14.9,
-      "notes": "Main controller; onboard LiPo charger (BAT pads); operating -40 to +65 C; verified Mouser/DigiKey SKU",
+      "usd": 13.99,
+      "notes": "Main controller; onboard LiPo charger (BAT pads); operating -40 to +65 C; verified Mouser/DigiKey SKU. Seeed/DigiKey list $13.99 (mid-2026)",
       "orderable": true
      },
      {
@@ -412,16 +412,16 @@
       "orderable": false
      }
     ],
-    "required_usd": 26.9,
-    "full_usd": 102.89,
-    "required_usd_live": 26.9,
-    "full_usd_live": 102.89,
-    "pricing_as_of": "2026-07-23T08:30:23Z",
+    "required_usd": 25.99,
+    "full_usd": 101.98,
+    "required_usd_live": 25.99,
+    "full_usd_live": 101.98,
+    "pricing_as_of": "2026-07-23T21:49:40Z",
     "recipes": [
      {
       "label": "Required-only",
       "refs": [],
-      "usd": 26.9,
+      "usd": 25.99,
       "note": "Bench bring-up"
      },
      {
@@ -486,10 +486,10 @@
       "required": true,
       "category": "Sensor",
       "desc": "Grove Vision AI V2 (Himax WiseEye2 HX6538, Arm Cortex-M55 + Ethos-U55)",
-      "mpn": "101021040",
+      "mpn": "101021112",
       "mfr": "Seeed Studio",
-      "usd": 29.0,
-      "notes": "I2C on GPIO4 (SDA) / GPIO5 (SCL); Seeed product 5851. Camera (e.g. OV5647) sold separately on some SKUs",
+      "usd": 15.99,
+      "notes": "I2C on GPIO4 (SDA) / GPIO5 (SCL); Seeed product 5851, SKU 101021112 = the HX6538 V2. NOT the older HX6537-A V1 (SKU 101021040 / DigiKey 114992866, OV2640) — those were wrong here. Camera sold separately on some SKUs. Board-only list $15.99 (verified mid-2026)",
       "orderable": true
      },
      {
@@ -733,17 +733,17 @@
       "orderable": false
      }
     ],
-    "required_usd": 41.7,
-    "full_usd": 93.16,
-    "required_usd_live": 41.7,
-    "full_usd_live": 93.16,
-    "pricing_as_of": "2026-07-23T08:30:23Z",
+    "required_usd": 28.69,
+    "full_usd": 80.15,
+    "required_usd_live": 28.69,
+    "full_usd_live": 80.15,
+    "pricing_as_of": "2026-07-23T21:49:40Z",
     "recipes": [
      {
       "label": "Required-only",
       "refs": [],
-      "usd": 41.7,
-      "note": "Core Vision device"
+      "usd": 28.69,
+      "note": "Core Vision device (Grove AI V2 now $15.99)"
      },
      {
       "label": "Printed camera unit",
@@ -756,7 +756,7 @@
        "NUT1",
        "CW2"
       ],
-      "usd": 54.75,
+      "usd": 41.74,
       "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
      }
     ]
@@ -890,7 +890,7 @@
     "full_usd": 40.0,
     "required_usd_live": 36.4,
     "full_usd_live": 40.0,
-    "pricing_as_of": "2026-07-23T08:30:23Z",
+    "pricing_as_of": "2026-07-23T21:49:40Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1006,7 +1006,7 @@
     "full_usd": 41.94,
     "required_usd_live": 34.99,
     "full_usd_live": 41.94,
-    "pricing_as_of": "2026-07-23T08:30:23Z"
+    "pricing_as_of": "2026-07-23T21:49:40Z"
    }
   },
   "canary-display-dash": {
@@ -1102,7 +1102,7 @@
     "full_usd": 45.5,
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
-    "pricing_as_of": "2026-07-23T08:30:23Z"
+    "pricing_as_of": "2026-07-23T21:49:40Z"
    }
   }
  }

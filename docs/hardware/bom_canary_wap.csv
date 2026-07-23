@@ -1,5 +1,5 @@
 Item,RefDes,Qty,Required,Category,Description,Manufacturer,MPN,Mouser,DigiKey,LCSC,UnitUSD,ExtUSD,Lifecycle,RoHS,Notes
-1,U1,1,Required,MCU Board,"XIAO ESP32-S3 Sense (ESP32-S3, 8MB flash, 8MB PSRAM, OV2640 camera, PDM mic)",Seeed Studio,102010469,713-102010469,102010469-ND,,14.90,14.90,Active,Yes,"Main controller; onboard LiPo charger (BAT pads); operating -40 to +65 C; verified Mouser/DigiKey SKU"
+1,U1,1,Required,MCU Board,"XIAO ESP32-S3 Sense (ESP32-S3, 8MB flash, 8MB PSRAM, OV2640 camera, PDM mic)",Seeed Studio,102010469,713-102010469,102010469-ND,,13.99,13.99,Active,Yes,"Main controller; onboard LiPo charger (BAT pads); operating -40 to +65 C; verified Mouser/DigiKey SKU. Seeed/DigiKey list $13.99 (mid-2026)"
 2,CBL1,1,Required,Cable,"USB-C cable, data-capable (not charge-only)",Generic,USB-C-DATA-1M,,,,3.50,3.50,Active,Yes,"Required for flashing and 5V power"
 3,SD1,1,Required,Storage,"microSD high-endurance 32GB+ FAT32 (24/7 continuous-write rated)",SanDisk,SDSQQNR-032G-GN6IA,,,,8.50,8.50,Active,Yes,"High Endurance line (or MAX Endurance SDSQQVR for heaviest duty); temperature-proof/waterproof; NOT a consumer card"
 4,BZ1,1,Optional,Buzzer,"Passive piezo transducer, 1-3 kHz usable, low current (1-3mA)",CUI Devices,CPT-9019S-SMT-TR,490-CPT-9019S-SMT-TR,102-CPT-9019S-SMT-TRCT-ND,,0.55,0.55,Active,Yes,"CHIRP_GPIO=GPIO2 (D1); LEDC PWM 2kHz/8-bit. For outdoor use a sealed IP67 piezo OR mount behind GORE vent (VENT1). Piezo preferred over magnetic (moisture/coil wear)"
@@ -33,7 +33,7 @@ Item,RefDes,Qty,Required,Category,Description,Manufacturer,MPN,Mouser,DigiKey,LC
 26,FIL1,1,Optional,Material,"TPU filament 90-95A (printed gasket), ~5g per gasket",Generic,TPU-95A,,,,0.20,0.20,Active,Yes,"Printed perimeter gasket for enclosure/ weather mode; 2 perimeters, 100% infill, slow"
 27,INS1,4,Optional,Mechanical,"M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",Generic,M2-HSI-3.5X4,,,,0.10,0.40,Active,Yes,"Service-grade lid threads: set screw_insert=true in the enclosure (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers"
 "# SUMMARY (subtotals are indicative; verify live pricing)",,,,,,,,,,,,,,,
-"# Required-only (U1+CBL1+SD1)",,,,,,,,,,,,26.90,,,"Bench bring-up"
+"# Required-only (U1+CBL1+SD1)",,,,,,,,,,,,25.99,,,"Bench bring-up"
 "# Indoor full build (req + LiPo + reed + indoor button + single LED + GPS)",,,,,,,,,,,,54.00,,,"Approx; single-choice optionals"
 "# Outdoor full build (PC IP66 + GORE vent + LiFePO4/Li-SOCl2 + sealed input + antenna)",,,,,,,,,,,,80.00,,,"Approx; excludes ALT duplicates"
 "# Printed-enclosure weather kit (SCR3+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1)",,,,,,,,,,,,11.55,,,"Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
