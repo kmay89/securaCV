@@ -823,3 +823,32 @@ button.flash-map-key:hover { color: var(--text); }
   .flash-bar-fill::after { animation: none; content: none; }
   .flash-voice h3::after { animation: none; opacity: 0.8; }
 }
+
+/* ── the coach: waiting is optional learning ─────────────────────────────── */
+.flash-coach {
+  margin: 12px 0 4px; padding: 12px 15px; border-radius: 12px;
+  background: rgba(255,212,79,0.05); border: 1px solid rgba(255,212,79,0.22);
+}
+.flash-coach-head { display: flex; align-items: center; justify-content: space-between; }
+.flash-coach-kicker {
+  font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: #d8bc6a; font-weight: 640;
+}
+.flash-coach-close {
+  border: none; background: none; color: var(--muted, #9aa39a);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 6px;
+}
+.flash-coach-close:hover { color: #f0dca0; }
+.flash-coach-title { margin: 7px 0 3px; font-weight: 640; font-size: 14.5px; color: #ffe8a3; }
+.flash-coach-body { margin: 0 0 8px; font-size: 13.5px; line-height: 1.55; color: #cfd8cf; }
+.flash-coach-controls { display: flex; justify-content: flex-end; }
+.flash-coach-swap .flash-coach-title,
+.flash-coach-swap .flash-coach-body { animation: coach-in 260ms ease-out both; }
+@keyframes coach-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash-coach-swap .flash-coach-title,
+  .flash-coach-swap .flash-coach-body { animation: none; }
+}

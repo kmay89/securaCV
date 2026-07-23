@@ -308,6 +308,87 @@ def die(msg: str) -> None:
     raise SystemExit(1)
 
 
+# ── waiting is learning: the coach's lesson deck ────────────────────────────
+# Shown (optionally, dismissibly) while the long operations run — a safety
+# copy takes a minute, a full erase takes a while, and that minute can leave
+# the user knowing more than they arrived with. `stage` tags are matched
+# against the words the live progress stages actually use ("saving a safety
+# copy…", "downloading", "erasing", "writing firmware"); "any" fills the
+# gaps. Every fact below is real and grounded in this repo — the coach
+# teaches, it never invents.
+LESSONS = [
+    {"id": "backup-undo", "stage": "safety copy",
+     "title": "This copy is your undo button",
+     "body": "Right now every byte on the chip — firmware, settings, identity key, "
+             "witness diary — is being read into one file in your downloads. Restore "
+             "it any time from Advanced and the board rewinds to this exact moment."},
+    {"id": "backup-harmless", "stage": "safety copy",
+     "title": "Reading can’t hurt anything",
+     "body": "A backup only reads. The witness chain, your settings, the firmware — "
+             "all untouched. That’s why the Nursery does it automatically: all upside."},
+    {"id": "dl-layers", "stage": "download",
+     "title": "One file, three layers",
+     "body": "A factory image is really three things fused together: a tiny second-stage "
+             "bootloader, a partition table (the chip’s floor plan), and the firmware "
+             "itself. The release pipeline merges them so a blank chip boots from zero."},
+    {"id": "dl-pinned", "stage": "download",
+     "title": "Pinned, never “latest”",
+     "body": "The flasher fetches from the exact release tag for this firmware train — "
+             "never from “latest”, which any newer release of anything could shadow. "
+             "Reproducible today, reproducible in five years."},
+    {"id": "verify-sha", "stage": "authentic",
+     "title": "The checksum handshake",
+     "body": "Your browser just computed the download’s SHA-256 and compared it against "
+             "the fingerprint published in the release — before writing a single byte. "
+             "After the write, the chip computes its own MD5 over what actually landed."},
+    {"id": "verify-sig", "stage": "authentic",
+     "title": "A signature that can’t be stripped",
+     "body": "Once a release key is in force, an official image without a valid Ed25519 "
+             "signature is refused outright — because a tampered manifest could always "
+             "strip a signature. Failing closed is the whole point."},
+    {"id": "erase-what", "stage": "erase",
+     "title": "What a full erase really is",
+     "body": "Every flash cell returns to its blank state (all ones). Settings, WiFi, "
+             "witness history — gone by design. On first boot the firmware mints a "
+             "fresh identity key and starts a brand-new diary."},
+    {"id": "write-nobrick", "stage": "writ",
+     "title": "Why you can’t brick it",
+     "body": "The chip’s first-stage bootloader lives in mask ROM — etched at the "
+             "factory, physically unwritable. Whatever happens to the flash, the ROM "
+             "can always drop back into download mode and take a fresh image."},
+    {"id": "write-nvs", "stage": "writ",
+     "title": "NVS — the chip’s settings drawer",
+     "body": "One small region holds key-value settings: WiFi, the detection dials, "
+             "the radar reflexes. It’s exactly where your choices from the confirm "
+             "card are being baked right now, in the same pass as the firmware."},
+    {"id": "write-ab", "stage": "writ",
+     "title": "Two slots, zero drama",
+     "body": "The floor plan keeps two firmware slots. Over-the-air updates write the "
+             "spare slot and only flip when it verifies — a failed update just boots "
+             "the old one. The update counter you saw at hello counts those flips."},
+    {"id": "write-witness", "stage": "writ",
+     "title": "The diary that survives",
+     "body": "The witness chain — this Canary’s tamper-evident hash diary — lives in "
+             "its own region. A normal install writes around it, so the board keeps "
+             "its memory across updates. Only a full erase starts it over."},
+    {"id": "any-chip-board", "stage": "any",
+     "title": "Chip vs. board",
+     "body": "The CHIP is the silicon (ESP32-S3, -C3, -C6); the BOARD is the little "
+             "PCB it sits on (a XIAO, a Waveshare). The chip guard reads the silicon "
+             "itself, so a board can never be handed another chip’s firmware."},
+    {"id": "any-baud", "stage": "any",
+     "title": "Why the speed varies",
+     "body": "Bytes move at the fastest rate your cable can carry — the Nursery starts "
+             "quick and steps down by itself if the link stumbles. Speed never costs "
+             "correctness: every byte is verified after, at any speed."},
+    {"id": "any-manifest", "stage": "any",
+     "title": "The board can prove itself",
+     "body": "After the install, press the monitor’s “self-manifest” key (j): the "
+             "running firmware answers with a signed statement of what it is — "
+             "version, identity, health score, even its temperature."},
+]
+
+
 # ── the epic layer: roles, dials, reflexes, displays, per-setting help ──────
 # Same honesty rule as everything above: every number below is PARSED out of
 # the firmware tree (config.h / detect_config.h / registry.json / the lab's
@@ -1058,6 +1139,8 @@ def main() -> None:
         # Every dial and toggle, explained once (flash-core.js helpTopic).
         "settings_help": settings_help_block(
             vision_detect, sense_reflexes["default"], sense_reflexes["wellbeing"]),
+        # The coach's lesson deck — waiting is optional learning (pickLesson).
+        "lessons": LESSONS,
         # The Vision's camera module — a different chip (Himax HX6538 behind a
         # CH343 bridge), a different engine (ROM bootloader + XMODEM, mirrored
         # from Seeed's open-source flasher), the same posture: pinned asset,

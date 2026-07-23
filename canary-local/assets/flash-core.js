@@ -1668,6 +1668,26 @@ export function parseWapLine(line) {
   };
 }
 
+// ── the coach: waiting is optional learning ────────────────────────────────
+// While a long operation runs, the progress card can teach — one bite-size
+// lesson at a time, stage-aware first (a backup teaches backups), generic
+// after, never repeating until the deck runs dry. The deck lives in the
+// generated catalog (catalog.lessons); this is just the pure picker.
+export function pickLesson(catalog, stageText, shownIds = []) {
+  const deck = (catalog && Array.isArray(catalog.lessons)) ? catalog.lessons : [];
+  if (!deck.length) return null;
+  const seen = new Set(shownIds);
+  const stage = String(stageText || "").toLowerCase();
+  // Stage-matched, unseen lessons first — "what's happening RIGHT NOW".
+  const staged = deck.find((l) => l.stage !== "any" && !seen.has(l.id) && stage.includes(l.stage));
+  if (staged) return staged;
+  // Then the generic pool, in authored order.
+  const generic = deck.find((l) => l.stage === "any" && !seen.has(l.id));
+  if (generic) return generic;
+  // Everything shown: any unseen at all (off-stage), else the deck is dry.
+  return deck.find((l) => !seen.has(l.id)) || null;
+}
+
 // ── the Nursery roster: don't get lost flashing a batch ────────────────────
 // Every successful install becomes a hatchling entry; the connect card can
 // then say "this one's already done" and the session shows its progression.
