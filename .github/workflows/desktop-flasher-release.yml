@@ -36,6 +36,12 @@ env:
   # esptool's Rust sibling. Pinned so a board is only ever written by a flash
   # engine we chose on purpose. Bump deliberately.
   ESPFLASH_VERSION: "3.3.0"
+  # raspberrypi/usbboot ref for the rpiboot sidecar + mass-storage gadget.
+  # Honest-before-pin (same posture as the hub image): empty tracks upstream's
+  # default branch until the Pi-over-USB-C path is validated on real hardware —
+  # that session MUST replace this with the exact tag it validated, and each
+  # build logs the resolved commit SHA so a working build is reproducible.
+  USBBOOT_REF: ""
 
 jobs:
   build:
@@ -178,6 +184,61 @@ jobs:
           fi
           chmod +x "$out"
           file "$out"
+
+      # ── the Pi USB-boot on-ramp (design doc §7 step 6) ─────────────────────
+      # Build Raspberry Pi's official rpiboot host tool and vendor its signed
+      # mass-storage-gadget payload from ONE pinned usbboot checkout. rpiboot
+      # turns a Pi connected over USB-C (power button held) into an ordinary
+      # USB disk, so the hub writer needs no card reader. macOS note: the
+      # runner is arm64 and brew has no cross libusb, so the sidecar is
+      # arm64-only lipo'd into the "universal" slot — Intel Macs keep every
+      # other flow and get a clear error from this one. The libusb dylib is
+      # bundled into Resources and the binary re-pointed at it, so the app
+      # never depends on a user's Homebrew.
+      - name: Bundle rpiboot sidecar + gadget (macOS)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install libusb pkg-config
+          git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
+            https://github.com/raspberrypi/usbboot usbboot-src
+          (cd usbboot-src && git rev-parse HEAD && make rpiboot)
+          bin=desktop/src-tauri/binaries
+          res=desktop/src-tauri/resources/mass-storage-gadget64
+          mkdir -p "$bin" "$res"
+          cp usbboot-src/rpiboot "$bin/rpiboot-aarch64-apple-darwin"
+          cp -R usbboot-src/mass-storage-gadget64/. "$res/"
+          # Make the sidecar self-contained: ship libusb in Resources and
+          # point the binary at it relative to the app bundle.
+          libusb=$(otool -L "$bin/rpiboot-aarch64-apple-darwin" | awk '/libusb/ {print $1}')
+          cp "$libusb" desktop/src-tauri/resources/libusb-1.0.0.dylib
+          # tauri.macos.conf.json maps the dylib to Resources/libusb-1.0.0.dylib;
+          # sidecars live in Contents/MacOS, one level below Contents/Resources.
+          install_name_tool -change "$libusb" \
+            "@executable_path/../Resources/libusb-1.0.0.dylib" \
+            "$bin/rpiboot-aarch64-apple-darwin"
+          lipo -create -output "$bin/rpiboot-universal-apple-darwin" "$bin/rpiboot-aarch64-apple-darwin"
+          cp "$bin/rpiboot-aarch64-apple-darwin" "$bin/rpiboot-x86_64-apple-darwin"
+          chmod +x "$bin"/rpiboot-*
+          file "$bin"/rpiboot-*
+
+      - name: Bundle rpiboot sidecar + gadget (Linux x86_64)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq libusb-1.0-0-dev
+          git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
+            https://github.com/raspberrypi/usbboot usbboot-src
+          (cd usbboot-src && git rev-parse HEAD && make rpiboot)
+          bin=desktop/src-tauri/binaries
+          res=desktop/src-tauri/resources/mass-storage-gadget64
+          mkdir -p "$bin" "$res"
+          cp usbboot-src/rpiboot "$bin/rpiboot-x86_64-unknown-linux-gnu"
+          cp -R usbboot-src/mass-storage-gadget64/. "$res/"
+          chmod +x "$bin/rpiboot-x86_64-unknown-linux-gnu"
+          file "$bin/rpiboot-x86_64-unknown-linux-gnu"
 
       # ── app icons ──────────────────────────────────────────────────────────
       - name: Generate app icons
