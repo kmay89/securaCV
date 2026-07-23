@@ -205,6 +205,14 @@
     #scene{max-height:none;}
     .prog-txt{margin-left:0;flex-basis:100%;}
   }
+
+  /* embedded in the Lab shell: the shell owns the branding — show just the room */
+  :root[data-embedded="1"] .brand{display:none;}
+  :root[data-embedded="1"] header.top{padding:8px 0 8px;justify-content:flex-end;}
+  :root[data-embedded="1"] .wrap{padding:0 10px;max-width:none;}
+  :root[data-embedded="1"] .foot-space{height:10px;}
+  :root[data-embedded="1"] #scene{max-height:calc(100vh - 132px);}
+  :root[data-embedded="1"] .prog-txt{display:none;}
 </style>
 
 <div class="wrap">
