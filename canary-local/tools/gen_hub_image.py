@@ -66,12 +66,20 @@ HAOS_RELEASE = "https://github.com/home-assistant/operating-system/releases/down
 # The 64-bit Raspberry Pi boards we support as hubs, richest-first. Pi 5 is the
 # recommended target because it can boot from NVMe/SSD — the durable default the
 # design steers toward (SD cards are the multi-year weak link).
+#
+# `covers` names every model the image boots, so the picker can answer "I have
+# a Pi 400 / a Compute Module — which one am I?" instead of leaving it to a
+# forum. `usb_device_boot` says whether the "use the Pi itself over USB-C"
+# on-ramp works for that family (ROM USB device-boot reachable without a
+# jumper on the flagship board; CMs use nRPIBOOT on their IO board).
 BOARDS = [
     {
         "id": "rpi5-64",
         "name": "Raspberry Pi 5 (64-bit)",
         "asset_stem": "haos_rpi5-64",
         "recommended": True,
+        "covers": ["Raspberry Pi 5", "Raspberry Pi 500", "Compute Module 5"],
+        "usb_device_boot": "hold the power button while connecting USB-C (CM5: nRPIBOOT on the IO board)",
         "durable_default": "boot from NVMe/SSD (Pi 5) for multi-year endurance",
     },
     {
@@ -79,7 +87,27 @@ BOARDS = [
         "name": "Raspberry Pi 4 (64-bit, 4 GB+)",
         "asset_stem": "haos_rpi4-64",
         "recommended": False,
+        "covers": ["Raspberry Pi 4 (4 GB+)", "Raspberry Pi 400", "Compute Module 4"],
+        "usb_device_boot": "connect USB-C with no card inserted (CM4: nRPIBOOT on the IO board; Pi 400: use a card reader)",
         "durable_default": "use a high-endurance A2 microSD; watch the SD wear sensor",
+    },
+]
+
+# Models we deliberately do NOT offer, with the reason on the record — an
+# honest "no" in the catalog beats a hub that thrashes. The full-stack payload
+# (Frigate/go2rtc + dashboards) is sized for 4 GB+ boards.
+EXCLUDED_BOARDS = [
+    {
+        "model": "Raspberry Pi 3 / 3B+",
+        "why": "1 GB RAM — below the full-stack hub's working set; HAOS runs, this payload doesn't",
+    },
+    {
+        "model": "Raspberry Pi 2 and earlier / Zero family",
+        "why": "no 64-bit or too little memory for Home Assistant itself",
+    },
+    {
+        "model": "Raspberry Pi 4 (1–2 GB)",
+        "why": "same image as the 4 GB+ Pi 4, but the payload needs the memory — not a supported hub",
     },
 ]
 
@@ -240,6 +268,8 @@ def main() -> None:
             "id": b["id"],
             "name": b["name"],
             "recommended": b["recommended"],
+            "covers": b["covers"],
+            "usb_device_boot": b["usb_device_boot"],
             "durable_default": b["durable_default"],
             "image_asset": f"{b['asset_stem']}-{version}.img.xz",
             "image_url": f"{HAOS_RELEASE}/{version}/{b['asset_stem']}-{version}.img.xz",
@@ -288,6 +318,7 @@ def main() -> None:
                 "published .sha256 and these stay empty."
             ),
             "boards": boards,
+            "excluded_boards": EXCLUDED_BOARDS,
         },
         "card_requirements": {
             "min_bytes": min_bytes,

@@ -143,6 +143,11 @@
         verify it <span id="hub-pin-state"></span>, write it to your card, read every byte
         back to prove the write, and seed your Wi-Fi so the Pi joins your network on
         its own. <span id="hub-card-req"></span></p>
+      <div id="hub-board-list" class="product-list" role="radiogroup" aria-label="Raspberry Pi model"></div>
+      <details class="hint">
+        <summary>Have a different Pi?</summary>
+        <div id="hub-excluded-list"></div>
+      </details>
       <details class="hint">
         <summary>What happens on first boot?</summary>
         <p>Home Assistant OS keeps itself updated and heals itself (A/B rollback if an
@@ -168,6 +173,7 @@
           <li><strong>Hold the Pi's power button</strong>, connect a USB-C <em>data</em> cable
             from this computer to the Pi's USB-C port, then release the button.</li>
         </ol>
+        <p id="hub-pi-usb-hint" class="muted"></p>
         <div class="row">
           <button id="hub-pi-usb-btn" class="btn btn-small">Wait for my Pi</button>
           <span id="hub-pi-usb-status" class="muted"></span>

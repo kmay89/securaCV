@@ -725,6 +725,8 @@ const hub = {
   active: false,
   targets: [],
   selected: null, // device path
+  boards: [], // catalog boards (Pi 5 / Pi 4, with the models each covers)
+  boardId: null,
   plan: null,
   pollTimer: null,
   busy: false,
@@ -806,16 +808,67 @@ function hubSetMode(showHub) {
 }
 
 async function hubLoadPlan() {
-  if (hub.plan) return;
   try {
-    hub.plan = await invoke("hub_plan", { boardId: null });
-    $("hub-os-label").textContent = hub.plan.os_label;
+    // The board list renders once from the embedded catalog; the plan
+    // re-resolves whenever the operator picks a different Pi.
+    if (!hub.boards.length) {
+      const catalog = await invoke("load_hub_catalog");
+      hub.boards = catalog.base_os.boards || [];
+      const recommended = hub.boards.find((b) => b.recommended);
+      hub.boardId = hub.boardId || (recommended ? recommended.id : null);
+      $("hub-board-list").innerHTML = hub.boards
+        .map(
+          (b) => `<label class="product${b.id === hub.boardId ? " selected" : ""}">
+            <input type="radio" name="hub-board" value="${esc(b.id)}" ${
+              b.id === hub.boardId ? "checked" : ""
+            }>
+            <div><div class="p-name">${esc(b.name)}${
+              b.recommended ? '<span class="chip-badge">recommended</span>' : ""
+            }</div>
+            <div class="p-tag">also fits: ${esc((b.covers || []).join(" · "))}</div>
+            <div class="p-meta">${esc(b.durable_default || "")}</div></div>
+          </label>`
+        )
+        .join("");
+      $("hub-board-list")
+        .querySelectorAll("input[name=hub-board]")
+        .forEach((r) =>
+          r.addEventListener("change", (ev) => {
+            hub.boardId = ev.target.value;
+            hub.plan = null;
+            hubLoadPlan();
+          })
+        );
+      const excluded = catalog.base_os.excluded_boards || [];
+      $("hub-excluded-list").innerHTML = excluded
+        .map(
+          (x) =>
+            `<div class="hidden-disk"><strong>${esc(x.model)}</strong> — ${esc(x.why)}</div>`
+        )
+        .join("");
+    }
+    if (hub.plan) return;
+    hub.plan = await invoke("hub_plan", { boardId: hub.boardId });
+    // Reflect the picked board in the list highlight + explainer line.
+    $("hub-board-list")
+      .querySelectorAll(".product")
+      .forEach((el) =>
+        el.classList.toggle("selected", el.querySelector("input").value === hub.boardId)
+      );
+    $("hub-os-label").textContent = hub.plan.os_label + " · " + hub.plan.board_name;
     $("hub-pin-state").textContent = hub.plan.pinned
       ? "against this release's pinned checksum"
       : "against Home Assistant's published checksum";
     const gb = Math.round(hub.plan.min_card_bytes / 1024 ** 3);
     $("hub-card-req").textContent =
       "You'll need a " + (gb + 4) + " GB or larger card — 64 GB recommended.";
+    // The USB-C on-ramp hint is per-family (CMs use the IO-board jumper;
+    // the Pi 400 needs a reader) — say the right thing for the picked board.
+    const board = hub.boards.find((b) => b.id === hub.boardId);
+    if (board && board.usb_device_boot) {
+      $("hub-pi-usb-hint").textContent = "For this board: " + board.usb_device_boot + ".";
+    }
+    hubArm();
   } catch (e) {
     setStatus("hub-result", "Couldn't load the hub catalog: " + e, "err");
   }
@@ -938,7 +991,7 @@ async function hubFlash() {
   setStatus("hub-result", "", "");
   try {
     const receipt = await invoke("hub_flash", {
-      boardId: hub.plan ? hub.plan.board_id : "rpi5-64",
+      boardId: hub.boardId || (hub.plan ? hub.plan.board_id : "rpi5-64"),
       diskPath: target.path,
       confirmed: true,
       wifi: hubWifiValue(),
