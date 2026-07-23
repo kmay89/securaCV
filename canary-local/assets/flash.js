@@ -550,6 +550,7 @@ async function onConnect() {
     // clean-install rescue flow the user asked for.
     if (state.resumeRescue) { state.resumeRescue = false; setPhase(phaseRescue()); return; }
     await readCurrentFirmware();     // best-effort; never throws out
+    await readPassport();            // the counters worth showing at hello
     ensureManifest();                // kick off (async) manifest load
     setPhase(phaseConnected());
   } catch (e) {
@@ -721,11 +722,24 @@ async function readFlashChunked(esploader, offset, size, onProgress) {
 // ── read what firmware is already on the board (best-effort) ────────────────
 async function readCurrentFirmware() {
   state.current = null;
+  state.pt = null;
   const { esploader } = state.session;
   try {
     const ptBytes = await readFlashChunked(esploader, 0x8000, 0xc00);
-    const { apps } = core.parsePartitionTable(ptBytes);
-    const app = core.pickAppPartition(apps);
+    const { entries, apps } = core.parsePartitionTable(ptBytes);
+    state.pt = { entries, apps };
+    // The verdict must judge the slot the bootloader actually runs, so read
+    // otadata (best-effort) before choosing which descriptor to trust.
+    let otadata = null;
+    try {
+      const otaPart = entries.find(core.isOtaDataPart);
+      const otaSlots = apps.filter((a) => a.subtype >= 0x10 && a.subtype < 0x20);
+      if (otaPart && otaSlots.length) {
+        const ob = await readFlashChunked(esploader, otaPart.offset, Math.min(otaPart.size, 0x2000));
+        otadata = core.parseOtaData(ob, otaSlots.length);
+      }
+    } catch {}
+    const app = core.pickBootedAppPartition(apps, otadata);
     if (!app) { state.current = { unknown: true }; return; }
     const desc = await readFlashChunked(esploader, app.offset + core.APP_DESC_OFFSET, 256);
     const d = core.parseAppDescriptor(desc);
@@ -736,10 +750,49 @@ async function readCurrentFirmware() {
       projectName: d.projectName,
       productName: product ? product.name : null,
       date: d.date,
+      built: d.date ? `${d.date} ${d.time || ""}`.trim() : null,
+      idf: d.idfVer || null,
     };
   } catch (e) {
     state.current = { unknown: true };
   }
+}
+
+// ── the rest of the board's passport (read-only, best-effort, seconds) ──────
+// The same probes the full health check runs, trimmed to the counters worth
+// showing the moment the board says hello: how many updates it has seen, its
+// lifetime boots, the witness-record count, the tamper flag, and whether it
+// has ever hard-crashed. Every read is optional — a brand-new board simply
+// has no story yet.
+async function readPassport() {
+  state.passport = null;
+  if (!state.pt || !state.session) return;
+  const { esploader } = state.session;
+  const { entries, apps } = state.pt;
+  const passport = {};
+  try {
+    const otaPart = entries.find(core.isOtaDataPart);
+    const otaSlots = apps.filter((a) => a.subtype >= 0x10 && a.subtype < 0x20);
+    if (otaPart) {
+      const ob = await readFlashChunked(esploader, otaPart.offset, Math.min(otaPart.size, 0x2000));
+      passport.otadata = core.parseOtaData(ob, otaSlots.length);
+    }
+  } catch {}
+  try {
+    const cd = entries.find(core.isCoredumpPart);
+    if (cd) {
+      const cb = await readFlashChunked(esploader, cd.offset, 16);
+      passport.coredump = core.parseCoredumpHeader(cb, cd.size);
+    }
+  } catch {}
+  try {
+    const nvs = entries.find(core.isNvsPart);
+    if (nvs) {
+      const nb = await readFlashChunked(esploader, nvs.offset, nvs.size);
+      passport.witness = core.witnessSummary(core.parseNvs(nb));
+    }
+  } catch {}
+  state.passport = passport;
 }
 
 // ── phase: connected — chip card + firmware picker ──────────────────────────
@@ -762,9 +815,12 @@ function phaseConnected() {
     cur.append(el("span", "flash-current-dot flash-dot-ok", "●"));
     const name = state.current.productName || state.current.projectName || "firmware";
     const ver = state.current.version ? ` ${state.current.version}` : "";
-    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver} right now.`));
+    const built = state.current.built ? ` (built ${state.current.built})` : "";
+    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver}${built} right now.`));
   }
   ht.append(cur);
+  const role = renderRoleLine();
+  if (role) ht.append(role);
   ht.append(modeBadge("download"));
   head.append(ht);
   hello.append(head);
@@ -774,6 +830,31 @@ function phaseConnected() {
   if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac)));
   if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes)));
   hello.append(facts);
+
+  // The passport strip: the board's story so far, read without changing a
+  // byte while we said hello — updates seen, lifetime boots, witness records,
+  // crash history. A brand-new board simply has no rows yet.
+  const story = core.passportRows(state.passport || {});
+  if (story.length) {
+    const strip = el("div", "flash-passport");
+    story.forEach((r) => {
+      const chip = el("span", `flash-passport-chip flash-passport-${r.tone || "ok"}`);
+      chip.append(el("strong", null, r.label + " "));
+      chip.append(document.createTextNode(r.value));
+      strip.append(chip);
+    });
+    hello.append(strip);
+  }
+  if (state.current && !state.current.unknown) {
+    const feel = el("p", "fineprint flash-feel");
+    feel.append(document.createTextNode(
+      "Those counters were read cold, without booting it. For the live story — " +
+      "its self-check score and how it’s feeling right now — "));
+    const ask = el("button", "ghost small", "🩺 ask the board itself");
+    ask.addEventListener("click", () => openMonitor({ proveIdentity: true }));
+    feel.append(ask);
+    hello.append(feel);
+  }
 
   const tools = el("div", "flash-row flash-tools");
   const health = el("button", "ghost", "🩺 Health check");
@@ -808,6 +889,74 @@ function fact(label, val) {
   f.append(el("span", "flash-fact-label", label));
   f.append(el("span", "flash-fact-val", val));
   return f;
+}
+
+// ── per-setting help: the ⓘ that teaches (catalog-driven) ───────────────────
+// One small button per setting; a tap opens a calm card: what it is, when to
+// touch it, what the default means. Copy comes from catalog.settings_help
+// (generated from the firmware's own values), looked up via core.helpTopic —
+// so a control without a topic simply has no dot, never a broken one.
+function helpDot(topicId) {
+  const t = core.helpTopic(state.catalog, topicId);
+  if (!t) return null;
+  const wrap = el("span", "flash-help");
+  const btn = el("button", "flash-help-dot", "?");
+  btn.type = "button";
+  btn.setAttribute("aria-label", `About: ${t.label}`);
+  btn.setAttribute("aria-expanded", "false");
+  const pop = el("span", "flash-help-pop flash-hidden");
+  pop.append(el("strong", "flash-help-title", t.label));
+  pop.append(el("span", "flash-help-what", t.what));
+  if (t.when) {
+    const w = el("span", "flash-help-when");
+    w.append(el("em", null, "When to touch it: "), document.createTextNode(t.when));
+    pop.append(w);
+  }
+  if (t.default) {
+    const d = el("span", "flash-help-default");
+    d.append(el("em", null, "Default: "), document.createTextNode(t.default));
+    pop.append(d);
+  }
+  btn.addEventListener("click", (ev) => {
+    // The dot often lives inside a <label>: stop the click from toggling the
+    // checkbox the label wraps.
+    ev.preventDefault();
+    ev.stopPropagation();
+    const hidden = pop.classList.toggle("flash-hidden");
+    btn.setAttribute("aria-expanded", String(!hidden));
+  });
+  wrap.append(btn, pop);
+  return wrap;
+}
+
+// ── role: what this board IS, read from what it RUNS ────────────────────────
+function renderRoleLine() {
+  const cur = state.current;
+  if (!cur || cur.unknown) return null;
+  // A display build read off the wire: name it and offer the live glass.
+  if (core.looksLikeDisplayProject(cur.projectName)) {
+    const d = core.displayFor(state.catalog, cur.projectName) || core.displaysIn(state.catalog)[0];
+    const p = el("p", "flash-role flash-role-display");
+    p.append(el("span", null,
+      `🖼 This board is a display — it SHOWS${d ? `. It looks like the ${d.name}.` : "."} `));
+    if (d) {
+      const b = el("button", "ghost small", "see its screen, live →");
+      b.addEventListener("click", () => setPhase(phaseDisplayBench(d, phaseConnected)));
+      p.append(b);
+    }
+    return p;
+  }
+  const prod = core.matchProjectToProduct(state.catalog, cur.projectName);
+  if (!prod) return null;
+  const role = prod.role || core.productRole(prod.id);
+  const verb = {
+    vision: "senses people through its camera — on-device, never raw video",
+    sense: "senses presence by 60 GHz radar — no camera, no mic",
+    wap: "senses presence in the WiFi field itself",
+    canary: "senses, witnesses, and bridges to Home Assistant",
+    display: "shows",
+  }[role];
+  return el("p", "flash-role", `🧭 A ${prod.name} — it ${verb}.`);
 }
 
 // ── the safety copy (runs automatically before every flash) ─────────────────
@@ -909,10 +1058,13 @@ function renderPicker() {
   const adv = el("details", "flash-advanced");
   adv.append(el("summary", null, "Advanced options — you can skip all of this"));
   const local = el("div", "flash-local");
-  local.append(el("p", "muted",
+  const localP = el("p", "muted",
     "Install a firmware file from your computer (a .bin you built, or one for " +
     "an air-gapped setup). We can’t check a personal file’s signature, but " +
-    "the board still can’t be bricked, and we verify the write against the chip."));
+    "the board still can’t be bricked, and we verify the write against the chip.");
+  const localHelp = helpDot("local_file");
+  if (localHelp) localP.append(localHelp);
+  local.append(localP);
   const fileBtn = el("input");
   fileBtn.type = "file";
   fileBtn.accept = ".bin";
@@ -929,6 +1081,8 @@ function renderPicker() {
   eraseWrap.append(el("span", null,
     " Erase the entire chip first — an extra-clean start that also clears any " +
     "leftover data from a previous firmware. Use it if a board is misbehaving."));
+  const eraseHelp = helpDot("erase_all");
+  if (eraseHelp) eraseWrap.append(eraseHelp);
   adv.append(eraseWrap);
 
   if (state.flashBytes) {
@@ -941,6 +1095,8 @@ function renderPicker() {
       " Skip the automatic safety copy this time. Only worth it if you’re " +
       "reflashing a board you already backed up — the copy is what lets you " +
       "put everything back exactly as it was."));
+    const skipHelp = helpDot("skip_backup");
+    if (skipHelp) skipWrap.append(skipHelp);
     adv.append(skipWrap);
   }
 
@@ -956,9 +1112,12 @@ function renderPicker() {
   }
 
   const restoreFile = el("div", "flash-local");
-  restoreFile.append(el("p", "muted",
+  const restoreP = el("p", "muted",
     "Restore a backup file saved earlier (canary-…-backup.bin) — rewinds the " +
-    "board to that exact moment, works with backups from any version."));
+    "board to that exact moment, works with backups from any version.");
+  const restoreHelp = helpDot("restore_backup");
+  if (restoreHelp) restoreP.append(restoreHelp);
+  restoreFile.append(restoreP);
   const rf = el("input");
   rf.type = "file";
   rf.accept = ".bin";
@@ -967,7 +1126,91 @@ function renderPicker() {
   restoreFile.append(rf);
   adv.append(restoreFile);
   card.append(adv);
+
+  const displays = displaysTeaser();
+  if (displays) card.append(displays);
   return card;
+}
+
+// ── the displays: boards that SHOW, previewed by their own firmware ─────────
+// Display builds aren't on the release channel yet (they build from source),
+// so they aren't installable rows — but the flasher still knows them, names
+// them off the wire, and can boot the REAL firmware (the same WASM build
+// fleet.html runs) so the glass is seen before it exists. 1:1 — framebuffer
+// out, touch in, LVGL and all.
+
+function displaysTeaser() {
+  // Both display hosts are ESP32-S3 boards — on other silicon the teaser
+  // would only be a detour.
+  if (core.normalizeChip(state.chip) !== core.normalizeChip("ESP32-S3")) return null;
+  const displays = core.displaysIn(state.catalog);
+  if (!displays.length) return null;
+  const sec = el("details", "flash-displays");
+  const sum = el("summary", null, "Building a Canary with a screen? Meet the displays");
+  sec.append(sum);
+  const intro = el("p", "muted",
+    "Two of the family SHOW instead of sense. Their firmware isn’t on the " +
+    "signed release channel yet (it builds from source) — but the real " +
+    "firmware boots in your browser, 1:1, so you can try the glass before " +
+    "you build it.");
+  const hd = helpDot("display_emulator");
+  if (hd) intro.append(hd);
+  sec.append(intro);
+  displays.forEach((d) => {
+    const row = el("div", "flash-product");
+    const left = el("div", "flash-product-main");
+    left.append(el("div", "flash-product-name", d.name));
+    left.append(el("div", "flash-product-tag muted", `${d.tagline} · ${d.panel}`));
+    row.append(left);
+    const btn = el("button", "primary small", "boot its screen");
+    btn.addEventListener("click", () => setPhase(phaseDisplayBench(d, phaseConnected)));
+    row.append(btn);
+    sec.append(row);
+  });
+  return sec;
+}
+
+// Where the glass actually boots: fleet.html#<id> opens that display's sheet
+// and powers the WASM firmware there. It does NOT boot inside flash.html on
+// purpose — this page ships a deliberately strict CSP with no wasm-unsafe-eval
+// (pinned by tests/flash.test.js), and weakening the flasher's policy for a
+// preview would be the wrong trade. One tab away, same 1:1 truth.
+function displayBenchUrl(d) {
+  return `fleet.html#${encodeURIComponent(d.id)}`;
+}
+
+function phaseDisplayBench(d, back) {
+  const box = el("section", "flash-card flash-displaybench");
+  box.append(el("h2", null, `${d.name} — a board that SHOWS`));
+  const sub = el("p", "muted",
+    `${d.tagline} Its firmware (v${d.emulator.fw_version}, LVGL ${d.emulator.lvgl}) ` +
+    `is compiled to run in the browser too — real C++, real LVGL, the exact pixels ` +
+    `the ${d.panel} will show, with touch. That’s the honest preview: not a mockup, ` +
+    `the firmware itself.`);
+  const hd = helpDot("display_emulator");
+  if (hd) sub.append(hd);
+  box.append(sub);
+
+  const facts = el("div", "flash-facts");
+  facts.append(fact("Board", d.board));
+  facts.append(fact("Panel", d.panel));
+  if (d.shows && d.shows.length) facts.append(fact("It shows", d.shows.join(" · ")));
+  box.append(facts);
+
+  box.append(el("p", "fineprint", d.build_note +
+    " (The glass boots on the fleet page — this flasher page runs under a " +
+    "stricter security policy that deliberately can’t execute the emulator.)"));
+
+  const row = el("div", "flash-row");
+  const go = el("a", "primary flash-go", "boot its screen — live, 1:1 →");
+  go.href = displayBenchUrl(d);
+  go.target = "_blank";
+  go.rel = "noopener";
+  const done = el("button", "ghost", "← back");
+  done.addEventListener("click", () => setPhase(back()));
+  row.append(go, done);
+  box.append(row);
+  return box;
 }
 
 function productRow(p) {
@@ -1051,7 +1294,16 @@ function refreshManifestState() {
     const verEl = row.querySelector('[data-for="' + id + '"].flash-product-ver, .flash-product-ver');
     const btn = row.querySelector(".flash-pick");
     if (entry && !entry.error) {
-      if (verEl) verEl.textContent = `v${entry.version} · ${core.formatBytes(entry.size)}`;
+      if (verEl) {
+        verEl.textContent = `v${entry.version} · ${core.formatBytes(entry.size)}`;
+        // The verdict chip: what would installing THIS mean for THIS board —
+        // an update, a downgrade, a reinstall, a role switch. Said up front,
+        // not discovered after.
+        const v = installVerdictFor(product, entry.version);
+        if (v && v.kind !== "fresh" && v.kind !== "unknown") {
+          verEl.append(" ", el("span", `flash-verdict flash-verdict-${v.kind}`, `${v.icon} ${v.label}`));
+        }
+      }
       if (btn) btn.disabled = false;
     } else {
       if (verEl) verEl.textContent = "not in this release";
@@ -1061,6 +1313,14 @@ function refreshManifestState() {
 }
 
 // ── pick → confirm → flash ──────────────────────────────────────────────────
+// The verdict for installing `product` at `version` on the board in hand.
+function installVerdictFor(product, version) {
+  const currentProduct = state.current && !state.current.unknown
+    ? core.matchProjectToProduct(state.catalog, state.current.projectName)
+    : null;
+  return core.installVerdict({ current: state.current, currentProduct, product, version });
+}
+
 function onPick(product) {
   const entry = core.manifestEntry(state.manifest, product, state.chip);
   if (!entry || entry.error) {
@@ -1104,6 +1364,15 @@ function phaseConfirm(product, entry) {
         : "SHA-256 before · chip MD5 after"));
   box.append(sum);
 
+  // The verdict, in plain words: what this install IS for this board.
+  const verdict = installVerdictFor(product, entry.version);
+  if (verdict) {
+    const vline = el("p", `flash-verdict-line flash-verdict-${verdict.kind}`);
+    vline.append(el("strong", null, `${verdict.icon} ${verdict.label}. `));
+    vline.append(document.createTextNode(verdict.detail));
+    box.append(vline);
+  }
+
   const willBackup = state.flashBytes && !skipBackup && !haveBackupForThisBoard();
   const isSensor = product && product.provisioning === "usb-secrets";
   const settingsLine = isSensor
@@ -1130,6 +1399,16 @@ function phaseConfirm(product, entry) {
     wifiUI = renderWifiFields(box);
   }
 
+  // Flash-time dials (Vision): pick the room, or fine-tune — the same four
+  // numbers Home Assistant tunes live later, baked in before first boot.
+  let dialsUI = null;
+  const dials = core.detectDials(state.catalog, product);
+  if (dials) dialsUI = renderDetectDials(box, dials);
+
+  // The radar builds carry their reflexes in the firmware itself — show them
+  // honestly (with the ⓘs), don't pretend they're writable from here.
+  if (product && product.reflexes) renderReflexes(box, product);
+
   const row = el("div", "flash-row");
   const go = el("button", "primary flash-go", `Install it${eraseOn ? " (with full erase)" : ""}`);
   go.addEventListener("click", () => {
@@ -1140,7 +1419,10 @@ function phaseConfirm(product, entry) {
       wifi = r.wifi;
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
-    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi });
+    const dialSel = dialsUI ? dialsUI.selection() : null;
+    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi,
+      detect: dialSel ? dialSel.values : null,
+      detectPreset: dialSel ? dialSel.presetTitle : null });
   });
   const cancel = el("button", "ghost", "not yet");
   cancel.addEventListener("click", () => setPhase(phaseConnected()));
@@ -1149,10 +1431,136 @@ function phaseConfirm(product, entry) {
   return box;
 }
 
+// ── flash-time dials (Vision): room presets + fine-tune ─────────────────────
+// The four runtime detection numbers (confidence floor, lost timeout, dwell
+// threshold, target class) are NVS-backed in the firmware and tunable from
+// Home Assistant later — so baking a room preset here is genuinely the same
+// write, just earlier. Presets and bounds come from the catalog (which parsed
+// them out of the firmware); "as it ships" writes nothing at all.
+function renderDetectDials(box, dials) {
+  const sec = el("div", "flash-dials");
+  sec.append(el("h3", null, "Dial it in for its room (optional)"));
+  sec.append(el("p", "fineprint", dials.note));
+
+  const chosen = { preset: "ships", values: { ...dials.defaults } };
+  const fmtS = (ms) => (ms / 1000) % 1 ? (ms / 1000).toFixed(2) + "s" : (ms / 1000) + "s";
+
+  const grid = el("div", "flash-preset-grid");
+  const cards = [];
+  dials.presets.forEach((pr) => {
+    const b = el("button", "flash-preset");
+    b.type = "button";
+    b.append(el("span", "flash-preset-icon", pr.icon));
+    b.append(el("span", "flash-preset-title", pr.title));
+    b.append(el("span", "flash-preset-blurb", pr.blurb));
+    b.append(el("span", "flash-preset-vals",
+      `confidence ${pr.values.score} · lost ${fmtS(pr.values.lost_ms)} · dwell ${fmtS(pr.values.dwell_ms)}`));
+    b.addEventListener("click", () => {
+      chosen.preset = pr.id;
+      chosen.values = { ...dials.defaults, ...pr.values };
+      sync();
+    });
+    grid.append(b);
+    cards.push([b, pr]);
+  });
+  sec.append(grid);
+
+  // Fine-tune: the same three numbers as sliders, each with its ⓘ.
+  const adv = el("details", "flash-dials-adv");
+  adv.append(el("summary", null, "fine-tune the dials"));
+  const sliders = {};
+  const mkSlider = (key, topic, unitFmt, step) => {
+    const [lo, hi] = dials.bounds[key];
+    const row = el("div", "flash-dial-row");
+    const lab = el("span", "flash-dial-label");
+    const t = core.helpTopic(state.catalog, topic);
+    lab.append(document.createTextNode((t && t.label) || key));
+    const hd = helpDot(topic);
+    if (hd) lab.append(hd);
+    const val = el("span", "flash-dial-val");
+    const input = el("input");
+    input.type = "range";
+    input.min = String(lo); input.max = String(hi); input.step = String(step);
+    input.addEventListener("input", () => {
+      chosen.values[key] = Number(input.value);
+      chosen.preset = "custom";
+      sync({ skipSlider: key });
+    });
+    row.append(lab, input, val);
+    adv.append(row);
+    sliders[key] = { input, val, unitFmt };
+  };
+  mkSlider("score", "det_score", (v) => `${v} / 100`, 1);
+  mkSlider("lost_ms", "det_lost", fmtS, 250);
+  mkSlider("dwell_ms", "det_dwell", fmtS, 1000);
+  sec.append(adv);
+
+  function sync(opts = {}) {
+    for (const [b, pr] of cards) {
+      const on = chosen.preset === pr.id;
+      b.classList.toggle("flash-preset-on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    for (const [key, s] of Object.entries(sliders)) {
+      if (opts.skipSlider !== key) s.input.value = String(chosen.values[key]);
+      s.val.textContent = s.unitFmt(chosen.values[key]);
+    }
+  }
+  sync();
+
+  box.append(sec);
+  return {
+    selection() {
+      // Exactly the shipped defaults → write nothing; the firmware IS that.
+      const same = Object.entries(dials.defaults).every(([k, v]) => chosen.values[k] === v);
+      if (same) return null;
+      const pr = dials.presets.find((p) => p.id === chosen.preset);
+      return {
+        values: { ...chosen.values },
+        presetTitle: pr && pr.id !== "ships" ? pr.title : null,
+      };
+    },
+  };
+}
+
+// ── the radar build's reflexes (Sense): shown, explained, never faked ───────
+function renderReflexes(box, product) {
+  const r = product.reflexes;
+  const sec = el("details", "flash-reflexes");
+  const sum = el("summary", null, "This build’s reflexes — how it judges presence");
+  sec.append(sum);
+  const body = el("div", "flash-reflexes-body");
+  const note = el("p", "fineprint", r.note);
+  const fh = helpDot("sense_flavor");
+  if (fh) note.append(fh);
+  body.append(note);
+  r.knobs.forEach((k) => {
+    const t = core.helpTopic(state.catalog, k.id);
+    const row = el("div", "flash-knob");
+    const lab = el("span", "flash-knob-label", (t && t.label) || k.id);
+    const hd = helpDot(k.id);
+    if (hd) lab.append(hd);
+    row.append(lab);
+    row.append(el("span", "flash-knob-val", `${k.value} ${k.unit}`));
+    body.append(row);
+  });
+  const lb = el("p", "fineprint");
+  lb.append(document.createTextNode("Want to feel these live before committing? "));
+  const a = el("a", null, "Open the Sense Lab →");
+  a.href = r.lab;
+  lb.append(a);
+  body.append(lb);
+  sec.append(body);
+  box.append(sec);
+}
+
 // ── optional WiFi fields (confirm card) ─────────────────────────────────────
 function renderWifiFields(box) {
   const sec = el("div", "flash-wifi");
-  sec.append(el("h3", null, "WiFi (optional)"));
+  const wh = el("h3", null, "WiFi (optional)");
+  const whd = helpDot("wifi_bake");
+  if (whd) wh.append(whd);
+  sec.append(wh);
 
   const ssid = el("input"), pass = el("input");
   ssid.type = "text"; ssid.placeholder = "network name (SSID)"; ssid.autocomplete = "off";
@@ -1373,24 +1781,29 @@ async function startFlash(opts) {
       } catch { diff = null; }
     }
 
-    // 2.7) WiFi pre-provisioning: build a minimal valid NVS image carrying
-    // the typed credentials and write it into the image's own settings
-    // region, in the same pass as the firmware. If we can't locate that
-    // region, the install continues and the setup network takes over —
-    // never block a flash on a convenience.
-    let wifiFile = null, wifiSsid = null;
-    if (opts.wifi && !opts.isBackup) {
+    // 2.7) Settings pre-provisioning: one minimal valid NVS image can carry
+    // the typed WiFi credentials and/or the chosen detection dials (the same
+    // det_* keys Home Assistant tunes later), written into the image's own
+    // settings region in the same pass as the firmware. If we can't locate
+    // that region, the install continues — never block a flash on a
+    // convenience.
+    let wifiFile = null, wifiSsid = null, seededDials = null;
+    if ((opts.wifi || opts.detect) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
           bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
         const nvs = entries.find(core.isNvsPart);
         if (!nvs) throw new Error("no settings region in this image");
-        const nvsImg = core.buildNvsWifiImage(opts.wifi.ssid, opts.wifi.pass, nvs.size);
+        const dials = opts.detect ? core.detectDials(state.catalog, opts.product) : null;
+        const ints = opts.detect ? core.detectValuesToNvs(opts.detect, dials) : { u8: {}, u32: {} };
+        const nvsImg = core.buildNvsSeedImage(
+          { wifi: opts.wifi || null, u8: ints.u8, u32: ints.u32 }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
-        wifiSsid = opts.wifi.ssid;
+        wifiSsid = opts.wifi ? opts.wifi.ssid : null;
+        seededDials = opts.detect || null;
       } catch (e) {
-        box.stage("Couldn’t bake the WiFi (" + String(e.message || e) +
-          ") — continuing; use the setup network instead");
+        box.stage("Couldn’t bake the settings (" + String(e.message || e) +
+          ") — continuing; everything is still tunable after boot");
         await sleep(1200);
       }
     }
@@ -1401,7 +1814,7 @@ async function startFlash(opts) {
       nextStep("erasing the whole chip");
       await esploader.eraseFlash();
     }
-    nextStep(wifiFile ? "writing firmware + your WiFi settings" : "writing firmware");
+    nextStep(wifiFile ? "writing firmware + your settings" : "writing firmware");
     const liveMap = diff ? box.attachMap(diff.rows, bytes.length, state.flashBytes || bytes.length) : null;
     const data = core.bytesToBinaryString(bytes);
     const eta = core.makeEtaTracker(bytes.length);
@@ -1436,7 +1849,8 @@ async function startFlash(opts) {
       visionSession.markDone("esp32");
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
-      shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length, wifiSsid, wifi: null }));
+      shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
+      wifiSsid, seededDials, wifi: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -1516,6 +1930,17 @@ function phaseDone(opts) {
       ` Your WiFi is baked in — the Canary should join “${opts.wifiSsid}” on its very first boot. ` +
       `No setup network needed (it still appears if the join fails, as the fallback).`));
     box.append(w);
+  }
+  if (opts.seededDials) {
+    const d = opts.seededDials;
+    const fmtS = (ms) => (ms / 1000) % 1 ? (ms / 1000).toFixed(2) + "s" : (ms / 1000) + "s";
+    const line = el("p", "muted");
+    line.append(el("span", "flash-check", "✓"));
+    line.append(document.createTextNode(
+      ` Dialed in${opts.detectPreset ? ` for ${opts.detectPreset}` : ""} — ` +
+      `confidence ${d.score}, lost ${fmtS(d.lost_ms)}, dwell ${fmtS(d.dwell_ms)} are ` +
+      `baked into its settings. Home Assistant can retune all of them live, any time.`));
+    box.append(line);
   }
   // The ONE obvious next step for THIS board — tailored to how it sets up and
   // what it senses, so "it's alive" leads somewhere instead of dead-ending.
@@ -2194,6 +2619,14 @@ function phaseMonitor(port, opts = {}) {
     const fp = core.formatFingerprint(m.pubkey_fp || m.pubkey);
     if (fp) facts.append(fact("key fingerprint", fp));
     if (typeof m.boots === "number") facts.append(fact("boots", String(m.boots)));
+    // Heat, straight from the chip's own sensor — firmwares that report
+    // temp_c in the manifest get a live reading; older ones simply don't.
+    if (typeof m.temp_c === "number" && Number.isFinite(m.temp_c) &&
+        m.temp_c > -40 && m.temp_c < 150) {
+      const warm = m.temp_c >= 70;
+      facts.append(fact("temperature",
+        `${Math.round(m.temp_c)} °C${warm ? " — running hot; give it air" : ""}`));
+    }
     idCard.append(facts);
     if (m.tamper) {
       idCard.append(el("p", "flash-note flash-note-soft",

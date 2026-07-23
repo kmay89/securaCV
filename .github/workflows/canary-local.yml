@@ -120,6 +120,7 @@ jobs:
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
           node --test canary-local/tests/flash.test.js
+          node --test canary-local/tests/flash_epic.test.js
           node --test canary-local/tests/playground.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |

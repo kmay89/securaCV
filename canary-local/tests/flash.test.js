@@ -130,6 +130,23 @@ test("parsePartitionTable finds app partitions and stops at padding", async () =
   assert.strictEqual(chosen.offset, 0x20000);
 });
 
+test("pickBootedAppPartition follows otadata's active slot", async () => {
+  const { pickBootedAppPartition } = await core();
+  const factory = { type: 0, subtype: 0x00, label: "factory" };
+  const ota0 = { type: 0, subtype: 0x10, label: "ota_0" };
+  const ota1 = { type: 0, subtype: 0x11, label: "ota_1" };
+  const apps = [factory, ota0, ota1];
+  // No otadata read → the old preference order.
+  assert.strictEqual(pickBootedAppPartition(apps, null).label, "ota_0");
+  // Fresh otadata → the bootloader runs factory.
+  assert.strictEqual(pickBootedAppPartition(apps, { fresh: true, activeOta: 0 }).label, "factory");
+  // A board that OTA'd into ota_1 is judged by ota_1, not stale ota_0.
+  assert.strictEqual(pickBootedAppPartition(apps, { fresh: false, activeOta: 1 }).label, "ota_1");
+  // Missing slot degrades to the preference order rather than failing.
+  assert.strictEqual(pickBootedAppPartition([factory, ota0], { fresh: false, activeOta: 1 }).label, "ota_0");
+  assert.strictEqual(pickBootedAppPartition([], null), null);
+});
+
 test("pickAppPartition falls back factory → first app", async () => {
   const { pickAppPartition } = await core();
   assert.strictEqual(pickAppPartition([]), null);

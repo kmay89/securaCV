@@ -541,3 +541,98 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-selfcheck-warn { background: rgba(255,212,79,0.1); border: 1px solid rgba(255,212,79,0.35); color: #f0dca0; }
 .flash-selfcheck-attn { background: rgba(244,67,54,0.1); border: 1px solid rgba(244,67,54,0.4); color: #f3b0ab; }
 .flash-selfcheck-pending { background: rgba(255,255,255,0.04); border: 1px solid var(--edge); color: var(--muted); }
+
+/* ── the epic layer: passport, verdicts, help ⓘ, dials, reflexes, glass ──── */
+
+/* board passport chips (pre-flash story, read-only) */
+.flash-passport { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 2px; }
+.flash-passport-chip {
+  padding: 5px 12px; border-radius: 999px; font-size: 13px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--edge, #262626);
+  color: var(--muted, #9aa39a);
+}
+.flash-passport-chip strong { color: inherit; font-weight: 640; }
+.flash-passport-warn {
+  background: rgba(255,212,79,0.1); border-color: rgba(255,212,79,0.35); color: #f0dca0;
+}
+.flash-feel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flash-role { margin: 6px 0 0; font-size: 14px; color: #cfd8cf; }
+.flash-role button { margin-left: 6px; }
+
+/* install verdict: the chip in the picker row + the line on the confirm card */
+.flash-verdict {
+  display: inline-block; margin-left: 6px; padding: 2px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 640; vertical-align: 1px;
+}
+.flash-verdict-update { background: rgba(67,160,71,0.12); border: 1px solid rgba(67,160,71,0.4); color: #bfe3c1; }
+.flash-verdict-same { background: rgba(255,255,255,0.05); border: 1px solid var(--edge, #262626); color: var(--muted); }
+.flash-verdict-downgrade { background: rgba(255,212,79,0.1); border: 1px solid rgba(255,212,79,0.35); color: #f0dca0; }
+.flash-verdict-switch { background: rgba(3,169,244,0.08); border: 1px solid rgba(3,169,244,0.35); color: #bfe6fb; }
+.flash-verdict-line { border-radius: 10px; padding: 9px 13px; margin: 8px 0; font-size: 14px; }
+.flash-verdict-line.flash-verdict-update { background: rgba(67,160,71,0.08); border: 1px solid rgba(67,160,71,0.3); }
+.flash-verdict-line.flash-verdict-downgrade { background: rgba(255,212,79,0.07); border: 1px solid rgba(255,212,79,0.3); }
+.flash-verdict-line.flash-verdict-same { background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626); }
+.flash-verdict-line.flash-verdict-switch { background: rgba(3,169,244,0.06); border: 1px solid rgba(3,169,244,0.3); }
+.flash-verdict-line.flash-verdict-fresh { background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626); }
+.flash-verdict-line.flash-verdict-unknown { background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626); }
+
+/* per-setting help: the ⓘ dot + its calm card */
+.flash-help { position: relative; display: inline-block; margin-left: 6px; }
+.flash-help-dot {
+  width: 18px; height: 18px; line-height: 16px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--edge, #3a3a3a); background: rgba(255,255,255,0.05);
+  color: var(--muted, #9aa39a); font-size: 11px; font-weight: 700; cursor: pointer;
+  vertical-align: 1px;
+}
+.flash-help-dot:hover, .flash-help-dot[aria-expanded="true"] { color: #ffd44f; border-color: rgba(255,212,79,0.5); }
+.flash-help-pop {
+  position: absolute; z-index: 30; left: 50%; transform: translateX(-50%);
+  top: 24px; width: min(310px, 78vw); padding: 11px 13px; border-radius: 12px;
+  background: #101113; border: 1px solid var(--edge, #303030);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  font-size: 13px; line-height: 1.45; text-align: left; white-space: normal;
+  display: flex; flex-direction: column; gap: 6px; font-weight: 400;
+}
+.flash-help-title { color: #ffd44f; font-size: 13px; }
+.flash-help-what { color: #cfd8cf; }
+.flash-help-when, .flash-help-default { color: var(--muted, #9aa39a); }
+.flash-help-when em, .flash-help-default em { color: #cfd8cf; font-style: normal; font-weight: 640; }
+
+/* Vision dials: preset cards + fine-tune sliders */
+.flash-dials { margin: 14px 0 4px; }
+.flash-dials h3 { margin-bottom: 4px; }
+.flash-preset-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px; margin: 8px 0;
+}
+.flash-preset {
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+  padding: 10px 12px; border-radius: 12px; cursor: pointer;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626);
+  color: inherit; font: inherit;
+}
+.flash-preset:hover { border-color: rgba(255,212,79,0.4); }
+.flash-preset-on { border-color: #ffd44f; background: rgba(255,212,79,0.07); }
+.flash-preset-icon { font-size: 18px; line-height: 1; }
+.flash-preset-title { font-weight: 640; font-size: 14px; }
+.flash-preset-blurb { font-size: 12px; color: var(--muted, #9aa39a); line-height: 1.4; }
+.flash-preset-vals { font-size: 11.5px; color: #cfd8cf; margin-top: 2px; }
+.flash-dials-adv { margin-top: 6px; }
+.flash-dial-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.flash-dial-label { min-width: 150px; font-size: 13.5px; display: inline-flex; align-items: center; }
+.flash-dial-row input[type="range"] { flex: 1; accent-color: #ffd44f; }
+.flash-dial-val { min-width: 64px; text-align: right; font-size: 13px; color: #cfd8cf; }
+
+/* Sense reflexes: shown honestly */
+.flash-reflexes { margin: 12px 0 4px; }
+.flash-reflexes-body { padding: 4px 0; }
+.flash-knob {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 0; border-bottom: 1px dashed rgba(255,255,255,0.07);
+}
+.flash-knob-label { font-size: 13.5px; display: inline-flex; align-items: center; }
+.flash-knob-val { font-size: 13px; color: #cfd8cf; font-variant-numeric: tabular-nums; }
+
+/* displays: the teaser + the hand-off card to the fleet page's live glass */
+.flash-displays { margin-top: 14px; }
+.flash-displaybench .flash-go { text-decoration: none; text-align: center; }
