@@ -80,6 +80,21 @@ BOARD_CHIP = {
     "waveshare_esp32s3_lcd43": "ESP32-S3",  # the Dash's 4.3B host (generic S3 FQBN)
 }
 
+# Flash silicon per board, in MB — the second half of board identification
+# (the chip guard is the first). The flasher reads the real flash size off
+# the connected board, so chip + size often names the module in the user's
+# hand without asking (XIAO-class S3 = 8 MB; the Waveshare panel module the
+# dash envs target overrides the generic devkit profile to its 16 MB part).
+# Same honesty rule as BOARD_CHIP: one place, verified nowhere else — if a
+# future product reuses a board id with different silicon, split the id.
+BOARD_FLASH_MB = {
+    "seeed_xiao_esp32s3": 8,
+    "seeed_xiao_esp32c3": 4,
+    "seeed_xiao_esp32c6": 4,
+    "esp32-c3-devkitm-1": 4,
+    "waveshare_esp32s3_lcd43": 16,  # dash profiles: FlashSize=16M / huge_app
+}
+
 # Per-chip human copy. Every Canary board is native-USB (the ESP32 chip's own
 # USB, no CH340/CP210x bridge) so the download-mode gesture is uniform; we
 # keep it per-chip anyway so a future bridge board can differ.
@@ -111,6 +126,8 @@ CHIP_INFO = {
 PRODUCTS = [
     {
         "id": "securacv-canary",
+        "family": "canary",
+        "board_label": "Seeed XIAO ESP32-S3",
         "name": "Canary",
         "tagline": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
         "asset_stem": "canary",
@@ -121,6 +138,8 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-wap",
+        "family": "wap",
+        "board_label": "Seeed XIAO ESP32-S3",
         "name": "Canary WAP",
         "tagline": "Feels presence through the WiFi field itself — no camera. Sets itself up from a phone.",
         "asset_stem": "canary-wap",
@@ -131,6 +150,9 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-vision",
+        "family": "vision",
+        "board_label": "ESP32-C3 DevKit",
+        "pick_label": "ESP32-C3 DevKitM-1",
         "name": "Canary Vision",
         "tagline": "Person detection on the camera module itself — only “someone is here” ever leaves the board.",
         "asset_stem": "canary-vision",
@@ -141,6 +163,9 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-vision-xiao-c3",
+        "family": "vision",
+        "board_label": "Seeed XIAO ESP32-C3",
+        "pick_label": "XIAO ESP32-C3",
         "name": "Canary Vision · XIAO C3",
         "tagline": "The Vision witness on a Seeed XIAO ESP32-C3.",
         "asset_stem": "canary-vision-xiao-c3",
@@ -151,6 +176,9 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-vision-xiao-s3",
+        "family": "vision",
+        "board_label": "Seeed XIAO ESP32-S3",
+        "pick_label": "XIAO ESP32-S3",
         "name": "Canary Vision · XIAO S3",
         "tagline": "The Vision witness on a Seeed XIAO ESP32-S3.",
         "asset_stem": "canary-vision-xiao-s3",
@@ -161,6 +189,9 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-sense",
+        "family": "sense",
+        "board_label": "Seeed XIAO ESP32-C6",
+        "pick_label": "presence only",
         "name": "Canary Sense",
         "tagline": "Radar-native presence on 60 GHz mmWave — no camera, no mic.",
         "asset_stem": "canary-sense",
@@ -171,6 +202,9 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-sense-wellbeing",
+        "family": "sense",
+        "board_label": "Seeed XIAO ESP32-C6",
+        "pick_label": "with wellbeing (breathing/heartbeat)",
         "name": "Canary Sense · Wellbeing",
         "tagline": "The mmWave witness with breathing/heartbeat sensing — a distinct privacy surface.",
         "asset_stem": "canary-sense-wellbeing",
@@ -181,6 +215,9 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-display-watch",
+        "family": "display",
+        "board_label": "XIAO ESP32-S3 + Seeed Round Display",
+        "pick_label": "Watch Station — the round puck",
         "name": "Canary Watch Station",
         "tagline": "The bedside glance — your whole fleet on one calm round glass.",
         "asset_stem": "canary-display-watch",
@@ -191,6 +228,9 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-display-dash",
+        "family": "display",
+        "board_label": "Waveshare 4.3 panel module",
+        "pick_label": "Dash — the plain 4.3 wall panel",
         "name": "Canary Dash",
         "tagline": "The wall glass — quiet 4.3″ 800×480 truth for the whole house.",
         "asset_stem": "canary-display-dash",
@@ -201,6 +241,9 @@ PRODUCTS = [
     },
     {
         "id": "securacv-canary-display-dash-modes",
+        "family": "display",
+        "board_label": "Waveshare 4.3B panel module",
+        "pick_label": "Dash · Modes — the 4.3B multi-tool",
         "name": "Canary Dash · Modes",
         "tagline": "The 4.3B multi-tool — the fleet face plus the bench, demo, debug and arcade gears.",
         "asset_stem": "canary-display-dash-modes",
@@ -208,6 +251,47 @@ PRODUCTS = [
         "env": "profile:modes",
         "board": "waveshare_esp32s3_lcd43",
         "provisioning": "on-glass",
+    },
+]
+
+# The family layer — how a ten-product line stays un-intimidating (the
+# Arduino-IDE lesson in reverse: no 400-item board menu, no FQBN options).
+# The picker shows FAMILIES (five, each a plain sentence); a family with
+# more than one product asks ONE plain-language question (`pick`) and each
+# product answers it with its `pick_label`. Detection does the rest — the
+# chip guard plus the read flash size usually name the exact board before
+# the user chooses anything. Validation below: every product belongs to
+# exactly one listed family; a multi-product family must carry its question.
+FAMILIES = [
+    {
+        "id": "canary",
+        "name": "Canary",
+        "pitch": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
+        "pick": None,
+    },
+    {
+        "id": "wap",
+        "name": "Canary WAP",
+        "pitch": "Feels presence through the WiFi field itself — no camera.",
+        "pick": None,
+    },
+    {
+        "id": "vision",
+        "name": "Canary Vision",
+        "pitch": "Person detection on the camera module itself — events, never video.",
+        "pick": "Which board is yours? (It's printed on the silkscreen.)",
+    },
+    {
+        "id": "sense",
+        "name": "Canary Sense",
+        "pitch": "Radar-native presence on 60 GHz mmWave — no camera, no mic.",
+        "pick": "Which sensing? Wellbeing adds breathing/heartbeat — a distinct privacy surface.",
+    },
+    {
+        "id": "display",
+        "name": "Canary Display",
+        "pitch": "The fleet's face — it shows, it never watches.",
+        "pick": "Which glass is in your hands?",
     },
 ]
 
@@ -1201,13 +1285,22 @@ def main() -> None:
         if fam not in flavors and not (REPO / p["project"]).exists():
             die(f"{p['id']}: neither flavors.json nor {p['project']} knows this variant")
         chips_used.add(chip)
+        flash_mb = BOARD_FLASH_MB.get(p["board"])
+        if not flash_mb:
+            die(f"no flash-size mapping for board '{p['board']}' — extend BOARD_FLASH_MB")
+        fam_ids = [f["id"] for f in FAMILIES]
+        if p.get("family") not in fam_ids:
+            die(f"{p['id']}: family '{p.get('family')}' is not in FAMILIES")
         role = product_role(p["id"])
         hatch = HATCH_MOMENTS[hatch_kind(p["id"], p["provisioning"])]
         entry = {
             "id": p["id"],
             "name": p["name"],
             "tagline": p["tagline"],
+            "family": p["family"],
+            "board_label": p["board_label"],
             "chip": chip,
+            "flash_mb": flash_mb,
             "board": p["board"],
             "asset_stem": p["asset_stem"],
             "provisioning": p["provisioning"],
@@ -1218,6 +1311,8 @@ def main() -> None:
             "role": role,
             "prove": prove_block(role, p["id"]),
         }
+        if p.get("pick_label"):
+            entry["pick_label"] = p["pick_label"]
         # The dials that genuinely apply to this product — Vision's four NVS
         # numbers are flash-bakeable; Sense's reflexes are compile-time and
         # say so. Nothing here is decorative.
@@ -1227,6 +1322,20 @@ def main() -> None:
             entry["reflexes"] = sense_reflexes[
                 "wellbeing" if "wellbeing" in p["id"] else "default"]
         products_out.append(entry)
+
+    # Family coverage: every family has products; a family with a variant
+    # choice carries its question and every member answers it (pick_label);
+    # single-product families must NOT carry stray pick labels.
+    for fam in FAMILIES:
+        members = [q for q in products_out if q["family"] == fam["id"]]
+        if not members:
+            die(f"family '{fam['id']}' has no products — drop it or add one")
+        if len(members) > 1:
+            if not fam.get("pick"):
+                die(f"family '{fam['id']}' has {len(members)} products but no pick question")
+            for q in members:
+                if not q.get("pick_label"):
+                    die(f"{q['id']}: family '{fam['id']}' asks a question but this product has no pick_label")
 
     doc = {
         "$generated_by": "canary-local/tools/gen_flash.py — do not edit by hand",
@@ -1245,6 +1354,11 @@ def main() -> None:
         "flash_baud": 921600,
         "console_baud": 115200,
         "chips": {c: CHIP_INFO[c] for c in sorted(chips_used)},
+        # The family layer (see FAMILIES): the picker's browse structure and
+        # the variant questions. Emitted only after the coverage validation
+        # below — a family with no products, or a multi-product family with
+        # no question, refuses to generate.
+        "families": FAMILIES,
         "products": products_out,
         # The boards that SHOW — known and named by the flasher, previewed by
         # the real firmware compiled to WASM, honest about not being in the

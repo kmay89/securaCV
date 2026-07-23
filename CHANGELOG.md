@@ -2,8 +2,34 @@
 
 ## [Unreleased]
 
-### flasher — the modes multi-tool joins the display release train
+### flasher — detection-led firmware selection (families + smartPick)
 
+- **The picker now scales to many boards and flavors without intimidating
+  anyone** — the Arduino-IDE lesson inverted: everything the flasher can
+  READ narrows the choice, and the human only answers what silicon can't.
+  New pure selection ladder `smartPick` (`flash-core.js`, 13 tests in
+  `tests/flash_select.test.js`): a `?product=` ask wins outright; else the
+  app descriptor already on the board ("This board already runs X —
+  installing keeps it, updated in place"); else the chip **plus the
+  measured flash size** — an ESP32-S3 with 16 MB flash can only be the
+  Waveshare panel module, with 8 MB it's the XIAO class — with the evidence
+  stated on the page; else the authored per-chip default. Where size
+  genuinely can't distinguish (both Vision C3 boards are 4 MB) the picker
+  claims nothing — honesty over cleverness.
+- **The family layer:** `flash.json` gains `families` (five stories:
+  Canary / WAP / Vision / Sense / Display) and per-product `family`,
+  `board_label`, `flash_mb` (derived from the firmware's board settings via
+  the new `BOARD_FLASH_MB` single-source table) and `pick_label`. The
+  "show all (developer)" browse renders grouped under family headers, each
+  multi-variant family asking one plain-language question ("Which glass is
+  in your hands?"). The generator refuses a family with no products, a
+  variant family with no question, or a product with no answer; adding a
+  board or flavor is one PRODUCTS entry + one family membership.
+- Docs: `browser_flasher.md` § How the picker chooses. All flasher suites
+  green (81 + 13).
+
+### flasher — the display family joins the release train (watch / dash / dash-modes)
+### flasher — the modes multi-tool joins the display release train
 - **`securacv-canary-display-dash-modes` is flashable** alongside the
   watch and dash cards that already ride the train: the 4.3B multi-tool
   that boots the fleet face and carries the bench / demo / debug / arcade

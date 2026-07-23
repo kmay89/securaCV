@@ -25,12 +25,47 @@
       "download_mode": "Hold the BOOT (B) button, tap RESET (R), then let go of BOOT."
     }
   },
+  "families": [
+    {
+      "id": "canary",
+      "name": "Canary",
+      "pitch": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
+      "pick": null
+    },
+    {
+      "id": "wap",
+      "name": "Canary WAP",
+      "pitch": "Feels presence through the WiFi field itself — no camera.",
+      "pick": null
+    },
+    {
+      "id": "vision",
+      "name": "Canary Vision",
+      "pitch": "Person detection on the camera module itself — events, never video.",
+      "pick": "Which board is yours? (It's printed on the silkscreen.)"
+    },
+    {
+      "id": "sense",
+      "name": "Canary Sense",
+      "pitch": "Radar-native presence on 60 GHz mmWave — no camera, no mic.",
+      "pick": "Which sensing? Wellbeing adds breathing/heartbeat — a distinct privacy surface."
+    },
+    {
+      "id": "display",
+      "name": "Canary Display",
+      "pitch": "The fleet's face — it shows, it never watches.",
+      "pick": "Which glass is in your hands?"
+    }
+  ],
   "products": [
     {
       "id": "securacv-canary",
       "name": "Canary",
       "tagline": "The all-rounder witness — full sensing plus the Home Assistant bridge.",
+      "family": "canary",
+      "board_label": "Seeed XIAO ESP32-S3",
       "chip": "ESP32-S3",
+      "flash_mb": 8,
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary",
       "provisioning": "ap",
@@ -65,7 +100,10 @@
       "id": "securacv-canary-wap",
       "name": "Canary WAP",
       "tagline": "Feels presence through the WiFi field itself — no camera. Sets itself up from a phone.",
+      "family": "wap",
+      "board_label": "Seeed XIAO ESP32-S3",
       "chip": "ESP32-S3",
+      "flash_mb": 8,
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-wap",
       "provisioning": "ap",
@@ -100,7 +138,10 @@
       "id": "securacv-canary-vision",
       "name": "Canary Vision",
       "tagline": "Person detection on the camera module itself — only “someone is here” ever leaves the board.",
+      "family": "vision",
+      "board_label": "ESP32-C3 DevKit",
       "chip": "ESP32-C3",
+      "flash_mb": 4,
       "board": "esp32-c3-devkitm-1",
       "asset_stem": "canary-vision",
       "provisioning": "usb-secrets",
@@ -130,6 +171,7 @@
           "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
         }
       },
+      "pick_label": "ESP32-C3 DevKitM-1",
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -240,7 +282,10 @@
       "id": "securacv-canary-vision-xiao-c3",
       "name": "Canary Vision · XIAO C3",
       "tagline": "The Vision witness on a Seeed XIAO ESP32-C3.",
+      "family": "vision",
+      "board_label": "Seeed XIAO ESP32-C3",
       "chip": "ESP32-C3",
+      "flash_mb": 4,
       "board": "seeed_xiao_esp32c3",
       "asset_stem": "canary-vision-xiao-c3",
       "provisioning": "usb-secrets",
@@ -270,6 +315,7 @@
           "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
         }
       },
+      "pick_label": "XIAO ESP32-C3",
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -380,7 +426,10 @@
       "id": "securacv-canary-vision-xiao-s3",
       "name": "Canary Vision · XIAO S3",
       "tagline": "The Vision witness on a Seeed XIAO ESP32-S3.",
+      "family": "vision",
+      "board_label": "Seeed XIAO ESP32-S3",
       "chip": "ESP32-S3",
+      "flash_mb": 8,
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-vision-xiao-s3",
       "provisioning": "usb-secrets",
@@ -410,6 +459,7 @@
           "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
         }
       },
+      "pick_label": "XIAO ESP32-S3",
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -520,7 +570,10 @@
       "id": "securacv-canary-sense",
       "name": "Canary Sense",
       "tagline": "Radar-native presence on 60 GHz mmWave — no camera, no mic.",
+      "family": "sense",
+      "board_label": "Seeed XIAO ESP32-C6",
       "chip": "ESP32-C6",
+      "flash_mb": 4,
       "board": "seeed_xiao_esp32c6",
       "asset_stem": "canary-sense",
       "provisioning": "usb-secrets",
@@ -550,6 +603,7 @@
           "how": "The Sense Lab: the real presence/vitals FSMs ported to the browser, with every reflex on a slider."
         }
       },
+      "pick_label": "presence only",
       "reflexes": {
         "applies": "runtime",
         "nvs": {
@@ -694,7 +748,10 @@
       "id": "securacv-canary-sense-wellbeing",
       "name": "Canary Sense · Wellbeing",
       "tagline": "The mmWave witness with breathing/heartbeat sensing — a distinct privacy surface.",
+      "family": "sense",
+      "board_label": "Seeed XIAO ESP32-C6",
       "chip": "ESP32-C6",
+      "flash_mb": 4,
       "board": "seeed_xiao_esp32c6",
       "asset_stem": "canary-sense-wellbeing",
       "provisioning": "usb-secrets",
@@ -724,6 +781,7 @@
           "how": "The Sense Lab: the real presence/vitals FSMs ported to the browser, with every reflex on a slider."
         }
       },
+      "pick_label": "with wellbeing (breathing/heartbeat)",
       "reflexes": {
         "applies": "runtime",
         "nvs": {
@@ -902,7 +960,10 @@
       "id": "securacv-canary-display-watch",
       "name": "Canary Watch Station",
       "tagline": "The bedside glance — your whole fleet on one calm round glass.",
+      "family": "display",
+      "board_label": "XIAO ESP32-S3 + Seeed Round Display",
       "chip": "ESP32-S3",
+      "flash_mb": 8,
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-display-watch",
       "provisioning": "on-glass",
@@ -931,13 +992,17 @@
           "label": "🧪 the 1:1 twin — the same firmware, in the browser",
           "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows."
         }
-      }
+      },
+      "pick_label": "Watch Station — the round puck"
     },
     {
       "id": "securacv-canary-display-dash",
       "name": "Canary Dash",
       "tagline": "The wall glass — quiet 4.3″ 800×480 truth for the whole house.",
+      "family": "display",
+      "board_label": "Waveshare 4.3 panel module",
       "chip": "ESP32-S3",
+      "flash_mb": 16,
       "board": "waveshare_esp32s3_lcd43",
       "asset_stem": "canary-display-dash",
       "provisioning": "on-glass",
@@ -966,13 +1031,17 @@
           "label": "🧪 the 1:1 twin — the same firmware, in the browser",
           "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows."
         }
-      }
+      },
+      "pick_label": "Dash — the plain 4.3 wall panel"
     },
     {
       "id": "securacv-canary-display-dash-modes",
       "name": "Canary Dash · Modes",
       "tagline": "The 4.3B multi-tool — the fleet face plus the bench, demo, debug and arcade gears.",
+      "family": "display",
+      "board_label": "Waveshare 4.3B panel module",
       "chip": "ESP32-S3",
+      "flash_mb": 16,
       "board": "waveshare_esp32s3_lcd43",
       "asset_stem": "canary-display-dash-modes",
       "provisioning": "on-glass",
@@ -1001,7 +1070,8 @@
           "label": "🧪 the 1:1 twin — the same firmware, in the browser",
           "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows."
         }
-      }
+      },
+      "pick_label": "Dash · Modes — the 4.3B multi-tool"
     }
   ],
   "displays": [

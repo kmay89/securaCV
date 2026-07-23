@@ -205,6 +205,43 @@ world-class installer guards its own supply chain.
   map's own text, and walks the flasher's module graph so a *new, unpinned*
   vendored import fails CI. The hashes can't silently rot or be skipped.
 
+## How the picker chooses (the Arduino lesson)
+
+Arduino IDE's board menu and PlatformIO's env matrix are the two honest
+ways to support many boards — and both intimidate, because they make the
+human answer questions the tooling could answer itself (four hundred board
+entries; `PSRAM=opi`). The flasher inverts that: **everything it can READ
+narrows the choice, and the human only answers what silicon can't.**
+
+The selection ladder (`smartPick` in `flash-core.js`, pure + tested in
+`tests/flash_select.test.js`), highest first — every rung states its
+evidence in plain words on the page:
+
+1. **What you asked for** — `?product=…` (arriving from /checkup or a doc
+   link) wins outright: "Showing X — the firmware you picked."
+2. **What the board already runs** — the app descriptor read off the wire
+   names the product: "This board already runs X — installing keeps it,
+   updated in place."
+3. **What the silicon says** — the chip guard plus the *measured flash
+   size* (catalog `flash_mb`, derived from the firmware's own board
+   settings). An ESP32-S3 with 16 MB flash can only be the Waveshare panel
+   module; with 8 MB it's the XIAO class: "Your board reads as an ESP32-S3
+   with 16 MB flash — that looks like a Waveshare 4.3 panel module."
+   Where size genuinely can't distinguish (both Vision C3 boards are
+   4 MB), the picker says nothing rather than guessing — honesty over
+   cleverness.
+4. **The authored default** — the catalog is flagship-first per chip, so
+   the fallback is still a sensible single card.
+
+One card leads; the full line hides behind "show all N for this chip
+(developer)" — and that browse is grouped by **family** (`families` in
+`flash.json`), five stories instead of a wall of SKUs, each multi-variant
+family asking one plain-language question ("Which glass is in your
+hands?") that its products answer with `pick_label`s. Adding a board or
+flavor is one `PRODUCTS` entry + one family membership in `gen_flash.py` —
+the generator refuses to emit a family with no products, a variant family
+with no question, or a product with no answer.
+
 ## The display family (watch / dash / dash-modes)
 
 Since the mode-system wave the flasher's product line includes the three

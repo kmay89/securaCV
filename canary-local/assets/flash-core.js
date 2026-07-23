@@ -1003,6 +1003,70 @@ export function recommendedProduct(catalog, detected) {
   return productsForChip(catalog, detected)[0] || null;
 }
 
+// ── detection-led selection (the Arduino-IDE lesson, minus the dropdown) ────
+// Arduino's board menu makes the human answer questions the tooling could
+// answer itself. Here, everything the flasher can READ narrows the choice:
+// the chip guard first, then the flash size it measured (XIAO-class S3 parts
+// are 8 MB; the Waveshare panel modules are 16 MB — catalog `flash_mb`, from
+// the firmware's own board settings), then whatever firmware is already on
+// the board. The human only ever answers what silicon can't.
+
+export function familiesIn(catalog) {
+  return (catalog && Array.isArray(catalog.families)) ? catalog.families : [];
+}
+
+// Chip + measured flash size → the products that could physically BE the
+// board in hand. Falls back to the plain chip set when the size is unknown
+// or matches nothing — an unexpected module must never empty the picker.
+export function productsForBoard(catalog, chip, flashBytes) {
+  const byChip = productsForChip(catalog, chip);
+  const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
+  if (!mb) return byChip;
+  const sized = byChip.filter((p) => p.flash_mb === mb);
+  return sized.length ? sized : byChip;
+}
+
+// The ONE card the picker leads with, plus the honest sentence for why.
+// Priority: what you asked for (?product=) → what the board already runs →
+// what the silicon says (chip + flash size) → the chip's authored default.
+// Every branch states its evidence in plain words — magic that explains
+// itself is trust; magic that doesn't is a guess.
+export function smartPick(catalog, opts = {}) {
+  const { chip, flashBytes, currentProject, preferredId } = opts;
+  const byChip = productsForChip(catalog, chip);
+  if (!byChip.length) return null;
+  const label = opts.chipLabel || chip || "this chip";
+
+  if (preferredId) {
+    const p = byChip.find((x) => x.id === preferredId);
+    if (p) {
+      return { product: p, kind: "picked",
+        why: `Showing ${p.name} — the firmware you picked.` };
+    }
+  }
+  if (currentProject) {
+    const cur = matchProjectToProduct(catalog, currentProject);
+    if (cur && byChip.some((x) => x.id === cur.id)) {
+      return { product: cur, kind: "current",
+        why: `This board already runs ${cur.name} — installing keeps it, ` +
+             `updated in place.` };
+    }
+  }
+  const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
+  if (mb) {
+    const sized = byChip.filter((p) => p.flash_mb === mb);
+    if (sized.length && sized.length < byChip.length) {
+      const p = sized[0];
+      return { product: p, kind: "board",
+        why: `Your board reads as an ${label} with ${mb} MB flash — that ` +
+             `looks like a ${p.board_label}. Recommended: ${p.name}.` };
+    }
+  }
+  const p = recommendedProduct(catalog, chip);
+  return p ? { product: p, kind: "chip",
+    why: `Recommended for your ${label}: ${p.name}.` } : null;
+}
+
 // ── catalog shape guard ─────────────────────────────────────────────────────
 // flash.js reads specific fields off devices/flash.json the moment it loads
 // (no_brick.points, recovery[], products[].chip for the chip guard). A valid-
