@@ -71,8 +71,8 @@ jobs:
         run: |
           # status --porcelain, not diff --quiet: the first ceremony CREATES
           # hub_image_pins.json, and an untracked file is invisible to diff.
-          FRESHNESS_PATHS="canary-local/devices/homeassistant.json canary-local/devices/hub_image.json canary-local/devices/hub_image_pins.json"
-          if [ -z "$(git status --porcelain -- $FRESHNESS_PATHS)" ]; then
+          FRESHNESS_PATHS=(canary-local/devices/homeassistant.json canary-local/devices/hub_image.json canary-local/devices/hub_image_pins.json)
+          if [ -z "$(git status --porcelain -- "${FRESHNESS_PATHS[@]}")" ]; then
             echo "upstream unchanged — nothing to do"
             exit 0
           fi
@@ -83,7 +83,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
-          git add $FRESHNESS_PATHS
+          git add "${FRESHNESS_PATHS[@]}"
           git commit -m "chore(canary-local): Hub upstream snapshot → HA OS ${HAOS} / Core ${HA} (hub image ${PIN})"
           git push -f origin "$BRANCH"
           if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
