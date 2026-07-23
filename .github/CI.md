@@ -12,7 +12,7 @@ introducing PR — the rules below can't rot by forgetting.
 |---|------|-----|
 | R1 | Every workflow declares `permissions` (top-level or per-job) | Least-privilege `GITHUB_TOKEN`, always explicit — a workflow that needs `write` says so where reviewers see it |
 | R2 | Every job sets `timeout-minutes` | A hung job otherwise burns the 360-minute default. Pick ~2–3× the healthy runtime — the timeout is a circuit breaker, not a race |
-| R3 | Push/PR workflows declare a `concurrency` group | PR groups cancel superseded runs (`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`); anything that **publishes** (releases, GHCR, Pages-adjacent) queues with `cancel-in-progress: false` — never kill a run mid-upload |
+| R3 | Push/PR workflows declare a `concurrency` group; tag/release-triggered workflows must not set a bare `cancel-in-progress: true` | PR groups cancel superseded runs (`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`); anything that **publishes** (releases, GHCR, Pages-adjacent) queues with `cancel-in-progress: false` or a condition excluding the publish path — never kill a run mid-upload |
 | R4 | Action refs are pinned to a tag or SHA — never `@main`/`@master`, never docker `:latest` | A mutable ref can change under a release run; third-party actions with secrets access get SHAs |
 | R5 | `pull_request` workflows are path-filtered | Unrelated PRs shouldn't pay for your workflow. Repo-wide checks that are unfiltered *on purpose* are listed in `ci-policy.yml → unfiltered_ok`, each with a reason |
 | R6 | `push` and `pull_request` path lists are identical | Copy-paste drift between the two silently makes main verify different things than PRs |
