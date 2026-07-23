@@ -2,7 +2,15 @@
 
 **The "AI voice" sibling of the Canary Dash panels — and the ONE display in
 the family that physically carries microphones** (a dual-MIC array behind an
-ES7210 ADC, with an ES8311 codec alongside). That makes it a **distinct
+ES7210 ADC, with an ES8311 codec alongside). Commonly sold as the
+**4.3C-BOX**: the board in a plastic case, mics listening through the
+grille slots on the case top — worth knowing when you place it, and when
+you point a smoke alarm's TEST horn at it. The vendor listing also names a
+**PCF85063 RTC** (see the pin map's RTC section — same address as the
+family's PCF8563, *different register map*, so the stock `FEATURE_RTC`
+layer must stay off until a PCF85063 variant lands) and the BOX edition
+exposes a **screw-terminal strip** whose functions are still to be read
+off the schematic (unverified — declared nothing in the pin map). That makes it a **distinct
 privacy surface**, handled the way Sense-Wellbeing is: its own board map,
 its own build env (`canary-display-dash-mic`), its own OTA product
 (`securacv-canary-display-dash-mic`) that never cross-installs with the
@@ -46,6 +54,8 @@ Same honesty rule as every board here. Two VERIFY clusters gate real use:
 2. Open **debug mode** (Settings → modes → debug) → the I²C census page.
    The ES8311 (0x18) and ES7210 (0x40) should ACK — that confirms the
    codec silicon and the shared-bus wiring before any audio pin is touched.
+   An ACK at **0x51** is the PCF85063 RTC saying hello (silicon confirmed;
+   driver support is a separate follow-up — see the pin map's RTC note).
 3. Read the I2S GPIOs (MCLK/SCLK/LRCK/SDIN) off the vendor wiki/schematic
    for your board revision and fill `AUDIO_PIN_I2S_*` in `pins/pins.h`.
 4. Rebuild + flash. Settings → **microphone** → listening. The amber

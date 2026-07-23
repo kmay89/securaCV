@@ -114,6 +114,6 @@
     "tier": "compile-tested",
     "tier_evidence": "",
     "used_by": ["canary-display"],
-    "notes": "The mic-bearing 'AI voice' dash sibling: same 800x480 panel family (ST7701 controller - VERIFY init) + GT911 + CH422G, plus an ES8311/ES7210 audio stack fronting a dual-MIC array. A DISTINCT privacy surface: own env (canary-display-dash-mic), own OTA product, mic off by default, alarm-pattern scalars only, hard mute = driver uninstalled, on-glass indicator while listening. Contract: docs/hardware/display_mic_variant.md."
+    "notes": "The mic-bearing 'AI voice' dash sibling (sold as 4.3C-BOX, cased, mic grille on top): same 800x480 panel family (ST7701 controller - VERIFY init) + GT911 + CH422G, plus an ES8311/ES7210 audio stack fronting a dual-MIC array, a PCF85063 RTC (register map differs from the family PCF8563 - driver follow-up), and a BOX-edition terminal strip with functions to VERIFY. A DISTINCT privacy surface: own env (canary-display-dash-mic), own OTA product, mic off by default, alarm-pattern scalars only, hard mute = driver uninstalled, on-glass indicator while listening. Contract: docs/hardware/display_mic_variant.md."
   }
 ]

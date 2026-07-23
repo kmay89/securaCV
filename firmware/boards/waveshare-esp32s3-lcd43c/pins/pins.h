@@ -149,6 +149,20 @@
 #define AUDIO_ES8311_ADDR       0x18  // codec (VERIFY via I2C census)
 #define AUDIO_ES7210_ADDR       0x40  // mic ADC (VERIFY via I2C census)
 
+// ============================================================================
+// RTC — PCF85063 (vendor-listed for the C; NOT the family's PCF8563)
+// ============================================================================
+//
+// The C carries a PCF85063 per Waveshare's product material. Same I2C
+// address as the family's PCF8563 (0x51) but a DIFFERENT register map
+// (time registers start at 0x04, control regs differ) — the existing
+// FEATURE_RTC layer (canary/io/rtc_pcf.h) targets the PCF8563 and would
+// misread this part. Do NOT enable FEATURE_RTC on this board until the
+// PCF85063 register variant lands; the I2C census confirming an ACK at
+// 0x51 is the bench signal that the silicon is really there.
+
+#define RTC_I2C_ADDR            0x51  // PCF85063 (VERIFY via I2C census)
+
 #define AUDIO_PIN_I2S_MCLK      -1    // VERIFY: fill from vendor schematic at bench
 #define AUDIO_PIN_I2S_SCLK      -1    // VERIFY: fill from vendor schematic at bench
 #define AUDIO_PIN_I2S_LRCK      -1    // VERIFY: fill from vendor schematic at bench
@@ -186,7 +200,16 @@
 #define HAS_BLE                 1     // passive Chirp scan fallback, same as siblings
 #define HAS_DISPLAY             1     // 800x480 RGB565 parallel (ST7701 — VERIFY init)
 #define HAS_TOUCH               1     // GT911 5-point
-#define HAS_RTC                 0
-#define HAS_BATTERY             0     // mains/USB-C powered
+#define HAS_RTC                 1     // PCF85063 (vendor-listed) — but see the
+                                      // RTC section: the family's FEATURE_RTC
+                                      // layer targets the PCF8563 register map
+                                      // and must NOT be enabled here until the
+                                      // PCF85063 variant lands. Silicon != driver.
+#define HAS_BATTERY             0     // demo UI shows a battery glyph; no charge
+                                      // silicon confirmed — VERIFY before claiming
 #define HAS_BACKLIGHT_PWM       0     // CH422G on/off only
-#define HAS_CAN_RS485           0     // no terminal block on the C
+#define HAS_CAN_RS485           0     // the BOX edition DOES expose a screw-
+                                      // terminal strip (visible on the case edge);
+                                      // its functions are unverified — read them
+                                      // off the vendor wiki/schematic at bench
+                                      // before declaring RS485/CAN/GPIO here

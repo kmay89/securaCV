@@ -1,8 +1,13 @@
 # The mic-bearing dash — Waveshare 4.3C, and the listening contract
 
-The Waveshare **ESP32-S3-Touch-LCD-4.3C** ("AI voice") is the one display
-in the family that physically carries microphones: a dual-MIC array behind
-an ES7210 ADC, with an ES8311 codec alongside. Until now the repo's answer
+The Waveshare **ESP32-S3-Touch-LCD-4.3C** ("AI voice", commonly sold as
+the cased **4.3C-BOX**) is the one display in the family that physically
+carries microphones: a dual-MIC array behind an ES7210 ADC, with an ES8311
+codec alongside — the mics listen through the grille slots on the case
+top. The vendor listing also names a **PCF85063 RTC**, a TF slot, an audio
+(speaker) output this firmware never initializes, and — on the BOX
+edition — a screw-terminal strip whose functions are still unverified
+(the board README tracks both follow-ups). Until now the repo's answer
 was "prefer the mic-free 4.3/4.3B" — the family promise is *it shows, it
 doesn't watch*, and a hidden mic array contradicts it. This document is the
 deliberate, bounded reversal for this one SKU: **what the mics are used
@@ -109,9 +114,10 @@ microphone" promise — this copy exists only where the silicon exists.
 
 The executable list lives in the board README
 ([`boards/waveshare-esp32s3-lcd43c`](../../firmware/boards/waveshare-esp32s3-lcd43c/README.md)):
-confirm the codec silicon via the I²C census (ES7210 @0x40, ES8311 @0x18),
-fill the I2S pins from the vendor schematic, arm, verify the chip lights
-the same instant, hold a smoke alarm's TEST button and watch
+confirm the codec silicon via the I²C census (ES7210 @0x40, ES8311 @0x18 —
+and 0x51 is the PCF85063 RTC saying hello), fill the I2S pins from the
+vendor schematic, arm, verify the chip lights the same instant, hold a
+smoke alarm's TEST button toward the case-top grille and watch
 `acoustic_smoke_alarm` land as an Alert, then disarm and verify the
 driver-uninstalled report. Panel note: the C's ST7701 controller may need
 an init sequence (VERIFY) — the mic layer runs headless either way, so the
