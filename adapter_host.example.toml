@@ -192,6 +192,26 @@ topic = "/sensors/garage/acoustic"   # matched against the request path
 kind = "acoustic_impulse_in_zone"
 zone = "garage"
 
+# Canary Vision Pro (Seeed reCamera Pro, on-device NPU camera). No new
+# firmware — configure its flow editor with a classifier -> HTTP request
+# node POSTing {"confidence": <score>} to the path below. See
+# docs/hardware/canary_vision_pro_recamera.md for the full setup and the
+# class -> kind mapping table. Only classifier labels are routed here, NEVER
+# a VLM/LLM free-text caption (the payload grammar has no field for one).
+[[adapter.route]]
+topic = "/sensors/loading_dock/recamera_pro"
+kind = "large_object_boundary_crossing"   # e.g. the "person"/"car" classes
+zone = "loading_dock"
+min_confidence = 0.6
+
+# Sound-classification flow from the same camera (glass break / alarm /
+# raised voice class -> a binary "state" payload):
+# [[adapter.route]]
+# topic = "/sensors/loading_dock/recamera_pro_audio"
+# kind = "acoustic_impulse_in_zone"
+# zone = "loading_dock"
+# require_truthy_state = true
+
 # ---------------------------------------------------------------------------
 # Adapter: BLE presence gateway (ESPresense / room-presence style)
 # Turns a popular DIY BLE presence mesh into a witness source. Subscribes to ESPresense's
