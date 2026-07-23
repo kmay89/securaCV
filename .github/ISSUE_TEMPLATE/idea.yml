@@ -1,0 +1,53 @@
+name: "💡 Idea or feature request"
+description: "Suggest something you'd love SecuraCV to do. No jargon needed — plain words are perfect."
+title: "Idea: "
+labels:
+  - "idea"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Thanks for sharing an idea!** This is exactly how SecuraCV grows.
+
+        You don't need to know anything technical — just tell us what you wish
+        it did, in your own words. Once you submit, your idea shows up on the
+        [Community Ideas board](https://securacv.com/ideas), where anyone can
+        back it with a 👍. The most-wanted ideas float to the top.
+  - type: input
+    id: summary
+    attributes:
+      label: In one sentence, what's the idea?
+      description: This becomes the headline everyone votes on. Keep it short and clear.
+      placeholder: "e.g., Let me get a text message when my Canary sees motion."
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: What would this help you with? What's annoying or missing today? No wrong answers.
+      placeholder: "Right now I have to check the app myself. I'd rather it just tell me."
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Roughly, what is this about?
+      description: A best guess is totally fine — pick "Not sure" if nothing fits.
+      options:
+        - "Not sure / something else"
+        - "The Canary device itself"
+        - "The app or website"
+        - "Setup & getting started"
+        - "Alerts & notifications"
+        - "Privacy & security"
+        - "Enclosures, printing & hardware"
+      default: 0
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        After you click **Submit**, share the link with friends so they can add
+        their 👍 too. Every vote helps us decide what to build next. 🐤
