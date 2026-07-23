@@ -504,3 +504,24 @@ test("flash.json: PARITY — every Canary proves itself two ways, real + emulate
       `${p.id}: twin should deep-link its own glass`);
   }
 });
+
+test("flash.json: ABOUT — legal & provenance parsed from the files of record", () => {
+  const a = catalog.about;
+  assert.ok(a, "catalog has an about block");
+  assert.ok(a.product.includes("Canary Nursery"), "product names the Nursery");
+  assert.ok(/^© \d{4} /.test(a.copyright), "copyright starts © <year>");
+  assert.strictEqual(a.license.name, "Apache-2.0");
+  assert.ok(existsSync(join(ROOT, "..", a.license.file)), "LICENSE file exists at repo root");
+  assert.ok(a.source.startsWith("https://github.com/"), "source links the repository");
+  assert.ok(a.privacy.length > 40, "privacy line says something real");
+  // every vendored module the flasher loads gets a credit, and every credit
+  // links a provenance file that actually exists — no dead links, ever
+  const names = a.vendors.map((v) => v.name);
+  for (const want of ["esptool-js", "md5", "ed25519", "qrcode"]) {
+    assert.ok(names.includes(want), `vendor credit missing: ${want}`);
+  }
+  for (const v of a.vendors) {
+    assert.ok(v.package && v.license, `${v.name}: needs package + license`);
+    assert.ok(existsSync(join(ROOT, v.file)), `${v.name}: provenance file missing: ${v.file}`);
+  }
+});
