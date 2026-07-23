@@ -193,6 +193,62 @@ PROVISIONING = {
                    "inherits it from the device’s memory.",
 }
 
+# Post-flash "hatching" copy. This lives in the generated catalog instead of
+# desktop/web UI branches so every flasher surface can share the same first-use
+# promise, and CI's catalog drift gate catches missing metadata for new products.
+HATCH_MOMENTS = {
+    "ap": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+            "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+            "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+            "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test.",
+        ],
+    },
+    "vision": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+            "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+            "Put the board where it can see a doorway, then walk through once.",
+            "Open Home Assistant and watch the presence entity flip to detected, then clear.",
+        ],
+    },
+    "sense": {
+        "kicker": "Sense Canary hatched",
+        "title": "Your Sense Canary is listening with radar.",
+        "body": "The first satisfying test is motion in empty air: no camera, no mic, just the mmWave witness waking up.",
+        "steps": [
+            "Power it from the room where it will live and wait for Home Assistant discovery.",
+            "Stand still for a breath, then walk past it at normal speed.",
+            "Watch presence flip in Home Assistant.",
+        ],
+    },
+    "sense-wellbeing": {
+        "kicker": "Wellbeing Canary hatched",
+        "title": "Your Sense Wellbeing Canary is listening with radar.",
+        "body": "Prove ordinary presence first, then let the gentler wellbeing signal settle before trusting breathing/heartbeat tiles.",
+        "steps": [
+            "Power it from the room where it will live and wait for Home Assistant discovery.",
+            "Walk past it once and watch presence flip in Home Assistant.",
+            "Sit still after the presence card is stable; then watch the wellbeing tile settle into its first breathing/heartbeat reading.",
+        ],
+    },
+}
+
+
+def hatch_kind(product_id: str, provisioning: str) -> str:
+    if "sense-wellbeing" in product_id:
+        return "sense-wellbeing"
+    if "sense" in product_id:
+        return "sense"
+    if "vision" in product_id:
+        return "vision"
+    return provisioning
+
 
 def die(msg: str) -> None:
     print(f"gen_flash.py: {msg}", file=sys.stderr)
@@ -630,6 +686,31 @@ def board_for_env(project: str, env: str) -> str:
     return found
 
 
+def supports_serial_receipt(project: str) -> bool:
+    """Derive the native flasher's post-write receipt gate from firmware.
+
+    A product supports the live receipt only when its own compiled sources wire
+    the shared self-manifest builder to the public ``j`` serial command.  This
+    deliberately is not another product capability table: adding or removing
+    the command in firmware changes flash.json on the next generator run, and
+    the existing catalog drift check makes that change visible in CI.
+    """
+    project_dir = REPO / project
+    source = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in sorted(project_dir.rglob("*"))
+        if path.is_file()
+        and not {".pio", "build", "dist"}.intersection(path.relative_to(project_dir).parts)
+        and path.suffix.lower() in {".c", ".cc", ".cpp", ".h", ".hpp", ".ino"}
+    )
+    has_builder = 'attest/self_manifest.h' in source and "emit_self_manifest" in source
+    has_command = bool(re.search(
+        r"case\s+'j'|\{\s*'j'\s*,\s*\"self_manifest\"",
+        source,
+    ))
+    return has_builder and has_command
+
+
 def main() -> None:
     registry = json.loads(read(CANARY_LOCAL / "devices/registry.json"))
     fw_train = registry.get("fw_train")
@@ -666,6 +747,7 @@ def main() -> None:
             die(f"{p['id']}: neither flavors.json nor {p['project']} knows this variant")
         chips_used.add(chip)
         role = product_role(p["id"])
+        hatch = HATCH_MOMENTS[hatch_kind(p["id"], p["provisioning"])]
         entry = {
             "id": p["id"],
             "name": p["name"],
@@ -675,6 +757,8 @@ def main() -> None:
             "asset_stem": p["asset_stem"],
             "provisioning": p["provisioning"],
             "provisioning_note": PROVISIONING[p["provisioning"]],
+            "hatch": hatch,
+            "serial_receipt": supports_serial_receipt(p["project"]),
             "role": role,
         }
         # The dials that genuinely apply to this product — Vision's four NVS

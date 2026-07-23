@@ -94,10 +94,18 @@ and test a build without touching the Releases page. CI installs with
 
 ### One-button Mac app build/release
 
-To build both native Mac apps together, use **Actions → Mac apps — one-button
-build/release → Run workflow**. Leave **publish** unchecked for build-only smoke
-artifacts, or check it to publish the Flasher release and create the Lab draft
-release in one click.
+To build both native Mac apps at once:
+
+1. Open [**Actions → Build Mac apps (Flasher + Lab)**](https://github.com/kmay89/securaCV/actions/workflows/mac-apps-release.yml).
+2. Click **Run workflow**, choose the **main** branch, and leave **publish**
+   unchecked for build-only smoke artifacts.
+3. Check **publish** only when you want to publish the Flasher release and
+   create the SecuraCV Lab draft release.
+
+GitHub only shows a newly added workflow in the Actions sidebar after its file
+exists on the repository's default branch. The launcher is now on **main**. If
+the entry is still missing, refresh the Actions page; as a fallback, run
+**Desktop Flasher — build & release** and **Desktop app release** separately.
 
 ## Roadmap
 

@@ -50,12 +50,14 @@
       <code>firmware/projects/canary-vision</code> and
       <code>docs/hardware/</code> by <code>tools/gen_vision.py</code>, and
       drift-checked in CI. The preview pane draws a staged scene — cartoon
-      actors, never a camera feed — but the detection math on top of it
-      (best-box, class filter, voxel grid, presence timing) mirrors the
-      firmware line for line and is pinned by tests. Nothing here is written twice.
+      actors, never a camera feed — and feeds their SSCMA boxes into the actual
+      Canary Vision detection pipeline and presence FSM compiled to WebAssembly.
+      CI rebuilds and byte-diffs that committed firmware artifact. Nothing here
+      is written twice.
     </p>
   </footer>
 
+  <script src="emulator/dist/canary-vision-core.js"></script>
   <script type="module" src="assets/vision.js"></script>
 </body>
 </html>

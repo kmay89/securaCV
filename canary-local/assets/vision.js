@@ -12,9 +12,9 @@
 // console; MQTT/HA; the boxes-only Aim card; the tuning sandbox) so a single
 // action — load the model, power on, send the cat through — ripples through
 // all of them at once, like a bench. One VisionSim instance is the shared
-// ground truth: the SAME detection math (best-box, class filter, voxel,
-// FSM) feeds the preview pane, the aim card, the event log and the MQTT
-// stream, because that's how the real device works too.
+// ground truth: the SAME compiled production detection pipeline, NVS tuning,
+// voxel tracker and FSM feed the preview pane, aim card, event log and MQTT
+// stream. JavaScript owns the staged sensor scene, never Canary decisions.
 //
 // Failure posture (same as The Hub/WAP): if vision.json can't load or
 // misses a section, degrade to a plain pointer at the getting-started
@@ -25,6 +25,7 @@ import {
   buildMqtt, buildAim, buildTunePlay, buildPlacement, buildFlashHost,
   buildTrouble,
 } from "./vision-ui.js";
+import { createVisionFirmwareCore } from "../emulator/web/vision-core.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -58,7 +59,7 @@ function makeBus() {
 
 async function main() {
   const mount = $("#vision");
-  let data, boards;
+  let data, boards, firmwareCore;
   try {
     const res = await fetch("devices/vision.json");
     if (!res.ok) throw new Error("HTTP " + res.status);
@@ -66,9 +67,11 @@ async function main() {
     for (const k of ["device", "module", "ports", "model_load", "detect", "serial", "mqtt", "aim", "placement", "sandbox"])
       if (!data[k]) throw new Error("missing section: " + k);
     boards = await (await fetch("devices/boards.json")).json().catch(() => null);
+    firmwareCore = await createVisionFirmwareCore(globalThis.createCanaryVisionCore);
+    firmwareCore.assertGeneratedData(data);
   } catch (e) {
     mount.append(el("p", "muted",
-      "The Vision bench data failed to load (" + e.message + "). Everything it stages is " +
+      "The Vision firmware bench failed its startup check (" + e.message + "). Everything it stages is " +
       "also written out in docs/hardware/canary_vision_getting_started.md."));
     const a = el("a", null, "Open the getting-started guide →");
     a.href = GH + "docs/hardware/canary_vision_getting_started.md";
@@ -77,7 +80,7 @@ async function main() {
   }
 
   const bus = makeBus();
-  const sim = new VisionSim(data);
+  const sim = new VisionSim(data, firmwareCore);
   if (data.model_load.wire) {
     sim.preview.confidence = data.model_load.wire.tscore_default;
     sim.preview.iou = data.model_load.wire.tiou_default;
@@ -130,6 +133,7 @@ async function main() {
       ["device", d.device.name],
       ["module", d.module.name],
       ["firmware", "v" + d.device.fw_version],
+      ["runtime", "real firmware wasm"],
       ["train", d.device.fw_train],
       ["senses", d.device.modality],
     ]) {
@@ -139,9 +143,9 @@ async function main() {
     }
     strip.append(chips);
     strip.append(el("p", "fineprint hub-fresh",
-      "every number here — thresholds, topics, boot lines, port names — is parsed from the " +
-      "canary-vision firmware and the Grove Vision AI V2 docs by tools/gen_vision.py and " +
-      "drift-checked in CI. Nothing is written twice."));
+      "the staged sensor boxes flow through canary-vision's compiled detection pipeline, " +
+      "NVS-backed tuning and presence FSM. Generated copy is checked against that wasm " +
+      "contract at startup, and CI rebuilds the artifact from this tree."));
   }
 
   // ── §board ──

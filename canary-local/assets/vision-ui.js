@@ -9,8 +9,7 @@
 //                      can't work.
 //   · buildModelLoad — the one-time SenseCraft model load, staged click by
 //                      click, ending in a live preview pane whose bounding
-//                      boxes run the same detection semantics the firmware
-//                      does (best-box, class filter, thresholds, NMS).
+//                      boxes feed the compiled firmware detection core.
 //   · buildSerial    — the host's USB-CDC console: the real boot banner +
 //                      setup() log stream, values straight from config.h.
 //   · buildMqtt      — an MQTT-explorer view: retained topics fill on
@@ -26,10 +25,10 @@
 //   · buildFlashHost — flashing the ESP32 host (and the module-flasher roadmap).
 //
 // The preview canvas draws a STAGED SCENE — cartoon actors, not a camera
-// feed — and says so on its face. The detection math on top of it is not
-// staged: bestBox / bboxToVoxel / the presence FSM below mirror
-// vision_mgr.cpp and presence_fsm.cpp line for line, and are pinned by
-// tests/vision.test.js against the firmware sources.
+// feed — and says so on its face. JavaScript stages only the SSCMA sensor
+// boxes and module-side NMS. Every Canary decision after that boundary runs
+// in canary-vision-core.wasm, compiled from the production detection pipeline,
+// detect_config, voxel tracker, and presence FSM sources.
 
 import { buildBoardLab } from "./board-lab.js";
 
@@ -41,38 +40,11 @@ const el = (tag, cls, text) => {
 };
 const alive = (node) => document.body.contains(node);
 
-// ── DOM-free cores (exported; pinned in tests/vision.test.js) ─────────────
+// ── DOM-free presentation helpers (exported for tests) ──────────────────
 
 // Substitute the illustrative device id into a topic/template.
 export function withId(tmpl, id) {
   return String(tmpl).split("<device_id>").join(id).split("<id>").join(id);
-}
-
-// Mirrors vision_mgr.cpp pick_best_person_box(): person class only, score at
-// or above the threshold, highest score wins. One box, however many people.
-export function bestBox(boxes, cfg) {
-  let found = null, best = -1;
-  for (const b of boxes || []) {
-    if (b.target !== cfg.person_target) continue;
-    if (b.score < cfg.score_min) continue;
-    if (b.score > best) { best = b.score; found = b; }
-  }
-  return found;
-}
-
-// Mirrors vision_mgr.cpp bbox_to_voxel(): the box CENTER (SSCMA boxes carry
-// center coords; w/h spread around it) lands in one integer grid cell.
-// Matches the firmware's integer math exactly, clamps included.
-export function bboxToVoxel(bb, g) {
-  const cols = g.cols || 1, rows = g.rows || 1;
-  const cx = bb.x + Math.trunc(bb.w / 2);
-  const cy = bb.y + Math.trunc(bb.h / 2);
-  // |0 truncates toward zero like C integer division (and folds away -0)
-  let c = ((cx * cols) / g.w) | 0;
-  let r = ((cy * rows) / g.h) | 0;
-  if (c < 0) c = 0; if (c > cols - 1) c = cols - 1;
-  if (r < 0) r = 0; if (r > rows - 1) r = rows - 1;
-  return { r, c, rows, cols };
 }
 
 // Intersection-over-union on center-coordinate boxes (the SSCMA convention).
@@ -112,86 +84,6 @@ export function aimPayload(sample, g) {
   };
 }
 
-// The presence FSM, mirroring presence_fsm.cpp for the full vocabulary:
-// presence_started → dwell_started → dwell_ended → presence_ended →
-// interaction_likely. One event per tick, in the firmware's order:
-// dwell_ended fires the tick before presence_ended, and a visit that
-// qualified — it dwelled, or held one voxel cell past the zone window —
-// signs interaction_likely within the post-leave window. `lastReason`
-// carries the firmware's reason string for the event payload.
-export function makeFsm() {
-  const s = {
-    presence: false, dwelling: false, presenceStart: 0, lastSeen: 0,
-    dwellLatch: false, zoneLatch: false, zoneCandidate: false,
-    stableCell: null, stableEnter: 0,
-    lastLeave: 0, lastLeaveSeen: 0, interactionEmitted: false,
-  };
-  const fsm = {
-    lastReason: null,
-    get state() { return { presence: s.presence, dwelling: s.dwelling }; },
-    reset() {
-      s.presence = s.dwelling = false; s.presenceStart = s.lastSeen = 0;
-      s.dwellLatch = s.zoneLatch = s.zoneCandidate = false;
-      s.stableCell = null; s.stableEnter = 0;
-      s.lastLeave = s.lastLeaveSeen = 0; s.interactionEmitted = false;
-      fsm.lastReason = null;
-    },
-    // `cell` is the occupied voxel cell key ("r,c") — the voxel_tracker
-    // mirror: entering a different cell restarts the stable-zone clock.
-    tick(personNow, nowMs, cfg, cell = null) {
-      fsm.lastReason = null;
-      if (personNow) {
-        s.lastSeen = nowMs;
-        if (cell != null && cell !== s.stableCell) { s.stableCell = cell; s.stableEnter = nowMs; }
-        if (!s.presence) {
-          s.presence = true; s.dwelling = false; s.presenceStart = nowMs;
-          s.dwellLatch = s.zoneLatch = s.zoneCandidate = false;
-          s.interactionEmitted = false;
-          s.stableCell = cell; s.stableEnter = nowMs;
-          return "presence_started";
-        }
-        if (!s.dwelling && nowMs - s.presenceStart >= cfg.dwell_start_ms) {
-          s.dwelling = true;
-          return "dwell_started";
-        }
-        if (!s.zoneCandidate && cell != null &&
-            nowMs - s.stableEnter >= (cfg.zone_interaction_ms ?? 2500)) {
-          s.zoneCandidate = true;
-        }
-        if (s.dwelling) s.dwellLatch = true;
-        if (s.zoneCandidate) s.zoneLatch = true;
-        return null;
-      }
-      if (s.presence && nowMs - s.lastSeen > cfg.lost_timeout_ms) {
-        if (s.dwelling) { s.dwelling = false; return "dwell_ended"; }
-        s.presence = false;
-        s.lastLeave = nowMs;
-        return "presence_ended";
-      }
-      if (!s.presence && s.lastLeave !== 0 && s.lastLeave !== s.lastLeaveSeen) {
-        s.lastLeaveSeen = s.lastLeave;
-        s.interactionEmitted = false;
-      }
-      if (!s.presence && s.lastLeave !== 0 && !s.interactionEmitted) {
-        const win = cfg.interaction_window_ms ?? 3000;
-        const qualified = s.dwellLatch || s.zoneLatch;
-        if (qualified && nowMs - s.lastLeave <= win) {
-          s.interactionEmitted = true;
-          fsm.lastReason = s.dwellLatch ? "dwell_then_left" : "zone_interaction_then_left";
-          s.dwellLatch = s.zoneLatch = false;
-          return "interaction_likely";
-        }
-        if (nowMs - s.lastLeave > win) {
-          s.interactionEmitted = true;
-          s.dwellLatch = s.zoneLatch = false;
-        }
-      }
-      return null;
-    },
-  };
-  return fsm;
-}
-
 // Flatten the serial data into ordered {cls,text} console lines.
 export function bootLines(serial) {
   const out = [];
@@ -217,11 +109,14 @@ export function mqttApply(store, msg) {
 
 // ── the staged scene simulation ───────────────────────────────────────────
 // A deterministic-enough cartoon room in SSCMA frame coordinates. Actors
-// produce raw candidate boxes (class + noisy score); everything downstream —
-// preview NMS, firmware best-box, FSM — runs the real math above.
+// produce raw candidate boxes (class + noisy score). Preview NMS belongs to
+// the staged SSCMA module boundary; all host decisions run in firmware WASM.
 
 export class VisionSim {
-  constructor(data) {
+  constructor(data, firmwareCore) {
+    if (!firmwareCore) throw new Error("VisionSim requires the compiled Canary Vision firmware core");
+    this.core = firmwareCore;
+    this.core.reset();
     this.g = { cols: data.detect.voxel.cols, rows: data.detect.voxel.rows,
                w: data.detect.frame.w, h: data.detect.frame.h };
     this.cfg = {
@@ -235,7 +130,9 @@ export class VisionSim {
     // SSCMA-Micro's own YOLO defaults (TSCORE 50 / TIOU 45); overwritten
     // from data.model_load.wire in vision.js when present
     this.preview = { confidence: 50, iou: 45 };
-    this.fsm = makeFsm();
+    Object.assign(this.cfg, this.core.configure(this.cfg));
+    this.fsmState = { presence: false, dwelling: false };
+    this.lastReason = null;
     this.actors = [];        // {kind, t0, dur, ...}
     this.raw = [];           // last frame's raw boxes
     this.sample = { person_now: false, bbox: null, voxel: null };
@@ -251,7 +148,7 @@ export class VisionSim {
   }
   snapshot() {
     return { t: this.t, raw: this.raw, sample: this.sample,
-             fsm: this.fsm.state, reason: this.fsm.lastReason,
+             fsm: this.fsmState, reason: this.lastReason,
              cfg: { ...this.cfg }, g: this.g };
   }
 
@@ -349,14 +246,14 @@ export class VisionSim {
     }
     this.raw = raw;
 
-    const bb = bestBox(raw, this.cfg);
-    this.sample = {
-      person_now: !!bb,
-      bbox: bb,
-      voxel: bb ? bboxToVoxel(bb, this.g) : { r: -1, c: -1, rows: this.g.rows, cols: this.g.cols },
-    };
-    const cell = bb ? this.sample.voxel.r + "," + this.sample.voxel.c : null;
-    const ev = this.fsm.tick(!!bb, this.t, this.cfg, cell);
+    // Reapply through the real detect_config setters so the interface always
+    // reflects the exact firmware clamps and persistence-facing values.
+    Object.assign(this.cfg, this.core.configure(this.cfg));
+    const result = this.core.tick(this.t, raw);
+    this.sample = result.sample;
+    this.fsmState = result.fsm;
+    this.lastReason = result.reason;
+    const ev = result.event;
     for (const fn of this.listeners.frame) fn(this.snapshot());
     if (ev) this.emitEvent(ev);
     return ev;

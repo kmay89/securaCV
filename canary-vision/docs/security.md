@@ -179,3 +179,17 @@ The SPA enforces additional client-side security constraints, verified by tests:
 - All API requests validated as private-network URLs before sending
 
 **Tests:** `tests/spa/csp-compliance.test.js`, `tests/spa/token-storage.test.js`
+
+
+### D10 — Webhook SSRF and remote-exfiltration guard
+
+Webhook delivery is opt-in, but the configured `integrations.webhook_url` is still treated as a potential SSRF sink because witness events are posted by the device process. The API now validates webhook targets at configuration time and again immediately before dispatch:
+
+- only `http` and `https` URLs are accepted;
+- URL credentials and fragments are rejected/stripped;
+- public Internet hosts, loopback (`localhost`, `127.0.0.0/8`), and link-local metadata ranges are rejected;
+- accepted destinations are limited to RFC1918 LAN IPv4 addresses and `.local` mDNS names for local automation systems.
+
+This preserves the local-ownership model while still allowing Home Assistant-style LAN webhooks.
+
+**Tests:** `tests/api/config.test.js`, `tests/security/webhook-url.test.js`

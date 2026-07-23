@@ -975,6 +975,14 @@ export function validateCatalog(cat) {
     if (!p.id) errs.push(`products[${i}] missing id`);
     if (!p.chip) errs.push(`product ${who} missing chip (the chip guard needs it)`);
     if (!p.name) errs.push(`product ${who} missing name`);
+    if (!p.hatch || typeof p.hatch !== "object") {
+      errs.push(`product ${who} missing hatch moment`);
+    } else {
+      if (!p.hatch.title || !p.hatch.body)
+        errs.push(`product ${who} hatch missing title/body`);
+      if (!Array.isArray(p.hatch.steps) || p.hatch.steps.length < 1)
+        errs.push(`product ${who} hatch steps must be a non-empty array`);
+    }
   });
   return errs;
 }
