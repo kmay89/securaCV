@@ -421,3 +421,23 @@ test("parseWapLine: the field bench reads the WAP's transition lines", async () 
   assert.strictEqual(c.parseWapLine("[sense] present count=1 range=near"), null);
   assert.strictEqual(c.parseWapLine(""), null);
 });
+
+test("flash.json: the full-polish help topics all exist (explainers for everything)", () => {
+  const h = catalog.settings_help;
+  for (const id of ["chip", "mac", "flash_size", "updates_seen", "boots", "witness_records",
+                    "tamper_flag", "crash_record", "self_check", "temperature",
+                    "health_check", "serial_monitor", "rescue", "verdict", "journey",
+                    "roster", "chirps", "radar_bench", "field_bench"]) {
+    assert.ok(h[id] && h[id].label && h[id].what, `missing help topic: ${id}`);
+    assert.ok(h[id].what.length > 40, `${id}: help copy too thin to teach`);
+  }
+});
+
+test("chirp module: safe headless — off by default, every call a quiet no-op", async () => {
+  const c = await import("../assets/chirp.js");
+  assert.strictEqual(c.chirpsEnabled(), false, "sound is invited, never sprung");
+  assert.doesNotThrow(() => c.chirp("hello"));
+  assert.doesNotThrow(() => c.chirp("hatch"));
+  assert.doesNotThrow(() => c.chirp("no-such-song"));
+  assert.doesNotThrow(() => c.setChirpsEnabled(true)); // no localStorage here — still safe
+});

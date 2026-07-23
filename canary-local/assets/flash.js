@@ -26,6 +26,7 @@ import { phaseModule } from "./we2-flash.js";
 import { wifiMemory } from "./wifi-memory.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
+import { chirp, chirpToggle } from "./chirp.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -170,6 +171,11 @@ function mountJourney(before) {
     s.append(el("span", "flash-journey-dot"), document.createTextNode(label));
     journeyEl.append(s);
   });
+  const side = el("span", "flash-journey-side");
+  side.append(chirpToggle());
+  const jh = helpDot("journey");
+  if (jh) side.append(jh);
+  journeyEl.append(side);
   before.parentNode.insertBefore(journeyEl, before);
   renderJourney(1);
 }
@@ -728,6 +734,7 @@ async function onConnect() {
     await readCurrentFirmware();     // best-effort; never throws out
     await readPassport();            // the counters worth showing at hello
     ensureManifest();                // kick off (async) manifest load
+    chirp("hello");                  // the Nursery says hi (only if invited)
     setPhase(phaseConnected());
   } catch (e) {
     state.busy = false;
@@ -1016,9 +1023,9 @@ function phaseConnected() {
   hello.append(head);
 
   const facts = el("div", "flash-facts");
-  facts.append(fact("Chip", state.chipDesc || state.chip));
-  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac)));
-  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes)));
+  facts.append(fact("Chip", state.chipDesc || state.chip, "chip"));
+  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac), "mac"));
+  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes), "flash_size"));
   hello.append(facts);
 
   // The passport strip: the board's story so far, read without changing a
@@ -1026,11 +1033,15 @@ function phaseConnected() {
   // crash history. A brand-new board simply has no rows yet.
   const story = core.passportRows(state.passport || {});
   if (story.length) {
-    const strip = el("div", "flash-passport");
+    const strip = el("div", "flash-passport flash-passport-stagger");
+    const HELP_FOR = { updates: "updates_seen", boots: "boots", seq: "witness_records",
+                       tamper: "tamper_flag", crash: "crash_record" };
     story.forEach((r) => {
       const chip = el("span", `flash-passport-chip flash-passport-${r.tone || "ok"}`);
       chip.append(el("strong", null, r.label + " "));
       chip.append(document.createTextNode(r.value));
+      const hd = HELP_FOR[r.id] && helpDot(HELP_FOR[r.id]);
+      if (hd) chip.append(hd);
       strip.append(chip);
     });
     hello.append(strip);
@@ -1056,7 +1067,8 @@ function phaseConnected() {
   const rescue = el("button", "ghost", "🚑 Rescue");
   rescue.title = "Board acting wrong? Wipe it and write the newest signed firmware — back to known-good.";
   rescue.addEventListener("click", () => setPhase(phaseRescue()));
-  tools.append(health, mon, rescue);
+  tools.append(health, helpDot("health_check") || "", mon, helpDot("serial_monitor") || "",
+               rescue, helpDot("rescue") || "");
   hello.append(tools);
   const toolsNote = el("p", "fineprint",
     "Health check reads the board’s story without changing a byte. The serial " +
@@ -1101,6 +1113,8 @@ function phaseConnected() {
       const hchip = el("span", `flash-passport-chip flash-passport-${hv.level === "ok" ? "ok" : "warn"}`);
       hchip.append(el("strong", null, "Self-check "),
         document.createTextNode(scored ? `${hv.icon} ${m.health}/100` : hv.label));
+      const hHelp = helpDot("self_check");
+      if (hHelp) hchip.append(hHelp);
       chips.append(hchip);
       if (typeof m.temp_c === "number" && Number.isFinite(m.temp_c) &&
           m.temp_c > -40 && m.temp_c < 150) {
@@ -1108,6 +1122,8 @@ function phaseConnected() {
         const tchip = el("span", `flash-passport-chip${warm ? " flash-passport-warn" : ""}`);
         tchip.append(el("strong", null, "Heat "),
           document.createTextNode(`${Math.round(m.temp_c)} °C${warm ? " — give it air" : ""}`));
+        const tHelp = helpDot("temperature");
+        if (tHelp) tchip.append(tHelp);
         chips.append(tchip);
       }
       if (m.tamper) {
@@ -1131,9 +1147,14 @@ function phaseConnected() {
   return wrap;
 }
 
-function fact(label, val) {
+function fact(label, val, topicId) {
   const f = el("div", "flash-fact");
-  f.append(el("span", "flash-fact-label", label));
+  const lab = el("span", "flash-fact-label", label);
+  if (topicId) {
+    const hd = helpDot(topicId);
+    if (hd) lab.append(hd);
+  }
+  f.append(lab);
   f.append(el("span", "flash-fact-val", val));
   return f;
 }
@@ -1210,8 +1231,11 @@ function renderRosterStrip() {
   const sec = el("details", "flash-roster");
   if (state.roster.length <= 3) sec.open = true;
   const plural = state.roster.length === 1 ? "hatchling" : "hatchlings";
-  sec.append(el("summary", null,
-    `🐣 This session’s nursery — ${state.roster.length} ${plural} so far`));
+  const sum = el("summary", null,
+    `🐣 This session’s nursery — ${state.roster.length} ${plural} so far`);
+  const rh = helpDot("roster");
+  if (rh) sum.append(rh);
+  sec.append(sum);
   const list = el("div", "flash-roster-list");
   core.rosterLines(state.roster, Date.now()).forEach((l) => {
     const row = el("div", "flash-roster-row");
@@ -1556,7 +1580,10 @@ function phaseSenseBench(port, product) {
   const wellbeing = /wellbeing/.test((product && product.id) || "");
   const box = el("section", "flash-card flash-sensebench");
   box.dataset.step = "5";
-  box.append(el("h2", null, "👋 The radar bench — hold still, then don’t"));
+  const senseH = el("h2", null, "👋 The radar bench — hold still, then don’t");
+  const shd = helpDot("radar_bench");
+  if (shd) senseH.append(shd);
+  box.append(senseH);
   box.append(el("p", "muted",
     "This is the radar’s own senses, live off the USB cable — the same coarse " +
     "truths it publishes (present/clear, 0/1/2+, near/mid/far), never raw " +
@@ -1665,8 +1692,10 @@ function phaseSenseBench(port, product) {
           if (!ev) continue;
           model.lastSeenMs = performance.now();
           if (ev.kind === "sense") {
+            if (ev.presence === "present" && model.presence !== "present") chirp("found");
             model.presence = ev.presence; model.count = ev.count; model.range = ev.range;
           } else if (ev.kind === "presence") {
+            if (ev.presence === "present" && model.presence !== "present") chirp("found");
             model.presence = ev.presence;
           } else if (ev.kind === "bpm") {
             model.breath = ev.breath; model.heart = ev.heart; model.locked = true;
@@ -1819,7 +1848,10 @@ function phaseSenseBench(port, product) {
 function phaseWapBench(port, product) {
   const box = el("section", "flash-card flash-sensebench");
   box.dataset.step = "5";
-  box.append(el("h2", null, "🌊 The field bench — the room’s WiFi, felt"));
+  const wapH = el("h2", null, "🌊 The field bench — the room’s WiFi, felt");
+  const whd2 = helpDot("field_bench");
+  if (whd2) wapH.append(whd2);
+  box.append(wapH);
   box.append(el("p", "muted",
     "This Canary reads the WiFi field itself: phones announcing themselves, " +
     "and the way a moving body stirs the radio reflections (CSI). Below is " +
@@ -1917,6 +1949,7 @@ function phaseWapBench(port, product) {
           model.confidence = ev.confidence;
           model.dwell = ev.dwell;
           model.stir = Math.max(model.stir, ev.stir);
+          if (ev.present && !model.present) chirp("found");
           if (ev.present) model.present = true;
           if (ev.departed) model.present = false;
           ripples.push({ born: performance.now(), strength: Math.max(0.35, ev.stir / 100) });
@@ -2174,6 +2207,8 @@ function phaseConfirm(product, entry) {
     const vline = el("p", `flash-verdict-line flash-verdict-${verdict.kind}`);
     vline.append(el("strong", null, `${verdict.icon} ${verdict.label}. `));
     vline.append(document.createTextNode(verdict.detail));
+    const vh = helpDot("verdict");
+    if (vh) vline.append(vh);
     box.append(vline);
   }
 
@@ -2813,6 +2848,7 @@ async function startFlash(opts) {
 }
 
 function flashError(e, opts) {
+  chirp("oops"); // one low, round note — never an alarm
   const msg = String(e && e.message ? e.message : e);
   const v = core.classifyFlashError(e);
   const box = errorBox(v.title || "The install didn’t complete",
@@ -2866,7 +2902,16 @@ function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
   box.dataset.step = "5";
   confettiBurst();
-  box.append(el("div", "flash-done-bird", "🎉"));
+  chirp("hatch");
+  // The hatch: egg wiggles, cracks, and the chick appears. Pure CSS
+  // (flash-hatch-* keyframes); under prefers-reduced-motion the chick
+  // simply IS — the celebration stays, the motion politely doesn't.
+  const hatch = el("div", "flash-hatch");
+  hatch.setAttribute("aria-hidden", "true");
+  hatch.append(el("span", "flash-hatch-egg", "🥚"),
+               el("span", "flash-hatch-cracked", "🐣"),
+               el("span", "flash-hatch-chick", "🐤"));
+  box.append(hatch);
   const hatchNo = !opts.isBackup && !opts.isLocal && opts.product && state.roster.length
     ? state.roster[state.roster.length - 1].n : null;
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
