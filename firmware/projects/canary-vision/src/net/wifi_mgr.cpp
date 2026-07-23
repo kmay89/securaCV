@@ -15,6 +15,7 @@ namespace {
 // STA supervision state (see wifi_loop). All timestamp math is wrap-safe
 // signed-delta, per the firmware idiom for millis() arithmetic.
 bool     s_online          = false;
+bool     s_configured      = false;
 uint32_t s_lost_since_ms   = 0;   // start of the current outage
 uint32_t s_last_attempt_ms = 0;   // last reconnect attempt
 uint32_t s_attempts        = 0;   // consecutive failed attempts this outage
@@ -56,10 +57,16 @@ void wifi_init_or_reboot() {
   const auto& cfg = canary::cfg::get();
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(false);  // wifi_loop owns retry policy (backoff)
+  s_configured = canary::cfg::wifi_credentials_configured();
+  if (!s_configured) {
+    s_lost_since_ms = canary::ms_now();
+    log_line("WIFI", "Provisioning required — generic release placeholders are active; continuing offline.");
+    return;
+  }
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
 
   log_header("WIFI");
-  canary::dbg_serial().printf("Connecting SSID=\"%s\" ...\n", cfg.wifi_ssid);
+  canary::dbg_serial().println("Connecting to the provisioned WiFi network ...");
 
   const uint32_t start = canary::ms_now();
   while (WiFi.status() != WL_CONNECTED) {
@@ -68,9 +75,11 @@ void wifi_init_or_reboot() {
 
     if ((canary::ms_now() - start) > WIFI_BOOT_TIMEOUT_MS) {
       canary::dbg_serial().println();
-      log_line("WIFI", "Timeout. Rebooting...");
-      delay(200);
-      ESP.restart();
+      log_line("WIFI", "Boot connect timed out — continuing offline; reconnect supervisor is armed.");
+      s_lost_since_ms = canary::ms_now();
+      s_last_attempt_ms = s_lost_since_ms;
+      s_attempts = 1;
+      return;
     }
   }
 
@@ -87,6 +96,7 @@ void wifi_init_or_reboot() {
 }
 
 void wifi_loop(uint32_t now_ms) {
+  if (!s_configured) return;
   if (WiFi.status() == WL_CONNECTED) {
     if (!s_online) {
       s_online = true;
@@ -144,6 +154,8 @@ void wifi_loop(uint32_t now_ms) {
 }
 
 bool wifi_connected() { return WiFi.status() == WL_CONNECTED; }
+
+bool wifi_configured() { return s_configured; }
 
 int wifi_rssi() {
   return (WiFi.status() == WL_CONNECTED) ? (int)WiFi.RSSI() : 0;

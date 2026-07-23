@@ -627,12 +627,14 @@ HX6538 + Ethos-U55) and the ESP32 host only ever hears boxes over I2C.
 - **The model load** — Seeed's SenseCraft workspace staged click for click
   (Connect → USB Single Serial → Person Detection → upload → preview), ending
   in a live preview pane. The scene is cartoon actors, and says so — but the
-  boxes on top run the **firmware's real detection math**: best-box rule,
-  class filter, thresholds, IoU/NMS.
+  staged sensor boxes feed **the compiled Canary Vision firmware core**:
+  production class/score filtering, primary-box selection, optical features,
+  voxel tracking, NVS-backed tuning and the presence FSM. IoU/NMS remains on
+  the labeled SSCMA-module side of that boundary, where it exists in hardware.
 - **The host flash + serial console** — the README's own quickstart commands
   with one-tap copy, then the staged boot log; `Grove Vision AI ID=` non-zero
   is the lesson.
-- **MQTT + HA** — every topic from `topics.h`, all 16 discovery entities from
+- **MQTT + HA** — every topic from `topics.h`, all 19 discovery entities from
   `ha_discovery.cpp`, the retained `cfg/state` and the signed events.
 - **The Aim card** — the boxes-only channel, drawn the way the Lovelace card
   draws it: a wireframe box and a voxel cell on black. The exact `aim`
@@ -650,8 +652,9 @@ Anti-rot, same rule as everything here — nothing written twice:
 | Thresholds, voxel grid, frame, cadences, aim timing | `include/canary/config.h` + `detect_config.h` |
 | Every MQTT topic | `include/canary/topics.h` |
 | The 16 HA entities | `src/ha/ha_discovery.cpp` |
-| Best-box rule + voxel math (mirrored in JS, pinned by tests) | `src/vision/vision_mgr.cpp` |
-| The event vocabulary + FSM order | `src/state/presence_fsm.cpp` |
+| Class/score filter, best box, optical features + voxel math | `include/canary/vision/detection_pipeline.h` (compiled into both ESP32 and wasm) |
+| Runtime score/target/lost/dwell clamps | `src/detect_config.cpp` (the real implementation is linked into wasm) |
+| The event vocabulary, voxel stability + FSM order | `src/state/{voxel_tracker,presence_fsm}.cpp` (linked into wasm) |
 | The aim payload keys | `src/main.cpp` |
 | Boot banner + log lines | `firmware/common/boot/boot_banner.cpp` + net managers |
 | Ports, wiring, SenseCraft steps, recovery, symptoms | `docs/hardware/grove_vision_ai_v2_guide.md` + `canary_vision_getting_started.md` |
@@ -659,16 +662,20 @@ Anti-rot, same rule as everything here — nothing written twice:
 
 `tools/gen_vision.py` regenerates `devices/vision.json` and **`sys.exit`s if
 any of those literals moved**; the drift gate in `canary-local.yml` re-runs it
-and `git diff --exit-code`s. The preview scene is staged and labeled as such
-on the page — the detection semantics on top of it are not, and
-`tests/vision.test.js` pins the JS cores (bestBox, bboxToVoxel, the FSM, the
-aim payload) against the firmware sources so the "mirrors the firmware" claim
-can't rot.
+and `git diff --exit-code`s. The preview scene is staged and labeled as such,
+but there is no JavaScript copy of Canary decision logic: `build.sh vision`
+compiles the production pipeline, detect config, voxel tracker and FSM into
+`dist/canary-vision-core.js`. The page refuses to start when its generated
+data differs from that runtime contract. CI is triggered by every
+`firmware/projects/canary-vision/**` change, executes behavior tests against
+the committed wasm, rebuilds it with pinned Emscripten 6.0.3, byte-diffs the
+artifact, and runs the complete page again in Chromium.
 
 | Piece | File |
 |---|---|
 | The page | `canary-local/vision.html` + `assets/vision.js` |
 | Ports picker · SenseCraft stage · sim · aim card · sandbox | `canary-local/assets/vision-ui.js` |
+| Production wasm boundary | `emulator/vision/` + `emulator/web/vision-core.js` |
 | The board + 3D reuse | `assets/board-lab.js`, `assets/scene3d.js`, `assets/glb.js` |
 | Generated data | `canary-local/devices/vision.json` |
 | Generator | `canary-local/tools/gen_vision.py` |
@@ -796,13 +803,15 @@ Three tiers, no lock-in, one source of truth:
 
 ```bash
 cd canary-local/emulator
-./build.sh all         # needs emcc (apt install emscripten, or emsdk)
+./build.sh all         # requires the pinned Emscripten SDK 6.0.3
+./build.sh vision      # rebuild only the Canary Vision production core
 ```
 
 Pinned third-party (fetched once into `third_party/`, gitignored):
 LVGL v8.4.0 · rweather/arduinolibs (Crypto) · ArduinoJson v7.4.1.
 Artifacts in `dist/` are committed so the page works from a checkout
-without a toolchain; CI rebuilds them and fails on drift.
+without a toolchain; CI installs the same pinned compiler, rebuilds them and
+fails on byte drift.
 
 ## 8. Testing
 

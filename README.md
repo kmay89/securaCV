@@ -45,6 +45,8 @@ Prefer to explore first? The [SecuraCV Lab](https://kmay89.github.io/securaCV/ca
 
 ### Home Assistant add-on
 
+Requires Home Assistant 2024.4.1 or newer.
+
 1. In Home Assistant, install the official **Mosquitto broker** add-on.
 2. Add these repositories in **Settings → Add-ons → Add-on Store → ⋮ → Repositories**:
    - `https://github.com/blakeblackshear/frigate-hass-addons`
@@ -62,6 +64,8 @@ The happiest path today is Home Assistant + Frigate + Mosquitto on a Raspberry P
 Use the compose quickstart, doctor check, bundled-broker option, and API-token setup in [Frigate integration](docs/frigate_integration.md).
 
 ### From source
+
+On a supported Linux host, the repository installer is `curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash`.
 
 ```bash
 # Ubuntu/Debian prerequisites

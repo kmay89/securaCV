@@ -8,15 +8,23 @@
 //! terminal — and, like the web flasher, you cannot brick the board: the
 //! ESP32's first-stage bootloader is mask ROM.
 //!
-//! The front-end (plain HTML/JS in `../src`) drives four commands:
+//! The front-end (plain HTML/JS in `../src`) drives the complete two-port flow:
 //!   * `load_catalog`   — the bundled product list + chip guard (offline-safe)
 //!   * `list_ports`     — USB serial ports the OS can see right now
 //!   * `detect_chip`    — ask the board which ESP32 it is (the "wrong image" guard)
-//!   * `flash`          — resolve the signed release, download it, write it, stream progress
+//!   * `flash`          — verify, provision, write, and return an ESP32 receipt
+//!   * `flash_vision_module` — verify + XMODEM-burn the WE2 model and run AT proof
+//!   * serial monitor commands — live logs + machine-readable boot receipt
 //!
 //! Everything the user watches scroll by during a flash is `espflash`'s own
 //! output, relayed verbatim over the `flash:log` event.
 
+mod provisioning;
+mod release;
+mod serial_monitor;
+mod we2;
+
+use provisioning::Provisioning;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
@@ -50,6 +58,24 @@ const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.jso
 // which doesn't exist → "No such file or directory".)
 const ESPFLASH: &str = "espflash";
 
+/// Stage a firmware image in an atomically-created, randomly named private
+/// file. `NamedTempFile` creates mode 0600 on Unix and removes the file on
+/// drop, so a provisioned image never passes through a world-readable path.
+fn stage_firmware(bytes: &[u8], safe_id: &str) -> Result<tempfile::NamedTempFile, String> {
+    use std::io::Write;
+
+    let mut staged = tempfile::Builder::new()
+        .prefix(&format!("securacv-{safe_id}-"))
+        .suffix(".bin")
+        .tempfile()
+        .map_err(|e| format!("couldn't create private firmware staging file: {e}"))?;
+    staged
+        .write_all(bytes)
+        .and_then(|_| staged.flush())
+        .map_err(|e| format!("couldn't stage the image: {e}"))?;
+    Ok(staged)
+}
+
 /// A USB serial port as the OS sees it — enough for the UI to show a friendly
 /// picker without pretending to know more than it does.
 #[derive(Serialize)]
@@ -64,21 +90,33 @@ pub struct PortDto {
     manufacturer: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct FlashReceipt {
+    target: &'static str,
+    product_id: String,
+    version: String,
+    release_sha256: String,
+    installed_sha256: String,
+    bytes_written: usize,
+    release_verification: &'static str,
+    chip_write_verified: bool,
+    provisioned: bool,
+}
+
 /// The embedded flasher catalog, handed to the UI verbatim. The front-end
 /// already knows this schema (it is the website's), so we don't re-type it
 /// here — we just guarantee it parses.
 #[tauri::command]
 fn load_catalog() -> Result<Value, String> {
-    serde_json::from_str(EMBEDDED_CATALOG)
-        .map_err(|e| format!("bundled catalog is corrupt: {e}"))
+    serde_json::from_str(EMBEDDED_CATALOG).map_err(|e| format!("bundled catalog is corrupt: {e}"))
 }
 
 /// Serial ports the OS can see this instant. No Web Serial permission prompt,
 /// no Chromium — just the platform enumerating its own devices.
 #[tauri::command]
 fn list_ports() -> Result<Vec<PortDto>, String> {
-    let ports = serialport::available_ports()
-        .map_err(|e| format!("could not list serial ports: {e}"))?;
+    let ports =
+        serialport::available_ports().map_err(|e| format!("could not list serial ports: {e}"))?;
     let mut out = Vec::new();
     for p in ports {
         use serialport::SerialPortType::*;
@@ -159,11 +197,8 @@ async fn run_sidecar_capture(app: &AppHandle, args: Vec<String>) -> Result<(i32,
 /// wrong image" guard: the UI only offers products whose `chip` matches.
 #[tauri::command]
 async fn detect_chip(app: AppHandle, port: String) -> Result<String, String> {
-    let (code, out) = run_sidecar_capture(
-        &app,
-        vec!["board-info".into(), "--port".into(), port],
-    )
-    .await?;
+    let (code, out) =
+        run_sidecar_capture(&app, vec!["board-info".into(), "--port".into(), port]).await?;
     // Check the exit code before parsing: a *failed* board-info can still print
     // a chip name in its error text, which would otherwise read as a false
     // positive detection.
@@ -182,7 +217,7 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<String, String> {
     }
 }
 
-/// Fetch the live signed release manifest so the UI can show what version is
+/// Fetch the live release manifest so the UI can show what version is
 /// currently published for each product (mirrors the website's manifest state).
 #[tauri::command]
 async fn fetch_manifest(manifest_url: String) -> Result<Value, String> {
@@ -217,29 +252,101 @@ async fn flash(
     product_id: String,
     manifest_url: String,
     baud: u32,
-) -> Result<(), String> {
+    detected_chip: String,
+    provisioning: Option<Provisioning>,
+) -> Result<FlashReceipt, String> {
     let emit = |app: &AppHandle, line: String| {
         let _ = app.emit("flash:log", line);
     };
 
-    // 1) Resolve the signed factory image for this exact product.
-    emit(&app, format!("→ resolving signed release for {product_id}…"));
+    // 1) Resolve the official factory image for this exact product.
+    emit(
+        &app,
+        format!("→ resolving verified release for {product_id}…"),
+    );
+    let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG)
+        .map_err(|e| format!("bundled catalog is corrupt: {e}"))?;
+    if catalog.get("manifest_url").and_then(Value::as_str) != Some(manifest_url.as_str()) {
+        return Err("refusing an unbundled firmware manifest URL".into());
+    }
+    let product = catalog
+        .get("products")
+        .and_then(Value::as_array)
+        .and_then(|products| {
+            products
+                .iter()
+                .find(|product| product.get("id").and_then(Value::as_str) == Some(&product_id))
+        })
+        .ok_or_else(|| format!("{product_id} is not in the bundled product catalog"))?;
+    let catalog_chip = product
+        .get("chip")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{product_id} has no chip guard in the catalog"))?;
+    if canonical_chip(catalog_chip) != canonical_chip(&detected_chip) {
+        return Err(format!(
+            "the catalog requires {catalog_chip}, but {detected_chip} was detected; refusing to write"
+        ));
+    }
+    let needs_provisioning =
+        product.get("provisioning").and_then(Value::as_str) == Some("usb-secrets");
+    // The generated catalog derives this from the product's real serial-command
+    // implementation. Missing fields fail closed for older/unknown catalogs.
+    let expects_serial_receipt = product
+        .get("serial_receipt")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    if needs_provisioning && provisioning.is_none() {
+        return Err(
+            "this firmware uses generic release placeholders; Wi-Fi and MQTT provisioning is required before flash"
+                .into(),
+        );
+    }
+
     let manifest = fetch_manifest(manifest_url).await?;
+    if manifest.get("schema").and_then(Value::as_str) != Some("securacv-flash-1") {
+        return Err("release manifest has an unexpected schema".into());
+    }
     let entry = manifest
         .get("products")
         .and_then(|p| p.get(&product_id))
         .ok_or_else(|| format!("the release doesn't offer {product_id} yet"))?;
+    let manifest_chip = entry
+        .get("chipFamily")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{product_id} has no chip family in the release"))?;
+    if canonical_chip(manifest_chip) != canonical_chip(&detected_chip) {
+        return Err(format!(
+            "the release offers {manifest_chip}, but {detected_chip} is connected; refusing to write"
+        ));
+    }
     let factory_url = entry
         .get("factory")
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{product_id} has no factory image in the release"))?
         .to_string();
-    if let Some(v) = entry.get("version").and_then(Value::as_str) {
-        emit(&app, format!("→ version {v}"));
+    if !factory_url.starts_with("https://github.com/kmay89/securaCV/releases/download/") {
+        return Err(
+            "release image URL is outside the bundled SecuraCV GitHub release origin".into(),
+        );
     }
+    let version = entry
+        .get("version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{product_id} has no version in the release"))?
+        .to_string();
+    let expected_size = entry
+        .get("size")
+        .and_then(Value::as_u64)
+        .filter(|size| *size > 0)
+        .ok_or_else(|| format!("{product_id} has an invalid release size"))?;
+    let expected_sha = entry
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{product_id} has no SHA-256 in the release"))?;
+    emit(&app, format!("→ version {version}"));
 
     // 2) Download it to a temp file. reqwest verifies TLS; GitHub serves the
-    //    asset from the signed release the CI published.
+    //    asset from the release the CI published.
     emit(&app, format!("→ downloading {factory_url}"));
     // The image is a few MB; guard the connect so a dead network fails fast,
     // but give the transfer itself generous headroom on a slow link.
@@ -249,7 +356,7 @@ async fn flash(
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
-    let bytes = client
+    let downloaded = client
         .get(&factory_url)
         .send()
         .await
@@ -260,32 +367,57 @@ async fn flash(
         .await
         .map_err(|e| format!("download failed: {e}"))?;
 
+    // TLS identifies GitHub; these checks identify the actual release bytes.
+    let release_sha = release::verify_size_and_sha(&downloaded, expected_size, expected_sha)?;
+    let release_pubkey = catalog
+        .get("release_pubkey")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "bundled catalog has no release public key".to_string())?;
+    let release_verification = release::verify_signature(
+        downloaded.len(),
+        &release_sha,
+        entry.get("signature").and_then(Value::as_str),
+        release_pubkey,
+    )?;
+    emit(
+        &app,
+        format!(
+            "✓ release verified: SHA-256 {}… ({release_verification})",
+            &release_sha[..16]
+        ),
+    );
+
+    // Provision only after verifying the untouched release. The installed hash
+    // records the exact per-device image we actually hand to espflash.
+    let mut bytes = downloaded.to_vec();
+    let provisioned = if let Some(config) = provisioning.as_ref() {
+        provisioning::patch_factory_image(&mut bytes, config)?;
+        emit(
+            &app,
+            "✓ Wi-Fi + MQTT settings sealed into the image's NVS partition (values not logged)"
+                .into(),
+        );
+        true
+    } else {
+        false
+    };
+    let installed_sha = release::sha256_hex(&bytes);
+
     let safe_id: String = product_id
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    // Unique per-run name so concurrent runs (or a stale file owned by another
-    // user) can't collide. `unwrap_or_default()` keeps it panic-free on a clock
-    // set before the epoch (SystemTime::saturating_duration_since is nightly-only).
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("securacv-{safe_id}-{stamp}.bin"));
-    std::fs::write(&path, &bytes).map_err(|e| format!("couldn't stage the image: {e}"))?;
-
-    // RAII cleanup: the staged image is removed on every exit path — including an
-    // early return if the sidecar fails to start below.
-    struct TempFileGuard(std::path::PathBuf);
-    impl Drop for TempFileGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-    let _guard = TempFileGuard(path.clone());
+    // Keep the private file handle alive until espflash exits. Its RAII guard
+    // removes the path on success and on every ordinary error return.
+    let staged = stage_firmware(&bytes, &safe_id)?;
+    let path = staged.path();
     emit(
         &app,
-        format!("→ {} bytes staged, writing to the board…", bytes.len()),
+        format!(
+            "→ {} bytes staged (installed SHA-256 {}…), writing to the board…",
+            bytes.len(),
+            &installed_sha[..16]
+        ),
     );
 
     // 3) Flash the merged factory image at 0x0. A factory image already carries
@@ -325,16 +457,145 @@ async fn flash(
             _ => {}
         }
     }
-    // (the staged image is removed by TempFileGuard on scope exit)
+    // (`staged` removes the private image on scope exit.)
 
     if code == 0 {
-        emit(&app, "✓ done — the Canary is rebooting into its new firmware.".into());
-        Ok(())
+        let message = if expects_serial_receipt {
+            "✓ chip write verified — reopening serial for the live boot receipt."
+        } else {
+            "✓ chip write verified — this firmware does not require a live receipt."
+        };
+        emit(&app, message.into());
+        Ok(FlashReceipt {
+            target: "esp32-host",
+            product_id,
+            version,
+            release_sha256: release_sha,
+            installed_sha256: installed_sha,
+            bytes_written: bytes.len(),
+            release_verification,
+            chip_write_verified: true,
+            provisioned,
+        })
     } else {
         Err(format!(
             "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again."
         ))
     }
+}
+
+/// Download the pinned WE2 model, verify the manifest hash, burn it to the
+/// module's custom-model slot, then require SSCMA AT + one-inference proof.
+#[tauri::command]
+async fn flash_vision_module(
+    app: AppHandle,
+    port: String,
+    manifest_url: String,
+) -> Result<we2::ModuleReceipt, String> {
+    let port_info = serialport::available_ports()
+        .map_err(|e| format!("could not list serial ports: {e}"))?
+        .into_iter()
+        .find(|candidate| candidate.port_name == port)
+        .ok_or_else(|| "the selected Vision-module port is no longer connected".to_string())?;
+    let (vid, pid) = match port_info.port_type {
+        serialport::SerialPortType::UsbPort(info) => (Some(info.vid), Some(info.pid)),
+        _ => (None, None),
+    };
+    if !we2::is_module_usb(vid, pid) {
+        return Err("the selected port is not the Grove Vision AI V2 CH343 (USB 1a86:55d3)".into());
+    }
+    let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG)
+        .map_err(|e| format!("bundled catalog is corrupt: {e}"))?;
+    let expected_manifest = catalog
+        .get("we2_module")
+        .and_then(|module| module.get("manifest_url"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "bundled catalog has no Vision-module manifest".to_string())?;
+    if manifest_url != expected_manifest {
+        return Err("refusing an unbundled Vision-module manifest URL".into());
+    }
+    let emit_log = |message: String| {
+        let _ = app.emit("vision:log", message);
+    };
+    emit_log("→ resolving the pinned Grove Vision AI V2 model…".into());
+    let manifest = fetch_manifest(manifest_url).await?;
+    let version = manifest
+        .get("version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Vision model manifest has no version".to_string())?
+        .to_string();
+    let model = manifest
+        .get("model")
+        .ok_or_else(|| "Vision model manifest has no model entry".to_string())?;
+    let model_url = model
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Vision model manifest has no download URL".to_string())?;
+    if !model_url.starts_with("https://github.com/kmay89/securaCV/releases/download/") {
+        return Err(
+            "Vision model URL is outside the bundled SecuraCV GitHub release origin".into(),
+        );
+    }
+    let expected_size = model
+        .get("size")
+        .and_then(Value::as_u64)
+        .filter(|size| *size > 0)
+        .ok_or_else(|| "Vision model manifest has an invalid size".to_string())?;
+    let expected_sha = model
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Vision model manifest has no SHA-256".to_string())?;
+    let flash_address = model
+        .get("flash_addr")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !flash_address.eq_ignore_ascii_case("0x400000") {
+        return Err(format!(
+            "Vision manifest targets {flash_address}, but this app only permits the model slot 0x400000"
+        ));
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("SecuraCV-Flasher")
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let bytes = client
+        .get(model_url)
+        .send()
+        .await
+        .map_err(|e| format!("Vision model download failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Vision model download failed: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("Vision model download failed: {e}"))?;
+    let sha = release::verify_size_and_sha(&bytes, expected_size, expected_sha)?;
+    emit_log(format!(
+        "✓ model verified: {} bytes · SHA-256 {}…",
+        bytes.len(),
+        &sha[..16]
+    ));
+
+    let app_for_log = app.clone();
+    let app_for_progress = app.clone();
+    let model_bytes = bytes.to_vec();
+    tauri::async_runtime::spawn_blocking(move || {
+        we2::flash_and_prove(
+            &port,
+            &model_bytes,
+            version,
+            sha,
+            move |line| {
+                let _ = app_for_log.emit("vision:log", line);
+            },
+            move |fraction| {
+                let _ = app_for_progress.emit("vision:progress", fraction);
+            },
+        )
+    })
+    .await
+    .map_err(|e| format!("Vision flasher worker failed: {e}"))?
 }
 
 /// What the UI shows in the "an update is ready" banner.
@@ -396,6 +657,7 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(serial_monitor::SerialMonitorState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -407,9 +669,46 @@ pub fn run() {
             detect_chip,
             fetch_manifest,
             flash,
+            flash_vision_module,
+            serial_monitor::start_serial_monitor,
+            serial_monitor::serial_monitor_send,
+            serial_monitor::stop_serial_monitor,
             check_update,
             install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running SecuraCV Flasher");
+}
+
+#[cfg(test)]
+mod staging_tests {
+    use super::stage_firmware;
+
+    #[test]
+    fn staged_firmware_is_private_and_removed_on_drop() {
+        let staged = stage_firmware(b"provisioned-secret-image", "canary-vision")
+            .expect("private staging file");
+        let path = staged.path().to_path_buf();
+        assert_eq!(
+            std::fs::read(&path).expect("staged bytes"),
+            b"provisioned-secret-image"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)
+                .expect("staging metadata")
+                .permissions()
+                .mode();
+            assert_eq!(
+                mode & 0o077,
+                0,
+                "staging file must not be group/world accessible"
+            );
+        }
+
+        drop(staged);
+        assert!(!path.exists(), "staging path must be removed on drop");
+    }
 }
