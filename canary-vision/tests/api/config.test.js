@@ -153,3 +153,46 @@ describe('Config API', () => {
     assert.equal(res.status, 400);
   });
 });
+
+describe('Webhook URL hardening', () => {
+  let server, client;
+
+  before(async () => {
+    server = await startServer({ devMode: true });
+    client = createClient(server.url, TOKEN);
+  });
+
+  after(async () => {
+    await server.close();
+  });
+
+  it('accepts private LAN and .local webhook URLs', async () => {
+    const lan = await client.put('/api/v1/config/integrations', {
+      webhook_url: 'http://192.168.1.20:8123/api/webhook/canary#secret-fragment',
+    });
+    assert.equal(lan.status, 200);
+    assert.equal(lan.json.config.integrations.webhook_url, 'http://192.168.1.20:8123/api/webhook/canary');
+
+    const mdns = await client.put('/api/v1/config/integrations', {
+      webhook_url: 'https://homeassistant.local/api/webhook/canary',
+    });
+    assert.equal(mdns.status, 200);
+  });
+
+  it('rejects public, loopback, link-local, credentialed, and non-HTTP webhook URLs', async () => {
+    const rejected = [
+      'https://example.com/hook',
+      'http://localhost:3000/api/v1/config',
+      'http://127.0.0.1:3000/api/v1/info',
+      'http://169.254.169.254/latest/meta-data',
+      'https://user:pass@192.168.1.20/hook',
+      'file:///etc/passwd',
+    ];
+
+    for (const webhook_url of rejected) {
+      const res = await client.put('/api/v1/config/integrations', { webhook_url });
+      assert.equal(res.status, 400, webhook_url);
+      assert.equal(res.json.error, 'invalid_config');
+    }
+  });
+});
