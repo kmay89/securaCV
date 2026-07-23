@@ -382,6 +382,13 @@ Separately tracked: the kernel export stamping `attestation`
 Phase 3 timeline chips render once populated — is issue #800, not part
 of the Phase 4 scope above.
 
+Also separately scoped (software-only, no new hardware): a **coarse
+mover-class** (large-vs-small mover) derived on-device from micro-Doppler
+features, riding as a confidence-weighted attribute on the same
+`PresenceInRestrictedZone` claim (no dictionary drift) — see
+[`canary_sense_coarse_class_design.md`](./canary_sense_coarse_class_design.md).
+It inherits §2.2 wholesale (class, not identity; single-window, no tracking).
+
 Total: ~4 engineering weeks to a shippable canary-sense product with the
 Track B funnel live in week 1.
 
