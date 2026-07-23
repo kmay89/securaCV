@@ -37,10 +37,11 @@
 //!
 //! Gated behind the `adapter-meshtastic` feature. See `docs/meshtastic_integration.md`.
 
+use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::adapter::contract::{AdapterDescriptor, Claim, ClaimKind};
 use crate::adapter::{LockTolerant, SensorAdapter};
@@ -168,6 +169,11 @@ pub struct MeshtasticAdapter {
     nodes: SharedNodes,
     frame_kind: MeshFrameKind,
     sandbox: bool,
+    /// Last known active/inactive state per state-broadcasting node (`node_num`), used to
+    /// edge-trigger heartbeat frames — see [`json_frame_to_claim_ex`]. Lives in the parent
+    /// adapter, never inside the (possibly forked) sandbox closure, so it survives across
+    /// `poll()` calls regardless of whether `adapter-sandbox` is enabled.
+    heartbeat_state: HashMap<u32, bool>,
 }
 
 impl MeshtasticAdapter {
@@ -181,6 +187,7 @@ impl MeshtasticAdapter {
                 nodes: std::sync::Arc::new(std::sync::Mutex::new(nodes)),
                 frame_kind: MeshFrameKind::JsonMqtt,
                 sandbox: false,
+                heartbeat_state: HashMap::new(),
             },
             tx,
         )
@@ -218,22 +225,69 @@ pub fn frame_to_claim(
     }
 }
 
+/// [`frame_to_claim`]'s heartbeat-aware counterpart — see [`json_frame_to_claim_ex`].
+fn frame_to_claim_ex(
+    nodes: &[MeshNode],
+    kind: MeshFrameKind,
+    _topic: &str,
+    payload: &[u8],
+) -> (Option<Claim>, Option<(u32, bool)>) {
+    match kind {
+        MeshFrameKind::JsonMqtt => json_frame_to_claim_ex(nodes, payload),
+    }
+}
+
+/// One frame's parse result, carried across the (possibly sandboxed) parse boundary as plain
+/// data — see [`MeshtasticAdapter::poll`]. `heartbeat` never reaches a [`Claim`]; it's adapter-
+/// internal bookkeeping only.
+#[derive(Serialize, Deserialize)]
+struct ParsedFrame {
+    claim: Option<Claim>,
+    heartbeat: Option<(u32, bool)>,
+}
+
 fn json_frame_to_claim(nodes: &[MeshNode], payload: &[u8]) -> Option<Claim> {
-    let env: MeshJsonEnvelope = serde_json::from_slice(payload).ok()?;
-    let msg_type = env.msg_type.as_deref()?;
+    json_frame_to_claim_ex(nodes, payload).0
+}
+
+/// Same mapping as [`json_frame_to_claim`], plus the `(node_num, active)` heartbeat identity
+/// when this frame was a recognized Detection Sensor state-broadcast — `None` for anything else
+/// (a genuine "detected" trigger alert, which is a one-shot event and must never be deduped the
+/// way a repeated heartbeat is). The claim in the return tuple is what this single frame would
+/// assert in isolation, exactly as `json_frame_to_claim` already did; callers that need
+/// cross-frame edge-triggering (see [`MeshtasticAdapter::poll`]) use the heartbeat identity to
+/// decide whether to actually emit it.
+fn json_frame_to_claim_ex(
+    nodes: &[MeshNode],
+    payload: &[u8],
+) -> (Option<Claim>, Option<(u32, bool)>) {
+    let env: MeshJsonEnvelope = match serde_json::from_slice(payload) {
+        Ok(e) => e,
+        Err(_) => return (None, None),
+    };
+    let msg_type = match env.msg_type.as_deref() {
+        Some(t) => t,
+        None => return (None, None),
+    };
     // Everything but detection/text — position, telemetry, nodeinfo, ... — is dropped on the
     // type tag alone; in particular, position coordinates are never examined (Invariant III).
     let text_gated = match msg_type {
         "detection" => false,
         "text" => true,
-        _ => return None,
+        _ => return (None, None),
     };
-    let from = env.from?;
-    let node = nodes.iter().find(|n| u64::from(n.node_num) == from)?;
+    let from = match env.from {
+        Some(f) => f,
+        None => return (None, None),
+    };
+    let node = match nodes.iter().find(|n| u64::from(n.node_num) == from) {
+        Some(n) => n,
+        None => return (None, None),
+    };
     if let Some(floor) = node.min_snr {
         // NaN-safe: a missing or garbage SNR never passes a configured floor.
         if !env.snr.is_some_and(|snr| snr >= floor) {
-            return None;
+            return (None, None);
         }
     }
     let text = env.payload.as_ref().and_then(|p| p.text.as_deref());
@@ -242,24 +296,25 @@ fn json_frame_to_claim(nodes: &[MeshNode], payload: &[u8]) -> Option<Claim> {
     // trigger alerts. Only an active state may assert a claim — an inactive heartbeat must
     // never seal an event, and it would otherwise even pass a detection_name gate (the text
     // contains the sensor name).
-    if let Some(active) = text.and_then(state_broadcast_state) {
+    let heartbeat = text
+        .and_then(state_broadcast_state)
+        .map(|active| (node.node_num, active));
+    if let Some((_, active)) = heartbeat {
         if !active {
-            return None;
+            return (None, heartbeat);
         }
     }
-    match (&node.detection_name, text_gated) {
+    let claim = match (&node.detection_name, text_gated) {
         // Plain text frames map only through an explicit detection_name gate; otherwise an
         // operator chatting on the channel would assert presence.
         (None, true) => None,
         (None, false) => Some(claim_for(node)),
-        (Some(name), _) => {
-            if text?.to_lowercase().contains(&name.to_lowercase()) {
-                Some(claim_for(node))
-            } else {
-                None
-            }
-        }
-    }
+        (Some(name), _) => match text {
+            Some(t) if t.to_lowercase().contains(&name.to_lowercase()) => Some(claim_for(node)),
+            _ => None,
+        },
+    };
+    (claim, heartbeat)
 }
 
 /// Recognize a Detection Sensor state-broadcast ("<name> state: <n>", firmware
@@ -296,22 +351,53 @@ impl SensorAdapter for MeshtasticAdapter {
         // Snapshot the nodes so we don't hold the lock across the sandbox fork.
         let nodes = self.nodes.lock_tolerant().clone();
         let frame_kind = self.frame_kind;
-        let parse_all = || {
+        let parse_all = || -> Result<Vec<ParsedFrame>> {
             let mut out = Vec::new();
             for (topic, payload) in &msgs {
-                if let Some(claim) = frame_to_claim(&nodes, frame_kind, topic, payload) {
-                    out.push(claim);
+                let (claim, heartbeat) = frame_to_claim_ex(&nodes, frame_kind, topic, payload);
+                if claim.is_some() || heartbeat.is_some() {
+                    out.push(ParsedFrame { claim, heartbeat });
                 }
             }
             Ok(out)
         };
         #[cfg(feature = "adapter-sandbox")]
-        {
-            if self.sandbox {
-                return crate::adapter::sandbox::parse_in_sandbox(parse_all);
+        let parsed: Vec<ParsedFrame> = if self.sandbox {
+            crate::module_runtime::sandbox::run_in_sandbox(parse_all)?
+        } else {
+            parse_all()?
+        };
+        #[cfg(not(feature = "adapter-sandbox"))]
+        let parsed: Vec<ParsedFrame> = parse_all()?;
+
+        // Edge-trigger heartbeat frames here, in the parent process, so the dedup state
+        // (`heartbeat_state`) survives across polls regardless of sandboxing — a node whose
+        // GPIO stays continuously active (e.g. Canary Car Mode's ignition-power heartbeat, see
+        // docs/hardware/canary_car_mode.md) must assert exactly once per activation, not once
+        // per `state_broadcast_interval` heartbeat, however many `poll()`/bucket boundaries it
+        // crosses while parked. Non-heartbeat claims (trigger alerts) pass through unchanged.
+        let mut claims = Vec::with_capacity(parsed.len());
+        for frame in parsed {
+            match frame.heartbeat {
+                Some((node_num, active)) => {
+                    let was_active = self
+                        .heartbeat_state
+                        .insert(node_num, active)
+                        .unwrap_or(false);
+                    if active && !was_active {
+                        if let Some(claim) = frame.claim {
+                            claims.push(claim);
+                        }
+                    }
+                }
+                None => {
+                    if let Some(claim) = frame.claim {
+                        claims.push(claim);
+                    }
+                }
             }
         }
-        parse_all()
+        Ok(claims)
     }
 }
 
@@ -519,5 +605,65 @@ mod tests {
         let claims = adapter.poll().expect("poll");
         // Two raw detections → two claims here; the host collapses them per bucket.
         assert_eq!(claims.len(), 2);
+    }
+
+    #[test]
+    fn repeated_active_heartbeat_asserts_only_once_across_polls() {
+        // Codex review (PR #1168): AdapterHost only dedups within the current time bucket, so a
+        // Car Mode node's periodic "still running" heartbeat (state_broadcast_interval) must not
+        // seal a fresh vehicle_arrival_departure claim on every poll while the vehicle is simply
+        // still parked with the engine running — only the inactive->active transition may.
+        let nodes = vec![MeshNode::new(
+            0x7d3a9f7f,
+            ClaimKind::VehicleArrivalDeparture,
+            "garage",
+        )];
+        let (mut adapter, tx) = MeshtasticAdapter::new(nodes);
+
+        tx.send((TOPIC.to_string(), detection_frame("Car Mode state: 1")))
+            .unwrap();
+        let first = adapter.poll().expect("poll");
+        assert_eq!(first.len(), 1, "first active heartbeat asserts");
+
+        // Several more active heartbeats, across separate poll() calls (i.e. separate potential
+        // time-bucket boundaries) — none should re-assert while the node stays continuously on.
+        for _ in 0..3 {
+            tx.send((TOPIC.to_string(), detection_frame("Car Mode state: 1")))
+                .unwrap();
+            let claims = adapter.poll().expect("poll");
+            assert!(
+                claims.is_empty(),
+                "repeated active heartbeat must not re-assert"
+            );
+        }
+
+        // Go inactive, then active again — this IS a real transition and must assert.
+        tx.send((TOPIC.to_string(), detection_frame("Car Mode state: 0")))
+            .unwrap();
+        let inactive = adapter.poll().expect("poll");
+        assert!(inactive.is_empty(), "inactive heartbeat never asserts");
+
+        tx.send((TOPIC.to_string(), detection_frame("Car Mode state: 1")))
+            .unwrap();
+        let reasserted = adapter.poll().expect("poll");
+        assert_eq!(
+            reasserted.len(),
+            1,
+            "re-activation after a real gap asserts again"
+        );
+    }
+
+    #[test]
+    fn repeated_trigger_alerts_are_never_deduped_like_heartbeats() {
+        // A genuine "detected" trigger alert (no "state:" suffix) is a one-shot event, not a
+        // heartbeat — repeated detections are meaningful and must each produce a claim, unlike
+        // repeated active heartbeats above.
+        let (mut adapter, tx) = MeshtasticAdapter::new(nodes());
+        for _ in 0..3 {
+            tx.send((TOPIC.to_string(), detection_frame("Motion detected")))
+                .unwrap();
+        }
+        let claims = adapter.poll().expect("poll");
+        assert_eq!(claims.len(), 3);
     }
 }

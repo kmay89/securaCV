@@ -143,3 +143,48 @@ clean addition to an already-tested adapter, not a redesign.
 - **Same hardware research as Fence Guard, not a second dossier.** Kit specs, pin map, and
   Meshtastic firmware notes are cited from
   [`canary_fence_guard_research.md`](./canary_fence_guard_research.md), not re-derived.
+
+---
+
+## 6 · Troubleshooting
+
+Anticipated, not field-reported — no bench unit exists yet (§1's honesty caveat applies to all
+of this).
+
+<details>
+<summary><strong>Node never appears on the mesh at all</strong></summary>
+
+- Confirm the car's USB port is actually delivering power — check with any other USB device
+  first, separate from debugging the node itself.
+- Confirm the node joined the private channel (not the default public `LongFast` — see
+  `meshtastic_integration.md`'s node-side runbook) and that a gateway node is in range and
+  actually uplinking (`mosquitto_sub -t 'msh/#' -v` on the broker).
+
+</details>
+
+<details>
+<summary><strong>Arrival claim never fires</strong></summary>
+
+- Check the Detection Sensor Module is actually `enabled = true` and `monitor_pin` is set to a
+  genuinely free GPIO (§4's D0–D3 list) — a pin claimed by the radio's SPI bus will never read
+  the way you expect.
+- `minimum_broadcast_interval` gates transitions too (see the firmware caveat in
+  `meshtastic_integration.md`'s Risks section) — a very low value doesn't guarantee instant, only
+  bounds the delay.
+- Confirm `adapter_host.toml`'s `node_id` matches the Car Mode node's actual id, not a copy-pasted
+  placeholder — `!a1b2c3d4` in the example config is not a real node.
+
+</details>
+
+<details>
+<summary><strong>Home Assistant never shows "away" after the car leaves</strong></summary>
+
+- This is the §3 design working as intended, not a bug, if you haven't set an availability
+  timeout — the entity will otherwise just hold its last known state forever. Set the timeout to
+  roughly 2x `state_broadcast_interval`.
+- If heartbeats stop arriving well before the car actually left (i.e. false "away" while still
+  parked with the engine running), `state_broadcast_interval` may be set too long, or mesh
+  reception at the parking spot may be marginal — check gateway signal strength at that exact
+  location, not just "somewhere in the house."
+
+</details>

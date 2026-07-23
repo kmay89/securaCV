@@ -779,6 +779,43 @@
         ],
         "catchphrase": "I only ever say I'm here — and I mean it because I couldn't lie if I tried."
       }
+    },
+    {
+      "id": "canary-vehicle",
+      "family": "canary-vehicle",
+      "kind": "witness",
+      "name": "Canary Vehicle",
+      "tagline": "Reads your car's own ignition state, passively — never writes to the bus, never learns where you've been.",
+      "board": "Linux SBC (e.g. Raspberry Pi) + MCP2515 CAN HAT, SocketCAN",
+      "senses": [
+        "vehicle CAN bus (passive, read-only)"
+      ],
+      "shows": [],
+      "modality": "contact",
+      "network": {
+        "mdns": "none — runs adapter_host, not a flashed Canary firmware host",
+        "web": "none",
+        "mqtt": "via the can_bus sensor adapter: vehicle_arrival_departure claims + signed chain"
+      },
+      "enclosure": "docs/hardware/enclosure/canary_vehicle_mount.scad",
+      "docs": [
+        "docs/hardware/canary_vehicle_can.md",
+        "docs/hardware/canary_vehicle_profiles.md"
+      ],
+      "status": "adapter shipped & unit-tested (src/adapter/can_bus.rs, edge-triggered, 11 tests) — vehicle-specific signal profiles documented but not bench-confirmed against a real car",
+      "persona": {
+        "name": "Hush the Wire Listener",
+        "accent": "graphite and brake-light red",
+        "shape": "a low, alert canary with a single coiled antenna-whisker and folded, listening-only wings — no beak wide enough to speak",
+        "story": "Hush was built with no voice on purpose. It rides quietly on your car's own wire, hears the ignition switch the way every other module in the car already does, and says only ever one thing outward: here, or gone. Hush never asks the car a question, never sends it a command, and never once remembers where the car has been — only whether it's home.",
+        "specialty": "Vehicle CAN bus / arrival-departure witness",
+        "good_for": [
+          "Telling the household fleet when a car arrives or leaves, without a phone geofence",
+          "Households with a small always-on Linux hub (a Pi) willing to ride along in the vehicle",
+          "Proving, structurally, that a witness can listen to a car without ever tracking it"
+        ],
+        "catchphrase": "I only ever answer one question: are you home?"
+      }
     }
   ]
 }

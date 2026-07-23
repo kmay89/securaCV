@@ -203,3 +203,42 @@ Mesh-checked clean (admesh: 1 part, 0 disconnected facets, all three
 unit has confirmed these screw/nut/magnet dimensions against the real
 hardware. Treat the defaults as a starting point to measure against, not a
 verified fit.
+
+---
+
+## 6 · Troubleshooting
+
+No bench unit exists yet, so this is anticipated, not field-reported — update it with real
+symptoms the first time someone actually wires one up.
+
+<details>
+<summary><strong>Webhook adapter never sees a request</strong></summary>
+
+- Confirm the reCamera Pro's flow editor is actually configured with an HTTP action node, not
+  just a classifier — the camera doing inference is not the same as it POSTing anywhere.
+- Check the camera and `adapter_host` are on the same reachable network; the webhook listener
+  defaults to loopback (`127.0.0.1:8800`) — a camera on a different host can't reach that.
+- `curl` the same URL manually with a matching JSON body first, to isolate "camera can't reach
+  the listener" from "listener rejects the camera's request."
+
+</details>
+
+<details>
+<summary><strong>Requests arrive but no claim is sealed</strong></summary>
+
+- Check the route's `min_confidence` isn't higher than the score the camera is actually sending.
+- Confirm the request path matches the configured route exactly — the webhook adapter routes on
+  path, not on payload content.
+- If `auth_token`/`hmac_secret` is set, an auth failure is silent from the camera's perspective
+  (it just gets rejected) — check `adapter_host`'s logs, not just the camera's flow editor.
+
+</details>
+
+<details>
+<summary><strong>Mount doesn't fit</strong></summary>
+
+- The screw/nut/magnet dimensions in `canary_vision_pro_mount.scad` are universal-standard
+  defaults, not measurements off a real reCamera Pro — see §4. Measure your actual unit and
+  override the relevant parameters before printing a second copy.
+
+</details>
