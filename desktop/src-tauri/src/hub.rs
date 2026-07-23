@@ -42,6 +42,12 @@ const RPIBOOT: &str = "rpiboot";
 #[derive(Default)]
 pub struct PiUsbState(std::sync::Mutex<Option<CommandChild>>);
 
+/// The running flash's stop signal, if one is running. The UI's Stop button
+/// flips it via [`hub_flash_cancel`]; every chunk loop in hub-io checks it, so
+/// a stop lands within one 4 MiB chunk — no orphaned writer, no zombie state.
+#[derive(Default)]
+pub struct HubFlashState(std::sync::Mutex<Option<hub_io::CancelToken>>);
+
 /// One disk as the picker shows it — eligible or not, always with the reason,
 /// so "why isn't my drive listed" is answered on screen instead of in a forum.
 #[derive(Serialize)]
@@ -77,6 +83,9 @@ pub struct HubReceipt {
     bytes_written: u64,
     sha256: String,
     wifi_seeded: bool,
+    /// A non-fatal note about the Wi-Fi seed (e.g. the write verified but
+    /// seeding failed) — the receipt stays a receipt; this is the plan B.
+    wifi_note: Option<String>,
 }
 
 /// The Wi-Fi the operator typed (the same secret the Canary flasher already
@@ -301,16 +310,45 @@ pub fn hub_pi_boot_stop(state: tauri::State<'_, PiUsbState>) -> Result<(), Strin
 #[tauri::command]
 pub async fn hub_flash(
     app: AppHandle,
+    state: tauri::State<'_, HubFlashState>,
     board_id: String,
     disk_path: String,
     confirmed: bool,
     wifi: Option<HubWifi>,
 ) -> Result<HubReceipt, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        hub_flash_blocking(&app, board_id, disk_path, confirmed, wifi)
+    let cancel = hub_io::CancelToken::default();
+    {
+        let mut guard = state.0.lock().map_err(|_| "hub flash state poisoned")?;
+        if guard.is_some() {
+            return Err("a hub flash is already running".to_string());
+        }
+        *guard = Some(cancel.clone());
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        hub_flash_blocking(&app, board_id, disk_path, confirmed, wifi, &cancel)
     })
     .await
-    .map_err(|e| format!("hub writer worker failed: {e}"))?
+    .map_err(|e| format!("hub writer worker failed: {e}"));
+    if let Ok(mut guard) = state.0.lock() {
+        *guard = None;
+    }
+    result?
+}
+
+/// Stop the running flash. Safe at every stage: before the write nothing has
+/// touched the card; during the write the card was being erased anyway and
+/// just needs a fresh flash. The pipeline stops within one chunk.
+#[tauri::command]
+pub fn hub_flash_cancel(state: tauri::State<'_, HubFlashState>) -> Result<(), String> {
+    if let Some(token) = state
+        .0
+        .lock()
+        .map_err(|_| "hub flash state poisoned")?
+        .as_ref()
+    {
+        token.cancel();
+    }
+    Ok(())
 }
 
 fn hub_flash_blocking(
@@ -319,6 +357,7 @@ fn hub_flash_blocking(
     disk_path: String,
     confirmed: bool,
     wifi: Option<HubWifi>,
+    cancel: &hub_io::CancelToken,
 ) -> Result<HubReceipt, String> {
     let log = |line: String| {
         let _ = app.emit("hub:log", line);
@@ -364,11 +403,22 @@ fn hub_flash_blocking(
         hub_core::hub_seed::wifi_keyfile(&seed).map_err(|e| e.message())?;
     }
 
-    // 3) Download the image, hashing as it streams.
+    // 3) Download the image, hashing as it streams. One automatic retry on a
+    //    network hiccup — the internet drops packets, users shouldn't have to
+    //    care — but a cancel is a cancel, never retried.
     let staging = tempfile::tempdir().map_err(|e| format!("couldn't create a staging dir: {e}"))?;
     let xz_path = staging.path().join("haos.img.xz");
     log(format!("→ downloading {}", plan.image_url));
-    let dl = hub_io::fetch::download(&plan.image_url, &xz_path, &mut progress)?;
+    let dl = match hub_io::fetch::download(&plan.image_url, &xz_path, cancel, &mut progress) {
+        Ok(dl) => dl,
+        Err(e) if !e.starts_with(hub_io::CANCELLED) => {
+            log(format!(
+                "→ the download tripped over its shoelaces ({e}) — dusting off and trying once more…"
+            ));
+            hub_io::fetch::download(&plan.image_url, &xz_path, cancel, &mut progress)?
+        }
+        Err(e) => return Err(e),
+    };
     log(format!(
         "✓ downloaded {} bytes · SHA-256 {}…",
         dl.bytes,
@@ -395,7 +445,7 @@ fn hub_flash_blocking(
 
     // 5) Decompress to the raw image; its hash is what the card must hold.
     let raw_path = staging.path().join("haos.img");
-    let raw = hub_io::xz::decompress(&xz_path, &raw_path, &mut progress)?;
+    let raw = hub_io::xz::decompress(&xz_path, &raw_path, cancel, &mut progress)?;
     log(format!("✓ raw image ready: {} bytes", raw.bytes));
     if raw.bytes > target.size_bytes {
         return Err(format!(
@@ -437,11 +487,13 @@ fn hub_flash_blocking(
         "→ writing to {} — do not remove the card…",
         target.path
     ));
-    let receipt = hub_io::write::write_image(authz, &raw_path, &raw.sha256, &mut progress)?;
+    let receipt = hub_io::write::write_image(authz, &raw_path, &raw.sha256, cancel, &mut progress)?;
     log("✓ written and read back — the card verifiably holds the image".to_string());
 
-    // 8) Seed Wi-Fi onto the boot partition, then eject.
-    let wifi_seeded = if let Some(w) = wifi {
+    // 8) Seed Wi-Fi onto the boot partition, then eject. From here on the
+    //    card is verifiably GOOD — a seeding stumble must never demote the
+    //    receipt to a failure. It becomes a note with the plan B instead.
+    let (wifi_seeded, wifi_note) = if let Some(w) = wifi {
         let seed = WifiSeed {
             ssid: &w.ssid,
             passphrase: &w.passphrase,
@@ -449,13 +501,29 @@ fn hub_flash_blocking(
             uuid: None,
             hidden: w.hidden,
         };
-        hub_io::seed::seed_wifi(&receipt.target_path, &seed, &mut progress)?;
-        log("✓ Wi-Fi seeded — the hub will join your network on first boot".to_string());
-        true
+        match hub_io::seed::seed_wifi(&receipt.target_path, &seed, &mut progress) {
+            Ok(_) => {
+                log("✓ Wi-Fi seeded — the hub will join your network on first boot".to_string());
+                (true, None)
+            }
+            Err(e) => {
+                log(format!(
+                    "→ the image is on the card and verified, but the Wi-Fi seed didn't stick: {e}"
+                ));
+                (
+                    false,
+                    Some(format!(
+                        "The card itself is perfect — only the Wi-Fi note didn't make it on. \
+                         Easiest fixes: plug in ethernet for the first boot, or replug the card \
+                         and flash again. ({e})"
+                    )),
+                )
+            }
+        }
     } else {
         log("→ no Wi-Fi seeded (wired ethernet assumed)".to_string());
         true_eject(&receipt.target_path, &log);
-        false
+        (false, None)
     };
 
     Ok(HubReceipt {
@@ -465,6 +533,7 @@ fn hub_flash_blocking(
         bytes_written: receipt.bytes_written,
         sha256: receipt.sha256,
         wifi_seeded,
+        wifi_note,
     })
 }
 

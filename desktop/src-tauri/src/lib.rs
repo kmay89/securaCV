@@ -656,6 +656,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(serial_monitor::SerialMonitorState::default())
         .manage(hub::PiUsbState::default())
+        .manage(hub::HubFlashState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -672,6 +673,7 @@ pub fn run() {
             hub::list_hub_targets,
             hub::hub_plan,
             hub::hub_flash,
+            hub::hub_flash_cancel,
             hub::hub_pi_boot_start,
             hub::hub_pi_boot_stop,
             serial_monitor::start_serial_monitor,

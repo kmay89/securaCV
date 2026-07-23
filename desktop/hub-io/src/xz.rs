@@ -6,7 +6,7 @@
 //! twice. Streaming (1 MiB in, 4 MiB out buffers) because a HAOS image is a
 //! few hundred MB compressed and ~1–2 GB raw — never all in memory.
 
-use crate::{sha256_hex, Progress, Stage};
+use crate::{sha256_hex, CancelToken, Progress, Stage};
 use sha2::Digest;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -28,6 +28,7 @@ pub struct RawImage {
 pub fn decompress(
     src: &Path,
     dest: &Path,
+    cancel: &CancelToken,
     mut progress: impl FnMut(Progress),
 ) -> Result<RawImage, String> {
     let compressed_total = std::fs::metadata(src).ok().map(|m| m.len());
@@ -45,6 +46,7 @@ pub fn decompress(
     let mut buf = vec![0u8; 4 * 1024 * 1024];
     let mut raw_bytes: u64 = 0;
     loop {
+        cancel.checkpoint()?;
         let n = decoder
             .read(&mut buf)
             .map_err(|e| format!("the .xz image is corrupt or truncated: {e}"))?;
@@ -110,7 +112,7 @@ mod tests {
         std::fs::write(&src, xz_bytes(&raw)).unwrap();
 
         let mut ticks = 0;
-        let out = decompress(&src, &dest, |p| {
+        let out = decompress(&src, &dest, &CancelToken::default(), |p| {
             assert_eq!(p.stage, Stage::Decompress);
             ticks += 1;
         })
@@ -132,7 +134,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("t.img.xz");
         std::fs::write(&src, xz).unwrap();
-        let err = decompress(&src, &dir.path().join("t.img"), |_| {}).unwrap_err();
+        let err = decompress(&src, &dir.path().join("t.img"), &CancelToken::default(), |_| {}).unwrap_err();
         assert!(err.contains("corrupt or truncated"), "{err}");
     }
 
@@ -141,6 +143,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("g.img.xz");
         std::fs::write(&src, b"this is not xz at all").unwrap();
-        assert!(decompress(&src, &dir.path().join("g.img"), |_| {}).is_err());
+        assert!(decompress(&src, &dir.path().join("g.img"), &CancelToken::default(), |_| {}).is_err());
     }
 }

@@ -778,13 +778,30 @@ function hubInit() {
   });
   listen("hub:progress", (e) => {
     const { stage, done, total } = e.payload;
+    hub.stage = stage;
     $("hub-progress-wrap").classList.remove("hidden");
     $("hub-stage").textContent = HUB_STAGE_COPY[stage] || stage;
     const fill = $("hub-bar-fill");
     if (total) {
+      fill.classList.remove("indet");
       fill.style.width = Math.min(100, Math.round((done / total) * 100)) + "%";
     } else {
-      fill.style.width = "100%";
+      // Unknown total: an alive, sweeping bar — never a full one that lies.
+      fill.classList.add("indet");
+      fill.style.width = "";
+    }
+    // Stopping is safe at every stage, but the copy should be honest about
+    // what stopping mid-write means for the card.
+    $("hub-stop-btn").textContent =
+      stage === "write" || stage === "verify" ? "Stop (card will need a fresh flash)" : "Stop";
+  });
+  $("hub-stop-btn").addEventListener("click", async () => {
+    $("hub-stop-btn").disabled = true;
+    $("hub-stage").textContent = "Stopping — finishing the current chunk…";
+    try {
+      await invoke("hub_flash_cancel");
+    } catch (e) {
+      setStatus("hub-result", String(e), "err");
     }
   });
 }
@@ -801,10 +818,53 @@ function hubSetMode(showHub) {
     hubLoadPlan();
     hubPollTargets();
     if (!hub.pollTimer) hub.pollTimer = setInterval(hubPollTargets, 2000);
-  } else if (hub.pollTimer) {
-    clearInterval(hub.pollTimer);
-    hub.pollTimer = null;
+  } else {
+    if (hub.pollTimer) {
+      clearInterval(hub.pollTimer);
+      hub.pollTimer = null;
+    }
+    // Don't leave a hidden rpiboot waiting forever behind the Canary tab —
+    // stop it; the panel says how to start again.
+    if (hub.piUsbWaiting) invoke("hub_pi_boot_stop").catch(() => {});
   }
+}
+
+// Turn a backend error into calm, useful words: what happened, why the
+// hardware is fine, and the one thing to do next. Cancels are not errors.
+function hubPresentError(raw) {
+  const msg = String(raw);
+  if (msg.startsWith("cancelled:")) {
+    setStatus(
+      "hub-result",
+      "Stopped, no harm done. The card just needs a fresh flash whenever you're ready — type ERASE again to go.",
+      ""
+    );
+    return;
+  }
+  let friendly;
+  if (msg.includes("read-back verification FAILED")) {
+    friendly =
+      "The card and we are telling different stories — it didn't hold what we wrote, which " +
+      "usually means a worn-out or counterfeit card. Best move: try a different card. " +
+      "Nothing else on your computer was touched.";
+  } else if (msg.includes("no longer connected") || msg.includes("disappeared")) {
+    friendly =
+      "The card wandered off mid-job (loose reader? bumped cable?). Plug it back in and " +
+      "type ERASE again — we start clean from the top, no leftovers.";
+  } else if (msg.includes("download")) {
+    friendly =
+      "The internet let us down mid-download — we even tried twice. Your card is untouched. " +
+      "Give the connection a moment and type ERASE to try again.";
+  } else if (msg.includes("no permission") || msg.includes("authorize")) {
+    friendly =
+      "Your computer wouldn't let us open the disk — that's it being protective, not broken. " +
+      "The message below says exactly which permission to grant, then try again.";
+  } else {
+    friendly =
+      "Well, that didn't go to plan — our fault, not yours, and your card is fine. " +
+      "The details are below; a retry sorts out most of these.";
+  }
+  setStatus("hub-result", friendly + "\n\n" + msg, "err");
 }
 
 async function hubLoadPlan() {
@@ -986,6 +1046,8 @@ async function hubFlash() {
   hub.busy = true;
   state.busy = true; // pause the Canary port watcher during the heavy write
   $("hub-flash-btn").disabled = true;
+  $("hub-stop-btn").classList.remove("hidden");
+  $("hub-stop-btn").disabled = false;
   $("hub-console").textContent = "";
   $("hub-console").classList.remove("hidden");
   setStatus("hub-result", "", "");
@@ -1000,10 +1062,16 @@ async function hubFlash() {
     setStatus("hub-result", "Done — written, read back, and verified.", "ok");
     hubShowHatch(receipt);
   } catch (e) {
-    setStatus("hub-result", String(e), "err");
+    hubPresentError(e);
   } finally {
     hub.busy = false;
     state.busy = false;
+    // Leave no stale theater: the bar and stop button belong to a running
+    // flash only. The console keeps the full story for the curious.
+    $("hub-stop-btn").classList.add("hidden");
+    $("hub-progress-wrap").classList.add("hidden");
+    $("hub-bar-fill").classList.remove("indet");
+    $("hub-bar-fill").style.width = "0%";
     $("hub-confirm").value = "";
     hubArm();
   }
@@ -1016,7 +1084,9 @@ function hubShowHatch(receipt) {
     `(SHA-256 ${receipt.sha256.slice(0, 16)}…).` +
     (receipt.wifi_seeded
       ? " Your Wi-Fi rides along on the card."
-      : " Plug in ethernet before you power it on.");
+      : receipt.wifi_note
+        ? " " + receipt.wifi_note
+        : " Plug in ethernet before you power it on.");
   const steps = [
     "Put the card in your Raspberry Pi (or connect the SSD) and power it on.",
     "First boot takes 10–20 minutes while Home Assistant sets itself up — the LED activity is normal.",

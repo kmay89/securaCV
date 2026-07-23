@@ -64,6 +64,15 @@ main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; 
   height: 100%; width: 0%;
   background: var(--brand); transition: width .25s linear;
 }
+/* a stage whose size isn't knowable up front: visibly alive, never "done" */
+.hub-progress .bar-fill.indet {
+  width: 30%;
+  animation: bar-indet 1.2s ease-in-out infinite alternate;
+}
+@keyframes bar-indet {
+  from { margin-left: 0; }
+  to { margin-left: 70%; }
+}
 .confirm-input {
   font: inherit; font-family: ui-monospace, "SF Mono", Menlo, monospace;
   width: 110px; padding: 8px 10px; text-transform: uppercase;

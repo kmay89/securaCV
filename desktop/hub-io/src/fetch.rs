@@ -16,7 +16,7 @@
 //! https for https origins; the image URL itself is already validated by the
 //! caller against the bundled catalog before it ever reaches here.
 
-use crate::{sha256_hex, Progress, Stage};
+use crate::{sha256_hex, CancelToken, Progress, Stage};
 use sha2::Digest;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -48,8 +48,10 @@ fn agent() -> ureq::Agent {
 pub fn download(
     url: &str,
     dest: &Path,
+    cancel: &CancelToken,
     mut progress: impl FnMut(Progress),
 ) -> Result<DownloadReceipt, String> {
+    cancel.checkpoint()?;
     let response = agent()
         .get(url)
         .call()
@@ -66,6 +68,7 @@ pub fn download(
     let mut buf = vec![0u8; 1024 * 1024];
     let mut done: u64 = 0;
     loop {
+        cancel.checkpoint()?;
         let n = reader
             .read(&mut buf)
             .map_err(|e| format!("download interrupted after {done} bytes: {e}"))?;
@@ -174,7 +177,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("image.xz");
         let mut ticks = Vec::new();
-        let receipt = download(&url, &dest, |p| ticks.push(p)).expect("download succeeds");
+        let receipt = download(&url, &dest, &CancelToken::default(), |p| ticks.push(p)).expect("download succeeds");
 
         assert_eq!(receipt.bytes, body.len() as u64);
         assert_eq!(std::fs::read(&dest).unwrap(), body);
@@ -195,7 +198,7 @@ mod tests {
         let body = vec![7u8; 1000];
         let url = serve_once("200 OK", vec!["Content-Length: 2000".to_string()], body);
         let dir = tempfile::tempdir().unwrap();
-        let err = download(&url, &dir.path().join("x"), |_| {}).unwrap_err();
+        let err = download(&url, &dir.path().join("x"), &CancelToken::default(), |_| {}).unwrap_err();
         // ureq may surface the truncation itself, or our length check does —
         // either way it is an error, never a receipt.
         assert!(!err.is_empty());
@@ -209,7 +212,7 @@ mod tests {
             vec![],
         );
         let dir = tempfile::tempdir().unwrap();
-        let err = download(&url, &dir.path().join("x"), |_| {}).unwrap_err();
+        let err = download(&url, &dir.path().join("x"), &CancelToken::default(), |_| {}).unwrap_err();
         assert!(err.contains("download failed"), "{err}");
     }
 

@@ -21,7 +21,7 @@
 //! `Read+Write+Seek` will do, which is exactly how the tests drive it against
 //! plain files.
 
-use crate::{sha256_hex, Progress, Stage};
+use crate::{sha256_hex, CancelToken, Progress, Stage};
 use hub_core::hub_flash::WriteAuthorization;
 use sha2::Digest;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -51,8 +51,10 @@ pub fn write_image(
     authz: WriteAuthorization,
     raw_image: &Path,
     raw_sha256: &str,
+    cancel: &CancelToken,
     mut progress: impl FnMut(Progress),
 ) -> Result<WriteReceipt, String> {
+    cancel.checkpoint()?;
     let mut device = open_target(authz.target_path())?;
     let image = std::fs::File::open(raw_image)
         .map_err(|e| format!("couldn't open the raw image {}: {e}", raw_image.display()))?;
@@ -60,7 +62,7 @@ pub fn write_image(
         .metadata()
         .map_err(|e| format!("couldn't stat the raw image: {e}"))?
         .len();
-    let sha = write_verified(&mut device, image, bytes, raw_sha256, &mut progress)?;
+    let sha = write_verified(&mut device, image, bytes, raw_sha256, cancel, &mut progress)?;
     Ok(WriteReceipt {
         board_id: authz.plan().board_id.clone(),
         os_label: authz.plan().os_label.clone(),
@@ -130,12 +132,14 @@ pub fn write_verified<D: Read + Write + Seek + SyncStorage>(
     mut image: impl Read,
     image_bytes: u64,
     expected_sha256: &str,
+    cancel: &CancelToken,
     progress: &mut impl FnMut(Progress),
 ) -> Result<String, String> {
     // ── write ──
     let mut buf = vec![0u8; CHUNK];
     let mut done: u64 = 0;
     loop {
+        cancel.checkpoint()?;
         let n = image
             .read(&mut buf)
             .map_err(|e| format!("couldn't read the raw image: {e}"))?;
@@ -174,6 +178,7 @@ pub fn write_verified<D: Read + Write + Seek + SyncStorage>(
     let mut hasher = sha2::Sha256::new();
     let mut remaining = image_bytes;
     while remaining > 0 {
+        cancel.checkpoint()?;
         let want = remaining.min(CHUNK as u64) as usize;
         device
             .read_exact(&mut buf[..want])
@@ -397,6 +402,7 @@ mod tests {
             std::io::Cursor::new(img.clone()),
             img.len() as u64,
             &sha,
+            &CancelToken::default(),
             &mut |p: Progress| stages.push(p.stage),
         )
         .expect("write + read-back verify");
@@ -404,6 +410,28 @@ mod tests {
         assert_eq!(device.into_inner(), img);
         assert!(stages.contains(&Stage::Write));
         assert!(stages.contains(&Stage::Verify));
+    }
+
+    #[test]
+    fn cancelling_mid_write_stops_between_chunks_with_the_neutral_marker() {
+        // The Stop button's contract: flip the token, and the loop exits at
+        // the next chunk boundary with the CANCELLED marker — never a panic,
+        // never a hang, and the UI can tell "stopped" from "failed".
+        let img = image_bytes();
+        let sha = sha_of(&img);
+        let token = crate::CancelToken::default();
+        let cancel_after_first_tick = token.clone();
+        let mut device = std::io::Cursor::new(Vec::new());
+        let err = write_verified(
+            &mut device,
+            std::io::Cursor::new(img.clone()),
+            img.len() as u64,
+            &sha,
+            &token,
+            &mut |_: Progress| cancel_after_first_tick.cancel(),
+        )
+        .unwrap_err();
+        assert!(err.starts_with(crate::CANCELLED), "{err}");
     }
 
     #[test]
@@ -450,6 +478,7 @@ mod tests {
             std::io::Cursor::new(img.clone()),
             img.len() as u64,
             &sha,
+            &CancelToken::default(),
             &mut |_| {},
         )
         .unwrap_err();
@@ -465,6 +494,7 @@ mod tests {
             std::io::Cursor::new(img.clone()),
             img.len() as u64,
             &"0".repeat(64),
+            &CancelToken::default(),
             &mut |_| {},
         )
         .unwrap_err();
@@ -519,6 +549,7 @@ mod tests {
             std::fs::File::open(&image_path).unwrap(),
             img.len() as u64,
             &sha,
+            &CancelToken::default(),
             &mut |_| {},
         )
         .unwrap();
