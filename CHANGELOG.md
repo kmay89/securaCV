@@ -15,6 +15,18 @@
   comprehension probes allow no assisted passes at all. Scoring
   thresholds, a results ledger (failures filed with VERIFY-note honesty),
   and a serial-grammar appendix (PG1/DM1/DBG1/ARC1/MIC1 in one table).
+- 4.3C power truth folded in (vendor-documented): the CS8501
+  charge/boost chip (~580 mA, single-cell 3.7 V → 5 V), the PWR/CHG/DONE
+  LEDs, and the **side switch = battery connect/disconnect** (USB powers
+  the board in either position; CHG-blink + DONE-lit with no pack is
+  normal). New POWER & BATTERY section in the 4.3C pin map +
+  "Power, the battery, and the side switch" in its README. `HAS_BATTERY`
+  stays 0 with the reason upgraded from "no charge silicon confirmed" to
+  "charging is hardware-managed; the firmware has no battery view" —
+  `BATTERY_PIN_ADC -1` (VERIFY) records the sense-pin conflict (series
+  demo says ADC1 ch3 = GPIO4, which this map carries as touch INT) that
+  only the schematic can arbitrate. The outage-witness follow-up is
+  staged in the README, not started.
 - Polish/honesty fixes found writing it: `mic_pins_ok()` now computes
   from the pin map rather than gate state, so debug mode's System page
   reports the board truthfully even though the gears never initialize the

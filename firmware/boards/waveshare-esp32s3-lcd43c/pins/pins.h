@@ -170,6 +170,35 @@
 #define AUDIO_PIN_PA_ENABLE     -1    // speaker amp enable, if routed (VERIFY)
 
 // ============================================================================
+// POWER & BATTERY — CS8501 charge/boost, battery-disconnect side switch
+// ============================================================================
+//
+// Vendor-documented for this SKU: a CS8501 charge/discharge management
+// chip (charges a single-cell 3.7 V Li-ion at ~580 mA, boosts it to 5 V
+// when discharging) behind a small battery connector, three status LEDs
+// (PWR / CHG / DONE), and the SIDE SWITCH — which is the BATTERY
+// connect/disconnect, not a device power switch: ON connects the pack,
+// OFF isolates it, and USB/DC powers the board in either position
+// (Waveshare documents CHG blinking + DONE lit as the NORMAL "powered,
+// no battery in the path" pattern, not a fault). Charging and the
+// USB→battery failover are pure hardware — they work with this firmware
+// flashed, with zero code involved.
+//
+// What the firmware does NOT have: any view of the battery. HAS_BATTERY
+// stays 0 below until a sense path is confirmed. Waveshare's demo code
+// for this display series reads pack voltage on ADC1 channel 3 — which
+// is GPIO4 on the S3, a pin this map carries as TOUCH_PIN_INT from the
+// 4.3 sibling — so either the demo belongs to a different board in the
+// series or the C's routing differs. The schematic must arbitrate; do
+// not guess a divider onto a driven pin. (Connector type is reported
+// variously as PH2.0 and MX1.25 across vendor pages — check your unit
+// before buying a pigtail.)
+
+#define BATTERY_PIN_ADC         -1    // VERIFY: pack-voltage sense, if routed —
+                                      // read off the vendor schematic at bench;
+                                      // see the section note (GPIO4 conflict)
+
+// ============================================================================
 // ONBOARD PERIPHERALS
 // ============================================================================
 
@@ -205,8 +234,15 @@
                                       // layer targets the PCF8563 register map
                                       // and must NOT be enabled here until the
                                       // PCF85063 variant lands. Silicon != driver.
-#define HAS_BATTERY             0     // demo UI shows a battery glyph; no charge
-                                      // silicon confirmed — VERIFY before claiming
+#define HAS_BATTERY             0     // charge silicon IS vendor-documented
+                                      // (CS8501 — see POWER & BATTERY above):
+                                      // charging + USB→battery failover work in
+                                      // hardware with no firmware involvement.
+                                      // Stays 0 because the firmware has no
+                                      // battery view: no confirmed sense pin
+                                      // (BATTERY_PIN_ADC -1, VERIFY), no level,
+                                      // no on-battery detection. Flip only with
+                                      // a schematic-confirmed sense path.
 #define HAS_BACKLIGHT_PWM       0     // CH422G on/off only
 #define HAS_CAN_RS485           0     // the BOX edition DOES expose a screw-
                                       // terminal strip (visible on the case edge);

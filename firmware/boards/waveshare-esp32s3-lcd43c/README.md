@@ -46,6 +46,41 @@ Same honesty rule as every board here. Two VERIFY clusters gate real use:
    unset"; console says `[MIC] pins unset`). The mics are provably
    un-driven until you fill them in.
 
+## Power, the battery, and the side switch
+
+Vendor-documented power scheme for this SKU: a **CS8501** charge/discharge
+management chip charges a single-cell 3.7 V Li-ion pack at ~580 mA and
+boosts it to 5 V when discharging, with three status LEDs (**PWR** power,
+**CHG** charging, **DONE** charge complete). **The side switch is the
+battery connect/disconnect — not a device power switch.** ON connects the
+pack (charges over USB; takes over seamlessly when USB is lost), OFF
+isolates it (neither charges nor discharges — the storage/shipping
+position). USB/DC powers the board in *either* position, and Waveshare
+documents CHG blinking + DONE lit as the normal "powered, nothing in the
+battery path" pattern — not a fault.
+
+Two honest lines for the firmware side:
+
+- **Charging works today, in hardware.** Connect a pack, switch ON, and
+  the CS8501 does everything with zero firmware involvement — including
+  riding through a power cut.
+- **The firmware is battery-blind.** `HAS_BATTERY 0` stands: no level
+  read, no on-battery detection, no low-battery warning, no outage event.
+  The demo-UI battery glyph in vendor listing photos is Waveshare's demo
+  firmware, not this one. The sense path is the blocker: the series demo
+  reads pack voltage on ADC1 ch3 (= GPIO4, which this map carries as
+  touch INT) — a conflict only the schematic can arbitrate, so
+  `BATTERY_PIN_ADC` ships `-1` (VERIFY) and no monitor gets written until
+  the bench reads the real divider off the vendor schematic.
+
+Sixty-second bench check of the above: on USB, flip the switch both ways —
+the glass stays lit. Switch ON + charged pack, pull USB — stays lit
+(that's the CS8501 boost path). Switch OFF, pull USB — dies. The follow-up
+worth wanting is the 4.3B capability map's battery line, on this board:
+*"cut the power, the Canary keeps witnessing"* — a schematic-confirmed
+sense pin plus an on-battery/outage event would let the dash report the
+power cut it survives. Staged, not started.
+
 ## Bench bring-up (the session this board is bought for)
 
 1. `pio run -e canary-display-dash-mic -t upload` — boots the fleet face
