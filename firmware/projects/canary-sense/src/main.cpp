@@ -36,6 +36,7 @@
 #include "canary/topics.h"
 #include "canary/types.h"
 #include "canary/runtime_config.h"
+#include "canary/sense_config.h"
 #include "canary/diagnostics.h"
 #include "canary/witness.h"
 #include "canary/net/wifi_mgr.h"
@@ -84,16 +85,24 @@ static HardwareSerial RadarSerial(RADAR_UART_NUM);
 static FrameParser g_parser;
 
 static PresenceConfig make_presence_config() {
+  // NVS-backed reflexes (sense_config): the CS_* compile-time values seed
+  // the first boot; HA's number entities and the flasher tune them after.
+  const auto& s = canary::cfg::sense();
   PresenceConfig c;
-  c.present_debounce_ms = CS_PRESENT_DEBOUNCE_MS;
-  c.clear_timeout_ms    = CS_CLEAR_TIMEOUT_MS;
-  c.stall_timeout_ms    = CS_RADAR_STALL_MS;
-  c.near_cm             = CS_RANGE_NEAR_CM;
-  c.mid_cm              = CS_RANGE_MID_CM;
+  c.present_debounce_ms = s.present_debounce_ms;
+  c.clear_timeout_ms    = s.clear_timeout_ms;
+  c.stall_timeout_ms    = s.stall_timeout_ms;
+  c.near_cm             = (uint16_t)s.near_cm;
+  c.mid_cm              = (uint16_t)s.mid_cm;
   return c;
 }
 
-static PresenceFSM g_presence(make_presence_config());
+// Constructed with placeholder defaults ON PURPOSE: make_presence_config()
+// reads NVS (sense_config), which must not run during static init. setup()
+// reconfigures with the real (NVS-backed) reflexes before the first tick.
+static PresenceFSM g_presence(PresenceConfig{});
+
+static void poll_sense_cfg_commands(uint32_t now);
 
 #ifdef CANARY_SENSE_VITALS
 using securacv::mmwave::VitalsConfig;
@@ -101,9 +110,10 @@ using securacv::mmwave::VitalsFSM;
 using securacv::mmwave::VitalsLock;
 
 static VitalsConfig make_vitals_config() {
+  const auto& s = canary::cfg::sense();
   VitalsConfig c;
-  c.lock_confirm_ms = CS_VITALS_LOCK_MS;
-  c.lock_lost_ms    = CS_VITALS_LOST_MS;
+  c.lock_confirm_ms = s.vitals_lock_ms;
+  c.lock_lost_ms    = s.vitals_lost_ms;
   c.breath_min_bpm  = CS_BREATH_MIN_BPM;
   c.breath_max_bpm  = CS_BREATH_MAX_BPM;
   c.heart_min_bpm   = CS_HEART_MIN_BPM;
@@ -111,7 +121,7 @@ static VitalsConfig make_vitals_config() {
   return c;
 }
 
-static VitalsFSM g_vitals(make_vitals_config());
+static VitalsFSM g_vitals(VitalsConfig{});  // real config lands in setup() (see g_presence)
 #endif
 
 #if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
@@ -237,6 +247,63 @@ static void led_for_presence(Presence p) {
     case Presence::Unknown:                              // fallthrough
     default:                led_show(24, 8, 0);  break;  // amber: no radar data
   }
+}
+
+// ── runtime radar reflexes: drain → clamp → apply → republish ───────────────
+static void poll_sense_cfg_commands(uint32_t now) {
+  using namespace canary::net;
+  long v;
+  bool any_cmd = false, changed = false, vitals_changed = false;
+
+  if ((v = take_pending_cfg_debounce()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::sense_set_present_debounce_ms((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_clear()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::sense_set_clear_timeout_ms((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_stall()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::sense_set_stall_timeout_ms((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_near()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::sense_set_near_cm((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_mid()) >= 0) {
+    any_cmd = true;
+    changed |= canary::cfg::sense_set_mid_cm((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_vlock()) >= 0) {
+    any_cmd = true;
+    vitals_changed |= canary::cfg::sense_set_vitals_lock_ms((uint32_t)v);
+  }
+  if ((v = take_pending_cfg_vlost()) >= 0) {
+    any_cmd = true;
+    vitals_changed |= canary::cfg::sense_set_vitals_lost_ms((uint32_t)v);
+  }
+
+  if (changed) {
+    g_presence.reconfigure(make_presence_config(), now);
+  }
+#ifdef CANARY_SENSE_VITALS
+  if (vitals_changed) {
+    g_vitals.reconfigure(make_vitals_config(), now);
+  }
+#endif
+  if (changed || vitals_changed) {
+    const auto& s = canary::cfg::sense();
+    canary::log_header("CFG");
+    canary::dbg_serial().printf(
+        "Radar reflexes: debounce=%lums clear=%lums stall=%lums near=%lucm "
+        "mid=%lucm vlock=%lums vlost=%lums\n",
+        (unsigned long)s.present_debounce_ms, (unsigned long)s.clear_timeout_ms,
+        (unsigned long)s.stall_timeout_ms, (unsigned long)s.near_cm,
+        (unsigned long)s.mid_cm, (unsigned long)s.vitals_lock_ms,
+        (unsigned long)s.vitals_lost_ms);
+  }
+  if (any_cmd) publish_sense_cfg_retained(TOPICS);
 }
 
 static void identify_start(uint32_t now) {
@@ -465,9 +532,9 @@ void setup() {
   boot_kv("Vitals",  "disabled (presence-only build)");
 #endif
   boot_kvf("Present", "%lu ms debounce, %lu ms clear, %lu ms stall",
-           (unsigned long)CS_PRESENT_DEBOUNCE_MS,
-           (unsigned long)CS_CLEAR_TIMEOUT_MS,
-           (unsigned long)CS_RADAR_STALL_MS);
+           (unsigned long)canary::cfg::sense().present_debounce_ms,
+           (unsigned long)canary::cfg::sense().clear_timeout_ms,
+           (unsigned long)canary::cfg::sense().stall_timeout_ms);
   boot_blank();
 
   // Bring up the radar UART (host TX16 / RX17 per the kit reference wiring).
@@ -475,9 +542,9 @@ void setup() {
 
   const uint32_t boot_ms = millis();
   g_parser.reset();
-  g_presence.reset(boot_ms);
+  g_presence.reconfigure(make_presence_config(), boot_ms);
 #ifdef CANARY_SENSE_VITALS
-  g_vitals.reset(boot_ms);
+  g_vitals.reconfigure(make_vitals_config(), boot_ms);
 #endif
   g_last_heartbeat_ms = boot_ms;
 
@@ -664,6 +731,14 @@ void loop() {
 
   // Identify: drain the button press and open the blink window.
   if (canary::net::take_pending_identify()) identify_start(now);
+
+  // Runtime radar reflexes: drain HA's number writes, apply through the
+  // clamping setters, and — on any actual change — swap the new thresholds
+  // into the live FSMs. State resets there by design (deadlines measured
+  // under the old config would be misleading) and rebuilds within one
+  // debounce window. Republish on every inbound command, even a clamped-to-
+  // same one, so HA's optimistic number display self-corrects.
+  poll_sense_cfg_commands(now);
 
   if (g_state_dirty) {
     publish_state_now(now);

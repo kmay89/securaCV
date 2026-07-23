@@ -1514,6 +1514,33 @@ export function detectValuesToNvs(values, dials) {
   return out;
 }
 
+// ── flash-time radar dials (Sense): catalog → NVS seed ─────────────────────
+// The Sense firmware's seven reflexes are NVS-backed (sense_config.cpp:
+// namespace "securacv", sns_* keys, all u32) — the same live numbers Home
+// Assistant tunes over cfg/*/set. The flasher seeds them at install time, so
+// a room preset is baked in before first boot. Mirror of detectValuesToNvs.
+export function reflexDials(catalog, product) {
+  if (!product || !catalog) return null;
+  const p = (catalog.products || []).find((x) => x.id === product.id);
+  const r = p && p.reflexes;
+  return (r && r.applies === "runtime" && r.nvs) ? r : null;
+}
+
+// Clamp one knob set against each knob's own bounds and shape it for the NVS
+// builder. Only the knobs actually provided (and known) are carried.
+export function reflexValuesToNvs(values, reflexes) {
+  const out = { u32: {} };
+  if (!values || !reflexes || !Array.isArray(reflexes.knobs)) return out;
+  for (const k of reflexes.knobs) {
+    const v = values[k.id];
+    if (!Number.isFinite(v) || !k.nvs) continue;
+    const [lo, hi] = Array.isArray(k.bounds) && k.bounds.length === 2
+      ? k.bounds : [0, 0xffffffff];
+    out.u32[k.nvs] = Math.min(Math.max(Math.round(v), lo), hi);
+  }
+  return out;
+}
+
 // ── displays: the boards that SHOW — known to the flasher, honestly ─────────
 // Display builds aren't published over the release channel (yet), so they are
 // deliberately not flashable products. But the flasher should still KNOW them:
@@ -1596,8 +1623,24 @@ export function validateEpicCatalog(cat) {
         if (!pr.id || !pr.title || !pr.values) errs.push(`product ${p.id}: preset ${pr && pr.id}: id, title, values required`);
       }
     }
-    if (p.reflexes && (!Array.isArray(p.reflexes.knobs) || !p.reflexes.knobs.length)) {
-      errs.push(`product ${p.id}: reflexes.knobs must be a non-empty array`);
+    if (p.reflexes) {
+      const r = p.reflexes;
+      if (!Array.isArray(r.knobs) || !r.knobs.length) {
+        errs.push(`product ${p.id}: reflexes.knobs must be a non-empty array`);
+      }
+      if (r.applies === "runtime") {
+        if (!r.nvs || !r.nvs.namespace || !r.nvs.keys) {
+          errs.push(`product ${p.id}: runtime reflexes need nvs{namespace,keys}`);
+        }
+        for (const k of Array.isArray(r.knobs) ? r.knobs : []) {
+          if (!k.nvs || !Array.isArray(k.bounds) || k.bounds.length !== 2) {
+            errs.push(`product ${p.id}: knob ${k && k.id}: runtime knobs need nvs + bounds [lo,hi]`);
+          }
+        }
+        if (!Array.isArray(r.presets) || !r.presets.length) {
+          errs.push(`product ${p.id}: runtime reflexes need presets`);
+        }
+      }
     }
   }
   return errs;
