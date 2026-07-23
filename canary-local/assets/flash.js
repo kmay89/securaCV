@@ -131,6 +131,14 @@ async function boot() {
   mountJourney(flow);
   mount.append(renderReassurance());
 
+  // The footer's opener stays hidden until the catalog (and its about block)
+  // actually loaded — a dead settings button would be worse than none.
+  const footBtn = $("#foot-settings");
+  if (footBtn && state.catalog && state.catalog.about) {
+    footBtn.hidden = false;
+    footBtn.addEventListener("click", openSettings);
+  }
+
   renderVersionStrip();
   setPhase(phaseConnect());
 }
@@ -173,11 +181,137 @@ function mountJourney(before) {
   });
   const side = el("span", "flash-journey-side");
   side.append(chirpToggle());
+  const gear = el("button", "flash-settings-open", "⚙︎");
+  gear.type = "button";
+  gear.title = "About & settings — version, legal, sound, and what this page remembers";
+  gear.setAttribute("aria-label", "About and settings");
+  gear.addEventListener("click", openSettings);
+  side.append(gear);
   const jh = helpDot("journey");
   if (jh) side.append(jh);
   journeyEl.append(side);
   before.parentNode.insertBefore(journeyEl, before);
   renderJourney(1);
+}
+
+// ── the settings & about panel: one tidy home for the meta ─────────────────
+// Version, provenance, legal, sound, lessons, and the page's local memory —
+// everything that isn't the flashing itself, in one native <dialog>. Facts
+// come from catalog.about (parsed from LICENSE + vendor provenance at
+// generation time), so the credits can't drift from the files of record.
+function openSettings() {
+  const about = (state.catalog && state.catalog.about) || null;
+  if (!about) return;
+  const old = $("#nursery-settings");
+  if (old) old.remove(); // rebuild fresh each open — toggles reflect NOW
+  const dlg = el("dialog", "flash-settings");
+  dlg.id = "nursery-settings";
+  dlg.setAttribute("aria-label", "About & settings");
+
+  const head = el("div", "flash-settings-head");
+  head.append(el("h2", null, "⚙︎ About & settings"));
+  const close = el("button", "ghost small", "close ✕");
+  close.addEventListener("click", () => dlg.close());
+  head.append(close);
+  dlg.append(head);
+
+  const sec = (title) => {
+    const s = el("section", "flash-settings-sec");
+    s.append(el("h3", null, title));
+    dlg.append(s);
+    return s;
+  };
+
+  // ── about ──
+  const sAbout = sec("The Nursery");
+  sAbout.append(el("p", "muted", about.product + " — where Canaries hatch: " +
+    "first flash, updates, triage, and the live benches, all in the browser."));
+  sAbout.append(el("p", "fineprint", about.privacy));
+  const src = el("p", "fineprint");
+  const srcA = el("a", null, "source & issues on GitHub →");
+  srcA.href = about.source; srcA.target = "_blank"; srcA.rel = "noopener";
+  src.append(srcA);
+  sAbout.append(src);
+
+  // ── versions & provenance ──
+  const sVer = sec("Versions & provenance");
+  const facts = el("div", "flash-facts");
+  facts.append(fact("Firmware train", state.catalog.fw_train));
+  const engine = (about.vendors || []).find((v) => v.name === "esptool-js");
+  if (engine) facts.append(fact("Flashing engine", engine.package + " (vendored, offline)"));
+  sVer.append(facts);
+  sVer.append(el("p", "fineprint",
+    "The device catalog on this page is generated from the firmware tree " +
+    "(tools/gen_flash.py) and drift-checked in CI — the facts here can’t be " +
+    "typed wrong, only parsed wrong loudly."));
+
+  // ── sound & lessons ──
+  const sPref = sec("Sound & lessons");
+  const prefRow = el("div", "flash-row");
+  prefRow.append(chirpToggle());
+  if (coachDismissed()) {
+    const coachBtn = el("button", "ghost small", "☕ bring back the lessons");
+    coachBtn.addEventListener("click", () => {
+      try { sessionStorage.removeItem(COACH_KEY); } catch { /* private mode */ }
+      coachBtn.textContent = "☕ lessons will ride the next install ✓";
+      coachBtn.disabled = true;
+    });
+    prefRow.append(coachBtn);
+  } else {
+    prefRow.append(el("span", "fineprint", "☕ lessons ride every install (hide them with the × on the card)"));
+  }
+  sPref.append(prefRow);
+  sPref.append(el("p", "fineprint",
+    "Motion follows your system’s reduce-motion setting automatically — " +
+    "nothing to configure here."));
+
+  // ── this page's memory ──
+  const sData = sec("What this page remembers");
+  const dataRow = el("div", "flash-row");
+  const forget = el("button", "ghost small", "forget saved WiFi");
+  forget.addEventListener("click", () => {
+    wifiMemory.forget();
+    forget.textContent = "saved WiFi forgotten ✓";
+    forget.disabled = true;
+  });
+  const clearRoster = el("button", "ghost small",
+    state.roster.length ? `clear the session roster (${state.roster.length})` : "session roster is empty");
+  clearRoster.disabled = !state.roster.length;
+  clearRoster.addEventListener("click", () => {
+    state.roster = [];
+    saveRoster(state.roster);
+    clearRoster.textContent = "roster cleared ✓";
+    clearRoster.disabled = true;
+  });
+  dataRow.append(forget, clearRoster);
+  sData.append(dataRow);
+  sData.append(el("p", "fineprint",
+    "Both live only in this browser: the WiFi copy so a batch provisions " +
+    "without retyping, the roster so a batch keeps its place (public facts " +
+    "only — never credentials). Neither ever leaves this page."));
+
+  // ── legal ──
+  const sLegal = sec("Legal");
+  sLegal.append(el("p", "muted", `${about.copyright} · ${about.license.name}`));
+  const legalList = el("div", "flash-settings-vendors");
+  (about.vendors || []).forEach((v) => {
+    const row = el("div", "flash-knob");
+    const lab = el("span", "flash-knob-label");
+    const a = el("a", null, v.package);
+    a.href = v.file; a.target = "_blank"; a.rel = "noopener";
+    lab.append(a);
+    row.append(lab, el("span", "flash-knob-val", v.license));
+    legalList.append(row);
+  });
+  sLegal.append(legalList);
+  sLegal.append(el("p", "fineprint",
+    "Vendored into this site on purpose — no CDNs, no third-party requests. " +
+    "Each credit links its provenance file; the whole page ships under " +
+    `${about.license.name} (LICENSE in the repository).`));
+
+  dlg.addEventListener("click", (ev) => { if (ev.target === dlg) dlg.close(); });
+  document.body.append(dlg);
+  dlg.showModal();
 }
 
 // One check, used everywhere motion is decorative rather than informative.
@@ -1318,6 +1452,9 @@ async function onBackup() {
   }
   const box = progressCard("Backing up your Canary", "Reading every byte off the board. Nothing is changed.");
   setPhase(box.card);
+  // Name the stage so the coach deals its safety-copy lessons here too, not
+  // only during an install's embedded backup step.
+  box.stage("Saving a safety copy — reading every byte off the board. Nothing is changed.");
   try {
     await takeBackup(box);
     state.busy = false;
@@ -1645,6 +1782,8 @@ function phaseSenseBench(port, product) {
   const row = el("div", "flash-row");
   const back = el("button", "ghost", "← back to the Nursery");
   row.append(back);
+  const senseTwin = twinLink(product);
+  if (senseTwin) row.append(senseTwin);
   box.append(row);
 
   // ── the live model, fed by the console lines ──
@@ -1669,7 +1808,13 @@ function phaseSenseBench(port, product) {
   (async () => {
     try {
       await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
       reader = port.readable.getReader();
+      if (!model.alive) {
+        try { reader.releaseLock(); } catch {}
+        try { await port.close(); } catch {}
+        return;
+      }
     } catch (e) {
       status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
       return;
@@ -1900,6 +2045,8 @@ function phaseWapBench(port, product) {
   const row = el("div", "flash-row");
   const back = el("button", "ghost", "← back to the Nursery");
   row.append(back);
+  const wapTwin = twinLink(product);
+  if (wapTwin) row.append(wapTwin);
   box.append(row);
 
   const model = {
@@ -1922,7 +2069,13 @@ function phaseWapBench(port, product) {
   (async () => {
     try {
       await port.open({ baudRate: state.catalog.console_baud || 115200 });
+      if (!model.alive) { try { await port.close(); } catch {} return; } // back won the race
       reader = port.readable.getReader();
+      if (!model.alive) {
+        try { reader.releaseLock(); } catch {}
+        try { await port.close(); } catch {}
+        return;
+      }
     } catch (e) {
       status.textContent = "The console didn’t open (" + String(e.message || e) + ") — unplug, replug, reconnect.";
       return;
@@ -1961,9 +2114,13 @@ function phaseWapBench(port, product) {
   })();
 
   const fctx = field.getContext("2d");
-  let raf = 0, t0 = performance.now();
+  let raf = 0, t0 = performance.now(), lastFrame = t0;
   function draw(now) {
     if (!model.alive) return;
+    // dt-based decay: the stir reading is INFORMATIVE, so it must drain at
+    // the same rate on every display — 60 Hz, 144 Hz, or reduced-motion.
+    const dt = Math.min(0.1, Math.max(0, (now - lastFrame) / 1000));
+    lastFrame = now;
     const t = calm ? 0 : (now - t0) / 1000;
     const W = field.width, H = field.height, cx = W / 2, cy = H / 2;
     fctx.clearRect(0, 0, W, H);
@@ -2008,8 +2165,8 @@ function phaseWapBench(port, product) {
       fctx.fillStyle = "#f0a860";
       fctx.fillText("no field lines lately — the WAP only speaks on transitions; walk past it", 14, 18);
     }
-    // the stir meter, decaying gently between events
-    model.stir = Math.max(0, model.stir - (calm ? 0.4 : 0.15));
+    // the stir meter, decaying gently between events (~9%/second everywhere)
+    model.stir = Math.max(0, model.stir - 9 * dt);
     fill.style.width = Math.round(model.stir) + "%";
     fill.dataset.level = model.stir >= 55 ? "ok" : model.stir >= 25 ? "soft" : "faint";
     raf = requestAnimationFrame(draw);
@@ -3071,17 +3228,32 @@ function phaseDone(opts) {
   const rosterStrip = renderRosterStrip();
   if (rosterStrip) box.append(rosterStrip);
 
+  // Prove it, two ways — the SAME shape for every Canary (parity is a
+  // tested guarantee): one real proof over the cable/glass, one emulated
+  // twin a click away. The catalog's prove block owns both.
+  const proveSpec = opts.product && !opts.isBackup
+    ? ((state.catalog.products.find((p) => p.id === opts.product.id) || {}).prove || null)
+    : null;
+  const proveReal = () => {
+    const kind = proveSpec ? proveSpec.real.kind : "monitor";
+    if (kind === "bench-radar") return openSenseBench(opts.product);
+    if (kind === "bench-field") return openWapBench(opts.product);
+    if (kind === "bench-camera") {
+      // The camera bench lives on the MODULE's port — route through the
+      // module flow (same hand-off the two-port checklist uses).
+      return onDisconnect(true).then(() => setPhase(phaseModule({
+        catalog: state.catalog, setPhase, back: () => setPhase(phaseConnect()),
+      })));
+    }
+    // "glass" and "monitor": the console is the honest window either way.
+    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true });
+  };
+
   const row = el("div", "flash-row");
-  const watch = doneRole === "sense"
-    ? el("button", "primary", "👋 Feel it sense — the live radar bench →")
-    : doneRole === "wap"
-      ? el("button", "primary", "🌊 Feel the field — the live WiFi bench →")
-      : el("button", "primary", "Watch it boot & prove itself →");
-  watch.addEventListener("click", () => doneRole === "sense"
-    ? openSenseBench(opts.product)
-    : doneRole === "wap"
-      ? openWapBench(opts.product)
-      : openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
+  const watch = el("button", "primary",
+    proveSpec ? proveSpec.real.label : "Watch it boot & prove itself →");
+  if (proveSpec) watch.title = proveSpec.real.how;
+  watch.addEventListener("click", proveReal);
   const again = el("button", "ghost", "Set up another board");
   // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
   // half-done Vision can't carry a stale flag into the next board (else its other
@@ -3095,9 +3267,31 @@ function phaseDone(opts) {
     tourEl = installStory(() => state.lastImage);
     box.append(tourEl);
   });
-  row.append(watch, again, tour);
+  row.append(watch);
+  if (proveSpec) {
+    const twin = el("a", "ghost flash-twin", proveSpec.emulated.label);
+    twin.href = proveSpec.emulated.href;
+    twin.target = "_blank";
+    twin.rel = "noopener";
+    twin.title = proveSpec.emulated.how;
+    row.append(twin);
+  }
+  row.append(again, tour);
   box.append(row);
   return box;
+}
+
+// The emulated-twin link for a product, wherever a bench wants to offer it.
+function twinLink(product) {
+  const spec = product &&
+    ((state.catalog.products.find((p) => p.id === product.id) || {}).prove || null);
+  if (!spec) return null;
+  const a = el("a", "ghost small flash-twin", spec.emulated.label);
+  a.href = spec.emulated.href;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.title = spec.emulated.how;
+  return a;
 }
 
 // ── rescue: back to known-good, for any firmware past or future ─────────────
@@ -4190,6 +4384,91 @@ function installStory(getBytes) {
 }
 
 // ── shared UI bits ──────────────────────────────────────────────────────────
+// The coach: optional micro-lessons that ride every long wait. Stage-aware
+// (a backup teaches backups, a write teaches NVS and slots), one lesson at
+// a time, auto-advancing gently (never under prefers-reduced-motion), and
+// dismissible for the session — learning is offered, never imposed.
+const COACH_KEY = "nursery.coach";
+function coachDismissed() {
+  try { return sessionStorage.getItem(COACH_KEY) === "off"; } catch { return false; }
+}
+function attachCoach(card, afterEl) {
+  if (coachDismissed() || !state.catalog || !Array.isArray(state.catalog.lessons) ||
+      !state.catalog.lessons.length) return null;
+  const box = el("aside", "flash-coach");
+  box.setAttribute("aria-label", "Optional lesson while you wait");
+  const head = el("div", "flash-coach-head");
+  head.append(el("span", "flash-coach-kicker", "☕ while it works — a 20-second lesson"));
+  const close = el("button", "flash-coach-close", "×");
+  close.type = "button";
+  close.title = "Hide the lessons for this session";
+  close.setAttribute("aria-label", "Hide lessons for this session");
+  head.append(close);
+  box.append(head);
+  const titleEl = el("div", "flash-coach-title");
+  const bodyEl = el("p", "flash-coach-body");
+  box.append(titleEl, bodyEl);
+  const controls = el("div", "flash-coach-controls");
+  const next = el("button", "ghost small", "another →");
+  controls.append(next);
+  box.append(controls);
+  afterEl.after(box);
+
+  const shown = [];
+  let stageText = "";
+  let timer = null;
+  let alive = true;
+  function show(lesson) {
+    if (!lesson) { next.disabled = true; next.textContent = "that’s the deck ✓"; return; }
+    shown.push(lesson.id);
+    box.classList.remove("flash-coach-swap");
+    void box.offsetWidth; // restart the swap animation
+    box.classList.add("flash-coach-swap");
+    titleEl.textContent = lesson.title;
+    bodyEl.textContent = lesson.body;
+  }
+  function advance() {
+    // Detachment retires the coach: setPhase() swaps cards without telling
+    // us, and an immortal 14 s timer chain per progress card would pile up
+    // fast in a batch session. A dry deck stops the chain too.
+    if (!alive || !box.isConnected) {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      return;
+    }
+    const lesson = core.pickLesson(state.catalog, stageText, shown);
+    show(lesson);
+    if (lesson) arm();
+  }
+  function arm() {
+    if (timer) clearTimeout(timer);
+    // Auto-advance is decorative pacing — calm users page by hand.
+    if (!prefersCalm()) timer = setTimeout(advance, 14000);
+  }
+  next.addEventListener("click", advance);
+  close.addEventListener("click", () => {
+    alive = false;
+    if (timer) clearTimeout(timer);
+    try { sessionStorage.setItem(COACH_KEY, "off"); } catch { /* private mode */ }
+    box.remove();
+  });
+  advance();
+  return {
+    stage(s) {
+      // A new stage brings its own lesson — but only if it actually has one
+      // unseen; mid-lesson churn for nothing helps nobody.
+      stageText = s || "";
+      const staged = core.pickLesson(state.catalog, stageText, shown);
+      if (staged && staged.stage !== "any" &&
+          stageText.toLowerCase().includes(staged.stage)) {
+        show(staged);
+        arm();
+      }
+    },
+    retire() { alive = false; if (timer) clearTimeout(timer); },
+  };
+}
+
 function progressCard(title, subtitle) {
   const card = el("section", "flash-card flash-progress");
   card.append(el("h2", null, title));
@@ -4204,6 +4483,7 @@ function progressCard(title, subtitle) {
   const reassure = el("p", "flash-reassure-lite fineprint",
     "Safe to interrupt — you can’t brick it. If anything stops, just start again.");
   card.append(reassure);
+  const coach = attachCoach(card, reassure);
   // expose esptool log
   const log = el("details", "flash-log");
   log.append(el("summary", null, "show technical log"));
@@ -4213,7 +4493,10 @@ function progressCard(title, subtitle) {
   card.append(log);
   return {
     card,
-    stage(s) { stageEl.textContent = s; },
+    stage(s) {
+      stageEl.textContent = s;
+      if (coach) coach.stage(s);
+    },
     set(frac, metaText) {
       const pct = Math.max(0, Math.min(1, frac || 0)) * 100;
       fill.style.width = pct.toFixed(1) + "%";

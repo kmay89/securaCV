@@ -416,7 +416,30 @@
     "full_usd": 102.89,
     "required_usd_live": 26.9,
     "full_usd_live": 102.89,
-    "pricing_as_of": "2026-07-23T08:30:23Z"
+    "pricing_as_of": "2026-07-23T08:30:23Z",
+    "recipes": [
+     {
+      "label": "Required-only",
+      "refs": [],
+      "usd": 26.9,
+      "note": "Bench bring-up"
+     },
+     {
+      "label": "Printed-enclosure weather kit",
+      "refs": [
+       "SCR3",
+       "CW1",
+       "ADH1",
+       "PLUG1",
+       "SCR4",
+       "FIL1",
+       "VENT1",
+       "LP1"
+      ],
+      "usd": 11.55,
+      "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
+     }
+    ]
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
@@ -714,7 +737,29 @@
     "full_usd": 93.16,
     "required_usd_live": 41.7,
     "full_usd_live": 93.16,
-    "pricing_as_of": "2026-07-23T08:30:23Z"
+    "pricing_as_of": "2026-07-23T08:30:23Z",
+    "recipes": [
+     {
+      "label": "Required-only",
+      "refs": [],
+      "usd": 41.7,
+      "note": "Core Vision device"
+     },
+     {
+      "label": "Printed camera unit",
+      "refs": [
+       "CAM1",
+       "ENC2",
+       "SCR5",
+       "SCR6",
+       "SCR7",
+       "NUT1",
+       "CW2"
+      ],
+      "usd": 54.75,
+      "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
+     }
+    ]
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
@@ -845,7 +890,27 @@
     "full_usd": 40.0,
     "required_usd_live": 36.4,
     "full_usd_live": 40.0,
-    "pricing_as_of": "2026-07-23T08:30:23Z"
+    "pricing_as_of": "2026-07-23T08:30:23Z",
+    "recipes": [
+     {
+      "label": "Required-only",
+      "refs": [],
+      "usd": 36.4,
+      "note": "Shelf/desk presence witness — kit + cable + wall power"
+     },
+     {
+      "label": "Wall-mounted sealed build",
+      "refs": [
+       "SW2",
+       "MAG1",
+       "SCR3",
+       "SCR4",
+       "FIL1"
+      ],
+      "usd": 39.6,
+      "note": "Printed radome + tamper + keyhole mount; INS1 optional service threads extra"
+     }
+    ]
    }
   },
   "canary-display-watch": {

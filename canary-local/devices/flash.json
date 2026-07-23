@@ -47,7 +47,19 @@
         ]
       },
       "serial_receipt": true,
-      "role": "canary"
+      "role": "canary",
+      "prove": {
+        "real": {
+          "kind": "monitor",
+          "label": "Watch it boot & prove itself →",
+          "how": "The live monitor: boot log, the signed self-manifest (j), health score and temperature — from the board's own mouth."
+        },
+        "emulated": {
+          "href": "homeassistant.html",
+          "label": "🧪 the emulated twin — its Home Assistant life",
+          "how": "The Hub lab: the exact entities, cards and automations this Canary raises, simulated from the same generated data."
+        }
+      }
     },
     {
       "id": "securacv-canary-wap",
@@ -70,7 +82,19 @@
         ]
       },
       "serial_receipt": false,
-      "role": "wap"
+      "role": "wap",
+      "prove": {
+        "real": {
+          "kind": "bench-field",
+          "label": "🌊 Feel the field — the live WiFi bench →",
+          "how": "The field bench: RF events, device counts, and the CSI stir meter, live off the USB console."
+        },
+        "emulated": {
+          "href": "wap.html",
+          "label": "🧪 the emulated twin — the guided WAP walkthrough",
+          "how": "The WAP lab: the same sensing pipeline and first-boot story, simulated from the firmware's own facts."
+        }
+      }
     },
     {
       "id": "securacv-canary-vision",
@@ -94,6 +118,18 @@
       },
       "serial_receipt": true,
       "role": "vision",
+      "prove": {
+        "real": {
+          "kind": "bench-camera",
+          "label": "👁 See through it — the camera bench →",
+          "how": "The module bench (the camera's OWN USB-C port): live frames, boxes, the confidence meter and the two on-module dials."
+        },
+        "emulated": {
+          "href": "vision.html",
+          "label": "🧪 the emulated twin — firmware-backed detection",
+          "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
+        }
+      },
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -222,6 +258,18 @@
       },
       "serial_receipt": true,
       "role": "vision",
+      "prove": {
+        "real": {
+          "kind": "bench-camera",
+          "label": "👁 See through it — the camera bench →",
+          "how": "The module bench (the camera's OWN USB-C port): live frames, boxes, the confidence meter and the two on-module dials."
+        },
+        "emulated": {
+          "href": "vision.html",
+          "label": "🧪 the emulated twin — firmware-backed detection",
+          "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
+        }
+      },
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -350,6 +398,18 @@
       },
       "serial_receipt": true,
       "role": "vision",
+      "prove": {
+        "real": {
+          "kind": "bench-camera",
+          "label": "👁 See through it — the camera bench →",
+          "how": "The module bench (the camera's OWN USB-C port): live frames, boxes, the confidence meter and the two on-module dials."
+        },
+        "emulated": {
+          "href": "vision.html",
+          "label": "🧪 the emulated twin — firmware-backed detection",
+          "how": "The Vision lab: the real detection math compiled for the browser, running on a staged scene."
+        }
+      },
       "detect": {
         "note": "These are the SAME four numbers Home Assistant tunes live later (cfg/*/set → NVS). Baking a preset here just means the Canary is already dialed for its room on first boot — nothing is locked in.",
         "nvs": {
@@ -478,6 +538,18 @@
       },
       "serial_receipt": false,
       "role": "sense",
+      "prove": {
+        "real": {
+          "kind": "bench-radar",
+          "label": "👋 Feel it sense — the live radar bench →",
+          "how": "The radar bench: presence, bands, count — and on Wellbeing, live breathing and heart rate — off the USB console."
+        },
+        "emulated": {
+          "href": "senselab.html",
+          "label": "🧪 the emulated twin — the Sense Lab bench",
+          "how": "The Sense Lab: the real presence/vitals FSMs ported to the browser, with every reflex on a slider."
+        }
+      },
       "reflexes": {
         "applies": "runtime",
         "nvs": {
@@ -640,6 +712,18 @@
       },
       "serial_receipt": false,
       "role": "sense",
+      "prove": {
+        "real": {
+          "kind": "bench-radar",
+          "label": "👋 Feel it sense — the live radar bench →",
+          "how": "The radar bench: presence, bands, count — and on Wellbeing, live breathing and heart rate — off the USB console."
+        },
+        "emulated": {
+          "href": "senselab.html",
+          "label": "🧪 the emulated twin — the Sense Lab bench",
+          "how": "The Sense Lab: the real presence/vitals FSMs ported to the browser, with every reflex on a slider."
+        }
+      },
       "reflexes": {
         "applies": "runtime",
         "nvs": {
@@ -835,7 +919,19 @@
         ]
       },
       "serial_receipt": false,
-      "role": "display"
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-watch",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows."
+        }
+      }
     },
     {
       "id": "securacv-canary-display-dash",
@@ -858,7 +954,19 @@
         ]
       },
       "serial_receipt": false,
-      "role": "display"
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-dash",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows."
+        }
+      }
     }
   ],
   "displays": [
@@ -1111,6 +1219,128 @@
       "what": "The real display firmware — same C++, same LVGL — compiled to run in the browser. The pixels you see are the pixels the glass will show, framebuffer out, touch in. It boots on the fleet page; the flasher itself runs a stricter security policy on purpose.",
       "when": "Before building a Watch Station or Dash: try the face, the touch, the night floor, without hardware."
     }
+  },
+  "lessons": [
+    {
+      "id": "backup-undo",
+      "stage": "safety copy",
+      "title": "This copy is your undo button",
+      "body": "Right now every byte on the chip — firmware, settings, identity key, witness diary — is being read into one file in your downloads. Restore it any time from Advanced and the board rewinds to this exact moment."
+    },
+    {
+      "id": "backup-harmless",
+      "stage": "safety copy",
+      "title": "Reading can’t hurt anything",
+      "body": "A backup only reads. The witness chain, your settings, the firmware — all untouched. That’s why the Nursery does it automatically: all upside."
+    },
+    {
+      "id": "dl-layers",
+      "stage": "download",
+      "title": "One file, three layers",
+      "body": "A factory image is really three things fused together: a tiny second-stage bootloader, a partition table (the chip’s floor plan), and the firmware itself. The release pipeline merges them so a blank chip boots from zero."
+    },
+    {
+      "id": "dl-pinned",
+      "stage": "download",
+      "title": "Pinned, never “latest”",
+      "body": "The flasher fetches from the exact release tag for this firmware train — never from “latest”, which any newer release of anything could shadow. Reproducible today, reproducible in five years."
+    },
+    {
+      "id": "verify-sha",
+      "stage": "authentic",
+      "title": "The checksum handshake",
+      "body": "Your browser just computed the download’s SHA-256 and compared it against the fingerprint published in the release — before writing a single byte. After the write, the chip computes its own MD5 over what actually landed."
+    },
+    {
+      "id": "verify-sig",
+      "stage": "authentic",
+      "title": "A signature that can’t be stripped",
+      "body": "Once a release key is in force, an official image without a valid Ed25519 signature is refused outright — because a tampered manifest could always strip a signature. Failing closed is the whole point."
+    },
+    {
+      "id": "erase-what",
+      "stage": "erase",
+      "title": "What a full erase really is",
+      "body": "Every flash cell returns to its blank state (all ones). Settings, WiFi, witness history — gone by design. On first boot the firmware mints a fresh identity key and starts a brand-new diary."
+    },
+    {
+      "id": "write-nobrick",
+      "stage": "writ",
+      "title": "Why you can’t brick it",
+      "body": "The chip’s first-stage bootloader lives in mask ROM — etched at the factory, physically unwritable. Whatever happens to the flash, the ROM can always drop back into download mode and take a fresh image."
+    },
+    {
+      "id": "write-nvs",
+      "stage": "writ",
+      "title": "NVS — the chip’s settings drawer",
+      "body": "One small region holds key-value settings: WiFi, the detection dials, the radar reflexes. It’s exactly where your choices from the confirm card are being baked right now, in the same pass as the firmware."
+    },
+    {
+      "id": "write-ab",
+      "stage": "writ",
+      "title": "Two slots, zero drama",
+      "body": "The floor plan keeps two firmware slots. Over-the-air updates write the spare slot and only flip when it verifies — a failed update just boots the old one. The update counter you saw at hello counts those flips."
+    },
+    {
+      "id": "write-witness",
+      "stage": "writ",
+      "title": "The diary and the deep install",
+      "body": "This Canary keeps a tamper-evident hash diary. Over-the-air updates never touch it — they swap firmware slots and nothing else. A USB factory install like this one is deeper: on some boards the diary’s chain state rides the settings region and starts fresh here. Visible by design — a new chain reads as a new chain, never as silently missing evidence."
+    },
+    {
+      "id": "any-chip-board",
+      "stage": "any",
+      "title": "Chip vs. board",
+      "body": "The CHIP is the silicon (ESP32-S3, -C3, -C6); the BOARD is the little PCB it sits on (a XIAO, a Waveshare). The chip guard reads the silicon itself, so a board can never be handed another chip’s firmware."
+    },
+    {
+      "id": "any-baud",
+      "stage": "any",
+      "title": "Why the speed varies",
+      "body": "Bytes move at the fastest rate your cable can carry — the Nursery starts quick and steps down by itself if the link stumbles. Speed never costs correctness: every byte is verified after, at any speed."
+    },
+    {
+      "id": "any-manifest",
+      "stage": "any",
+      "title": "The board can prove itself",
+      "body": "After the install, press the monitor’s “self-manifest” key (j): the running firmware answers with a signed statement of what it is — version, identity, health score, even its temperature."
+    }
+  ],
+  "about": {
+    "product": "The Canary Nursery — the SecuraCV browser flasher",
+    "copyright": "© 2026 Errer Labs / SecuraCV",
+    "license": {
+      "name": "Apache-2.0",
+      "file": "LICENSE"
+    },
+    "source": "https://github.com/kmay89/securaCV",
+    "privacy": "Everything on this page runs locally: firmware images come from the pinned signed release, and nothing about you or your board is sent anywhere. What this page remembers (an optional saved WiFi, the session roster, the chirps choice) lives only in this browser and is yours to clear below.",
+    "vendors": [
+      {
+        "name": "esptool-js",
+        "package": "esptool-js@0.5.4",
+        "license": "Apache-2.0",
+        "file": "assets/vendor/esptool-js/PROVENANCE.txt"
+      },
+      {
+        "name": "md5",
+        "package": "blueimp JavaScript-MD5",
+        "license": "MIT",
+        "file": "assets/vendor/md5/md5.js"
+      },
+      {
+        "name": "ed25519",
+        "package": "@noble/ed25519@2.1.0",
+        "license": "MIT",
+        "file": "assets/vendor/ed25519/PROVENANCE.txt"
+      },
+      {
+        "name": "qrcode",
+        "package": "qrcode-generator@2.0.4",
+        "license": "MIT",
+        "file": "assets/vendor/qrcode/PROVENANCE.txt"
+      }
+    ]
   },
   "we2_module": {
     "name": "Grove Vision AI V2 — the Vision’s camera module",

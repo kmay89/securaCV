@@ -153,11 +153,17 @@ fetched history.
 
 ## Ordering — the "just works" path (shipped)
 
-The Build-it page carries an **Order the parts** panel: one click copies
-distributor-ready `MPN,qty` lines (only rows the snapshot marks
-`orderable` — generic screws/cables are excluded on purpose) and opens
-Digi-Key myLists or Mouser's BOM tool, where a paste prices the cart
-instantly with no account. A CSV download covers every other tool. This
+The Build-it page is a **pick-your-build** table: required rows are
+always in, every optional row (tamper reed, doorbell button, seals,
+optical covers…) is a checkbox, and the CSVs' own recipe rows become
+one-click presets (WAP's weather kit, Vision's printed camera unit,
+Sense's wall-mounted sealed build) with a live running total. The
+**Order the parts** panel then copies distributor-ready `MPN,qty` lines
+for exactly that selection (only rows the snapshot marks `orderable` —
+generic screws/cables are excluded on purpose, and counted honestly)
+and opens Digi-Key myLists or Mouser's BOM tool, where a paste prices
+the cart instantly with no account. A CSV download of the full build —
+generic items included — covers every other tool. This
 path is deliberately **deterministic**: no third-party API call that can
 silently break, an honest manual-copy fallback when the browser blocks
 the clipboard, and the row set always matches what's on screen

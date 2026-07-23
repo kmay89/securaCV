@@ -308,6 +308,221 @@ def die(msg: str) -> None:
     raise SystemExit(1)
 
 
+# ── about & legal: parsed, never typed ──────────────────────────────────────
+# The settings/about panel's facts come from the files of record: the repo
+# LICENSE names the license, each vendored module's PROVENANCE.txt names its
+# package, version and license (md5 carries its terms in its own header).
+# A moved or reworded source fails the build instead of shipping a wrong
+# credit — same honesty rule as everything else here.
+
+LICENSE_FILE = REPO / "LICENSE"
+VENDOR_DIR = CANARY_LOCAL / "assets/vendor"
+# The four modules the flasher page actually loads (the SRI import-map set).
+FLASHER_VENDORS = ["esptool-js", "md5", "ed25519", "qrcode"]
+
+
+def about_block() -> dict:
+    lic_text = read(LICENSE_FILE)
+    if "Apache License" in lic_text and "Version 2.0" in lic_text:
+        license_name = "Apache-2.0"
+    elif "MIT" in lic_text.splitlines()[0]:
+        license_name = "MIT"
+    else:
+        die("LICENSE not recognized — teach about_block() its name")
+
+    vendors = []
+    for v in FLASHER_VENDORS:
+        d = VENDOR_DIR / v
+        prov = d / "PROVENANCE.txt"
+        if prov.exists():
+            text = read(prov)
+            pkg = re.search(r"package:\s*(\S+)", text)
+            lic = re.search(r"license:\s*([^\n(]+)", text)
+            if not pkg or not lic:
+                die(f"vendor {v}: PROVENANCE.txt missing package/license lines")
+            vendors.append({"name": v, "package": pkg.group(1),
+                            "license": lic.group(1).strip(),
+                            "file": f"assets/vendor/{v}/PROVENANCE.txt"})
+        else:
+            # md5 carries its terms in its own file header.
+            src = next(d.glob("*.js"), None)
+            if not src or "Licensed under the MIT license" not in read(src):
+                die(f"vendor {v}: no PROVENANCE.txt and no recognizable in-file license")
+            vendors.append({"name": v, "package": "blueimp JavaScript-MD5",
+                            "license": "MIT",
+                            "file": f"assets/vendor/{v}/{src.name}"})
+
+    return {
+        "product": "The Canary Nursery — the SecuraCV browser flasher",
+        "copyright": "© 2026 Errer Labs / SecuraCV",
+        "license": {"name": license_name, "file": "LICENSE"},
+        "source": f"https://github.com/{REPO_SLUG}",
+        "privacy": "Everything on this page runs locally: firmware images come "
+                   "from the pinned signed release, and nothing about you or "
+                   "your board is sent anywhere. What this page remembers (an "
+                   "optional saved WiFi, the session roster, the chirps choice) "
+                   "lives only in this browser and is yours to clear below.",
+        "vendors": vendors,
+    }
+
+
+# ── parity: every Canary proves itself TWO ways ─────────────────────────────
+# One real proof (live, over the cable or on the glass) and one emulated twin
+# (a lab page that shows the same behavior with no hardware in hand) — per
+# ROLE, within each board's honest abilities. The done card renders this
+# uniformly, and a test enforces that no product ships without both. Twin
+# pages are checked to exist at generation time, so a moved page fails the
+# build instead of shipping a dead link.
+PROVE = {
+    "canary": {
+        "real": {"kind": "monitor",
+                 "label": "Watch it boot & prove itself →",
+                 "how": "The live monitor: boot log, the signed self-manifest (j), "
+                        "health score and temperature — from the board's own mouth."},
+        "emulated": {"href": "homeassistant.html",
+                     "label": "🧪 the emulated twin — its Home Assistant life",
+                     "how": "The Hub lab: the exact entities, cards and automations this "
+                            "Canary raises, simulated from the same generated data."},
+    },
+    "wap": {
+        "real": {"kind": "bench-field",
+                 "label": "🌊 Feel the field — the live WiFi bench →",
+                 "how": "The field bench: RF events, device counts, and the CSI stir "
+                        "meter, live off the USB console."},
+        "emulated": {"href": "wap.html",
+                     "label": "🧪 the emulated twin — the guided WAP walkthrough",
+                     "how": "The WAP lab: the same sensing pipeline and first-boot "
+                            "story, simulated from the firmware's own facts."},
+    },
+    "vision": {
+        "real": {"kind": "bench-camera",
+                 "label": "👁 See through it — the camera bench →",
+                 "how": "The module bench (the camera's OWN USB-C port): live frames, "
+                        "boxes, the confidence meter and the two on-module dials."},
+        "emulated": {"href": "vision.html",
+                     "label": "🧪 the emulated twin — firmware-backed detection",
+                     "how": "The Vision lab: the real detection math compiled for the "
+                            "browser, running on a staged scene."},
+    },
+    "sense": {
+        "real": {"kind": "bench-radar",
+                 "label": "👋 Feel it sense — the live radar bench →",
+                 "how": "The radar bench: presence, bands, count — and on Wellbeing, "
+                        "live breathing and heart rate — off the USB console."},
+        "emulated": {"href": "senselab.html",
+                     "label": "🧪 the emulated twin — the Sense Lab bench",
+                     "how": "The Sense Lab: the real presence/vitals FSMs ported to the "
+                            "browser, with every reflex on a slider."},
+    },
+    "display": {
+        "real": {"kind": "glass",
+                 "label": "Watch the glass — it comes alive",
+                 "how": "The proof is the screen itself: splash, then the face, then "
+                        "the on-glass wizard. Touch works."},
+        "emulated": {"href": "fleet.html",
+                     "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+                     "how": "The fleet page boots the REAL display firmware compiled to "
+                            "WASM — the pixels here are the pixels the glass shows."},
+    },
+}
+
+
+def prove_block(role: str, product_id: str) -> dict:
+    p = {k: dict(v) for k, v in PROVE[role].items()}  # deep-ish copy per product
+    if role == "display":
+        # Deep-link straight to THIS display's sheet (registry ids drop the
+        # securacv- prefix: canary-display-watch / canary-display-dash).
+        p["emulated"]["href"] = "fleet.html#" + product_id.replace("securacv-", "")
+    page = p["emulated"]["href"].split("#")[0]
+    if not (CANARY_LOCAL / page).exists():
+        die(f"prove twin page missing: {page} (role {role})")
+    return p
+
+
+# ── waiting is learning: the coach's lesson deck ────────────────────────────
+# Shown (optionally, dismissibly) while the long operations run — a safety
+# copy takes a minute, a full erase takes a while, and that minute can leave
+# the user knowing more than they arrived with. `stage` tags are matched
+# against the words the live progress stages actually use ("saving a safety
+# copy…", "downloading", "erasing", "writing firmware"); "any" fills the
+# gaps. Every fact below is real and grounded in this repo — the coach
+# teaches, it never invents.
+LESSONS = [
+    {"id": "backup-undo", "stage": "safety copy",
+     "title": "This copy is your undo button",
+     "body": "Right now every byte on the chip — firmware, settings, identity key, "
+             "witness diary — is being read into one file in your downloads. Restore "
+             "it any time from Advanced and the board rewinds to this exact moment."},
+    {"id": "backup-harmless", "stage": "safety copy",
+     "title": "Reading can’t hurt anything",
+     "body": "A backup only reads. The witness chain, your settings, the firmware — "
+             "all untouched. That’s why the Nursery does it automatically: all upside."},
+    {"id": "dl-layers", "stage": "download",
+     "title": "One file, three layers",
+     "body": "A factory image is really three things fused together: a tiny second-stage "
+             "bootloader, a partition table (the chip’s floor plan), and the firmware "
+             "itself. The release pipeline merges them so a blank chip boots from zero."},
+    {"id": "dl-pinned", "stage": "download",
+     "title": "Pinned, never “latest”",
+     "body": "The flasher fetches from the exact release tag for this firmware train — "
+             "never from “latest”, which any newer release of anything could shadow. "
+             "Reproducible today, reproducible in five years."},
+    {"id": "verify-sha", "stage": "authentic",
+     "title": "The checksum handshake",
+     "body": "Your browser just computed the download’s SHA-256 and compared it against "
+             "the fingerprint published in the release — before writing a single byte. "
+             "After the write, the chip computes its own MD5 over what actually landed."},
+    {"id": "verify-sig", "stage": "authentic",
+     "title": "A signature that can’t be stripped",
+     "body": "Once a release key is in force, an official image without a valid Ed25519 "
+             "signature is refused outright — because a tampered manifest could always "
+             "strip a signature. Failing closed is the whole point."},
+    {"id": "erase-what", "stage": "erase",
+     "title": "What a full erase really is",
+     "body": "Every flash cell returns to its blank state (all ones). Settings, WiFi, "
+             "witness history — gone by design. On first boot the firmware mints a "
+             "fresh identity key and starts a brand-new diary."},
+    {"id": "write-nobrick", "stage": "writ",
+     "title": "Why you can’t brick it",
+     "body": "The chip’s first-stage bootloader lives in mask ROM — etched at the "
+             "factory, physically unwritable. Whatever happens to the flash, the ROM "
+             "can always drop back into download mode and take a fresh image."},
+    {"id": "write-nvs", "stage": "writ",
+     "title": "NVS — the chip’s settings drawer",
+     "body": "One small region holds key-value settings: WiFi, the detection dials, "
+             "the radar reflexes. It’s exactly where your choices from the confirm "
+             "card are being baked right now, in the same pass as the firmware."},
+    {"id": "write-ab", "stage": "writ",
+     "title": "Two slots, zero drama",
+     "body": "The floor plan keeps two firmware slots. Over-the-air updates write the "
+             "spare slot and only flip when it verifies — a failed update just boots "
+             "the old one. The update counter you saw at hello counts those flips."},
+    {"id": "write-witness", "stage": "writ",
+     "title": "The diary and the deep install",
+     "body": "This Canary keeps a tamper-evident hash diary. Over-the-air updates "
+             "never touch it — they swap firmware slots and nothing else. A USB "
+             "factory install like this one is deeper: on some boards the diary’s "
+             "chain state rides the settings region and starts fresh here. Visible "
+             "by design — a new chain reads as a new chain, never as silently "
+             "missing evidence."},
+    {"id": "any-chip-board", "stage": "any",
+     "title": "Chip vs. board",
+     "body": "The CHIP is the silicon (ESP32-S3, -C3, -C6); the BOARD is the little "
+             "PCB it sits on (a XIAO, a Waveshare). The chip guard reads the silicon "
+             "itself, so a board can never be handed another chip’s firmware."},
+    {"id": "any-baud", "stage": "any",
+     "title": "Why the speed varies",
+     "body": "Bytes move at the fastest rate your cable can carry — the Nursery starts "
+             "quick and steps down by itself if the link stumbles. Speed never costs "
+             "correctness: every byte is verified after, at any speed."},
+    {"id": "any-manifest", "stage": "any",
+     "title": "The board can prove itself",
+     "body": "After the install, press the monitor’s “self-manifest” key (j): the "
+             "running firmware answers with a signed statement of what it is — "
+             "version, identity, health score, even its temperature."},
+]
+
+
 # ── the epic layer: roles, dials, reflexes, displays, per-setting help ──────
 # Same honesty rule as everything above: every number below is PARSED out of
 # the firmware tree (config.h / detect_config.h / registry.json / the lab's
@@ -1022,6 +1237,7 @@ def main() -> None:
             "hatch": hatch,
             "serial_receipt": supports_serial_receipt(p["project"]),
             "role": role,
+            "prove": prove_block(role, p["id"]),
         }
         # The dials that genuinely apply to this product — Vision's four NVS
         # numbers are flash-bakeable; Sense's reflexes are compile-time and
@@ -1058,6 +1274,11 @@ def main() -> None:
         # Every dial and toggle, explained once (flash-core.js helpTopic).
         "settings_help": settings_help_block(
             vision_detect, sense_reflexes["default"], sense_reflexes["wellbeing"]),
+        # The coach's lesson deck — waiting is optional learning (pickLesson).
+        "lessons": LESSONS,
+        # The settings/about panel's facts — parsed from LICENSE + vendor
+        # provenance files, never typed (about_block()).
+        "about": about_block(),
         # The Vision's camera module — a different chip (Himax HX6538 behind a
         # CH343 bridge), a different engine (ROM bootloader + XMODEM, mirrored
         # from Seeed's open-source flasher), the same posture: pinned asset,
