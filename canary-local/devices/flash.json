@@ -813,6 +813,52 @@
           }
         ]
       }
+    },
+    {
+      "id": "securacv-canary-display-watch",
+      "name": "Canary Watch Station",
+      "tagline": "The bedside glance — your whole fleet on one calm round glass.",
+      "chip": "ESP32-S3",
+      "board": "seeed_xiao_esp32s3",
+      "asset_stem": "canary-display-watch",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display Canary hatched",
+        "title": "Watch the glass — it comes alive.",
+        "body": "This Canary SHOWS. The proof isn’t in a console: after the splash, its face comes up and walks you through first flight on the screen itself.",
+        "steps": [
+          "Keep it powered and watch the splash give way to the on-glass welcome.",
+          "Follow the wizard on the screen — WiFi (unless you baked it here), then meeting the fleet.",
+          "Tap the glass: it feels touch. The same face is running in the emulator on the fleet page, pixel for pixel."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display"
+    },
+    {
+      "id": "securacv-canary-display-dash",
+      "name": "Canary Dash",
+      "tagline": "The wall glass — quiet 4.3″ 800×480 truth for the whole house.",
+      "chip": "ESP32-S3",
+      "board": "waveshare_esp32s3_lcd43",
+      "asset_stem": "canary-display-dash",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display Canary hatched",
+        "title": "Watch the glass — it comes alive.",
+        "body": "This Canary SHOWS. The proof isn’t in a console: after the splash, its face comes up and walks you through first flight on the screen itself.",
+        "steps": [
+          "Keep it powered and watch the splash give way to the on-glass welcome.",
+          "Follow the wizard on the screen — WiFi (unless you baked it here), then meeting the fleet.",
+          "Tap the glass: it feels touch. The same face is running in the emulator on the fleet page, pixel for pixel."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display"
     }
   ],
   "displays": [
@@ -840,7 +886,7 @@
         "fw_version": "2.2.0",
         "lvgl": "v8.4.0"
       },
-      "build_note": "Display builds aren’t in the signed release train yet — they build from source (firmware/projects/canary-display). The emulator below IS that firmware, compiled to run here."
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it."
     },
     {
       "id": "canary-display-dash",
@@ -866,7 +912,7 @@
         "fw_version": "2.2.0",
         "lvgl": "v8.4.0"
       },
-      "build_note": "Display builds aren’t in the signed release train yet — they build from source (firmware/projects/canary-display). The emulator below IS that firmware, compiled to run here."
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it."
     }
   ],
   "settings_help": {

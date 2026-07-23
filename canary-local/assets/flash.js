@@ -1350,10 +1350,10 @@ function displaysTeaser() {
   const sum = el("summary", null, "Building a Canary with a screen? Meet the displays");
   sec.append(sum);
   const intro = el("p", "muted",
-    "Two of the family SHOW instead of sense. Their firmware isn’t on the " +
-    "signed release channel yet (it builds from source) — but the real " +
-    "firmware boots in your browser, 1:1, so you can try the glass before " +
-    "you build it.");
+    "Two of the family SHOW instead of sense — and both flash right here " +
+    "(they’re in the picker above, chip-guarded like everything else). " +
+    "Before you commit, the REAL firmware boots in your browser, 1:1: try " +
+    "the glass first.");
   const hd = helpDot("display_emulator");
   if (hd) intro.append(hd);
   sec.append(intro);
@@ -1399,8 +1399,9 @@ function phaseDisplayBench(d, back) {
   box.append(facts);
 
   box.append(el("p", "fineprint", d.build_note +
-    " (The glass boots on the fleet page — this flasher page runs under a " +
-    "stricter security policy that deliberately can’t execute the emulator.)"));
+    " (The emulator boots on the fleet page — the Nursery itself runs under a " +
+    "stricter security policy that deliberately can’t execute it. Flashing the " +
+    "real board happens right here: it’s in the picker.)"));
 
   const row = el("div", "flash-row");
   const go = el("a", "primary flash-go", "boot its screen — live, 1:1 →");
@@ -2170,18 +2171,27 @@ function renderWifiFields(box, product) {
 
   const err = el("p", "flash-note flash-note-soft flash-hidden");
   sec.append(err);
-  const isAp = product && product.provisioning === "ap";
-  sec.append(el("p", "fineprint", isAp
-    ? "Fill this in and it’s written into the chip during the install, so the " +
+  const prov = (product && product.provisioning) || "usb-secrets";
+  sec.append(el("p", "fineprint", {
+    "ap":
+      "Fill this in and it’s written into the chip during the install, so the " +
       "Canary joins your WiFi on its very first boot. If it can’t connect — " +
       "or you leave this empty — it simply broadcasts its own setup network " +
       "to connect to and finish setup there. What you type stays on this " +
-      "page and goes only to the chip over the cable."
-    : "Fill this in and it’s written into the chip’s settings region during " +
+      "page and goes only to the chip over the cable.",
+    "on-glass":
+      "Fill this in and it’s written into the chip’s settings region during " +
+      "the install — the glass then skips its WiFi wizard and goes straight " +
+      "to meeting your Canaries. Leave it empty and the on-screen wizard " +
+      "walks you through it on first boot. What you type stays on this page " +
+      "and goes only to the chip over the cable.",
+    "usb-secrets":
+      "Fill this in and it’s written into the chip’s settings region during " +
       "the install — the signed generic release then joins YOUR network on " +
       "first boot, no custom build needed. Leave it empty and the firmware " +
       "keeps its compiled defaults. What you type stays on this page and " +
-      "goes only to the chip over the cable."));
+      "goes only to the chip over the cable.",
+  }[prov] || ""));
 
   // Type it once, provision a whole batch. By default the network is kept in
   // memory for this tab only (gone when you close it, never written to disk);

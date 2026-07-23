@@ -77,6 +77,7 @@ BOARD_CHIP = {
     "seeed_xiao_esp32c3": "ESP32-C3",
     "seeed_xiao_esp32c6": "ESP32-C6",
     "esp32-c3-devkitm-1": "ESP32-C3",
+    "waveshare_esp32s3_lcd43": "ESP32-S3",  # the Dash's 4.3B host (generic S3 FQBN)
 }
 
 # Per-chip human copy. Every Canary board is native-USB (the ESP32 chip's own
@@ -101,8 +102,8 @@ CHIP_INFO = {
 }
 
 # The published, flashable product line. Mirrors the release assets in
-# .github/workflows/firmware-release.yml (canary-display is not released over
-# this channel yet, so it is intentionally absent). `env` + `board` are
+# .github/workflows/firmware-release.yml — including the two display flavors,
+# built there from the sketch's committed profiles. `env` + `board` are
 # re-verified against the firmware tree below; `asset_stem` is the release
 # binary name minus version and extension.
 PRODUCTS = [
@@ -176,6 +177,26 @@ PRODUCTS = [
         "board": "seeed_xiao_esp32c6",
         "provisioning": "usb-secrets",
     },
+    {
+        "id": "securacv-canary-display-watch",
+        "name": "Canary Watch Station",
+        "tagline": "The bedside glance — your whole fleet on one calm round glass.",
+        "asset_stem": "canary-display-watch",
+        "project": "firmware/projects/canary-display",
+        "env": "profile:watch",
+        "board": "seeed_xiao_esp32s3",
+        "provisioning": "on-glass",
+    },
+    {
+        "id": "securacv-canary-display-dash",
+        "name": "Canary Dash",
+        "tagline": "The wall glass — quiet 4.3″ 800×480 truth for the whole house.",
+        "asset_stem": "canary-display-dash",
+        "project": "firmware/projects/canary-display",
+        "env": "profile:dash",
+        "board": "waveshare_esp32s3_lcd43",
+        "provisioning": "on-glass",
+    },
 ]
 
 # Provisioning copy — what happens after the flash, per scheme. This is the
@@ -191,6 +212,9 @@ PROVISIONING = {
                    "chip’s settings region — the signed generic release then joins YOUR "
                    "network on first boot, no custom build needed. (Leave it empty and "
                    "the firmware falls back to its compiled defaults, exactly as before.)",
+    "on-glass": "It sets itself up on its own glass: the screen walks you through WiFi "
+                "and the fleet on first boot. Bake WiFi here during the install and it "
+                "skips straight to meeting your Canaries.",
 }
 
 
@@ -199,13 +223,15 @@ def wifi_scheme(project: str) -> str:
     project's own source, never guessed. sense/vision runtime_config use
     Preferences getString (NVS string entries); the wap/canary family reads
     blobs. The flasher's seed writer must match or the firmware reads ''."""
-    rc = REPO / project / "src/runtime_config.cpp"
-    if rc.exists():
-        text = rc.read_text(encoding="utf-8")
-        # The credential loader reads via Preferences getString (nvs string
-        # entries); "wifi_ssid" is the key it loads.
-        if ".getString(" in text and '"wifi_ssid"' in text:
-            return "string"
+    candidates = [REPO / project / "src/runtime_config.cpp",
+                  *(REPO / project).glob("arduino/*/runtime_config.cpp")]
+    for rc in candidates:
+        if rc.exists():
+            text = rc.read_text(encoding="utf-8")
+            # The credential loader reads via Preferences getString (nvs
+            # string entries); "wifi_ssid" is the key it loads.
+            if ".getString(" in text and '"wifi_ssid"' in text:
+                return "string"
     return "blob"
 
 # Post-flash "hatching" copy. This lives in the generated catalog instead of
@@ -242,6 +268,16 @@ HATCH_MOMENTS = {
             "Watch presence flip in Home Assistant.",
         ],
     },
+    "display": {
+        "kicker": "Display Canary hatched",
+        "title": "Watch the glass — it comes alive.",
+        "body": "This Canary SHOWS. The proof isn’t in a console: after the splash, its face comes up and walks you through first flight on the screen itself.",
+        "steps": [
+            "Keep it powered and watch the splash give way to the on-glass welcome.",
+            "Follow the wizard on the screen — WiFi (unless you baked it here), then meeting the fleet.",
+            "Tap the glass: it feels touch. The same face is running in the emulator on the fleet page, pixel for pixel.",
+        ],
+    },
     "sense-wellbeing": {
         "kicker": "Wellbeing Canary hatched",
         "title": "Your Sense Wellbeing Canary is listening with radar.",
@@ -256,6 +292,8 @@ HATCH_MOMENTS = {
 
 
 def hatch_kind(product_id: str, provisioning: str) -> str:
+    if "display" in product_id:
+        return "display"
     if "sense-wellbeing" in product_id:
         return "sense-wellbeing"
     if "sense" in product_id:
@@ -502,9 +540,10 @@ def displays_block() -> list:
                          "factory": d["emulator"]["factory"],
                          "fw_version": meta.get("fw_version"),
                          "lvgl": meta.get("lvgl")},
-            "build_note": "Display builds aren’t in the signed release train yet — "
-                          "they build from source (firmware/projects/canary-display). "
-                          "The emulator below IS that firmware, compiled to run here.",
+            "build_note": "Flashable right here — the display flavors ship in the "
+                          "firmware release train now. The emulator is the SAME "
+                          "firmware compiled for the browser: try the glass before "
+                          "(or after) you flash it.",
         })
     if not out:
         die("no display devices found in registry.json — displays block would lie")
@@ -698,6 +737,27 @@ def board_for_env(project: str, env: str) -> str:
     with the product table — that disagreement is exactly the drift the CI
     gate exists to catch.
     """
+    # Profile builds (canary-display): the FQBN — and therefore the board —
+    # lives in the sketch's committed sketch.yaml, the same file the release
+    # workflow compiles with (arduino-cli --profile). Read it from there so
+    # the chip guard can't drift from what actually gets built.
+    if env.startswith("profile:"):
+        prof = env.split(":", 1)[1]
+        candidates = list((REPO / project).glob("arduino/*/sketch.yaml"))
+        if not candidates:
+            die(f"{project}: profile env '{env}' but no arduino/*/sketch.yaml")
+        text = read(candidates[0])
+        m = re.search(rf"^  {re.escape(prof)}:\n(?:(?!^  \S).*\n)*?\s*fqbn:\s*esp32:esp32:([A-Za-z0-9_]+)",
+                      text, re.M)
+        if not m:
+            die(f"{project}: profile '{prof}' (or its fqbn) not found in {candidates[0].name}")
+        fqbn_board = m.group(1)
+        fqbn_to_pio = {"XIAO_ESP32S3": "seeed_xiao_esp32s3",
+                       "esp32s3": "waveshare_esp32s3_lcd43"}
+        if fqbn_board not in fqbn_to_pio:
+            die(f"unknown profile FQBN board '{fqbn_board}' — extend fqbn_to_pio")
+        return fqbn_to_pio[fqbn_board]
+
     # Arduino-cli variants name their board via FQBN in the release workflow.
     if env.startswith("arduino:"):
         fqbn_board = env.split(":", 1)[1]
@@ -705,7 +765,8 @@ def board_for_env(project: str, env: str) -> str:
         if f":{fqbn_board}:" not in wf and f":{fqbn_board}\n" not in wf:
             die(f"{project}: FQBN board '{fqbn_board}' not found in firmware-release.yml")
         # Map the FQBN board to a PlatformIO board id for the chip lookup.
-        fqbn_to_pio = {"XIAO_ESP32S3": "seeed_xiao_esp32s3"}
+        fqbn_to_pio = {"XIAO_ESP32S3": "seeed_xiao_esp32s3",
+                       "esp32s3": "waveshare_esp32s3_lcd43"}
         if fqbn_board not in fqbn_to_pio:
             die(f"unknown FQBN board '{fqbn_board}' — extend fqbn_to_pio")
         return fqbn_to_pio[fqbn_board]

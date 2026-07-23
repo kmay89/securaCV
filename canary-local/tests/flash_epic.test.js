@@ -313,10 +313,25 @@ test("passportRows: formats the read-only probes, flags what matters", async () 
 test("flash.json: every product declares its wifi NVS scheme, honestly", () => {
   for (const p of catalog.products) {
     assert.ok(["blob", "string"].includes(p.wifi_nvs), `${p.id}: wifi_nvs`);
-    // usb-secrets firmwares read Preferences getString → string entries;
-    // the ap family reads blobs. The generator derives this from source.
-    if (p.provisioning === "usb-secrets") assert.strictEqual(p.wifi_nvs, "string", p.id);
-    else assert.strictEqual(p.wifi_nvs, "blob", p.id);
+    // The generator derives this from each firmware's own source: the
+    // getString-reading runtime_configs (sense/vision/display) take string
+    // entries; the ap family (canary/wap) reads blobs.
+    if (p.provisioning === "ap") assert.strictEqual(p.wifi_nvs, "blob", p.id);
+    else assert.strictEqual(p.wifi_nvs, "string", p.id);
+  }
+});
+
+test("flash.json: the display boards are flashable products now", () => {
+  const displays = catalog.products.filter((p) => p.role === "display");
+  assert.strictEqual(displays.length, 2, "watch + dash");
+  for (const p of displays) {
+    assert.strictEqual(p.chip, "ESP32-S3");
+    assert.strictEqual(p.provisioning, "on-glass");
+    assert.ok(p.provisioning_note.length > 40, `${p.id}: provisioning copy`);
+    assert.ok(p.hatch && /glass/i.test(p.hatch.title), `${p.id}: a display's hatch is the glass`);
+    // and each flashable display still has its 1:1 emulator twin
+    const twin = catalog.displays.find((d) => p.id.includes(d.id));
+    assert.ok(twin, `${p.id}: no emulator twin in catalog.displays`);
   }
 });
 
