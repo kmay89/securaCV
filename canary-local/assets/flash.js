@@ -1645,6 +1645,8 @@ function phaseSenseBench(port, product) {
   const row = el("div", "flash-row");
   const back = el("button", "ghost", "← back to the Nursery");
   row.append(back);
+  const senseTwin = twinLink(product);
+  if (senseTwin) row.append(senseTwin);
   box.append(row);
 
   // ── the live model, fed by the console lines ──
@@ -1900,6 +1902,8 @@ function phaseWapBench(port, product) {
   const row = el("div", "flash-row");
   const back = el("button", "ghost", "← back to the Nursery");
   row.append(back);
+  const wapTwin = twinLink(product);
+  if (wapTwin) row.append(wapTwin);
   box.append(row);
 
   const model = {
@@ -3071,17 +3075,32 @@ function phaseDone(opts) {
   const rosterStrip = renderRosterStrip();
   if (rosterStrip) box.append(rosterStrip);
 
+  // Prove it, two ways — the SAME shape for every Canary (parity is a
+  // tested guarantee): one real proof over the cable/glass, one emulated
+  // twin a click away. The catalog's prove block owns both.
+  const proveSpec = opts.product && !opts.isBackup
+    ? ((state.catalog.products.find((p) => p.id === opts.product.id) || {}).prove || null)
+    : null;
+  const proveReal = () => {
+    const kind = proveSpec ? proveSpec.real.kind : "monitor";
+    if (kind === "bench-radar") return openSenseBench(opts.product);
+    if (kind === "bench-field") return openWapBench(opts.product);
+    if (kind === "bench-camera") {
+      // The camera bench lives on the MODULE's port — route through the
+      // module flow (same hand-off the two-port checklist uses).
+      return onDisconnect(true).then(() => setPhase(phaseModule({
+        catalog: state.catalog, setPhase, back: () => setPhase(phaseConnect()),
+      })));
+    }
+    // "glass" and "monitor": the console is the honest window either way.
+    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true });
+  };
+
   const row = el("div", "flash-row");
-  const watch = doneRole === "sense"
-    ? el("button", "primary", "👋 Feel it sense — the live radar bench →")
-    : doneRole === "wap"
-      ? el("button", "primary", "🌊 Feel the field — the live WiFi bench →")
-      : el("button", "primary", "Watch it boot & prove itself →");
-  watch.addEventListener("click", () => doneRole === "sense"
-    ? openSenseBench(opts.product)
-    : doneRole === "wap"
-      ? openWapBench(opts.product)
-      : openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
+  const watch = el("button", "primary",
+    proveSpec ? proveSpec.real.label : "Watch it boot & prove itself →");
+  if (proveSpec) watch.title = proveSpec.real.how;
+  watch.addEventListener("click", proveReal);
   const again = el("button", "ghost", "Set up another board");
   // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
   // half-done Vision can't carry a stale flag into the next board (else its other
@@ -3095,9 +3114,31 @@ function phaseDone(opts) {
     tourEl = installStory(() => state.lastImage);
     box.append(tourEl);
   });
-  row.append(watch, again, tour);
+  row.append(watch);
+  if (proveSpec) {
+    const twin = el("a", "ghost flash-twin", proveSpec.emulated.label);
+    twin.href = proveSpec.emulated.href;
+    twin.target = "_blank";
+    twin.rel = "noopener";
+    twin.title = proveSpec.emulated.how;
+    row.append(twin);
+  }
+  row.append(again, tour);
   box.append(row);
   return box;
+}
+
+// The emulated-twin link for a product, wherever a bench wants to offer it.
+function twinLink(product) {
+  const spec = product &&
+    ((state.catalog.products.find((p) => p.id === product.id) || {}).prove || null);
+  if (!spec) return null;
+  const a = el("a", "ghost small flash-twin", spec.emulated.label);
+  a.href = spec.emulated.href;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.title = spec.emulated.how;
+  return a;
 }
 
 // ── rescue: back to known-good, for any firmware past or future ─────────────
@@ -4190,6 +4231,83 @@ function installStory(getBytes) {
 }
 
 // ── shared UI bits ──────────────────────────────────────────────────────────
+// The coach: optional micro-lessons that ride every long wait. Stage-aware
+// (a backup teaches backups, a write teaches NVS and slots), one lesson at
+// a time, auto-advancing gently (never under prefers-reduced-motion), and
+// dismissible for the session — learning is offered, never imposed.
+const COACH_KEY = "nursery.coach";
+function coachDismissed() {
+  try { return sessionStorage.getItem(COACH_KEY) === "off"; } catch { return false; }
+}
+function attachCoach(card, afterEl) {
+  if (coachDismissed() || !state.catalog || !Array.isArray(state.catalog.lessons) ||
+      !state.catalog.lessons.length) return null;
+  const box = el("aside", "flash-coach");
+  box.setAttribute("aria-label", "Optional lesson while you wait");
+  const head = el("div", "flash-coach-head");
+  head.append(el("span", "flash-coach-kicker", "☕ while it works — a 20-second lesson"));
+  const close = el("button", "flash-coach-close", "×");
+  close.type = "button";
+  close.title = "Hide the lessons for this session";
+  close.setAttribute("aria-label", "Hide lessons for this session");
+  head.append(close);
+  box.append(head);
+  const titleEl = el("div", "flash-coach-title");
+  const bodyEl = el("p", "flash-coach-body");
+  box.append(titleEl, bodyEl);
+  const controls = el("div", "flash-coach-controls");
+  const next = el("button", "ghost small", "another →");
+  controls.append(next);
+  box.append(controls);
+  afterEl.after(box);
+
+  const shown = [];
+  let stageText = "";
+  let timer = null;
+  let alive = true;
+  function show(lesson) {
+    if (!lesson) { next.disabled = true; next.textContent = "that’s the deck ✓"; return; }
+    shown.push(lesson.id);
+    box.classList.remove("flash-coach-swap");
+    void box.offsetWidth; // restart the swap animation
+    box.classList.add("flash-coach-swap");
+    titleEl.textContent = lesson.title;
+    bodyEl.textContent = lesson.body;
+  }
+  function advance() {
+    if (!alive) return;
+    show(core.pickLesson(state.catalog, stageText, shown));
+    arm();
+  }
+  function arm() {
+    if (timer) clearTimeout(timer);
+    // Auto-advance is decorative pacing — calm users page by hand.
+    if (!prefersCalm()) timer = setTimeout(advance, 14000);
+  }
+  next.addEventListener("click", advance);
+  close.addEventListener("click", () => {
+    alive = false;
+    if (timer) clearTimeout(timer);
+    try { sessionStorage.setItem(COACH_KEY, "off"); } catch { /* private mode */ }
+    box.remove();
+  });
+  advance();
+  return {
+    stage(s) {
+      // A new stage brings its own lesson — but only if it actually has one
+      // unseen; mid-lesson churn for nothing helps nobody.
+      stageText = s || "";
+      const staged = core.pickLesson(state.catalog, stageText, shown);
+      if (staged && staged.stage !== "any" &&
+          stageText.toLowerCase().includes(staged.stage)) {
+        show(staged);
+        arm();
+      }
+    },
+    retire() { alive = false; if (timer) clearTimeout(timer); },
+  };
+}
+
 function progressCard(title, subtitle) {
   const card = el("section", "flash-card flash-progress");
   card.append(el("h2", null, title));
@@ -4204,6 +4322,7 @@ function progressCard(title, subtitle) {
   const reassure = el("p", "flash-reassure-lite fineprint",
     "Safe to interrupt — you can’t brick it. If anything stops, just start again.");
   card.append(reassure);
+  const coach = attachCoach(card, reassure);
   // expose esptool log
   const log = el("details", "flash-log");
   log.append(el("summary", null, "show technical log"));
@@ -4213,7 +4332,10 @@ function progressCard(title, subtitle) {
   card.append(log);
   return {
     card,
-    stage(s) { stageEl.textContent = s; },
+    stage(s) {
+      stageEl.textContent = s;
+      if (coach) coach.stage(s);
+    },
     set(frac, metaText) {
       const pct = Math.max(0, Math.min(1, frac || 0)) * 100;
       fill.style.width = pct.toFixed(1) + "%";

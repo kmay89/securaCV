@@ -441,3 +441,66 @@ test("chirp module: safe headless — off by default, every call a quiet no-op",
   assert.doesNotThrow(() => c.chirp("no-such-song"));
   assert.doesNotThrow(() => c.setChirpsEnabled(true)); // no localStorage here — still safe
 });
+
+test("flash.json: the coach's lesson deck — real stages, unique ids, teaching-weight copy", () => {
+  const deck = catalog.lessons;
+  assert.ok(Array.isArray(deck) && deck.length >= 10, "a deck worth dealing");
+  const KNOWN_STAGES = new Set(["safety copy", "download", "authentic", "erase", "writ", "any"]);
+  const ids = new Set();
+  for (const l of deck) {
+    assert.ok(l.id && !ids.has(l.id), `duplicate/missing lesson id: ${l.id}`);
+    ids.add(l.id);
+    assert.ok(KNOWN_STAGES.has(l.stage), `${l.id}: unknown stage tag ${l.stage}`);
+    assert.ok(l.title && l.body && l.body.length > 60, `${l.id}: copy too thin to teach`);
+  }
+  // every long stage has at least one lesson of its own
+  for (const s of ["safety copy", "download", "authentic", "erase", "writ"]) {
+    assert.ok(deck.some((l) => l.stage === s), `no lesson for the ${s} stage`);
+  }
+});
+
+test("pickLesson: stage-matched first, generic after, never repeats, ends honestly", async () => {
+  const c = await core();
+  const shown = [];
+  // A backup stage deals a backup lesson first.
+  const first = c.pickLesson(catalog, "saving a safety copy of the board first", shown);
+  assert.strictEqual(first.stage, "safety copy");
+  shown.push(first.id);
+  const second = c.pickLesson(catalog, "saving a safety copy of the board first", shown);
+  assert.strictEqual(second.stage, "safety copy");
+  assert.notStrictEqual(second.id, first.id);
+  shown.push(second.id);
+  // Backup lessons exhausted → the generic pool takes over.
+  const third = c.pickLesson(catalog, "saving a safety copy of the board first", shown);
+  assert.strictEqual(third.stage, "any");
+  // A write stage prefers write lessons.
+  assert.strictEqual(c.pickLesson(catalog, "writing firmware + your settings", []).stage, "writ");
+  // Deal the whole deck → the picker says so with null, exactly once dry.
+  const all = [];
+  for (;;) {
+    const l = c.pickLesson(catalog, "writing firmware", all);
+    if (!l) break;
+    all.push(l.id);
+  }
+  assert.strictEqual(all.length, catalog.lessons.length, "every lesson reachable");
+  assert.strictEqual(c.pickLesson({}, "writing", []), null, "no deck, no coach");
+});
+
+test("flash.json: PARITY — every Canary proves itself two ways, real + emulated twin", () => {
+  const REAL_KINDS = new Set(["monitor", "bench-field", "bench-camera", "bench-radar", "glass"]);
+  for (const p of catalog.products) {
+    const pr = p.prove;
+    assert.ok(pr && pr.real && pr.emulated, `${p.id}: no prove block — parity broken`);
+    assert.ok(REAL_KINDS.has(pr.real.kind), `${p.id}: unknown real proof kind ${pr.real.kind}`);
+    assert.ok(pr.real.label && pr.real.how, `${p.id}: real proof needs label + how`);
+    assert.ok(pr.emulated.label && pr.emulated.how, `${p.id}: twin needs label + how`);
+    // the twin page must actually exist — no dead links, ever
+    const page = pr.emulated.href.split("#")[0];
+    assert.ok(existsSync(join(ROOT, page)), `${p.id}: twin page missing: ${page}`);
+  }
+  // displays deep-link to their own sheet on the fleet page
+  for (const p of catalog.products.filter((x) => x.role === "display")) {
+    assert.ok(p.prove.emulated.href.includes("#" + p.id.replace("securacv-", "")),
+      `${p.id}: twin should deep-link its own glass`);
+  }
+});
