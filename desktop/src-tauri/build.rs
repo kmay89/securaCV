@@ -24,5 +24,20 @@ fn main() {
     // Re-run (and re-embed) whenever the canonical catalog changes.
     println!("cargo:rerun-if-changed={}", src.display());
 
+    // Same contract for the hub-image catalog (the Raspberry Pi writer's
+    // single source of truth, kept honest by gen_hub_image.py's drift gate).
+    let hub_src = Path::new(&manifest).join("../../canary-local/devices/hub_image.json");
+    let hub_dst = Path::new(&out).join("hub_image.json");
+    let hub_data = fs::read(&hub_src).unwrap_or_else(|e| {
+        panic!(
+            "cannot read the canonical hub-image catalog at {} ({e}). \
+             The desktop app must be built inside the securaCV repo so it can \
+             embed the current catalog.",
+            hub_src.display()
+        )
+    });
+    fs::write(&hub_dst, hub_data).expect("write hub catalog to OUT_DIR");
+    println!("cargo:rerun-if-changed={}", hub_src.display());
+
     tauri_build::build()
 }

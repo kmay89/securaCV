@@ -59,7 +59,7 @@ module sign() {
         if (screws) for (sx = [1, -1], sy = [1, -1]) {
             translate([sx*(sign_w/2 - 7), sy*(sign_h/2 - 7), -0.1]) cylinder(d = screw_d, h = sign_t + 0.2);
             translate([sx*(sign_w/2 - 7), sy*(sign_h/2 - 7), sign_t - 1.6])
-                cylinder(d1 = screw_d, d2 = screw_d + 3.6, h = 1.7);
+                cylinder(d1 = screw_d, d2 = screw_d + 4.2, h = 1.7);   // #8 flat head (Ø8.2) seats flush
         }
     }
 }

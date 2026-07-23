@@ -636,3 +636,116 @@ button.flash-map-key:hover { color: var(--text); }
 /* displays: the teaser + the hand-off card to the fleet page's live glass */
 .flash-displays { margin-top: 14px; }
 .flash-displaybench .flash-go { text-decoration: none; text-align: center; }
+
+/* ── the WE2 live bench: meter, chips, guide ─────────────────────────────── */
+.we2-preview { position: relative; }
+.we2-chip {
+  position: absolute; top: 10px; padding: 4px 11px; border-radius: 999px;
+  font: 700 12px ui-monospace, Menlo, monospace; letter-spacing: 0.02em;
+  background: rgba(8, 9, 11, 0.78); border: 1px solid rgba(255,255,255,0.16);
+  color: #e8f0e8; backdrop-filter: blur(4px);
+}
+.we2-chip-count { left: 10px; border-color: rgba(124,255,155,0.45); color: #7CFF9B; }
+.we2-chip-fps { right: 10px; color: var(--muted, #9aa39a); }
+
+.we2-meter { margin: 10px 0 2px; }
+.we2-meter-track {
+  position: relative; height: 12px; border-radius: 999px; overflow: visible;
+  background: rgba(255,255,255,0.06); border: 1px solid var(--edge, #262626);
+}
+.we2-meter-fill {
+  height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, #5a4a12, #FFD44F 55%, #7CFF9B 85%);
+  transition: width 180ms ease-out;
+}
+.we2-meter-fill[data-level="ok"] { box-shadow: 0 0 12px rgba(124,255,155,0.35); }
+.we2-meter-tick {
+  position: absolute; top: -4px; bottom: -4px; width: 2px; border-radius: 1px;
+  background: #e8f0e8; opacity: 0.85;
+}
+.we2-meter-tick::after {
+  content: "floor"; position: absolute; top: -15px; left: 50%; transform: translateX(-50%);
+  font: 600 10px ui-monospace, Menlo, monospace; color: var(--muted, #9aa39a);
+}
+.we2-meter-label { margin-top: 8px; font-size: 12.5px; color: var(--muted, #9aa39a); }
+
+.we2-guide { margin: 8px 0 10px; }
+.we2-guide-steps { margin: 8px 0 4px 4px; padding-left: 18px; }
+.we2-guide-steps li { margin: 6px 0; font-size: 13.5px; line-height: 1.5; color: #cfd8cf; }
+.we2-guide-fixh { margin: 10px 0 4px; font-weight: 640; font-size: 13.5px; }
+.we2-guide-fixes { display: flex; flex-direction: column; gap: 7px; }
+.we2-guide-fix {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 11px;
+  border-radius: 10px; background: rgba(255,255,255,0.03);
+  border: 1px solid var(--edge, #262626); font-size: 13px; line-height: 1.45;
+}
+.we2-guide-fix strong { color: #f0dca0; font-size: 12.5px; }
+.we2-guide-fix span { color: var(--muted, #9aa39a); }
+
+/* ── the live voice (pre-flash serial console on the hello card) ─────────── */
+.flash-voice { margin-top: 10px; }
+.flash-voice h3 { margin-bottom: 4px; }
+.flash-voice-console { max-height: 180px; min-height: 64px; }
+.flash-voice-id { margin: 6px 0 2px; }
+.flash-headline { font-weight: 640; }
+
+/* ── the Nursery: branding, roster, and the radar bench ──────────────────── */
+.nursery-sub { font-size: 0.55em; font-weight: 500; color: var(--muted, #9aa39a); }
+
+.flash-roster { margin-top: 12px; }
+.flash-roster-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
+.flash-roster-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 7px 11px; border-radius: 10px; font-size: 13px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--edge, #262626);
+}
+.flash-roster-n { color: #ffd44f; font-weight: 700; font-variant-numeric: tabular-nums; }
+.flash-roster-main { flex: 1; color: #cfd8cf; }
+.flash-roster-extras { color: var(--muted, #9aa39a); }
+.flash-roster-ago { color: var(--muted, #9aa39a); font-size: 12px; white-space: nowrap; }
+.flash-already { color: #f0dca0; }
+
+.flash-sensebench .flash-sense-aura,
+.flash-sensebench .flash-sense-wave {
+  display: block; width: 100%; height: auto;
+  background: #08090b; border: 1px solid var(--edge, #262626); border-radius: 14px;
+}
+.flash-sense-status {
+  margin: 10px 0; padding: 10px 15px; border-radius: 999px; display: inline-block;
+  font-weight: 640; font-size: 15px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--edge, #262626);
+  color: var(--muted, #9aa39a);
+}
+.flash-sense-present { background: rgba(67,160,71,0.12); border-color: rgba(67,160,71,0.5); color: #7CFF9B; }
+.flash-sense-clear { background: rgba(3,169,244,0.08); border-color: rgba(3,169,244,0.35); color: #bfe6fb; }
+.flash-sense-vitals { margin: 12px 0 6px; }
+.flash-sense-vitals-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 14px;
+}
+
+/* ── pro grade: the journey bar, phase fade, calm motion ─────────────────── */
+.flash-journey {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 2px 0 12px; font-size: 12.5px; color: var(--muted, #9aa39a);
+}
+.flash-journey-step { display: inline-flex; align-items: center; gap: 6px; }
+.flash-journey-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(255,255,255,0.14); border: 1px solid var(--edge, #303030);
+}
+.flash-journey-on { color: #ffd44f; font-weight: 640; }
+.flash-journey-on .flash-journey-dot { background: #ffd44f; border-color: #ffd44f; }
+.flash-journey-done { color: #9fbf9f; }
+.flash-journey-done .flash-journey-dot { background: rgba(124,255,155,0.55); border-color: rgba(124,255,155,0.55); }
+.flash-journey-sep { opacity: 0.4; }
+
+/* each new phase eases in — one soft step, never a jump-cut */
+#flash-flow > * { animation: flash-phase-in 180ms ease-out both; }
+@keyframes flash-phase-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #flash-flow > * { animation: none; }
+  .flash-bar-fill, .we2-meter-fill { transition: none; }
+}

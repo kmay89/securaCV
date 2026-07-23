@@ -130,3 +130,23 @@ profiles:
       - Crypto (0.4.0)
       - ArduinoJson (7.4.3)
       - NimBLE-Arduino (2.5.0)
+
+  # ── Mode system: dash + every gear on the Waveshare 4.3B ──
+  # The Arduino twin of the canary-display-dash-modes PlatformIO env
+  # (docs/hardware/display_modes.md): a fleet witness that also carries the
+  # bench doorway, the scripted demo, on-glass debug, and the arcade —
+  # `./setup.sh arduino modes` stages flavor_local.h with the four
+  # FEATURE_* mode flags. Same vendor board + core-3 line as playground.
+  modes:
+    notes: Waveshare 4.3B vendor board — full mode system (fleet + gears), core 3.x only
+    fqbn: esp32:esp32:waveshare_esp32_s3_touch_lcd_43b
+    platforms:
+      - platform: esp32:esp32 (3.3.10)
+        platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+    libraries:
+      - GFX Library for Arduino (1.6.6)
+      - lvgl (9.5.0)
+      - PubSubClient (2.8.0)
+      - Crypto (0.4.0)
+      - ArduinoJson (7.4.3)
+      - NimBLE-Arduino (2.5.0)

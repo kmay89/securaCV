@@ -13,8 +13,10 @@
  * stateful behind a class instead of file-scope static globals so the
  * module is unit-testable and safe under RTOS task interleaving.
  *
- * The wiring into HTTP handlers happens in Phase 2 — this library ships
- * standalone so it can be reviewed in isolation.
+ * This library is now wired into the HTTP handlers: securacv_network.cpp's
+ * auth_gate() calls auth_check() against the device-provisioned bearer token
+ * on the REST endpoints (the SPA at "/" carries the token but is itself
+ * ungated by design). The standalone class remains unit-testable in isolation.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0

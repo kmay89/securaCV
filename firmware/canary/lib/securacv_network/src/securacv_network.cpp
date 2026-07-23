@@ -21,6 +21,7 @@
 
 #if FEATURE_WATCHDOG
 #include "esp_task_wdt.h"
+#include <esp_wifi.h>   // esp_wifi_set_protocol/bandwidth/country_code/max_tx_power
 #endif
 
 #if FEATURE_CAMERA_PEEK
@@ -302,6 +303,26 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
 
   m_status.ap_active = true;
   witness_get_health().wifi_active = true;
+
+  // Pin the radio PHY + regulatory + TX power now that the driver is up
+  // (WiFi.mode/softAP have called esp_wifi_start). HT20 + 11bgn on both
+  // interfaces keeps the CSI subcarrier count constant; the country code fixes
+  // the channel set / TX ceiling (802.11d adapts it to the AP); an explicit
+  // max-TX makes range deterministic. The AP has no clients yet at boot, so
+  // pinning IF_AP here can't disrupt a live link. All failures are non-fatal.
+  {
+    if (esp_wifi_set_country_code(CANARY_WIFI_COUNTRY, true) != ESP_OK) {
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi country set failed", nullptr);
+    }
+    const uint8_t proto = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
+    esp_wifi_set_protocol(WIFI_IF_STA, proto);
+    esp_wifi_set_protocol(WIFI_IF_AP,  proto);
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+    esp_wifi_set_bandwidth(WIFI_IF_AP,  WIFI_BW_HT20);
+    if (esp_wifi_set_max_tx_power(CANARY_WIFI_TX_QDBM) != ESP_OK) {
+      log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi TX power set failed", nullptr);
+    }
+  }
 
   IPAddress ip = WiFi.softAPIP();
   snprintf(m_status.ap_ip, sizeof(m_status.ap_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);

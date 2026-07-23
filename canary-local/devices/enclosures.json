@@ -687,18 +687,18 @@
       },
       {
        "name": "gasket_w",
-       "default": "1.2",
-       "comment": "gasket groove width (the printed gasket is 0.1 narrower)"
+       "default": "1.6",
+       "comment": "gasket groove width (the printed gasket is 0.5 narrower)"
       },
       {
        "name": "gasket_groove",
-       "default": "1.0",
+       "default": "1.2",
        "comment": "groove depth into the base rim"
       },
       {
        "name": "gasket_proud",
-       "default": "0.6",
-       "comment": "uncompressed gasket stand-proud (~35 % squeeze under the lid screws)"
+       "default": "0.3",
+       "comment": "uncompressed gasket stand-proud (~20 % squeeze under the lid screws;"
       },
       {
        "name": "skirt_h",
@@ -1164,7 +1164,8 @@
       },
       {
        "name": "screw_head_h",
-       "default": "2.0"
+       "default": "1.2",
+       "comment": "countersink depth — the cone below is a true 90° seat for an M2 flat head"
       }
      ]
     },
@@ -1174,8 +1175,8 @@
      "params": [
       {
        "name": "usb_w",
-       "default": "10.5",
-       "comment": "opening width: clears a typical USB-C cable boot (connector body ~8.9 mm)"
+       "default": "12.0",
+       "comment": "opening width: clears rugged USB-C cable boots (connector body ~8.9 mm)"
       },
       {
        "name": "usb_h",
@@ -1184,8 +1185,8 @@
       },
       {
        "name": "usb_z",
-       "default": "0.0",
-       "comment": "extra lift relative to PCB-top centring"
+       "default": "-1.65",
+       "comment": "centres the opening on the connector AXIS: the C shell is 3.2 mm tall on the"
       }
      ]
     },
@@ -1286,7 +1287,8 @@
       },
       {
        "name": "mag_h",
-       "default": "3.2"
+       "default": "2.2",
+       "comment": "pocket depth — a 6 x 2 mm disc is standard; keep parts under"
       },
       {
        "name": "mag_dx",
@@ -1314,12 +1316,12 @@
       },
       {
        "name": "clip_t",
-       "default": "1.5",
+       "default": "1.0",
        "comment": "beam thickness — thinner = easier flex (tune to your material)"
       },
       {
        "name": "clip_hook",
-       "default": "0.8",
+       "default": "0.5",
        "comment": "how far the lip overhangs the board top"
       },
       {
@@ -1998,15 +2000,15 @@
      "params": [
       {
        "name": "gasket_w",
-       "default": "1.2"
+       "default": "1.6"
       },
       {
        "name": "gasket_groove",
-       "default": "1.0"
+       "default": "1.2"
       },
       {
        "name": "gasket_proud",
-       "default": "0.6"
+       "default": "0.3"
       },
       {
        "name": "skirt_h",
@@ -2109,11 +2111,11 @@
       },
       {
        "name": "clip_t",
-       "default": "1.5"
+       "default": "1.0"
       },
       {
        "name": "clip_hook",
-       "default": "0.8"
+       "default": "0.5"
       },
       {
        "name": "clip_hook_h",
@@ -2291,7 +2293,7 @@
       },
       {
        "name": "hinge_hole",
-       "default": "hinge_bolt_d + 2*tol_hole/2 + 0.1",
+       "default": "hinge_bolt_d + tol_hole + 0.1",
        "comment": "~5.4 for M5: free pivot"
       },
       {
@@ -2345,8 +2347,8 @@
       },
       {
        "name": "opt_vent",
-       "default": "false",
-       "comment": "GORE vent cluster on the face (recommended in wet climates)"
+       "default": "true",
+       "comment": "GORE vent cluster on the face — ON by default: a sealed outdoor"
       },
       {
        "name": "opt_led",
@@ -2641,15 +2643,15 @@
      "params": [
       {
        "name": "gasket_w",
-       "default": "1.2"
+       "default": "1.6"
       },
       {
        "name": "gasket_groove",
-       "default": "1.0"
+       "default": "1.2"
       },
       {
        "name": "gasket_proud",
-       "default": "0.6"
+       "default": "0.3"
       },
       {
        "name": "skirt_h",
@@ -2808,11 +2810,13 @@
       },
       {
        "name": "vent_dx",
-       "default": "-8.0"
+       "default": "0.0",
+       "comment": "vent/sound cluster ON the face's vertical axis — the"
       },
       {
        "name": "vent_dy",
-       "default": "-8.0"
+       "default": "-8.0",
+       "comment": "camera → grille → button rhythm of a real doorbell"
       },
       {
        "name": "mag_d",
@@ -2842,11 +2846,11 @@
       },
       {
        "name": "clip_t",
-       "default": "1.5"
+       "default": "1.0"
       },
       {
        "name": "clip_hook",
-       "default": "0.8"
+       "default": "0.5"
       },
       {
        "name": "clip_hook_h",
@@ -3097,8 +3101,8 @@
      "params": [
       {
        "name": "radome_t",
-       "default": "1.0",
-       "comment": "membrane thickness (~1.0, or ~1.5 for a half-wave wall)  // [0.8:0.1:2.0]"
+       "default": "1.5",
+       "comment": "membrane thickness — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection"
       },
       {
        "name": "rad_win_x",
@@ -3187,15 +3191,18 @@
       },
       {
        "name": "mag_h",
-       "default": "3.2"
+       "default": "2.2",
+       "comment": "pocket depth — a 6 x 2 mm disc is standard; the pocket ring descends"
       },
       {
        "name": "mag_dx",
-       "default": "13.0"
+       "default": "13.0",
+       "comment": "mag_h below the front's inner face, so parts on the carrier under"
       },
       {
        "name": "mag_dy",
-       "default": "14.0"
+       "default": "14.0",
+       "comment": "(mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE"
       }
      ]
     },
@@ -3435,15 +3442,15 @@
      "params": [
       {
        "name": "gasket_w",
-       "default": "1.2"
+       "default": "1.6"
       },
       {
        "name": "gasket_groove",
-       "default": "1.0"
+       "default": "1.2"
       },
       {
        "name": "gasket_proud",
-       "default": "0.6"
+       "default": "0.3"
       },
       {
        "name": "skirt_h",
@@ -3520,11 +3527,11 @@
       },
       {
        "name": "clip_t",
-       "default": "1.5"
+       "default": "1.0"
       },
       {
        "name": "clip_hook",
-       "default": "0.8"
+       "default": "0.5"
       },
       {
        "name": "clip_hook_h",
@@ -3803,8 +3810,8 @@
       },
       {
        "name": "snap_proud",
-       "default": "0.6",
-       "comment": "nub stand-proud of the skirt"
+       "default": "0.4",
+       "comment": "nub stand-proud of the skirt (with the relief slits this is"
       },
       {
        "name": "skirt_dep",
@@ -4071,8 +4078,8 @@
       },
       {
        "name": "bal_t",
-       "default": "2.2",
-       "comment": "pocket depth per disc (stack two if thinner)"
+       "default": "4.0",
+       "comment": "pocket depth ABOVE the lid recess — fits two stacked quarters (2 x 1.75)"
       },
       {
        "name": "bal_n",
@@ -4219,6 +4226,11 @@
        "default": "11.5"
       },
       {
+       "name": "vm_front_h",
+       "default": "3.5",
+       "comment": "carrier front-side TALLEST part (connectors etc.) — MEASURE"
+      },
+      {
        "name": "pcb_t",
        "default": "1.0"
       },
@@ -4234,7 +4246,8 @@
      "params": [
       {
        "name": "radome_t",
-       "default": "1.0"
+       "default": "1.5",
+       "comment": "≈ half-wave in PETG/ASA at 60 GHz — the low-reflection optimum;"
       },
       {
        "name": "rad_win_x",
@@ -4260,12 +4273,13 @@
      "params": [
       {
        "name": "vm_standoff",
-       "default": "3.0",
-       "comment": "carrier rides close to the plate; XIAO hangs into the box"
+       "default": "4.5",
+       "comment": "rails hold the carrier's front parts (vm_front_h) clear of the"
       },
       {
        "name": "rail_h",
-       "default": "vm_standoff"
+       "default": "vm_standoff",
+       "comment": "solid plate back; the XIAO hangs deeper into the box"
       }
      ]
     }
@@ -4319,7 +4333,7 @@
       {
        "name": "grip_lip",
        "default": "1.2",
-       "comment": "inward lip at the collar front that hooks the wart face"
+       "comment": "inward LOCATING lip at the collar front (clearance-sized: it"
       }
      ]
     },
@@ -4681,7 +4695,8 @@
       },
       {
        "name": "radome_t",
-       "default": "1.0"
+       "default": "1.5",
+       "comment": "≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); AVOID 0.7–1.1 mm"
       },
       {
        "name": "s_usb_z",
@@ -4740,10 +4755,6 @@
       {
        "name": "inner_y",
        "default": "max(board_clear + vm_l + 2 + cam_h + 3, board_clear + sm_l + 8)"
-      },
-      {
-       "name": "cav_d",
-       "default": "max(v_standoff + pcb_t + v_front_h, s_standoff + pcb_t + s_front_h) + cav_extra"
       },
       {
        "name": "out_x",
@@ -4924,8 +4935,8 @@
       },
       {
        "name": "din_lip",
-       "default": "5.0",
-       "comment": "flange depth engaged by the hooks"
+       "default": "1.2",
+       "comment": "hook capture depth behind each flange edge (TS35 lip ~1 mm)"
       },
       {
        "name": "din_t",
@@ -5028,12 +5039,12 @@
       },
       {
        "name": "plate_l",
-       "default": "154.0",
-       "comment": "plate outline (fits inside the box walls)"
+       "default": "158.0",
+       "comment": "plate outline (fits inside the box walls) — MEASURE your box"
       },
       {
        "name": "plate_w",
-       "default": "84.0"
+       "default": "88.0"
       },
       {
        "name": "plate_t",
@@ -5169,7 +5180,8 @@
       },
       {
        "name": "mag_n",
-       "default": "4"
+       "default": "2",
+       "comment": "two Ø20 pockets fit the 56 mm plate (four overlapped into one"
       }
      ]
     },
@@ -5264,7 +5276,7 @@
       {
        "name": "horn_mouth",
        "default": "14.0",
-       "comment": "at the lid face (covers the vent hole ring)"
+       "comment": "at the lid face (covers the vent hole ring). Physics honesty: a"
       },
       {
        "name": "horn_h",
@@ -5387,8 +5399,8 @@
       },
       {
        "name": "boss_d",
-       "default": "21.0",
-       "comment": "fake 1/2\" conduit boss diameter"
+       "default": "12.0",
+       "comment": "fake conduit boss diameter (fits the body height; a true 1/2\" boss needs a taller shell)"
       },
       {
        "name": "boss_l",
@@ -5408,6 +5420,16 @@
       {
        "name": "cam_ap_d",
        "default": "9.0"
+      },
+      {
+       "name": "cam_dx",
+       "default": "0.0",
+       "comment": "aperture offset from the board centre — MEASURE: the XIAO"
+      },
+      {
+       "name": "cam_dy",
+       "default": "0.0",
+       "comment": "Sense camera sits toward the antenna end, not dead centre"
       },
       {
        "name": "ko_ring_d",
@@ -5988,8 +6010,8 @@
       },
       {
        "name": "cav_t",
-       "default": "glass_t + stack_t",
-       "comment": "frame interior depth"
+       "default": "glass_t + stack_t + 3.0",
+       "comment": "frame interior depth: +3 mm rear clearance so the"
       },
       {
        "name": "frame_h",

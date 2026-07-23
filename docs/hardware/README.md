@@ -22,8 +22,10 @@ optional.
 | [`mr60bha2_radar_notes.md`](./mr60bha2_radar_notes.md) | **MR60BHA2 radar deep-dive (Canary Sense)** — the ADT6101P all the way down: antenna/FoV, the wire beyond what we decode, placement physics with citations, the power budget derivation, and six bench flags. Its `SIM:` tables are the drift-gated source for the Sense Lab (`canary-local/sense.html`). |
 | [`canary_fence_guard_research.md`](./canary_fence_guard_research.md) | **Fence Guard research dossier (concept)** — the Seeed XIAO ESP32S3 + Wio-SX1262 Meshtastic kit, verified: specs, pin map, power measurements, solar guidance, free pins for the vibration sensor. Feeds the coming-soon concept card and `firmware/projects/canary-fence-guard/`. |
 | [`canary_vehicle_can.md`](./canary_vehicle_can.md) | **Canary Vehicle — passive CAN bus witness** — the hero feature (ignition on/off → a fleet-wide arrival/departure claim, its own dedicated `ClaimKind`), why it's read-only by design, and the SocketCAN hardware path. Backed by real shipped code: `src/adapter/can_bus.rs` + the `adapter_host` SocketCAN reader — unit-tested, not yet bench-validated against a real vehicle. |
+| [`bom_pipeline.md`](./bom_pipeline.md) | **How the BOMs run themselves** — design intent (the CSVs) vs fetched supply-chain facts (`pricing.json`), the nightly Digi-Key/Mouser snapshot workflow, the exception policy (out-of-stock / price-jump / lifecycle issues), credentials setup, and the local runbook. |
 | [`bom_canary_wap.csv`](./bom_canary_wap.csv) | Machine-readable BOM — Canary WAP (XIAO ESP32-S3 Sense). |
 | [`bom_canary_vision.csv`](./bom_canary_vision.csv) | Machine-readable BOM — Canary Vision (ESP32 host + Grove Vision AI V2). |
+| [`bom_canary_sense.csv`](./bom_canary_sense.csv) | Machine-readable BOM — Canary Sense (MR60BHA2 60 GHz kit + XIAO ESP32-C6). |
 | [`bom_canary_display.csv`](./bom_canary_display.csv) | Machine-readable BOM — Canary Display (watch & dash variants). |
 
 ## The display family (watch station & dash)
@@ -47,17 +49,22 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`display_bench_bringup.md`](./display_bench_bringup.md) | Display bench bring-up — from bare board to a beating face. |
 | [`dev_playground_43b.md`](./dev_playground_43b.md) | **Dev playground (bench mode)** — the Waveshare 4.3B as a safe guided peripheral test bench: doorbell/intrusion/light/cap-touch/ToF/beam-gap plus RS485·Modbus and CAN·TWAI stations, the PG1 comms standard, and the fully-loaded pin tracker. |
 | [`dev_playground_todo.md`](./dev_playground_todo.md) | **Dev playground — TODO & maintainer handoff** — where every piece of the drift-lock chain lives (firmware ↔ generator ↔ json ↔ sim ↔ test ↔ website carry), the exact ritual to add a station, the gotchas, and the next-station + bench-activation TODO. Start here to continue the playground. |
-| [`display_modes.md`](./display_modes.md) | **Display modes — one glass, five gears** — the mode architecture that generalizes the bench latch: fleet / bench / demo / debug / arcade, the no-bloat contract, the host-tested registry + demo-storyline cores, per-mode policy (network/OTA/watchdog), and the entry/exit choreography. |
+| [`display_modes.md`](./display_modes.md) | **Display modes — one glass, five gears** — the built, compile-gated mode system: fleet / bench / demo / debug / arcade, the no-bloat contract, host-tested cores + gear runtimes (`src/mode/`), per-mode policy (network/OTA/watchdog), entry/exit choreography, the `-dash-modes`/`-watch-modes` CI envs, and the browser twin behind the public `/modes` page. |
 | [`display_peripheral_catalog.md`](./display_peripheral_catalog.md) | **Display peripheral catalog (4.3B)** — the curated what-plugs-in ledger, by wiring surface (DI/DO/I²C/RS485/CAN/radio): why each peripheral, what it's for, honest status, the "not this board" list (cameras/RTSP → where they really live), and the ATM-style combination plays. |
 | [`board_capability_map_43b.md`](./board_capability_map_43b.md) | **Board capability map (4.3B)** — an honest, cited ledger of every capability the dash board can do vs. what the firmware drives today, and for each unused one the exact feature gate + bench step to activate it (evidence vault, isolated DI/DO, RS485/Modbus, CAN, microSD, RTC/battery). |
 | [`board_43b_activation_bench.md`](./board_43b_activation_bench.md) | **4.3B peripheral activation bench checklist** — the executable companion to the capability map: per capability (field I/O, RS485/Modbus, CAN/TWAI, evidence vault, RTC/battery), the exact wiring, build/flag, pass signal (the `[FIELD]`/`[RS485]`/`[CAN]` log lines), and the honesty-correction/`VERIFY` note each pass retires. |
 | [`display_research.md`](./display_research.md) | Display hardware research notes. |
 
-The CSVs use a flat, RoHS-style schema:
+The CSVs use a flat, RoHS-style schema (enforced by `scripts/lint_bom.py`):
 
 ```
 Item,RefDes,Qty,Required,Category,Description,Manufacturer,MPN,Mouser,DigiKey,LCSC,UnitUSD,ExtUSD,Lifecycle,RoHS,Notes
 ```
+
+The CSVs carry *design intent*; live distributor SKUs, stock, price breaks
+and lifecycle are fetched nightly into [`pricing.json`](./pricing.json) —
+see [`bom_pipeline.md`](./bom_pipeline.md). Prices typed in the CSVs are
+indicative seed values only.
 
 > **Pin definitions are authoritative in firmware**, not here — see
 > [`firmware/boards/`](../../firmware/boards/). This area documents the hardware
