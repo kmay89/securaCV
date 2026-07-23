@@ -102,6 +102,11 @@ static uint8_t  s_trend_count = 0;
 
 /* Charge cycle detection */
 static bool s_was_below_cycle_threshold = false;
+#if !FEATURE_DEEP_SLEEP
+/* One-shot latch for power_graceful_shutdown() under the never-sleep contract
+ * (FEATURE_DEEP_SLEEP=0). Cleared on battery recovery in update_charge_state(). */
+static bool s_shutdown_latched = false;
+#endif
 static constexpr uint16_t CYCLE_LOW_MV  = 3800;
 static constexpr uint16_t CYCLE_HIGH_MV = 4100;
 
@@ -352,6 +357,12 @@ static void update_charge_state(uint16_t battery_mv) {
 
   if (next == prev) return;
   s_state.charge_state = next;
+
+#if !FEATURE_DEEP_SLEEP
+  /* Recovery clears the graceful-shutdown latch so a later critical episode
+   * (after a charge) re-emits the shutdown attestation exactly once again. */
+  if (next != CHARGE_STATE_CRITICAL) s_shutdown_latched = false;
+#endif
 
   /* Derive power source from charge state. */
   if (next == CHARGE_STATE_CHARGING || next == CHARGE_STATE_FULL) {
@@ -709,6 +720,18 @@ void power_set_capacity_mah(uint16_t mah) {
 void power_graceful_shutdown(void) {
   using namespace power;
   if (!s_state.battery_present) return;
+
+#if !FEATURE_DEEP_SLEEP
+  /* Never-sleep contract (FEATURE_DEEP_SLEEP=0): this function returns instead
+   * of deep-sleeping, but policy_process() re-invokes it every loop while the
+   * battery stays in PMODE_SHUTDOWN. Do the chain-close attestation + persist
+   * EXACTLY ONCE — without this latch each loop would re-emit
+   * RECORD_POWER_SHUTDOWN and re-flush NVS/SD until brownout, spamming the
+   * witness log and accelerating the final drain. The latch clears on battery
+   * recovery in update_charge_state(). */
+  if (s_shutdown_latched) return;
+#endif
+
   log_health(LOG_LEVEL_ALERT, LOG_CAT_SYSTEM,
              "Power: graceful shutdown — battery critical", nullptr);
 
@@ -750,7 +773,10 @@ void power_graceful_shutdown(void) {
 #else
   /* Never-sleep contract: the chain-close record and battery stats are already
    * persisted above. Do not stop peripherals or deep-sleep — keep witnessing
-   * until brownout. Deep-sleep battery protection requires FEATURE_DEEP_SLEEP=1. */
+   * until brownout. Latch so the record/persist runs once per critical episode
+   * (see the guard at the top of this function; cleared on recovery in
+   * update_charge_state). Deep-sleep battery protection needs FEATURE_DEEP_SLEEP=1. */
+  s_shutdown_latched = true;
   log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
              "Power: critical battery — deep sleep disabled (FEATURE_DEEP_SLEEP=0)",
              nullptr);
