@@ -86,13 +86,25 @@ export function parsePartitionTable(bytes) {
 }
 
 // Which app partition to read a version out of: prefer ota_0, then factory,
-// then whatever app comes first. (Reading otadata to know the *live* slot is
-// deliberately out of scope — for a first-flash tool "there's canary-wap
-// ~2.1.0 on here" is the honest, useful signal, and it never blocks flashing.)
+// then whatever app comes first. Used when otadata could not be read — the
+// install verdict compares against the booted slot via pickBootedAppPartition.
 export function pickAppPartition(apps) {
   if (!apps || !apps.length) return null;
   const byName = (n) => apps.find((a) => APP_SUBTYPE[a.subtype] === n);
   return byName("ota_0") || byName("factory") || apps[0];
+}
+
+// The slot the bootloader will actually run, given parsed otadata: fresh
+// otadata boots factory (else ota_0); otherwise ota_<activeOta>. A board that
+// OTA'd into ota_1 must be judged by ota_1's descriptor, or the install
+// verdict compares against a stale inactive app and can call a downgrade an
+// update.
+export function pickBootedAppPartition(apps, otadata) {
+  if (!apps || !apps.length) return null;
+  if (!otadata) return pickAppPartition(apps);
+  const byName = (n) => apps.find((a) => APP_SUBTYPE[a.subtype] === n);
+  if (otadata.fresh) return byName("factory") || byName("ota_0") || apps[0];
+  return byName(`ota_${otadata.activeOta}`) || pickAppPartition(apps);
 }
 
 // ── esp_app_desc_t (256 bytes, at app_offset + 0x20) ──────────────────────

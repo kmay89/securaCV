@@ -728,7 +728,18 @@ async function readCurrentFirmware() {
     const ptBytes = await readFlashChunked(esploader, 0x8000, 0xc00);
     const { entries, apps } = core.parsePartitionTable(ptBytes);
     state.pt = { entries, apps };
-    const app = core.pickAppPartition(apps);
+    // The verdict must judge the slot the bootloader actually runs, so read
+    // otadata (best-effort) before choosing which descriptor to trust.
+    let otadata = null;
+    try {
+      const otaPart = entries.find(core.isOtaDataPart);
+      const otaSlots = apps.filter((a) => a.subtype >= 0x10 && a.subtype < 0x20);
+      if (otaPart && otaSlots.length) {
+        const ob = await readFlashChunked(esploader, otaPart.offset, Math.min(otaPart.size, 0x2000));
+        otadata = core.parseOtaData(ob, otaSlots.length);
+      }
+    } catch {}
+    const app = core.pickBootedAppPartition(apps, otadata);
     if (!app) { state.current = { unknown: true }; return; }
     const desc = await readFlashChunked(esploader, app.offset + core.APP_DESC_OFFSET, 256);
     const d = core.parseAppDescriptor(desc);
