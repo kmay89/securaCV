@@ -862,6 +862,23 @@ jobs:
           /tmp/demo_script | tee /tmp/demo_script.log
           grep -q "ALL .* PASSED" /tmp/demo_script.log
 
+      - name: Build + run canary-display arcade logic host test
+        # Arcade mode's factory claim — one round exercises EVERY touch zone
+        # and the score screen is the QA report — is pinned in the pure core
+        # (canary/mode/arcade_logic.h): the seeded shuffle visits every zone
+        # exactly once and replays from its printed seed, targets never leave
+        # their zone cell, and the verdict fails on a dead zone, a slow zone,
+        # or a stray tap. The LVGL runtime (FEATURE_ARCADE) draws and forwards
+        # taps; it decides nothing.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_arcade_logic.cpp \
+              -o /tmp/arcade_logic
+          /tmp/arcade_logic | tee /tmp/arcade_logic.log
+          grep -q "ALL .* PASSED" /tmp/arcade_logic.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
