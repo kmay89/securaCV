@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### canary-display — the usability protocol (testing the promises on real people)
+
+- New `docs/hardware/display_usability_protocol.md` — the post-flash
+  counterpart to the bench runbooks: every product claim rewritten as a
+  think-aloud task a stranger either completes or doesn't. First light
+  with no phone in the loop; glance comprehension at 2 m; half-asleep
+  hold-to-ack + per-witness mute; night manners; settings without a
+  manual; the mode gears (including the strand-in-a-gear check on the 3 s
+  exit); the demo storyline narration; proof-on-glass; and the 4.3C's
+  **"is it listening?" battery (task H)** — where the two safety-critical
+  comprehension probes allow no assisted passes at all. Scoring
+  thresholds, a results ledger (failures filed with VERIFY-note honesty),
+  and a serial-grammar appendix (PG1/DM1/DBG1/ARC1/MIC1 in one table).
+- Polish/honesty fixes found writing it: `mic_pins_ok()` now computes
+  from the pin map rather than gate state, so debug mode's System page
+  reports the board truthfully even though the gears never initialize the
+  mic (and "the gears never listen" is now stated in the mic contract);
+  the 4.3C README gains the dark-glass survival note — a dark panel is
+  the ST7701 init follow-up, not a brick, and the serial console + the
+  device's own web mirror remain the working screens.
+
 ### canary-display — the mic-bearing dash (Waveshare 4.3C) and the listening contract
 
 - **First-class support for the one display SKU that physically carries

@@ -245,7 +245,10 @@ void mic_set_armed(bool armed) {
 
 bool mic_armed() { return s_gate.armed; }
 bool mic_listening() { return s_gate.running; }
-bool mic_pins_ok() { return s_gate.pins_ok; }
+// Computed from the pin map, not the gate: callers in the non-fleet gears
+// (debug's System page) read this before mic_begin ever ran there — the
+// gears never listen, and this must still report the BOARD truthfully.
+bool mic_pins_ok() { return pins_ok(); }
 uint16_t mic_level() { return s_level; }
 
 }  // namespace io

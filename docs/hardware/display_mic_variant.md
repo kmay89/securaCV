@@ -102,6 +102,11 @@ disagree with reality — it IS the driver state.**
   are `-1`, and the gate refuses to start regardless of arming (host-
   tested). A guessed microphone pin is the one guess this repo never
   ships.
+- **The gears never listen.** The mic runs only under the fleet face:
+  bench, demo, debug, and arcade modes boot before `mic_begin` and never
+  call the mic loop, so entering any gear is itself a mute (debug's
+  System page still reports the board's pin state truthfully — it reads
+  the pin map, not the uninitialized gate).
 
 The transparency sheet (tap the dash footer) changes on this board from a
 flat "Never: … microphone …" to the live truth: `Mic: LISTENING (amber
@@ -126,6 +131,12 @@ mic bench is not blocked on the glass.
 If the ES7210 needs register init before it clocks samples (likely), the
 `SNAP rms=0` line makes that visible instantly; the init lands in
 `mic_alarm.cpp` at the marked VERIFY point during the same session.
+
+After the bench passes, the contract faces its real judge: the
+[usability protocol](./display_usability_protocol.md)'s **task H** — five
+strangers must answer "is it listening?" correctly every time, with no
+assisted passes allowed on the safety-critical probes. The indicator
+invariant is host-tested; whether humans *read* it is tested there.
 
 ## Status ledger
 

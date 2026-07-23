@@ -51,6 +51,12 @@ Same honesty rule as every board here. Two VERIFY clusters gate real use:
 1. `pio run -e canary-display-dash-mic -t upload` — boots the fleet face
    (panel VERIFY above; the mic layer runs headless either way, and the
    `MIC1` serial grammar reports its state).
+   **If the glass stays dark, the board is not bricked and you are not
+   blind:** the firmware keeps running — the USB serial console carries
+   the full boot scene + `MIC1`/`DBG1` grammars, and once WiFi is up the
+   device serves its own live web mirror (`http://<device-id>.local`) —
+   a display with broken glass still mirrors, by design. Dark glass =
+   the ST7701 init follow-up, worked with the mirror as your screen.
 2. Open **debug mode** (Settings → modes → debug) → the I²C census page.
    The ES8311 (0x18) and ES7210 (0x40) should ACK — that confirms the
    codec silicon and the shared-bus wiring before any audio pin is touched.
@@ -65,6 +71,10 @@ Same honesty rule as every board here. Two VERIFY clusters gate real use:
    must vanish and `MIC1` must report the driver uninstalled.
 6. File results per `firmware/HARDWARE.md` (tier promotion + retire the
    VERIFY notes), and update the mic doc's status ledger.
+7. Then the second half: hand the unit to someone who didn't build it and
+   run the [usability protocol](../../../docs/hardware/display_usability_protocol.md)
+   — task H is this board's "is it listening?" comprehension battery, and
+   its two safety-critical probes allow no assisted passes.
 
 Vendor references: <https://www.waveshare.com/esp32-s3-touch-lcd-4.3c.htm>
 and its wiki page (the schematic download is the pin truth).
