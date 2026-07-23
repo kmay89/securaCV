@@ -477,6 +477,12 @@ pub enum EventType {
     /// Carries no detail beyond the coarse claim — the zone names the device
     /// location, never the attacker.
     TamperDetected,
+    /// A vehicle arrived at or departed a zone (e.g. ignition on/off sensed
+    /// passively off a vehicle's own CAN bus). Carries no plate, make,
+    /// model, trip data, or GPS trail — a binary state change, same
+    /// coarseness as `ContactStateChange`, scoped to a named zone (e.g.
+    /// `zone:garage`) rather than a door.
+    VehicleArrivalDeparture,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]

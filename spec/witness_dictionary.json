@@ -13,7 +13,8 @@
       { "id": "vehicle_presence_after_hours", "rust_variant": "VehiclePresenceAfterHours", "label": "Vehicle presence after hours", "icon": "mdi:car-clock" },
       { "id": "contact_state_change", "rust_variant": "ContactStateChange", "label": "Contact state change", "icon": "mdi:door" },
       { "id": "object_removed_from_zone", "rust_variant": "ObjectRemovedFromZone", "label": "Object removed from zone", "icon": "mdi:package-variant-closed-remove" },
-      { "id": "tamper_detected", "rust_variant": "TamperDetected", "label": "Tamper detected", "icon": "mdi:shield-alert" }
+      { "id": "tamper_detected", "rust_variant": "TamperDetected", "label": "Tamper detected", "icon": "mdi:shield-alert" },
+      { "id": "vehicle_arrival_departure", "rust_variant": "VehicleArrivalDeparture", "label": "Vehicle arrival/departure", "icon": "mdi:car-side" }
     ]
   },
 
@@ -50,7 +51,8 @@
       { "rust_variant": "VehiclePresenceAfterHours", "snake": "vehicle_presence_after_hours", "maps_to_event_type": "vehicle_presence_after_hours" },
       { "rust_variant": "ContactStateChange", "snake": "contact_state_change", "maps_to_event_type": "contact_state_change" },
       { "rust_variant": "ObjectRemovedFromZone", "snake": "object_removed_from_zone", "maps_to_event_type": "object_removed_from_zone" },
-      { "rust_variant": "TamperDetected", "snake": "tamper_detected", "maps_to_event_type": "tamper_detected" }
+      { "rust_variant": "TamperDetected", "snake": "tamper_detected", "maps_to_event_type": "tamper_detected" },
+      { "rust_variant": "VehicleArrivalDeparture", "snake": "vehicle_arrival_departure", "maps_to_event_type": "vehicle_arrival_departure" }
     ]
   },
 

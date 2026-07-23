@@ -160,6 +160,7 @@ adapter. The vocabulary is closed and coarse:
 | `ContactStateChange` | `ContactStateChange` |
 | `ObjectRemovedFromZone` | `ObjectRemovedFromZone` |
 | `TamperDetected` | `TamperDetected` |
+| `VehicleArrivalDeparture` | `VehicleArrivalDeparture` |
 
 New kinds MAY be introduced only via a ruleset change and only if they remain coarse,
 non-identifying claims (see `spec/event_contract.md §5` for permitted vs forbidden claims).

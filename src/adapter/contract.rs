@@ -45,6 +45,10 @@ pub enum ClaimKind {
     /// Tampering with the witnessing device itself (enclosure opened, camera
     /// covered/blinded, thermal-attack temperature drift). Coarse claim only.
     TamperDetected,
+    /// A vehicle arrived at or departed a zone (e.g. ignition on/off sensed
+    /// passively off a vehicle's own CAN bus). No plate, make, model, trip
+    /// data, or GPS trail — a binary state change scoped to a zone.
+    VehicleArrivalDeparture,
 }
 
 impl ClaimKind {
@@ -59,6 +63,7 @@ impl ClaimKind {
             ClaimKind::ContactStateChange => "contact_state_change",
             ClaimKind::ObjectRemovedFromZone => "object_removed_from_zone",
             ClaimKind::TamperDetected => "tamper_detected",
+            ClaimKind::VehicleArrivalDeparture => "vehicle_arrival_departure",
         }
     }
 
@@ -73,6 +78,7 @@ impl ClaimKind {
             "contact_state_change" => Some(ClaimKind::ContactStateChange),
             "object_removed_from_zone" => Some(ClaimKind::ObjectRemovedFromZone),
             "tamper_detected" => Some(ClaimKind::TamperDetected),
+            "vehicle_arrival_departure" => Some(ClaimKind::VehicleArrivalDeparture),
             _ => None,
         }
     }
@@ -92,6 +98,7 @@ pub fn claim_kind_to_event_type(kind: ClaimKind) -> EventType {
         ClaimKind::ContactStateChange => EventType::ContactStateChange,
         ClaimKind::ObjectRemovedFromZone => EventType::ObjectRemovedFromZone,
         ClaimKind::TamperDetected => EventType::TamperDetected,
+        ClaimKind::VehicleArrivalDeparture => EventType::VehicleArrivalDeparture,
     }
 }
 
@@ -230,6 +237,7 @@ mod tests {
             ClaimKind::ContactStateChange,
             ClaimKind::ObjectRemovedFromZone,
             ClaimKind::TamperDetected,
+            ClaimKind::VehicleArrivalDeparture,
         ] {
             assert_eq!(ClaimKind::from_str_opt(kind.as_str()), Some(kind));
         }

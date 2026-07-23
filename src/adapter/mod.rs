@@ -28,6 +28,8 @@ pub mod sandbox;
 
 #[cfg(feature = "adapter-ble-presence")]
 pub mod ble_presence;
+#[cfg(feature = "adapter-can-bus")]
+pub mod can_bus;
 #[cfg(feature = "adapter-frigate")]
 pub mod frigate;
 #[cfg(feature = "adapter-meshtastic")]
@@ -54,6 +56,7 @@ use anyhow::Result;
     feature = "adapter-webhook",
     feature = "adapter-ble-presence",
     feature = "adapter-meshtastic",
+    feature = "adapter-can-bus",
 ))]
 pub(crate) use poison_tolerant::LockTolerant;
 
@@ -64,6 +67,7 @@ pub(crate) use poison_tolerant::LockTolerant;
     feature = "adapter-webhook",
     feature = "adapter-ble-presence",
     feature = "adapter-meshtastic",
+    feature = "adapter-can-bus",
 ))]
 mod poison_tolerant {
     use std::sync::{Mutex, MutexGuard};

@@ -237,6 +237,7 @@ They are coarse, non-identifying claims and obey every constraint above.
 | `contact_state_change` | A binary contact/open-close change (door, gate, window, enclosure) |
 | `object_removed_from_zone` | An object previously present in a zone is no longer present |
 | `tamper_detected` | Tampering with the witnessing device itself: enclosure opened, camera covered/blinded, or thermal-attack temperature drift. The zone names the device location, never the actor |
+| `vehicle_arrival_departure` | A vehicle arrived at or departed a zone (e.g. ignition on/off sensed passively off a vehicle's own CAN bus). No plate, make, model, trip data, or GPS trail — a binary state change scoped to a zone |
 
 ### Claim → Event Flow
 
