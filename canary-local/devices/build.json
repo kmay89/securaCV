@@ -5,6 +5,11 @@
   "source": "sbom/README.md",
   "link": "https://github.com/kmay89/securaCV/actions/workflows/sbom.yml"
  },
+ "pricing": {
+  "source": "docs/hardware/pricing.json",
+  "as_of": "2026-07-23T02:10:06Z",
+  "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
+ },
  "devices": {
   "canary-wap": {
    "bom": {
@@ -375,7 +380,10 @@
      }
     ],
     "required_usd": 26.9,
-    "full_usd": 102.89
+    "full_usd": 102.89,
+    "required_usd_live": 26.9,
+    "full_usd_live": 102.89,
+    "pricing_as_of": "2026-07-23T02:10:06Z"
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
@@ -647,7 +655,10 @@
      }
     ],
     "required_usd": 41.7,
-    "full_usd": 93.16
+    "full_usd": 93.16,
+    "required_usd_live": 41.7,
+    "full_usd_live": 93.16,
+    "pricing_as_of": "2026-07-23T02:10:06Z"
    },
    "assembly": {
     "source": "docs/hardware/enclosure/README.md §Assembly",
@@ -659,6 +670,117 @@
      "Close the front (lip nests into the back) and drive the 4 × M2 corner screws — snug diagonally, then final quarter-turns.",
      "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
     ]
+   }
+  },
+  "canary-sense": {
+   "bom": {
+    "source": "docs/hardware/bom_canary_sense.csv",
+    "rows": [
+     {
+      "ref": "U1",
+      "qty": "1",
+      "required": true,
+      "category": "MCU Board",
+      "desc": "MR60BHA2 60GHz mmWave kit (radar module + XIAO ESP32-C6, onboard BH1750 lux + WS2812 LED)",
+      "mpn": "MR60BHA2",
+      "mfr": "Seeed Studio",
+      "usd": 24.9,
+      "notes": "The whole Sense front end in one kit: radar IQ never leaves the module's own DSP (privacy chokepoint); UART 115200 GPIO16/17, I2C GPIO22/23. Ships ESPHome-preflashed — reflash with firmware/projects/canary-sense. Seeed list $24.90 (2026-07)"
+     },
+     {
+      "ref": "CBL1",
+      "qty": "1",
+      "required": true,
+      "category": "Cable",
+      "desc": "USB-C cable, data-capable (not charge-only)",
+      "mpn": "USB-C-DATA-1M",
+      "mfr": "Generic",
+      "usd": 3.5,
+      "notes": "Required for flashing and 5V power"
+     },
+     {
+      "ref": "PSU1",
+      "qty": "1",
+      "required": true,
+      "category": "Power",
+      "desc": "USB-C PSU 5V/2A wall adapter (UL/ETL listed)",
+      "mpn": "5V2A-USBC-UL",
+      "mfr": "Generic",
+      "usd": 8.0,
+      "notes": "Always-on appliance — use a listed adapter (same guidance as the Display BOM)"
+     },
+     {
+      "ref": "SW2",
+      "qty": "1",
+      "required": false,
+      "category": "Sensor",
+      "desc": "Reed switch, SPST normally-closed (tamper), hermetic glass",
+      "mpn": "59140-1-S-02-A",
+      "mfr": "Littelfuse",
+      "usd": 1.8,
+      "notes": "Enclosure-level tamper for the printed radome; wire to a free GPIO. FIRMWARE: no FEATURE_TAMPER flag in canary-sense yet — the P0 tamper signal is BH1750 lights-out corroboration (design doc §tamper enrichment)"
+     },
+     {
+      "ref": "MAG1",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "Magnet, Ni-coated neodymium disc for tamper",
+      "mpn": "NEO-6X3-NI",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Lid-mounted; separates from SW2 when the radome opens. Ni/epoxy coat for corrosion"
+     },
+     {
+      "ref": "SCR3",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 self-tapping screw, FLAT (countersunk) head, 8-10mm (printed-enclosure lid)",
+      "mpn": "M2X8-ST-CSK",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "For the printed Sense enclosure posts (canary_sense_enclosure.scad); max ~0.3 N-m or the printed posts strip"
+     },
+     {
+      "ref": "INS1",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",
+      "mpn": "M2-HSI-3.5X4",
+      "mfr": "Generic",
+      "usd": 0.4,
+      "notes": "Service-grade lid threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers"
+     },
+     {
+      "ref": "SCR4",
+      "qty": "2",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "#6 / M3.5 pan-head screw + wall anchor (keyhole mount)",
+      "mpn": "M3.5-PAN-ANCHOR",
+      "mfr": "Generic",
+      "usd": 0.6,
+      "notes": "For the printed enclosure's keyhole mounts (opt_mount); head <= 7mm dia, <= 2.5mm tall"
+     },
+     {
+      "ref": "FIL1",
+      "qty": "1",
+      "required": false,
+      "category": "Material",
+      "desc": "TPU filament 90-95A (printed gasket), ~5g per gasket",
+      "mpn": "TPU-95A",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "Printed perimeter gasket for the sealed radome preset (opt_seal); 2 perimeters, 100% infill, slow. Radar sees through plastic — no window, no vent needed"
+     }
+    ],
+    "required_usd": 36.4,
+    "full_usd": 40.0,
+    "required_usd_live": 36.4,
+    "full_usd_live": 40.0,
+    "pricing_as_of": "2026-07-23T02:10:06Z"
    }
   },
   "canary-display-watch": {
@@ -744,7 +866,10 @@
      }
     ],
     "required_usd": 34.99,
-    "full_usd": 41.94
+    "full_usd": 41.94,
+    "required_usd_live": 34.99,
+    "full_usd_live": 41.94,
+    "pricing_as_of": "2026-07-23T02:10:06Z"
    }
   },
   "canary-display-dash": {
@@ -830,11 +955,11 @@
      }
     ],
     "required_usd": 42.5,
-    "full_usd": 45.5
+    "full_usd": 45.5,
+    "required_usd_live": 42.5,
+    "full_usd_live": 45.5,
+    "pricing_as_of": "2026-07-23T02:10:06Z"
    }
-  },
-  "canary-sense": {
-   "bom_note": "Sense BOM pending — parts list lives in firmware/projects/canary-sense/README.md."
   }
  }
 }

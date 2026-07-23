@@ -35,6 +35,17 @@ export function buildBuildIt(buildData, dev) {
     bomHead.append(totals);
     wrap.append(bomHead);
 
+    if (d.bom.pricing_as_of) {
+      const asOf = el("p", "muted fineprint bom-asof");
+      let line = `Supply-chain snapshot ${d.bom.pricing_as_of.slice(0, 10)}`;
+      if (d.bom.required_usd_live != null &&
+          d.bom.required_usd_live !== d.bom.required_usd) {
+        line += ` — live required total $${d.bom.required_usd_live.toFixed(2)}`;
+      }
+      asOf.textContent = line + " · distributor-verified rows are marked live";
+      wrap.append(asOf);
+    }
+
     const optToggle = el("label", "over-toggle bom-toggle");
     const cb = document.createElement("input");
     cb.type = "checkbox";
@@ -47,11 +58,14 @@ export function buildBuildIt(buildData, dev) {
       for (const r of d.bom.rows || []) {
         if (!r.required && !cb.checked) continue;
         const row = el("div", "bom-row" + (r.required ? "" : " bom-opt"));
+        const liveExt = r.live
+          ? r.live.unit_usd * (Number(r.qty) || 1) : null;
         const top = el("div", "bom-row-top");
         top.append(
           el("code", "bom-ref", r.ref),
           el("span", "bom-desc", r.desc),
-          el("span", "bom-usd", r.usd ? `$${r.usd.toFixed(2)}` : "—")
+          el("span", "bom-usd", liveExt != null ? `$${liveExt.toFixed(2)}`
+                                : r.usd ? `$${r.usd.toFixed(2)}` : "—")
         );
         const meta = el("div", "bom-row-meta");
         meta.append(
@@ -61,6 +75,12 @@ export function buildBuildIt(buildData, dev) {
                      : el("span", "chip", "optional"),
           r.mpn ? el("span", "muted", `${r.mfr} · ${r.mpn}`) : ""
         );
+        if (r.live) {
+          meta.append(el("span", "chip chip-live",
+            `live · ${r.live.src}` +
+            (typeof r.live.stock === "number"
+              ? ` · ${r.live.stock.toLocaleString()} in stock` : "")));
+        }
         row.append(top, meta);
         if (r.notes) {
           const note = el("div", "bom-note", r.notes);

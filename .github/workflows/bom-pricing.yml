@@ -1,0 +1,82 @@
+name: BOM Pricing
+
+# The supply chain runs itself: every night this fetches live distributor
+# data (Digi-Key Product Information V4 + Mouser Search) for every orderable
+# MPN in docs/hardware/bom_*.csv, refreshes docs/hardware/pricing.json, and
+# regenerates the Build-it catalog that rides on it. A human is only pulled
+# in when something needs a decision — out-of-stock, price jump, lifecycle
+# change — raised as a deduplicated GitHub issue.
+#
+# No secrets configured? The fetch no-ops politely and the committed
+# snapshot stands. Setup: docs/hardware/bom_pipeline.md §Credentials.
+
+on:
+  schedule:
+    - cron: "13 9 * * *" # nightly; distributors have refreshed by then
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: bom-pricing
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch distributor snapshot
+        env:
+          DIGIKEY_CLIENT_ID: ${{ secrets.DIGIKEY_CLIENT_ID }}
+          DIGIKEY_CLIENT_SECRET: ${{ secrets.DIGIKEY_CLIENT_SECRET }}
+          MOUSER_API_KEY: ${{ secrets.MOUSER_API_KEY }}
+        run: python3 scripts/bom_pricing.py --exceptions-out bom_exceptions.json
+
+      - name: Regenerate the catalog JSONs that ride the snapshot
+        run: python3 canary-local/tools/gen_enclosures.py
+
+      - name: Commit the refreshed snapshot
+        run: |
+          if git diff --quiet -- docs/hardware/pricing.json canary-local/devices; then
+            echo "snapshot unchanged — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/hardware/pricing.json canary-local/devices
+          git commit -m "bom: nightly supply-chain snapshot"
+          git push
+
+      - name: Raise supply-chain exceptions as issues (deduplicated)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+
+          p = pathlib.Path("bom_exceptions.json")
+          exceptions = json.loads(p.read_text()) if p.exists() else []
+          for e in exceptions:
+              title = f"supply-chain [{e['kind']}]: {e['mpn']}"
+              probe = subprocess.run(
+                  ["gh", "issue", "list", "--state", "open",
+                   "--search", f'"{title}" in:title', "--json", "number"],
+                  capture_output=True, text=True)
+              if probe.returncode == 0 and json.loads(probe.stdout or "[]"):
+                  print(f"open issue exists, skipping: {title}")
+                  continue
+              body = (
+                  f"{e['detail']}\n\n"
+                  "Raised automatically by the nightly BOM Pricing workflow.\n\n"
+                  "- Snapshot: `docs/hardware/pricing.json`\n"
+                  "- Design intent: `docs/hardware/bom_*.csv`\n"
+                  "- Playbook: `docs/hardware/bom_pipeline.md` (Exceptions)\n")
+              subprocess.run(
+                  ["gh", "issue", "create", "--title", title, "--body", body],
+                  check=False)
+          print(f"{len(exceptions)} exception(s) processed")
+          PY
