@@ -308,6 +308,79 @@ def die(msg: str) -> None:
     raise SystemExit(1)
 
 
+# ── parity: every Canary proves itself TWO ways ─────────────────────────────
+# One real proof (live, over the cable or on the glass) and one emulated twin
+# (a lab page that shows the same behavior with no hardware in hand) — per
+# ROLE, within each board's honest abilities. The done card renders this
+# uniformly, and a test enforces that no product ships without both. Twin
+# pages are checked to exist at generation time, so a moved page fails the
+# build instead of shipping a dead link.
+PROVE = {
+    "canary": {
+        "real": {"kind": "monitor",
+                 "label": "Watch it boot & prove itself →",
+                 "how": "The live monitor: boot log, the signed self-manifest (j), "
+                        "health score and temperature — from the board's own mouth."},
+        "emulated": {"href": "homeassistant.html",
+                     "label": "🧪 the emulated twin — its Home Assistant life",
+                     "how": "The Hub lab: the exact entities, cards and automations this "
+                            "Canary raises, simulated from the same generated data."},
+    },
+    "wap": {
+        "real": {"kind": "bench-field",
+                 "label": "🌊 Feel the field — the live WiFi bench →",
+                 "how": "The field bench: RF events, device counts, and the CSI stir "
+                        "meter, live off the USB console."},
+        "emulated": {"href": "wap.html",
+                     "label": "🧪 the emulated twin — the guided WAP walkthrough",
+                     "how": "The WAP lab: the same sensing pipeline and first-boot "
+                            "story, simulated from the firmware's own facts."},
+    },
+    "vision": {
+        "real": {"kind": "bench-camera",
+                 "label": "👁 See through it — the camera bench →",
+                 "how": "The module bench (the camera's OWN USB-C port): live frames, "
+                        "boxes, the confidence meter and the two on-module dials."},
+        "emulated": {"href": "vision.html",
+                     "label": "🧪 the emulated twin — firmware-backed detection",
+                     "how": "The Vision lab: the real detection math compiled for the "
+                            "browser, running on a staged scene."},
+    },
+    "sense": {
+        "real": {"kind": "bench-radar",
+                 "label": "👋 Feel it sense — the live radar bench →",
+                 "how": "The radar bench: presence, bands, count — and on Wellbeing, "
+                        "live breathing and heart rate — off the USB console."},
+        "emulated": {"href": "senselab.html",
+                     "label": "🧪 the emulated twin — the Sense Lab bench",
+                     "how": "The Sense Lab: the real presence/vitals FSMs ported to the "
+                            "browser, with every reflex on a slider."},
+    },
+    "display": {
+        "real": {"kind": "glass",
+                 "label": "Watch the glass — it comes alive",
+                 "how": "The proof is the screen itself: splash, then the face, then "
+                        "the on-glass wizard. Touch works."},
+        "emulated": {"href": "fleet.html",
+                     "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+                     "how": "The fleet page boots the REAL display firmware compiled to "
+                            "WASM — the pixels here are the pixels the glass shows."},
+    },
+}
+
+
+def prove_block(role: str, product_id: str) -> dict:
+    p = {k: dict(v) for k, v in PROVE[role].items()}  # deep-ish copy per product
+    if role == "display":
+        # Deep-link straight to THIS display's sheet (registry ids drop the
+        # securacv- prefix: canary-display-watch / canary-display-dash).
+        p["emulated"]["href"] = "fleet.html#" + product_id.replace("securacv-", "")
+    page = p["emulated"]["href"].split("#")[0]
+    if not (CANARY_LOCAL / page).exists():
+        die(f"prove twin page missing: {page} (role {role})")
+    return p
+
+
 # ── waiting is learning: the coach's lesson deck ────────────────────────────
 # Shown (optionally, dismissibly) while the long operations run — a safety
 # copy takes a minute, a full erase takes a while, and that minute can leave
@@ -1103,6 +1176,7 @@ def main() -> None:
             "hatch": hatch,
             "serial_receipt": supports_serial_receipt(p["project"]),
             "role": role,
+            "prove": prove_block(role, p["id"]),
         }
         # The dials that genuinely apply to this product — Vision's four NVS
         # numbers are flash-bakeable; Sense's reflexes are compile-time and

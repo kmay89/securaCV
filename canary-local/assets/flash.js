@@ -1645,6 +1645,8 @@ function phaseSenseBench(port, product) {
   const row = el("div", "flash-row");
   const back = el("button", "ghost", "← back to the Nursery");
   row.append(back);
+  const senseTwin = twinLink(product);
+  if (senseTwin) row.append(senseTwin);
   box.append(row);
 
   // ── the live model, fed by the console lines ──
@@ -1900,6 +1902,8 @@ function phaseWapBench(port, product) {
   const row = el("div", "flash-row");
   const back = el("button", "ghost", "← back to the Nursery");
   row.append(back);
+  const wapTwin = twinLink(product);
+  if (wapTwin) row.append(wapTwin);
   box.append(row);
 
   const model = {
@@ -3071,17 +3075,32 @@ function phaseDone(opts) {
   const rosterStrip = renderRosterStrip();
   if (rosterStrip) box.append(rosterStrip);
 
+  // Prove it, two ways — the SAME shape for every Canary (parity is a
+  // tested guarantee): one real proof over the cable/glass, one emulated
+  // twin a click away. The catalog's prove block owns both.
+  const proveSpec = opts.product && !opts.isBackup
+    ? ((state.catalog.products.find((p) => p.id === opts.product.id) || {}).prove || null)
+    : null;
+  const proveReal = () => {
+    const kind = proveSpec ? proveSpec.real.kind : "monitor";
+    if (kind === "bench-radar") return openSenseBench(opts.product);
+    if (kind === "bench-field") return openWapBench(opts.product);
+    if (kind === "bench-camera") {
+      // The camera bench lives on the MODULE's port — route through the
+      // module flow (same hand-off the two-port checklist uses).
+      return onDisconnect(true).then(() => setPhase(phaseModule({
+        catalog: state.catalog, setPhase, back: () => setPhase(phaseConnect()),
+      })));
+    }
+    // "glass" and "monitor": the console is the honest window either way.
+    return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true });
+  };
+
   const row = el("div", "flash-row");
-  const watch = doneRole === "sense"
-    ? el("button", "primary", "👋 Feel it sense — the live radar bench →")
-    : doneRole === "wap"
-      ? el("button", "primary", "🌊 Feel the field — the live WiFi bench →")
-      : el("button", "primary", "Watch it boot & prove itself →");
-  watch.addEventListener("click", () => doneRole === "sense"
-    ? openSenseBench(opts.product)
-    : doneRole === "wap"
-      ? openWapBench(opts.product)
-      : openMonitor({ celebrate: true, skipReset: true, proveIdentity: true }));
+  const watch = el("button", "primary",
+    proveSpec ? proveSpec.real.label : "Watch it boot & prove itself →");
+  if (proveSpec) watch.title = proveSpec.real.how;
+  watch.addEventListener("click", proveReal);
   const again = el("button", "ghost", "Set up another board");
   // A new board is a new bring-up: drop any in-progress two-port Vision pair so a
   // half-done Vision can't carry a stale flag into the next board (else its other
@@ -3095,9 +3114,31 @@ function phaseDone(opts) {
     tourEl = installStory(() => state.lastImage);
     box.append(tourEl);
   });
-  row.append(watch, again, tour);
+  row.append(watch);
+  if (proveSpec) {
+    const twin = el("a", "ghost flash-twin", proveSpec.emulated.label);
+    twin.href = proveSpec.emulated.href;
+    twin.target = "_blank";
+    twin.rel = "noopener";
+    twin.title = proveSpec.emulated.how;
+    row.append(twin);
+  }
+  row.append(again, tour);
   box.append(row);
   return box;
+}
+
+// The emulated-twin link for a product, wherever a bench wants to offer it.
+function twinLink(product) {
+  const spec = product &&
+    ((state.catalog.products.find((p) => p.id === product.id) || {}).prove || null);
+  if (!spec) return null;
+  const a = el("a", "ghost small flash-twin", spec.emulated.label);
+  a.href = spec.emulated.href;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.title = spec.emulated.how;
+  return a;
 }
 
 // ── rescue: back to known-good, for any firmware past or future ─────────────

@@ -485,3 +485,22 @@ test("pickLesson: stage-matched first, generic after, never repeats, ends honest
   assert.strictEqual(all.length, catalog.lessons.length, "every lesson reachable");
   assert.strictEqual(c.pickLesson({}, "writing", []), null, "no deck, no coach");
 });
+
+test("flash.json: PARITY — every Canary proves itself two ways, real + emulated twin", () => {
+  const REAL_KINDS = new Set(["monitor", "bench-field", "bench-camera", "bench-radar", "glass"]);
+  for (const p of catalog.products) {
+    const pr = p.prove;
+    assert.ok(pr && pr.real && pr.emulated, `${p.id}: no prove block — parity broken`);
+    assert.ok(REAL_KINDS.has(pr.real.kind), `${p.id}: unknown real proof kind ${pr.real.kind}`);
+    assert.ok(pr.real.label && pr.real.how, `${p.id}: real proof needs label + how`);
+    assert.ok(pr.emulated.label && pr.emulated.how, `${p.id}: twin needs label + how`);
+    // the twin page must actually exist — no dead links, ever
+    const page = pr.emulated.href.split("#")[0];
+    assert.ok(existsSync(join(ROOT, page)), `${p.id}: twin page missing: ${page}`);
+  }
+  // displays deep-link to their own sheet on the fleet page
+  for (const p of catalog.products.filter((x) => x.role === "display")) {
+    assert.ok(p.prove.emulated.href.includes("#" + p.id.replace("securacv-", "")),
+      `${p.id}: twin should deep-link its own glass`);
+  }
+});

@@ -852,3 +852,6 @@ button.flash-map-key:hover { color: var(--text); }
   .flash-coach-swap .flash-coach-title,
   .flash-coach-swap .flash-coach-body { animation: none; }
 }
+
+/* the emulated-twin link sits beside the real proof, styled as its equal */
+.flash-twin { text-decoration: none; text-align: center; }
