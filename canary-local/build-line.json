@@ -7,15 +7,14 @@
     "nav": "stage-tabs",
     "note": "The desktop app renders the six stages below as a native toolbar tab bar; each tab shows that stage's benches. The isometric room is the default 'Overview' surface."
   },
-  "$room_note": "Maps each isometric-room station (room.html) to the benches/site links it opens, by slug + emoji. The room reads this so its tool lists stay in lockstep with the manifest; it falls back to its own hardcoded tools if the manifest can't load.",
+  "$room_note": "Maps each isometric-room station (room.html) to the benches/site links it opens, by slug + emoji. The room reads this so its tool lists stay in lockstep with the manifest; it falls back to its own hardcoded tools if the manifest can't load. The room is ONE straight line, stations 1–6; stage 4 is a single options bench (camera + radar today, more senses later), never a fork.",
   "room": {
-    "1":  [{ "e": "🐦", "slug": "fleet" }, { "e": "🧭", "slug": "choose" }],
-    "2":  [{ "e": "🧱", "slug": "workshop" }, { "e": "💎", "slug": "see-it-in-3d" }],
-    "3":  [{ "e": "📌", "slug": "boards" }, { "e": "🎛️", "slug": "test-bench" }],
-    "4a": [{ "e": "📷", "slug": "vision" }],
-    "4b": [{ "e": "📡", "slug": "sense" }],
-    "5":  [{ "e": "🏠", "slug": "hub" }, { "e": "🏡", "slug": "house" }],
-    "6":  [{ "e": "🔐", "slug": "vault" }, { "e": "🧠", "slug": "how-it-works" }]
+    "1": [{ "e": "🐦", "slug": "fleet" }, { "e": "🧭", "slug": "choose" }],
+    "2": [{ "e": "🧱", "slug": "workshop" }, { "e": "💎", "slug": "see-it-in-3d" }],
+    "3": [{ "e": "📌", "slug": "boards" }, { "e": "🎛️", "slug": "test-bench" }],
+    "4": [{ "e": "📷", "slug": "vision" }, { "e": "📡", "slug": "sense" }],
+    "5": [{ "e": "🏠", "slug": "hub" }, { "e": "🏡", "slug": "house" }],
+    "6": [{ "e": "🔐", "slug": "vault" }, { "e": "🧠", "slug": "how-it-works" }]
   },
   "onramp": {
     "noun": "Get started",
@@ -72,19 +71,19 @@
       ]
     },
     {
-      "id": "sense", "n": 4, "name": "Sense", "verb": "camera · or radar",
-      "accent": "#2563eb", "icon": "eye", "fork": true,
-      "forkNote": "Pick the sense your Canary carries. Both rejoin at Home.",
+      "id": "sense", "n": 4, "name": "Sense", "verb": "pick its sense",
+      "accent": "#2563eb", "icon": "eye", "options": true,
+      "optionsNote": "Camera and radar are options at this one stage, not separate paths — pick the sense your Canary carries. More senses will dock here. The line runs straight on to Home.",
       "tracks": [
         {
-          "track": "vision", "label": "Camera path", "accent": "#2563eb",
+          "track": "vision", "label": "Camera", "accent": "#2563eb",
           "benches": [
             { "noun": "The Vision", "slug": "vision", "lab": "vision.html", "real": false, "kind": "sim", "status": "keep",
               "desc": "On-device person detection — boxes, not pixels. SenseCraft model load + aim." }
           ]
         },
         {
-          "track": "radar", "label": "Radar path", "accent": "#3b82f6",
+          "track": "radar", "label": "Radar", "accent": "#3b82f6",
           "benches": [
             { "noun": "The Sense", "slug": "sense", "lab": "sense.html", "real": false, "kind": "sim", "status": "keep",
               "desc": "60 GHz presence. Drag people through the cone; watch the real FSM decide.",

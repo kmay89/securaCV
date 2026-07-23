@@ -47,6 +47,7 @@ jobs:
             args: ""
             rust-targets: ""
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 90
 
     # tauri-action creates the GitHub release and uploads the installers.
     permissions:

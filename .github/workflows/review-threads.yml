@@ -41,6 +41,7 @@ jobs:
   unresolved-threads:
     name: All review comments addressed
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check for unresolved review threads
         uses: actions/github-script@v9

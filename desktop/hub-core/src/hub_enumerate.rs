@@ -190,11 +190,17 @@ pub fn enumerate() -> Result<Vec<TargetDisk>, String> {
     Ok(out)
 }
 
+/// macOS: `diskutil`'s plist output, parsed and judged by the pure functions in
+/// [`crate::hub_enumerate_macos`] — same contract as the Linux enumerator.
+#[cfg(target_os = "macos")]
+pub fn enumerate() -> Result<Vec<crate::hub_disk::TargetDisk>, String> {
+    crate::hub_enumerate_macos::enumerate()
+}
+
 /// Enumeration for platforms whose backend isn't written yet. Honest rather than
 /// empty: an empty list would read as "no disks found", inviting the UI to say
-/// the wrong thing. macOS (`diskutil list -plist` + Internal/Ejectable) and
-/// Windows are follow-ups.
-#[cfg(not(target_os = "linux"))]
+/// the wrong thing. Windows (PowerShell `Get-Disk`) is the follow-up.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn enumerate() -> Result<Vec<crate::hub_disk::TargetDisk>, String> {
     Err("hub-disk enumeration isn't implemented on this OS yet".to_string())
 }
