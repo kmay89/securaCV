@@ -1,0 +1,52 @@
+# Nightly iOS self-heal — "each night, does what it needs to do."
+#
+# The iOS analogue of desktop-hub-core.yml's rationale: the full app only builds
+# on a release tag, so this nightly job regenerates the Xcode project from
+# project.yml and rebuilds + tests it against the CURRENT firmware contracts, so
+# it can never rot silently between releases. It needs no signing (simulator
+# build), so it runs whenever iOS is enabled — but stays a green no-op until then
+# so it never nags.
+#
+# House style honored: manual dispatch + a staggered, non-:00 nightly cron;
+# gated behind the same `ENABLE_IOS_BUILD` repo variable as the other iOS jobs;
+# least-privilege permissions.
+name: iOS self-heal (nightly)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 08:41 UTC nightly — off the :00 fleet stampede, distinct from bom-pricing.
+    - cron: "41 8 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-selfheal
+  cancel-in-progress: true
+
+jobs:
+  selfheal:
+    runs-on: macos-14
+    steps:
+      - name: Gate notice
+        if: vars.ENABLE_IOS_BUILD != 'true'
+        run: |
+          echo "::notice title=iOS self-heal skipped::Set repository variable ENABLE_IOS_BUILD=true to enable the nightly iOS build/test. Exiting green."
+
+      - uses: actions/checkout@v4
+        if: vars.ENABLE_IOS_BUILD == 'true'
+
+      - name: Select Xcode
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        run: sudo xcode-select -s /Applications/Xcode_16.app || true
+
+      - name: Regenerate, build & test (no signing)
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        working-directory: ios
+        run: |
+          bash scripts/heal.sh build
+
+      - name: Summary
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        run: echo "::notice title=iOS self-heal::App regenerated from project.yml and rebuilt + tested against current contracts. It did not rot."

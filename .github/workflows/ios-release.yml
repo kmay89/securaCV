@@ -1,0 +1,108 @@
+# iOS release — build a signed .ipa of the native SecuraCV companion.
+#
+# Mirrors desktop-mobile-release.yml exactly where it matters: manual dispatch
+# ONLY (never blocks PR/CI), double-gated behind the ENABLE_IOS_BUILD repo
+# variable (green no-op until set), and signs with an App Store Connect API key
+# materialized from a base64 secret to a real .p8 on the runner ("a secret is a
+# string, so the key must be a file"). Reuses the SAME Apple secret names as the
+# desktop mobile pipeline so there is one signing story for the whole repo.
+name: iOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      export_method:
+        description: "Signing destination"
+        type: choice
+        options: [debugging, release-testing, app-store-connect]
+        default: debugging
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Gate notice
+        if: vars.ENABLE_IOS_BUILD != 'true'
+        run: |
+          echo "::notice title=iOS release skipped::Set ENABLE_IOS_BUILD=true and the APPLE_* signing secrets to enable. Exiting green."
+
+      - uses: actions/checkout@v4
+        if: vars.ENABLE_IOS_BUILD == 'true'
+
+      - name: Select Xcode
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        run: sudo xcode-select -s /Applications/Xcode_16.app || true
+
+      - name: Materialize App Store Connect API key
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          # A secret is a string; the .p8 must exist as a file for signing.
+          mkdir -p "$RUNNER_TEMP/keys"
+          echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/keys/AuthKey_${APPLE_API_KEY}.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/keys/AuthKey_${APPLE_API_KEY}.p8" >> "$GITHUB_ENV"
+
+      - name: Regenerate project
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        working-directory: ios
+        run: |
+          eval "$(bash scripts/stamp_build.sh)"
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Archive & export .ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        working-directory: ios
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          EXPORT_METHOD: ${{ inputs.export_method }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project SecuraCV.xcodeproj \
+            -scheme SecuraCV \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_DEVELOPMENT_TEAM" \
+            SECURACV_BUILD_REV="${SECURACV_BUILD_REV:-dev}" \
+            SECURACV_FW_TRAIN="${SECURACV_FW_TRAIN:-0.x}" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$APPLE_API_KEY_PATH" \
+            -authenticationKeyID "$APPLE_API_KEY" \
+            -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
+            archive
+
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>${EXPORT_METHOD}</string>
+            <key>teamID</key><string>${APPLE_DEVELOPMENT_TEAM}</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict></plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$APPLE_API_KEY_PATH" \
+            -authenticationKeyID "$APPLE_API_KEY" \
+            -authenticationKeyIssuerID "$APPLE_API_ISSUER"
+
+      - name: Upload .ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecuraCV-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: warn
