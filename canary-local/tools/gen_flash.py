@@ -308,6 +308,64 @@ def die(msg: str) -> None:
     raise SystemExit(1)
 
 
+# ── about & legal: parsed, never typed ──────────────────────────────────────
+# The settings/about panel's facts come from the files of record: the repo
+# LICENSE names the license, each vendored module's PROVENANCE.txt names its
+# package, version and license (md5 carries its terms in its own header).
+# A moved or reworded source fails the build instead of shipping a wrong
+# credit — same honesty rule as everything else here.
+
+LICENSE_FILE = REPO / "LICENSE"
+VENDOR_DIR = CANARY_LOCAL / "assets/vendor"
+# The four modules the flasher page actually loads (the SRI import-map set).
+FLASHER_VENDORS = ["esptool-js", "md5", "ed25519", "qrcode"]
+
+
+def about_block() -> dict:
+    lic_text = read(LICENSE_FILE)
+    if "Apache License" in lic_text and "Version 2.0" in lic_text:
+        license_name = "Apache-2.0"
+    elif "MIT" in lic_text.splitlines()[0]:
+        license_name = "MIT"
+    else:
+        die("LICENSE not recognized — teach about_block() its name")
+
+    vendors = []
+    for v in FLASHER_VENDORS:
+        d = VENDOR_DIR / v
+        prov = d / "PROVENANCE.txt"
+        if prov.exists():
+            text = read(prov)
+            pkg = re.search(r"package:\s*(\S+)", text)
+            lic = re.search(r"license:\s*([^\n(]+)", text)
+            if not pkg or not lic:
+                die(f"vendor {v}: PROVENANCE.txt missing package/license lines")
+            vendors.append({"name": v, "package": pkg.group(1),
+                            "license": lic.group(1).strip(),
+                            "file": f"assets/vendor/{v}/PROVENANCE.txt"})
+        else:
+            # md5 carries its terms in its own file header.
+            src = next(d.glob("*.js"), None)
+            if not src or "Licensed under the MIT license" not in read(src):
+                die(f"vendor {v}: no PROVENANCE.txt and no recognizable in-file license")
+            vendors.append({"name": v, "package": "blueimp JavaScript-MD5",
+                            "license": "MIT",
+                            "file": f"assets/vendor/{v}/{src.name}"})
+
+    return {
+        "product": "The Canary Nursery — the SecuraCV browser flasher",
+        "copyright": "© 2026 Errer Labs / SecuraCV",
+        "license": {"name": license_name, "file": "LICENSE"},
+        "source": f"https://github.com/{REPO_SLUG}",
+        "privacy": "Everything on this page runs locally: firmware images come "
+                   "from the pinned signed release, and nothing about you or "
+                   "your board is sent anywhere. What this page remembers (an "
+                   "optional saved WiFi, the session roster, the chirps choice) "
+                   "lives only in this browser and is yours to clear below.",
+        "vendors": vendors,
+    }
+
+
 # ── parity: every Canary proves itself TWO ways ─────────────────────────────
 # One real proof (live, over the cable or on the glass) and one emulated twin
 # (a lab page that shows the same behavior with no hardware in hand) — per
@@ -1218,6 +1276,9 @@ def main() -> None:
             vision_detect, sense_reflexes["default"], sense_reflexes["wellbeing"]),
         # The coach's lesson deck — waiting is optional learning (pickLesson).
         "lessons": LESSONS,
+        # The settings/about panel's facts — parsed from LICENSE + vendor
+        # provenance files, never typed (about_block()).
+        "about": about_block(),
         # The Vision's camera module — a different chip (Himax HX6538 behind a
         # CH343 bridge), a different engine (ROM bootloader + XMODEM, mirrored
         # from Seeed's open-source flasher), the same posture: pinned asset,
