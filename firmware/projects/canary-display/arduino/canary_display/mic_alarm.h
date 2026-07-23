@@ -44,6 +44,14 @@ bool mic_listening();            // == driver installed == chip lit
 bool mic_pins_ok();              // false until AUDIO_PIN_I2S_* leave -1
 uint16_t mic_level();            // last frame RMS (debug page)
 
+// Sensitivity preset (quiet / standard / noisy — see mic_logic.h). Sets the
+// noise-floor-relative thresholds for the room; persists to NVS. Detection
+// cadence is standards-fixed and not affected. Index clamps to a valid
+// preset; the name is for the Settings row and the debug page.
+void mic_set_sensitivity(uint8_t index);
+uint8_t mic_sensitivity();        // current preset index
+const char* mic_sensitivity_name();
+
 }  // namespace io
 }  // namespace canary
 

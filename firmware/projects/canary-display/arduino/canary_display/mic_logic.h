@@ -56,18 +56,114 @@ struct Gate {
 
 inline bool indicator_lit(const Gate& g) { return g.running; }
 
-// ── Envelope hysteresis ─────────────────────────────────────────────────────
-// RMS scalar in, loud/quiet out. Two thresholds so hum near one level can't
-// chatter edges into the cadence detector (the WAP's on/off pattern).
+// ── Sensitivity presets (the one environment-tunable axis) ──────────────────
+//
+// The alarm CADENCE is fixed by the standards (below) — not tunable. What a
+// room changes is only the LEVEL at which a sound counts as a "beep", and
+// the honest way to set that is RELATIVE to the measured noise floor, not as
+// an absolute RMS number:
+//
+//   A UL-listed alarm emits >= 85 dBA @ 10 ft (>= 79 dBA low-frequency,
+//   UL 217/2034). Household ambient runs ~30 dBA (bedroom) to ~65 dBA (noisy
+//   kitchen). So an alarm stands +14 dB above the room in the worst case and
+//   +20..40 dB typically — a 5x..100x RMS margin. A threshold expressed as
+//   "N dB over the tracked floor" therefore lands correctly REGARDLESS of the
+//   ES7210's absolute gain, which is the one thing we cannot know without the
+//   bench. The margins here are gain-independent physics; only `floor_min`
+//   (the dead-silence clamp) is a soft bench anchor — and it fails SAFE when
+//   set low (a low clamp keeps the detector sensitive; the runtime's SNAP
+//   line prints the live floor so the bench sets it in one glance).
+//
+// Percent-of-floor thresholds: on = floor * on_pct/100 (e.g. 316 = +10 dB),
+// off = floor * off_pct/100 (hysteresis, always < on_pct). Nuisance edges
+// below the alarm cadence are harmless — the CadenceDetector rejects anything
+// that isn't a T3/T4 group — so the presets can lean sensitive.
+
+struct Sensitivity {
+  uint16_t floor_min;   // dead-silence clamp on the tracked floor (bench anchor)
+  uint16_t on_pct;      // on_threshold  = floor * on_pct  / 100  (dB over floor)
+  uint16_t off_pct;     // off_threshold = floor * off_pct / 100  (< on_pct)
+  uint8_t  floor_shift; // floor EMA speed: floor += (rms-floor) >> shift, quiet
+};
+
+// Bedroom / nightstand — sensitivity first: a faint, distant, or
+// through-the-wall alarm must still wake you, and nuisance edges are cheap
+// (you are right there). +9 dB on / +5 dB off, low clamp, medium tracking.
+constexpr Sensitivity SENS_QUIET    = {100, 282, 178, 6};
+// Living areas — the balanced default. +10 dB on / +6 dB off.
+constexpr Sensitivity SENS_STANDARD = {180, 316, 200, 6};
+// Kitchen / workshop — specificity first: clatter, tools and music shouldn't
+// chatter the detector, and you are awake to hear a real one. +13 dB on /
+// +8 dB off, higher clamp, slower tracking so a transient can't jerk the
+// floor up and desensitize it.
+constexpr Sensitivity SENS_NOISY    = {350, 450, 251, 7};
+
+constexpr uint8_t SENS_COUNT = 3;
+constexpr uint8_t SENS_DEFAULT_INDEX = 1;  // Standard
+
+inline const Sensitivity& sensitivity_by_index(uint8_t i) {
+  switch (i) {
+    case 0:  return SENS_QUIET;
+    case 2:  return SENS_NOISY;
+    default: return SENS_STANDARD;
+  }
+}
+
+inline const char* sensitivity_name(uint8_t i) {
+  switch (i) {
+    case 0:  return "quiet";
+    case 2:  return "noisy";
+    default: return "standard";
+  }
+}
+
+// ── Envelope with an adaptive noise floor ───────────────────────────────────
+// RMS scalar in, loud/quiet out. Thresholds ride a slowly-tracked noise
+// floor (see Sensitivity): the floor follows ambient only WHILE QUIET (a beep
+// can never inflate its own threshold) and is clamped to floor_min, so the
+// detector self-calibrates to the room instead of trusting an absolute level.
 
 struct Envelope {
-  uint16_t on_threshold = 900;
-  uint16_t off_threshold = 600;
+  Sensitivity s = SENS_STANDARD;
+  uint16_t floor = 0;
   bool loud = false;
+  bool seeded = false;
+
+  void set_profile(const Sensitivity& ns) {
+    s = ns;
+    floor = ns.floor_min;
+    loud = false;
+    seeded = true;
+  }
+
+  // Fall time constant (shared): the floor drops toward a quieter reading
+  // ~8x faster than it rises. Fast fall is what makes the follower track the
+  // room's QUIET level rather than its mean — the silence between beeps pulls
+  // the floor straight back down, so an alarm can never inflate its own bar.
+  static constexpr uint8_t FALL_SHIFT = 3;
+
+  uint16_t noise_floor() const { return floor < s.floor_min ? s.floor_min : floor; }
+  uint16_t on_threshold() const { return clamp16((uint32_t)noise_floor() * s.on_pct / 100); }
+  uint16_t off_threshold() const { return clamp16((uint32_t)noise_floor() * s.off_pct / 100); }
+
+  static uint16_t clamp16(uint32_t v) { return v > 0xFFFF ? 0xFFFF : (uint16_t)v; }
 
   bool update(uint16_t rms) {
-    if (!loud && rms >= on_threshold) loud = true;
-    else if (loud && rms < off_threshold) loud = false;
+    if (!seeded) { floor = s.floor_min; seeded = true; }
+    // Asymmetric noise-floor follower: rise SLOWLY toward a louder reading (a
+    // brief beep barely lifts it), fall FAST toward a quieter one (the gaps
+    // pull it back), so the floor settles on the room's true ambient. A
+    // standing alarm can't raise its own threshold — its gaps reset the floor
+    // every cycle — while genuinely sustained room noise (no gaps) does.
+    if (rms >= floor) {
+      floor = (uint16_t)(floor + (((uint32_t)rms - floor) >> s.floor_shift));
+    } else {
+      floor = (uint16_t)(floor - (((uint32_t)floor - rms) >> FALL_SHIFT));
+    }
+    if (floor < s.floor_min) floor = s.floor_min;
+    const uint32_t fl = floor;  // clamped above
+    if (!loud && rms >= fl * s.on_pct / 100) loud = true;
+    else if (loud && rms < fl * s.off_pct / 100) loud = false;
     return loud;
   }
 };
@@ -92,12 +188,26 @@ struct Detection {
 };
 
 struct CadenceDetector {
-  // Beep-duration windows (ms), generous for room acoustics + DSP latency.
-  static constexpr uint16_t T3_BEEP_MIN = 300, T3_BEEP_MAX = 900;
-  static constexpr uint16_t T4_BEEP_MIN = 40, T4_BEEP_MAX = 280;
-  // A gap this long ends the current beep group.
-  static constexpr uint16_t GROUP_GAP_MS = 1100;
-  // A silence this long means the alarm stopped; cycles reset.
+  // Beep-duration windows (ms), derived from the standards' source timing
+  // plus what the acoustic path adds: room reverb lengthens a beep's tail
+  // above the release threshold, and 20 ms audio frames quantize each edge.
+  //   T3 source beep = 0.5 s ±10% (450-550 ms) -> measured ~430-750 ms.
+  //   T4 source beep = 0.1 s ±10 ms (90-110 ms) -> measured ~60-280 ms.
+  // The windows stay DISJOINT (T3_MIN > T4_MAX by a 50 ms guard) so a
+  // miscounted group can never cross-classify between the two grammars.
+  static constexpr uint16_t T3_BEEP_MIN = 350, T3_BEEP_MAX = 800;
+  static constexpr uint16_t T4_BEEP_MIN = 60, T4_BEEP_MAX = 300;
+  // A gap this long ends the current beep group. It must sit ABOVE the
+  // largest intra-group gap (T3's 0.5 s ±10% between beeps, ~570 ms measured)
+  // and BELOW the smallest inter-group pause (T3's ~1.5 s, shortened by
+  // reverb to ~1.3 s) so intra-gaps never split a group and inter-gaps always
+  // close one. 900 ms sits mid-band with margin on both sides.
+  static constexpr uint16_t GROUP_GAP_MS = 900;
+  // A silence this long means the alarm stopped; cycles reset. It MUST exceed
+  // the longest inter-group pause — T4's 5 s ±0.5 s — or a standing CO alarm
+  // would reset its own streak between groups and never confirm. 12 s clears
+  // that 5.5 s worst case with room to spare while still resetting promptly
+  // once a real alarm goes quiet.
   static constexpr uint32_t RESET_GAP_MS = 12000;
 
   bool prev_loud = false;

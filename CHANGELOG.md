@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### canary-display — mic detection presets, grounded in the standards
+
+- **The cadence windows are now derived from the alarm standards, not
+  guessed.** T3 = 0.5 s ±10% beeps (ISO 8201 / ANSI S3.41 / NFPA 72); T4 =
+  four 100 ms ±10 ms pulses + a 5 s ±0.5 s pause (UL 2034). The beep-duration
+  windows (T3 350–800 ms, T4 60–300 ms) stay disjoint so a miscount can't
+  cross-classify; the group-gap (900 ms) sits between T3's intra-beep and
+  inter-cycle gaps; the streak-reset (12 s) is proven to exceed T4's 5 s pause
+  (or a standing CO alarm would reset its own streak). Each constant carries
+  its derivation in a comment and is host-tested against the source timing.
+- **Level detection is now noise-floor-relative, so it's gain-independent.**
+  A UL alarm is ≥ 85 dBA @ 10 ft (≥ 79 dBA low-freq) — +14 dB over the worst
+  household ambient, +20–40 dB typically — so thresholds set as "N dB over the
+  tracked floor" are correct without knowing the ES7210's absolute gain (the
+  one thing the bench hasn't pinned). The envelope tracks the room with an
+  asymmetric follower (rises slowly toward loud, falls fast toward quiet) so a
+  standing alarm can never inflate the bar it must clear.
+- **Three sensitivity presets** (Settings → microphone → sensitivity,
+  NVS-persisted): **quiet** (bedroom, +9/+5 dB — catches a faint alarm),
+  **standard** (default, +10/+6 dB), **noisy** (kitchen/workshop, +13/+8 dB —
+  ignores clatter). The dB margins are gain-independent physics; only the
+  dead-silence clamp is a soft bench anchor that fails safe when low. The
+  `MIC1 SNAP` line now prints `floor`/`on`/`off` live as the bench's one-glance
+  calibration readout, and `HELLO`/`SNAP` report the active preset.
+- Nine new/updated mic-core host tests: adaptive floor tracks ambient and
+  freezes a beep out, self-calibration (the same RMS reads as a beep in
+  silence but as "the room" in a loud kitchen), the preset sensitivity ladder
+  is monotone, plus the standards-window and type-switch pins. Mic doc gains
+  the "how loud is a beep" section; usability protocol + serial appendix note
+  the new SNAP fields.
+
 ### canary-display — mic soundness pass (a fails-safe becomes a works-right)
 
 - **The acoustic cadence detector now runs on the audio clock, not the

@@ -80,6 +80,7 @@ enum class Page {
 #endif
 #ifdef CD_SET_MIC
   EditMic,     // 4.3C: the mic opt-in (alarm-pattern listening, default off)
+  EditMicSens, // 4.3C: the room sensitivity preset (quiet/standard/noisy)
 #endif
   EditStyle,   // the Character ring picker
   CalIntro,    // watch only — the black-point wizard
@@ -105,7 +106,7 @@ enum : int {
   IT_ROW_SIREN,
 #endif
 #ifdef CD_SET_MIC
-  IT_ROW_MIC,
+  IT_ROW_MIC, IT_ROW_MIC_SENS, IT_OPT_C,
 #endif
 #ifdef CD_SET_MODES
   IT_ROW_DEV,   // the root doorway row ("modes" / "dev mode")
@@ -681,6 +682,10 @@ void build_edit_mic() {
   y += ROW_H;
   mk_row(y, "off", !(pins && on) ? "on" : nullptr, IT_OPT_B, !(pins && on));
   y += ROW_H;
+  // The room preset — how loud a sound must be to count as a beep. Detection
+  // cadence is standards-fixed; this only sets the noise-floor margin.
+  mk_row(y, "sensitivity", canary::io::mic_sensitivity_name(), IT_ROW_MIC_SENS);
+  y += ROW_H;
   lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
   lv_label_set_text(cap,
       pins ? "hears alarm patterns only - never speech;\n"
@@ -690,6 +695,28 @@ void build_edit_mic() {
            : "audio pins are unset (VERIFY in pins.h) -\n"
              "the mics are provably un-driven until the\n"
              "bench fills them. see the board README.");
+  lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
+}
+
+// Sensitivity preset picker (landing IS choosing). Tuned for the room, not
+// the alarm: quiet = bedroom (most sensitive), standard = living areas,
+// noisy = kitchen/workshop (least twitchy). The cadence match is unchanged.
+void build_edit_mic_sens() {
+  mk_back("sensitivity");
+  const uint8_t cur = canary::io::mic_sensitivity();
+  int y = ROOT_Y0 + ROW_H / 2;
+  mk_row(y, "quiet", cur == 0 ? "on" : nullptr, IT_OPT_A, cur == 0);
+  y += ROW_H;
+  mk_row(y, "standard", cur == 1 ? "on" : nullptr, IT_OPT_B, cur == 1);
+  y += ROW_H;
+  mk_row(y, "noisy", cur == 2 ? "on" : nullptr, IT_OPT_C, cur == 2);
+  y += ROW_H;
+  lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
+  lv_label_set_text(cap,
+      "quiet: a bedroom - catches a faint or\n"
+      "distant alarm. noisy: a kitchen/workshop -\n"
+      "ignores clatter. it adapts to the room\n"
+      "either way; this sets the margin.");
   lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, y + 6);
 }
 #endif
@@ -777,6 +804,7 @@ void build(Page pg) {
 #endif
 #ifdef CD_SET_MIC
     case Page::EditMic:      build_edit_mic(); break;
+    case Page::EditMicSens:  build_edit_mic_sens(); break;
 #endif
     case Page::EditStyle:    build_edit_style(); break;
     case Page::CalIntro:     build_cal_intro(); break;
@@ -946,12 +974,23 @@ void dispatch(int id) {
 #ifdef CD_SET_MIC
     case Page::EditMic:
       if (id == IT_BACK) { build(Page::Root); return; }
+      if (id == IT_ROW_MIC_SENS) { build(Page::EditMicSens); return; }
       if (id == IT_OPT_A || id == IT_OPT_B) {
         // Landing IS choosing. mic_set_armed persists to NVS and performs
         // the gate action in the same call — driver AND the amber chip
         // together; with pins unset the gate refuses regardless of choice.
         canary::io::mic_set_armed(id == IT_OPT_A);
         build(Page::EditMic);
+      }
+      return;
+    case Page::EditMicSens:
+      if (id == IT_BACK) { build(Page::EditMic); return; }
+      if (id == IT_OPT_A || id == IT_OPT_B || id == IT_OPT_C) {
+        // Landing IS choosing: persist the preset and re-seed the floor.
+        canary::io::mic_set_sensitivity(id == IT_OPT_A ? 0
+                                        : id == IT_OPT_B ? 1
+                                                         : 2);
+        build(Page::EditMicSens);
       }
       return;
 #endif

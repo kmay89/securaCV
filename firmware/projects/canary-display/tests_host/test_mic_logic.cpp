@@ -223,11 +223,77 @@ static void test_confidence_grows_and_caps() {
 }
 
 static void test_envelope_hysteresis() {
+  // Adaptive design: thresholds ride the tracked floor (default STANDARD,
+  // floor_min 180 -> on ~+10 dB, off ~+6 dB). Values kept clear of the
+  // boundary so the per-frame floor nudge doesn't blur the assertions.
   Envelope env;
-  CHECK(!env.update(800), "below on-threshold stays quiet");
-  CHECK(env.update(950), "above on-threshold goes loud");
-  CHECK(env.update(700), "between thresholds holds loud (no chatter)");
-  CHECK(!env.update(500), "below off-threshold releases");
+  env.set_profile(SENS_STANDARD);
+  CHECK(!env.update(300), "quiet below on-threshold stays quiet");
+  CHECK(env.update(2000), "a loud beep crosses on-threshold");
+  CHECK(env.update(500), "decaying tail between thresholds holds loud");
+  CHECK(!env.update(300), "below off-threshold releases");
+}
+
+static void test_beep_does_not_inflate_the_floor() {
+  // The follower's core property: a brief beep followed by its gap leaves the
+  // floor essentially where it started, so a standing alarm never raises the
+  // bar it must keep clearing. (One 500 ms beep, then 1 s of the same quiet
+  // room that preceded it.)
+  Envelope env;
+  env.set_profile(SENS_STANDARD);
+  for (int i = 0; i < 40; i++) env.update(200);  // settle on a quiet room
+  const uint16_t base = env.noise_floor();
+  for (int i = 0; i < 20; i++) env.update(2000);  // a 500 ms beep
+  for (int i = 0; i < 40; i++) env.update(200);   // the gap after it
+  CHECK(env.noise_floor() <= base + 40, "the beep's gap pulls the floor back");
+}
+
+static void test_floor_tracks_ambient() {
+  // In a quiet room the floor settles low; in a noisy room it rises to meet
+  // ambient, so the on-threshold scales with the room.
+  Envelope env;
+  env.set_profile(SENS_STANDARD);
+  const uint16_t on_quiet = env.on_threshold();
+  for (int i = 0; i < 400; i++) env.update(800);  // steady room hum
+  CHECK(env.noise_floor() > 600, "floor climbs toward the 800 ambient");
+  CHECK(env.on_threshold() > on_quiet + 500, "the bar rises with the room");
+}
+
+static void test_self_calibration_same_level_reads_differently() {
+  // The whole point of relative thresholds: an RMS that is a clear "beep"
+  // against silence is just "the room" against a loud ambient. This is what
+  // makes the detector gain-independent.
+  Envelope loudroom;
+  loudroom.set_profile(SENS_STANDARD);
+  for (int i = 0; i < 600; i++) loudroom.update(900);  // establish a loud floor
+  CHECK(!loudroom.update(2000),
+        "2000 is below the raised bar in a loud room (not a beep)");
+  CHECK(loudroom.update(4000), "a genuinely louder alarm still crosses");
+
+  Envelope quietroom;
+  quietroom.set_profile(SENS_STANDARD);
+  CHECK(quietroom.update(2000),
+        "the same 2000 IS a beep against a silent floor");
+}
+
+static void test_presets_order_by_sensitivity() {
+  // At an equal floor, quiet trips soonest, noisy latest — a monotone
+  // sensitivity ladder. (floor set directly to compare the ratios alone.)
+  auto on_at = [](const Sensitivity& s, uint16_t floor) {
+    Envelope e;
+    e.set_profile(s);
+    e.floor = floor;
+    return e.on_threshold();
+  };
+  const uint16_t f = 500;  // above every preset's floor_min
+  CHECK(on_at(SENS_QUIET, f) < on_at(SENS_STANDARD, f),
+        "quiet is more sensitive than standard");
+  CHECK(on_at(SENS_STANDARD, f) < on_at(SENS_NOISY, f),
+        "standard is more sensitive than noisy");
+  CHECK(sensitivity_by_index(0).on_pct == SENS_QUIET.on_pct, "index 0 = quiet");
+  CHECK(sensitivity_by_index(SENS_DEFAULT_INDEX).on_pct == SENS_STANDARD.on_pct,
+        "the default index is standard");
+  CHECK(std::strcmp(sensitivity_name(2), "noisy") == 0, "index 2 names noisy");
 }
 
 static void test_wire_names_match_the_real_classifier_vocabulary() {
@@ -257,6 +323,10 @@ int main() {
   test_collapsed_timing_fails_safe();
   test_confidence_grows_and_caps();
   test_envelope_hysteresis();
+  test_beep_does_not_inflate_the_floor();
+  test_floor_tracks_ambient();
+  test_self_calibration_same_level_reads_differently();
+  test_presets_order_by_sensitivity();
   test_wire_names_match_the_real_classifier_vocabulary();
 
   if (g_fail == 0) {

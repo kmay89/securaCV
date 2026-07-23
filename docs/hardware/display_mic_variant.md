@@ -43,6 +43,50 @@ are an alarm — host-tested), re-raises at most every 30 s while standing,
 and lands as an **unsigned local event** (a display holds no signing key —
 same honest footing as the 4.3B's door contacts).
 
+**The cadence windows are the standards, not guesses.** The detector's
+beep-duration windows are derived from the published timing plus what a room
+adds: T3 is a 0.5 s ±10% beep ([ISO 8201 / ANSI S3.41 / NFPA 72](https://www.oaktreeproducts.com/smoke-detector-signal)),
+T4 is four 100 ms ±10 ms pulses then a 5 s ±0.5 s pause
+([UL 2034](https://www.cpsc.gov/s3fs-public/pdfs/COAlarmConformanceReportPhaseI.pdf)).
+The windows stay **disjoint** (T3 ≥ 350 ms, T4 ≤ 300 ms) so a miscount can't
+cross-classify smoke as CO; the group-gap sits between T3's 0.5 s intra-beep
+gap and its ~1.5 s inter-cycle pause; and the streak-reset gap must exceed
+T4's 5 s pause or a standing CO alarm would reset its own streak — every one
+of these is host-tested against the source timing.
+
+## How loud is a "beep"? Sensitivity presets, not a magic number
+
+The one genuinely room-dependent value is the *level* at which a sound counts
+as a beep — and the honest way to set it is **relative to the room's own
+noise floor**, not as an absolute number tied to the ES7210's (unknown until
+bench) gain. The physics makes this exact: a UL-listed alarm emits **≥ 85 dBA
+at 10 ft** ([UL 217](https://customfiresecurity.com/blog/smoke-alarm-decibel-sound-requirements-what-ul-217-en-14604-as-3786-and-nfpa-72-require);
+≥ 79 dBA low-frequency), while household ambient runs ~30 dBA (bedroom) to
+~65 dBA (noisy kitchen). So an alarm stands **+14 dB above the room worst
+case, +20–40 dB typically** — a threshold expressed as "N dB over the tracked
+floor" lands correctly *regardless of absolute gain*.
+
+The envelope therefore tracks the room with an **asymmetric noise-floor
+follower** — it rises slowly toward a louder reading (a brief beep barely
+lifts it) and falls fast toward a quieter one (the gaps pull it back), so it
+settles on the room's true quiet level and a standing alarm can never inflate
+the bar it must keep clearing. Three presets set the margin (Settings →
+microphone → **sensitivity**, NVS-persisted):
+
+| Preset | Room | Margin (on / off) | Trades for |
+|---|---|---|---|
+| **quiet** | bedroom / nightstand | +9 dB / +5 dB | sensitivity — catches a faint or through-the-wall alarm while you sleep |
+| **standard** *(default)* | living areas | +10 dB / +6 dB | balance |
+| **noisy** | kitchen / workshop | +13 dB / +8 dB | specificity — ignores clatter, tools, music |
+
+The dB margins are gain-independent physics; only the dead-silence clamp
+(`floor_min`) is a soft bench anchor, and it fails **safe** when set low.
+Nuisance edges below the alarm cadence are harmless — the cadence detector
+rejects anything that isn't a T3/T4 group — so the presets can lean
+sensitive. **The `MIC1 SNAP` line prints the live `floor`/`on`/`off`** so the
+bench sets `floor_min` in one glance: watch it in a quiet room, then confirm a
+real alarm's beeps clear `on`.
+
 ## How it works — the privacy barrier
 
 The pipeline is the WAP's proven scalars-not-samples design
@@ -94,10 +138,11 @@ disagree with reality — it IS the driver state.**
    text, with the full contract as the page caption. Debug mode's System
    page repeats it (`mic LISTENING rms N`) for the support-photo path.
 3. **The console says it, timestamped.** The `MIC1` serial grammar
-   (PG1-style): `HELLO` with the armed/pins state at boot, `EVT` on every
-   arm/disarm/start/stop/detection, and a 1 Hz `SNAP rms=…` heartbeat
-   that only exists while capturing — silence on the wire means a silent
-   mic.
+   (PG1-style): `HELLO` with the armed/pins/sensitivity state at boot,
+   `EVT` on every arm/disarm/start/stop/detection/sensitivity change, and a
+   1 Hz `SNAP rms=… floor=… on=… off=… sens=…` heartbeat that only exists
+   while capturing — silence on the wire means a silent mic, and the
+   `floor`/`on`/`off` fields are the bench's calibration readout.
 
 **Off is the default, and off is real.**
 

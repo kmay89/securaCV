@@ -38,6 +38,7 @@ constexpr i2s_port_t MIC_I2S_PORT = I2S_NUM_0;
 // leaks into the glass settings blob or the mic-free builds.
 constexpr const char* MIC_NS = "scv-mic";
 constexpr const char* MIC_KEY = "armed";
+constexpr const char* SENS_KEY = "sens";  // sensitivity preset index
 
 // Detection rate ceiling: a standing alarm re-raises at most once/30 s
 // (the fleet model's own tamper-style dedupe is event-name blind).
@@ -46,6 +47,7 @@ constexpr uint32_t REDETECT_MS = 30000;
 Gate s_gate;
 Envelope s_env;
 CadenceDetector s_det;
+uint8_t s_sens_index = SENS_DEFAULT_INDEX;
 char s_self_id[48] = {0};
 bool s_display_ok = false;
 bool s_begun = false;
@@ -158,6 +160,7 @@ void driver_uninstall() {
 // honest reading of the privacy contract.
 void reset_acoustic_state() {
   s_env = Envelope();
+  s_env.set_profile(sensitivity_by_index(s_sens_index));  // room preset applied
   s_det = CadenceDetector();
   s_level = 0;
   // A fresh listening session earns a fresh "first detection is immediate":
@@ -224,13 +227,15 @@ void mic_begin(const char* self_id, bool display_ok) {
     Preferences p;
     if (p.begin(MIC_NS, /*readOnly=*/true)) {
       s_gate.armed = p.getBool(MIC_KEY, false);  // OFF is the default
+      const uint8_t idx = (uint8_t)p.getUChar(SENS_KEY, SENS_DEFAULT_INDEX);
+      s_sens_index = idx < SENS_COUNT ? idx : SENS_DEFAULT_INDEX;
       p.end();
     }
   }
   s_begun = true;
-  Serial.printf("MIC1 HELLO armed=%d pins=%s codec=0x%02X\r\n",
+  Serial.printf("MIC1 HELLO armed=%d pins=%s codec=0x%02X sens=%s\r\n",
                 s_gate.armed ? 1 : 0, s_gate.pins_ok ? "ok" : "UNSET(VERIFY)",
-                (unsigned)AUDIO_ES7210_ADDR);
+                (unsigned)AUDIO_ES7210_ADDR, sensitivity_name(s_sens_index));
   if (!s_gate.pins_ok) {
     say_evt("pins unset — mics provably un-driven until bench fills pins.h");
   }
@@ -268,9 +273,16 @@ void mic_loop(uint32_t now) {
   }
   if ((int32_t)(now - s_last_snap_ms) >= 1000) {
     s_last_snap_ms = now;
-    Serial.printf("MIC1 %lu SNAP rms=%u loud=%d armed=1 listening=1\r\n",
-                  (unsigned long)now, (unsigned)s_level,
-                  s_env.loud ? 1 : 0);
+    // The heartbeat doubles as the bench calibration readout: floor is the
+    // tracked ambient, on/off are the live thresholds. Watch it in a quiet
+    // room to confirm floor_min, then near an alarm to confirm the beeps
+    // clear `on`. Silence on the wire == no capture driver == mic off.
+    Serial.printf(
+        "MIC1 %lu SNAP rms=%u floor=%u on=%u off=%u loud=%d sens=%s "
+        "armed=1 listening=1\r\n",
+        (unsigned long)now, (unsigned)s_level, (unsigned)s_env.noise_floor(),
+        (unsigned)s_env.on_threshold(), (unsigned)s_env.off_threshold(),
+        s_env.loud ? 1 : 0, sensitivity_name(s_sens_index));
   }
 }
 
@@ -286,6 +298,25 @@ void mic_set_armed(bool armed) {
   say_evt("%s", armed ? "armed" : "disarmed");
   apply_action(s_gate.update());
 }
+
+void mic_set_sensitivity(uint8_t index) {
+  s_sens_index = index < SENS_COUNT ? index : SENS_DEFAULT_INDEX;
+  {
+    Preferences p;
+    if (p.begin(MIC_NS, /*readOnly=*/false)) {
+      p.putUChar(SENS_KEY, s_sens_index);
+      p.end();
+    }
+  }
+  // Apply live: restart the acoustic pipeline cleanly under the new preset
+  // (fresh floor + cadence state), so no streak built at the old thresholds
+  // carries across the change. The driver/chip are untouched.
+  reset_acoustic_state();
+  say_evt("sensitivity=%s", sensitivity_name(s_sens_index));
+}
+
+uint8_t mic_sensitivity() { return s_sens_index; }
+const char* mic_sensitivity_name() { return sensitivity_name(s_sens_index); }
 
 bool mic_armed() { return s_gate.armed; }
 bool mic_listening() { return s_gate.running; }
