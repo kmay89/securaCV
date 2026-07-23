@@ -661,6 +661,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             load_catalog,
@@ -674,6 +675,8 @@ pub fn run() {
             hub::hub_plan,
             hub::hub_flash,
             hub::hub_flash_cancel,
+            hub::hub_preflight,
+            hub::hub_probe_hub,
             hub::hub_pi_boot_start,
             hub::hub_pi_boot_stop,
             serial_monitor::start_serial_monitor,

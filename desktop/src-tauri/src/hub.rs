@@ -19,6 +19,7 @@ use hub_core::hub_enumerate::enumerate;
 use hub_core::hub_flash::authorize_write;
 use hub_core::hub_image::{recommended_board, resolve, BoardImage, CatalogView};
 use hub_core::hub_seed::WifiSeed;
+use hub_io::account::{mint_owner_store, OwnerAccount};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
@@ -86,6 +87,12 @@ pub struct HubReceipt {
     /// A non-fatal note about the Wi-Fi seed (e.g. the write verified but
     /// seeding failed) — the receipt stays a receipt; this is the plan B.
     wifi_note: Option<String>,
+    /// Whether the experimental account pre-seed was written to the card.
+    account_seeded: bool,
+    /// Non-fatal note about the account seed, if requested.
+    account_note: Option<String>,
+    /// True when a locally-cached, re-verified image was reused (no download).
+    used_cache: bool,
 }
 
 /// The Wi-Fi the operator typed (the same secret the Canary flasher already
@@ -95,6 +102,32 @@ pub struct HubWifi {
     ssid: String,
     passphrase: String,
     hidden: bool,
+}
+
+/// The Home Assistant owner account, collected next to the Wi-Fi. Opt-in and
+/// EXPERIMENTAL (the zero-touch restore mechanism is still under hardware
+/// validation): when present, the flasher mints HA's `.storage` locally and
+/// seeds it onto the boot partition so first visit is a login page. The
+/// password is hashed on this computer and never logged or emitted.
+#[derive(Deserialize)]
+pub struct HubAccount {
+    name: String,
+    username: String,
+    password: String,
+}
+
+/// What a preflight check found — surfaced before the flash so a disk-full or
+/// tiny-target surprise never lands mid-write.
+#[derive(Serialize)]
+pub struct HubPreflight {
+    /// Free bytes in the staging directory (download + decompress live here).
+    staging_free_bytes: u64,
+    /// Roughly what the pipeline needs there (compressed + raw + headroom).
+    staging_need_bytes: u64,
+    /// True when there's comfortably enough room.
+    staging_ok: bool,
+    /// The OS family, so the UI can tailor a hint (e.g. macOS permission prompt).
+    platform: String,
 }
 
 fn parse_catalog() -> Result<(Value, CatalogView), String> {
@@ -308,6 +341,7 @@ pub fn hub_pi_boot_stop(state: tauri::State<'_, PiUsbState>) -> Result<(), Strin
 /// streams over `hub:progress` ({stage, done, total}) and human lines over
 /// `hub:log`; the Wi-Fi values themselves are never logged.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn hub_flash(
     app: AppHandle,
     state: tauri::State<'_, HubFlashState>,
@@ -315,6 +349,7 @@ pub async fn hub_flash(
     disk_path: String,
     confirmed: bool,
     wifi: Option<HubWifi>,
+    account: Option<HubAccount>,
 ) -> Result<HubReceipt, String> {
     let cancel = hub_io::CancelToken::default();
     {
@@ -325,7 +360,7 @@ pub async fn hub_flash(
         *guard = Some(cancel.clone());
     }
     let result = tauri::async_runtime::spawn_blocking(move || {
-        hub_flash_blocking(&app, board_id, disk_path, confirmed, wifi, &cancel)
+        hub_flash_blocking(&app, board_id, disk_path, confirmed, wifi, account, &cancel)
     })
     .await
     .map_err(|e| format!("hub writer worker failed: {e}"));
@@ -333,6 +368,99 @@ pub async fn hub_flash(
         *guard = None;
     }
     result?
+}
+
+/// The staging directory the pipeline downloads and decompresses into. Uses
+/// the OS temp dir; the cached `.xz` lives in the app cache dir instead so it
+/// survives between runs.
+fn staging_dir() -> std::path::PathBuf {
+    std::env::temp_dir()
+}
+
+/// A filesystem-safe cache filename for an image URL — the last path segment,
+/// which for HAOS assets is already the unique `haos_<board>-<ver>.img.xz`.
+fn cache_name(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| "hub-image.img.xz".to_string())
+}
+
+/// Preflight the flash: is there room to stage the download + decompressed
+/// image, and what platform are we on (so the UI can pre-warn about, e.g., the
+/// macOS disk-permission prompt). Cheap and read-only.
+#[tauri::command]
+pub fn hub_preflight() -> Result<HubPreflight, String> {
+    // The full-stack raw image is ~2.5 GB and the compressed download ~0.5 GB;
+    // ask for 6 GB of headroom so decompression + the OS both breathe.
+    const NEED: u64 = 6 * 1024 * 1024 * 1024;
+    let free = free_space_bytes(&staging_dir()).unwrap_or(u64::MAX);
+    Ok(HubPreflight {
+        staging_free_bytes: free,
+        staging_need_bytes: NEED,
+        staging_ok: free >= NEED,
+        platform: std::env::consts::OS.to_string(),
+    })
+}
+
+#[cfg(unix)]
+fn free_space_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let c = CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: statvfs writes into a zeroed struct; we read scalar fields only.
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    // f_bavail/f_frsize are u64 on Linux and u32 on macOS — go through u128 so
+    // the multiply can't overflow and the cast is right on both.
+    Some((u128::from(s.f_bavail) * u128::from(s.f_frsize)).min(u128::from(u64::MAX)) as u64)
+}
+
+#[cfg(not(unix))]
+fn free_space_bytes(_path: &std::path::Path) -> Option<u64> {
+    None
+}
+
+/// Poll whether a just-flashed hub is answering yet, so the UI can close the
+/// loop across the long silent first boot instead of abandoning the user.
+/// Returns true once the host responds with any HTTP status (HA serving a
+/// login page, a redirect, anything) — reachability is the signal, not 200.
+#[tauri::command]
+pub async fn hub_probe_hub(host: String) -> Result<bool, String> {
+    // Guard the host: only a plain hostname[:port], no scheme/path, so this
+    // can't be steered into probing an arbitrary URL.
+    let host = host.trim();
+    if host.is_empty()
+        || host.contains('/')
+        || host.contains(' ')
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == ':')
+    {
+        return Err("that doesn't look like a hostname".to_string());
+    }
+    let url = format!("http://{host}/");
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    // Any HTTP response at all — 200, a redirect, even a 401 — means HA is up
+    // and serving. Only a transport failure (refused/timeout) means "not yet".
+    Ok(client.get(&url).send().await.is_ok())
 }
 
 /// Stop the running flash. Safe at every stage: before the write nothing has
@@ -357,6 +485,7 @@ fn hub_flash_blocking(
     disk_path: String,
     confirmed: bool,
     wifi: Option<HubWifi>,
+    account: Option<HubAccount>,
     cancel: &hub_io::CancelToken,
 ) -> Result<HubReceipt, String> {
     let log = |line: String| {
@@ -402,38 +531,89 @@ fn hub_flash_blocking(
         };
         hub_core::hub_seed::wifi_keyfile(&seed).map_err(|e| e.message())?;
     }
-
-    // 3) Download the image, hashing as it streams. One automatic retry on a
-    //    network hiccup — the internet drops packets, users shouldn't have to
-    //    care — but a cancel is a cancel, never retried.
-    let staging = tempfile::tempdir().map_err(|e| format!("couldn't create a staging dir: {e}"))?;
-    let xz_path = staging.path().join("haos.img.xz");
-    log(format!("→ downloading {}", plan.image_url));
-    let dl = match hub_io::fetch::download(&plan.image_url, &xz_path, cancel, &mut progress) {
-        Ok(dl) => dl,
-        Err(e) if !e.starts_with(hub_io::CANCELLED) => {
-            log(format!(
-                "→ the download tripped over its shoelaces ({e}) — dusting off and trying once more…"
-            ));
-            hub_io::fetch::download(&plan.image_url, &xz_path, cancel, &mut progress)?
-        }
-        Err(e) => return Err(e),
+    // Mint the account store up front too (opt-in) so a bad password fails
+    // instantly, before any bytes move. The hash is computed here, on this
+    // computer; the cleartext is dropped when `account` goes out of scope.
+    let account_files = match account.as_ref() {
+        Some(a) => mint_owner_store(&OwnerAccount {
+            name: &a.name,
+            username: &a.username,
+            password: &a.password,
+        })?,
+        None => Vec::new(),
     };
-    log(format!(
-        "✓ downloaded {} bytes · SHA-256 {}…",
-        dl.bytes,
-        &dl.sha256[..16]
-    ));
 
-    // 4) The trust call. Pinned catalog: repo-vouched hash is authoritative.
-    //    Unpinned: HA's published .sha256 must match. Neither: refuse.
+    // 3) Get the image — reuse a locally cached, RE-VERIFIED copy when we have
+    //    one (skips the network, never the trust check), else download it.
+    //    One automatic retry on a network hiccup; a cancel is never retried.
     let published = if plan.expected_sha256.is_none() {
         hub_io::fetch::fetch_published_sha256(&plan.image_url)?
     } else {
         None
     };
-    let verified = hub_core::hub_image::verify_download(&plan, &dl.sha256, published.as_deref())
-        .map_err(|e| e.message())?;
+
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map(|d| d.join("hub-images"))
+        .ok();
+    let cached_path = cache_dir
+        .as_ref()
+        .map(|d| d.join(cache_name(&plan.image_url)));
+
+    // Try the cache first: hash the local file and see if it still verifies
+    // against the plan (a HAOS re-release or a corrupt cache simply misses).
+    let mut used_cache = false;
+    let (xz_path, verified) = 'image: {
+        if let Some(cp) = cached_path.as_ref().filter(|p| p.exists()) {
+            log("→ found a local copy — re-verifying it instead of downloading…".to_string());
+            if let Ok(sha) = hub_io::fetch::sha256_file(cp, cancel) {
+                if let Ok(v) =
+                    hub_core::hub_image::verify_download(&plan, &sha, published.as_deref())
+                {
+                    log("✓ local copy verified — skipping the download".to_string());
+                    used_cache = true;
+                    break 'image (cp.clone(), v);
+                }
+            }
+            log("→ the local copy didn't check out; downloading a fresh one".to_string());
+            let _ = std::fs::remove_file(cp);
+        }
+
+        // Download to the cache location when we have one (so it survives for
+        // next time), else to a temp file.
+        let staging = staging_dir();
+        let dest = match cache_dir.as_ref() {
+            Some(d) => {
+                let _ = std::fs::create_dir_all(d);
+                d.join(cache_name(&plan.image_url))
+            }
+            None => staging.join(cache_name(&plan.image_url)),
+        };
+        log(format!("→ downloading {}", plan.image_url));
+        let dl = match hub_io::fetch::download(&plan.image_url, &dest, cancel, &mut progress) {
+            Ok(dl) => dl,
+            Err(e) if !e.starts_with(hub_io::CANCELLED) => {
+                log(format!(
+                    "→ the download tripped over its shoelaces ({e}) — dusting off and trying once more…"
+                ));
+                hub_io::fetch::download(&plan.image_url, &dest, cancel, &mut progress)?
+            }
+            Err(e) => return Err(e),
+        };
+        log(format!(
+            "✓ downloaded {} bytes · SHA-256 {}…",
+            dl.bytes,
+            &dl.sha256[..16]
+        ));
+        let v = hub_core::hub_image::verify_download(&plan, &dl.sha256, published.as_deref())
+            .map_err(|e| {
+                // A bad download shouldn't poison the cache for next time.
+                let _ = std::fs::remove_file(&dest);
+                e.message()
+            })?;
+        break 'image (dest, v);
+    };
     log(format!(
         "✓ image verified against {}",
         if plan.expected_sha256.is_some() {
@@ -443,9 +623,12 @@ fn hub_flash_blocking(
         }
     ));
 
-    // 5) Decompress to the raw image; its hash is what the card must hold.
-    let raw_path = staging.path().join("haos.img");
-    let raw = hub_io::xz::decompress(&xz_path, &raw_path, cancel, &mut progress)?;
+    // 5) Decompress to a raw image in a private temp file that we delete when
+    //    this function returns (it's ~2.5 GB — the cached .xz is the artifact
+    //    worth keeping, not the expanded image). RaiiPath removes it on drop,
+    //    on the success path and on every `?` below.
+    let raw_path = RaiiPath(staging_dir().join(format!("securacv-hub-{}.img", std::process::id())));
+    let raw = hub_io::xz::decompress(&xz_path, &raw_path.0, cancel, &mut progress)?;
     log(format!("✓ raw image ready: {} bytes", raw.bytes));
     if raw.bytes > target.size_bytes {
         return Err(format!(
@@ -487,44 +670,93 @@ fn hub_flash_blocking(
         "→ writing to {} — do not remove the card…",
         target.path
     ));
-    let receipt = hub_io::write::write_image(authz, &raw_path, &raw.sha256, cancel, &mut progress)?;
+    let receipt =
+        hub_io::write::write_image(authz, &raw_path.0, &raw.sha256, cancel, &mut progress)?;
     log("✓ written and read back — the card verifiably holds the image".to_string());
 
-    // 8) Seed Wi-Fi onto the boot partition, then eject. From here on the
-    //    card is verifiably GOOD — a seeding stumble must never demote the
-    //    receipt to a failure. It becomes a note with the plan B instead.
-    let (wifi_seeded, wifi_note) = if let Some(w) = wifi {
-        let seed = WifiSeed {
-            ssid: &w.ssid,
-            passphrase: &w.passphrase,
-            connection_id: "securacv-hub",
-            uuid: None,
-            hidden: w.hidden,
-        };
-        match hub_io::seed::seed_wifi(&receipt.target_path, &seed, &mut progress) {
-            Ok(_) => {
-                log("✓ Wi-Fi seeded — the hub will join your network on first boot".to_string());
-                (true, None)
+    // 8) Seed the card in ONE mount — Wi-Fi and (opt-in) the account store —
+    //    then eject. From here the card is verifiably GOOD, so a seeding
+    //    stumble is a note with a plan B, never a failure.
+    let wifi_seed = wifi.as_ref().map(|w| WifiSeed {
+        ssid: &w.ssid,
+        passphrase: &w.passphrase,
+        connection_id: "securacv-hub",
+        uuid: None,
+        hidden: w.hidden,
+    });
+    let want_wifi = wifi_seed.is_some();
+    let want_account = !account_files.is_empty();
+
+    let (wifi_seeded, mut wifi_note, account_seeded, mut account_note) = if want_wifi
+        || want_account
+    {
+        match hub_io::seed::seed_card(
+            &receipt.target_path,
+            wifi_seed.as_ref(),
+            &account_files,
+            &mut progress,
+        ) {
+            Ok(o) => {
+                if o.wifi_written {
+                    log(
+                        "✓ Wi-Fi seeded — the hub will join your network on first boot".to_string(),
+                    );
+                }
+                if o.account_written {
+                    log(
+                        "✓ account seeded (experimental) — first visit should be a login page"
+                            .to_string(),
+                    );
+                }
+                (
+                    o.wifi_written,
+                    o.wifi_note,
+                    o.account_written,
+                    o.account_note,
+                )
             }
             Err(e) => {
+                // Couldn't even mount — the card is still good; say so plainly.
                 log(format!(
-                    "→ the image is on the card and verified, but the Wi-Fi seed didn't stick: {e}"
+                    "→ the image is on the card and verified, but the card couldn't be re-mounted \
+                     to add settings: {e}"
                 ));
                 (
                     false,
-                    Some(format!(
-                        "The card itself is perfect — only the Wi-Fi note didn't make it on. \
-                         Easiest fixes: plug in ethernet for the first boot, or replug the card \
-                         and flash again. ({e})"
-                    )),
+                    if want_wifi { Some(e.clone()) } else { None },
+                    false,
+                    if want_account { Some(e) } else { None },
                 )
             }
         }
     } else {
-        log("→ no Wi-Fi seeded (wired ethernet assumed)".to_string());
+        log("→ no Wi-Fi or account to seed (wired ethernet assumed)".to_string());
         true_eject(&receipt.target_path, &log);
-        (false, None)
+        (false, None, false, None)
     };
+
+    // Turn the raw seed notes into calm, actionable copy.
+    if want_wifi && !wifi_seeded {
+        wifi_note = Some(format!(
+            "The card itself is perfect — only the Wi-Fi note didn't make it on. Easiest fixes: \
+             plug in ethernet for the first boot, or flash again. ({})",
+            wifi_note.as_deref().unwrap_or("unknown reason")
+        ));
+    }
+    if want_account && !account_seeded {
+        account_note = Some(format!(
+            "The card is perfect and (if set) your Wi-Fi is on it — only the experimental \
+             account pre-seed didn't apply, so first boot will show Home Assistant's normal \
+             setup wizard. ({})",
+            account_note.as_deref().unwrap_or("unknown reason")
+        ));
+    } else if want_account && account_seeded {
+        account_note = Some(
+            "Experimental: we wrote your account onto the card. On first boot, tell us whether \
+             homeassistant.local:8123 showed a login page (success) or the setup wizard."
+                .to_string(),
+        );
+    }
 
     Ok(HubReceipt {
         board_id: receipt.board_id,
@@ -534,7 +766,19 @@ fn hub_flash_blocking(
         sha256: receipt.sha256,
         wifi_seeded,
         wifi_note,
+        account_seeded,
+        account_note,
+        used_cache,
     })
+}
+
+/// A path that deletes its file when dropped — used for the ~2.5 GB raw image
+/// so it never lingers, on the happy path or any early return.
+struct RaiiPath(std::path::PathBuf);
+impl Drop for RaiiPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// Best-effort eject for the wired-ethernet path (the seed path ejects as part

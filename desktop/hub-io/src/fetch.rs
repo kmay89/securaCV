@@ -104,6 +104,28 @@ pub fn download(
     })
 }
 
+/// Hash an existing file's bytes with SHA-256, checking `cancel` between
+/// chunks. This is how a *cached* image earns the same trust as a fresh
+/// download: the cached bytes are re-hashed and fed to `verify_download`, so
+/// reusing a local copy skips the network but never the verification.
+pub fn sha256_file(path: &Path, cancel: &CancelToken) -> Result<String, String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("couldn't open the cached image {}: {e}", path.display()))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0u8; 4 * 1024 * 1024];
+    loop {
+        cancel.checkpoint()?;
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("couldn't read the cached image: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(sha256_hex(hasher))
+}
+
 /// The largest plausible `.sha256` file — a hash line plus filename. Anything
 /// bigger is not a checksum and is not worth reading.
 const SHA256_FILE_MAX: usize = 4096;
@@ -177,7 +199,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("image.xz");
         let mut ticks = Vec::new();
-        let receipt = download(&url, &dest, &CancelToken::default(), |p| ticks.push(p)).expect("download succeeds");
+        let receipt = download(&url, &dest, &CancelToken::default(), |p| ticks.push(p))
+            .expect("download succeeds");
 
         assert_eq!(receipt.bytes, body.len() as u64);
         assert_eq!(std::fs::read(&dest).unwrap(), body);
@@ -198,7 +221,8 @@ mod tests {
         let body = vec![7u8; 1000];
         let url = serve_once("200 OK", vec!["Content-Length: 2000".to_string()], body);
         let dir = tempfile::tempdir().unwrap();
-        let err = download(&url, &dir.path().join("x"), &CancelToken::default(), |_| {}).unwrap_err();
+        let err =
+            download(&url, &dir.path().join("x"), &CancelToken::default(), |_| {}).unwrap_err();
         // ureq may surface the truncation itself, or our length check does —
         // either way it is an error, never a receipt.
         assert!(!err.is_empty());
@@ -212,7 +236,8 @@ mod tests {
             vec![],
         );
         let dir = tempfile::tempdir().unwrap();
-        let err = download(&url, &dir.path().join("x"), &CancelToken::default(), |_| {}).unwrap_err();
+        let err =
+            download(&url, &dir.path().join("x"), &CancelToken::default(), |_| {}).unwrap_err();
         assert!(err.contains("download failed"), "{err}");
     }
 
@@ -243,5 +268,22 @@ mod tests {
             vec![],
         );
         assert_eq!(fetch_published_sha256(&url).unwrap(), None);
+    }
+
+    #[test]
+    fn sha256_file_matches_a_streamed_download_of_the_same_bytes() {
+        // The cache-trust invariant: hashing a file on disk yields exactly the
+        // hash a fresh download would have produced, so a cached image can be
+        // re-verified byte-for-byte instead of re-downloaded.
+        let body: Vec<u8> = (0..500_000u32).flat_map(|i| i.to_le_bytes()).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cached.xz");
+        std::fs::write(&path, &body).unwrap();
+        let mut h = sha2::Sha256::new();
+        h.update(&body);
+        assert_eq!(
+            sha256_file(&path, &CancelToken::default()).unwrap(),
+            crate::sha256_hex(h)
+        );
     }
 }

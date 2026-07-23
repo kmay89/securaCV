@@ -186,9 +186,9 @@
     </section>
 
     <section class="card disabled" id="hub-step-wifi">
-      <div class="step-head"><span class="step-n">3</span><h2>Your Wi-Fi</h2></div>
-      <p class="muted">Written onto the card only — never logged, never sent anywhere.
-        The hub joins this network the moment it boots.</p>
+      <div class="step-head"><span class="step-n">3</span><h2>Your Wi-Fi &amp; account</h2></div>
+      <p class="muted">All written onto the card only — never logged, never sent anywhere.
+        The hub joins your Wi-Fi the moment it boots.</p>
       <div class="form-grid">
         <label>Wi-Fi name<input id="hub-ssid" maxlength="32" autocomplete="off"></label>
         <label>Wi-Fi password<input id="hub-pass" type="password" maxlength="64" autocomplete="new-password"></label>
@@ -196,12 +196,29 @@
       <div class="row">
         <label class="check"><input type="checkbox" id="hub-hidden-net"> Hidden network</label>
         <label class="check"><input type="checkbox" id="hub-ethernet"> I'll plug in ethernet instead</label>
+        <label class="check"><input type="checkbox" id="hub-remember" checked> Remember these for next time</label>
       </div>
+
+      <details id="hub-account-panel" class="hint">
+        <summary>Skip Home Assistant's setup wizard — pre-make your account
+          <span class="chip-badge">experimental</span></summary>
+        <p class="muted">Type your login now and first visit to the hub is a
+          <strong>login page</strong>, not a setup wizard. Your password is scrambled
+          on this computer and only the scrambled form goes on the card.</p>
+        <div class="form-grid">
+          <label>Your name<input id="hub-acct-name" maxlength="128" autocomplete="off"></label>
+          <label>Username<input id="hub-acct-user" maxlength="64" autocomplete="off"></label>
+          <label>Password<input id="hub-acct-pass" type="password" maxlength="128" autocomplete="new-password"></label>
+          <label>Confirm password<input id="hub-acct-pass2" type="password" maxlength="128" autocomplete="new-password"></label>
+        </div>
+        <p id="hub-acct-hint" class="muted"></p>
+      </details>
     </section>
 
     <section class="card disabled" id="hub-step-write">
       <div class="step-head"><span class="step-n">4</span><h2>Write it</h2></div>
       <p class="muted" id="hub-write-summary"></p>
+      <p id="hub-preflight" class="muted"></p>
       <p class="muted"><strong>Everything on the chosen disk will be erased.</strong>
         Type <span class="mono">ERASE</span> to arm the button.</p>
       <div class="row">
@@ -211,7 +228,10 @@
         <button id="hub-stop-btn" class="link-btn hidden">Stop</button>
       </div>
       <div id="hub-progress-wrap" class="hub-progress hidden">
-        <p id="hub-stage" class="muted"></p>
+        <div class="hub-stage-row">
+          <p id="hub-stage" class="muted"></p>
+          <p id="hub-eta" class="muted"></p>
+        </div>
         <div class="bar"><div id="hub-bar-fill" class="bar-fill"></div></div>
       </div>
       <pre id="hub-console" class="console hidden" aria-live="polite"></pre>
@@ -222,6 +242,18 @@
         <h3>The card verifiably holds Home Assistant.</h3>
         <p id="hub-hatch-body"></p>
         <ol id="hub-hatch-steps"></ol>
+        <!-- First-boot companion: closes the loop across the silent 10–20 min. -->
+        <div id="hub-firstboot" class="firstboot hidden">
+          <div class="row">
+            <span class="dot reading" id="hub-fb-dot"></span>
+            <span id="hub-fb-text">Watching for your hub to come online…</span>
+          </div>
+          <div id="hub-fb-qr" class="fb-qr hidden" role="img" aria-label="QR code linking to your hub"></div>
+          <div class="row">
+            <button id="hub-fb-open" class="btn btn-primary hidden">Open your hub →</button>
+            <button id="hub-fb-stop" class="link-btn">Stop watching</button>
+          </div>
+        </div>
       </section>
     </section>
   </main>

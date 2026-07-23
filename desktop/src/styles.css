@@ -73,6 +73,25 @@ main { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; 
   from { margin-left: 0; }
   to { margin-left: 70%; }
 }
+.hub-stage-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+#hub-eta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* respect a reduced-motion preference: no sweeping bar, no dot pulse */
+@media (prefers-reduced-motion: reduce) {
+  .hub-progress .bar-fill.indet { animation: none; width: 100%; opacity: .6; }
+  .dot.reading { animation: none; }
+}
+
+/* first-boot companion */
+.firstboot {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--canary) 40%, var(--border));
+}
+.fb-qr {
+  display: block; width: 148px; height: 148px; margin: 10px 0;
+  border-radius: 10px; background: #fff; padding: 8px;
+  image-rendering: pixelated;
+}
 .confirm-input {
   font: inherit; font-family: ui-monospace, "SF Mono", Menlo, monospace;
   width: 110px; padding: 8px 10px; text-transform: uppercase;

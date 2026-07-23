@@ -11,6 +11,7 @@
 //! verified write, so the worst case is a hub that boots without Wi-Fi and
 //! says so, never a broken card.
 
+use crate::account::SeedFile;
 use crate::{Progress, Stage};
 use hub_core::hub_seed::{wifi_keyfile, WifiSeed};
 use std::path::{Path, PathBuf};
@@ -74,14 +75,61 @@ pub fn write_wifi_seed(mount_root: &Path, seed: &WifiSeed<'_>) -> Result<PathBuf
     Ok(path)
 }
 
-/// Seed the Wi-Fi keyfile onto `device`'s boot partition: re-probe the
-/// partition table, mount partition 1, write the tree, unmount, eject.
-/// Platform glue around the pure pieces above.
-pub fn seed_wifi(
+/// Write the minted account `.storage` files under the boot partition's
+/// `CONFIG/` tree (so `.storage/auth` becomes `CONFIG/.storage/auth`).
+///
+/// EXPERIMENTAL: whether HAOS imports these on first boot is exactly what the
+/// hardware-validation runbook decides — this is the boot-partition (FAT,
+/// writable from every OS) candidate. Files HAOS doesn't recognize are simply
+/// ignored, so the worst case is a normal onboarding wizard, never a broken
+/// boot. Never called unless the operator opts in.
+pub fn write_account_seed(mount_root: &Path, files: &[SeedFile]) -> Result<Vec<PathBuf>, String> {
+    let mut written = Vec::new();
+    for f in files {
+        // Guard against any path escaping CONFIG/ (the relative paths are ours,
+        // but treat them as untrusted on principle).
+        if f.relative_path.contains("..") || f.relative_path.starts_with('/') {
+            return Err(format!("refusing an unsafe seed path: {}", f.relative_path));
+        }
+        let dest = mount_root.join("CONFIG").join(&f.relative_path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("couldn't create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&dest, &f.contents)
+            .map_err(|e| format!("couldn't write {}: {e}", dest.display()))?;
+        written.push(dest);
+    }
+    Ok(written)
+}
+
+/// The result of seeding a freshly-written card: what made it on, and the
+/// non-fatal notes for what didn't. The write already verified, so nothing
+/// here is a failure — each note is context + a plan B.
+#[derive(Debug, Default, Clone)]
+pub struct SeedOutcome {
+    pub wifi_written: bool,
+    pub account_written: bool,
+    /// Non-fatal note about the Wi-Fi seed, if it stumbled.
+    pub wifi_note: Option<String>,
+    /// Non-fatal note about the account seed, if requested and it stumbled.
+    pub account_note: Option<String>,
+}
+
+/// Seed a freshly-written card in ONE mount: re-probe the partition table,
+/// mount partition 1, write whatever was requested (Wi-Fi and/or the
+/// experimental account store), then always unmount/eject. Mounting once
+/// avoids racing the OS's auto-mounter twice.
+///
+/// A mount failure is the only hard error (nothing could be written); once
+/// mounted, each item's failure becomes a note so a verified card is never
+/// demoted to a failure over a seed hiccup.
+pub fn seed_card(
     device: &str,
-    seed: &WifiSeed<'_>,
+    wifi: Option<&WifiSeed<'_>>,
+    account_files: &[SeedFile],
     mut progress: impl FnMut(Progress),
-) -> Result<PathBuf, String> {
+) -> Result<SeedOutcome, String> {
     progress(Progress {
         stage: Stage::Seed,
         done: 0,
@@ -89,18 +137,31 @@ pub fn seed_wifi(
     });
     let partition = boot_partition_path(device);
     let mount_root = mount_partition(&partition)?;
-    let written = write_wifi_seed(&mount_root, seed);
-    // Always try to unmount/eject, even after a failed write — never leave the
+
+    let mut outcome = SeedOutcome::default();
+    if let Some(seed) = wifi {
+        match write_wifi_seed(&mount_root, seed) {
+            Ok(_) => outcome.wifi_written = true,
+            Err(e) => outcome.wifi_note = Some(e),
+        }
+    }
+    if !account_files.is_empty() {
+        match write_account_seed(&mount_root, account_files) {
+            Ok(_) => outcome.account_written = true,
+            Err(e) => outcome.account_note = Some(e),
+        }
+    }
+
+    // Always try to unmount/eject, even after a partial write — never leave the
     // operator holding a card the OS thinks is busy.
     let ejected = eject(device, &partition);
-    let path = written?;
     ejected?;
     progress(Progress {
         stage: Stage::Seed,
         done: 1,
         total: Some(1),
     });
-    Ok(path)
+    Ok(outcome)
 }
 
 // ── platform edges ──────────────────────────────────────────────────────────
@@ -270,5 +331,36 @@ mod tests {
         };
         assert!(write_wifi_seed(root.path(), &seed).is_err());
         assert!(!root.path().join("CONFIG").exists());
+    }
+
+    #[test]
+    fn account_seed_lands_under_config_preserving_structure() {
+        let root = tempfile::tempdir().unwrap();
+        let files = vec![
+            SeedFile {
+                relative_path: ".storage/auth".to_string(),
+                contents: "{\"auth\":true}".to_string(),
+            },
+            SeedFile {
+                relative_path: ".storage/onboarding".to_string(),
+                contents: "{\"done\":[]}".to_string(),
+            },
+        ];
+        let written = write_account_seed(root.path(), &files).expect("writes");
+        assert_eq!(written.len(), 2);
+        let auth = root.path().join("CONFIG").join(".storage").join("auth");
+        assert_eq!(std::fs::read_to_string(&auth).unwrap(), "{\"auth\":true}");
+    }
+
+    #[test]
+    fn account_seed_refuses_path_traversal() {
+        let root = tempfile::tempdir().unwrap();
+        let files = vec![SeedFile {
+            relative_path: "../escape".to_string(),
+            contents: "x".to_string(),
+        }];
+        assert!(write_account_seed(root.path(), &files).is_err());
+        // Nothing written on a rejected batch member.
+        assert!(!root.path().join("CONFIG").join("escape").exists());
     }
 }

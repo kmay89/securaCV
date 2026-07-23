@@ -134,7 +134,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("t.img.xz");
         std::fs::write(&src, xz).unwrap();
-        let err = decompress(&src, &dir.path().join("t.img"), &CancelToken::default(), |_| {}).unwrap_err();
+        let err = decompress(
+            &src,
+            &dir.path().join("t.img"),
+            &CancelToken::default(),
+            |_| {},
+        )
+        .unwrap_err();
         assert!(err.contains("corrupt or truncated"), "{err}");
     }
 
@@ -143,6 +149,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("g.img.xz");
         std::fs::write(&src, b"this is not xz at all").unwrap();
-        assert!(decompress(&src, &dir.path().join("g.img"), &CancelToken::default(), |_| {}).is_err());
+        assert!(decompress(
+            &src,
+            &dir.path().join("g.img"),
+            &CancelToken::default(),
+            |_| {}
+        )
+        .is_err());
     }
 }

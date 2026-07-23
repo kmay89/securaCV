@@ -732,7 +732,17 @@ const hub = {
   busy: false,
   done: false,
   piUsbWaiting: false,
+  platform: "", // "macos" | "linux" | …
+  accountValid: false,
+  accountRequested: false,
+  // ETA bookkeeping, reset at each stage change
+  eta: { stage: null, t0: 0, done0: 0 },
+  fbTimer: null, // first-boot poll
+  sawMacWriteHint: false,
 };
+
+const HUB_HOST = "homeassistant.local:8123";
+const HUB_REMEMBER_KEY = "securacv.hub.remember";
 
 const HUB_STAGE_COPY = {
   download: "Downloading Home Assistant OS…",
@@ -755,6 +765,18 @@ function hubInit() {
     hubArm();
   });
   ["hub-ssid", "hub-pass"].forEach((id) => $(id).addEventListener("input", hubArm));
+  // Account fields: live-validate on every keystroke.
+  ["hub-acct-name", "hub-acct-user", "hub-acct-pass", "hub-acct-pass2"].forEach((id) =>
+    $(id).addEventListener("input", () => {
+      hubValidateAccount();
+      hubArm();
+    })
+  );
+  // First-boot companion controls.
+  $("hub-fb-open").addEventListener("click", () => openExternal("http://" + HUB_HOST));
+  $("hub-fb-stop").addEventListener("click", hubStopFirstBoot);
+  // Restore remembered non-secret fields.
+  hubRestoreSettings();
 
   $("hub-pi-usb-btn").addEventListener("click", hubPiUsbToggle);
   listen("hub:pi-usb", (e) => {
@@ -781,14 +803,26 @@ function hubInit() {
     hub.stage = stage;
     $("hub-progress-wrap").classList.remove("hidden");
     $("hub-stage").textContent = HUB_STAGE_COPY[stage] || stage;
+
+    // A one-time, calm heads-up that macOS is about to ask for disk permission,
+    // so a walked-away user knows the flash isn't frozen — it's waiting on them.
+    if (stage === "write" && hub.platform === "macos" && !hub.sawMacWriteHint) {
+      hub.sawMacWriteHint = true;
+      const el = $("hub-console");
+      el.classList.remove("hidden");
+      el.textContent += "→ macOS may now ask permission to write the disk — click Allow.\n";
+    }
+
     const fill = $("hub-bar-fill");
     if (total) {
       fill.classList.remove("indet");
       fill.style.width = Math.min(100, Math.round((done / total) * 100)) + "%";
+      $("hub-eta").textContent = hubEta(stage, done, total);
     } else {
       // Unknown total: an alive, sweeping bar — never a full one that lies.
       fill.classList.add("indet");
       fill.style.width = "";
+      $("hub-eta").textContent = "";
     }
     // Stopping is safe at every stage, but the copy should be honest about
     // what stopping mid-write means for the card.
@@ -816,6 +850,7 @@ function hubSetMode(showHub) {
   $("mode-hub").setAttribute("aria-selected", String(showHub));
   if (showHub) {
     hubLoadPlan();
+    hubPreflight();
     hubPollTargets();
     if (!hub.pollTimer) hub.pollTimer = setInterval(hubPollTargets, 2000);
   } else {
@@ -826,6 +861,8 @@ function hubSetMode(showHub) {
     // Don't leave a hidden rpiboot waiting forever behind the Canary tab —
     // stop it; the panel says how to start again.
     if (hub.piUsbWaiting) invoke("hub_pi_boot_stop").catch(() => {});
+    // The first-boot watch keeps polling in the background either way, so it
+    // survives a tab switch — the user may leave to check other things.
   }
 }
 
@@ -1026,41 +1063,259 @@ function hubWifiValue() {
   };
 }
 
+// ── ETA ─────────────────────────────────────────────────────────────────────
+// A rolling estimate for the CURRENT stage: honest ("about 3m left"), never a
+// fake total across stages. Reset the clock whenever the stage changes.
+function hubEta(stage, done, total) {
+  if (hub.eta.stage !== stage) {
+    hub.eta = { stage, t0: Date.now(), done0: done };
+    return "";
+  }
+  const dt = (Date.now() - hub.eta.t0) / 1000;
+  const bytes = done - hub.eta.done0;
+  if (dt < 1.5 || bytes <= 0) return ""; // let it settle before guessing
+  const rate = bytes / dt; // bytes/sec
+  const secs = Math.max(0, Math.round((total - done) / rate));
+  if (secs < 3) return "almost there";
+  if (secs < 60) return `about ${secs}s left`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `about ${m}m ${s.toString().padStart(2, "0")}s left`;
+}
+
+// ── account fields ──────────────────────────────────────────────────────────
+function hubAccountValue() {
+  if (!hub.accountRequested) return null;
+  return {
+    name: $("hub-acct-name").value.trim(),
+    username: $("hub-acct-user").value.trim(),
+    password: $("hub-acct-pass").value,
+  };
+}
+
+function hubValidateAccount() {
+  const name = $("hub-acct-name").value.trim();
+  const user = $("hub-acct-user").value.trim();
+  const pass = $("hub-acct-pass").value;
+  const pass2 = $("hub-acct-pass2").value;
+  // "Requested" = they've started filling it in. Empty panel → skipped entirely.
+  hub.accountRequested = !!(name || user || pass || pass2);
+  if (!hub.accountRequested) {
+    hub.accountValid = false;
+    $("hub-acct-hint").textContent = "";
+    return;
+  }
+  let msg = "";
+  let ok = true;
+  if (!name) { ok = false; msg = "Add your name."; }
+  else if (!user) { ok = false; msg = "Pick a username."; }
+  else if (/\s/.test(user)) { ok = false; msg = "The username can't contain spaces."; }
+  else if (pass.length < 8) { ok = false; msg = `Password needs 8+ characters (${pass.length} so far).`; }
+  else if (pass !== pass2) { ok = false; msg = "The two passwords don't match yet."; }
+  else {
+    // Gentle strength read — never blocking, just encouraging.
+    const variety =
+      (/[a-z]/.test(pass) ? 1 : 0) + (/[A-Z]/.test(pass) ? 1 : 0) +
+      (/[0-9]/.test(pass) ? 1 : 0) + (/[^a-zA-Z0-9]/.test(pass) ? 1 : 0);
+    const strength = pass.length >= 16 || (pass.length >= 12 && variety >= 3)
+      ? "strong" : pass.length >= 10 ? "decent" : "okay";
+    msg = `Looks good — password strength: ${strength}. First boot will be a login page.`;
+  }
+  hub.accountValid = ok;
+  $("hub-acct-hint").textContent = msg;
+}
+
+// ── remember non-secret settings (never passwords) ──────────────────────────
+function hubSaveSettings() {
+  try {
+    if (!$("hub-remember").checked) {
+      localStorage.removeItem(HUB_REMEMBER_KEY);
+      return;
+    }
+    localStorage.setItem(
+      HUB_REMEMBER_KEY,
+      JSON.stringify({
+        ssid: $("hub-ssid").value.trim(),
+        hidden: $("hub-hidden-net").checked,
+        boardId: hub.boardId,
+        acctName: $("hub-acct-name").value.trim(),
+        acctUser: $("hub-acct-user").value.trim(),
+      })
+    );
+  } catch (_) {}
+}
+
+function hubRestoreSettings() {
+  try {
+    const raw = localStorage.getItem(HUB_REMEMBER_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s.ssid) $("hub-ssid").value = s.ssid;
+    if (s.hidden) $("hub-hidden-net").checked = true;
+    if (s.acctName) $("hub-acct-name").value = s.acctName;
+    if (s.acctUser) $("hub-acct-user").value = s.acctUser;
+    if (s.boardId) hub.boardId = s.boardId; // applied when the board list renders
+  } catch (_) {}
+}
+
+// ── preflight (free space + platform hint) ──────────────────────────────────
+async function hubPreflight() {
+  try {
+    const pf = await invoke("hub_preflight");
+    hub.platform = pf.platform || "";
+    const line = $("hub-preflight");
+    if (!pf.staging_ok) {
+      const freeGb = (pf.staging_free_bytes / 1024 ** 3).toFixed(1);
+      line.textContent =
+        `⚠ Only ${freeGb} GB free for staging — the image needs ~6 GB of room. ` +
+        "Free some space first, or the flash may stop partway.";
+    } else {
+      line.textContent =
+        hub.platform === "macos"
+          ? "Heads up: macOS will ask permission to write the disk — that's normal."
+          : "";
+    }
+  } catch (_) {
+    /* preflight is advisory; never block on it */
+  }
+}
+
+// ── first-boot companion ────────────────────────────────────────────────────
+// Close the loop across the silent 10–20 min: poll the hub until it answers,
+// then invite the user in. Nothing here can hurt the card — it's read-only.
+function hubStartFirstBoot() {
+  const panel = $("hub-firstboot");
+  panel.classList.remove("hidden");
+  $("hub-fb-dot").className = "dot reading";
+  $("hub-fb-text").textContent =
+    "Put the card in your Pi and power it on. Watching for it to come online — this takes 10–20 minutes on first boot, and that's normal.";
+  $("hub-fb-open").classList.add("hidden");
+  hubRenderQr();
+  hubStopFirstBoot(true); // clear any prior timer without hiding the panel
+  const tick = async () => {
+    let up = false;
+    try {
+      up = await invoke("hub_probe_hub", { host: HUB_HOST });
+    } catch (_) {}
+    if (up) {
+      hubStopFirstBoot(true);
+      $("hub-fb-dot").className = "dot connected";
+      $("hub-fb-text").textContent = "It's alive! Your hub is up.";
+      $("hub-fb-open").classList.remove("hidden");
+      hubNotify("Your hub is ready", "Open " + HUB_HOST + " to log in.");
+      hubChime();
+    }
+  };
+  hub.fbTimer = setInterval(tick, 5000);
+  tick();
+}
+
+function hubStopFirstBoot(keepPanel) {
+  if (hub.fbTimer) {
+    clearInterval(hub.fbTimer);
+    hub.fbTimer = null;
+  }
+  if (!keepPanel) $("hub-firstboot").classList.add("hidden");
+}
+
+async function hubRenderQr() {
+  try {
+    const { default: qrcode } = await import("./vendor/qrcode/qrcode.mjs");
+    const qr = qrcode(0, "M");
+    qr.addData("http://" + HUB_HOST);
+    qr.make();
+    const box = $("hub-fb-qr");
+    box.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2 });
+    box.classList.remove("hidden");
+  } catch (_) {
+    /* QR is a bonus; the Open button is the real path */
+  }
+}
+
+// ── notification + chime ────────────────────────────────────────────────────
+async function hubNotify(title, body) {
+  try {
+    const n = window.__TAURI__ && window.__TAURI__.notification;
+    if (!n) return;
+    let granted = await n.isPermissionGranted();
+    if (!granted) granted = (await n.requestPermission()) === "granted";
+    if (granted) n.sendNotification({ title, body });
+  } catch (_) {}
+}
+
+function hubChime() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const now = ctx.currentTime;
+    [880, 1320].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.type = "sine";
+      const t = now + i * 0.14;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.15, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.24);
+    });
+  } catch (_) {}
+}
+
 function hubArm() {
   const target = hub.targets.find((t) => t.path === hub.selected);
   const wifi = hubWifiValue();
   const wifiOk = wifi === null || (wifi.ssid.length > 0 && wifi.passphrase.length >= 8);
+  // If the account panel has been started, it must be valid to arm — but an
+  // untouched panel never blocks the flash.
+  const accountOk = !hub.accountRequested || hub.accountValid;
   const armed =
-    !!target && wifiOk && $("hub-confirm").value.trim().toUpperCase() === "ERASE" && !hub.busy;
+    !!target &&
+    wifiOk &&
+    accountOk &&
+    $("hub-confirm").value.trim().toUpperCase() === "ERASE" &&
+    !hub.busy;
   $("hub-flash-btn").disabled = !armed;
   $("hub-write-summary").textContent = target
     ? `${hub.plan ? hub.plan.os_label : "Home Assistant OS"} → ${target.model} ` +
       `(${target.path}, ${hubFmtBytes(target.size_bytes)})` +
-      (wifi === null ? " · wired ethernet" : "")
+      (wifi === null ? " · wired ethernet" : "") +
+      (hub.accountRequested && hub.accountValid ? " · account pre-made" : "")
     : "Pick a disk above first.";
 }
 
 async function hubFlash() {
   const target = hub.targets.find((t) => t.path === hub.selected);
   if (!target || hub.busy) return;
+  hubStopFirstBoot(); // a fresh flash supersedes any prior first-boot watch
   hub.busy = true;
+  hub.sawMacWriteHint = false;
   state.busy = true; // pause the Canary port watcher during the heavy write
   $("hub-flash-btn").disabled = true;
   $("hub-stop-btn").classList.remove("hidden");
   $("hub-stop-btn").disabled = false;
+  $("hub-hatch").classList.add("hidden");
   $("hub-console").textContent = "";
   $("hub-console").classList.remove("hidden");
   setStatus("hub-result", "", "");
+  hubSaveSettings();
   try {
     const receipt = await invoke("hub_flash", {
       boardId: hub.boardId || (hub.plan ? hub.plan.board_id : "rpi5-64"),
       diskPath: target.path,
       confirmed: true,
       wifi: hubWifiValue(),
+      account: hubAccountValue(),
     });
     hub.done = true;
     setStatus("hub-result", "Done — written, read back, and verified.", "ok");
     hubShowHatch(receipt);
+    hubNotify("Your card is ready", "Now boot it in your Pi — the app will tell you when it's online.");
+    hubChime();
+    hubStartFirstBoot();
   } catch (e) {
     hubPresentError(e);
   } finally {
@@ -1072,6 +1327,7 @@ async function hubFlash() {
     $("hub-progress-wrap").classList.add("hidden");
     $("hub-bar-fill").classList.remove("indet");
     $("hub-bar-fill").style.width = "0%";
+    $("hub-eta").textContent = "";
     $("hub-confirm").value = "";
     hubArm();
   }
@@ -1079,18 +1335,24 @@ async function hubFlash() {
 
 function hubShowHatch(receipt) {
   $("hub-hatch").classList.remove("hidden");
+  const wifiLine = receipt.wifi_seeded
+    ? " Your Wi-Fi rides along on the card."
+    : receipt.wifi_note
+      ? " " + receipt.wifi_note
+      : " Plug in ethernet before you power it on.";
+  const acctLine = receipt.account_note ? " " + receipt.account_note : "";
+  const cacheLine = receipt.used_cache ? " (reused your verified local copy — no re-download.)" : "";
   $("hub-hatch-body").textContent =
     `${receipt.os_label} is on ${receipt.target_path} — every byte read back and matched ` +
-    `(SHA-256 ${receipt.sha256.slice(0, 16)}…).` +
-    (receipt.wifi_seeded
-      ? " Your Wi-Fi rides along on the card."
-      : receipt.wifi_note
-        ? " " + receipt.wifi_note
-        : " Plug in ethernet before you power it on.");
+    `(SHA-256 ${receipt.sha256.slice(0, 16)}…).${cacheLine}${wifiLine}${acctLine}`;
+  // If the account was pre-made, the third step is "log in", not "create".
+  const accountMade = receipt.account_seeded;
   const steps = [
     "Put the card in your Raspberry Pi (or connect the SSD) and power it on.",
     "First boot takes 10–20 minutes while Home Assistant sets itself up — the LED activity is normal.",
-    "Open http://homeassistant.local:8123 on any device in your home and create your account.",
+    accountMade
+      ? `Open http://${HUB_HOST} and log in with the account you just made.`
+      : `Open http://${HUB_HOST} on any device in your home and create your account.`,
     "Then follow “The Hub” guide to bring in your Canaries — securacv.com/lab → Home Assistant.",
   ];
   $("hub-hatch-steps").innerHTML = steps.map((s) => `<li>${esc(s)}</li>`).join("");
