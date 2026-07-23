@@ -1,0 +1,90 @@
+// KeysView.swift
+//
+// The part no web SPA can do well: your key ring. Pinned-key trust (TOFU) with
+// a loud "this key changed" alarm, the trustee approve/deny surface, on-device
+// .svlt unseal (Secure Enclave), and the self-healing About panel — build rev,
+// firmware train, last-checked, "heals forward" — ported from the desktop app's
+// renderAbout() so every surface tells the same story from one source of truth.
+
+import SwiftUI
+
+struct KeysView: View {
+    @EnvironmentObject var store: FleetStore
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Pinned trust") {
+                    if store.witnesses.isEmpty {
+                        Text("Pair a Canary and its signing key pins here on first sight.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    ForEach(store.witnesses) { w in
+                        HStack {
+                            Image(systemName: w.badge.sfSymbol)
+                                .foregroundStyle(w.badge.isTrusted ? Theme.color(.calm) : .secondary)
+                            VStack(alignment: .leading) {
+                                Text(w.displayName)
+                                Text(w.fingerprint.isEmpty ? w.badge.label : w.fingerprint)
+                                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
+                Section("Vault") {
+                    NavigationLink {
+                        UnsealView()
+                    } label: {
+                        Label("Unseal a snapshot", systemImage: "lock.open.rotation")
+                    }
+                } footer: {
+                    Text("Sealed snapshots are encrypted to your key. The Canary holds only the public half — it's structurally unable to open them. Only this phone can, in the Secure Enclave.")
+                }
+
+                AboutSection()
+            }
+            .navigationTitle("Keys")
+        }
+    }
+}
+
+/// Placeholder unseal surface — the crypto is already built in the repo
+/// (tools/unseal_snapshot.py); on device this runs against Secure Enclave.
+struct UnsealView: View {
+    var body: some View {
+        ContentUnavailableView("Bring a sealed snapshot",
+            systemImage: "doc.badge.gearshape",
+            description: Text("Import a .svlt from Files to decrypt it here, once, in the Secure Enclave. It's never written to any cloud."))
+            .navigationTitle("Unseal")
+    }
+}
+
+/// The self-healing About/Health panel — mirrors desktop/src/app.js renderAbout().
+struct AboutSection: View {
+    var body: some View {
+        Section("About") {
+            LabeledContent("Version", value: BuildInfo.version)
+            LabeledContent("Build", value: BuildInfo.buildRev)
+            LabeledContent("Firmware train", value: BuildInfo.firmwareTrain)
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Heals forward", systemImage: "arrow.triangle.2.circlepath")
+                Text("The app renders what each Canary describes, so new firmware features light up here without an App Store update. It fails quietly when offline — never an alarm you didn't earn.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+enum BuildInfo {
+    static var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    }
+    /// Baked at build time by scripts/stamp_build.sh into Info.plist.
+    static var buildRev: String {
+        Bundle.main.object(forInfoDictionaryKey: "SECURACV_BUILD_REV") as? String ?? "dev"
+    }
+    static var firmwareTrain: String {
+        Bundle.main.object(forInfoDictionaryKey: "SECURACV_FW_TRAIN") as? String ?? "0.x"
+    }
+}

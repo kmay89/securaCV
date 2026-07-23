@@ -17,6 +17,12 @@
 > Grep tokens: `iphone companion`, `witness console`, `self-describing UI`,
 > `metadata-only relay`, `cloudkit private db`, `hide-my-email`, `secure enclave
 > unseal`, `no-account`.
+>
+> **Implementation:** the native SwiftUI foundation for this design now lives in
+> [`ios/`](../../ios/README.md) — the four surfaces, the device transports
+> (mDNS/HTTP/BLE), Dynamic Island / Live Activities, HomeKit, AirPlay, on-device
+> Ed25519 verify, CloudKit-private-DB sync, and a self-healing nightly pipeline.
+> It builds and signs on a Mac / in gated CI (Apple Developer account required).
 
 ---
 
