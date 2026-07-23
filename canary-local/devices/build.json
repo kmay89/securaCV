@@ -7,7 +7,7 @@
  },
  "pricing": {
   "source": "docs/hardware/pricing.json",
-  "as_of": "2026-07-23T21:37:37Z",
+  "as_of": "2026-07-23T21:49:40Z",
   "note": "Nightly distributor snapshot (scripts/bom_pricing.py); rows without a live match keep the CSV's indicative price."
  },
  "devices": {
@@ -416,7 +416,7 @@
     "full_usd": 101.98,
     "required_usd_live": 25.99,
     "full_usd_live": 101.98,
-    "pricing_as_of": "2026-07-23T21:37:37Z",
+    "pricing_as_of": "2026-07-23T21:49:40Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -486,10 +486,10 @@
       "required": true,
       "category": "Sensor",
       "desc": "Grove Vision AI V2 (Himax WiseEye2 HX6538, Arm Cortex-M55 + Ethos-U55)",
-      "mpn": "101021040",
+      "mpn": "101021112",
       "mfr": "Seeed Studio",
       "usd": 15.99,
-      "notes": "I2C on GPIO4 (SDA) / GPIO5 (SCL); Seeed product 5851. Camera (e.g. OV5647) sold separately on some SKUs. Seeed list dropped ~$29->$15.99 (verified mid-2026)",
+      "notes": "I2C on GPIO4 (SDA) / GPIO5 (SCL); Seeed product 5851, SKU 101021112 = the HX6538 V2. NOT the older HX6537-A V1 (SKU 101021040 / DigiKey 114992866, OV2640) — those were wrong here. Camera sold separately on some SKUs. Board-only list $15.99 (verified mid-2026)",
       "orderable": true
      },
      {
@@ -737,7 +737,7 @@
     "full_usd": 80.15,
     "required_usd_live": 28.69,
     "full_usd_live": 80.15,
-    "pricing_as_of": "2026-07-23T21:37:37Z",
+    "pricing_as_of": "2026-07-23T21:49:40Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -890,7 +890,7 @@
     "full_usd": 40.0,
     "required_usd_live": 36.4,
     "full_usd_live": 40.0,
-    "pricing_as_of": "2026-07-23T21:37:37Z",
+    "pricing_as_of": "2026-07-23T21:49:40Z",
     "recipes": [
      {
       "label": "Required-only",
@@ -1006,7 +1006,7 @@
     "full_usd": 41.94,
     "required_usd_live": 34.99,
     "full_usd_live": 41.94,
-    "pricing_as_of": "2026-07-23T21:37:37Z"
+    "pricing_as_of": "2026-07-23T21:49:40Z"
    }
   },
   "canary-display-dash": {
@@ -1102,7 +1102,7 @@
     "full_usd": 45.5,
     "required_usd_live": 42.5,
     "full_usd_live": 45.5,
-    "pricing_as_of": "2026-07-23T21:37:37Z"
+    "pricing_as_of": "2026-07-23T21:49:40Z"
    }
   }
  }
