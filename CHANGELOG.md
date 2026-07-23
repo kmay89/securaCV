@@ -46,11 +46,11 @@
   `canary-local/assets/mode-sim.js` — a DOM-free port of the registry,
   latch semantics, and demo storyline — drift-locked by
   `canary-local/tests/mode.test.js` (10 tests, wired into canary-local CI)
-  against the committed Arduino mirror, playground-style. Carried to the
-  website as **`/modes`**: the five gears, the policy matrix rendered from
-  the sim, a live latch simulator, and the storyline player at 6× — plus
-  `tests/modes-facts.test.mjs`, a Lab stop, `_redirects`, and sitemap
-  entries on the website side.
+  against the committed Arduino mirror, playground-style. The twin is ready
+  to be carried to the website as **`/modes`** (the five gears, the policy
+  matrix rendered from the sim, a live latch simulator, and the storyline
+  player) — the website page itself is a pending follow-up in the
+  securacv_website repo.
 - **Polish: the storyline reaches the real firmware in the browser.** The
   canary-local emulator page grows a **"play the demo storyline"** control:
   the same drift-locked beats stream through the page's staged witnesses

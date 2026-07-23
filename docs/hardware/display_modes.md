@@ -20,7 +20,7 @@ architecture, the rules every mode must obey, and each gear's spec.
 > with or without this work, and per the repo's honesty rule nothing here is
 > **Driven** until a bench pass on real hardware (§Waves). The browser twin
 > (`canary-local/assets/mode-sim.js`, drift-locked by
-> `canary-local/tests/mode.test.js`) powers the public `/modes` page.
+> `canary-local/tests/mode.test.js`) is ready to power a public `/modes` page (website carry-over pending).
 
 Related: [`dev_playground_43b.md`](./dev_playground_43b.md) (the bench that
 pioneered the pattern) · [`board_capability_map_43b.md`](./board_capability_map_43b.md)
@@ -246,7 +246,7 @@ Uniform, and identical to what the bench already taught users:
 | 2 | **demo**: `FEATURE_DEMO_MODE`; `src/mode/demo_mode.cpp` walks `DEMO_BEATS` into `the_fleet()` and renders the real faces (both flavors) under the DEMO chip (`lv_layer_top`); `DM1` serial. | **Built** — core host-tested; bench-pending |
 | 3 | **debug**: `FEATURE_DEBUG_MODE`; `src/mode/debug_mode.cpp` — five tap-to-page faces (system+link / fleet raw / events / touch / i2c), non-blocking WiFi + bounded broker attempts, `DBG1` 1 Hz snapshots. | **Built** — bench-pending |
 | 4 | **arcade**: `FEATURE_ARCADE` (dash); `src/mode/arcade_mode.cpp` — Canary Catch on the host-tested `arcade_logic.h` plan/stats/verdict; `ARC1` serial + the QA report screen. | **Built** — core host-tested; bench-pending |
-| 5 | **The browser twin**: `canary-local/assets/mode-sim.js` (registry + storyline + latch semantics, DOM-free) drift-locked by `canary-local/tests/mode.test.js` against the Arduino mirror; carried to the website as `/modes` (gears, policy table, latch simulator, storyline player). **Plus the real thing:** the canary-local emulator page's "play the demo storyline" button walks the same drift-locked beats through the staged household into the REAL wasm firmware — signed chains and all, where the browser has Ed25519. | **Done — CI-tested** |
+| 5 | **The browser twin**: `canary-local/assets/mode-sim.js` (registry + storyline + latch semantics, DOM-free) drift-locked by `canary-local/tests/mode.test.js` against the Arduino mirror; the website `/modes` page (gears, policy table, latch simulator, storyline player) is the pending carry-over. **Plus the real thing:** the canary-local emulator page's "play the demo storyline" button walks the same drift-locked beats through the staged household into the REAL wasm firmware — signed chains and all, where the browser has Ed25519. | **Twin done — CI-tested; page pending** |
 | 6 | **The bench session**: the executable checklist is [`board_43b_activation_bench.md` §6](./board_43b_activation_bench.md) — flash `canary-display-dash-modes`, walk doorway/latch/migration, each gear's pass signals (`DM1`/`DBG1`/`ARC1`), exits, then flip per-gear defaults where earned. | **Pending — needs hardware** |
 
 Each wave follows the capability-map shipping reality: feature-gated default
