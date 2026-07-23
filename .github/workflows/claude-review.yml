@@ -36,7 +36,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # Advisory-only: if the key isn't configured yet, skip cleanly (green)
+      # instead of failing the PR. Add ANTHROPIC_API_KEY in repo Settings →
+      # Secrets to turn the reviewer on.
+      - name: Check for API key
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY not set — skipping the advisory Canary Reviewer. Add it in Settings → Secrets to enable it."
+          fi
       - name: Canary Reviewer
+        if: steps.key.outputs.present == 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
