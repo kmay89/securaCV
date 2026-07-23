@@ -17,6 +17,7 @@ import { buildBoardLab } from "./board-lab.js";
 import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
 import { BenchPower, romBanner } from "../emulator/web/bench.js";
+import { DEMO, beatsBetween } from "./mode-sim.js";
 import {
   DISPLAY_TOUR,
   DISPLAY_FIXES,
@@ -643,8 +644,64 @@ function tryView(ctx, noteLine) {
   styleWrap.append(mk("meet the bird again (first boot)",
     () => ctx.meetAgain?.(), "primary"));
 
+  // ── The storyline (display_modes.md §demo): the mode system's scripted
+  // household, played through THIS page's staged witnesses into the real
+  // firmware — the same beats, seconds and severities the on-device demo
+  // gear feeds its own faces (the table is drift-locked to the firmware in
+  // tests/mode.test.js). Shown at 6× wall speed; here the events even ride
+  // signed chains where the browser has Ed25519, because the staged
+  // witnesses really sign. Cast mapping is presentational: the beats'
+  // front door / garage land on their namesakes, the indoor stirs on the
+  // nursery.
+  // The player state rides ctx (not this closure): the view can be rebuilt
+  // mid-story, and a rebuilt button must find — and be able to stop — the
+  // running lap instead of stacking a second one.
+  ctx.story ||= { timer: null, clock: 0 };
+  const STORY_CAST = [0, 1, 2, 1]; // beat witness -> staged fleet index
+  const stopStory = () => {
+    if (ctx.story.timer) clearInterval(ctx.story.timer);
+    ctx.story.timer = null;
+    ctx.story.clock = 0;
+    ctx.emu.witnessTamper(ctx.fleet[2], false); // never leave a staged tamper
+    storyBtn.textContent = "▶ play the demo storyline";
+  };
+  const storyBtn = mk("▶ play the demo storyline", () => {
+    if (ctx.story.timer) {
+      stopStory();
+      noteLine.textContent = "storyline stopped — the household is yours again.";
+      return;
+    }
+    storyBtn.textContent = "⏸ storyline playing (6×) — tap to stop";
+    ctx.story.timer = setInterval(() => {
+      const prev = ctx.story.clock;
+      ctx.story.clock = (ctx.story.clock + 1) % DEMO.LOOP_S;
+      for (const i of beatsBetween(prev, ctx.story.clock)) {
+        const b = DEMO.BEATS[i];
+        const w = ctx.fleet[STORY_CAST[b.witness]];
+        if (b.intent === "tamper") {
+          ctx.emu.witnessTamper(w, true, "tamper_contact");
+        } else if (b.event === "cleared") {
+          ctx.emu.witnessTamper(w, false);
+          ctx.emu.witnessEvent(w, "cleared");
+        } else {
+          ctx.emu.witnessEvent(w, b.event);
+        }
+        noteLine.textContent =
+          `storyline ${b.atS}s — ${w.name}: ${b.event.replaceAll("_", " ")}` +
+          ` [${b.intent}]` +
+          (b.intent === "alert" || b.intent === "tamper"
+            ? " — hold the glass to acknowledge"
+            : "");
+      }
+    }, 1000 / 6);
+  }, "primary");
+  if (ctx.story.timer) {
+    storyBtn.textContent = "⏸ storyline playing (6×) — tap to stop";
+  }
+
   const grid = el("div", "try-grid");
   grid.append(
+    storyBtn,
     mk("Wi-Fi down", () => ctx.emu.setWifi(false)),
     mk("Wi-Fi up", () => ctx.emu.setWifi(true)),
     mk("broker down", () => ctx.emu.setBroker(false)),

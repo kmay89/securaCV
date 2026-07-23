@@ -37,9 +37,22 @@ constexpr uint32_t UI_EVERY_MS = 200;  // matches the fleet face's dash tick
 bool     s_display_ok = false;
 uint16_t s_prev_loop_s = 0;  // loop-local seconds, last processed position
 bool     s_touch_down = false;
+bool     s_longpress_fired = false;
 uint32_t s_touch_down_ms = 0;
 int16_t  s_tx = 0, s_ty = 0;
 uint32_t s_last_ui_ms = 0;
+
+// The hold-to-ack ring is part of the story: same sweep, same timing as
+// the fleet face (MOTION_ACK_MS == CD_LONGPRESS_MS).
+void ui_ack_hold(bool active) {
+  if (!s_display_ok) return;
+#ifdef CD_FLAVOR_WATCH
+  canary::ui::glance_ui_ack_hold(active);
+#endif
+#ifdef CD_FLAVOR_DASH
+  canary::ui::dash_ui_ack_hold(active);
+#endif
+}
 
 #ifdef CD_FLAVOR_WATCH
 int s_page = 0;
@@ -56,10 +69,11 @@ void make_demo_chip() {
   lv_obj_set_style_pad_hor(chip, 8, 0);
   lv_obj_set_style_pad_ver(chip, 3, 0);
   lv_obj_set_style_radius(chip, 9, 0);
-  lv_label_set_text(chip, "DEMO");
 #ifdef CD_FLAVOR_WATCH
+  lv_label_set_text(chip, "DEMO");  // 240 px round glass: the word alone
   lv_obj_align(chip, LV_ALIGN_TOP_MID, 0, 6);
 #else
+  lv_label_set_text(chip, "DEMO  ·  hold 3s to exit");
   lv_obj_align(chip, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
 #endif
 }
@@ -76,7 +90,13 @@ void seed_cast(uint32_t now) {
     fleet.on_meta(w.id, w.name, w.room, now);
     fleet.on_health(w.id, w.battery, /*battery_present=*/true,
                     CANARY_FW_VERSION, now);
+    // Dress the detail lines the way a lived-in fleet looks: believable
+    // signal strengths, and room comfort on the indoor pair (the care
+    // wave's comfort words render from exactly this ingest).
+    fleet.on_rssi(w.id, -48 - (int)i * 9, now);
   }
+  fleet.on_comfort(DEMO_CAST[1].id, 215, true, 44, now);  // kitchen 21.5 C
+  fleet.on_comfort(DEMO_CAST[3].id, 226, true, 47, now);  // nursery 22.6 C
   fleet.mark_dirty();
 }
 
@@ -190,22 +210,30 @@ void demo_mode_loop() {
   const uint32_t now = millis();
   auto& fleet = canary::fleet::the_fleet();
 
-  // ── Touch: tap = face nav, long-press = acknowledge, 3 s = exit ──
+  // ── Touch: tap = face nav, long-press = acknowledge (with the ring
+  //    sweeping closed exactly as the fleet face does), 3 s = exit ──
   const auto ts = canary::hal::touch_read();
   if (ts.touched && !s_touch_down) {
     s_touch_down = true;
     s_touch_down_ms = now;
     s_tx = ts.x;
     s_ty = ts.y;
+    s_longpress_fired = false;
+    ui_ack_hold(true);  // the sweep starts; a tap only ever shows a sliver
+  } else if (ts.touched && s_touch_down && !s_longpress_fired &&
+             (int32_t)(now - s_touch_down_ms) >= (int32_t)CD_LONGPRESS_MS) {
+    // Fires DURING the hold, like the product: the ring closes and the
+    // alarm beat quiets in the same instant.
+    s_longpress_fired = true;
+    ui_ack_hold(false);
+    fleet.acknowledge_by(now, "demo");
   } else if (!ts.touched && s_touch_down) {
     s_touch_down = false;
+    ui_ack_hold(false);
     const uint32_t held = now - s_touch_down_ms;
     if (held >= 3000) {
       mode_exit_to_fleet();  // does not return
-    } else if (held >= CD_LONGPRESS_MS) {
-      // The ack UX is part of the story: quiet the alarm beat by hand.
-      fleet.acknowledge_by(now, "demo");
-    } else if (s_display_ok) {
+    } else if (!s_longpress_fired && held < 600 && s_display_ok) {
 #ifdef CD_FLAVOR_WATCH
       s_page = (s_page + 1) % canary::ui::glance_page_count();
       fleet.mark_dirty();

@@ -217,6 +217,7 @@ void page_update(uint32_t now) {
       set_line(i++, b, broker ? c_ok() : c_warn());
       snprintf(b, sizeof(b), "device  %s", canary::cfg::get().device_id);
       set_line(i++, b, c_muted());
+      set_line(i++, "hold the glass 3 s to exit debug", c_muted());
       break;
     }
     case PG_FLEET: {

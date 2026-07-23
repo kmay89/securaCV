@@ -51,6 +51,21 @@
   the sim, a live latch simulator, and the storyline player at 6× — plus
   `tests/modes-facts.test.mjs`, a Lab stop, `_redirects`, and sitemap
   entries on the website side.
+- **Polish: the storyline reaches the real firmware in the browser.** The
+  canary-local emulator page grows a **"play the demo storyline"** control:
+  the same drift-locked beats stream through the page's staged witnesses
+  (`witnessEvent`/`witnessTamper` — real Ed25519-signed chains where the
+  browser supports it) into the actual compiled wasm firmware, at 6×, with
+  a coached note line ("hold the glass to acknowledge") — no dist rebuild,
+  player state survives view rebuilds, and stopping never leaves a staged
+  tamper standing. Demo mode gains its missing signature moment — the
+  **hold-to-ack ring** now sweeps closed exactly as the fleet face does
+  (fires during the hold, not on release) — plus believable RSSI/comfort
+  seeding on the cast and an exit hint on the dash's DEMO chip; debug's
+  System page states its own exit. And wave 6 became executable:
+  `board_43b_activation_bench.md` **§6 "The mode system"** is the on-bench
+  checklist (doorway/latch/migration, per-gear pass signals, exits) whose
+  pass moves each gear from Built · compile-gated toward Driven.
 
 ### canary-display — the glass gets gears (mode architecture) + the 4.3B peripheral catalog
 
