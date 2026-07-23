@@ -7,9 +7,9 @@
 # build), so it runs whenever iOS is enabled — but stays a green no-op until then
 # so it never nags.
 #
-# House style honored: manual dispatch + a staggered, non-:00 nightly cron;
-# gated behind the same `ENABLE_IOS_BUILD` repo variable as the other iOS jobs;
-# least-privilege permissions.
+# House style honored (.github/CI.md): explicit permissions, timeout-minutes,
+# a concurrency group, a staggered non-:00 nightly cron, and the same
+# `ENABLE_IOS_BUILD` gate as the other iOS jobs.
 name: iOS self-heal (nightly)
 
 on:
@@ -22,12 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-selfheal
-  cancel-in-progress: true
+  group: ios-selfheal-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   selfheal:
     runs-on: macos-14
+    timeout-minutes: 40
     steps:
       - name: Gate notice
         if: vars.ENABLE_IOS_BUILD != 'true'
@@ -44,8 +45,7 @@ jobs:
       - name: Regenerate, build & test (no signing)
         if: vars.ENABLE_IOS_BUILD == 'true'
         working-directory: ios
-        run: |
-          bash scripts/heal.sh build
+        run: bash scripts/heal.sh build
 
       - name: Summary
         if: vars.ENABLE_IOS_BUILD == 'true'

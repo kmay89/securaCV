@@ -6,6 +6,9 @@
 # materialized from a base64 secret to a real .p8 on the runner ("a secret is a
 # string, so the key must be a file"). Reuses the SAME Apple secret names as the
 # desktop mobile pipeline so there is one signing story for the whole repo.
+#
+# House style honored (.github/CI.md): explicit permissions, timeout-minutes,
+# and a concurrency group that never cancels a publishing run mid-flight.
 name: iOS release
 
 on:
@@ -20,9 +23,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ios-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-14
+    timeout-minutes: 60
     steps:
       - name: Gate notice
         if: vars.ENABLE_IOS_BUILD != 'true'
@@ -55,16 +63,14 @@ jobs:
           brew install xcodegen
           xcodegen generate
 
-      - name: Archive & export .ipa
+      - name: Archive
         if: vars.ENABLE_IOS_BUILD == 'true'
         working-directory: ios
         env:
           APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          EXPORT_METHOD: ${{ inputs.export_method }}
         run: |
-          set -euo pipefail
           xcodebuild \
             -project SecuraCV.xcodeproj \
             -scheme SecuraCV \
@@ -80,19 +86,24 @@ jobs:
             -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
             archive
 
-          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>method</key><string>${EXPORT_METHOD}</string>
-            <key>teamID</key><string>${APPLE_DEVELOPMENT_TEAM}</string>
-            <key>signingStyle</key><string>automatic</string>
-          </dict></plist>
-          PLIST
+      - name: Export .ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          EXPORT_METHOD: ${{ inputs.export_method }}
+        run: |
+          # Build ExportOptions.plist with PlistBuddy — no fragile heredoc.
+          PLIST="$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Clear dict" "$PLIST" 2>/dev/null || printf '%s' '{}' > "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :method string $EXPORT_METHOD" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_DEVELOPMENT_TEAM" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string automatic" "$PLIST"
 
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/SecuraCV.xcarchive" \
-            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportOptionsPlist "$PLIST" \
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$APPLE_API_KEY_PATH" \
