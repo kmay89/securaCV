@@ -26,6 +26,8 @@ concurrency:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
+    # ~60 MPNs at polite pacing is a 2-5 minute run; 15 is the circuit breaker
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
