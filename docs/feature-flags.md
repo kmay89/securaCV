@@ -82,6 +82,7 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `adapter-webhook-tls` | off | stable | Webhook adapter + rustls TLS/mTLS | keep |
 | `adapter-ble-presence` | off | stable | BLE presence adapter | keep |
 | `adapter-meshtastic` | off | stable | Meshtastic LoRa-mesh detection-sensor adapter | keep |
+| `adapter-can-bus` | off | exp | Passive-only vehicle CAN bus adapter (arrival/departure claims via Linux SocketCAN) | promote to stable once bench-validated against a real vehicle (docs/hardware/canary_vehicle_can.md) |
 | `adapter-sandbox` | off | stable | Sandbox/test adapter | keep |
 | `pqc-signatures` | off | exp | ML-DSA post-quantum signatures | promote once PQC signing is a supported deployment mode |
 | `pqc-vault` | off | exp | ML-KEM post-quantum vault sealing | promote once PQC vault is supported |

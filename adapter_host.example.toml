@@ -3,7 +3,7 @@
 # Run with:
 #   DEVICE_KEY_SEED=$(openssl rand -hex 32) \
 #     cargo run --bin adapter_host \
-#     --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-sandbox \
+#     --features adapter-frigate,adapter-mqtt-sensor,adapter-webhook,adapter-webhook-tls,adapter-ble-presence,adapter-meshtastic,adapter-can-bus,adapter-sandbox \
 #     -- --config adapter_host.toml
 #
 # The adapter host runs many vendor-neutral sensor adapters behind one daemon. Every claim flows
@@ -68,7 +68,7 @@ mqtt_broker_addr = "127.0.0.1:1883"
 #   large_object_boundary_crossing, small_object_boundary_crossing,
 #   acoustic_impulse_in_zone, presence_in_restricted_zone,
 #   vehicle_presence_after_hours, contact_state_change, object_removed_from_zone,
-#   tamper_detected
+#   tamper_detected, vehicle_arrival_departure
 # Optional per-route gates: min_confidence (float), require_truthy_state (bool),
 # numeric_min (float — payload must carry a numeric reading >= this; replaces the
 # truthy gate for counters/numeric sensor states; the reading is never logged).
@@ -192,6 +192,36 @@ topic = "/sensors/garage/acoustic"   # matched against the request path
 kind = "acoustic_impulse_in_zone"
 zone = "garage"
 
+# Canary Vision Pro (Seeed reCamera Pro, on-device NPU camera). No new
+# firmware — configure its flow editor with a classifier -> HTTP request
+# node POSTing {"confidence": <score>} to the path below. See
+# docs/hardware/canary_vision_pro_recamera.md for the full setup and the
+# class -> kind mapping table. Only classifier labels are routed here, NEVER
+# a VLM/LLM free-text caption (the payload grammar has no field for one).
+[[adapter.route]]
+topic = "/sensors/loading_dock/recamera_pro"
+kind = "large_object_boundary_crossing"   # e.g. the "person"/"car" classes
+zone = "loading_dock"
+min_confidence = 0.6
+
+# Sound-classification flow from the same camera (glass break / alarm /
+# raised voice class -> a binary "state" payload):
+# [[adapter.route]]
+# topic = "/sensors/loading_dock/recamera_pro_audio"
+# kind = "acoustic_impulse_in_zone"
+# zone = "loading_dock"
+# require_truthy_state = true
+
+# Canary Vision Lite (Seeed reCamera 2002w, ~$35 RISC-V/SG2002 WiFi camera).
+# Same zero-new-firmware pattern as Vision Pro above, one route per unit —
+# this is the "put several of these in mundane spots" coverage tier, not a
+# flagship chokepoint. See docs/hardware/canary_vision_lite_recamera.md.
+[[adapter.route]]
+topic = "/sensors/stockroom/recamera_2002w"
+kind = "small_object_boundary_crossing"
+zone = "stockroom"
+min_confidence = 0.6
+
 # ---------------------------------------------------------------------------
 # Adapter: BLE presence gateway (ESPresense / room-presence style)
 # Turns a popular DIY BLE presence mesh into a witness source. Subscribes to ESPresense's
@@ -237,6 +267,51 @@ zone = "back_gate"
 # detection_name = "PIR"        # require the alert text to contain the sensor's configured
 #                               # name (also lets detection alerts ride plain text packets)
 # min_snr = -15.0               # optional RF quality floor; the value is never logged
+
+# ---------------------------------------------------------------------------
+# Adapter: Vehicle CAN bus (Canary Vehicle — passive-only, read-only)
+# Turns a vehicle's own CAN bus into a witness source: ignition on/off (or any frame you've
+# identified) becomes a coarse `vehicle_arrival_departure` claim. This adapter NEVER transmits a
+# CAN frame — read-only by construction, see docs/hardware/canary_vehicle_can.md §3. Requires a
+# Linux SocketCAN interface, brought up OUTSIDE this process:
+#   sudo ip link set can0 up type can bitrate 500000
+#
+# CAN frame IDs and byte layouts are manufacturer-proprietary — there is no universal "ignition
+# on" frame. Find yours by sniffing your own vehicle's bus, e.g. with candump (can-utils) while
+# turning the ignition on and off, and diffing which frame ID/byte changes:
+#   candump can0 | grep -v <known-noisy-ids>
+# See the full walkthrough in docs/hardware/canary_vehicle_can.md §2.
+# ---------------------------------------------------------------------------
+[[adapter]]
+type = "can_bus"
+interface = "can0"
+
+# Each route matches (can_id, byte_offset, mask, equals) to a claim kind in a zone. can_id and
+# equals accept decimal or 0x-hex (paste straight from candump's hex dump). Multiple routes MAY
+# share a can_id (e.g. ignition-on and ignition-off are two routes on the SAME frame ID,
+# distinguished by which byte value each expects) — the first whose byte condition matches wins.
+# kind must be one of the vehicle-shaped kinds; today that's just:
+#   vehicle_arrival_departure
+# (mqtt_sensor/webhook accept the FULL claim-kind vocabulary — this adapter's descriptor
+# deliberately allows only this one kind, so a misconfigured route cannot emit anything
+# telemetry- or tracking-shaped even by mistake.)
+[[adapter.route]]
+can_id = "0x3E8"       # replace with YOUR vehicle's ignition-status frame ID
+byte_offset = 0
+equals = "0x01"         # replace with the byte value that means "ignition on"
+kind = "vehicle_arrival_departure"
+zone = "garage"
+confidence = 0.9
+
+[[adapter.route]]
+can_id = "0x3E8"        # same frame ID as above...
+byte_offset = 0
+equals = "0x00"         # ...different byte value: "ignition off"
+kind = "vehicle_arrival_departure"
+zone = "garage"
+confidence = 0.9
+
+# mask = "0x01"          # optional: isolate a single flag bit instead of the whole byte
 
 # ---------------------------------------------------------------------------
 # Optional hardening: set `sandbox = true` on ANY adapter above to run its

@@ -177,6 +177,7 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_field_case.scad";    png "preview_dev_field.png"   -D 'part="all"')
   (SRC="canary_dash_display.scad";  png "preview_dev_dash.png"    -D 'part="all"')
   (SRC="canary_vehicle_mount.scad"; png "preview_dev_veh.png"     -D 'part="all"')
+  (SRC="canary_vision_pro_mount.scad"; png "preview_dev_visionpro.png" -D 'part="plate"')
   (SRC="canary_wear_clip.scad";     png "preview_dev_wear.png"    -D 'part="all"')
   (SRC="canary_fit_coupon.scad";    png "preview_dev_coupon.png"  -D 'part="all"')
   (SRC="canary_bench_fixture.scad"; png "preview_dev_fixture.png" -D 'part="all"')

@@ -145,6 +145,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - **Requirements review series:** [review/README](review/README.md)
 - **Research:** [bitchat protocol](research/bitchat_protocol_review.md) · [display market](research/display_market_research.md) · [harm-reduction prior art](research/harm_reduction_prior_art.md)
 - **Strategy series (01–17):** [strategy/README](strategy/README.md)
+- **Ecosystem & branding:** [trademark & branding policy](../TRADEMARK.md) · [trademark grants registry](trademark-grants.md) — the free "Works with SecuraCV" badge, the "… for SecuraCV" naming rule, and the public record of primary-mark grants (strategy doc 19 §5)
 - **Marketing:** [launch posts](marketing/launch_posts.md)
 
 </details>

@@ -122,6 +122,26 @@ if [ -f "$PROVQR_CANONICAL" ]; then
     fi
 fi
 
+# GNSS time helper: same single-source pattern. The canonical, header-only
+# gnss_time (NMEA UTC date/time -> validated Unix epoch, used by the
+# GPS-derived system clock in both trees) lives at firmware/common/gnss/; the
+# canary-wap sketch carries a byte-identical staged copy so a fresh zip
+# download compiles and both firmware trees apply the same trust window.
+GNSSTIME_CANONICAL="firmware/common/gnss/gnss_time.h"
+GNSSTIME_STAGED="$STAGED/gnss_time.h"
+if [ -f "$GNSSTIME_CANONICAL" ]; then
+    if [ ! -f "$GNSSTIME_STAGED" ]; then
+        echo "::error::Missing staged copy: $GNSSTIME_STAGED"
+        echo "         Run: cp $GNSSTIME_CANONICAL $GNSSTIME_STAGED"
+        drift=1
+    elif ! cmp -s "$GNSSTIME_CANONICAL" "$GNSSTIME_STAGED"; then
+        echo "::error::Drift detected: $GNSSTIME_STAGED differs from $GNSSTIME_CANONICAL"
+        echo "--- diff ($GNSSTIME_CANONICAL vs $GNSSTIME_STAGED) ---"
+        diff -u "$GNSSTIME_CANONICAL" "$GNSSTIME_STAGED" || true
+        drift=1
+    fi
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "The committed copies under $STAGED/ must match their canonical sources."
@@ -129,4 +149,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr library copies are in sync."
+echo "CSI + identity + witness-store + provision-qr + gnss-time library copies are in sync."

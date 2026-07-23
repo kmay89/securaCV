@@ -307,6 +307,24 @@ setup_arduino() {
         print_warn "witness_store not found at ${witness_src} — sketch will not compile until firmware/common/witness/ is restored"
     fi
 
+    # GNSS UTC date/time -> validated Unix epoch (the NMEA-time trust window +
+    # calendar math the GPS-derived system clock relies on) is a single
+    # canonical, header-only source shared with the PIO canary tree
+    # (firmware/canary). Stage a byte-identical copy next to the sketch;
+    # check_csi_sync.sh guards the two against drift.
+    local gnss_src="${FIRMWARE_ROOT}/common/gnss"
+    if [ -f "${gnss_src}/gnss_time.h" ]; then
+        cp "${gnss_src}/gnss_time.h" "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/gnss_time.h" ]; then
+            print_success "Copied gnss_time header"
+        else
+            print_error "Failed to stage gnss_time header to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "gnss_time not found at ${gnss_src} — sketch will not compile until firmware/common/gnss/ is restored"
+    fi
+
     print_success "Arduino IDE setup complete!"
     echo ""
     echo "Arduino IDE Instructions:"

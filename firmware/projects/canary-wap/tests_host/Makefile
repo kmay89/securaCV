@@ -103,6 +103,13 @@ DEVPSEUDO_COMMON_SRC = test_device_pseudonym_common.cpp
 GPS_COARSEN_BIN = test_gps_coarsen
 GPS_COARSEN_SRC = test_gps_coarsen.cpp
 
+# GPS-derived system clock: NMEA UTC date/time -> validated Unix epoch
+# (firmware/common/gnss/gnss_time.h). Pure header, no Arduino glue — asserts
+# known epoch values and the calendar-validity guardrails that keep a
+# corrupt-but-checksum-valid sentence from reaching settimeofday().
+GNSS_TIME_BIN = test_gnss_time
+GNSS_TIME_SRC = test_gnss_time.cpp
+
 # Acoustic pipeline: compiles the REAL vendored securacv_audio.cpp against
 # stub Arduino/ESP-IDF headers (stubs/audio/) and drives synthetic alarm
 # cadences through a scripted i2s_read. Covers T3 detection, knock, the
@@ -185,6 +192,9 @@ $(DEVPSEUDO_COMMON_BIN): $(DEVPSEUDO_COMMON_SRC)
 $(GPS_COARSEN_BIN): $(GPS_COARSEN_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(GPS_COARSEN_SRC)
 
+$(GNSS_TIME_BIN): $(GNSS_TIME_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(GNSS_TIME_SRC)
+
 $(AUDIO_BIN): $(AUDIO_SOURCES)
 	$(CXX) $(CXXFLAGS) -I stubs/audio -I $(SRC_DIR) -o $@ $(AUDIO_SOURCES)
 
@@ -200,7 +210,7 @@ $(EVDRIVE_BIN): $(EVDRIVE_SOURCES)
 $(EVVERIFY_BIN): $(EVVERIFY_SOURCES)
 	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(EVVERIFY_SOURCES) -lcrypto
 
-run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN)
+run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN)
 	./$(BIN)
 	./$(CHIRP_INV_BIN)
 	./$(CHIRP_SEC_BIN)
@@ -214,6 +224,7 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(DEVPSEUDO_BIN)
 	./$(DEVPSEUDO_COMMON_BIN)
 	./$(GPS_COARSEN_BIN)
+	./$(GNSS_TIME_BIN)
 	./$(AUDIO_BIN)
 	./$(CSI_FEAT_BIN)
 	./$(FLEET_BEACON_BIN)
@@ -221,4 +232,4 @@ run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_B
 	./$(EVVERIFY_BIN)
 
 clean:
-	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)
+	rm -f $(EVVERIFY_BIN) $(EVDRIVE_BIN) $(FLEET_BEACON_BIN) $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN)
