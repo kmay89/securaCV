@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 232 44" width="232" height="44" role="img" aria-label="Works with SecuraCV">
+  <title>Works with SecuraCV</title>
+  <!-- The free compatibility badge. Rules of use: TRADEMARK.md §2 in the
+       SecuraCV repo — truthful compatibility, open config, buyer can
+       re-flash, badge unmodified. No permission or registration needed. -->
+  <defs>
+    <clipPath id="pill"><rect width="232" height="44" rx="12"/></clipPath>
+  </defs>
+  <g clip-path="url(#pill)">
+    <rect width="232" height="44" fill="#17150f"/>
+    <rect x="104" width="128" height="44" fill="#f5b301"/>
+    <circle cx="20" cy="22" r="5" fill="#f5b301"/>
+    <text x="34" y="27" font-family="system-ui,-apple-system,'Segoe UI',Verdana,sans-serif" font-size="11" font-weight="600" letter-spacing="1.4" fill="#fafafa">WORKS WITH</text>
+    <text x="168" y="28" text-anchor="middle" font-family="system-ui,-apple-system,'Segoe UI',Verdana,sans-serif" font-size="15" font-weight="800" letter-spacing="0.4" fill="#17150f">SecuraCV</text>
+  </g>
+  <rect width="231" height="43" x="0.5" y="0.5" rx="11.5" fill="none" stroke="#17150f" stroke-opacity="0.25"/>
+</svg>
