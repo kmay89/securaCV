@@ -46,7 +46,7 @@ Every target should do one satisfying, privacy-safe thing immediately after flas
 
 ## UX rule added in this pass
 
-The desktop flasher now shows a post-success **Canary hatched** card. It gives the user a concrete first action based on the selected product family: AP/dashboard + Identify for Canary/WAP, two-port + walk-through for Vision, and radar walk-by for Sense. That card is intentionally local and privacy-safe: it promises motion/presence, not identity recognition.
+The generated flasher catalog now carries each product's post-flash **hatch** moment, and the desktop flasher renders that catalog metadata after a successful flash. That keeps browser/native copy from drifting and gives the user a concrete first action based on the selected product family: AP/dashboard + Identify for Canary/WAP, two-port + walk-through for Vision, radar walk-by for Sense, and a separate settling path for Sense · Wellbeing. The copy is intentionally local and privacy-safe: it promises motion/presence, not identity recognition.
 
 ## Definition of done for the “hatched” experience
 

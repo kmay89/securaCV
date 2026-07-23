@@ -298,6 +298,45 @@ export function formatDetections(boxes, classes = WE2_CLASSES) {
   return out;
 }
 
+// Per-detection paint for the bench canvas: a stable identity color per box
+// index (so two people stay visually distinct frame to frame) and a confidence
+// band (ok ≥ 60, soft 35-59, faint < 35) that picks stroke weight/glow. Pure —
+// the canvas code just applies it. Host-tested (tests/we2.test.js).
+const PREVIEW_HUES = [140, 45, 200, 320, 20, 260, 80, 175]; // green first — the pinned person model leads with it
+export function stylizeDetections(boxes, classes = WE2_CLASSES) {
+  return formatDetections(boxes, classes).map((d, i) => {
+    const hue = PREVIEW_HUES[i % PREVIEW_HUES.length];
+    const band = d.score >= 60 ? "ok" : d.score >= 35 ? "soft" : "faint";
+    return {
+      ...d,
+      n: i + 1,
+      band,
+      color: `hsl(${hue} 90% ${band === "ok" ? 66 : 58}%)`,
+      fill: `hsl(${hue} 65% 14% / ${band === "ok" ? 0.92 : 0.85})`,
+    };
+  });
+}
+
+// The confidence-meter model: what the meter under the preview shows. `top` is
+// the best score in frame, `threshold` the module's own reporting floor
+// (AT+TSCORE) rendered as a tick — a box below it never even arrives, which is
+// exactly what the meter teaches. Pure + host-tested.
+export function meterModel(boxes, classes = WE2_CLASSES, threshold = 50) {
+  const dets = formatDetections(boxes, classes);
+  const top = dets.reduce((m, d) => Math.max(m, d.score), 0);
+  const thr = Math.max(0, Math.min(100, Math.round(Number(threshold) || 0)));
+  return {
+    count: dets.length,
+    top,
+    threshold: thr,
+    // margin: how far the best hit clears the floor (negative never happens on
+    // the wire — the module already filtered — but the math stays honest).
+    margin: dets.length ? top - thr : null,
+    level: !dets.length ? "idle" : top >= 60 ? "ok" : top >= 35 ? "soft" : "faint",
+    label: detectionSummary(boxes, classes),
+  };
+}
+
 // A one-line readout of what it sees right now — pluralized, with the top
 // confidence — for the "it sees you!" moment. "watching…" when nothing's found.
 export function detectionSummary(boxes, classes = WE2_CLASSES) {

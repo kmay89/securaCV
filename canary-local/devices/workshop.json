@@ -619,21 +619,31 @@
      "group": "Options",
      "label": "reed/Hall magnet pocket",
      "consequence": "",
-     "default": false
+     "default": false,
+     "bom": [
+      "SW2",
+      "MAG1"
+     ]
     },
     {
      "id": "opt_seal",
      "group": "Options",
      "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
      "consequence": "",
-     "default": false
+     "default": false,
+     "bom": [
+      "FIL1"
+     ]
     },
     {
      "id": "opt_mount",
      "group": "Options",
      "label": "opt_mount",
      "consequence": "",
-     "default": true
+     "default": true,
+     "bom": [
+      "SCR4"
+     ]
     },
     {
      "id": "mount_style",

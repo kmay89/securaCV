@@ -25,12 +25,48 @@ test("flash.json: every product names a chip the chips map + esptool know", () =
     assert.ok(ESPTOOL_CHIPS.has(p.chip), `${p.id}: unknown esptool chip "${p.chip}"`);
     assert.ok(catalog.chips[p.chip], `${p.id}: chip "${p.chip}" absent from chips map`);
     assert.ok(p.asset_stem && p.name && p.tagline, `${p.id}: missing display fields`);
+    assert.ok(p.hatch && p.hatch.title && p.hatch.body, `${p.id}: missing hatch copy`);
+    assert.ok(Array.isArray(p.hatch.steps) && p.hatch.steps.length >= 2, `${p.id}: missing hatch steps`);
     assert.ok(catalog.chips[p.chip].download_mode, `${p.chip}: no download-mode copy`);
   }
 });
 
 test("flash.json: fw_train is single-sourced from the registry", () => {
   assert.strictEqual(catalog.fw_train, registry.fw_train);
+});
+
+test("flash.json: hatch moments are privacy-safe and product-specific", () => {
+  for (const p of catalog.products) {
+    const copy = [p.hatch.kicker, p.hatch.title, p.hatch.body, ...p.hatch.steps]
+      .join(" ")
+      .toLowerCase();
+    assert.doesNotMatch(copy, /license plate|identity|recognition|re-id|embedding/, `${p.id}: hatch copy overclaims identity`);
+  }
+  const vision = catalog.products.find((p) => p.id === "securacv-canary-vision");
+  assert.match(vision.hatch.body, /presence only/);
+  assert.ok(vision.hatch.steps.some((s) => /Grove Vision AI V2/.test(s)), "Vision must remind users about the second port");
+
+  const sense = catalog.products.find((p) => p.id === "securacv-canary-sense");
+  assert.match(sense.hatch.body, /no camera, no mic/);
+
+  const wellbeing = catalog.products.find((p) => p.id === "securacv-canary-sense-wellbeing");
+  assert.ok(wellbeing.hatch.steps.some((s) => /breathing\/heartbeat/.test(s)), "Wellbeing gets its own settling instruction");
+});
+
+test("flash.json: live-receipt capability follows the firmware command", () => {
+  const receiptIds = catalog.products
+    .filter((p) => p.serial_receipt)
+    .map((p) => p.id)
+    .sort();
+  assert.deepStrictEqual(receiptIds, [
+    "securacv-canary",
+    "securacv-canary-vision",
+    "securacv-canary-vision-xiao-c3",
+    "securacv-canary-vision-xiao-s3",
+  ]);
+  for (const p of catalog.products) {
+    assert.strictEqual(typeof p.serial_receipt, "boolean", `${p.id}: capability missing`);
+  }
 });
 
 test("flash.json: the no-brick promise and recovery ladder are present", () => {
@@ -92,6 +128,23 @@ test("parsePartitionTable finds app partitions and stops at padding", async () =
   const chosen = pickAppPartition(apps);
   assert.strictEqual(chosen.label, "ota_0", "ota_0 preferred for the version read");
   assert.strictEqual(chosen.offset, 0x20000);
+});
+
+test("pickBootedAppPartition follows otadata's active slot", async () => {
+  const { pickBootedAppPartition } = await core();
+  const factory = { type: 0, subtype: 0x00, label: "factory" };
+  const ota0 = { type: 0, subtype: 0x10, label: "ota_0" };
+  const ota1 = { type: 0, subtype: 0x11, label: "ota_1" };
+  const apps = [factory, ota0, ota1];
+  // No otadata read → the old preference order.
+  assert.strictEqual(pickBootedAppPartition(apps, null).label, "ota_0");
+  // Fresh otadata → the bootloader runs factory.
+  assert.strictEqual(pickBootedAppPartition(apps, { fresh: true, activeOta: 0 }).label, "factory");
+  // A board that OTA'd into ota_1 is judged by ota_1, not stale ota_0.
+  assert.strictEqual(pickBootedAppPartition(apps, { fresh: false, activeOta: 1 }).label, "ota_1");
+  // Missing slot degrades to the preference order rather than failing.
+  assert.strictEqual(pickBootedAppPartition([factory, ota0], { fresh: false, activeOta: 1 }).label, "ota_0");
+  assert.strictEqual(pickBootedAppPartition([], null), null);
 });
 
 test("pickAppPartition falls back factory → first app", async () => {
@@ -763,6 +816,9 @@ test("validateCatalog passes the shipped catalog and flags real breakage", async
   // A product missing the chip the guard needs.
   const badProd = JSON.parse(JSON.stringify(catalog)); delete badProd.products[0].chip;
   assert.ok(validateCatalog(badProd).some((e) => /missing chip/.test(e)));
+  // Hatching copy is now first-class catalog metadata, not hardcoded UI copy.
+  const noHatch = JSON.parse(JSON.stringify(catalog)); delete noHatch.products[0].hatch;
+  assert.ok(validateCatalog(noHatch).some((e) => /missing hatch moment/.test(e)));
 });
 
 // ── self-healing: baud ladder, boot-log diagnosis, bridge detect, report ────

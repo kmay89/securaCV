@@ -93,13 +93,19 @@
 #include "chime.h"
 #include "core_compat.h"
 #include "glass_settings.h"
-#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
-#include "playground.h"
-#include <Preferences.h>
-// True once this boot handed the device to the peripheral bench (dedicated
-// bench env, or the dev-mode NVS latch set from Settings). Keeps loop() on the
-// bench path without re-reading NVS every pass.
-static bool s_devmode_active = false;
+#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) ||   \
+     (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE) ||         \
+     (defined(FEATURE_DEMO_MODE) && FEATURE_DEMO_MODE) ||     \
+     (defined(FEATURE_DEBUG_MODE) && FEATURE_DEBUG_MODE) ||   \
+     (defined(FEATURE_ARCADE) && FEATURE_ARCADE))
+// Mode system (docs/hardware/display_modes.md): this build carries at least
+// one non-fleet gear (bench / demo / debug / arcade). Which gear a boot
+// lands in is decided ONCE by the host-tested registry (NVS token, legacy
+// devmode migration, fail-safe to Fleet); the resolved gear is cached here
+// so loop() never re-reads NVS.
+#define CD_MODES_COMPILED 1
+#include "mode_glue.h"
+static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #endif
 
 #include <lvgl.h>
@@ -700,33 +706,19 @@ void setup() {
   boot_scene_banner(&bi);
   boot_scene_hardware(&bi);
 
-#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
-  // Peripheral bench (docs/hardware/dev_playground_43b.md): the guided test
-  // suite owns the device from here. Enter it when EITHER this is the dedicated
-  // bench build (FEATURE_PLAYGROUND) or the shipped firmware's dev-mode latch
-  // was set from Settings -> "dev mode" (FEATURE_DEVMODE + NVS). Everything
-  // below — WiFi, MQTT, OTA, discovery, provisioning, watchdog — is
-  // deliberately never initialized, so a bench/dev unit can't join the fleet,
-  // phone home, or take an update by accident.
-  {
-    bool enter_bench = false;
-  #if defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND
-    enter_bench = true;                 // dedicated bench env: always the bench
-  #endif
-  #if defined(FEATURE_DEVMODE) && FEATURE_DEVMODE
-    if (!enter_bench) {                 // shipped firmware: only if the latch is set
-      Preferences p;
-      if (p.begin("securacv", /*readOnly=*/true)) {
-        enter_bench = p.getBool("devmode", false);
-        p.end();
-      }
-    }
-  #endif
-    if (enter_bench) {
-      s_devmode_active = true;
-      canary::playground::playground_setup();
-      return;
-    }
+#ifdef CD_MODES_COMPILED
+  // Non-fleet gears (docs/hardware/display_modes.md): resolve this boot's
+  // gear from the NVS latch — the dedicated bench env always boots the
+  // bench, an unknown/uncarried token fails safe to the fleet face, and the
+  // legacy "devmode" bool still lands in the bench it asked for. A non-fleet
+  // gear owns the device from here; per-mode policy (mode_registry.h,
+  // host-tested) pins what it may touch — only debug brings the network up,
+  // none take OTA, none arm the watchdog. Everything below this block is
+  // fleet-only bring-up.
+  s_active_mode = canary::mode::boot_mode();
+  if (s_active_mode != canary::mode::Mode::Fleet) {
+    canary::mode::mode_enter(s_active_mode);
+    return;
   }
 #endif
 
@@ -951,9 +943,9 @@ void setup() {
 }
 
 void loop() {
-#if ((defined(FEATURE_PLAYGROUND) && FEATURE_PLAYGROUND) || (defined(FEATURE_DEVMODE) && FEATURE_DEVMODE))
-  if (s_devmode_active) {
-    canary::playground::playground_loop();
+#ifdef CD_MODES_COMPILED
+  if (s_active_mode != canary::mode::Mode::Fleet) {
+    canary::mode::mode_loop_step(s_active_mode);
     return;
   }
 #endif

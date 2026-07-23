@@ -86,7 +86,7 @@ button{font:inherit;color:inherit;cursor:pointer;}
 
 /* isometric room, embedded as the Overview */
 .room-wrap{border:1px solid var(--sep);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);background:var(--surface);}
-.room{width:100%;height:min(74vh,700px);border:0;display:block;}
+.room{width:100%;height:min(70vh,590px);border:0;display:block;}
 .ov-cards-head{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;}
 
 .crumbs{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-family:var(--mono);}

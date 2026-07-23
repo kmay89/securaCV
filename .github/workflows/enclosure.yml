@@ -20,15 +20,25 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR branch supersedes the in-flight render; main is never
+# cancelled (full signal per main commit).
+concurrency:
+  group: enclosure-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   render:
     name: Render + mesh check
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: docs/hardware/enclosure
     steps:
       - uses: actions/checkout@v7
+
+      - name: Web-builder manifest is in sync with the sources
+        run: python3 gen_builder_manifest.py --check
 
       - name: Install OpenSCAD + admesh
         run: |

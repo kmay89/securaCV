@@ -5,9 +5,9 @@
 // two-port picker answers right and wrong, the SenseCraft stage walks
 // Connect → port → Person Detection → upload → live preview with bounding
 // boxes on canvas, the host console boots to [DISC], the MQTT retained
-// surfaces + all 19 HA discovery entities land, a sandbox scene fires a real
-// witness event, and the Aim card streams the firmware's exact payload keys
-// — all with zero page errors.
+// surfaces + all 19 HA discovery entities land, and staged SSCMA boxes flow
+// through the compiled production detection/config/voxel/FSM core before a
+// witness event and Aim payload appear — all with zero page errors.
 //
 // Uses playwright (or playwright-core with PW_EXECUTABLE set), same as the
 // other probes. Prints VISION_PROBE_OK / exits 0 on success.
@@ -64,6 +64,11 @@ try {
   // version strip built from vision.json
   const chips = await page.$$eval(".hub-chips .chip", (e) => e.length);
   if (chips < 4) fail("version strip thin (" + chips + " chips)");
+  const chipText = await page.$eval(".hub-chips", (n) => n.textContent);
+  if (!/runtime\s+real firmware wasm/i.test(chipText))
+    fail("Vision runtime did not identify the production firmware wasm: " + chipText);
+  if (!(await page.evaluate(() => typeof globalThis.createCanaryVisionCore === "function")))
+    fail("committed Canary Vision firmware core factory did not load");
 
   // ── two-port picker: right and wrong answers both teach ──
   const tasks = await page.$$(".vis-task");

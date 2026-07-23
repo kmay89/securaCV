@@ -38,10 +38,16 @@ on:
 permissions:
   contents: read
 
+# Read-only freshness probe — one at a time is plenty.
+concurrency:
+  group: vision-model-verify
+  cancel-in-progress: false
+
 jobs:
   verify:
     name: Verify the latest release's pinned model
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 

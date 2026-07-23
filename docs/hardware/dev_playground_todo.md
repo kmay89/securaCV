@@ -126,6 +126,24 @@ When adding any of these, follow the ritual above **and** update the pin tracker
 
 ---
 
+## The mode system (the bench's next of kin) — BUILT, bench-pending
+
+The bench is now the first gear of the five-mode system —
+[`display_modes.md`](./display_modes.md): fleet / bench / demo / debug /
+arcade, one NVS `mode` token superseding the `devmode` bool (legacy bool
+honored forever — host-tested migration). **The runtime is implemented**:
+`src/mode/mode_glue.cpp` dispatches boot + loop for every gear, `main.cpp`
+branches through `boot_mode()`, the Settings "dev mode" row generalized to a
+modes list, and this playground's 3 s exit now goes through
+`mode_exit_to_fleet()` (clears token + legacy bool). Compile-verified by the
+`canary-display-dash-modes` / `-watch-modes` envs; pure cores host-tested
+(`test_mode_registry` / `test_demo_script` / `test_arcade_logic`); the
+browser twin is `canary-local/assets/mode-sim.js` + `tests/mode.test.js`
+(drift-locked against the Arduino mirror, playground-style). Remaining:
+the spec's wave-6 bench session on a real 4.3B.
+
+---
+
 ## TODO — the real gating work (not playground code)
 
 Everything the fieldbus/latent-capability PRs added is **`Built · bench-gated`**:

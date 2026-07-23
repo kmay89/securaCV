@@ -27,6 +27,7 @@ set -euo pipefail
 #   ./setup.sh arduino watch       # generate + stage the watch flavor
 #   ./setup.sh arduino dash        # generate + stage the dash flavor
 #   ./setup.sh arduino playground  # dash + FEATURE_PLAYGROUND on the 4.3B
+#   ./setup.sh arduino modes       # dash + every mode gear on the 4.3B
 #   ./setup.sh check               # verify toolchain (arduino-cli)
 #   ./setup.sh clean               # remove generated sketch sources
 
@@ -154,7 +155,7 @@ generate_shared() {
 // IDE's Tools->Board menu safe: you cannot build watch firmware for dash
 // hardware by forgetting a define (review catch).
 //
-// Overrides (for exotic boards): `./setup.sh arduino <watch|dash|playground>`
+// Overrides (for exotic boards): `./setup.sh arduino <watch|dash|playground|modes>`
 // writes the git-ignored flavor_local.h, or define CD_BUILD_DASH 0/1 (and
 // optionally CD_BOARD_DASH43B 1 / FEATURE_PLAYGROUND 1) there yourself. An
 // explicit override always wins over board inference.
@@ -234,7 +235,7 @@ EOF
 
 stage_flavor() {
   local flavor="$1"
-  local dash=0 b43=0 pg=0
+  local dash=0 b43=0 pg=0 devmode=0 demo=0 dbg=0 arcade=0
   case "$flavor" in
     watch)      dash=0 ;;
     dash)       dash=1 ;;
@@ -242,7 +243,12 @@ stage_flavor() {
     # flavor on the 4.3B pin map with the bench mode switched on — the
     # Arduino twin of the canary-display-playground PlatformIO env.
     playground) dash=1; b43=1; pg=1 ;;
-    *) err "Unknown flavor '$flavor' (watch|dash|playground)"; exit 1 ;;
+    # Mode system (docs/hardware/display_modes.md): the dash flavor on the
+    # 4.3B with every gear compiled in (bench doorway + demo + debug +
+    # arcade) — the Arduino twin of the canary-display-dash-modes env.
+    # Boots the fleet face; Settings -> "modes" is the doorway.
+    modes)      dash=1; b43=1; devmode=1; demo=1; dbg=1; arcade=1 ;;
+    *) err "Unknown flavor '$flavor' (watch|dash|playground|modes)"; exit 1 ;;
   esac
   # The committed dispatchers (pins.h/flavor_config.h) key on these
   # git-ignored lines — staging never dirties the tree.
@@ -252,6 +258,10 @@ stage_flavor() {
 #define CD_BUILD_DASH ${dash}
 #define CD_BOARD_DASH43B ${b43}
 #define FEATURE_PLAYGROUND ${pg}
+#define FEATURE_DEVMODE ${devmode}
+#define FEATURE_DEMO_MODE ${demo}
+#define FEATURE_DEBUG_MODE ${dbg}
+#define FEATURE_ARCADE ${arcade}
 EOF
   ok "Selected flavor: ${flavor} (flavor_local.h)"
 }
@@ -295,7 +305,7 @@ stage_lv_conf() {
 setup_arduino() {
   local flavor="${1:-}"
   if [ -z "$flavor" ]; then
-    err "Pick a flavor: ./setup.sh arduino watch | dash | playground"; exit 1
+    err "Pick a flavor: ./setup.sh arduino watch | dash | playground | modes"; exit 1
   fi
   remove_generated
   generate_shared
@@ -329,5 +339,5 @@ case "${1:-}" in
   regen)   remove_generated; generate_shared ;;
   check)   check_toolchain ;;
   clean)   remove_generated; ok "Removed generated sketch sources" ;;
-  *) echo "Usage: ./setup.sh {arduino <watch|dash|playground>|regen|check|clean}"; exit 1 ;;
+  *) echo "Usage: ./setup.sh {arduino <watch|dash|playground|modes>|regen|check|clean}"; exit 1 ;;
 esac

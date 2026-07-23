@@ -1,11 +1,16 @@
 # SecuraCV Flasher (desktop)
 
 The [SecuraCV Lab](https://securacv.com/lab) as a small native app. It detects
-your ESP32 Canary over USB-C, downloads the **signed** factory image from the
-project's GitHub release, and writes it — with **no browser, no Web Serial, no
-PlatformIO, no terminal**. Like the web flasher, you can't pick the wrong image
-(it reads the chip first) and you can't brick the board (the ESP32's first-stage
-bootloader is mask ROM).
+your ESP32 Canary over USB-C, downloads the official factory image from the
+project's GitHub release, verifies its size and SHA-256 (and its Ed25519
+signature when a non-placeholder release key is pinned), provisions the board,
+and writes it — with **no browser, no Web Serial, no PlatformIO, no terminal**.
+Like the web flasher, it reads the chip before exposing compatible images.
+
+The Vision flow also recognizes the Grove Vision AI V2 module's CH343 USB
+port. It preserves the ESP32 receipt while the cable is moved, writes the
+pinned model with the WE2 ROM/XMODEM protocol, and requires an AT response plus
+one inference before reporting that the Canary hatched.
 
 ## Why this exists
 
@@ -29,13 +34,23 @@ Rust-first.
 |---|---|---|
 | Shell | **Tauri v2** | ~5–10 MB, uses the OS WebView, Rust backend — fits this repo |
 | Flash engine | **espflash** (sidecar) | native ESP flashing, no browser; stable CLI, not a fragile library binding |
-| Serial | `serialport` crate | OS-native port enumeration |
+| Serial | `serialport` crate | OS-native enumeration, persistent monitor, and public device receipt capture |
+| Vision module | native WE2/XMODEM engine | verifies and burns the pinned model, then proves AT + inference |
 | Front-end | plain HTML/CSS/JS in `src/` | no build step, mirrors the Lab's look |
 | Self-update | `tauri-plugin-updater` | checks GitHub releases, one-click update |
 | Catalog | `canary-local/devices/flash.json` | embedded fresh every build by `build.rs` (via `OUT_DIR`) — no committed copy to drift; the chip guard works offline |
 
-The Rust commands live in `src-tauri/src/lib.rs`: `load_catalog`, `list_ports`,
-`detect_chip`, `fetch_manifest`, `flash`, `check_update`, `install_update`.
+The command registration lives in `src-tauri/src/lib.rs`. Release verification,
+NVS provisioning, the serial monitor/receipt parser, and the WE2 engine are
+split into `release.rs`, `provisioning.rs`, `serial_monitor.rs`, and `we2.rs`.
+
+For `usb-secrets` images, Wi-Fi and MQTT values are patched into the ESP32 NVS
+partition only after the untouched release image verifies. Passwords are not
+logged or serialized, and the UI clears them after a successful write. The
+patched image is handed to `espflash` through an atomically-created, randomly
+named private temporary file (mode 0600 on Unix) that is removed on every
+ordinary exit path. The host receipt records both the official release hash
+and the installed, device-specific hash.
 
 ## Layout
 
@@ -43,7 +58,7 @@ The Rust commands live in `src-tauri/src/lib.rs`: `load_catalog`, `list_ports`,
 desktop/
 ├── src/                     # front-end (index.html, styles.css, app.js)
 └── src-tauri/
-    ├── src/                 # main.rs, lib.rs (the flashing backend)
+    ├── src/                 # flashing, verification, provisioning, serial, WE2
     ├── build.rs             # embeds canary-local/devices/flash.json fresh each build
     ├── binaries/            # espflash sidecars (CI-populated, git-ignored)
     ├── icons/               # source.png + generator (set built by CI)
@@ -69,10 +84,18 @@ The workflow downloads the espflash sidecars, builds a **universal** macOS
 
 ### One-button Mac app build/release
 
-If you want both native Mac apps at once, use **Actions → Mac apps —
-one-button build/release → Run workflow**. Leave **publish** unchecked for a
-build-only smoke run, or check it to publish releases for both this Flasher app
-and the sibling SecuraCV Lab app.
+To build both native Mac apps at once:
+
+1. Open [**Actions → Build Mac apps (Flasher + Lab)**](https://github.com/kmay89/securaCV/actions/workflows/mac-apps-release.yml).
+2. Click **Run workflow**, choose the **main** branch, and leave **publish**
+   unchecked for a build-only smoke run.
+3. Check **publish** only when you want to publish the Flasher release and
+   create the sibling SecuraCV Lab draft release.
+
+GitHub only shows a newly added workflow in the Actions sidebar after its file
+exists on the repository's default branch. The launcher is now on **main**. If
+the entry is still missing, refresh the Actions page; as a fallback, run
+**Desktop Flasher — build & release** and **Desktop app release** separately.
 
 ### One-time: real self-update signing (recommended)
 
@@ -103,3 +126,10 @@ npm run dev
 ```
 
 Find your target triple with `rustc -vV | grep host`.
+
+## Verification
+
+From `desktop/src-tauri/`, run `cargo test --lib`,
+`cargo clippy --lib -- -D warnings`, and
+`RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps`. Build the paired host firmware
+with `pio run -e canary-vision-xiao-c3` from the repository root.

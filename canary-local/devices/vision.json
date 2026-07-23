@@ -368,7 +368,7 @@
       },
       {
         "tag": "[WIFI]",
-        "text": "Connecting SSID=\"YourHomeWiFi\" ..."
+        "text": "Connecting to the provisioned WiFi network ..."
       },
       {
         "tag": "[WIFI]",

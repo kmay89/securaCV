@@ -21,6 +21,7 @@ jobs:
   scripts:
     name: scripts/lint_*.sh
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       # Conformance + hygiene lints that previously had no CI gate.
@@ -38,5 +39,9 @@ jobs:
         run: python3 scripts/lint_docs_index.py
       - name: Build matrix matches platformio.ini + config.h
         run: python3 scripts/lint_build_matrix.py
+      - name: BOM CSVs — schema-clean and wired into the generator
+        run: python3 scripts/lint_bom.py
+      - name: BOM pricing engine — contract tests
+        run: python3 scripts/tests/test_bom_pricing.py
       - name: verify_pipeline.sh false-pass regression tests
         run: bash integrations/ha_frigate_mqtt/tests/test_verify_pipeline.sh

@@ -35,10 +35,17 @@ permissions:
   id-token: write      # OIDC identity used to sign the build-provenance attestation
   attestations: write  # upload the signed provenance to this repo's attestation store
 
+# One release build per tag; NEVER cancel a run mid-publish (half-uploaded
+# release assets) — concurrent runs queue instead.
+concurrency:
+  group: firmware-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-sign-release:
     name: Build, sign, and publish firmware
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v7
@@ -180,19 +187,13 @@ jobs:
           HEADER
           pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Configure Arduino CLI + libraries
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-          arduino-cli lib install "Crypto"
-          arduino-cli lib install "ArduinoJson"
-          arduino-cli lib install "NimBLE-Arduino"
+      - name: Install Arduino CLI + ESP32 core (cached)
+        uses: ./.github/actions/setup-arduino-esp32
+        with:
+          libraries: |
+            Crypto
+            ArduinoJson
+            NimBLE-Arduino
 
       - name: Build canary-wap (arduino-cli)
         run: |

@@ -35,7 +35,7 @@ namespace manifest {
 
 // Bump the minor when adding fields (additive), the major on a breaking change.
 // The website pins this exact string so a breaking change fails CI loudly.
-inline constexpr const char* SCHEMA = "securacv.canary.manifest/v1";
+static constexpr const char* SCHEMA = "securacv.canary.manifest/v1";
 
 // One interactive command the device answers, for the commands[] array. Key is
 // a single serial character; name is the short registry label ("identity").
@@ -75,6 +75,7 @@ struct Facts {
   uint32_t seq;
   uint32_t boots;
   int health;                 // 0..100, or <0 = unknown → emitted as null
+  int temp_c = -1000;         // die temperature °C; <= -273 = unknown → null
   bool tamper;
   const char* const* features; // enabled feature short-names
   size_t feature_count;
@@ -134,6 +135,10 @@ struct Writer {
     while (v && n < (int)sizeof b) { b[n++] = (char)('0' + (v % 10)); v /= 10; }
     while (n) raw(b[--n]);
   }
+  void i32(int32_t v) {
+    if (v < 0) { raw('-'); u32((uint32_t)(-(int64_t)v)); }
+    else u32((uint32_t)v);
+  }
   // A quoted "key": prefix, with the leading comma for all but the first pair.
   void key(const char* k, bool first) {
     if (!first) raw(',');
@@ -165,6 +170,11 @@ inline size_t build(const Facts& f, char* out, size_t cap) {
   w.key("health", false);
   if (f.health < 0) w.raw("null");
   else { int h = f.health > 100 ? 100 : f.health; w.u32((uint32_t)h); }
+  // Die temperature: how warm the chip itself runs. Optional — a build (or a
+  // chip) without the sensor leaves the default and readers see null.
+  w.key("temp_c", false);
+  if (f.temp_c <= -273) w.raw("null");
+  else w.i32(f.temp_c);
   w.key("tamper", false);       w.raw(f.tamper ? "true" : "false");
   w.key("features", false);
   w.raw('[');

@@ -193,10 +193,481 @@ PROVISIONING = {
                    "inherits it from the device’s memory.",
 }
 
+# Post-flash "hatching" copy. This lives in the generated catalog instead of
+# desktop/web UI branches so every flasher surface can share the same first-use
+# promise, and CI's catalog drift gate catches missing metadata for new products.
+HATCH_MOMENTS = {
+    "ap": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+            "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+            "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+            "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test.",
+        ],
+    },
+    "vision": {
+        "kicker": "Vision Canary hatched",
+        "title": "Your Vision Canary is waking up.",
+        "body": "Give it one visible, privacy-safe thing to notice immediately: presence only, no faces and no saved frames.",
+        "steps": [
+            "If you have not flashed the Grove Vision AI V2 module yet, move the USB-C cable to the module port and flash the pinned model.",
+            "Put the board where it can see a doorway, then walk through once.",
+            "Open Home Assistant and watch the presence entity flip to detected, then clear.",
+        ],
+    },
+    "sense": {
+        "kicker": "Sense Canary hatched",
+        "title": "Your Sense Canary is listening with radar.",
+        "body": "The first satisfying test is motion in empty air: no camera, no mic, just the mmWave witness waking up.",
+        "steps": [
+            "Power it from the room where it will live and wait for Home Assistant discovery.",
+            "Stand still for a breath, then walk past it at normal speed.",
+            "Watch presence flip in Home Assistant.",
+        ],
+    },
+    "sense-wellbeing": {
+        "kicker": "Wellbeing Canary hatched",
+        "title": "Your Sense Wellbeing Canary is listening with radar.",
+        "body": "Prove ordinary presence first, then let the gentler wellbeing signal settle before trusting breathing/heartbeat tiles.",
+        "steps": [
+            "Power it from the room where it will live and wait for Home Assistant discovery.",
+            "Walk past it once and watch presence flip in Home Assistant.",
+            "Sit still after the presence card is stable; then watch the wellbeing tile settle into its first breathing/heartbeat reading.",
+        ],
+    },
+}
+
+
+def hatch_kind(product_id: str, provisioning: str) -> str:
+    if "sense-wellbeing" in product_id:
+        return "sense-wellbeing"
+    if "sense" in product_id:
+        return "sense"
+    if "vision" in product_id:
+        return "vision"
+    return provisioning
+
 
 def die(msg: str) -> None:
     print(f"gen_flash.py: {msg}", file=sys.stderr)
     raise SystemExit(1)
+
+
+# ── the epic layer: roles, dials, reflexes, displays, per-setting help ──────
+# Same honesty rule as everything above: every number below is PARSED out of
+# the firmware tree (config.h / detect_config.h / registry.json / the lab's
+# own drift-gated vision.json), never typed here and hoped true.
+
+def read_const(path: Path, name: str) -> int:
+    """Read `#define NAME value` or `constexpr T NAME = value;` as an int."""
+    text = read(path)
+    m = re.search(rf"(?:#define\s+{name}\s+|constexpr\s+\w+\s+{name}\s*=\s*)(\d+)", text)
+    if not m:
+        die(f"constant {name} not found in {path.relative_to(REPO)}")
+    return int(m.group(1))
+
+
+def product_role(pid: str) -> str:
+    """Mirror of flash-core.js productRole — one word per board family."""
+    if re.search(r"display|watch|dash", pid):
+        return "display"
+    if "sense" in pid:
+        return "sense"
+    if "vision" in pid:
+        return "vision"
+    if "wap" in pid:
+        return "wap"
+    return "canary"
+
+
+VISION_CFG = REPO / "firmware/configs/canary-vision/default/config.h"
+VISION_BOUNDS = REPO / "firmware/projects/canary-vision/include/canary/detect_config.h"
+VISION_LAB = CANARY_LOCAL / "devices/vision.json"
+
+
+def vision_detect_block() -> dict:
+    """The Vision's four runtime dials: defaults from the firmware config,
+    bounds from detect_config.h (the clamps the setters enforce), and the
+    room presets from the lab's own drift-gated vision.json — the exact
+    values the Home Assistant numbers write, now bakeable at flash time
+    (NVS namespace "securacv": det_target u8, det_score u8, det_lost u32,
+    det_dwell u32 — detect_config.cpp)."""
+    defaults = {
+        "target": read_const(VISION_CFG, "CONFIG_PERSON_TARGET"),
+        "score": read_const(VISION_CFG, "CONFIG_SCORE_MIN"),
+        "lost_ms": read_const(VISION_CFG, "CONFIG_LOST_TIMEOUT_MS"),
+        "dwell_ms": read_const(VISION_CFG, "CONFIG_DWELL_START_MS"),
+    }
+    bounds = {
+        "score": [read_const(VISION_BOUNDS, "DETECT_SCORE_MIN_LO"),
+                  read_const(VISION_BOUNDS, "DETECT_SCORE_MIN_HI")],
+        "target": [0, 255],
+        "lost_ms": [read_const(VISION_BOUNDS, "DETECT_LOST_MS_LO"),
+                    read_const(VISION_BOUNDS, "DETECT_LOST_MS_HI")],
+        "dwell_ms": [read_const(VISION_BOUNDS, "DETECT_DWELL_MS_LO"),
+                     read_const(VISION_BOUNDS, "DETECT_DWELL_MS_HI")],
+    }
+    lab = json.loads(read(VISION_LAB))
+    presets = [{
+        "id": "ships",
+        "icon": "🐤",
+        "title": "As it ships",
+        "blurb": "The firmware’s own defaults — balanced for a first bring-up. "
+                 "Pick nothing and this is what you get.",
+        "values": dict(defaults),
+    }]
+    for uc in lab["placement"]["use_cases"]:
+        presets.append({
+            "id": uc["id"],
+            "icon": uc.get("icon", "·"),
+            "title": uc["title"],
+            "blurb": uc["blurb"],
+            "values": {
+                "score": uc["preset"]["score"],
+                "lost_ms": uc["preset"]["lost_ms"],
+                "dwell_ms": uc["preset"]["dwell_ms"],
+            },
+        })
+    return {
+        "note": "These are the SAME four numbers Home Assistant tunes live later "
+                "(cfg/*/set → NVS). Baking a preset here just means the Canary is "
+                "already dialed for its room on first boot — nothing is locked in.",
+        "nvs": {"namespace": "securacv",
+                "keys": {"target": "det_target", "score": "det_score",
+                         "lost_ms": "det_lost", "dwell_ms": "det_dwell"}},
+        "defaults": defaults,
+        "bounds": bounds,
+        "presets": presets,
+    }
+
+
+SENSE_CFG = {
+    "default": REPO / "firmware/configs/canary-sense/default/config.h",
+    "wellbeing": REPO / "firmware/configs/canary-sense/wellbeing/config.h",
+}
+
+SENSE_CONFIG_H = REPO / "firmware/projects/canary-sense/include/canary/sense_config.h"
+
+SENSE_KNOBS = [
+    # (id, macro, nvs key, bounds macros stem, unit, flavor)
+    # flavor None = both builds carry it. The NVS keys and bounds come from
+    # sense_config.{h,cpp} — the runtime twin of vision's detect_config.
+    ("present_debounce_ms", "CS_PRESENT_DEBOUNCE_MS", "sns_debounce", "SENSE_DEBOUNCE_MS", "ms", None),
+    ("clear_timeout_ms", "CS_CLEAR_TIMEOUT_MS", "sns_clear", "SENSE_CLEAR_MS", "ms", None),
+    ("stall_timeout_ms", "CS_RADAR_STALL_MS", "sns_stall", "SENSE_STALL_MS", "ms", None),
+    ("range_near_cm", "CS_RANGE_NEAR_CM", "sns_near", "SENSE_NEAR_CM", "cm", None),
+    ("range_mid_cm", "CS_RANGE_MID_CM", "sns_mid", "SENSE_MID_CM", "cm", None),
+    ("vitals_lock_ms", "CS_VITALS_LOCK_MS", "sns_vlock", "SENSE_VLOCK_MS", "ms", "wellbeing"),
+    ("vitals_lost_ms", "CS_VITALS_LOST_MS", "sns_vlost", "SENSE_VLOST_MS", "ms", "wellbeing"),
+]
+
+# Room presets for the radar — authored here (like the hatch moments), values
+# guided by the Sense pages' raise-it-when/lower-it-when playbook and bounded
+# by sense_config.h (asserted below, so an out-of-range preset can't ship).
+# "As it ships" is prepended at build time and writes nothing.
+SENSE_PRESETS = [
+    {
+        "id": "bedside", "icon": "🛏",
+        "title": "Bedside / sleep watch",
+        "blurb": "Slow to alarm, steady through stillness. Longer debounce and clear "
+                 "ride out turning-over; tighter bands match a bed two steps away; "
+                 "vitals lock waits for a genuinely settled signal.",
+        "values": {"present_debounce_ms": 500, "clear_timeout_ms": 5000,
+                   "range_near_cm": 100, "range_mid_cm": 250,
+                   "vitals_lock_ms": 6000, "vitals_lost_ms": 8000},
+    },
+    {
+        "id": "living", "icon": "🛋",
+        "title": "Living room / shared space",
+        "blurb": "Occupancy over motion: a long clear timeout rides through reading "
+                 "and TV stillness; wider bands cover the whole room.",
+        "values": {"present_debounce_ms": 300, "clear_timeout_ms": 4000,
+                   "range_near_cm": 200, "range_mid_cm": 450},
+    },
+    {
+        "id": "hall", "icon": "🚶",
+        "title": "Hallway / corridor",
+        "blurb": "People transit fast — a short debounce catches them, a snappy "
+                 "clear frees the room the moment they’re gone.",
+        "values": {"present_debounce_ms": 200, "clear_timeout_ms": 800,
+                   "range_near_cm": 150, "range_mid_cm": 350},
+    },
+    {
+        "id": "workshop", "icon": "🧰",
+        "title": "Garage / workshop",
+        "blurb": "Machinery shakes the air: a longer debounce shrugs off vibration "
+                 "phantoms; a far mid band covers the long room.",
+        "values": {"present_debounce_ms": 600, "clear_timeout_ms": 2000,
+                   "range_near_cm": 150, "range_mid_cm": 500},
+    },
+]
+
+
+def sense_reflexes_block(flavor: str) -> dict:
+    """The radar build's reflexes — now RUNTIME dials. Compiled CS_* values
+    seed the first boot; after that the seven numbers live in NVS
+    (sense_config.cpp), are HA-tunable over cfg/*/set, and the flasher can
+    bake a room preset at install time — the exact posture the Vision's
+    detect dials established. Defaults parsed from the flavor config,
+    bounds from sense_config.h, so no surface can drift from the firmware."""
+    cfg = SENSE_CFG[flavor]
+    knobs = []
+    for kid, macro, nvs_key, bstem, unit, only in SENSE_KNOBS:
+        if only and only != flavor:
+            continue
+        knobs.append({
+            "id": kid, "macro": macro, "unit": unit,
+            "value": read_const(cfg, macro),
+            "nvs": nvs_key,
+            "bounds": [read_const(SENSE_CONFIG_H, bstem + "_LO"),
+                       read_const(SENSE_CONFIG_H, bstem + "_HI")],
+        })
+    by_id = {k["id"]: k for k in knobs}
+    presets = [{
+        "id": "ships", "icon": "🐤",
+        "title": "As it ships",
+        "blurb": "The firmware’s own reflexes — balanced for a first bring-up. "
+                 "Pick nothing and this is what you get.",
+        "values": {k["id"]: k["value"] for k in knobs},
+    }]
+    for pr in SENSE_PRESETS:
+        values = {kid: v for kid, v in pr["values"].items() if kid in by_id}
+        for kid, v in values.items():
+            lo, hi = by_id[kid]["bounds"]
+            if not (lo <= v <= hi):
+                die(f"sense preset {pr['id']}: {kid}={v} outside [{lo},{hi}]")
+        # A preset only overrides what it names; unnamed knobs keep defaults.
+        presets.append({**{k: pr[k] for k in ("id", "icon", "title", "blurb")},
+                        "values": {**presets[0]["values"], **values}})
+    return {
+        "applies": "runtime",
+        "nvs": {"namespace": "securacv",
+                "keys": {k["id"]: k["nvs"] for k in knobs}},
+        "note": "These are live numbers now: they persist in the chip’s settings "
+                "region and Home Assistant can retune every one of them later "
+                "(cfg/*/set). Baking a preset here just means the Canary is already "
+                "dialed for its room on first boot — nothing is locked in.",
+        "lab": "senselab.html",
+        "knobs": knobs,
+        "presets": presets,
+    }
+
+
+REGISTRY = CANARY_LOCAL / "devices/registry.json"
+
+
+def displays_block() -> list:
+    """The boards that SHOW. Not flashable over the release channel (yet —
+    the release workflow doesn't publish display builds), so they are NOT
+    products; the flasher names them when it reads one off the wire, and
+    offers the same 1:1 WASM firmware emulator fleet.html boots as the
+    honest preview of the glass. Facts from registry.json + the committed
+    emulator build's own meta."""
+    reg = json.loads(read(REGISTRY))
+    out = []
+    for d in reg["devices"]:
+        if d.get("kind") != "display" or not d.get("emulator"):
+            continue
+        meta_path = CANARY_LOCAL / (d["emulator"]["module"].replace(".js", ".meta.json"))
+        meta = json.loads(read(meta_path))
+        g = d.get("glass", {})
+        out.append({
+            "id": d["id"],
+            "name": d["name"],
+            "tagline": d.get("tagline", ""),
+            "board": d.get("board", ""),
+            "match": "display",  # app-descriptor project names carry it
+            "panel": f'{g.get("panel", "?")} · {g.get("w")}×{g.get("h")}'
+                     + (" round" if g.get("round") else ""),
+            "glass": {"w": g.get("w"), "h": g.get("h"), "round": bool(g.get("round"))},
+            "shows": d.get("shows", []),
+            "emulator": {"module": d["emulator"]["module"],
+                         "factory": d["emulator"]["factory"],
+                         "fw_version": meta.get("fw_version"),
+                         "lvgl": meta.get("lvgl")},
+            "build_note": "Display builds aren’t in the signed release train yet — "
+                          "they build from source (firmware/projects/canary-display). "
+                          "The emulator below IS that firmware, compiled to run here.",
+        })
+    if not out:
+        die("no display devices found in registry.json — displays block would lie")
+    return out
+
+
+def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict) -> dict:
+    """Every dial and toggle the flasher shows, explained once — what it is,
+    when to touch it, what the default means. Short, calm, never scolding;
+    numeric defaults are interpolated from the parsed firmware values so the
+    help can't drift from the code. flash-core.js helpTopic() looks these up."""
+    vd = vision["defaults"]
+    sk = {k["id"]: k["value"] for k in sense_default["knobs"]}
+    wk = {k["id"]: k["value"] for k in sense_wellbeing["knobs"]}
+    return {
+        # ── the install itself ──
+        "erase_all": {
+            "label": "Erase the entire chip first",
+            "what": "Wipes every byte — firmware, settings, stored WiFi, witness history — "
+                    "then writes fresh. A factory reset and an install in one pass.",
+            "when": "A board that misbehaves in ways an ordinary reinstall doesn’t fix, "
+                    "or one you’re handing to someone else.",
+            "default": "Off — a normal install only touches the regions the new firmware needs.",
+        },
+        "skip_backup": {
+            "label": "Skip the automatic safety copy",
+            "what": "Normally every byte on the board is saved to your downloads before "
+                    "anything is written — that file is your undo button.",
+            "when": "Only when you already backed this exact board up this session and "
+                    "want to save the minute.",
+            "default": "Off — the copy happens by itself.",
+        },
+        "wifi_bake": {
+            "label": "WiFi at install time",
+            "what": "Typed here, your network is written into the chip’s settings region "
+                    "in the same pass as the firmware — the Canary joins it on first boot. "
+                    "It never leaves this page except over the USB cable.",
+            "when": "Always worth it if you know the network; leave it empty and the "
+                    "board raises its own setup WiFi instead.",
+            "default": "Empty — the setup network is the fallback either way.",
+        },
+        "local_file": {
+            "label": "Install a local file",
+            "what": "Flashes a .bin you built or downloaded yourself. Signatures can’t be "
+                    "checked for a personal file, but the write is still verified against "
+                    "the chip and the board still can’t be bricked.",
+            "when": "Your own builds, air-gapped setups, or restoring someone’s shared image.",
+        },
+        "restore_backup": {
+            "label": "Restore a backup",
+            "what": "Rewinds the board to the exact moment a backup file was taken — "
+                    "firmware, settings, identity, everything.",
+            "when": "After an experiment, a downgrade gone odd, or to clone a known-good state "
+                    "back onto the same board.",
+        },
+        "dev_channel": {
+            "label": "Dev channel",
+            "what": "?channel=dev in the address bar switches to the rolling prerelease — "
+                    "signed with the same key, newer, less soaked.",
+            "when": "You’re testing a fix the maintainer just cut. Remove the parameter to "
+                    "return to stable.",
+            "default": "Stable release.",
+        },
+        "flash_speed": {
+            "label": "Flash speed",
+            "what": "How fast bytes move over USB (921600 baud first). The flasher steps "
+                    "down by itself when a cable can’t keep up — speed never costs "
+                    "correctness, every byte is verified after.",
+            "default": "Automatic — no setting to get wrong.",
+        },
+        # ── Vision: the four live dials ──
+        "det_score": {
+            "label": "Confidence floor",
+            "what": "How sure the camera must be before “someone is here” counts (0–100). "
+                    "Higher shrugs off shadows and screen-people; lower catches more at "
+                    "the cost of false alarms.",
+            "when": "Raise it in rooms with monitors or glare; lower it if real people "
+                    "go unnoticed.",
+            "default": f"{vd['score']} — the shipped balance.",
+        },
+        "det_lost": {
+            "label": "Lost timeout",
+            "what": "How long with no person in frame before presence flips back to "
+                    "“clear”. Short feels snappy; long rides through someone sitting still.",
+            "when": "Short for doorways and hallways, long for sofas and desks.",
+            "default": f"{vd['lost_ms']} ms.",
+        },
+        "det_dwell": {
+            "label": "Dwell threshold",
+            "what": "How long someone must stay before it counts as dwelling — the "
+                    "difference between passing through and being there.",
+            "when": "Short where any stop matters (an entryway), long where lingering "
+                    "is the signal (a hallway at night).",
+            "default": f"{vd['dwell_ms']} ms.",
+        },
+        "det_target": {
+            "label": "What it looks for",
+            "what": "The model class treated as “person”. With the pinned person-detection "
+                    "model this stays 0 — it exists so a future model swap can’t strand "
+                    "the firmware.",
+            "when": "Only with a custom model whose person class sits elsewhere.",
+            "default": f"{vd['target']} — person, for the pinned model.",
+        },
+        "tscore": {
+            "label": "Module confidence (TSCORE)",
+            "what": "The camera module’s own reporting floor — below it, the module "
+                    "doesn’t even mention a box. Lives on the module, set over the "
+                    "bench wire, separate from the firmware’s confidence floor.",
+            "default": "50 — the model zoo default.",
+        },
+        "tiou": {
+            "label": "Module overlap (TIOU)",
+            "what": "How much two candidate boxes may overlap before the module merges "
+                    "them into one person instead of reporting two.",
+            "default": "45 — the model zoo default.",
+        },
+        # ── Sense: the radar reflexes (compile-time, shown honestly) ──
+        "sense_flavor": {
+            "label": "Which Sense build",
+            "what": "Canary Sense watches presence only. Sense · Wellbeing adds breathing "
+                    "and heart-rate sensing — a genuinely different privacy surface, which "
+                    "is why it’s a separate firmware, not a toggle.",
+            "when": "Wellbeing only where vitals are wanted (a bedside); presence-only "
+                    "everywhere else.",
+        },
+        "present_debounce_ms": {
+            "label": "Presence debounce",
+            "what": "How long the radar must keep seeing a target before “someone is "
+                    "here” is announced — the guard against blinks and noise.",
+            "default": f"{sk['present_debounce_ms']} ms in this build.",
+        },
+        "clear_timeout_ms": {
+            "label": "Clear timeout",
+            "what": "How long with no target before the room reads empty again.",
+            "default": f"{sk['clear_timeout_ms']} ms in this build.",
+        },
+        "stall_timeout_ms": {
+            "label": "Radar stall alarm",
+            "what": "No frames at all from the radar for this long means the sensor link "
+                    "itself is in trouble — state becomes “unknown”, never a silent guess.",
+            "default": f"{sk['stall_timeout_ms']} ms in this build.",
+        },
+        "range_near_cm": {
+            "label": "Near band",
+            "what": "Inside this distance counts as “near”. Only the coarse band ever "
+                    "leaves the device — raw centimetres stay on the board.",
+            "default": f"{sk['range_near_cm']} cm in this build.",
+        },
+        "range_mid_cm": {
+            "label": "Mid band",
+            "what": "Between near and this is “mid”; beyond it, “far”. Three honest "
+                    "buckets instead of a tracking dot.",
+            "default": f"{sk['range_mid_cm']} cm in this build.",
+        },
+        "vitals_lock_ms": {
+            "label": "Vitals lock",
+            "what": "Breathing must hold steady this long before the Wellbeing build "
+                    "trusts it — and vitals are suppressed entirely unless exactly one "
+                    "person is in view.",
+            "default": f"{wk['vitals_lock_ms']} ms in the Wellbeing build.",
+        },
+        "vitals_lost_ms": {
+            "label": "Vitals lost",
+            "what": "How long without a plausible breathing signal before the lock is "
+                    "dropped rather than guessed at.",
+            "default": f"{wk['vitals_lost_ms']} ms in the Wellbeing build.",
+        },
+        # ── displays ──
+        "display_emulator": {
+            "label": "The 1:1 emulator",
+            "what": "The real display firmware — same C++, same LVGL — compiled to run "
+                    "in the browser. The pixels you see are the pixels the glass will "
+                    "show, framebuffer out, touch in. It boots on the fleet page; the "
+                    "flasher itself runs a stricter security policy on purpose.",
+            "when": "Before building a Watch Station or Dash: try the face, the touch, "
+                    "the night floor, without hardware.",
+        },
+    }
 
 
 def read(path: Path) -> str:
@@ -288,6 +759,31 @@ def board_for_env(project: str, env: str) -> str:
     return found
 
 
+def supports_serial_receipt(project: str) -> bool:
+    """Derive the native flasher's post-write receipt gate from firmware.
+
+    A product supports the live receipt only when its own compiled sources wire
+    the shared self-manifest builder to the public ``j`` serial command.  This
+    deliberately is not another product capability table: adding or removing
+    the command in firmware changes flash.json on the next generator run, and
+    the existing catalog drift check makes that change visible in CI.
+    """
+    project_dir = REPO / project
+    source = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in sorted(project_dir.rglob("*"))
+        if path.is_file()
+        and not {".pio", "build", "dist"}.intersection(path.relative_to(project_dir).parts)
+        and path.suffix.lower() in {".c", ".cc", ".cpp", ".h", ".hpp", ".ino"}
+    )
+    has_builder = 'attest/self_manifest.h' in source and "emit_self_manifest" in source
+    has_command = bool(re.search(
+        r"case\s+'j'|\{\s*'j'\s*,\s*\"self_manifest\"",
+        source,
+    ))
+    return has_builder and has_command
+
+
 def main() -> None:
     registry = json.loads(read(CANARY_LOCAL / "devices/registry.json"))
     fw_train = registry.get("fw_train")
@@ -301,6 +797,9 @@ def main() -> None:
     manifest_url = f"{release_base}/manifest-flash.json"
 
     flavors = {f["name"]: f for f in json.loads(read(REPO / "firmware/flavors.json"))}
+
+    vision_detect = vision_detect_block()
+    sense_reflexes = {f: sense_reflexes_block(f) for f in ("default", "wellbeing")}
 
     products_out = []
     chips_used = set()
@@ -320,7 +819,9 @@ def main() -> None:
         if fam not in flavors and not (REPO / p["project"]).exists():
             die(f"{p['id']}: neither flavors.json nor {p['project']} knows this variant")
         chips_used.add(chip)
-        products_out.append({
+        role = product_role(p["id"])
+        hatch = HATCH_MOMENTS[hatch_kind(p["id"], p["provisioning"])]
+        entry = {
             "id": p["id"],
             "name": p["name"],
             "tagline": p["tagline"],
@@ -329,7 +830,19 @@ def main() -> None:
             "asset_stem": p["asset_stem"],
             "provisioning": p["provisioning"],
             "provisioning_note": PROVISIONING[p["provisioning"]],
-        })
+            "hatch": hatch,
+            "serial_receipt": supports_serial_receipt(p["project"]),
+            "role": role,
+        }
+        # The dials that genuinely apply to this product — Vision's four NVS
+        # numbers are flash-bakeable; Sense's reflexes are compile-time and
+        # say so. Nothing here is decorative.
+        if role == "vision":
+            entry["detect"] = vision_detect
+        elif role == "sense":
+            entry["reflexes"] = sense_reflexes[
+                "wellbeing" if "wellbeing" in p["id"] else "default"]
+        products_out.append(entry)
 
     doc = {
         "$generated_by": "canary-local/tools/gen_flash.py — do not edit by hand",
@@ -349,6 +862,13 @@ def main() -> None:
         "console_baud": 115200,
         "chips": {c: CHIP_INFO[c] for c in sorted(chips_used)},
         "products": products_out,
+        # The boards that SHOW — known and named by the flasher, previewed by
+        # the real firmware compiled to WASM, honest about not being in the
+        # release train yet. See displays_block().
+        "displays": displays_block(),
+        # Every dial and toggle, explained once (flash-core.js helpTopic).
+        "settings_help": settings_help_block(
+            vision_detect, sense_reflexes["default"], sense_reflexes["wellbeing"]),
         # The Vision's camera module — a different chip (Himax HX6538 behind a
         # CH343 bridge), a different engine (ROM bootloader + XMODEM, mirrored
         # from Seeed's open-source flasher), the same posture: pinned asset,
@@ -454,6 +974,64 @@ def we2_module_block(release_base: str) -> dict:
                   "WebSerial, the same wire protocol Seeed’s open-source flasher speaks, "
                   "clean-room implemented and pinned by tests/we2.test.js.",
         "docs": "docs/hardware/grove_vision_ai_v2_guide.md",
+        # The live bench: how to get the camera preview working, start to
+        # finish, plus the fixes for every way it usually goes sideways.
+        # Threshold defaults come from the drift-gated vision lab data (the
+        # SSCMA model-zoo YOLO defaults), never typed here.
+        "bench": bench_block(),
+    }
+
+
+VISION_LAB_WIRE_KEYS = ("tscore_default", "tiou_default")
+
+
+def bench_block() -> dict:
+    wire = json.loads(read(VISION_LAB))["model_load"]["wire"]
+    for k in VISION_LAB_WIRE_KEYS:
+        if not isinstance(wire.get(k), int):
+            die(f"vision.json model_load.wire.{k} missing — bench defaults would lie")
+    return {
+        "defaults": {"tscore": wire["tscore_default"], "tiou": wire["tiou_default"]},
+        "steps": [
+            "Plug the MODULE’s own USB-C port into this computer — the big port on "
+            "the camera carrier board, next to the Grove connector. The XIAO’s port "
+            "can’t reach the camera.",
+            "Click Connect and pick “USB Single Serial” (the CH343). If the model "
+            "isn’t on the module yet, burn it first — one click, verified.",
+            "Press “Start live preview”. Frames appear within a second or two, with "
+            "a box and a confidence score on everything the model finds.",
+            "Aim and light it like the real spot: face the camera, two to four "
+            "meters, light on you rather than behind you. Watch the meter climb.",
+            "Tune if needed: Confidence (TSCORE) is the module’s reporting floor — "
+            "raise it to shrug off weak phantoms, lower it to catch more. IoU (TIOU) "
+            "merges overlapping boxes of the same object.",
+            "Press Stop when done. Day-to-day aiming stays boxes-only over MQTT — "
+            "the video stream exists only on this attended bench.",
+        ],
+        "troubleshooting": [
+            {"when": "No port shows up in the picker",
+             "fix": "Wrong port (the XIAO’s instead of the module’s), a charge-only "
+                    "cable, or Linux missing the one udev rule — device guide §7. "
+                    "Unplug, replug into the module’s port, use a data cable."},
+            {"when": "Connected, but Start shows no frames",
+             "fix": "The module may still be in its bootloader — power-cycle it "
+                    "(unplug/replug), reconnect, start again. If it persists, the "
+                    "module might run non-SSCMA firmware; reflash the model here."},
+            {"when": "Frames, but never a box",
+             "fix": "Check the model is burned (the header above says so), then step "
+                    "back — Swift-YOLO wants the whole person in frame, not a face "
+                    "filling it. Try more light, or lower Confidence a notch."},
+            {"when": "The image is black or very dark",
+             "fix": "Peel the lens film if it’s still on, add light in front of the "
+                    "camera, and give the sensor a second to auto-expose."},
+            {"when": "Boxes flicker or split in two",
+             "fix": "Raise IoU (TIOU) slightly so overlapping candidates merge, or "
+                    "raise Confidence so marginal duplicates drop."},
+            {"when": "Scores feel low",
+             "fix": "Confidence is a reporting floor, not a grade — a steady 60-80% "
+                    "on a well-lit person is normal and plenty. Chase framing and "
+                    "light before chasing 99%."},
+        ],
     }
 
 

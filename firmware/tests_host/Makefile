@@ -112,6 +112,16 @@ OPTFEAT_INC = ../projects/canary-vision/include
 OPTFEAT_HDR = $(OPTFEAT_INC)/canary/vision/optical_features.h $(OPTFEAT_INC)/canary/types.h
 OPTFEAT_BIN = $(BUILD_DIR)/test_optical_features
 
+# Canary Vision detection pipeline: this is the exact allocation-free header
+# compiled by both vision_mgr.cpp on the ESP32 and the browser wasm core.
+VISION_INC = ../projects/canary-vision/include
+VISION_CFG = ../configs/canary-vision/default
+VISION_PIPE_HDR = $(VISION_INC)/canary/vision/detection_pipeline.h \
+                  $(VISION_INC)/canary/vision/optical_features.h \
+                  $(VISION_INC)/canary/detect_config.h \
+                  $(VISION_INC)/canary/types.h
+VISION_PIPE_BIN = $(BUILD_DIR)/test_vision_detection_pipeline
+
 .PHONY: all run clean
 all: run
 
@@ -154,7 +164,10 @@ $(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN)
+$(VISION_PIPE_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_detection_pipeline.cpp -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -167,6 +180,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FLEETVIEW_BIN)
 	./$(MANIFEST_BIN)
 	./$(OPTFEAT_BIN)
+	./$(VISION_PIPE_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)
