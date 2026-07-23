@@ -306,8 +306,32 @@ fn hub_flash_blocking(
         ));
     }
 
-    // 6) The gate. verified + still-eligible target + operator confirmation,
-    //    or this line does not produce a WriteAuthorization.
+    // 6) The gate. The download/decompress window is long and /dev paths get
+    //    reused, so re-resolve the disk NOW: it must still be present, still
+    //    classify eligible (authorize_write re-checks), and still be the SAME
+    //    device the operator confirmed — not another stick that inherited the
+    //    path mid-download.
+    let target = {
+        let fresh = enumerate()?
+            .into_iter()
+            .find(|d| d.path == disk_path)
+            .ok_or_else(|| {
+                format!("{disk_path} disappeared while the image was being prepared — was it unplugged?")
+            })?;
+        if fresh.model != target.model
+            || fresh.size_bytes != target.size_bytes
+            || fresh.removable != target.removable
+            || fresh.external != target.external
+            || fresh.system != target.system
+        {
+            return Err(format!(
+                "{disk_path} now reports a different device than the one confirmed \
+                 ({} → {}) — replug the intended card and start again",
+                target.model, fresh.model
+            ));
+        }
+        fresh
+    };
     let authz = authorize_write(plan, &verified, &target, confirmed).map_err(|e| e.message())?;
 
     // 7) The destructive write + full read-back.

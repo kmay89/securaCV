@@ -74,7 +74,59 @@ pub fn write_image(
 /// the same span off `device` and require its hash to equal `expected_sha256`
 /// (case-insensitively, same as the rest of the trust chain). Returns the
 /// read-back hash. Host-tested against plain files.
-pub fn write_verified<D: Read + Write + Seek>(
+/// Force written bytes down to the medium before the read-back, and drop any
+/// cached pages so verification reads the device rather than the kernel's
+/// write/page cache. `write_verified` stays generic so the host tests can
+/// drive it with cursors and plain files; real block devices get the strict
+/// behavior via the `File` impl.
+pub trait SyncStorage {
+    fn sync_storage(&mut self) -> std::io::Result<()>;
+    /// Best-effort page-cache invalidation for the span about to be re-read.
+    fn drop_read_cache(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<T> SyncStorage for std::io::Cursor<T> {
+    fn sync_storage(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl SyncStorage for std::fs::File {
+    fn sync_storage(&mut self) -> std::io::Result<()> {
+        // fsync, not flush: flush() is a no-op for File and leaves the bytes
+        // in the kernel cache, where a counterfeit card's lies are invisible.
+        self.sync_all()
+    }
+    #[cfg(target_os = "linux")]
+    fn drop_read_cache(&mut self) -> std::io::Result<()> {
+        use std::os::unix::io::AsRawFd;
+        // Evict this handle's clean pages so the verify pass re-reads the
+        // medium instead of being satisfied from cache.
+        let rc =
+            unsafe { libc::posix_fadvise(self.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::from_raw_os_error(rc))
+        }
+    }
+    #[cfg(target_os = "macos")]
+    fn drop_read_cache(&mut self) -> std::io::Result<()> {
+        use std::os::unix::io::AsRawFd;
+        // Raw rdisk I/O is already uncached; F_NOCACHE covers the /dev/disk
+        // and regular-file cases.
+        let rc = unsafe { libc::fcntl(self.as_raw_fd(), libc::F_NOCACHE, 1) };
+        if rc == -1 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+pub fn write_verified<D: Read + Write + Seek + SyncStorage>(
     device: &mut D,
     mut image: impl Read,
     image_bytes: u64,
@@ -104,6 +156,9 @@ pub fn write_verified<D: Read + Write + Seek>(
     device
         .flush()
         .map_err(|e| format!("couldn't flush the device: {e}"))?;
+    device
+        .sync_storage()
+        .map_err(|e| format!("couldn't sync the device before verification: {e}"))?;
     if done != image_bytes {
         return Err(format!(
             "the image changed size mid-write ({done} of {image_bytes} bytes) — aborting"
@@ -111,6 +166,9 @@ pub fn write_verified<D: Read + Write + Seek>(
     }
 
     // ── read back ──
+    device
+        .drop_read_cache()
+        .map_err(|e| format!("couldn't invalidate the read cache before verification: {e}"))?;
     device
         .seek(SeekFrom::Start(0))
         .map_err(|e| format!("couldn't rewind the device for verification: {e}"))?;
@@ -355,6 +413,11 @@ mod tests {
         // counterfeit card. The read-back must catch it.
         struct LyingDevice {
             inner: std::io::Cursor<Vec<u8>>,
+        }
+        impl SyncStorage for LyingDevice {
+            fn sync_storage(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
         impl Write for LyingDevice {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
