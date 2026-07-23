@@ -503,6 +503,7 @@ function mountBench(ctx, at, opts = {}) {
   const ctx2 = cv.getContext("2d");
   let lastFrame = null;      // the current camera still (Image)
   let previewing = false, seen = false;
+  let streamed = false;      // any INVOKE event since the last Start press
   let frames = 0, fpsT0 = performance.now();
 
   function render(boxes) {
@@ -559,6 +560,7 @@ function mountBench(ctx, at, opts = {}) {
 
   at.onEvent((f) => {
     if (!previewing || !f.data) return;
+    streamed = true;
     if (f.data.image) {
       const image = new Image();
       image.onload = () => {
@@ -580,11 +582,18 @@ function mountBench(ctx, at, opts = {}) {
 
   startBtn.addEventListener("click", async () => {
     previewing = true;
+    streamed = false;
     seen = false; seenBanner.classList.add("flash-hidden");
     meta.textContent = "watching…";
     startBtn.disabled = true; stopBtn.disabled = false;
-    const inv = await at.cmd("INVOKE=-1,0,0", { timeoutMs: 4000 }); // continuous, with frames
-    if (!inv || inv.code !== 0) {
+    // Continuous invoke, with frames. On SSCMA the stream itself arrives as
+    // type-1 INVOKE events (docs/hardware/grove_vision_ai_v2_guide.md §8) and
+    // a type-0 ack may or may not precede it depending on firmware build —
+    // so success is EITHER signal, and failure is only "nothing arrived".
+    const inv = await at.cmd("INVOKE=-1,0,0", { timeoutMs: 4000 });
+    if (streamed || (inv && inv.code === 0) || !previewing) return;
+    await sleep(1500); // one more beat — a slow first frame is not a failure
+    if (previewing && !streamed) {
       meta.textContent = "The module didn’t start streaming — power-cycle it (unplug/replug), " +
         "reconnect, and try again. The guide above lists the other usual causes.";
       previewing = false;
