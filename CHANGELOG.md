@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### flasher — the modes multi-tool joins the display release train
+
+- **`securacv-canary-display-dash-modes` is flashable** alongside the
+  watch and dash cards that already ride the train: the 4.3B multi-tool
+  that boots the fleet face and carries the bench / demo / debug / arcade
+  gears behind Settings → modes. Built like its siblings — an arduino-cli
+  `--profile modes` build (the sketch's committed profile pins the
+  Waveshare 4.3B FQBN), a signed per-product manifest, an entry in
+  `build_flash_manifest.py`'s BUILD map, and a `gen_flash.py` product row
+  regenerated into `flash.json`.
+- **Distinct OTA/flash product, on purpose.** A modes unit must never
+  cross-grade to the plain-dash image — that would silently strip the
+  gears. Same rule that keeps a watch image off a dash.
+- **Display-specific hatch moments:** the join-QR first light, plus a
+  "with gears" variant (`display-modes`) that points at the modes doorway.
+  The displays' emulator cards now cross-link their flashable product
+  (`flash_product`); the flash button still lights only when a release's
+  `manifest-flash.json` actually offers the image. Flasher docs gain
+  §The display family (`docs/browser_flasher.md`); the modes spec's Waves
+  ledger gains wave 7.
+
 ### GPS/GNSS — RMC status-flag fix + GPS-derived system clock
 
 - **RMC 'V' (void) sentences no longer trusted as fixes.** Both NMEA parsers
@@ -34,8 +55,7 @@
   one is available — floored against the same "clock looks unset" epoch,
   re-checked periodically to correct crystal drift, and only stepping the
   clock when it disagrees by more than a second so a synced clock isn't
-  re-written every cycle.
-### canary-display — the gears turn: full mode runtime + the browser twin
+  re-written every cycle.### canary-display — the gears turn: full mode runtime + the browser twin
 
 - **The mode system is now end-to-end firmware** (Built · compile-gated ·
   bench-pending — `docs/hardware/display_modes.md` §Waves). The glue

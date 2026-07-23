@@ -102,10 +102,12 @@ CHIP_INFO = {
 }
 
 # The published, flashable product line. Mirrors the release assets in
-# .github/workflows/firmware-release.yml — including the two display flavors,
-# built there from the sketch's committed profiles. `env` + `board` are
-# re-verified against the firmware tree below; `asset_stem` is the release
-# binary name minus version and extension.
+# .github/workflows/firmware-release.yml — including the display flavors
+# (watch / dash / dash-modes), built there from the sketch's committed
+# profiles. `env` + `board` are re-verified against the firmware tree below;
+# `asset_stem` is the release binary name minus version and extension.
+# Order matters for the picker's recommendation: the sensing flagship stays
+# first per chip, so the display cards never outrank a witness by accident.
 PRODUCTS = [
     {
         "id": "securacv-canary",
@@ -194,6 +196,16 @@ PRODUCTS = [
         "asset_stem": "canary-display-dash",
         "project": "firmware/projects/canary-display",
         "env": "profile:dash",
+        "board": "waveshare_esp32s3_lcd43",
+        "provisioning": "on-glass",
+    },
+    {
+        "id": "securacv-canary-display-dash-modes",
+        "name": "Canary Dash · Modes",
+        "tagline": "The 4.3B multi-tool — the fleet face plus the bench, demo, debug and arcade gears.",
+        "asset_stem": "canary-display-dash-modes",
+        "project": "firmware/projects/canary-display",
+        "env": "profile:modes",
         "board": "waveshare_esp32s3_lcd43",
         "provisioning": "on-glass",
     },
@@ -288,12 +300,32 @@ HATCH_MOMENTS = {
             "Sit still after the presence card is stable; then watch the wellbeing tile settle into its first breathing/heartbeat reading.",
         ],
     },
+    "display": {
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
+        "steps": [
+            "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+            "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+            "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever.",
+        ],
+    },
+    "display-modes": {
+        "kicker": "Display hatched — with gears",
+        "title": "Your glass is waking up, and it's a multi-tool.",
+        "body": "Same first light as any display — plus four extra gears a reboot away, each with a 3-second hold to come home.",
+        "steps": [
+            "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+            "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and the fleet face fades in.",
+            "Open Settings → modes to find the gears: the peripheral bench, the scripted demo, on-glass diagnostics, and the arcade. Hold the glass 3 s in any of them to return to the fleet face.",
+        ],
+    },
 }
 
 
 def hatch_kind(product_id: str, provisioning: str) -> str:
     if "display" in product_id:
-        return "display"
+        return "display-modes" if "modes" in product_id else "display"
     if "sense-wellbeing" in product_id:
         return "sense-wellbeing"
     if "sense" in product_id:
@@ -669,11 +701,12 @@ REGISTRY = CANARY_LOCAL / "devices/registry.json"
 
 
 def displays_block() -> list:
-    """The boards that SHOW. Not flashable over the release channel (yet —
-    the release workflow doesn't publish display builds), so they are NOT
-    products; the flasher names them when it reads one off the wire, and
-    offers the same 1:1 WASM firmware emulator fleet.html boots as the
-    honest preview of the glass. Facts from registry.json + the committed
+    """The boards that SHOW. Since the mode-system wave they are ALSO
+    flashable products (see PRODUCTS — watch/dash/dash-modes ride the
+    signed release train); this block remains the emulator-preview layer:
+    the flasher names a display when it reads one off the wire, and offers
+    the same 1:1 WASM firmware emulator fleet.html boots as the honest
+    preview of the glass. Facts from registry.json + the committed
     emulator build's own meta."""
     reg = json.loads(read(REGISTRY))
     out = []
@@ -701,6 +734,8 @@ def displays_block() -> list:
                           "firmware release train now. The emulator is the SAME "
                           "firmware compiled for the browser: try the glass before "
                           "(or after) you flash it.",
+            # Cross-link to the flashable product card (same id, securacv- prefix).
+            "flash_product": f"securacv-{d['id']}",
         })
     if not out:
         die("no display devices found in registry.json — displays block would lie")
@@ -1022,7 +1057,8 @@ def board_for_env(project: str, env: str) -> str:
             die(f"{project}: profile '{prof}' (or its fqbn) not found in {candidates[0].name}")
         fqbn_board = m.group(1)
         fqbn_to_pio = {"XIAO_ESP32S3": "seeed_xiao_esp32s3",
-                       "esp32s3": "waveshare_esp32s3_lcd43"}
+                       "esp32s3": "waveshare_esp32s3_lcd43",
+                       "waveshare_esp32_s3_touch_lcd_43b": "waveshare_esp32s3_lcd43"}
         if fqbn_board not in fqbn_to_pio:
             die(f"unknown profile FQBN board '{fqbn_board}' — extend fqbn_to_pio")
         return fqbn_to_pio[fqbn_board]
@@ -1035,7 +1071,8 @@ def board_for_env(project: str, env: str) -> str:
             die(f"{project}: FQBN board '{fqbn_board}' not found in firmware-release.yml")
         # Map the FQBN board to a PlatformIO board id for the chip lookup.
         fqbn_to_pio = {"XIAO_ESP32S3": "seeed_xiao_esp32s3",
-                       "esp32s3": "waveshare_esp32s3_lcd43"}
+                       "esp32s3": "waveshare_esp32s3_lcd43",
+                       "waveshare_esp32_s3_touch_lcd_43b": "waveshare_esp32s3_lcd43"}
         if fqbn_board not in fqbn_to_pio:
             die(f"unknown FQBN board '{fqbn_board}' — extend fqbn_to_pio")
         return fqbn_to_pio[fqbn_board]

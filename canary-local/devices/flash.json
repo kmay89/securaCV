@@ -909,13 +909,13 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "hatch": {
-        "kicker": "Display Canary hatched",
-        "title": "Watch the glass — it comes alive.",
-        "body": "This Canary SHOWS. The proof isn’t in a console: after the splash, its face comes up and walks you through first flight on the screen itself.",
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
         "steps": [
-          "Keep it powered and watch the splash give way to the on-glass welcome.",
-          "Follow the wizard on the screen — WiFi (unless you baked it here), then meeting the fleet.",
-          "Tap the glass: it feels touch. The same face is running in the emulator on the fleet page, pixel for pixel."
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
         ]
       },
       "serial_receipt": false,
@@ -944,13 +944,13 @@
       "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
       "wifi_nvs": "string",
       "hatch": {
-        "kicker": "Display Canary hatched",
-        "title": "Watch the glass — it comes alive.",
-        "body": "This Canary SHOWS. The proof isn’t in a console: after the splash, its face comes up and walks you through first flight on the screen itself.",
+        "kicker": "Display hatched",
+        "title": "Your glass is waking up.",
+        "body": "First light is the whole setup: the display guides you from its own screen — no app, no account, and it never reboot-loops on a fresh network.",
         "steps": [
-          "Keep it powered and watch the splash give way to the on-glass welcome.",
-          "Follow the wizard on the screen — WiFi (unless you baked it here), then meeting the fleet.",
-          "Tap the glass: it feels touch. The same face is running in the emulator on the fleet page, pixel for pixel."
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and you're done typing.",
+          "The fleet face fades in and every Canary on your broker appears on its own — retained topics, no pairing, ever."
         ]
       },
       "serial_receipt": false,
@@ -963,6 +963,41 @@
         },
         "emulated": {
           "href": "fleet.html#canary-display-dash",
+          "label": "🧪 the 1:1 twin — the same firmware, in the browser",
+          "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows."
+        }
+      }
+    },
+    {
+      "id": "securacv-canary-display-dash-modes",
+      "name": "Canary Dash · Modes",
+      "tagline": "The 4.3B multi-tool — the fleet face plus the bench, demo, debug and arcade gears.",
+      "chip": "ESP32-S3",
+      "board": "waveshare_esp32s3_lcd43",
+      "asset_stem": "canary-display-dash-modes",
+      "provisioning": "on-glass",
+      "provisioning_note": "It sets itself up on its own glass: the screen walks you through WiFi and the fleet on first boot. Bake WiFi here during the install and it skips straight to meeting your Canaries.",
+      "wifi_nvs": "string",
+      "hatch": {
+        "kicker": "Display hatched — with gears",
+        "title": "Your glass is waking up, and it's a multi-tool.",
+        "body": "Same first light as any display — plus four extra gears a reboot away, each with a 3-second hold to come home.",
+        "steps": [
+          "Watch the splash land, then the hello: a fresh display shows a join QR on its own glass (a device-unique setup network).",
+          "Scan the QR with your phone — the setup page opens by itself; pick your home Wi-Fi and the fleet face fades in.",
+          "Open Settings → modes to find the gears: the peripheral bench, the scripted demo, on-glass diagnostics, and the arcade. Hold the glass 3 s in any of them to return to the fleet face."
+        ]
+      },
+      "serial_receipt": false,
+      "role": "display",
+      "prove": {
+        "real": {
+          "kind": "glass",
+          "label": "Watch the glass — it comes alive",
+          "how": "The proof is the screen itself: splash, then the face, then the on-glass wizard. Touch works."
+        },
+        "emulated": {
+          "href": "fleet.html#canary-display-dash-modes",
           "label": "🧪 the 1:1 twin — the same firmware, in the browser",
           "how": "The fleet page boots the REAL display firmware compiled to WASM — the pixels here are the pixels the glass shows."
         }
@@ -994,7 +1029,8 @@
         "fw_version": "2.2.0",
         "lvgl": "v8.4.0"
       },
-      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it."
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-watch"
     },
     {
       "id": "canary-display-dash",
@@ -1020,7 +1056,8 @@
         "fw_version": "2.2.0",
         "lvgl": "v8.4.0"
       },
-      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it."
+      "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
+      "flash_product": "securacv-canary-display-dash"
     }
   ],
   "settings_help": {

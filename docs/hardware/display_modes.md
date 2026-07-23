@@ -248,6 +248,7 @@ Uniform, and identical to what the bench already taught users:
 | 4 | **arcade**: `FEATURE_ARCADE` (dash); `src/mode/arcade_mode.cpp` — Canary Catch on the host-tested `arcade_logic.h` plan/stats/verdict; `ARC1` serial + the QA report screen. | **Built** — core host-tested; bench-pending |
 | 5 | **The browser twin**: `canary-local/assets/mode-sim.js` (registry + storyline + latch semantics, DOM-free) drift-locked by `canary-local/tests/mode.test.js` against the Arduino mirror; the website `/modes` page (gears, policy table, latch simulator, storyline player) is the pending carry-over. **Plus the real thing:** the canary-local emulator page's "play the demo storyline" button walks the same drift-locked beats through the staged household into the REAL wasm firmware — signed chains and all, where the browser has Ed25519. | **Twin done — CI-tested; page pending** |
 | 6 | **The bench session**: the executable checklist is [`board_43b_activation_bench.md` §6](./board_43b_activation_bench.md) — flash `canary-display-dash-modes`, walk doorway/latch/migration, each gear's pass signals (`DM1`/`DBG1`/`ARC1`), exits, then flip per-gear defaults where earned. | **Pending — needs hardware** |
+| 7 | **The flasher**: the display family joined the release train as three distinct OTA products — `securacv-canary-display-watch` / `-dash` / **`-dash-modes`** (its own product, so a modes unit can never cross-grade to plain dash and silently lose the gears). Flasher catalog cards with display hatch moments (`gen_flash.py` → `flash.json`), factory-image recipes (`build_flash_manifest.py`), signed manifests + version guards in `firmware-release.yml` / `flasher-release.yml`. The flash button lights when the next `fw-v*` release carries the images. | **Done — pipeline-tested; artifacts land with the next release** |
 
 Each wave follows the capability-map shipping reality: feature-gated default
 0, dedicated env for CI compile-verification, byte-neutral to the emulator's
@@ -255,7 +256,7 @@ Each wave follows the capability-map shipping reality: feature-gated default
 until it has run on a bench. When a wave lands, update this table and the
 README in the same PR — the docs and the firmware must never disagree.
 
-### Build it
+### Build it — or flash it
 
 ```bash
 # PlatformIO (compile-verification envs; CI builds these on every PR)
@@ -267,6 +268,11 @@ pio run -e canary-display-watch-modes    # watch: fleet + demo + debug
 ./setup.sh arduino modes                 # dash + every gear on the 4.3B
 arduino-cli compile --profile modes
 ```
+
+No toolchain? The **browser flasher** (`canary-local/flash.html`) carries
+the released images — pick **Canary Dash · Modes** for the 4.3B multi-tool
+(`securacv-canary-display-dash-modes`, its own signed OTA product; see
+[`docs/browser_flasher.md`](../browser_flasher.md) §The display family).
 
 Enter a gear on the glass: **Settings → modes → (gear) → enter** (one-gear
 builds keep the familiar "dev mode" row). Exit any gear: **hold the glass

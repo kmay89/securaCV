@@ -205,6 +205,29 @@ world-class installer guards its own supply chain.
   map's own text, and walks the flasher's module graph so a *new, unpinned*
   vendored import fails CI. The hashes can't silently rot or be skipped.
 
+## The display family (watch / dash / dash-modes)
+
+Since the mode-system wave the flasher's product line includes the three
+**canary-display** images: `securacv-canary-display-watch` (the round
+bedside puck), `-dash` (the plain Waveshare 4.3 wall panel), and
+`-dash-modes` — the 4.3B multi-tool that boots the fleet face and carries
+the bench / demo / debug / arcade gears behind Settings → modes
+(`docs/hardware/display_modes.md`). Three deliberate properties:
+
+- **Three distinct OTA products.** A modes unit must never cross-grade to
+  the plain-dash image (it would silently strip the gears *and* swap the
+  4.3B pin map for the plain 4.3's) — same rule that keeps a watch image
+  off a dash.
+- **Provisioning is the glass itself** (`provisioning: "ap"`): a fresh
+  display shows a join QR on its own screen and walks the user through —
+  the release builds carry the same NVS-backed placeholder scheme as
+  vision/sense.
+- **The catalog can run ahead of the release.** Display cards appear in
+  the picker as soon as `flash.json` carries them; the flash button lights
+  up only when a release's `manifest-flash.json` actually offers the image
+  (`manifestEntry` returns nothing until then). The emulator preview on the
+  same page is live either way.
+
 ## Going live (owner steps)
 
 Everything is built; the official images light up when a release is cut:

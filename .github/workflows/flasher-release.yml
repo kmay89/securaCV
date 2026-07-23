@@ -158,6 +158,22 @@ jobs:
             --output-dir /tmp/wap-build \
             firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino
 
+      - name: Build canary-display watch + dash + modes (arduino-cli, profile-pinned)
+        # Same profile builds as firmware-release.yml (sketch.yaml pins the
+        # platform + libs; profiles install their own isolated core). Without
+        # this step the out-of-band rebuild would silently drop the display
+        # products from the flasher — build_flash_manifest only packages the
+        # build dirs that exist. Non-blocking for the same reason as there.
+        run: |
+          cd firmware/projects/canary-display/arduino/canary_display
+          for P in watch dash modes; do
+            if ! arduino-cli compile --profile "$P" \
+                --output-dir "/tmp/display-${P}-build" canary_display.ino; then
+              echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this rebuild"
+            fi
+          done
+          cd "$GITHUB_WORKSPACE"
+
       - name: Build factory images + manifest-flash.json
         env:
           VERSION: ${{ steps.tag.outputs.version }}
