@@ -31,6 +31,7 @@ concurrency:
 jobs:
   viewer:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
     - uses: actions/setup-node@v7
@@ -49,11 +50,14 @@ jobs:
 
   canary-bridge:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
     - uses: actions/setup-node@v7
       with:
         node-version: '22'
+        cache: npm
+        cache-dependency-path: canary-vision/package-lock.json
     - name: Install canary-vision deps
       working-directory: canary-vision
       run: npm install --workspaces
@@ -66,6 +70,7 @@ jobs:
 
   selftest-ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
     - uses: actions/setup-node@v7
@@ -81,11 +86,14 @@ jobs:
   canary-vision-lint:
     name: ESLint (canary-vision)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
     - uses: actions/setup-node@v7
       with:
         node-version: '22'
+        cache: npm
+        cache-dependency-path: canary-vision/package-lock.json
     - name: Install canary-vision deps
       working-directory: canary-vision
       run: npm ci

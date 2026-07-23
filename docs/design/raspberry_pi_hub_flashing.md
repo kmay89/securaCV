@@ -178,9 +178,15 @@ Raspberry Pi Imager.
     bus — host-tested, plus a thin read-only Linux `enumerate()`. Smoke-verified
     against real hardware: the root disk is correctly refused. The external call
     stays conservative: unproven ⇒ refused.
-  - *Remaining:* macOS (`diskutil` internal/ejectable) + Windows backends; the
-    read-only `list_hub_targets` command; and the picker that shows eligible
-    cards/SSDs, *why* the rest are hidden, and an explicit size/model confirm.
+  - *macOS backend (landed):* `hub_enumerate_macos.rs` — a minimal,
+    dependency-free plist reader over `diskutil list/info -plist`, with the APFS
+    subtleties fixture-tested: the root's synthesized disk is followed through
+    `APFSPhysicalStores` to the *physical* boot disk (refused as `system`),
+    external means an explicit `Internal = false`, and container devices are
+    never offered as raw targets. Host-tested like the Linux half.
+  - *Remaining:* the Windows backend (PowerShell `Get-Disk`); the read-only
+    `list_hub_targets` command; and the picker that shows eligible cards/SSDs,
+    *why* the rest are hidden, and an explicit size/model confirm.
 - **Step 3 — acquire the image.**
   - *Resolver + verify decision (landed):* `hub_core::hub_image` turns the
     catalog into a typed `WritePlan` (board → image URL, the card-size
@@ -188,6 +194,14 @@ Raspberry Pi Imager.
     is authoritative, else the download must match HA's published `.sha256`, else
     refuse; malformed hashes fail loudly. Pure and host-tested, so an
     unverifiable or wrong image can't be blessed for writing.
+  - *Pin ceremony (landed):* `canary-local/tools/pin_hub_image.py` double-sources
+    each board image's SHA-256 (HA's published `.sha256` **and** GitHub's asset
+    digest, required to agree) into a committed pins file that `gen_hub_image.py`
+    folds back into the catalog — `pinned: true` only while the pins name the
+    current HAOS version, so a version bump honestly un-pins. The freshness
+    workflow re-runs the ceremony weekly after the upstream snapshot refresh, and
+    a separate `--verify` job alarms on link rot or a hash that moves under a
+    pinned version. A pin never moves silently under the same version.
   - *Remaining (needs the Tauri build + new deps):* the I/O that feeds those —
     the TLS download, computing the SHA-256, fetching HA's `.sha256`, and the
     `.xz` decompress.

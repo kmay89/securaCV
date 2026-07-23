@@ -89,10 +89,18 @@ on:
 permissions:
   contents: read
 
+# Supersede stale runs: a new push to a PR branch cancels the in-flight run
+# (the wasm job is one of the most expensive in the repo). Pushes to main
+# are never cancelled — full signal per main commit.
+concurrency:
+  group: canary-local-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   logic-tests:
     name: page logic tests (committed artifacts)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -120,6 +128,7 @@ jobs:
           node --test canary-local/tests/bench.test.js
           node --test canary-local/tests/start.test.js
           node --test canary-local/tests/flash.test.js
+          node --test canary-local/tests/flash_epic.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
@@ -229,6 +238,7 @@ jobs:
   wasm-build-and-boot:
     name: firmware → wasm → boots in a browser
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -240,10 +250,25 @@ jobs:
             canary-local/emulator/test/sha256_vectors.c \
             canary-local/emulator/src/emu_sha256.c -o /tmp/shacheck
           /tmp/shacheck
+      # The SDK is pinned, so the cache key never needs to rotate — the
+      # clone+install (~2-3 min) only happens on a cold cache.
+      - name: Cache the Emscripten SDK
+        id: emsdk-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/emsdk
+          key: emsdk-6.0.3-${{ runner.os }}
       - name: Install pinned Emscripten SDK 6.0.3
+        if: steps.emsdk-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
           /tmp/emsdk/emsdk install 6.0.3
+      - name: Activate + verify Emscripten (cached or fresh)
+        # activate runs UNCONDITIONALLY: it's seconds of local config
+        # writing, and running it on warm-cache restores too means the
+        # build can never depend on which activation state the cache
+        # happened to capture.
+        run: |
           /tmp/emsdk/emsdk activate 6.0.3
           source /tmp/emsdk/emsdk_env.sh
           emcc --version | head -1
@@ -252,6 +277,18 @@ jobs:
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
+      # Weekly key: playwright (installed unpinned below) moves its pinned
+      # Chromium build over time; a weekly rotation keeps the ~150 MB
+      # browser download to at most one run per week while never letting
+      # the cached browser drift more than a week behind the npm package.
+      - name: Weekly browser-cache stamp
+        id: week
+        run: echo "stamp=$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.week.outputs.stamp }}
       - name: Install Playwright Chromium
         run: |
           npm i --no-save playwright

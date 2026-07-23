@@ -20,9 +20,12 @@ on:
         type: boolean
         default: true
 
+# Tag pushes and dry_run=false dispatches PUBLISH a release — never cancel
+# those mid-upload; they queue. Only build-only smoke runs (dispatch with
+# dry_run left at its true default) supersede each other.
 concurrency:
   group: desktop-flasher-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run != false }}
 
 # Least privilege by default; the build job elevates to contents: write
 # because it publishes the release and uploads the installers.
@@ -47,6 +50,7 @@ jobs:
             args: ""
             rust-targets: ""
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 90
 
     # tauri-action creates the GitHub release and uploads the installers.
     permissions:

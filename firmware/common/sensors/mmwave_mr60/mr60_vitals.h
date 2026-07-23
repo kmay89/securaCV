@@ -58,6 +58,13 @@ class VitalsFSM {
 public:
     explicit VitalsFSM(const VitalsConfig& cfg) : cfg_(cfg) { reset(0); }
 
+    // Swap in new lock windows at runtime; state resets (same rationale as
+    // PresenceFSM::reconfigure) and the lock re-earns itself.
+    void reconfigure(const VitalsConfig& cfg, uint32_t now_ms) {
+        cfg_ = cfg;
+        reset(now_ms);
+    }
+
     void reset(uint32_t now_ms);
 
     // Advance the lock FSM. `single_target` is the presence FSM's verdict that

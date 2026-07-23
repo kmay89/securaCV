@@ -40,10 +40,14 @@ orphaned, and the six surfaces stay in lockstep.
 }
 ```
 
-### Stage 4 forks
+### Stage 4 is options, not a fork
 
-Stage 4 (`Sense`) sets `"fork": true` and uses `tracks` instead of `benches` —
-one track per sensor (camera vs radar). Both tracks rejoin at stage 5 (Home).
+Stage 4 (`Sense`) sets `"options": true` and uses `tracks` instead of
+`benches` — one track per sense (camera, radar, and whatever docks next).
+The build line itself stays straight: tracks are options **at** the stage,
+never separate paths **through** it, so renderers draw one line 1→6 and
+list the senses side by side. `optionsNote` carries the one-line explainer
+every surface shows.
 
 ### Depths = one node, two tabs
 
