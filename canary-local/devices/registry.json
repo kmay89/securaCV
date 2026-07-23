@@ -529,7 +529,7 @@
           "Bench: confirm the flow editor's HTTP action node actually produces the documented {\"confidence\": ...} payload shape against a real webhook listener.",
           "Bench: pin a SenseCraft audio-classification model for glass-break / alarm / raised-voice and confirm its class labels match the ClaimKind mapping in docs/hardware/canary_vision_pro_recamera.md.",
           "Verify bearer/HMAC auth and TLS survive a device restart before calling this off-loopback-ready.",
-          "Print-fit an enclosure/mount profile for the shared two-T-stud interface once a unit is on the bench — none exists yet.",
+          "Print-fit canary_vision_pro_mount.scad (bridges reCamera's magnetic/1/4\"-20 mount onto the shared stud interface) against a real unit once one is on the bench — the mesh renders clean today but has never touched actual hardware.",
           "Promote from 'concept' to 'released' only after a real unit's claims round-trip into the sealed log — the same bar as every other Canary."
         ],
         "radio_tab_label": "The hardware",

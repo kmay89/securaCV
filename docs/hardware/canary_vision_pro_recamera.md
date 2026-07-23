@@ -25,8 +25,11 @@ The reCamera Pro is a standalone AI camera, not an ESP32 peripheral:
 - **Integration surface:** built-in Web UI, event-driven workflows
   (Node-RED-style flow editor), open HTTP APIs, and broad industrial
   protocol support.
-- **Power/mount:** PoE or USB-C; ships with the same two-T-stud enclosure
-  interface Seeed uses across the reCamera line.
+- **Power/mount:** PoE or USB-C; the reCamera line's confirmed physical
+  interface is a **magnetic mount and/or a 1/4"-20 tripod thread** (Seeed
+  reCamera hardware wiki) — a universal camera standard, not a SecuraCV-
+  specific one. `canary_vision_pro_mount.scad` (below) bridges that
+  interface onto the catalog's own two-T-stud wall ecosystem.
 
 That last bullet — **event-driven workflows with an HTTP action node** — is
 what makes it a zero-new-code fit: point its "on detection → HTTP POST" flow
@@ -162,6 +165,41 @@ that already run RS485/Modbus/CAN.
   etc.) needs to be pinned to specific SenseCraft audio model IDs once
   trained — this doc describes the target `ClaimKind` mapping, not a
   shipped model.
-- No enclosure/mount work done yet; the reCamera Pro's two-T-stud interface
-  is compatible with the same OpenSCAD mounting system used elsewhere
-  (`docs/hardware/enclosure/`), but no profile exists for it yet.
+- A mount adapter now exists (`canary_vision_pro_mount.scad`, §6 below) but
+  is render/mesh-verified only, like everything else in this doc — it has
+  never been fitted to a real reCamera Pro, because no bench unit exists
+  yet. Its screw/nut/magnet dimensions are universal-standard defaults, not
+  measurements off a real unit.
+
+---
+
+## 6 · 3D model — the mount adapter
+
+[`canary_vision_pro_mount.scad`](./enclosure/canary_vision_pro_mount.scad)
+(catalog entry: [enclosure README → In development](./enclosure/README.md#in-development))
+is a parametric adapter plate, not a body-hugging case (no confirmed
+reCamera Pro body dimensions exist to shell around):
+
+- **Back:** two blind keyhole pockets — identical geometry to every other
+  Canary case's back — so the plate hangs on *any* existing stud surface
+  in the catalog: a bare wall bracket, `canary_mount_adapters.scad`'s
+  corner/magnet/pole plates, or `canary_vehicle_mount.scad`'s dash plate.
+- **Front:** the reCamera line's own confirmed mount options — a 1/4"-20
+  tripod-screw counterbore and/or a magnet disc pocket, selectable via the
+  `mount` parameter (`"tripod"`, `"magnet"`, or `"both"`).
+
+<img src="./enclosure/preview_dev_visionpro.png" width="320">
+
+Render it yourself (openscad required):
+
+```bash
+cd docs/hardware/enclosure
+openscad --export-format binstl -o vision_pro_mount.stl \
+  -D 'mount="both"' canary_vision_pro_mount.scad
+```
+
+Mesh-checked clean (admesh: 1 part, 0 disconnected facets, all three
+`mount` variants) — but **not print- or bench-validated**: no reCamera Pro
+unit has confirmed these screw/nut/magnet dimensions against the real
+hardware. Treat the defaults as a starting point to measure against, not a
+verified fit.

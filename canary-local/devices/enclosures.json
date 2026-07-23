@@ -524,6 +524,17 @@
    "scad": "canary_wear_clip.scad"
   },
   {
+   "id": "vision-pro-mount",
+   "name": "Vision Pro mount",
+   "for": "bridges a Seeed reCamera Pro onto the shared stud interface: keyhole pockets on the back (hangs on any existing stud surface in this catalog), 1/4\"-20 tripod counterbore and/or magnet pocket on the front (reCamera's confirmed mount options, [Canary Vision Pro doc](../canary_vision_pro_recamera.md)). No confirmed body dimensions yet — mounting interface only",
+   "status": "in-development",
+   "note": "measure your screw/nut; no bench unit yet",
+   "device": "canary-vision",
+   "preview": "preview_dev_visionpro.png",
+   "parts": [],
+   "scad": "canary_vision_pro_mount.scad"
+  },
+  {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
    "for": "ONE ~25 min print that calibrates every fit in the catalog: clip, keyhole+stud, slide, gasket, press, screw, insert — each station labelled with the parameter it tunes",
@@ -6162,6 +6173,139 @@
        "name": "nub_h",
        "default": "1.2",
        "comment": "grip nub at the leaf tip"
+      }
+     ]
+    }
+   ]
+  },
+  "canary_vision_pro_mount.scad": {
+   "title": "Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "groups": [
+    {
+     "name": "What to render",
+     "note": "",
+     "params": [
+      {
+       "name": "part",
+       "default": "plate",
+       "enum": [
+        "plate"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Device-facing interface",
+     "note": "reCamera's confirmed mount options",
+     "params": [
+      {
+       "name": "mount",
+       "default": "both",
+       "enum": [
+        "tripod",
+        "magnet",
+        "both"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Tripod interface — 1/4\"-20 UNC, universal camera-mount standard",
+     "note": "",
+     "params": [
+      {
+       "name": "tripod_shaft_d",
+       "default": "6.6",
+       "comment": "clearance for a 1/4\"-20 screw shank (6.35 mm major dia)"
+      },
+      {
+       "name": "tripod_head_d",
+       "default": "12.0",
+       "comment": "counterbore for the screw head — MEASURE your screw"
+      },
+      {
+       "name": "tripod_head_h",
+       "default": "3.5",
+       "comment": "counterbore depth"
+      }
+     ]
+    },
+    {
+     "name": "Magnet interface — matches canary_mount_adapters.scad's magnet plate",
+     "note": "",
+     "params": [
+      {
+       "name": "mag_d",
+       "default": "20.0",
+       "comment": "Ø20 x 3 neodymium disc pocket"
+      },
+      {
+       "name": "mag_t",
+       "default": "3.0"
+      }
+     ]
+    },
+    {
+     "name": "Plate",
+     "note": "",
+     "params": [
+      {
+       "name": "plate_w",
+       "default": "50.0"
+      },
+      {
+       "name": "plate_h",
+       "default": "64.0"
+      },
+      {
+       "name": "plate_t",
+       "default": "7.0"
+      },
+      {
+       "name": "plate_r",
+       "default": "4.0",
+       "comment": "corner rounding"
+      }
+     ]
+    },
+    {
+     "name": "T-stud keyhole interface — matches canary_wap_enclosure.scad exactly",
+     "note": "",
+     "params": [
+      {
+       "name": "kh_head_d",
+       "default": "7.0",
+       "comment": "screw-head pass hole (fits the catalog's Ø6.6 stud head)"
+      },
+      {
+       "name": "kh_shank_d",
+       "default": "4.2",
+       "comment": "slot width (fits the catalog's Ø4 stud stem)"
+      },
+      {
+       "name": "kh_slot_l",
+       "default": "8.0",
+       "comment": "slot travel"
+      },
+      {
+       "name": "kh_head_h",
+       "default": "3.5",
+       "comment": "total pocket depth (face web + head cavity)"
+      },
+      {
+       "name": "kh_face",
+       "default": "1.0",
+       "comment": "face web thickness the stud head grips behind"
+      },
+      {
+       "name": "kh_x",
+       "default": "12.0",
+       "comment": "keyhole pair spacing (± from centre)"
+      },
+      {
+       "name": "kh_y",
+       "default": "22.0",
+       "comment": "keyhole row offset from centre, toward the TOP edge"
       }
      ]
     }
