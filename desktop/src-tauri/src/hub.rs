@@ -1,0 +1,370 @@
+//! hub — the Raspberry Pi Home Assistant hub writer, wired into the app.
+//!
+//! This is deliberately the THINNEST layer in the hub path
+//! (docs/design/raspberry_pi_hub_flashing.md): every decision lives in
+//! `hub-core` (what is a legal target, is the image trusted, may we write) and
+//! every mechanism lives in `hub-io` (download+hash, xz, the read-back-verified
+//! write, the Wi-Fi seed) — both PR-CI-tested crates. What remains here is
+//! translation: catalog JSON → `CatalogView`, judged disks → DTOs the picker
+//! can render, progress callbacks → `hub:progress` events, and the one
+//! orchestrating command that runs the pipeline in order.
+//!
+//! The safety chain the orchestration cannot skip, because it's typed:
+//! `verify_download` is the only mint of `VerifiedImage`, `authorize_write`
+//! (verified + still-eligible + operator-confirmed) is the only mint of
+//! `WriteAuthorization`, and `hub_io::write::write_image` takes that by value.
+
+use hub_core::hub_disk::{judge_all, Eligibility, Judged};
+use hub_core::hub_enumerate::enumerate;
+use hub_core::hub_flash::authorize_write;
+use hub_core::hub_image::{recommended_board, resolve, BoardImage, CatalogView};
+use hub_core::hub_seed::WifiSeed;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tauri::{AppHandle, Emitter};
+
+// Same never-rot posture as the flasher catalog: the ONE canonical
+// hub_image.json is embedded fresh on every build by build.rs.
+const EMBEDDED_HUB_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/hub_image.json"));
+
+/// One disk as the picker shows it — eligible or not, always with the reason,
+/// so "why isn't my drive listed" is answered on screen instead of in a forum.
+#[derive(Serialize)]
+pub struct HubTargetDto {
+    path: String,
+    model: String,
+    size_bytes: u64,
+    eligible: bool,
+    /// Human reason when refused (`None` when eligible).
+    refused_because: Option<String>,
+    /// Advisory lines when eligible (erases data, below recommended size, …).
+    warnings: Vec<String>,
+}
+
+/// The catalog slice the UI needs to explain the flow before anything runs.
+#[derive(Serialize)]
+pub struct HubPlanDto {
+    os_label: String,
+    board_id: String,
+    board_name: String,
+    image_url: String,
+    pinned: bool,
+    min_card_bytes: u64,
+    warnings: Vec<String>,
+}
+
+/// What a finished hub flash proved, for the UI's receipt screen.
+#[derive(Serialize)]
+pub struct HubReceipt {
+    board_id: String,
+    os_label: String,
+    target_path: String,
+    bytes_written: u64,
+    sha256: String,
+    wifi_seeded: bool,
+}
+
+/// The Wi-Fi the operator typed (the same secret the Canary flasher already
+/// collects). Values never appear in logs or events.
+#[derive(Deserialize)]
+pub struct HubWifi {
+    ssid: String,
+    passphrase: String,
+    hidden: bool,
+}
+
+fn parse_catalog() -> Result<(Value, CatalogView), String> {
+    let json: Value = serde_json::from_str(EMBEDDED_HUB_CATALOG)
+        .map_err(|e| format!("bundled hub catalog is corrupt: {e}"))?;
+    let base = json
+        .get("base_os")
+        .ok_or("bundled hub catalog has no base_os")?;
+    let boards = base
+        .get("boards")
+        .and_then(Value::as_array)
+        .ok_or("bundled hub catalog has no boards")?
+        .iter()
+        .map(|b| {
+            Ok(BoardImage {
+                id: b
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or("board without id")?
+                    .to_string(),
+                name: b
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                recommended: b
+                    .get("recommended")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                image_url: b
+                    .get("image_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                sha256: b
+                    .get("sha256")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, &'static str>>()
+        .map_err(|e| format!("bundled hub catalog is malformed: {e}"))?;
+    let view = CatalogView {
+        os_name: base
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Home Assistant OS")
+            .to_string(),
+        os_version: base
+            .get("version")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        pinned: base.get("pinned").and_then(Value::as_bool).unwrap_or(false),
+        min_card_bytes: json
+            .get("card_requirements")
+            .and_then(|c| c.get("min_bytes"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        boards,
+    };
+    Ok((json, view))
+}
+
+/// The full hub catalog JSON, verbatim, for the UI's explainer copy (what gets
+/// pre-installed, why HAOS, the card guidance) — same schema the website reads.
+#[tauri::command]
+pub fn load_hub_catalog() -> Result<Value, String> {
+    parse_catalog().map(|(json, _)| json)
+}
+
+/// The disks the OS can see right now, each with its verdict. The UI polls
+/// this while the operator is on the "plug in your card" step, so inserting a
+/// card is what advances the flow — recognition, not configuration.
+#[tauri::command]
+pub fn list_hub_targets() -> Result<Vec<HubTargetDto>, String> {
+    let judged = judge_all(enumerate()?);
+    Ok(judged
+        .into_iter()
+        .map(|Judged { disk, eligibility }| {
+            let (eligible, refused_because, warnings) = match eligibility {
+                Eligibility::Eligible { warnings } => {
+                    (true, None, warnings.iter().map(|w| w.message()).collect())
+                }
+                Eligibility::Refused(r) => (false, Some(r.reason()), Vec::new()),
+            };
+            HubTargetDto {
+                path: disk.path,
+                model: disk.model,
+                size_bytes: disk.size_bytes,
+                eligible,
+                refused_because,
+                warnings,
+            }
+        })
+        .collect())
+}
+
+/// Resolve the write plan for a board — what image, from where, pinned or not
+/// — so the confirm screen states exactly what will happen before it does.
+#[tauri::command]
+pub fn hub_plan(board_id: Option<String>) -> Result<HubPlanDto, String> {
+    let (_, view) = parse_catalog()?;
+    let board_id = board_id
+        .or_else(|| recommended_board(&view).map(str::to_string))
+        .ok_or("the hub catalog names no recommended board")?;
+    let plan = resolve(&view, &board_id).map_err(|e| e.message())?;
+    let board_name = view
+        .boards
+        .iter()
+        .find(|b| b.id == board_id)
+        .map(|b| b.name.clone())
+        .unwrap_or_else(|| board_id.clone());
+    Ok(HubPlanDto {
+        os_label: plan.os_label.clone(),
+        board_id,
+        board_name,
+        image_url: plan.image_url.clone(),
+        pinned: plan.expected_sha256.is_some(),
+        min_card_bytes: plan.min_card_bytes,
+        warnings: plan.warnings.iter().map(|w| w.message()).collect(),
+    })
+}
+
+/// The whole pipeline, in order, in a blocking worker: download → verify →
+/// decompress → authorize → write → read-back → Wi-Fi seed → eject. Progress
+/// streams over `hub:progress` ({stage, done, total}) and human lines over
+/// `hub:log`; the Wi-Fi values themselves are never logged.
+#[tauri::command]
+pub async fn hub_flash(
+    app: AppHandle,
+    board_id: String,
+    disk_path: String,
+    confirmed: bool,
+    wifi: Option<HubWifi>,
+) -> Result<HubReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        hub_flash_blocking(&app, board_id, disk_path, confirmed, wifi)
+    })
+    .await
+    .map_err(|e| format!("hub writer worker failed: {e}"))?
+}
+
+fn hub_flash_blocking(
+    app: &AppHandle,
+    board_id: String,
+    disk_path: String,
+    confirmed: bool,
+    wifi: Option<HubWifi>,
+) -> Result<HubReceipt, String> {
+    let log = |line: String| {
+        let _ = app.emit("hub:log", line);
+    };
+    let progress_app = app.clone();
+    let mut progress = move |p: hub_io::Progress| {
+        let _ = progress_app.emit(
+            "hub:progress",
+            serde_json::json!({
+                "stage": p.stage.name(),
+                "done": p.done,
+                "total": p.total,
+            }),
+        );
+    };
+
+    // 1) Resolve the plan from the embedded catalog.
+    let (_, view) = parse_catalog()?;
+    let plan = resolve(&view, &board_id).map_err(|e| e.message())?;
+    log(format!(
+        "→ plan: {} for {board_id}, image {}",
+        plan.os_label, plan.image_url
+    ));
+
+    // 2) Re-enumerate and find the chosen disk NOW — never trust a stale
+    //    picker row; the disk must still exist and still classify eligible
+    //    (authorize_write re-checks classify as well).
+    let target = enumerate()?
+        .into_iter()
+        .find(|d| d.path == disk_path)
+        .ok_or_else(|| format!("{disk_path} is no longer connected — was it unplugged?"))?;
+
+    // Validate the Wi-Fi seed BEFORE any download or write: a typo'd
+    // passphrase should fail in one second, not after two GB.
+    if let Some(w) = wifi.as_ref() {
+        let seed = WifiSeed {
+            ssid: &w.ssid,
+            passphrase: &w.passphrase,
+            connection_id: "securacv-hub",
+            uuid: None,
+            hidden: w.hidden,
+        };
+        hub_core::hub_seed::wifi_keyfile(&seed).map_err(|e| e.message())?;
+    }
+
+    // 3) Download the image, hashing as it streams.
+    let staging = tempfile::tempdir().map_err(|e| format!("couldn't create a staging dir: {e}"))?;
+    let xz_path = staging.path().join("haos.img.xz");
+    log(format!("→ downloading {}", plan.image_url));
+    let dl = hub_io::fetch::download(&plan.image_url, &xz_path, &mut progress)?;
+    log(format!(
+        "✓ downloaded {} bytes · SHA-256 {}…",
+        dl.bytes,
+        &dl.sha256[..16]
+    ));
+
+    // 4) The trust call. Pinned catalog: repo-vouched hash is authoritative.
+    //    Unpinned: HA's published .sha256 must match. Neither: refuse.
+    let published = if plan.expected_sha256.is_none() {
+        hub_io::fetch::fetch_published_sha256(&plan.image_url)?
+    } else {
+        None
+    };
+    let verified = hub_core::hub_image::verify_download(&plan, &dl.sha256, published.as_deref())
+        .map_err(|e| e.message())?;
+    log(format!(
+        "✓ image verified against {}",
+        if plan.expected_sha256.is_some() {
+            "the repo-pinned checksum"
+        } else {
+            "Home Assistant's published checksum"
+        }
+    ));
+
+    // 5) Decompress to the raw image; its hash is what the card must hold.
+    let raw_path = staging.path().join("haos.img");
+    let raw = hub_io::xz::decompress(&xz_path, &raw_path, &mut progress)?;
+    log(format!("✓ raw image ready: {} bytes", raw.bytes));
+    if raw.bytes > target.size_bytes {
+        return Err(format!(
+            "the raw image ({} bytes) is larger than {} ({} bytes)",
+            raw.bytes, target.path, target.size_bytes
+        ));
+    }
+
+    // 6) The gate. verified + still-eligible target + operator confirmation,
+    //    or this line does not produce a WriteAuthorization.
+    let authz = authorize_write(plan, &verified, &target, confirmed).map_err(|e| e.message())?;
+
+    // 7) The destructive write + full read-back.
+    log(format!(
+        "→ writing to {} — do not remove the card…",
+        target.path
+    ));
+    let receipt = hub_io::write::write_image(authz, &raw_path, &raw.sha256, &mut progress)?;
+    log("✓ written and read back — the card verifiably holds the image".to_string());
+
+    // 8) Seed Wi-Fi onto the boot partition, then eject.
+    let wifi_seeded = if let Some(w) = wifi {
+        let seed = WifiSeed {
+            ssid: &w.ssid,
+            passphrase: &w.passphrase,
+            connection_id: "securacv-hub",
+            uuid: None,
+            hidden: w.hidden,
+        };
+        hub_io::seed::seed_wifi(&receipt.target_path, &seed, &mut progress)?;
+        log("✓ Wi-Fi seeded — the hub will join your network on first boot".to_string());
+        true
+    } else {
+        log("→ no Wi-Fi seeded (wired ethernet assumed)".to_string());
+        true_eject(&receipt.target_path, &log);
+        false
+    };
+
+    Ok(HubReceipt {
+        board_id: receipt.board_id,
+        os_label: receipt.os_label,
+        target_path: receipt.target_path,
+        bytes_written: receipt.bytes_written,
+        sha256: receipt.sha256,
+        wifi_seeded,
+    })
+}
+
+/// Best-effort eject for the wired-ethernet path (the seed path ejects as part
+/// of its own flow). Failure is a log line, not an error — the write already
+/// verified.
+fn true_eject(device: &str, log: &impl Fn(String)) {
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("diskutil")
+        .args(["eject", device])
+        .output();
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("udisksctl")
+        .args(["power-off", "-b", device])
+        .output();
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let result: std::io::Result<std::process::Output> = Err(std::io::Error::other("unsupported"));
+
+    match result {
+        Ok(out) if out.status.success() => log(format!("✓ {device} ejected — safe to remove")),
+        _ => log(format!(
+            "→ couldn't auto-eject {device}; eject it in your file manager before removing"
+        )),
+    }
+}
