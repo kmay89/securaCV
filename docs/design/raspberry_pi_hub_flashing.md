@@ -248,7 +248,39 @@ Raspberry Pi Imager.
     PWK add-on + Frigate/go2rtc + dashboards + blueprints) so first boot comes
     up pre-wired — until then the hub boots as stock HAOS + Wi-Fi and the
     guide carries the user from `homeassistant.local:8123`.
-- **Step 6 — community + convergence.** Extract the SD-health add-on for upstream;
+- **Step 6 — the card-reader-less path: flash the Pi through its own USB-C.**
+  Accepted 2026-07-23. Many laptops (every recent MacBook) have no SD reader —
+  but the Pi 5 doesn't need one: the BCM2712 boot ROM has a USB *device* boot
+  mode (hold the power button while connecting USB-C to the computer → the Pi
+  enumerates as `0a5c:2712 "BCM2712 Boot"`), and Raspberry Pi's official
+  `usbboot`/`rpiboot` tool pushes their signed **mass-storage gadget** over
+  that cable — the Pi then presents its own SD card *and NVMe* to the host as
+  an ordinary USB disk (`RPi-MSD-…`). This is exactly how Raspberry Pi Imager
+  flashes Compute Modules; the host's USB-C also powers the board during the
+  flash, so the desk needs one cable, nothing else.
+
+  The reason this slots in almost for free: once the gadget is running, the
+  Pi-as-a-disk walks in through the pipeline's existing front door.
+  `hub_enumerate` sees an external USB mass-storage disk, `hub_disk::classify`
+  offers it (removable/external, size-checked — and it is the ONLY way our
+  flow can reach the Pi 5's NVMe, the durable default, without an enclosure),
+  and the verified write, read-back, and Wi-Fi seed run **unchanged**. The
+  only new machinery is the on-ramp:
+
+  - *Sidecar:* bundle `rpiboot` + the signed `mass-storage-gadget64` payload
+    from `raspberrypi/usbboot` exactly like `espflash` (CI-fetched, pinned,
+    checksummed; licenses vendored). No protocol re-implementation.
+  - *Detection:* watch USB for `0a5c:2712` (Pi 5) / `0a5c:2711` (Pi 4) while
+    the Hub tab is open; on sight, run the sidecar, then wait for the
+    `RPi-MSD` disk to appear in the normal enumerator poll.
+  - *UI copy:* "No card reader? Plug the Pi itself in: hold its power button,
+    connect USB-C to this computer, release" → "Your Pi is now a disk — we're
+    writing to the card inside it." When more than one MSD LUN appears (SD +
+    NVMe), the existing picker already handles the choice, warnings and all.
+  - *Hardware validation:* same bar as the write itself — a real Pi 5 over
+    USB-C on macOS + Linux before any tagged release claims the path.
+
+- **Step 7 — community + convergence.** Extract the SD-health add-on for upstream;
   submit the add-on repo to the community store; fold the hub image into the
   signed release train; converge with the §7.7 Canary onboarding (Improv /
   zeroconf) so hub and Canaries share one adoption flow.
