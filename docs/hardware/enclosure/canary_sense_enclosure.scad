@@ -6,11 +6,14 @@
 //  (<=1.5 m) for the wellbeing/breathing channel.
 //
 //  THE RADOME RULE: 60 GHz must pass through the front face. The window over
-//  the antenna zone is a THIN (radome_t), FLAT, UNIFORM membrane — no ribs,
-//  no label, no seams and no gasket path crossing it, and the board mounts
-//  parallel to it at a small air gap. ~1.0 mm PETG/ASA is a good default;
-//  ~1.5 mm is close to a half-wave in plastic (also low-loss). Never put
-//  metal, foil labels or CF-filled filament in front of the antenna.
+//  the antenna zone is a FLAT, UNIFORM membrane — no ribs, no label, no seams
+//  and no gasket path crossing it, and the board mounts parallel to it at a
+//  small air gap. Thickness is TUNED, not just thin: at 60 GHz (λ0 ≈ 5.0 mm)
+//  a PETG/ASA wall (εr ≈ 2.7) is transparent at the HALF-WAVE thickness
+//  λ0/(2·√εr) ≈ 1.5 mm (<0.5 % reflection) and worst near the quarter-wave
+//  band ~0.7–1.1 mm (up to ~20 % reflected back into the antenna — standing
+//  waves corrupt the µm-scale breathing phase). Use 1.5 mm; never put metal,
+//  foil labels or CF-filled filament in front of the antenna.
 //
 //  Everything else reuses the proven Canary patterns: snap-clip rails with
 //  the stacked XIAO hanging beneath, GoPro-compatible hinge + blind keyholes,
@@ -58,13 +61,14 @@ board_clear = 0.6;
 xiao_usb_z  = 4.0;   // XIAO USB-C centre above the back floor — MEASURE the seated stack
 
 /* [Radome window] — thin flat membrane over the antenna zone */
-radome_t  = 1.0;     // membrane thickness (~1.0, or ~1.5 for a half-wave wall)  // [0.8:0.1:2.0]
+radome_t  = 1.5;     // membrane thickness — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection
+                     // optimum); AVOID 0.7–1.1 (quarter-wave band, ~20 % reflection)  // [1.4:0.1:1.6]
 rad_win_x = 24.0;    // window size (X) — cover the antenna array generously
 rad_win_y = 24.0;    // window size (Y)
 rad_dx    = 0.0;     // antenna-zone centre offset from the BOARD centre — MEASURE
 rad_dy    = 6.0;     //   (the array usually sits toward the top half of the carrier)
-// antenna-to-radome air gap is COMPUTED below (rad_gap) and asserted >= 2.5;
-// raise cav_extra for more gap. Keep >= 3 mm for clean radar performance.
+// antenna-to-radome air gap is COMPUTED below (rad_gap) and asserted >= 3.0
+// for clean radar performance; raise cav_extra for more gap.
 
 /* [Front-face features] — offsets from the BOARD centre; keep them OUT of the window */
 lp_d   = 3.0;        // WS2812 light pipe (press fit)
@@ -81,9 +85,9 @@ vent_holes     = 10;
 vent_dx        = 0.0;
 vent_dy        = -17.0;
 mag_d  = 6.0;
-mag_h  = 3.2;
-mag_dx = 13.0;
-mag_dy = 14.0;
+mag_h  = 2.2;        // pocket depth — a 6 x 2 mm disc is standard; the pocket ring descends
+mag_dx = 13.0;       // mag_h below the front's inner face, so parts on the carrier under
+mag_dy = 14.0;       // (mag_dx, mag_dy) must stay >= 1 mm below vm_front_h — MEASURE
 
 /* [Shell] */
 wall_t   = 2.0;
@@ -147,9 +151,9 @@ kh_face    = 1.0;
 kh_inset   = 12.0;
 
 /* [Weather sealing] */
-gasket_w      = 1.2;
-gasket_groove = 1.0;
-gasket_proud  = 0.6;
+gasket_w      = 1.6;
+gasket_groove = 1.2;
+gasket_proud  = 0.3;
 skirt_h       = 3.0;
 skirt_t       = 1.6;
 usb_cover     = true;
@@ -169,8 +173,8 @@ label_font  = "Liberation Sans:style=Bold";
 
 /* [Board snap clips] */
 clip_w      = 6.0;
-clip_t      = 1.5;
-clip_hook   = 0.8;
+clip_t      = 1.0;
+clip_hook   = 0.5;
 clip_hook_h = 1.2;
 clip_clear  = 0.25;
 
@@ -223,9 +227,9 @@ function post_xy() = [
 ];
 
 assert(radome_t >= 0.6 && radome_t < lid_t, "radome_t must be printable (>=0.6) and thinner than lid_t");
-assert(rad_gap >= 2.5, "antenna-to-radome gap < 2.5 mm — raise cav_extra (>= 3 mm recommended)");
-assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y <= vm_l,
-       "radome window exceeds the face — shrink rad_win or grow the board zone");
+assert(rad_gap >= 3.0, "antenna-to-radome gap < 3 mm — raise cav_extra");
+assert(rad_win_x + 2*abs(rad_dx) <= inner_x - 4 && rad_win_y + 2*abs(rad_dy) <= vm_l,
+       "radome window exceeds the face — shrink rad_win/rad_dx/rad_dy or grow the board zone");
 assert(lip_h < cav_d, "lip_h must be less than the cavity depth");
 assert(screw_head_d > screw_d, "screw_head_d must be larger than screw_d");
 assert(!e_seal || gasket_groove <= lip_h - 0.5, "gasket_groove must stay below the lip");
@@ -510,7 +514,7 @@ module front() {
 // ----------------------------------------------------------------------------
 //  GASKET / BRACKET / KNOB (same system as the Vision case)
 // ----------------------------------------------------------------------------
-module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.1); }
+module gasket() { linear_extrude(gasket_groove + gasket_proud) rim_ring2d(gasket_w - 0.5); }
 module bracket_fin(xc) {
     hull() {
         translate([xc - prong_t/2, -fin_r, br_t - 0.5]) cube([prong_t, 2*fin_r, 0.5]);

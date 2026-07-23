@@ -67,7 +67,8 @@ snap_n       = 4;     // nubs / wall slots
 snap_w       = 6.5;   // slot width (arc chord)
 snap_h       = 1.8;   // slot height
 snap_depth   = 2.6;   // slot centre below the drum rim
-snap_proud   = 0.6;   // nub stand-proud of the skirt
+snap_proud   = 0.4;   // nub stand-proud of the skirt (with the relief slits this is
+                      // the working snap interference — 0.6 needed crush to insert)
 skirt_dep    = 4.0;   // bezel skirt reach into the bore
 
 /* [Mounting] */
@@ -175,10 +176,15 @@ module bezel() {
             cylinder(d = drum_d, h = bez_t - lid_edge);
             translate([0, 0, bez_t - lid_edge - 0.01])
                 cylinder(d1 = drum_d, d2 = drum_d - 2*lid_edge, h = lid_edge);
-            // retaining skirt — presses the disc's trim ring down `flush`
+            // retaining skirt — captures the disc with 0.2 mm nominal float over
+            // the PCB rim (it does NOT preload the trim ring). Slit into four
+            // fingers midway between the nubs: a closed ring has no compliance
+            // path, so the nubs would shave instead of snapping.
             translate([0, 0, -skirt_dep]) difference() {
                 cylinder(d = skirt_od, h = skirt_dep + 0.01);
                 translate([0, 0, -0.1]) cylinder(d = bez_ap_d, h = skirt_dep + 0.2);
+                for (a = snap_angs()) rotate([0, 0, a + 45])
+                    translate([skirt_od/2 - 3, -0.6, -0.1]) cube([6, 1.2, skirt_dep - 0.9]);
             }
             // snap nubs, chamfered both ways (assembly AND service removal).
             // The face underside (bezel z=0) rests on the drum rim (drum z=drum_h),

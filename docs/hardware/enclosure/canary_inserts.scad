@@ -3,7 +3,7 @@
 //  Three small parts referenced by the enclosure docs but never modelled:
 //    part = "horn"       — exponential buzzer horn: glues INSIDE the WAP lid
 //                          over the vent cluster; channels the piezo into the
-//                          hole ring for a louder, directional chirp.
+//                          hole ring for a slightly more directional chirp.
 //    part = "glare_ring" — matte washer behind a camera disc: kills internal
 //                          reflections off glossy prints (print MATTE BLACK).
 //    part = "gland_body" / "gland_bush" / "gland_cap" — three-part printed
@@ -20,7 +20,9 @@ part = "horn";       // ["horn","glare_ring","gland_body","gland_bush","gland_ca
 
 /* [Horn] — matches the WAP lid vent cluster defaults */
 horn_throat = 4.0;   // over the buzzer port
-horn_mouth  = 14.0;  // at the lid face (covers the vent hole ring)
+horn_mouth  = 14.0;  // at the lid face (covers the vent hole ring). Physics honesty: a
+                     // lid-scale horn cannot LOAD a ~4 kHz chirp (flare cutoff ~8.5 kHz,
+                     // mouth << lambda) - expect a few dB of on-axis directivity, not "louder"
 horn_h      = 8.0;
 horn_wall   = 1.4;
 
@@ -81,7 +83,8 @@ module gland_body() {
             cylinder(d = cg_flange, h = 2.0);                            // outer flange
             translate([0, 0, 2.0 - 0.01]) cylinder(d = cg_hole - 2*tol_slide, h = cg_panel + 0.5);
             translate([0, 0, 2.0 + cg_panel + 0.4]) cylinder(d = cg_hole - 2*tol_slide, h = 5);  // nose (>=0.7 mm wall)
-            translate([0, 0, 2.0 + cg_panel + 3.6]) cylinder(d1 = cg_hole - 0.2, d2 = cg_hole - 1.2, h = 1.8); // barb
+            translate([0, 0, 2.0 + cg_panel + 5.4]) cylinder(d1 = cg_hole - 0.2, d2 = cg_hole - 1.2, h = 1.8); // barb at the
+                                                                 // nose tip, aligned with the seated cap's relief
         }
         // two-step bore sized so every wall stays >= 0.7 mm (mesh-check catch:
         // a wide full-depth bore hollowed the stem and nose into a floating ring)
@@ -100,7 +103,8 @@ module gland_bush() {
 module gland_cap() {
     difference() {
         cylinder(d = cg_hole + 3.2, h = 5.5);
-        translate([0, 0, 1.2]) cylinder(d = cg_hole - 0.4 + 2*tol_slide, h = 6);
+        translate([0, 0, 1.2]) cylinder(d = cg_hole - 0.6, h = 6);   // 0.4 diametral interference over the
+                                                                     // barb (~2.5 % hoop strain) — actually snaps
         translate([0, 0, -0.1]) cylinder(d = cg_cable + 1.2, h = 6);
         translate([0, 0, 3.4]) cylinder(d1 = cg_hole - 0.4, d2 = cg_hole + 0.6, h = 2.2); // barb relief
     }

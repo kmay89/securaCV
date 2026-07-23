@@ -126,18 +126,21 @@ When adding any of these, follow the ritual above **and** update the pin tracker
 
 ---
 
-## TODO — the mode system (the bench's next of kin)
+## The mode system (the bench's next of kin) — BUILT, bench-pending
 
-The bench is now spec'd as one gear of a five-mode system —
+The bench is now the first gear of the five-mode system —
 [`display_modes.md`](./display_modes.md): fleet / bench / demo / debug /
-arcade, one NVS `mode` token replacing the `devmode` bool (legacy bool
-honored forever — host-tested migration). The registry core
-(`include/canary/mode/mode_registry.h`) and the demo storyline core
-(`include/canary/mode/demo_script.h`) are implemented + host-tested
-(`tests_host/test_mode_registry.cpp`, `test_demo_script.cpp`, both in CI).
-Next up is wave 1 (runtime glue: `main.cpp` branch via `resolve_boot_mode`,
-Settings row → modes list) — see the spec's Waves table before touching the
-latch code here.
+arcade, one NVS `mode` token superseding the `devmode` bool (legacy bool
+honored forever — host-tested migration). **The runtime is implemented**:
+`src/mode/mode_glue.cpp` dispatches boot + loop for every gear, `main.cpp`
+branches through `boot_mode()`, the Settings "dev mode" row generalized to a
+modes list, and this playground's 3 s exit now goes through
+`mode_exit_to_fleet()` (clears token + legacy bool). Compile-verified by the
+`canary-display-dash-modes` / `-watch-modes` envs; pure cores host-tested
+(`test_mode_registry` / `test_demo_script` / `test_arcade_logic`); the
+browser twin is `canary-local/assets/mode-sim.js` + `tests/mode.test.js`
+(drift-locked against the Arduino mirror, playground-style). Remaining:
+the spec's wave-6 bench session on a real 4.3B.
 
 ---
 

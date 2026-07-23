@@ -436,6 +436,26 @@ static void record_event_now(const char* event_name, uint32_t now_ms) {
 
 static void drive_fsms(const Frame& frame, uint32_t now) {
   const PresenceEvent pev = g_presence.tick(frame, now);
+
+  // One compact, machine-parseable line on any sensing change — the browser
+  // flasher's live radar bench reads it off the attended USB console (the
+  // same coarse fields MQTT publishes: state, count bucket, range band —
+  // never raw centimetres). Cheap (change-gated) and greppable.
+  {
+    static Presence    last_state = Presence::Unknown;
+    static CountBucket last_count = CountBucket::Zero;
+    static RangeBand   last_range = RangeBand::Unknown;
+    const RangeBand range_now = g_presence.range();
+    if (pev.state_changed || pev.count_changed || range_now != last_range) {
+      last_state = g_presence.state();
+      last_count = g_presence.count();
+      last_range = range_now;
+      boot_linef("[sense] %s count=%s range=%s",
+                 presence_str(last_state), count_str(last_count),
+                 range_str(last_range));
+    }
+  }
+
   if (pev.state_changed) {
     led_for_presence(pev.state);
     const char* s = presence_str(pev.state);
@@ -482,6 +502,14 @@ static void drive_fsms(const Frame& frame, uint32_t now) {
     g_snap.breath_bpm = vev.breath_bpm;
     g_snap.heart_bpm  = vev.heart_bpm;
     g_state_dirty = true;
+    // The bench line for the wellbeing wow — rate-limited so a jittery lock
+    // can't flood the console; same P1-gated numerics MQTT carries.
+    static uint32_t last_bpm_line_ms = 0;
+    if (vev.bpm_valid && (int32_t)(now - last_bpm_line_ms) >= 1000) {
+      last_bpm_line_ms = now;
+      boot_linef("[vitals] breath=%u heart=%u bpm",
+                 (unsigned)vev.breath_bpm, (unsigned)vev.heart_bpm);
+    }
   }
 #endif
 }

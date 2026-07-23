@@ -1,0 +1,42 @@
+# Standalone workspace root: like hub-core and src-tauri, this declares an
+# empty [workspace] so Cargo doesn't fold it into the repo-root workspace. It
+# is depended on by ../src-tauri via a path dependency.
+[workspace]
+
+[package]
+name = "hub-io"
+version = "0.1.0"
+description = "Host-tested I/O for the securaCV Home Assistant hub writer: streaming download + SHA-256, xz decompress, the guarded raw write with read-back verify, and the boot-partition Wi-Fi seed."
+authors = ["Errer Labs"]
+license = "Apache-2.0"
+repository = "https://github.com/kmay89/securaCV"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "hub_io"
+
+# Unlike hub-core (pure decisions, zero deps), this crate exists to DO the
+# I/O those decisions feed — so it carries the minimum real machinery and
+# nothing else. Every dependency here still builds on a bare CI runner (no
+# webkit/gtk), so PR CI tests this crate the same way it tests hub-core:
+#   sha2 ... the one hash the whole trust chain speaks
+#   ureq ... small blocking HTTP client (rustls); no async runtime needed
+#   xz2 .... liblzma bindings, `static` so no system library is required
+[dependencies]
+hub-core = { path = "../hub-core" }
+sha2 = "0.10"
+ureq = "2"
+xz2 = { version = "0.1", features = ["static"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Only for the authopen fd-passing handshake (receiving the opened device fd
+# over a unix socket) — macOS's sanctioned way to open a raw disk without
+# running the whole app as root.
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

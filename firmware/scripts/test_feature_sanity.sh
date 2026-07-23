@@ -52,6 +52,12 @@ expect err "display on, no panel"       FEATURE_DISPLAY=1 HAS_DISPLAY=0
 expect err "touch on, no controller"    FEATURE_TOUCH=1 HAS_TOUCH=0
 expect err "dim on, on/off backlight"   FEATURE_BACKLIGHT_DIM=1 HAS_BACKLIGHT_PWM=0
 expect ok  "dim off, on/off backlight"  FEATURE_BACKLIGHT_DIM=0 HAS_BACKLIGHT_PWM=0
+# On-glass modes (demo/debug/arcade): glass + touch, nothing more.
+expect err "demo on, no panel"          FEATURE_DEMO_MODE=1 HAS_DISPLAY=0 HAS_TOUCH=1
+expect err "debug on, no touch"         FEATURE_DEBUG_MODE=1 HAS_DISPLAY=1 HAS_TOUCH=0
+expect ok  "arcade on, glass + touch"   FEATURE_ARCADE=1 HAS_DISPLAY=1 HAS_TOUCH=1
+expect ok  "modes on, HAS undefined"    FEATURE_DEMO_MODE=1
+expect ok  "modes off, no panel"        FEATURE_DEBUG_MODE=0 HAS_DISPLAY=0
 
 # Real-world matrix: every shipped Vision host board's pins.h against the
 # REAL vision default flavor config (not simulated -D flags — the same pair

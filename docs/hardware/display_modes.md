@@ -7,13 +7,20 @@ reversibly, and without a laptop. This document generalizes that from *one
 special case* (the bench) into a small, deliberate **mode system**: the
 architecture, the rules every mode must obey, and each gear's spec.
 
-> **Status:** the mode **registry core is implemented and host-tested**
-> (`include/canary/mode/mode_registry.h`, `tests_host/test_mode_registry.cpp`)
-> and the **demo storyline core is implemented and host-tested**
-> (`include/canary/mode/demo_script.h`, `tests_host/test_demo_script.cpp`) —
-> both run in CI. The runtime glue and the per-mode faces are **spec'd here,
-> not yet built**; nothing in this wave changes the behavior of any existing
-> build. See §Waves for the honest ledger.
+> **Status: Built · compile-gated · bench-pending.** The pure cores
+> (registry / demo storyline / arcade QA) are **host-tested in CI**
+> (`tests_host/test_mode_registry.cpp`, `test_demo_script.cpp`,
+> `test_arcade_logic.cpp`); the **runtime is implemented** — the mode glue
+> (`src/mode/mode_glue.cpp`), the demo/debug/arcade gears
+> (`src/mode/{demo,debug,arcade}_mode.cpp`), the `main.cpp` boot branch, and
+> the Settings modes doorway — and is **compile-verified by the dedicated CI
+> envs** `canary-display-dash-modes` (all four gears, 4.3B) and
+> `canary-display-watch-modes` (demo + debug on the watch). Every flag
+> defaults **off**: the default watch/dash/emulator builds are byte-identical
+> with or without this work, and per the repo's honesty rule nothing here is
+> **Driven** until a bench pass on real hardware (§Waves). The browser twin
+> (`canary-local/assets/mode-sim.js`, drift-locked by
+> `canary-local/tests/mode.test.js`) is ready to power a public `/modes` page (website carry-over pending).
 
 Related: [`dev_playground_43b.md`](./dev_playground_43b.md) (the bench that
 pioneered the pattern) · [`board_capability_map_43b.md`](./board_capability_map_43b.md)
@@ -68,10 +75,10 @@ argue against before proposing gear number six:
 | Mode | One-liner | Network | Who it's for | Status |
 |------|-----------|---------|--------------|--------|
 | **fleet** | The product: the fleet face | full stack | the household | **Driven** (it's the firmware) |
-| **bench** | Guided peripheral test bench ("dev mode" / sandbox) | none, ever | builders, maintainers | **Driven** (the playground) |
-| **demo** | Scripted synthetic fleet through the *real* faces | none, ever | demos, shows, shelves, UX review | storyline core **host-tested**; face glue spec'd |
-| **debug** | On-glass diagnostics; the link is the patient | up, read-mostly | support, bench bring-up, field triage | spec'd |
-| **arcade** | Touch/display QA that happens to be fun | none, ever | factory EOL, demo tables, burn-in | spec'd |
+| **bench** | Guided peripheral test bench ("dev mode" / sandbox) | none, ever | builders, maintainers | **Driven** (the playground; now dispatched via the registry) |
+| **demo** | Scripted synthetic fleet through the *real* faces | none, ever | demos, shows, shelves, UX review | **Built · compile-gated** (`FEATURE_DEMO_MODE`); core host-tested; bench-pending |
+| **debug** | On-glass diagnostics; the link is the patient | up, read-mostly | support, bench bring-up, field triage | **Built · compile-gated** (`FEATURE_DEBUG_MODE`); bench-pending |
+| **arcade** | Touch/display QA that happens to be fun | none, ever | factory EOL, demo tables, burn-in | **Built · compile-gated** (`FEATURE_ARCADE`, dash-first); core host-tested; bench-pending |
 
 ### fleet — the product face
 
@@ -234,14 +241,34 @@ Uniform, and identical to what the bench already taught users:
 
 | Wave | Contents | Status |
 |---|---|---|
-| **0 (this PR)** | This spec; registry core + tests; demo storyline core + tests; CI steps. Zero behavior change to any build. | **Done — host-verified** |
-| 1 | Runtime glue: `main.cpp` branches via `resolve_boot_mode`; Settings "dev mode" row → modes list; bench latch migrated to the token grammar. No new faces. | Spec'd |
-| 2 | **demo**: `FEATURE_DEMO_MODE` + `canary-display-dash-demo` env (and watch); the feeder that walks `DEMO_BEATS` into `the_fleet()`; the DEMO chip. | Core host-tested; glue spec'd |
-| 3 | **debug**: `FEATURE_DEBUG_MODE` + env; pages above; `DBG1` grammar. | Spec'd |
-| 4 | **arcade**: `FEATURE_ARCADE` + env; Canary Catch + the QA report screen. | Spec'd |
+| 0 | This spec; registry core + tests; demo storyline core + tests; CI steps. | **Done — host-verified** |
+| 1 | Runtime glue: `main.cpp` branches via `boot_mode()`; the Settings row → modes list (`ModesList`/`ModeConfirm`); bench latch migrated to the token grammar (`mode_glue.cpp`, exits unified on `mode_exit_to_fleet`). | **Built** — compile-verified (`-dash-modes` / `-watch-modes` envs) |
+| 2 | **demo**: `FEATURE_DEMO_MODE`; `src/mode/demo_mode.cpp` walks `DEMO_BEATS` into `the_fleet()` and renders the real faces (both flavors) under the DEMO chip (`lv_layer_top`); `DM1` serial. | **Built** — core host-tested; bench-pending |
+| 3 | **debug**: `FEATURE_DEBUG_MODE`; `src/mode/debug_mode.cpp` — five tap-to-page faces (system+link / fleet raw / events / touch / i2c), non-blocking WiFi + bounded broker attempts, `DBG1` 1 Hz snapshots. | **Built** — bench-pending |
+| 4 | **arcade**: `FEATURE_ARCADE` (dash); `src/mode/arcade_mode.cpp` — Canary Catch on the host-tested `arcade_logic.h` plan/stats/verdict; `ARC1` serial + the QA report screen. | **Built** — core host-tested; bench-pending |
+| 5 | **The browser twin**: `canary-local/assets/mode-sim.js` (registry + storyline + latch semantics, DOM-free) drift-locked by `canary-local/tests/mode.test.js` against the Arduino mirror; the website `/modes` page (gears, policy table, latch simulator, storyline player) is the pending carry-over. **Plus the real thing:** the canary-local emulator page's "play the demo storyline" button walks the same drift-locked beats through the staged household into the REAL wasm firmware — signed chains and all, where the browser has Ed25519. | **Twin done — CI-tested; page pending** |
+| 6 | **The bench session**: the executable checklist is [`board_43b_activation_bench.md` §6](./board_43b_activation_bench.md) — flash `canary-display-dash-modes`, walk doorway/latch/migration, each gear's pass signals (`DM1`/`DBG1`/`ARC1`), exits, then flip per-gear defaults where earned. | **Pending — needs hardware** |
 
 Each wave follows the capability-map shipping reality: feature-gated default
 0, dedicated env for CI compile-verification, byte-neutral to the emulator's
 `dist/*.js`, pure cores host-tested first, and nothing claimed **Driven**
 until it has run on a bench. When a wave lands, update this table and the
 README in the same PR — the docs and the firmware must never disagree.
+
+### Build it
+
+```bash
+# PlatformIO (compile-verification envs; CI builds these on every PR)
+cd firmware/projects/canary-display
+pio run -e canary-display-dash-modes     # 4.3B: fleet + all four gears
+pio run -e canary-display-watch-modes    # watch: fleet + demo + debug
+
+# Arduino CLI (the staged twin)
+./setup.sh arduino modes                 # dash + every gear on the 4.3B
+arduino-cli compile --profile modes
+```
+
+Enter a gear on the glass: **Settings → modes → (gear) → enter** (one-gear
+builds keep the familiar "dev mode" row). Exit any gear: **hold the glass
+3 s**. Serial grammars: `PG1` (bench, unchanged) · `DM1` (demo) · `DBG1`
+(debug) · `ARC1` (arcade) — one `k=v` line discipline throughout.

@@ -308,3 +308,101 @@ test("passportRows: formats the read-only probes, flags what matters", async () 
   assert.deepStrictEqual(c.passportRows({}), []);
   assert.deepStrictEqual(c.passportRows(), []);
 });
+
+// ── the Nursery: wifi for every board, the radar's voice, the roster ────────
+test("flash.json: every product declares its wifi NVS scheme, honestly", () => {
+  for (const p of catalog.products) {
+    assert.ok(["blob", "string"].includes(p.wifi_nvs), `${p.id}: wifi_nvs`);
+    // The generator derives this from each firmware's own source: the
+    // getString-reading runtime_configs (sense/vision/display) take string
+    // entries; the ap family (canary/wap) reads blobs.
+    if (p.provisioning === "ap") assert.strictEqual(p.wifi_nvs, "blob", p.id);
+    else assert.strictEqual(p.wifi_nvs, "string", p.id);
+  }
+});
+
+test("flash.json: the display boards are flashable products now", () => {
+  const displays = catalog.products.filter((p) => p.role === "display");
+  assert.strictEqual(displays.length, 2, "watch + dash");
+  for (const p of displays) {
+    assert.strictEqual(p.chip, "ESP32-S3");
+    assert.strictEqual(p.provisioning, "on-glass");
+    assert.ok(p.provisioning_note.length > 40, `${p.id}: provisioning copy`);
+    assert.ok(p.hatch && /glass/i.test(p.hatch.title), `${p.id}: a display's hatch is the glass`);
+    // and each flashable display still has its 1:1 emulator twin
+    const twin = catalog.displays.find((d) => p.id.includes(d.id));
+    assert.ok(twin, `${p.id}: no emulator twin in catalog.displays`);
+  }
+});
+
+test("buildNvsSeedImage: string-scheme wifi round-trips (the sense/vision read path)", async () => {
+  const c = await core();
+  const img = c.buildNvsSeedImage({
+    wifi: { ssid: "birdhouse", pass: "chirpchirp" },
+    wifiScheme: "string",
+    u32: { sns_debounce: 500 },
+  }, 0x6000);
+  const items = c.parseNvs(img, ["wifi_ssid", "wifi_pass"]);
+  const get = (k) => items.find((i) => i.key === k && i.namespace === "securacv");
+  const ssid = get("wifi_ssid");
+  assert.strictEqual(ssid.type, 0x21, "a STRING entry — getString finds it");
+  assert.strictEqual(new TextDecoder().decode(ssid.bytes), "birdhouse");
+  assert.strictEqual(new TextDecoder().decode(get("wifi_pass").bytes), "chirpchirp");
+  assert.ok(!get("wifi_en"), "wifi_en is the blob family's key — not written here");
+  assert.strictEqual(get("sns_debounce").value, 500, "reflex seeds ride the same image");
+  // and the blob scheme is untouched by the addition
+  const blobImg = c.buildNvsSeedImage({ wifi: { ssid: "nest", pass: "chirpchirp" } }, 0x4000);
+  const blobItems = c.parseNvs(blobImg, ["wifi_ssid"]);
+  const bssid = blobItems.find((i) => i.key === "wifi_ssid");
+  assert.strictEqual(bssid.type, 0x42, "blob by default, as before");
+});
+
+test("parseSenseLine: the radar bench reads every console shape", async () => {
+  const c = await core();
+  assert.deepStrictEqual(c.parseSenseLine("[sense] present count=1 range=near"),
+    { kind: "sense", presence: "present", count: "1", range: "near" });
+  assert.deepStrictEqual(c.parseSenseLine("[sense] clear count=0 range=unknown"),
+    { kind: "sense", presence: "clear", count: "0", range: "unknown" });
+  assert.deepStrictEqual(c.parseSenseLine("[sense] present count=2+ range=far"),
+    { kind: "sense", presence: "present", count: "2+", range: "far" });
+  assert.deepStrictEqual(c.parseSenseLine("[presence] -> present"),
+    { kind: "presence", presence: "present", stalled: false });
+  assert.strictEqual(c.parseSenseLine("[presence] -> unknown (radar stall)").stalled, true);
+  assert.deepStrictEqual(c.parseSenseLine("[vitals] breath=14 heart=67 bpm"),
+    { kind: "bpm", breath: 14, heart: 67 });
+  assert.deepStrictEqual(c.parseSenseLine("[vitals] breathing locked"),
+    { kind: "vitals", locked: true, stalled: false });
+  assert.strictEqual(c.parseSenseLine("[vitals] breathing lost (stall)").locked, false);
+  const h = c.parseSenseLine("[health] up 120s  heap 187KB  frame_errs 0");
+  assert.deepStrictEqual(h, { kind: "health", up_s: 120, heap_kb: 187, frame_errs: 0 });
+  assert.strictEqual(c.parseSenseLine("random noise"), null);
+  assert.strictEqual(c.parseSenseLine(""), null);
+});
+
+test("roster: add, find, and the progression lines", async () => {
+  const c = await core();
+  let r = c.rosterAdd([], { t: 1000000, mac: "a4:cf:12:00:a4:3b", product: "Canary Sense",
+    version: "2.2.0", preset: "Bedside / sleep watch", wifi: true });
+  r = c.rosterAdd(r, { t: 1300000, mac: "a4:cf:12:00:ff:01", product: "Canary Vision",
+    version: "2.2.0", preset: null, wifi: false });
+  assert.strictEqual(r.length, 2);
+  assert.strictEqual(r[0].n, 1);
+  assert.strictEqual(r[1].n, 2);
+  const found = c.rosterFind(r, "a4:cf:12:00:a4:3b");
+  assert.strictEqual(found.product, "Canary Sense");
+  assert.strictEqual(found.wifi, true);
+  assert.strictEqual(c.rosterFind(r, "no:pe"), null);
+  assert.strictEqual(c.rosterFind(r, null), null);
+  assert.strictEqual(c.macTail("a4:cf:12:00:a4:3b"), "…a4:3b");
+  const lines = c.rosterLines(r, 1300000 + 120000);
+  assert.strictEqual(lines[0].label, "Canary Sense v2.2.0");
+  assert.strictEqual(lines[0].mac, "…a4:3b");
+  assert.ok(lines[0].extras.includes("Bedside"));
+  assert.ok(lines[0].extras.includes("WiFi baked"));
+  assert.strictEqual(lines[0].ago, "7 min ago");
+  assert.strictEqual(lines[1].extras, "");
+  assert.strictEqual(lines[1].ago, "2 min ago");
+  // never store credentials — the entry shape is public facts only
+  assert.deepStrictEqual(Object.keys(found).sort(),
+    ["mac", "n", "preset", "product", "t", "version", "wifi"]);
+});

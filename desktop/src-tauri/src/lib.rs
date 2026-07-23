@@ -19,6 +19,7 @@
 //! Everything the user watches scroll by during a flash is `espflash`'s own
 //! output, relayed verbatim over the `flash:log` event.
 
+mod hub;
 mod provisioning;
 mod release;
 mod serial_monitor;
@@ -33,16 +34,12 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
 // The Raspberry Pi Home Assistant hub path (design: docs/design/
-// raspberry_pi_hub_flashing.md). Writing a whole-OS image to a raw disk is the
-// one thing this app can do that ISN'T can't-brick-safe like an ESP32 flash — a
-// wrong-disk write destroys data. The footgun-critical logic (what is a legal
-// write target, and how to enumerate disks and tell the system disk from an
-// external one) lives in the dependency-free `hub-core` crate (../hub-core) so
-// it is unit-tested on every PR without the desktop stack. The enumerator's
-// tauri command, the confirm UI, and the guarded write build on top of it in
-// follow-up changes — each must run a candidate through `hub_core::hub_disk::
-// classify` and refuse anything not `Eligible`. (Wired in via a path dependency
-// when the first command that uses it lands.)
+// raspberry_pi_hub_flashing.md) lives in src/hub.rs. Writing a whole-OS image
+// to a raw disk is the one thing this app can do that ISN'T can't-brick-safe
+// like an ESP32 flash — so every decision (legal target, image trust, write
+// authorization) stays in the PR-CI-tested `hub-core` crate and every
+// mechanism (download/hash, xz, read-back-verified write, Wi-Fi seed) in
+// `hub-io`; hub.rs only translates and orchestrates.
 
 // The flasher catalog is baked in at compile time so the app can list every
 // Canary and enforce the chip guard with zero network. build.rs copies the ONE
@@ -658,6 +655,7 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(serial_monitor::SerialMonitorState::default())
+        .manage(hub::PiUsbState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -670,6 +668,12 @@ pub fn run() {
             fetch_manifest,
             flash,
             flash_vision_module,
+            hub::load_hub_catalog,
+            hub::list_hub_targets,
+            hub::hub_plan,
+            hub::hub_flash,
+            hub::hub_pi_boot_start,
+            hub::hub_pi_boot_stop,
             serial_monitor::start_serial_monitor,
             serial_monitor::serial_monitor_send,
             serial_monitor::stop_serial_monitor,
