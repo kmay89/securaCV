@@ -36,6 +36,7 @@ const WE2_PID = 0x55d3;
 const state = {
   catalog: null,
   manifest: null,
+  hatch: null,
   appInfo: null,
   port: null,        // the port we're currently tracking
   portInfo: null,
@@ -136,6 +137,11 @@ async function boot() {
     setConn("failed", "Couldn't load the catalog: " + e);
     logEvent("err", "Catalog load failed: " + e);
   }
+  try {
+    state.hatch = await invoke("load_hatch"); // shared Hatchery naming spec
+  } catch (_) {
+    state.hatch = null; // certificate degrades to name-less if unavailable
+  }
 
   loadAppInfo();          // build number, rev, build date, firmware train
   restoreProv();          // remember the non-secret fields from last time
@@ -157,6 +163,8 @@ async function boot() {
       setStatus("monitor-status", String(e), "err"))
   );
   $("update-btn").addEventListener("click", onInstallUpdate);
+  const rerollBtn = $("cert-reroll");
+  if (rerollBtn) rerollBtn.addEventListener("click", rerollCertificate);
   $("update-dismiss").addEventListener("click", () =>
     $("update-banner").classList.add("hidden")
   );
@@ -1069,10 +1077,103 @@ function showHatchCard(product) {
   });
   $("hatch-card").classList.remove("hidden");
   if (wasHidden) {
-    rosterAdd({ kind: "canary", name: (product && product.name) || "Canary", chip: state.chip || "" });
-    logEvent("ok", `${(product && product.name) || "Canary"} hatched`);
+    const cert = mintCertificate(product); // a real birth certificate, once
+    renderCertificate(cert);
+    rosterAdd({ kind: "canary", name: cert ? cert.name : (product && product.name) || "Canary", chip: state.chip || "" });
+    logEvent("ok", `${cert ? cert.name : (product && product.name) || "Canary"} hatched`);
     updateResumeState();
   }
+}
+
+// ── the Hatchery: name + birth certificate (shared spec with the web Lab) ────
+// The whimsical name is a display layer only — the device's functional id
+// stays the stable slug written during provisioning; here it just becomes the
+// certificate's Ring ID. The same name parts, mottoes and copy come from the
+// embedded hatch.json the website also ships, so both surfaces hatch alike.
+let lastCert = null;
+
+function mintCertificate(product) {
+  const h = state.hatch;
+  if (!h || !Array.isArray(h.first) || !h.first.length) return null;
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  const base = pick(h.first);
+  const withTitle = Array.isArray(h.titles) && h.titles.length &&
+    Math.random() < (typeof h.title_chance === "number" ? h.title_chance : 0.6);
+  const house = (Array.isArray(h.house) && h.house.length) ? pick(h.house) : "";
+  // "Nth of its name" from how many Canaries with this base name you've hatched.
+  const fleet = prefs.fleet || [];
+  const nth = fleet.filter((c) => c.base === base).length + 1;
+  const ordinals = Array.isArray(h.ordinals) ? h.ordinals : [];
+  const ordinal = ordinals[nth] || ("the " + nth + "th");
+  // Ring ID = the real functional device-id if this board was provisioned,
+  // else a generated ring code — either way it identifies the actual bird.
+  const provisionedId = $("device-id") ? $("device-id").value.trim() : "";
+  const ringId = provisionedId || genRing(h.ring_prefix || "CNRY");
+
+  return {
+    base,
+    name: (withTitle ? pick(h.titles) + " " : "") + base + (house ? " " + house : ""),
+    species: (product && product.name) || "Canary",
+    lineage: ordinal + " of its name" + (house ? ", " + house.replace(/^the /, "") : ""),
+    ringId,
+    motto: (Array.isArray(h.mottoes) && h.mottoes.length) ? pick(h.mottoes) : "",
+    craft: (h.certificate && h.certificate.craft) || "",
+    ts: Date.now(),
+  };
+}
+
+function genRing(prefix) {
+  let hex;
+  try {
+    const b = crypto.getRandomValues(new Uint8Array(3));
+    hex = Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+  } catch (_) {
+    hex = Math.floor(Math.random() * 0xffffff).toString(16);
+  }
+  hex = (hex + "000000").slice(0, 6).toUpperCase();
+  return prefix + "-" + hex.slice(0, 3) + "-" + hex.slice(3);
+}
+
+function renderCertificate(cert) {
+  const fig = $("hatch-cert");
+  if (!fig) return;
+  if (!cert) { fig.hidden = true; return; }
+  lastCert = cert;
+  const h = state.hatch || {};
+  const c = (h.certificate) || {};
+  if (c.kicker) $("cert-kicker").textContent = c.kicker;
+  if (c.intro) $("cert-intro").textContent = c.intro;
+  if (c.foot) $("cert-foot").textContent = c.foot;
+  $("cert-name").textContent = cert.name;
+  $("cert-species").textContent = "Species · " + cert.species;
+  $("cert-lineage").textContent = cert.lineage;
+  $("cert-date").textContent = fmtDate(cert.ts);
+  $("cert-id").textContent = cert.ringId;
+  $("cert-craft").textContent = cert.craft || "shell pressed in the workshop · spirit woken in the hatchery";
+  $("cert-motto").textContent = cert.motto ? "“" + cert.motto + "”" : "";
+  fig.hidden = false;
+  // Remember this bird's lineage locally so ordinals climb across sessions.
+  prefs.fleet = prefs.fleet || [];
+  if (!prefs.fleet.some((x) => x.ringId === cert.ringId)) {
+    prefs.fleet.unshift({ name: cert.name, base: cert.base, species: cert.species, ringId: cert.ringId, ts: cert.ts });
+    prefs.fleet = prefs.fleet.slice(0, 40);
+    savePrefs();
+  }
+}
+
+// Roll a fresh name for the same freshly-hatched bird (does not re-count it).
+function rerollCertificate() {
+  if (!lastCert || !state.hatch) return;
+  const prev = lastCert;
+  // drop the just-recorded entry so a re-roll replaces rather than stacks
+  if (prefs.fleet && prefs.fleet[0] && prefs.fleet[0].ringId === prev.ringId) {
+    prefs.fleet.shift();
+    savePrefs();
+  }
+  const product = (state.catalog && state.catalog.products || [])
+    .find((p) => p.name === prev.species) || { name: prev.species };
+  const next = mintCertificate(product);
+  if (next) { next.ringId = prev.ringId; next.ts = prev.ts; renderCertificate(next); }
 }
 
 function hatchMoment(product) {

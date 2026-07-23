@@ -47,6 +47,11 @@ use tauri_plugin_updater::UpdaterExt;
 // this embed can never drift from the website/firmware source of truth.
 const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.json"));
 
+// The Hatchery naming spec — the same canary-local/devices/hatch.json the
+// website ships — embedded so the flasher's birth certificate names a Canary
+// identically to the web Lab, offline, and can never drift from it.
+const EMBEDDED_HATCH: &str = include_str!(concat!(env!("OUT_DIR"), "/hatch.json"));
+
 // The one sidecar we ship. This is the RUNTIME name: the bundler flattens the
 // `externalBin` "binaries/espflash-<triple>" to plain `espflash` next to the
 // app binary (Contents/MacOS/espflash), and Tauri resolves the sidecar by that
@@ -106,6 +111,14 @@ pub struct FlashReceipt {
 #[tauri::command]
 fn load_catalog() -> Result<Value, String> {
     serde_json::from_str(EMBEDDED_CATALOG).map_err(|e| format!("bundled catalog is corrupt: {e}"))
+}
+
+/// The Hatchery naming spec (name parts, mottoes, certificate copy), shared
+/// verbatim with the website. The UI mints the same whimsical names + birth
+/// certificate the web Lab does — offline, from this one embedded source.
+#[tauri::command]
+fn load_hatch() -> Result<Value, String> {
+    serde_json::from_str(EMBEDDED_HATCH).map_err(|e| format!("bundled hatch spec is corrupt: {e}"))
 }
 
 /// What build am I? The version, the exact git rev, the moment it was compiled,
@@ -692,6 +705,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             load_catalog,
+            load_hatch,
             app_info,
             list_ports,
             detect_chip,
