@@ -855,6 +855,13 @@ button.flash-map-key:hover { color: var(--text); }
 
 /* the emulated-twin link sits beside the real proof, styled as its equal */
 .flash-twin { text-decoration: none; text-align: center; }
+/* Family headers in the picker's grouped browse (the show-all view):
+   quiet section breaks so ten products read as five stories, not a wall. */
+.flash-family { margin: 14px 0 4px; }
+.flash-family:first-child { margin-top: 4px; }
+.flash-family-name { font-weight: 640; font-size: 14px; }
+.flash-family-pitch { font-size: 12.5px; }
+.flash-family-pick { margin-top: 2px; opacity: 0.85; }
 
 /* ── the settings & about panel: a native <dialog>, one tidy home ── */
 .flash-settings-open {

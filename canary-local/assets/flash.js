@@ -1481,32 +1481,70 @@ function renderPicker() {
   manifestState.id = "flash-manifest-state";
   card.append(manifestState);
 
-  // By default the flasher figures out what to install: it leads with ONE
-  // product — the one asked for via ?product=… (arriving from /checkup), or, if
-  // none, the recommended default for the detected chip. The chip guard still
-  // limits the set, so this only ever narrows within what's valid. The full
-  // list is one click away for the curious / for developers.
-  const preferredId = core.preferredProductId(location.search);
-  const explicit = preferredId ? matches.find((p) => p.id === preferredId) : null;
-  const focus = explicit || core.recommendedProduct(state.catalog, state.chip);
-  const isRecommendation = !explicit && !!focus;
+  // Selection is detection-led (the Arduino-IDE lesson, minus the 400-board
+  // dropdown): everything the flasher can READ — the chip, the measured
+  // flash size, the firmware already on the board, a ?product= ask — picks
+  // the ONE right card and says why in plain words. The full line hides
+  // behind a click, grouped by family with one plain-language question per
+  // variant axis, so ten products never read as a wall of SKUs.
+  const pick = core.smartPick(state.catalog, {
+    chip: state.chip,
+    chipLabel: info.label,
+    flashBytes: state.flashBytes,
+    currentProject: state.current && !state.current.unknown
+      ? state.current.projectName : null,
+    preferredId: core.preferredProductId(location.search),
+  });
+  const focus = pick && pick.product;
 
   const list = el("div", "flash-products");
-  const rows = matches.map((p) => { const r = productRow(p); list.append(r); return r; });
+  const rows = [];
+  const headers = [];
+  const fams = core.familiesIn(state.catalog);
+  const grouped = new Set();
+  for (const fam of fams) {
+    const inFam = matches.filter((p) => p.family === fam.id);
+    if (!inFam.length) continue;
+    const head = el("div", "flash-family");
+    head.append(el("div", "flash-family-name", fam.name));
+    head.append(el("div", "flash-family-pitch muted", fam.pitch));
+    if (inFam.length > 1 && fam.pick) {
+      head.append(el("div", "flash-family-pick fineprint", fam.pick));
+    }
+    headers.push(head);
+    list.append(head);
+    for (const p of inFam) {
+      grouped.add(p.id);
+      const r = productRow(p);
+      rows.push(r);
+      list.append(r);
+    }
+  }
+  // Defensive: a product outside every family still renders (catalog drift
+  // must degrade to "ungrouped", never to "invisible").
+  for (const p of matches.filter((x) => !grouped.has(x.id))) {
+    const r = productRow(p);
+    rows.push(r);
+    list.append(r);
+  }
   if (!matches.length) {
     list.append(el("p", "muted", "No published SecuraCV product targets this chip yet."));
   }
   if (focus && matches.length > 1) {
     // Hide the others, but keep their rows in the DOM so refreshManifestState
-    // still fills every version; one click reveals them.
+    // still fills every version; one click reveals the grouped browse.
     rows.forEach((r) => { if (r.dataset.id !== focus.id) r.style.display = "none"; });
+    headers.forEach((h) => { h.style.display = "none"; });
     const note = el("p", "fineprint flash-focus-note");
-    note.append(el("span", null, isRecommendation
-      ? `🪄 Recommended for your ${info.label || state.chip}: ${focus.name}. `
-      : `Showing ${focus.name} — the firmware you picked. `));
+    note.append(el("span", null,
+      (pick.kind === "picked" ? "" : "🪄 ") + pick.why + " "));
     const more = el("button", "ghost small",
       `show all ${matches.length} for this chip (developer)`);
-    more.addEventListener("click", () => { rows.forEach((r) => { r.style.display = ""; }); note.remove(); });
+    more.addEventListener("click", () => {
+      rows.forEach((r) => { r.style.display = ""; });
+      headers.forEach((h) => { h.style.display = ""; });
+      note.remove();
+    });
     note.append(more);
     card.append(note);
   }

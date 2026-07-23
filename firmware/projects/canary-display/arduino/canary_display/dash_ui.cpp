@@ -34,6 +34,10 @@
 #include "bedside.h"
 #endif
 #endif
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+#include "mic_alarm.h"  // 4.3C: live mic state on the honesty sheet
+#endif
 
 namespace canary::ui {
 
@@ -388,6 +392,25 @@ void about_open(const Fleet& fleet) {
 #if defined(FEATURE_TIME_MACHINE) && FEATURE_TIME_MACHINE
   journal_kept = canary::fleet::the_journal().count();
 #endif
+#if defined(FEATURE_MIC_ALARM) && FEATURE_MIC_ALARM && \
+    defined(HAS_MICROPHONE) && HAS_MICROPHONE
+  // Mic-bearing board (4.3C, display_mic_variant.md): the sheet must tell
+  // the truth this hardware makes possible — and the truth of what the
+  // firmware provably does with it. Live state, not a promise.
+  lv_label_set_text_fmt(
+      s_about_body,
+      "Watches: %d %s, through your home hub only\n"
+      "Speaks: its own check-ins, and the alerts you handle\n"
+      "Keeps: %d events on this device - erasable in History\n"
+      "Mic: %s - alarm patterns only, never speech;\n"
+      "audio never recorded, never leaves this board\n"
+      "Never: cloud, camera, or tracking IDs\n\n"
+      "Firmware v%s",
+      fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
+      canary::io::mic_listening() ? "LISTENING (amber chip lit)"
+                                  : "off (driver uninstalled)",
+      CANARY_FW_VERSION);
+#else
   lv_label_set_text_fmt(
       s_about_body,
       "Watches: %d %s, through your home hub only\n"
@@ -397,6 +420,7 @@ void about_open(const Fleet& fleet) {
       "Firmware v%s",
       fleet.count(), fleet.count() == 1 ? "canary" : "canaries", journal_kept,
       CANARY_FW_VERSION);
+#endif
   lv_label_set_text(s_about_clean, LV_SYMBOL_REFRESH "  Wipe the glass - touch turns off for 30 s");
   lv_label_set_text(s_about_settings, LV_SYMBOL_SETTINGS "  Screen settings");
   lv_label_set_text(s_about_add, LV_SYMBOL_PLUS "  Add a canary");

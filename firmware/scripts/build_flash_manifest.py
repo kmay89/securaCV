@@ -53,8 +53,9 @@ BUILD = {
     # platform + libs), exported by firmware-release.yml to these dirs. A
     # missing dir just drops the product from the flasher — same per-variant
     # resilience as everything else here.
-    "securacv-canary-display-watch":   {"toolchain": "arduino", "dir": "/tmp/display-watch-build", "sketch": "canary_display", "vsuffix": ""},
-    "securacv-canary-display-dash":    {"toolchain": "arduino", "dir": "/tmp/display-dash-build", "sketch": "canary_display", "vsuffix": ""},
+    "securacv-canary-display-watch":      {"toolchain": "arduino", "dir": "/tmp/display-watch-build", "sketch": "canary_display", "vsuffix": ""},
+    "securacv-canary-display-dash":       {"toolchain": "arduino", "dir": "/tmp/display-dash-build", "sketch": "canary_display", "vsuffix": ""},
+    "securacv-canary-display-dash-modes": {"toolchain": "arduino", "dir": "/tmp/display-modes-build", "sketch": "canary_display", "vsuffix": ""},
 }
 
 
