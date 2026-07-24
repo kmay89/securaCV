@@ -24,9 +24,26 @@ on:
       # publishing side skips the very guard that covers it.
       - '.github/workflows/firmware-release.yml'
 
+# A new push to a PR branch supersedes its in-flight run; main is never
+# cancelled.
+#
+# This used to cancel on every ref, main included, and that quietly destroyed
+# the signal this workflow exists to produce. The build takes ~30 minutes and
+# merges arrive in bursts — three landed within about a minute on 2026-07-24 —
+# so each merge killed the previous run before it could report. Four of the
+# five main builds that day ended `cancelled`, including both halves of a
+# link-error fix; the one that did finish reported the failure, but by then
+# the broken commit was already on main and the next merge cancelled the
+# correction's build too.
+#
+# A cancelled build is not a neutral outcome. It is indistinguishable at a
+# glance from one that has not finished, so main can sit broken while looking
+# merely busy. Queueing costs runner minutes; cancelling costs the ability to
+# know whether main compiles. This matches what nearly every other workflow
+# here already does, and what the website's site-checks.yml does.
 concurrency:
   group: firmware-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
