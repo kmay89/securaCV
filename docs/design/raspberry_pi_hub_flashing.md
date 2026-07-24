@@ -1,8 +1,9 @@
 # Design: the Raspberry Pi hub, flashed in one shot
 
-**Status:** accepted — build in progress (§7 steps 1–5 implemented; hardware
-validation of the write + first boot outstanding, Windows backend + full-stack
-seed remaining) · **Date:** 2026-07-22 · **Owner:** TBD
+**Status:** accepted — build in progress (§7 steps 1–5 implemented, disk
+enumeration complete on Linux/macOS/Windows; hardware validation of the write +
+first boot outstanding, full-stack seed remaining) · **Date:** 2026-07-24 ·
+**Owner:** TBD
 
 > *"Can our flashing tool support the Raspberry Pi with a custom flash that adds
 > all the tools they need for it to just work — they put in their Wi-Fi, flash it,
@@ -186,12 +187,23 @@ Raspberry Pi Imager.
     `APFSPhysicalStores` to the *physical* boot disk (refused as `system`),
     external means an explicit `Internal = false`, and container devices are
     never offered as raw targets. Host-tested like the Linux half.
+  - *Windows backend (landed):* `hub_enumerate_windows.rs` — a minimal,
+    dependency-free JSON reader over `Get-Disk … | ConvertTo-Json`, with the
+    Windows subtleties fixture-tested: the boot disk is flagged `system` from
+    `IsBoot`/`IsSystem` **and** the disk hosting `$env:SystemDrive` (so a missing
+    flag can't offer it), `USB` is the sole external bus (the same conservative
+    stance as Linux/macOS), `SD`/`MMC` are the removable card buses, and the
+    Windows-PowerShell-5.1 single-element-array collapse (a lone disk or drive
+    letter arriving unwrapped) is tolerated. Host-tested like the other two.
   - *Command + picker (landed):* `list_hub_targets` (src-tauri/src/hub.rs)
     returns every disk with its verdict, and the app's Hub tab polls it live —
     a lone eligible card selects itself, warnings ride each row, and refused
     disks appear under "hidden — here's why" with hub-core's own reason. The
-    write only arms after a typed ERASE.
-  - *Remaining:* the Windows backend (PowerShell `Get-Disk`).
+    write only arms after a typed ERASE. It calls `hub_enumerate::enumerate()`,
+    which dispatches per-OS, so the Windows backend wired in with no app change.
+  - *Step 2 is now complete across all three desktop OSes* — the last enumerate
+    gap (Windows) is closed; what remains before the writer ships is the
+    hardware validation of the destructive write itself (Step 4).
 - **Step 3 — acquire the image.**
   - *Resolver + verify decision (landed):* `hub_core::hub_image` turns the
     catalog into a typed `WritePlan` (board → image URL, the card-size
