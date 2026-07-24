@@ -21,13 +21,28 @@ const facts = {
   doc: ha.docs.setup,
 };
 
-test("wizard explains both Home Assistant AND MQTT in plain words up front", async () => {
+test("wizard opens with the goal — what you gain and why it's worth it", async () => {
   const { wizardSteps } = await mod();
   const first = wizardSteps(facts)[0];
-  assert.ok(/home assistant/i.test(first.what), "explains Home Assistant");
-  assert.ok(/mqtt/i.test(first.what), "explains MQTT");
+  assert.strictEqual(first.id, "why", "the very first step sells the payoff");
+  const blob = JSON.stringify(first).toLowerCase();
+  // the motivation: the goal, the concrete gains, and the honesty hooks
+  assert.ok(/you gain/.test(blob), "spells out what the user gains");
+  assert.ok(/alert/.test(blob), "names the payoff: alerts");
+  assert.ok(/no cloud|no account|no monthly fee|no subscription/.test(blob),
+    "names why it's worth it: local-only, no fee");
+  assert.ok(/what happened.*never who|records events, not faces/.test(blob),
+    "keeps the privacy promise (events, not identities)");
+});
+
+test("wizard explains both Home Assistant AND MQTT in plain words", async () => {
+  const { wizardSteps } = await mod();
+  const what = wizardSteps(facts).find((s) => s.id === "what");
+  assert.ok(what, "there is a 'what are these two words' step");
+  assert.ok(/home assistant/i.test(what.what), "explains Home Assistant");
+  assert.ok(/mqtt/i.test(what.what), "explains MQTT");
   // no cloud / no account — the reassurance that keeps people going
-  assert.ok(/no cloud|nothing leaves|local/i.test(first.what));
+  assert.ok(/no cloud|nothing leaves|local/i.test(what.what));
 });
 
 test("every step has guidance and a no-dead-end 'Stuck?' path", async () => {
