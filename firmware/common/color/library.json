@@ -6,10 +6,6 @@
     "license": "Apache-2.0",
     "frameworks": ["arduino", "espidf"],
     "platforms": ["espressif32", "native"],
-    "headers": [
-        "color_engine.h",
-        "look_engine.h"
-    ],
     "build": {
         "srcFilter": ["+<*.cpp>"],
         "includeDir": "..",

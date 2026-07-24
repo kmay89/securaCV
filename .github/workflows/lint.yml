@@ -43,6 +43,8 @@ jobs:
         run: python3 scripts/lint_docs_index.py
       - name: Build matrix matches platformio.ini + config.h
         run: python3 scripts/lint_build_matrix.py
+      - name: common/ library manifests are LDF-consistent
+        run: python3 scripts/lint_common_lib_manifests.py
       - name: BOM CSVs — schema-clean and wired into the generator
         run: python3 scripts/lint_bom.py
       - name: BOM pricing engine — contract tests
