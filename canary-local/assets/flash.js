@@ -3434,10 +3434,14 @@ function phaseBluetoothCheck(back) {
   box.append(row);
   backBtn.addEventListener("click", () => stopBle().then(goBack));
 
+  let connectedName = null;   // the board's advertised (branded) BLE name
   const renderSnapshot = (snap, live) => {
     result.innerHTML = "";
     const card = el("div", "flash-card flash-ble-card");
-    card.append(el("h3", null, "✓ Connected — your Canary is on and talking"));
+    card.append(el("h3", null,
+      connectedName
+        ? `✓ Connected to ${connectedName} — it’s on and talking`
+        : "✓ Connected — your Canary is on and talking"));
     const rows = core.bleSnapshotRows(snap);
     if (rows.length) {
       const facts = el("div", "flash-facts");
@@ -3478,11 +3482,12 @@ function phaseBluetoothCheck(back) {
     status.textContent = "Opening the Bluetooth chooser…";
     try {
       await stopBle(); // drop any prior console first
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [core.BLE_CONSOLE.serviceUuid] }],
-        optionalServices: [core.BLE_CONSOLE.serviceUuid],
-      });
-      status.textContent = `Connecting to ${device.name || "the Canary"}…`;
+      // Discover by the Canary's ADVERTISED identity (branded name + pairing
+      // service); the console service is reached over the connection. See
+      // core.bleRequestOptions.
+      const device = await navigator.bluetooth.requestDevice(core.bleRequestOptions());
+      connectedName = device.name || null;
+      status.textContent = `Connecting to ${connectedName || "the Canary"}…`;
       device.addEventListener("gattserverdisconnected", () => {
         if (state.ble && state.ble.device === device) {
           state.ble = null;
