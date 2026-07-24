@@ -28,11 +28,11 @@
  *        sequence — see the board README's bring-up section).
  *      - LCD_RST rides an extra CH422G bit — drive it HIGH at init
  *        (bit position VERIFY: EXIO3 assumed, mirroring the 4.3B).
- *      - ES8311 + ES7210 audio stack. The I2S pins are deliberately -1
- *        until read off the vendor wiki/schematic AT THE BENCH: the mic
- *        layer refuses to start while any pin is -1 and says so on the
- *        glass and the console — a guessed microphone pin map is the one
- *        thing this file must never carry.
+ *      - ES8311 + ES7210 audio stack. The I2S pins are now filled from the
+ *        vendor's own pin-mapping table (captured in board_facts.json and
+ *        drift-locked to it) — facts, not guesses, so the repo's "never ship
+ *        a guessed mic pin" rule holds. The ES7210 register init is the
+ *        remaining bench step; the mic is OFF by default + arm-gated.
  *
  * @note This file must NOT contain any logic - only pin definitions.
  */
@@ -137,14 +137,17 @@
 // I2C bus. Standard silicon addresses below (VERIFY with the playground /
 // debug-mode I2C census — the census names them when they ACK).
 //
-// The I2S capture pins are DELIBERATELY -1: Waveshare's public material
-// for the C does not land the audio GPIOs unambiguously, and a guessed
-// microphone pin is the one guess this repo must never ship. The mic layer
-// (canary/io/mic_alarm) refuses to start while any pin is -1, states so on
-// the glass ("mic: pins unset") and the console, and the board README's
-// bench section walks through reading the real GPIOs off the vendor
-// wiki/schematic and filling these in. Until then the mics are provably
-// un-driven: no driver install ever happens.
+// The I2S GPIOs below are now VENDOR-DOCUMENTED, not guessed: they are
+// transcribed from Waveshare's own ESP32-S3-Touch-LCD-4.3C pin-mapping
+// tables (Audio Codec section), captured in canary-local/devices/
+// board_facts.json and drift-locked against this file. So the repo's rule —
+// "never ship a GUESSED microphone pin" — is satisfied: these are facts off
+// the vendor's page, watched for change by the board-facts freshness loop.
+// What is still bench-pending is the ES7210 REGISTER INIT (the ADC may need
+// configuration before it clocks samples); the mic layer runs headless and
+// the MIC1 SNAP rms=0 line makes an un-inited codec obvious. The mic is
+// still OFF by default and arm-gated — filling these pins changes nothing
+// until a household explicitly arms it.
 
 #define AUDIO_ES8311_ADDR       0x18  // codec (VERIFY via I2C census)
 #define AUDIO_ES7210_ADDR       0x40  // mic ADC (VERIFY via I2C census)
@@ -163,11 +166,17 @@
 
 #define RTC_I2C_ADDR            0x51  // PCF85063 (VERIFY via I2C census)
 
-#define AUDIO_PIN_I2S_MCLK      -1    // VERIFY: fill from vendor schematic at bench
-#define AUDIO_PIN_I2S_SCLK      -1    // VERIFY: fill from vendor schematic at bench
-#define AUDIO_PIN_I2S_LRCK      -1    // VERIFY: fill from vendor schematic at bench
-#define AUDIO_PIN_I2S_SDIN      -1    // VERIFY: mic data in — fill at bench
-#define AUDIO_PIN_PA_ENABLE     -1    // speaker amp enable, if routed (VERIFY)
+// I2S pin map — vendor "Audio Codec" table (board_facts.json). Shared bus:
+// MCLK/SCLK/LRCK clock both the ES7210 mic ADC and the ES8311 speaker codec;
+// DSDIN is data IN from the mics (what capture reads), ASDOUT is data OUT to
+// the speaker (unused by this firmware — we listen, we don't play).
+#define AUDIO_PIN_I2S_MCLK      6     // I2S master clock (GPIO6)
+#define AUDIO_PIN_I2S_SCLK      44    // I2S bit clock / SCLK (GPIO44)
+#define AUDIO_PIN_I2S_LRCK      16    // I2S word/LR clock (GPIO16)
+#define AUDIO_PIN_I2S_SDIN      15    // mic data in — ES7210 DSDIN (GPIO15)
+#define AUDIO_PIN_I2S_ASDOUT    43    // speaker data out — ES8311 (GPIO43, unused)
+#define AUDIO_PIN_PA_ENABLE     -1    // speaker amp enable = CH422G EXIO4 (PA_CTRL),
+                                      // not a native GPIO — driven via the expander
 
 // ============================================================================
 // POWER & BATTERY — CS8501 charge/boost, battery-disconnect side switch

@@ -67,6 +67,7 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`board_capability_map_43b.md`](./board_capability_map_43b.md) | **Board capability map (4.3B)** — an honest, cited ledger of every capability the dash board can do vs. what the firmware drives today, and for each unused one the exact feature gate + bench step to activate it (evidence vault, isolated DI/DO, RS485/Modbus, CAN, microSD, RTC/battery). |
 | [`board_43b_activation_bench.md`](./board_43b_activation_bench.md) | **4.3B peripheral activation bench checklist** — the executable companion to the capability map: per capability (field I/O, RS485/Modbus, CAN/TWAI, evidence vault, RTC/battery), the exact wiring, build/flag, pass signal (the `[FIELD]`/`[RS485]`/`[CAN]` log lines), and the honesty-correction/`VERIFY` note each pass retires. |
 | [`display_research.md`](./display_research.md) | Display hardware research notes. |
+| [`waveshare_board_reference.md`](./waveshare_board_reference.md) | **Waveshare 4.3″ dash boards — our reference, kept fresh** — our first-party reference for the 4.3 / 4.3B / 4.3C hardware (pin maps, onboard silicon, the CH422G "switched" EXIO bits, interfaces, mechanicals), backed by a machine-readable vendor-facts snapshot (`board_facts.json`) that a weekly freshness loop re-pulls from the canonical Waveshare wiki and drift-locks against our `pins.h`. Facts are ours to read and can't go stale; the vendor page stays canonical. |
 
 The CSVs use a flat, RoHS-style schema (enforced by `scripts/lint_bom.py`):
 
