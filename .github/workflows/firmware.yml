@@ -441,6 +441,19 @@ jobs:
           chmod +x firmware/scripts/check_fleet_beacon_sync.sh
           firmware/scripts/check_fleet_beacon_sync.sh
 
+      - name: Verify fleet self-report header copies match the canonical /api/fleet wire shape
+        # fleet_selfreport.h is the ONE place the coarse /api/fleet presence JSON
+        # shape lives (the DISCOVERY.md contract the Witness Wall emulator + the
+        # Flasher's post-flash LAN discovery read). Canonical at
+        # firmware/common/fleet_selfreport/ (included directly by the PIO builds
+        # via -I, and host-tested there) and committed byte-identical next to the
+        # canary-wap Arduino sketch. If the copies diverge, boards answer
+        # /api/fleet with different shapes and the wall/Flasher misparse them,
+        # with no compile error — this guard catches the drift either direction.
+        run: |
+          chmod +x firmware/scripts/check_fleet_selfreport_sync.sh
+          firmware/scripts/check_fleet_selfreport_sync.sh
+
       - name: Verify OTA engine copies in the canary-wap + canary-display sketch dirs match canonical source
         # The signed pull-OTA engine is canonical at firmware/common/ota/src/
         # and committed byte-identical next to BOTH Arduino sketches (canary-wap

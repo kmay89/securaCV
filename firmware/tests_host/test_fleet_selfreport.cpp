@@ -1,0 +1,213 @@
+/* Host tests for the shared /api/fleet self-report builder
+ * (firmware/common/fleet_selfreport/fleet_selfreport.h).
+ *
+ * This is the "parity by architecture" core: every networked Canary answers
+ * GET /api/fleet from THIS one builder, so a change to the wire shape is a
+ * change to this one header — and these tests pin that shape. They mirror the
+ * discipline of test_self_manifest.cpp (a bounded, escaping JSON writer):
+ *
+ *   1. The body is well-formed, single-line JSON matching the contract in
+ *      tvos/discovery/DISCOVERY.md — every required key, in the shape the
+ *      Witness Wall emulator's "connect" and the Flasher's post-flash LAN
+ *      discovery read.
+ *   2. String values are JSON-escaped — an attacker-influenced device name can
+ *      never break out of the JSON (the same discipline as the web UI's
+ *      HTML-escaping; see the CodeQL XSS fix).
+ *   3. The writer is bounded — a too-small buffer truncates safely, always
+ *      NUL-terminates, and never writes past `cap`.
+ *   4. The open/append/close variants compose into a multi-device (hub) body.
+ *
+ * Build & run (via firmware/tests_host/Makefile, mirrors the CI contract):
+ *   g++ -std=c++17 -Wall -Wextra -Werror -I ../common test_fleet_selfreport.cpp
+ */
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+#include "fleet_selfreport/fleet_selfreport.h"
+
+static int g_failures = 0;
+#define CHECK(cond)                                                      \
+  do {                                                                   \
+    if (!(cond)) {                                                       \
+      std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+      g_failures++;                                                      \
+    }                                                                    \
+  } while (0)
+
+static bool has(const std::string& s, const char* sub) {
+  return s.find(sub) != std::string::npos;
+}
+
+static FleetSelfDevice sample() {
+  FleetSelfDevice d{};
+  d.name = "Front Door";
+  d.product = "canary-wap";
+  d.online = 1;
+  d.chain_ok = 1;
+  d.chain_height = 4210;
+  return d;
+}
+
+// ── a single-device body is well-formed, one line, contract shape ───────────
+static void test_single_device_shape() {
+  char buf[512];
+  FleetSelfDevice d = sample();
+  size_t n = fleet_selfreport_build(buf, sizeof buf, &d);
+  std::string s(buf);
+  CHECK(n == s.size());
+  CHECK(!s.empty());
+  CHECK(s.front() == '{');
+  CHECK(s.back() == '}');
+  CHECK(s.find('\n') == std::string::npos);   // single line
+  CHECK(s.find('\r') == std::string::npos);
+
+  // The exact contract shape from DISCOVERY.md.
+  CHECK(has(s, "\"kernel\":\"Front Door\""));
+  CHECK(has(s, "\"verified_through\":\"now\""));
+  CHECK(has(s, "\"devices\":["));
+  CHECK(has(s, "\"name\":\"Front Door\""));
+  CHECK(has(s, "\"online\":true"));
+  CHECK(has(s, "\"chain\":\"ok\""));
+  CHECK(has(s, "\"product\":\"canary-wap\""));
+  CHECK(has(s, "\"chain_height\":4210"));
+  // The single-device body is exactly one object inside the array.
+  CHECK(has(s, "\"devices\":[{\"name\":\"Front Door\",\"online\":true,"
+              "\"chain\":\"ok\",\"product\":\"canary-wap\",\"chain_height\":4210}]}"));
+}
+
+// ── offline / degraded / no-height renders honestly, no dangling keys ───────
+static void test_offline_degraded() {
+  char buf[512];
+  FleetSelfDevice d{};
+  d.name = "Driveway";
+  d.product = "canary-vision";
+  d.online = 0;
+  d.chain_ok = 0;
+  d.chain_height = -1;          // < 0 ⇒ omit chain_height entirely
+  fleet_selfreport_build(buf, sizeof buf, &d);
+  std::string s(buf);
+  CHECK(has(s, "\"online\":false"));
+  CHECK(has(s, "\"chain\":\"unknown\""));
+  CHECK(!has(s, "chain_height"));   // omitted, not "chain_height":-1
+  CHECK(s.back() == '}');
+}
+
+// ── null / empty fields are safe (a half-initialised device must not crash) ─
+static void test_null_fields_safe() {
+  char buf[512];
+  FleetSelfDevice d{};             // everything zero/null
+  d.chain_height = -1;
+  size_t n = fleet_selfreport_build(buf, sizeof buf, &d);
+  std::string s(buf);
+  CHECK(n > 0);
+  CHECK(s.front() == '{' && s.back() == '}');
+  CHECK(has(s, "\"kernel\":\"Canary\""));      // null name → default, not a crash
+  CHECK(has(s, "\"name\":\"Canary\""));
+  CHECK(has(s, "\"product\":\"\""));           // null product → empty string
+  CHECK(has(s, "\"online\":false"));
+
+  // A wholly-null pointer must also be safe.
+  n = fleet_selfreport_build(buf, sizeof buf, nullptr);
+  CHECK(n > 0);
+  CHECK(std::string(buf).front() == '{');
+}
+
+// ── string values are JSON-escaped (never trust a name into a wire format) ──
+static void test_escaping() {
+  char buf[512];
+  FleetSelfDevice d = sample();
+  d.name = "Bar\"; <script>\n\tx";   // quote, angle brackets, newline, tab
+  size_t n = fleet_selfreport_build(buf, sizeof buf, &d);
+  std::string s(buf);
+  CHECK(n == s.size());
+  // The quote/backslash/control chars are escaped; the raw bytes never leak.
+  CHECK(has(s, "\\\""));                        // the embedded quote is escaped
+  CHECK(has(s, "\\n"));
+  CHECK(has(s, "\\t"));
+  CHECK(s.find('\n') == std::string::npos);     // no raw newline in the body
+  CHECK(s.find('\t') == std::string::npos);     // no raw tab in the body
+  // A control byte becomes a \u00XX escape, not a raw byte.
+  FleetSelfDevice d2 = sample();
+  char name[] = { 'a', (char)0x01, 'b', '\0' };
+  d2.name = name;
+  fleet_selfreport_build(buf, sizeof buf, &d2);
+  CHECK(has(std::string(buf), "\\u0001"));
+}
+
+// ── open/append/close compose into a multi-device (hub/aggregator) body ─────
+static void test_multi_device_compose() {
+  char buf[1024];
+  FleetSelfDevice a = sample();          // Front Door
+  FleetSelfDevice b{};
+  b.name = "Studio"; b.product = "canary"; b.online = 1; b.chain_ok = 1;
+  b.chain_height = -1;
+
+  size_t o = fleet_selfreport_open(buf, sizeof buf, "kitchen-hub");
+  o = fleet_selfreport_append_device(buf, sizeof buf, o, &a);
+  o = fsr__raw(buf, sizeof buf, o, ",");       // caller joins peer rows
+  o = fleet_selfreport_append_device(buf, sizeof buf, o, &b);
+  o = fleet_selfreport_close(buf, sizeof buf, o);
+
+  std::string s(buf);
+  CHECK(o == s.size());
+  CHECK(s.front() == '{' && s.back() == '}');
+  CHECK(has(s, "\"kernel\":\"kitchen-hub\""));
+  CHECK(has(s, "\"name\":\"Front Door\""));
+  CHECK(has(s, "\"name\":\"Studio\""));
+  // Two device objects, comma-joined, inside one array.
+  CHECK(has(s, "},{"));
+  // Studio omits chain_height; Front Door keeps it.
+  CHECK(has(s, "\"name\":\"Studio\",\"online\":true,\"chain\":\"ok\","
+              "\"product\":\"canary\"}"));
+}
+
+// ── a too-small buffer fails safe: stays inside cap, always NUL-terminated ──
+static void test_bounded_no_overflow() {
+  FleetSelfDevice d = sample();
+  for (size_t cap = 1; cap < 200; ++cap) {
+    char buf[256];
+    for (size_t i = 0; i < sizeof buf; ++i) buf[i] = (char)0x7f;  // canary bytes
+    size_t n = fleet_selfreport_build(buf, cap, &d);
+    // Whatever happens, it stays inside cap and stays NUL-terminated at the
+    // write offset, and the returned length is the real string length (no
+    // interior NUL, no overrun) — the writer truncates rather than fails closed.
+    CHECK(n < cap);
+    CHECK(buf[n] == '\0');
+    CHECK(std::strlen(buf) == n);
+    // The bytes at/after cap must be untouched (no overflow write).
+    for (size_t i = cap; i < sizeof buf; ++i) CHECK(buf[i] == (char)0x7f);
+  }
+  // With ample room the whole body is present and complete.
+  char big[512];
+  size_t n = fleet_selfreport_build(big, sizeof big, &d);
+  CHECK(n > 0);
+  CHECK(big[n] == '\0');
+  CHECK(std::strlen(big) == n);
+  CHECK(big[0] == '{' && big[n - 1] == '}');
+}
+
+// ── cap==0 / null out are no-ops, never a write ─────────────────────────────
+static void test_degenerate_caps() {
+  FleetSelfDevice d = sample();
+  char sentinel = (char)0x7f;
+  // cap == 0: nothing may be written.
+  CHECK(fleet_selfreport_build(&sentinel, 0, &d) == 0);
+  CHECK(sentinel == (char)0x7f);
+  // null out: returns 0, no crash.
+  CHECK(fleet_selfreport_build(nullptr, 64, &d) == 0);
+}
+
+int main() {
+  test_single_device_shape();
+  test_offline_degraded();
+  test_null_fields_safe();
+  test_escaping();
+  test_multi_device_compose();
+  test_bounded_no_overflow();
+  test_degenerate_caps();
+
+  if (g_failures == 0) { std::printf("ALL fleet-selfreport tests PASSED\n"); return 0; }
+  std::printf("FAILED: %d assertion(s)\n", g_failures);
+  return 1;
+}
