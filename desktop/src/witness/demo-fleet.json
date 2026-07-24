@@ -1,0 +1,11 @@
+{
+  "kernel": "SecuraCV demo kernel",
+  "verified_through": "just now",
+  "devices": [
+    { "name": "Front Door", "online": true, "chain": "ok", "product": "canary-wap" },
+    { "name": "Studio", "online": true, "chain": "ok", "product": "canary" },
+    { "name": "Garage", "online": true, "chain": "ok", "product": "canary-sense" },
+    { "name": "Back Gate", "online": true, "chain": "ok", "product": "canary" },
+    { "name": "Driveway", "online": false, "chain": "ok", "product": "canary-vision" }
+  ]
+}

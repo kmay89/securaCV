@@ -5,10 +5,29 @@ page + `js/tv-emulator.js` + `js/highlight.js` + `demo-fleet.json`, no build
 step, no framework, CSP-safe (`script-src 'self'`). That makes it a drop-in for
 both Tauri apps, which are already web-frontend shells.
 
-> **Status: plan, not yet wired.** This touches the app frontends and their
-> build/release flows, so per [`../CLAUDE.md`](../CLAUDE.md) it needs a real
-> **macOS + Tauri** build to verify before shipping. Everything below is the
-> exact integration; give the go-ahead and it gets wired and built.
+> **Status: Flasher — wired; web layer verified. Lab — same pattern, pending.**
+> The Flasher integration below is implemented and the web layer is verified in
+> a headless browser (the `witness:appear` postMessage makes a just-flashed
+> Canary show up on the wall; skins, connect, and the highlighted JSON all
+> work inside the app-origin iframe). The remaining gate is a real **macOS +
+> Tauri build/run** of the Flasher (per [`../CLAUDE.md`](../CLAUDE.md) /
+> `RELEASE_LESSONS`) — that can't be done from CI or a browser. The Lab is the
+> identical pattern; wire it the same way once the Flasher build is confirmed.
+
+## As wired in the Flasher (this repo)
+
+- `desktop/src/witness/` — the vendored emulator (`witness.html` +
+  `tv-emulator.js` + `highlight.js` + `demo-fleet.json`), self-contained and
+  loaded in an isolated `<iframe>`. See `witness/PROVENANCE.txt` for the sync.
+- `desktop/src/index.html` — a **Your Fleet** tab (`data-nav="fleet"`) and a
+  `#fleet-view` holding `<iframe id="witness-frame" src="witness/witness.html">`.
+- `desktop/src/app.js` — `VIEWS` includes `fleet`; `announceToWitness()` posts
+  `{type:'witness:appear', name}` to the iframe right after a successful flash
+  (`onFlash`), wrapped in try/catch so it can **never** break the flash flow;
+  a "new" badge draws attention until you open the tab.
+- Works within the app's existing CSP (`default-src 'self'`) — same-origin
+  iframe + `demo-fleet.json` fetch; no CSP change. A real LAN kernel needs
+  `connect-src` widened (a deliberate, separate change).
 
 ## The Flasher — the magic moment
 
