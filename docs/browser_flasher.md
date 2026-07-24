@@ -115,10 +115,14 @@ identity card). It writes **nothing** to the board — it's a connectivity test,
 not a flash channel (you can't flash an ESP32 over BLE with esptool). Web
 Bluetooth is Chromium-only just like Web Serial (desktop or Android; never
 Safari/Firefox/iOS), and the console is **bonded-peers-only** by design, so an
-unpaired browser is told to pair first rather than dead-ending. The UUIDs, the
-availability gate, and the snapshot parser live in `flash-core.js` (`BLE_CONSOLE`,
-`bleSupport`, `parseBleSnapshot`, `bleSnapshotRows`), pinned by
-`tests/flash.test.js`; `flash.js` owns the GATT dance.
+unpaired browser is told to pair first rather than dead-ending. A "can't find
+it" failure also names the **external antenna** first: on the XIAO ESP32-S3 the
+u.FL WiFi/BT antenna must be seated or — per Seeed's own Bluetooth guide — *BLE
+may not work at all*, so it's the first thing to check before range or power.
+The UUIDs, the availability gate, and the snapshot parser live in
+`flash-core.js` (`BLE_CONSOLE`, `bleSupport`, `parseBleSnapshot`,
+`bleSnapshotRows`), pinned by `tests/flash.test.js`; `flash.js` owns the GATT
+dance.
 
 ## How it fits the release system
 

@@ -3515,9 +3515,14 @@ function phaseBluetoothCheck(back) {
       connectBtn.disabled = false;
       const name = (e && e.name) || "";
       if (name === "NotFoundError") {
-        // User dismissed the chooser, or no Canary was advertising.
+        // User dismissed the chooser, or no Canary was advertising. On the XIAO
+        // ESP32-S3 the #1 physical cause of "nothing shows up" is the external
+        // u.FL antenna not being seated — Seeed is explicit that BLE may not
+        // work at all without it — so name it before blaming range/power.
         status.textContent =
-          "No Canary picked. Make sure it’s powered and nearby — its Bluetooth " +
+          "No Canary picked. Make sure it’s powered and nearby, and that its " +
+          "external antenna is seated (on the XIAO ESP32-S3 the u.FL WiFi/BT " +
+          "antenna must be attached or Bluetooth may not work at all). Its " +
           "console advertises for a bonded phone; pick it from the list.";
       } else if (name === "SecurityError" || name === "NotAllowedError") {
         result.innerHTML = "";
@@ -3528,7 +3533,9 @@ function phaseBluetoothCheck(back) {
       } else {
         result.innerHTML = "";
         result.append(errorBox("Bluetooth connect failed",
-          (e && e.message) || "Couldn’t reach the Canary. Move closer, power-cycle it, and retry."));
+          (e && e.message) || "Couldn’t reach the Canary. Check the external " +
+          "antenna is seated (required for BLE on the XIAO ESP32-S3), move " +
+          "closer, power-cycle it, and retry."));
       }
     }
   };

@@ -10,7 +10,7 @@
     "tier": "verified",
     "tier_evidence": "docs/hardware/v1_bench_validation_runbook.md",
     "used_by": ["canary", "canary-wap"],
-    "notes": "Primary witness board: camera, PDM mic, microSD, 8 MB octal PSRAM."
+    "notes": "Primary witness board: camera, PDM mic, microSD, 8 MB octal PSRAM. External u.FL antenna required — WiFi and BLE (pairing + offline console) need it seated; without it Bluetooth may not work at all."
   },
   {
     "id": "xiao-esp32s3",
@@ -75,7 +75,7 @@
     "tier": "compile-tested",
     "tier_evidence": "",
     "used_by": ["canary-display"],
-    "notes": "Watch-puck fleet display: GC9A01 240x240 round LCD, CST816S touch, PCF8563 RTC, battery. Bench validation pending — run docs/hardware/display_bench_bringup.md Track W to promote."
+    "notes": "Watch-puck fleet display: GC9A01 240x240 round LCD, CST816S touch, PCF8563 RTC, battery. External u.FL antenna required for reliable WiFi/BLE (the BLE 5 long-range fleet scan needs it seated). Bench validation pending — run docs/hardware/display_bench_bringup.md Track W to promote."
   },
   {
     "id": "waveshare-esp32s3-lcd43",
