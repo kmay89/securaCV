@@ -219,5 +219,9 @@ any scale, forever. Two short, plain-language companions cover the rest:
   make it safe to standardize on.
 - **[TRADEMARK.md](TRADEMARK.md)** — using the name, logo, and mascot: a free
   "Works with SecuraCV" badge for anyone, primary marks by public grant.
+- **[TERMS.md](TERMS.md)** — a plain-language template for paid-services terms
+  (advisory-only, liability capped at fees, not a safety device). A scaffold for
+  your attorney to finish — not legal advice, and it covers services only, never
+  the Apache-2.0 software.
 
 **SecuraCV** — calm local proof, without the surveillance archive.
