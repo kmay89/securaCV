@@ -538,7 +538,9 @@ PROVE = {
         "emulated": {"href": "fleet.html",
                      "label": "🧪 the 1:1 twin — the same firmware, in the browser",
                      "how": "The fleet page boots the REAL display firmware compiled to "
-                            "WASM — the pixels here are the pixels the glass shows."},
+                            "WASM — the pixels here are the pixels the glass shows. The "
+                            "listening 4.3C variant gets its own does/doesn't mic bench "
+                            "at dash-mic.html — same decision core, drift-locked."},
     },
 }
 

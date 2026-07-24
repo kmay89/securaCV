@@ -127,8 +127,11 @@ have to be true, and today none of the shipped images clear the first:
 
 So the honest path to "browse a Canary's witness files on an iPhone" is: an
 **opt-in OTG + evidence-drive S3 image**, a **FAT32/exFAT SD**, **self-powered**,
-and a **bench test on a real iPhone** (the Phase-2 step that hasn't run). It is
-buildable; it is not yet a validated, flashable option.
+and a **bench test on a real iPhone** (the Phase-2 step that hasn't run). That
+build now exists as the **`canary-wap-usbdrive`** env (it also carries the
+branded USB name, so one flash validates both) — flash it and run the checklist
+in [`docs/hardware/usb_drive_bench.md`](hardware/usb_drive_bench.md). It is
+compile-verified in CI; what remains is the on-device/iPhone confirmation.
 
 ## Self-healing (never get stuck)
 

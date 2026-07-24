@@ -332,6 +332,46 @@ jobs:
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
+      # ── self-heal a flaky upload ───────────────────────────────────────────
+      # GitHub's asset-upload endpoint 5xx's from time to time; tauri-action has
+      # no retry, so one hiccup fails the whole publish with the installers
+      # half-uploaded. Runs on the publish path even if the step above failed:
+      # reconcile every built bundle + signature against the release, uploading
+      # (with backoff) only what's missing. Idempotent — a clean run is a no-op.
+      - name: Reconcile release assets (retry missing uploads)
+        if: always() && steps.plan.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -uo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG not present yet — nothing to reconcile"; exit 0
+          fi
+          root=desktop/src-tauri/target
+          have=$(gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null || true)
+          fail=0
+          found=0
+          # while-read (not mapfile) so this also runs on macOS's bash 3.2.
+          while IFS= read -r f; do
+            found=1
+            # GitHub renames spaces to dots in asset names; match on that form.
+            ghname=$(basename "$f" | tr ' ' '.')
+            if grep -qxF "$ghname" <<<"$have"; then continue; fi
+            echo "missing on release: $ghname — uploading"
+            ok=0
+            for i in 1 2 3 4 5; do
+              if gh release upload "$TAG" "$f" --clobber; then ok=1; break; fi
+              echo "  upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+            done
+            [ "$ok" -eq 1 ] || { echo "::error::could not upload $ghname after retries"; fail=1; }
+          done < <(find "$root" -type f \
+            \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' \
+               -o -name '*.app.tar.gz' -o -name '*.sig' \) 2>/dev/null | sort -u)
+          [ "$found" -eq 1 ] || echo "no bundles on disk"
+          exit $fail
+
       - name: Upload build artifacts (dry run)
         if: steps.plan.outputs.publish == 'false'
         uses: actions/upload-artifact@v7
@@ -343,3 +383,90 @@ jobs:
             desktop/src-tauri/target/**/release/bundle/**/*.app
             desktop/src-tauri/target/**/release/bundle/**/*.AppImage
             desktop/src-tauri/target/**/release/bundle/**/*.deb
+
+  # ── one authoritative writer for the updater manifest ────────────────────────
+  # The matrix jobs each write latest.json and rely on merge-with-existing, and
+  # tauri-action fills it with asset-ID URLs that die on any re-upload — so a
+  # re-run or a half-failed job can leave self-update pointing at deleted assets
+  # or carrying a stale signature (fresh INSTALLS are unaffected; only the
+  # in-app updater breaks). This job runs ONCE after both builds and rewrites
+  # latest.json to be durable: stable name-based URLs + signatures read from the
+  # .sig files the release actually carries. Then it refuses to finish unless
+  # every updater URL resolves — an inconsistent release fails loudly here
+  # instead of silently breaking updates. Publish path only.
+  finalize:
+    name: Finalize updater manifest (stable URLs + consistency guard)
+    needs: build
+    if: github.ref_type == 'tag' || github.event.inputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve tag + version
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            ver=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+            tag="flasher-v${ver}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#flasher-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite latest.json with stable URLs + fresh signatures
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VER: ${{ steps.plan.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null
+          work="$(mktemp -d)"
+          # The current manifest gives us the platform key set (tauri-action's
+          # own scheme); the .sig assets give us the authoritative signatures.
+          gh release download "$TAG" -p latest.json -D "$work" --clobber
+          for f in \
+            "SecuraCV.Flasher_${VER}_amd64.AppImage.sig" \
+            "SecuraCV.Flasher_${VER}_amd64.deb.sig" \
+            "SecuraCV.Flasher_${VER}_universal.app.tar.gz.sig"; do
+            gh release download "$TAG" -p "$f" -D "$work" --clobber
+          done
+          python3 desktop/scripts/harden_updater_manifest.py \
+            "$work/latest.json" "$OWNER" "$REPO" "$TAG" "$VER" "$work"
+          ok=0
+          for i in 1 2 3 4 5; do
+            if gh release upload "$TAG" "$work/latest.json" --clobber; then ok=1; break; fi
+            echo "latest.json upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+          done
+          [ "$ok" -eq 1 ] || { echo "::error::could not upload latest.json after retries"; exit 1; }
+          echo "MANIFEST=$work/latest.json" >> "$GITHUB_ENV"
+
+      - name: Consistency guard — every updater URL must resolve
+        shell: bash
+        env:
+          MANIFEST: ${{ env.MANIFEST }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r url; do
+            code=$(curl -sSL -o /dev/null -w '%{http_code}' "$url")
+            if [ "$code" != "200" ]; then
+              echo "::error::updater URL does not resolve ($code): $url"; fail=1
+            else
+              echo "ok $code  $url"
+            fi
+          done < <(python3 -c "import json,sys;[print(p['url']) for p in json.load(open('$MANIFEST'))['platforms'].values()]" | sort -u)
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::release $TAG has a broken updater manifest — self-update would fail"; exit 1
+          fi
+          echo "updater manifest is self-consistent"

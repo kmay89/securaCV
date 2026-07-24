@@ -279,6 +279,14 @@ DEFINES=(
   -DLV_CONF_INCLUDE_SIMPLE
   -DCONFIG_CANARY_DISPLAY
   -DEMU_BUILD_FLAVOR="\"$FLAVOR\""
+  # The emulator is not real hardware, so the piezo-unpopulated gate that keeps
+  # FEATURE_CHIME off in shipped firmware does not apply here: turn it ON so the
+  # in-browser display actually VOICES the real Canary Voice grammar (boot
+  # chirp, alerts, ack/page/mute) through the LEDC→onTone→Web Audio path. The
+  # sound you hear is the real firmware driving frequency + duty per control
+  # tick — it cannot drift from voice_score.h. Display flavors only (vision /
+  # wap-audio exit above and never see this).
+  -DFEATURE_CHIME=1
   # Reproducible bytes: the boot banner prints __DATE__/__TIME__, which
   # would make every rebuild differ and trip CI's dist drift gate. The
   # honest wall-clock stamp lives in dist/*.meta.json instead.

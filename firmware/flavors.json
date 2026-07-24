@@ -15,7 +15,7 @@
   {
     "name": "canary-wap",
     "dir": "firmware/projects/canary-wap",
-    "build_envs": ["canary-wap-default"],
+    "build_envs": ["canary-wap-default", "canary-wap-usbdrive"],
     "check_env": "canary-wap-default"
   },
   {

@@ -303,22 +303,72 @@ async function buildDisplaySheet(ctx, side, stage) {
   const wireLog = el("div", "wirelog");
   const noteLine = el("div", "note");
 
-  // Web Audio chime (created lazily on first gesture per autoplay rules).
-  let audio = null;
-  const tone = (f) => {
-    if (f <= 0) return;
+  // Web Audio chime — a persistent square "piezo" voice whose frequency AND
+  // gain follow the firmware's real per-control-tick writes (onTone), so the
+  // in-browser display reproduces the actual Canary Voice envelope, glissando,
+  // warble, and volume model — not a flat beep. Created lazily on first gesture
+  // (autoplay policy); muteable and remembered across visits.
+  let audio = null, voiceOsc = null, voiceGain = null;
+  let soundMuted = false;
+  try { soundMuted = localStorage.getItem("canary-sound") === "off"; } catch {}
+  const audioResume = () => { try { if (audio && audio.state === "suspended") audio.resume(); } catch {} };
+  const ensureVoice = () => {
+    if (!audio) audio = new AudioContext();
+    if (!voiceOsc) {
+      voiceOsc = audio.createOscillator();
+      voiceOsc.type = "square";
+      voiceGain = audio.createGain();
+      voiceGain.gain.value = 0;
+      const lp = audio.createBiquadFilter();
+      lp.type = "lowpass"; lp.frequency.value = 5600; lp.Q.value = 0.4;
+      voiceOsc.connect(voiceGain).connect(lp).connect(audio.destination);
+      voiceOsc.start();
+    }
+  };
+  // onTone(freqHz, gain0to1): frequency + the note's duty-derived level. freq 0
+  // is a rest/end (silence). MASTER keeps the square wave civil next to real
+  // audio; a short gain ramp de-zips the per-tick updates.
+  const MASTER = 0.22;
+  const tone = (f, gain) => {
+    if (soundMuted) return;
     try {
-      audio ||= new AudioContext();
-      const o = audio.createOscillator();
-      const g = audio.createGain();
-      o.frequency.value = f;
-      o.type = "square";
-      g.gain.value = 0.03;
-      o.connect(g).connect(audio.destination);
-      o.start();
-      o.stop(audio.currentTime + 0.09);
+      ensureVoice(); audioResume();
+      const t = audio.currentTime;
+      if (f > 0) {
+        voiceOsc.frequency.setValueAtTime(f, t);
+        voiceGain.gain.setTargetAtTime(Math.max(0, Math.min(1, gain || 0)) * MASTER, t, 0.003);
+      } else {
+        voiceGain.gain.setTargetAtTime(0, t, 0.004);
+      }
     } catch {}
   };
+  const setSound = (on) => {
+    soundMuted = !on;
+    try { localStorage.setItem("canary-sound", on ? "on" : "off"); } catch {}
+    if (!on && voiceGain) { try { voiceGain.gain.setTargetAtTime(0, audio.currentTime, 0.01); } catch {} }
+  };
+  // A small, unobtrusive corner toggle — the chime is meaningful and infrequent
+  // (boot, alerts, the touch you make), but the room is yours.
+  (() => {
+    if (document.getElementById("canary-sound-toggle")) return;
+    const st = document.createElement("style");
+    st.textContent = "#canary-sound-toggle{position:fixed;right:14px;bottom:14px;z-index:60;width:40px;height:40px;"
+      + "border-radius:50%;border:1px solid rgba(140,140,150,.4);background:rgba(20,20,24,.72);color:#f2f2f2;"
+      + "font-size:17px;cursor:pointer;display:grid;place-items:center;backdrop-filter:blur(6px);"
+      + "box-shadow:0 4px 14px rgba(0,0,0,.3);transition:transform .15s,border-color .15s}"
+      + "#canary-sound-toggle:hover{transform:translateY(-1px);border-color:#e9b44c}"
+      + "#canary-sound-toggle:focus-visible{outline:2px solid #e9b44c;outline-offset:2px}";
+    document.head.append(st);
+    const btn = el("button", null);
+    btn.id = "canary-sound-toggle";
+    btn.type = "button";
+    btn.title = "Display sound";
+    btn.setAttribute("aria-label", "Toggle display sound");
+    const paint = () => { btn.textContent = soundMuted ? "🔇" : "🔊"; btn.setAttribute("aria-pressed", String(!soundMuted)); };
+    btn.addEventListener("click", () => { setSound(soundMuted); paint(); if (!soundMuted) { ensureVoice(); audioResume(); } });
+    paint();
+    document.body.append(btn);
+  })();
 
   const factory = window[dev.emulator.factory];
   const serialAppend = (t) => {
@@ -354,6 +404,9 @@ async function buildDisplaySheet(ctx, side, stage) {
   };
   const bootInner = async (opts = {}) => {
     setShade(null);
+    // Boot is a user gesture; prime the audio voice now so the firmware's
+    // power-on chirp isn't swallowed by a still-suspended AudioContext.
+    if (!soundMuted) { try { ensureVoice(); audioResume(); } catch {} }
     ctx.emu = new CanaryEmulator(factory, {
       canvas: glass,
       onSerial: serialAppend,

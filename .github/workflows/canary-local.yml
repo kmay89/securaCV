@@ -135,6 +135,7 @@ jobs:
           node --test canary-local/tests/flash_select.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
+          node --test canary-local/tests/mic.test.js
           node --test canary-local/tests/board_facts.test.mjs
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
@@ -355,6 +356,11 @@ jobs:
         # hand-transcribed — so it cannot drift. This regenerates it and fails
         # if the committed page is stale, the same guard the dist bundles use.
         run: node canary-local/tools/gen_voice_preview.mjs --check
+      - name: Voice nav rot guard (sound board stays navigable)
+        # Guards the other way the board could rot: losing its place in the
+        # site. Asserts the generated page exists and is registered in
+        # build-line.json (the one manifest every nav surface reads).
+        run: node canary-local/tests/voice_nav_probe.mjs
       - name: Boot probe — rebuilt artifacts
         run: node canary-local/tests/boot_probe.mjs
       - name: Artifact stamps
