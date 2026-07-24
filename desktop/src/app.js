@@ -267,7 +267,27 @@ async function boot() {
 }
 
 // ── the shell: rail router, splash, health strip ─────────────────────────────
-const VIEWS = ["canary", "hub", "atlas", "about"];
+const VIEWS = ["canary", "hub", "atlas", "fleet", "about"];
+
+// The Witness Wall lives in an isolated iframe (witness/witness.html). After a
+// successful flash we tell it a device appeared, so the Canary you just flashed
+// shows up on the wall. Wrapped so it can NEVER interfere with the flash flow.
+function witnessName(product) {
+  const el = $("device-id");
+  const typed = el && el.value && el.value.trim();
+  return String(typed || (product && (product.name || product.id)) || "New Canary").slice(0, 40);
+}
+function announceToWitness(product) {
+  try {
+    const frame = $("witness-frame");
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.postMessage(
+        { type: "witness:appear", name: witnessName(product), label: "just flashed" }, "*");
+    }
+    const badge = $("badge-fleet");
+    if (badge) { badge.textContent = "new"; badge.classList.remove("hidden"); }
+  } catch (_) { /* the wall must never break a flash */ }
+}
 
 function initShell() {
   document.querySelectorAll(".nav-item").forEach((b) =>
@@ -329,6 +349,7 @@ function navigate(view) {
   }
   if (view === "atlas") renderAtlas();
   if (view === "about") renderAbout();
+  if (view === "fleet") { const b = $("badge-fleet"); if (b) b.classList.add("hidden"); }
 
   prefs.view = view;
   savePrefs();
@@ -671,6 +692,7 @@ async function onFlash() {
     state.vision.hostBoot = null;
     clearSecretFields();
     renderReceipts();
+    announceToWitness(state.product);
     if (requiresLiveReceipt(state.product)) {
       setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
       state.busy = false;
