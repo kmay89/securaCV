@@ -23,9 +23,10 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing fw-v* release tag to (re)build flasher assets for (e.g. fw-v2.3.0)"
-        required: true
+        description: "Existing fw-v* release tag to (re)build flasher assets for (e.g. fw-v2.3.0). Blank = the latest published release."
+        required: false
         type: string
+        default: ""
 
 permissions:
   contents: write
@@ -46,7 +47,20 @@ jobs:
         id: tag
         env:
           TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          if [ -z "$TAG" ]; then
+            # Blank = the stable channel's releases/latest — the exact URL the
+            # flasher's release channel polls (the API excludes prereleases and
+            # drafts). One-click "refresh the flasher for what's live".
+            TAG="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+              echo "::error::no published (non-prerelease) release found to refresh. Pass an explicit fw-v* tag, or cut a release first."
+              exit 1
+            fi
+            echo "No tag given — using the latest release: ${TAG}"
+          fi
           case "$TAG" in
             fw-v*) ;;
             *) echo "::error::expected a fw-v* tag, got '$TAG'"; exit 1 ;;

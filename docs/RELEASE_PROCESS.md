@@ -55,17 +55,53 @@ git tag fw-v2.3.1-dev.2 && git push origin fw-v2.3.1-dev.2
 git tag fw-v2.3.1 <same-sha> && git push origin fw-v2.3.1
 ```
 
-CI does everything else: builds all seven products, verifies the signing key
-matches the committed public key, signs every image and manifest, runs
-`ota_release.py verify` over its own output, greps binaries for the version
-string, generates the browser-flasher factory images + `manifest-flash.json`,
-and publishes. There are no manual artifact steps — if you did something by
-hand, that's the bug.
+CI does everything else: builds all products (canary, wap, the three vision
+host boards, the two sense flavors, and the three display flavors — watch /
+dash / dash-modes), verifies the signing key matches the committed public
+key, signs every image and manifest, runs `ota_release.py verify` over its
+own output, greps binaries for the version string, generates the
+browser-flasher factory images + `manifest-flash.json`, and publishes. There
+are no manual artifact steps — if you did something by hand, that's the bug.
 
 Promotion is a rebuild of the same commit from the same pinned workflow —
 the honest guarantee is "same source, same toolchain, re-verified
 signatures". (Bit-identical artifact promotion is a possible future
 hardening; don't claim it until it's implemented.)
+
+### The same ceremony, one-click (no local `git tag`)
+
+Everything above also runs from the **Actions tab** — same build, same
+signing, same guards, so the two paths can't drift. The button just creates
+the tag for you from the version you pick, at the current commit, so tag and
+source can never disagree.
+
+- **Actions → "Firmware Release" → Run workflow.** Pick `channel`
+  (release / dev) and enter `version`:
+  - `release`: a clean triple, e.g. `2.3.1` (blank reads the triple from
+    source). Tags `fw-v2.3.1`, `latest` moves, everyone sees it.
+  - `dev`: a `-dev.N` / `-rc.N` version, e.g. `2.3.1-dev.2`. Tags
+    `fw-v2.3.1-dev.2` as a prerelease; only the dev channel sees it.
+  - The channel is cross-checked against the version's grammar (a dev
+    version with the release channel — or the reverse — is refused), and an
+    already-published tag is refused (bump the headers first). **You still
+    bump `FIRMWARE_VERSION` / `CANARY_FW_VERSION` in every variant** to match
+    — the version-string guard greps each binary for it and fails closed
+    otherwise. The one-click removes the `git tag` step, not the version bump.
+- **Actions → "Release — one click (firmware + apps + web)".** The
+  whole-pipeline launcher: set `firmware` to `dev` or `release` (with
+  `firmware_version`) and it dispatches the firmware release above alongside
+  the desktop apps and the site deploy. Leave `firmware: none` to ship only
+  the apps/web.
+- **Actions → "Flasher Factory Images"** rebuilds *only* the browser-flasher
+  factory images + `manifest-flash.json` for an existing tag (e.g. after a
+  packaging-tooling fix) without cutting a new version. Blank tag = the
+  current `releases/latest`.
+
+Which products appear (flashable) in the in-browser flasher is decided by
+`manifest-flash.json` in the release the page reads — the stable channel's
+`releases/latest`, or the rolling `fw-dev-latest` with `?channel=dev`. A
+product shows as "unavailable" until a release carries it, so a newly-added
+board reaches the flasher the moment its first release is cut.
 
 ## Opting a device into the dev channel
 

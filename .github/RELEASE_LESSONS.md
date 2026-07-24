@@ -33,12 +33,52 @@ any platform.
    a clear line in *that* step, not an opaque bundler abort 3 minutes later:
    `test -s "$res/bootfiles.bin" || { echo "::error::payload missing"; exit 1; }`
 5. **One button for the whole pipeline.** `release-one-click.yml`
-   ("Release — one click (apps + web)") fans out to the app builds + the
-   GitHub Pages web deploy. `publish` off = dev smoke run, on = real
+   ("Release — one click (firmware + apps + web)") fans out to the **firmware
+   release** (the OTA `.bin` images *and* the browser-flasher factory images
+   + `manifest-flash.json`), the desktop app builds, and the GitHub Pages web
+   deploy. `firmware` = none / dev / release (opt-in — a firmware release is
+   always a publish); the apps' `publish` off = dev smoke run, on = real
    releases; `deploy_web` redeploys the site. Prefer it over triggering the
-   per-target workflows by hand.
+   per-target workflows by hand. `firmware-release.yml` also takes the same
+   `channel` + `version` inputs directly (Actions → "Firmware Release"),
+   which is what the launcher dispatches.
+6. **A new board reaches the flasher only when a release carries it.** The
+   in-browser flasher lights a product up from `manifest-flash.json` in the
+   release it reads (`releases/latest`, or `fw-dev-latest` via
+   `?channel=dev`). Adding a board to `flash.json` + the release workflows is
+   necessary but *not sufficient* — the product stays "unavailable" until the
+   **next firmware release is actually cut**. After adding a board, cut a
+   release (one-click above) or it will never appear, no matter how correct
+   the wiring is.
 
 ## Entries
+
+### 2026-07-24 — New boards wired into the flasher but never cut into a release → invisible in the flasher; firmware releases were tag-only and not one-click
+
+- **Symptom:** the three Canary Display flavors (watch / dash / dash-modes)
+  were fully wired — in `flash.json`, in `firmware-release.yml`,
+  `flasher-release.yml`, and `build_flash_manifest.py`, with green gates — yet
+  never appeared in the in-browser flasher. Every product showed as
+  "unavailable".
+- **Cause:** two compounding gaps. (1) The only published release
+  (`fw-v2.2.0`) predated the display boards, and `manifest-flash.json` is
+  built from the catalog *as of the tagged commit* — so the live release
+  simply didn't contain them. (2) Cutting a new firmware release was a
+  local-only `git tag && git push` ceremony: the one-click launcher
+  (`release-one-click.yml`) shipped the apps + web but **not** the firmware,
+  so there was no low-friction way to publish the release that would surface
+  the boards. Correct wiring + no release = invisible.
+- **Fix:** made `firmware-release.yml` dispatchable (Actions → "Firmware
+  Release", `channel` release/dev + `version`, deriving and creating the tag
+  so tag and source can't disagree; existing tag-push path unchanged), folded
+  the firmware release into `release-one-click.yml` as a first-class opt-in
+  target, and made `flasher-release.yml` default a blank tag to
+  `releases/latest`. Documented the one-click ceremony in
+  `docs/RELEASE_PROCESS.md` and added Principle 6 above.
+- **Applies to:** every future board/flavor. Wiring a product into the
+  catalog and workflows is necessary but not sufficient — it is invisible in
+  the flasher until the next release is cut. Cut one (one-click) as the final
+  step of adding a board.
 
 ### 2026-07-24 — Bundled resource copied from an external checkout was a symlink → dangling link → build aborted
 

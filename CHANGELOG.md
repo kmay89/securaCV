@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### release pipeline — one-click firmware release (dev or prod), and the flasher gap it closes
+
+- **`firmware-release.yml` is now dispatchable** (Actions → "Firmware
+  Release"): pick `channel` (release / dev) and a `version`, and it builds,
+  signs, and publishes exactly like the tag-push path — then creates the tag
+  itself from the version at the current commit, so tag and source can never
+  disagree. The version's grammar is cross-checked against the channel (a
+  dev version on the release channel, or vice versa, is refused), an
+  already-published tag is refused, and the existing version-string guard
+  still fails closed if the headers weren't bumped. The `push: tags: fw-v*`
+  ceremony is unchanged.
+- **The whole-pipeline launcher now includes firmware.**
+  `release-one-click.yml` ("Release — one click (firmware + apps + web)")
+  gains a `firmware` selector (none / dev / release) + `firmware_version`, so
+  one button can cut the firmware release — the OTA `.bin` images **and** the
+  browser-flasher factory images + `manifest-flash.json` — alongside the
+  desktop apps and the site deploy.
+- **`flasher-release.yml`** (rebuild the flasher assets for an existing tag)
+  now defaults a blank tag to the stable `releases/latest`, so refreshing the
+  flasher for what's live is a zero-input click.
+- **Why it mattered:** the three Canary Display flavors were fully wired into
+  the catalog and both release workflows but invisible in the in-browser
+  flasher — the only published release predated them, and a firmware release
+  was a local `git tag` step outside the one-click pipeline. A product is
+  "unavailable" until a release carries its `manifest-flash.json` entry;
+  cutting that release is now one click. Recorded in
+  `.github/RELEASE_LESSONS.md` (Principle 6 + a dated entry) and
+  `docs/RELEASE_PROCESS.md`.
+
 ### canary-sentinel — the multi-sensor fusion guardian (Phase 0)
 
 - **A new project: a doorway/window guardian that fuses physically independent
