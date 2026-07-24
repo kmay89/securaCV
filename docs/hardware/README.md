@@ -59,6 +59,7 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`display_living_canary.md`](./display_living_canary.md) | The living-canary mood engine — honest moods mirroring system health. |
 | [`display_care_wave.md`](./display_care_wave.md) | The care wave — gentle presence signals between households. |
 | [`display_nightstand.md`](./display_nightstand.md) | The nightstand ("watch") variant — sleep, glanceability, bedside manners. |
+| [`display_nightstand_line.md`](./display_nightstand_line.md) | **The Nightstand Line — three new display boards** (Waveshare ESP32-C6/S3 1.47" 172×320 + ESP32-S3 7" 800×480 touch): the hardware bring-up (ST7789 34-px offset, WS2812 ambient LED, GT911 + CH422G), color-as-primary language with the RGB LED as the across-the-room attention beacon, the honest night-light two-channel split (state-glow stays dark-when-safe; a summoned warm light is separate), the new 172×320 portrait layout, the 7" Dash-reuse + real 5-point touch, and the staged build plan. Board `pins.h` landed; HAL/emulator/registry are the next slice. |
 | [`display_onboarding.md`](./display_onboarding.md) | On-glass onboarding flows. |
 | [`display_settings.md`](./display_settings.md) | On-glass settings — what's adjustable without an app. |
 | [`display_discovery_and_resilience.md`](./display_discovery_and_resilience.md) | Discovery & resilience — finding sensors, surviving outages. |
