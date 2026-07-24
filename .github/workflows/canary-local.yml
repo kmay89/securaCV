@@ -121,6 +121,7 @@ jobs:
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/audio.test.js
+          node --test canary-local/tests/board_identity.test.js
           node --test canary-local/tests/we2.test.js
           node --test canary-local/tests/sense.test.js
           node --test canary-local/tests/senselab.test.js
