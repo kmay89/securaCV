@@ -67,7 +67,9 @@ void prefs_load() {
   Preferences p;
   if (!p.begin("scv-voice", /*readOnly=*/true)) return;
   s_volume = p.getUChar("vol", CD_VOICE_VOLUME_DEFAULT);
-  s_interactions = p.getBool("ix", CD_VOICE_INTERACTIONS_DEFAULT);
+  // Store the interactions flag as a UChar (0/1), not a Bool: the emulator's
+  // Preferences shim implements getUChar/putUChar but not getBool/putBool.
+  s_interactions = p.getUChar("ix", CD_VOICE_INTERACTIONS_DEFAULT ? 1 : 0) != 0;
   p.end();
   if (s_volume > 4) s_volume = 4;
 }
@@ -75,7 +77,7 @@ void prefs_save() {
   Preferences p;
   if (!p.begin("scv-voice", /*readOnly=*/false)) return;
   p.putUChar("vol", s_volume);
-  p.putBool("ix", s_interactions);
+  p.putUChar("ix", s_interactions ? 1 : 0);
   p.end();
 }
 
