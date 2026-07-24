@@ -27,8 +27,8 @@ EM_JS(void, js_serial_write, (const char* s), {
 EM_JS(void, js_backlight, (int level, int is_night_profile, int duty13), {
   if (Module.onBacklight) Module.onBacklight(level, !!is_night_profile, duty13);
 });
-EM_JS(void, js_tone, (int freq_hz), {
-  if (Module.onTone) Module.onTone(freq_hz);
+EM_JS(void, js_tone, (int freq_hz, int gain_permille), {
+  if (Module.onTone) Module.onTone(freq_hz, gain_permille / 1000);
 });
 EM_JS(void, js_nvs_write, (const char* ns, const char* key, const char* hex), {
   if (Module.onNvsWrite) Module.onNvsWrite(UTF8ToString(ns), UTF8ToString(key), UTF8ToString(hex));
@@ -114,11 +114,30 @@ time_t __wrap_time(time_t* t) {
 namespace {
 struct LedcChan {
   uint32_t freq_hz = 0;
+  uint32_t duty = 0;
   uint8_t res_bits = 8;
   bool attached = false;
   bool is_tone = false;
 };
 LedcChan g_ledc[16];
+
+// Voice the chime channel to Web Audio. A passive piezo is loudest as its duty
+// approaches 50%, and the chime engine writes a duty in [0, max/2] to shape
+// each note's envelope + volume (voice_score.h). Map that to a 0..1 gain so
+// the browser reproduces the REAL firmware-driven envelope/glissando/warble —
+// not a flat beep. A zero frequency (a rest, or the phrase end) is silence.
+void emit_tone(uint8_t channel) {
+  const LedcChan& c = g_ledc[channel];
+  int gain_permille = 0;
+  if (c.freq_hz > 0) {
+    const uint32_t maxduty =
+        c.res_bits >= 31 ? 0xFFFFFFFFu : ((1u << c.res_bits) - 1u);
+    const uint32_t half = maxduty / 2 ? maxduty / 2 : 1;
+    const uint32_t d = c.duty > half ? half : c.duty;
+    gain_permille = (int)((uint64_t)d * 1000u / half);
+  }
+  js_tone(c.freq_hz > 0 ? (int)c.freq_hz : 0, gain_permille);
+}
 }  // namespace
 
 void ledcSetup(uint8_t channel, uint32_t freq_hz, uint8_t resolution_bits) {
@@ -131,12 +150,21 @@ void ledcAttachPin(uint8_t /*pin*/, uint8_t channel) {
 }
 void ledcWrite(uint8_t channel, uint32_t duty) {
   if (channel >= 16) return;
+  g_ledc[channel].duty = duty;
+  // The chime rides its own LEDC channel (marked is_tone by ledcWriteTone); its
+  // duty is the note envelope, so it drives audio gain, NOT the backlight glow.
+  if (g_ledc[channel].is_tone) {
+    emit_tone(channel);
+    return;
+  }
   emu_bus_ledc_write(channel, duty, g_ledc[channel].freq_hz,
                      g_ledc[channel].res_bits);
 }
 void ledcWriteTone(uint8_t channel, uint32_t freq_hz) {
-  if (channel < 16) g_ledc[channel].is_tone = true;
-  js_tone((int)freq_hz);
+  if (channel >= 16) return;
+  g_ledc[channel].is_tone = true;
+  g_ledc[channel].freq_hz = freq_hz;
+  emit_tone(channel);  // authoritative gain follows in the paired ledcWrite
 }
 
 // ── Entropy ─────────────────────────────────────────────────────────────

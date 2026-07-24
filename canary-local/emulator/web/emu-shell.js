@@ -153,7 +153,9 @@ export class CanaryEmulator {
    * @param opts.onMqtt   ({dir, topic, payload, retained}) — wire panel
    * @param opts.onNetEvent (kind, detail)
    * @param opts.onBacklight (levelFloat 0..1, nightProfile) — glass glow
-   * @param opts.onTone   (freqHz) — chime voice (Web Audio outside)
+   * @param opts.onTone   (freqHz, gain0to1) — chime voice: frequency + the
+   *                      note's envelope/volume gain, updated per control tick.
+   *                      Web Audio synthesis lives outside (freq 0 = silence).
    * @param opts.onReboot () — module needs a fresh boot (ESP.restart)
    */
   constructor(moduleFactory, opts) {
@@ -179,7 +181,7 @@ export class CanaryEmulator {
       onFlush: (x, y, w, h) => shell._blit(),
       onDisplayReady: (w, h, round) => shell._displayReady(w, h, round),
       onBacklight: (level, duty13) => shell._backlight(level, duty13),
-      onTone: (f) => shell.opts.onTone?.(f),
+      onTone: (f, g) => shell.opts.onTone?.(f, g),
       onMqttPublish: (topic, payload, retained) => {
         shell.opts.onMqtt?.({ dir: "out", topic, payload, retained });
       },
