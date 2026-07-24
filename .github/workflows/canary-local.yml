@@ -349,6 +349,12 @@ jobs:
             echo "::error::emulator dist/ artifacts do not match a rebuild from this tree — run canary-local/emulator/build.sh all and commit the result"
             exit 1
           fi
+      - name: Voice preview drift check (index.html matches voice_score.h)
+        # The Canary Voice sound preview (canary-local/voice/index.html) is
+        # GENERATED from the firmware header by the real compiler — never
+        # hand-transcribed — so it cannot drift. This regenerates it and fails
+        # if the committed page is stale, the same guard the dist bundles use.
+        run: node canary-local/tools/gen_voice_preview.mjs --check
       - name: Boot probe — rebuilt artifacts
         run: node canary-local/tests/boot_probe.mjs
       - name: Artifact stamps

@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### canary-display — Canary Voice: a browser preview that can't rot, and a sound clearance guard
+
+- **You can hear the signatures now — and the preview can't drift.** A browser
+  sound board (`canary-local/voice/`) plays every Canary Voice signature with
+  its real envelopes, glissando, warble, and the live volume/night model. It is
+  **generated from the firmware** — `tests_host/dump_voice_score.cpp` renders
+  each signature and the volume table straight from `voice_score.h` via the
+  real compiler, and `canary-local/tools/gen_voice_preview.mjs` injects that
+  into the page — so the preview owns no audio math of its own and cannot
+  diverge. A CI drift gate (`canary-local.yml`) fails if the committed page is
+  stale, the same mechanism that guards the emulator dist and `workshop.json`.
+- **Acoustic clearance, machine-checked.** New `display_sound_clearance.md`
+  audits every signature as original and unencumbered (public-domain pentatonic
+  scale; no sampled or trademarked chime; the alarm uses the IEC 60601-1-8
+  *principle* via two bare frequencies, not a protected melody). New
+  `tests_host/test_voice_clearance.cpp` (+ CI step) proves no signature
+  reproduces a **regulated life-safety cadence** — ISO 8201 Temporal-Three
+  (fire) or Temporal-Four (CO) — so a status chirp can never be confused with a
+  real alarm; the detectors self-verify against the genuine cadences so the
+  guard can't rot into a rubber stamp.
+
 ### canary-display — the mic does something useful: wake the screen on a sound
 
 - **Opt-in "wake on sound".** A dark 4.3C dash now lights the moment you walk

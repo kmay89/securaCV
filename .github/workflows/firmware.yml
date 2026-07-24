@@ -909,6 +909,23 @@ jobs:
           /tmp/voice_score | tee /tmp/voice_score.log
           grep -q "ALL .* PASSED" /tmp/voice_score.log
 
+      - name: Build + run canary-display voice clearance host test
+        # Acoustic clearance (docs/hardware/display_sound_clearance.md): no
+        # signature reproduces a regulated life-safety cadence — ISO 8201
+        # Temporal-Three (fire) or Temporal-Four (CO) — so a status chirp can
+        # never be confused with a real alarm; plus the originality invariants
+        # (pleasant voices stay in the public-domain pentatonic; the alarm uses
+        # only its two IEC frequencies). The detectors self-verify against the
+        # real cadences so the guard can't rot into a rubber stamp.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_voice_clearance.cpp \
+              -o /tmp/voice_clearance
+          /tmp/voice_clearance | tee /tmp/voice_clearance.log
+          grep -q "ALL .* PASSED" /tmp/voice_clearance.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
