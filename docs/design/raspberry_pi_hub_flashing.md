@@ -245,8 +245,11 @@ Raspberry Pi Imager.
   - *Windows backend (staged behind the gate; VM/hardware validation
     OUTSTANDING):* `open_target` on Windows opens `\\.\PhysicalDriveN`
     (`CreateFileW`, whole-disk I/O via `FSCTL_ALLOW_EXTENDED_DASD_IO`) after
-    locking + dismounting every volume on that disk and holding the locks for
-    the write — hand-rolled Win32 FFI, no `windows-sys` (the crate keeps its
+    **locking** (required — a lock it can't take is a hard error, since a
+    dismount alone isn't exclusive) and dismounting every volume on that disk.
+    The lock handles are owned by the returned device and dropped the instant
+    the write ends — success, cancel, or verify failure — so the card is never
+    left locked. Hand-rolled Win32 FFI, no `windows-sys` (the crate keeps its
     small dep set, as the macOS path hand-rolls `libc`). The device-agnostic
     core is unchanged: HAOS images are whole-sector, so the 4 MiB chunks and
     aligned tail satisfy raw-disk alignment. The pure `physical_drive_number`

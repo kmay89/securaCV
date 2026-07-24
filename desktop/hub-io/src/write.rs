@@ -405,11 +405,14 @@ fn authopen(path: &str) -> Result<std::fs::File, String> {
 }
 
 /// Windows: get an exclusive handle to `\\.\PhysicalDriveN`, with every volume
-/// that lives on that disk locked and dismounted first (Windows refuses raw
-/// writes to sectors a mounted filesystem owns). The returned `File` then
-/// streams through the very same host-tested [`write_verified`] core as every
-/// other platform — HAOS images are whole-sector, so the 4 MiB chunks and the
-/// aligned tail satisfy raw-disk I/O alignment; only *getting the handle* is
+/// that lives on that disk **locked** and dismounted first (Windows refuses raw
+/// writes to sectors a mounted filesystem owns). The lock handles are owned by
+/// the returned [`win_io::WinDevice`] and released the instant it drops — i.e.
+/// when the write ends, however it ends (success, cancel, or verify failure) —
+/// so the card is never left locked against safe removal. The device streams
+/// through the very same host-tested [`write_verified`] core as every other
+/// platform: HAOS images are whole-sector, so the 4 MiB chunks and the aligned
+/// tail satisfy raw-disk I/O alignment; only *getting the handle* is
 /// Windows-specific.
 ///
 /// STAGED — NOT YET ENABLED. [`write_backend_available`] returns `false` on
@@ -420,11 +423,10 @@ fn authopen(path: &str) -> Result<std::fs::File, String> {
 /// write needs Administrator, so the shipped app will carry an elevation
 /// manifest; a non-elevated run surfaces the clear permission error below.
 #[cfg(target_os = "windows")]
-fn open_target(path: &str) -> Result<std::fs::File, String> {
+fn open_target(path: &str) -> Result<win_io::WinDevice, String> {
     let n = physical_drive_number(path)
         .ok_or_else(|| format!("{path} isn't a \\\\.\\PhysicalDrive<n> path"))?;
-    win_io::lock_and_dismount_disk_volumes(n)?;
-    win_io::open_physical_drive(n)
+    win_io::open(n)
 }
 
 /// The Windows raw-disk primitives, hand-declared in the crate's own style (the
@@ -432,8 +434,9 @@ fn open_target(path: &str) -> Result<std::fs::File, String> {
 /// dependency set — no `windows-sys` pulled in for a handful of calls.
 #[cfg(target_os = "windows")]
 mod win_io {
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
-    use std::sync::Mutex;
+    use std::time::Duration;
 
     const INVALID_HANDLE_VALUE: RawHandle = -1isize as RawHandle;
     const GENERIC_READ: u32 = 0x8000_0000;
@@ -449,6 +452,13 @@ mod win_io {
     const FSCTL_DISMOUNT_VOLUME: u32 = 0x0009_0020;
     const FSCTL_ALLOW_EXTENDED_DASD_IO: u32 = 0x0009_0083;
     const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002D_1080;
+
+    /// How many times to try `FSCTL_LOCK_VOLUME` before giving up. A volume can
+    /// be held transiently (Explorer preview, indexing, antivirus), so we retry
+    /// a few times ~250 ms apart — but a lock we ultimately can't take IS a hard
+    /// error: without it the volume could be written or remounted mid-flash.
+    const LOCK_ATTEMPTS: u32 = 6;
+    const LOCK_RETRY: Duration = Duration::from_millis(250);
 
     // STORAGE_DEVICE_NUMBER. Only `device_number` is read; the other fields are
     // present so the struct matches the Win32 layout the kernel fills in.
@@ -484,25 +494,64 @@ mod win_io {
         fn GetLastError() -> u32;
     }
 
-    /// Volume-lock handles held open for the duration of the current write.
-    /// Keeping the LOCK/DISMOUNT handle open is what stops Windows re-mounting a
-    /// volume mid-write. Replaced (prior locks released) at the start of every
-    /// flash and dropped on process exit; one flash runs at a time (the flasher
-    /// serialises them), so this never accumulates.
-    static VOLUME_LOCKS: Mutex<Vec<OwnedHandle>> = Mutex::new(Vec::new());
+    /// An opened raw physical drive **plus** the volume locks that keep it
+    /// exclusive. All I/O delegates to the drive handle; when the device drops,
+    /// the lock handles drop with it — remounting the card — so the locks live
+    /// exactly as long as the write and no longer, on every return path.
+    pub struct WinDevice {
+        file: std::fs::File,
+        // Held only so the volumes stay locked/dismounted until this drops.
+        #[allow(dead_code)]
+        locks: Vec<OwnedHandle>,
+    }
+
+    impl Read for WinDevice {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.file.read(buf)
+        }
+    }
+    impl Write for WinDevice {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.file.write(buf)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.file.flush()
+        }
+    }
+    impl Seek for WinDevice {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.file.seek(pos)
+        }
+    }
+    impl super::SyncStorage for WinDevice {
+        fn sync_storage(&mut self) -> std::io::Result<()> {
+            self.file.sync_all()
+        }
+        // drop_read_cache keeps the default (no-op). A Windows read-back that
+        // truly bypasses the cache wants FILE_FLAG_NO_BUFFERING with
+        // sector-aligned buffers — a refinement to prove out in the VM pass.
+    }
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    /// Lock + dismount every mounted volume that sits on physical disk `n`,
-    /// keeping each lock handle open (in `VOLUME_LOCKS`) so the volume can't
-    /// remount while we write. Volumes on other disks are left untouched.
-    pub fn lock_and_dismount_disk_volumes(n: u32) -> Result<(), String> {
-        let mut held = VOLUME_LOCKS
-            .lock()
-            .map_err(|_| "volume-lock state was poisoned".to_string())?;
-        held.clear(); // release any locks a previous flash left behind
+    /// Lock + dismount every mounted volume on physical disk `n`, then open the
+    /// disk itself — returning a [`WinDevice`] that owns both. If the open fails
+    /// after locking, the locks it took drop here (remounting those volumes), so
+    /// a failed open never leaves the card half-locked.
+    pub fn open(n: u32) -> Result<WinDevice, String> {
+        let locks = lock_and_dismount_disk_volumes(n)?;
+        let file = open_physical_drive(n)?;
+        Ok(WinDevice { file, locks })
+    }
+
+    /// Lock (required) + dismount every mounted volume that sits on physical
+    /// disk `n`, returning the held lock handles. Keeping a lock handle open is
+    /// what stops Windows re-mounting a volume mid-write; a volume we cannot
+    /// lock is a hard error, because a dismount alone is not exclusive.
+    fn lock_and_dismount_disk_volumes(n: u32) -> Result<Vec<OwnedHandle>, String> {
+        let mut held: Vec<OwnedHandle> = Vec::new();
 
         for letter in b'A'..=b'Z' {
             let vol = format!(r"\\.\{}:", letter as char);
@@ -520,7 +569,7 @@ mod win_io {
             if handle == INVALID_HANDLE_VALUE {
                 continue; // no such drive letter
             }
-            // Own it now so every early exit closes it.
+            // Own it now so every early exit closes it (and releases `held`).
             let owned = unsafe { OwnedHandle::from_raw_handle(handle) };
 
             let mut sdn = StorageDeviceNumber {
@@ -545,22 +594,45 @@ mod win_io {
                 continue; // couldn't tell, or not our disk → drop (closes) it
             }
 
-            // It's on the target disk. Lock (best effort — open handles can
-            // block it), then force the dismount, and KEEP the handle so the
-            // volume stays down for the write.
-            let mut r = 0u32;
-            unsafe {
-                DeviceIoControl(
-                    handle,
-                    FSCTL_LOCK_VOLUME,
-                    std::ptr::null_mut(),
-                    0,
-                    std::ptr::null_mut(),
-                    0,
-                    &mut r,
-                    std::ptr::null_mut(),
-                );
+            // It's on the target disk. Take an exclusive LOCK first, retrying a
+            // few times for a transient holder. A lock we can't get is fatal —
+            // proceeding on a dismount alone would not be exclusive (P2 fix).
+            let mut lock_err = 0u32;
+            let mut locked = false;
+            for attempt in 0..LOCK_ATTEMPTS {
+                let mut r = 0u32;
+                let got = unsafe {
+                    DeviceIoControl(
+                        handle,
+                        FSCTL_LOCK_VOLUME,
+                        std::ptr::null_mut(),
+                        0,
+                        std::ptr::null_mut(),
+                        0,
+                        &mut r,
+                        std::ptr::null_mut(),
+                    )
+                };
+                if got != 0 {
+                    locked = true;
+                    break;
+                }
+                lock_err = unsafe { GetLastError() };
+                if attempt + 1 < LOCK_ATTEMPTS {
+                    std::thread::sleep(LOCK_RETRY);
+                }
             }
+            if !locked {
+                return Err(format!(
+                    "couldn't lock {vol} on PhysicalDrive{n} — another program is using that card \
+                     (Windows error {lock_err}). Close any Explorer window, antivirus, or backup \
+                     tool using it and try again."
+                ));
+            }
+
+            // Now dismount, and KEEP the (locked) handle so the volume stays
+            // down for the write.
+            let mut r = 0u32;
             let dismounted = unsafe {
                 DeviceIoControl(
                     handle,
@@ -582,12 +654,12 @@ mod win_io {
             }
             held.push(owned);
         }
-        Ok(())
+        Ok(held)
     }
 
     /// Open `\\.\PhysicalDriveN` read/write and allow whole-disk I/O. Needs
     /// Administrator; a denied open returns a clear "run as administrator" line.
-    pub fn open_physical_drive(n: u32) -> Result<std::fs::File, String> {
+    fn open_physical_drive(n: u32) -> Result<std::fs::File, String> {
         let path = format!(r"\\.\PhysicalDrive{n}");
         let handle = unsafe {
             CreateFileW(
