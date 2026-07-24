@@ -242,6 +242,23 @@ Raspberry Pi Imager.
     Raspberry Pi Imager / Etcher path — the app never runs as root). **A real
     flash on real hardware must be validated before this ships in a tagged
     flasher release.**
+  - *Windows backend (staged behind the gate; VM/hardware validation
+    OUTSTANDING):* `open_target` on Windows opens `\\.\PhysicalDriveN`
+    (`CreateFileW`, whole-disk I/O via `FSCTL_ALLOW_EXTENDED_DASD_IO`) after
+    locking + dismounting every volume on that disk and holding the locks for
+    the write — hand-rolled Win32 FFI, no `windows-sys` (the crate keeps its
+    small dep set, as the macOS path hand-rolls `libc`). The device-agnostic
+    core is unchanged: HAOS images are whole-sector, so the 4 MiB chunks and
+    aligned tail satisfy raw-disk alignment. The pure `physical_drive_number`
+    path parser is host-tested, and the FFI is cross-`cargo check`ed +
+    `clippy -D warnings`ed for `x86_64-pc-windows-gnu` (it type-checks; only
+    runtime behaviour needs a machine). It is **kept disabled** —
+    `hub_io::write::write_backend_available()` returns `false` on Windows, so
+    the flasher fails fast *before any download* on an unsupported/unvalidated
+    OS rather than dead-ending at the write. Enabling Windows is a one-line flip
+    of that predicate once a VM pass (write a spare USB stick, confirm the
+    read-back) proves it. Opening a physical drive to write needs
+    Administrator, so a shipped Windows build will carry an elevation manifest.
 - **Step 5 — seed the boot partition.**
   - *Wi-Fi keyfile generator (landed):* `hub_core::hub_seed::wifi_keyfile` builds
     the NetworkManager keyfile HAOS reads at first boot from the SSID +
@@ -254,7 +271,12 @@ Raspberry Pi Imager.
     diskutil), writes `CONFIG/network/<id>` via the tested keyfile generator,
     syncs, and ejects — the Wi-Fi form in the app's Hub tab feeds it, values
     never logged. Whether the target HAOS build accepts the seed end-to-end
-    still needs a physical first boot to confirm.
+    still needs a physical first boot to confirm. `mount_partition` is Linux +
+    macOS only, so the **Windows seed-mount is the next Windows piece** after
+    the writer: until it lands a Windows flash produces a bootable card without
+    the Wi-Fi/account pre-seed (a seed stumble is already non-fatal — the
+    verified write is never demoted), and the guide carries the user the last
+    step from `homeassistant.local:8123`.
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS
     keychain, and seed the curated **full-stack** securaCV backup (Mosquitto +
     PWK add-on + Frigate/go2rtc + dashboards + blueprints) so first boot comes

@@ -31,18 +31,43 @@ use std::path::Path;
 /// SD/SSD erase-block size that matters and keeps syscall overhead irrelevant.
 const CHUNK: usize = 4 * 1024 * 1024;
 
-/// Whether this platform actually has a raw-disk write backend (`open_target`).
+/// Whether writing a hub card is **enabled** on this platform.
 ///
 /// Disk *detection* works everywhere — `hub_core::hub_enumerate` enumerates and
-/// classifies candidates on Linux, macOS, and Windows alike — but *writing* a
-/// card only exists on Linux and macOS today. The flasher checks this **up
-/// front**, before the hundreds-of-MB download and ~2.5 GB decompress, so an
-/// operator on an unsupported OS gets an instant, honest answer instead of
-/// waiting out the whole preparation only to fail at the write. This mirrors
-/// `open_target`'s own `#[cfg]` gate exactly (they share the same expression),
-/// which stays as the belt-and-suspenders on the type-level write path.
+/// classifies candidates on Linux, macOS, and Windows alike. *Writing* is
+/// validated and enabled on Linux and macOS. Windows has a full `open_target`
+/// implementation too (see below), but it stays **gated off here until it's
+/// validated on real hardware** — the same "hardware-proven before it ships"
+/// bar every destructive path in this repo holds to. Enabling Windows is a
+/// one-line change to this expression once a VM/hardware pass confirms a
+/// round-tripped write.
+///
+/// The flasher checks this **up front**, before the hundreds-of-MB download and
+/// ~2.5 GB decompress, so an operator on a not-yet-enabled OS gets an instant,
+/// honest answer instead of waiting out the whole preparation only to fail at
+/// the write.
 pub const fn write_backend_available() -> bool {
     cfg!(any(target_os = "linux", target_os = "macos"))
+}
+
+/// The physical-drive index in a Windows raw device path, e.g.
+/// `\\.\PhysicalDrive2` → `2` (case-insensitive, a leading `\\.\` optional).
+/// Pure so it's host-tested on any runner; the Windows `open_target` turns the
+/// number back into a handle. Returns `None` for anything that isn't a
+/// `PhysicalDrive<n>` path — the inverse of
+/// `hub_core::hub_enumerate_windows::physical_drive_path`.
+pub fn physical_drive_number(path: &str) -> Option<u32> {
+    let p = path.trim();
+    let p = p.strip_prefix(r"\\.\").unwrap_or(p);
+    const PREFIX: &str = "PhysicalDrive";
+    if p.len() < PREFIX.len() || !p[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
+        return None;
+    }
+    let digits = &p[PREFIX.len()..];
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u32>().ok()
 }
 
 /// What a completed, read-back-verified write proved.
@@ -379,9 +404,235 @@ fn authopen(path: &str) -> Result<std::fs::File, String> {
     }
 }
 
-/// Platforms without a write backend yet (Windows). Honest error, same posture
-/// as the enumerator.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// Windows: get an exclusive handle to `\\.\PhysicalDriveN`, with every volume
+/// that lives on that disk locked and dismounted first (Windows refuses raw
+/// writes to sectors a mounted filesystem owns). The returned `File` then
+/// streams through the very same host-tested [`write_verified`] core as every
+/// other platform — HAOS images are whole-sector, so the 4 MiB chunks and the
+/// aligned tail satisfy raw-disk I/O alignment; only *getting the handle* is
+/// Windows-specific.
+///
+/// STAGED — NOT YET ENABLED. [`write_backend_available`] returns `false` on
+/// Windows, so the flasher fails fast (before any download) and never reaches
+/// this. It exists so a VM/hardware pass can compile and exercise it against a
+/// spare USB stick; once a round-tripped write is confirmed, enabling Windows is
+/// the one-line flip in `write_backend_available`. Opening a physical drive for
+/// write needs Administrator, so the shipped app will carry an elevation
+/// manifest; a non-elevated run surfaces the clear permission error below.
+#[cfg(target_os = "windows")]
+fn open_target(path: &str) -> Result<std::fs::File, String> {
+    let n = physical_drive_number(path)
+        .ok_or_else(|| format!("{path} isn't a \\\\.\\PhysicalDrive<n> path"))?;
+    win_io::lock_and_dismount_disk_volumes(n)?;
+    win_io::open_physical_drive(n)
+}
+
+/// The Windows raw-disk primitives, hand-declared in the crate's own style (the
+/// macOS path hand-rolls its `libc` FFI too) so hub-io keeps its small, audited
+/// dependency set — no `windows-sys` pulled in for a handful of calls.
+#[cfg(target_os = "windows")]
+mod win_io {
+    use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
+    use std::sync::Mutex;
+
+    const INVALID_HANDLE_VALUE: RawHandle = -1isize as RawHandle;
+    const GENERIC_READ: u32 = 0x8000_0000;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const OPEN_EXISTING: u32 = 3;
+    const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
+    const ERROR_ACCESS_DENIED: u32 = 5;
+
+    // FSCTL / IOCTL codes from winioctl.h.
+    const FSCTL_LOCK_VOLUME: u32 = 0x0009_0018;
+    const FSCTL_DISMOUNT_VOLUME: u32 = 0x0009_0020;
+    const FSCTL_ALLOW_EXTENDED_DASD_IO: u32 = 0x0009_0083;
+    const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002D_1080;
+
+    // STORAGE_DEVICE_NUMBER. Only `device_number` is read; the other fields are
+    // present so the struct matches the Win32 layout the kernel fills in.
+    #[repr(C)]
+    #[allow(dead_code)]
+    struct StorageDeviceNumber {
+        device_type: u32,
+        device_number: u32,
+        partition_number: u32,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateFileW(
+            name: *const u16,
+            access: u32,
+            share: u32,
+            security: *mut core::ffi::c_void,
+            disposition: u32,
+            flags: u32,
+            template: RawHandle,
+        ) -> RawHandle;
+        fn DeviceIoControl(
+            device: RawHandle,
+            code: u32,
+            in_buf: *mut core::ffi::c_void,
+            in_size: u32,
+            out_buf: *mut core::ffi::c_void,
+            out_size: u32,
+            returned: *mut u32,
+            overlapped: *mut core::ffi::c_void,
+        ) -> i32;
+        fn GetLastError() -> u32;
+    }
+
+    /// Volume-lock handles held open for the duration of the current write.
+    /// Keeping the LOCK/DISMOUNT handle open is what stops Windows re-mounting a
+    /// volume mid-write. Replaced (prior locks released) at the start of every
+    /// flash and dropped on process exit; one flash runs at a time (the flasher
+    /// serialises them), so this never accumulates.
+    static VOLUME_LOCKS: Mutex<Vec<OwnedHandle>> = Mutex::new(Vec::new());
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// Lock + dismount every mounted volume that sits on physical disk `n`,
+    /// keeping each lock handle open (in `VOLUME_LOCKS`) so the volume can't
+    /// remount while we write. Volumes on other disks are left untouched.
+    pub fn lock_and_dismount_disk_volumes(n: u32) -> Result<(), String> {
+        let mut held = VOLUME_LOCKS
+            .lock()
+            .map_err(|_| "volume-lock state was poisoned".to_string())?;
+        held.clear(); // release any locks a previous flash left behind
+
+        for letter in b'A'..=b'Z' {
+            let vol = format!(r"\\.\{}:", letter as char);
+            let handle = unsafe {
+                CreateFileW(
+                    wide(&vol).as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    std::ptr::null_mut(),
+                    OPEN_EXISTING,
+                    0,
+                    std::ptr::null_mut(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                continue; // no such drive letter
+            }
+            // Own it now so every early exit closes it.
+            let owned = unsafe { OwnedHandle::from_raw_handle(handle) };
+
+            let mut sdn = StorageDeviceNumber {
+                device_type: 0,
+                device_number: u32::MAX,
+                partition_number: 0,
+            };
+            let mut returned = 0u32;
+            let ok = unsafe {
+                DeviceIoControl(
+                    handle,
+                    IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::addr_of_mut!(sdn).cast(),
+                    std::mem::size_of::<StorageDeviceNumber>() as u32,
+                    &mut returned,
+                    std::ptr::null_mut(),
+                )
+            };
+            if ok == 0 || sdn.device_number != n {
+                continue; // couldn't tell, or not our disk → drop (closes) it
+            }
+
+            // It's on the target disk. Lock (best effort — open handles can
+            // block it), then force the dismount, and KEEP the handle so the
+            // volume stays down for the write.
+            let mut r = 0u32;
+            unsafe {
+                DeviceIoControl(
+                    handle,
+                    FSCTL_LOCK_VOLUME,
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut r,
+                    std::ptr::null_mut(),
+                );
+            }
+            let dismounted = unsafe {
+                DeviceIoControl(
+                    handle,
+                    FSCTL_DISMOUNT_VOLUME,
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut r,
+                    std::ptr::null_mut(),
+                )
+            };
+            if dismounted == 0 {
+                let e = unsafe { GetLastError() };
+                return Err(format!(
+                    "couldn't dismount {vol} on PhysicalDrive{n} before writing (Windows error \
+                     {e}) — close any Explorer window or program using that card and try again"
+                ));
+            }
+            held.push(owned);
+        }
+        Ok(())
+    }
+
+    /// Open `\\.\PhysicalDriveN` read/write and allow whole-disk I/O. Needs
+    /// Administrator; a denied open returns a clear "run as administrator" line.
+    pub fn open_physical_drive(n: u32) -> Result<std::fs::File, String> {
+        let path = format!(r"\\.\PhysicalDrive{n}");
+        let handle = unsafe {
+            CreateFileW(
+                wide(&path).as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            let e = unsafe { GetLastError() };
+            return Err(if e == ERROR_ACCESS_DENIED {
+                format!(
+                    "no permission to open {path} — flashing a disk needs Administrator. \
+                     Right-click the flasher and choose \"Run as administrator\", then try again."
+                )
+            } else {
+                format!("couldn't open {path} for writing (Windows error {e})")
+            });
+        }
+        // Let writes run past the last partition to the end of the medium.
+        let mut returned = 0u32;
+        unsafe {
+            DeviceIoControl(
+                handle,
+                FSCTL_ALLOW_EXTENDED_DASD_IO,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                0,
+                &mut returned,
+                std::ptr::null_mut(),
+            );
+        }
+        // Safety: `handle` is a valid, owned OS handle we just opened.
+        Ok(unsafe { std::fs::File::from_raw_handle(handle) })
+    }
+}
+
+/// Other platforms (e.g. the BSDs) have no write backend yet. Honest error,
+/// same posture as the enumerator.
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn open_target(_path: &str) -> Result<std::fs::File, String> {
     Err("writing a hub disk isn't implemented on this OS yet".to_string())
 }
@@ -394,14 +645,36 @@ mod tests {
     use hub_core::hub_image::{verify_download, WritePlan};
 
     #[test]
-    fn write_backend_available_agrees_with_open_target() {
-        // The predicate the flasher gates on must match the platform
-        // open_target actually provides — true on Linux/macOS, false elsewhere
-        // — so the up-front check and the real write can never disagree.
+    fn write_backend_available_is_true_only_where_writing_is_enabled() {
+        // Writing is enabled (validated) on Linux/macOS. Windows has a full
+        // open_target now, but stays gated off here until a VM/hardware pass
+        // proves it — so the predicate is false on Windows on purpose, and the
+        // flasher fails fast there before any download.
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         assert!(write_backend_available());
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         assert!(!write_backend_available());
+    }
+
+    #[test]
+    fn physical_drive_number_parses_windows_raw_paths() {
+        assert_eq!(physical_drive_number(r"\\.\PhysicalDrive0"), Some(0));
+        assert_eq!(physical_drive_number(r"\\.\PhysicalDrive2"), Some(2));
+        assert_eq!(physical_drive_number(r"\\.\PhysicalDrive10"), Some(10));
+        // Case-insensitive, and the \\.\ prefix is optional.
+        assert_eq!(physical_drive_number(r"\\.\physicaldrive7"), Some(7));
+        assert_eq!(physical_drive_number("PhysicalDrive3"), Some(3));
+        // The inverse of hub_core's physical_drive_path round-trips.
+        assert_eq!(
+            physical_drive_number(&hub_core::hub_enumerate_windows::physical_drive_path(5)),
+            Some(5)
+        );
+        // Not a physical-drive path → None (never a guessed device).
+        assert_eq!(physical_drive_number(r"\\.\C:"), None);
+        assert_eq!(physical_drive_number("/dev/sdb"), None);
+        assert_eq!(physical_drive_number(r"\\.\PhysicalDrive"), None);
+        assert_eq!(physical_drive_number(r"\\.\PhysicalDriveX"), None);
+        assert_eq!(physical_drive_number(""), None);
     }
 
     fn image_bytes() -> Vec<u8> {
