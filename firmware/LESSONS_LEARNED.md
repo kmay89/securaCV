@@ -461,6 +461,53 @@
   #endif
   ```
 
+### A shared `common/` module whose .cpp nothing compiles
+- **What happened:** The nightstand look engine landed as
+  `firmware/common/color/{color_engine,look_engine}.{h,cpp}`. Host tests passed,
+  review passed, the headers resolved everywhere — and
+  `canary-display-nightstand-s3` failed at LINK with undefined references to
+  `canary::color::led_color`.
+- **Root cause:** `common/color` had no `library.json`, so PlatformIO's Library
+  Dependency Finder never treated it as a library under
+  `lib_extra_dirs = ../../common` and never compiled its translation units. The
+  `-I${PROJECT_DIR}/../../common` in the env still resolved the *headers*, which
+  is what hides the problem at compile time. **A header resolving is not
+  evidence that its .cpp is built.**
+- **Fix:** Added the manifest pair every other shared PIO library already
+  carries — see `common/boot` and `common/fleet_link` for the canonical shape:
+  `includeDir: ".."` so `"<lib>/<name>.h"` resolves, `srcDir: "."` +
+  `srcFilter: ["+<*.cpp>"]` so the sources compile.
+- **Regression check:** `firmware/scripts/check_common_build_reachability.py`
+  (Regression Guards). Every non-test .cpp under `common/` must be reachable by
+  a manifest, an explicit `build_src_filter` entry, or a staged Arduino copy;
+  anything else fails in seconds instead of minutes into a board build. Verified
+  against the real bug: it flags the pre-fix `common/color` and passes with the
+  manifest. It also surfaced a pre-existing orphan,
+  `common/bluetooth/ble_debug_beacon.cpp`, which is waived with a written reason
+  rather than silently ignored.
+- **Date learned:** 2026-07
+
+### A host test cannot pin the target's preprocessor
+- **What happened:** `common/fleet_selfreport/fleet_selfreport.h` declared a
+  local `static const char* HEX` for its `\u00XX` escape path. The host suite
+  passed; the entire firmware CI matrix went red — both Arduino display builds
+  on both cores, the Arduino WAP build, both PlatformIO builds, the CSI
+  feature-disabled builds, and the DRAM symbol ranking.
+- **Root cause:** Arduino's `cores/esp32/Print.h` does `#define HEX 16` before
+  any sketch include is reached, so on device that line expands to
+  `static const char* 16 = ...`. Plain g++ on the host has no such macro, so the
+  test suite could not see the collision. Same shape as the `DEC`/`OCT`/`BIN`
+  macros, and the reason board code avoids those names.
+- **Fix:** Renamed to `fsr__hex`, matching the file's existing `fsr__` prefix
+  convention for internal helpers.
+- **Regression check:** `test_fleet_selfreport.cpp` now `#define`s Arduino's
+  `HEX`/`DEC`/`OCT`/`BIN` immediately above the include, so the host build fails
+  the same way the device build would. Verified both directions: it fails with
+  the pre-fix header and passes with the fixed one. **When a shared header ships
+  to Arduino, its host test should reproduce Arduino's macro namespace — a test
+  that cannot see the target's preprocessor cannot pin the target's compile.**
+- **Date learned:** 2026-07
+
 ---
 
 ## Security Architecture Principles
