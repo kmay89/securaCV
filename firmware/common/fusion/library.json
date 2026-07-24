@@ -1,0 +1,23 @@
+{
+    "name": "sentinel-fusion",
+    "version": "0.1.0",
+    "description": "Board-agnostic multi-sensor evidence-fusion engine for Canary Sentinel. Fuses coarse votes from physically independent sensing modalities (PIR thermal, 60GHz radar, WiFi CSI, WiFi/BLE device counting, ambient light, door-contact/tamper) into a debounced people-detection decision with a 0..100 confidence. Independence-weighted scoring plus a fraud-detection posture: blinded/denied channels raise suspicion, and an uncorroborated dwelling body is surfaced as an anomaly, never dismissed. Allocation-free, no Arduino/RTOS deps, time injected for deterministic host testing.",
+    "keywords": ["fusion", "sensor-fusion", "presence", "people-detection", "pir", "radar", "wifi-sensing", "ble", "anti-evasion", "privacy", "esp32"],
+    "authors": [
+        {
+            "name": "SecuraCV Contributors",
+            "url": "https://github.com/kmay89/securaCV"
+        }
+    ],
+    "license": "Apache-2.0",
+    "frameworks": ["arduino", "espidf"],
+    "platforms": ["espressif32", "native"],
+    "headers": [
+        "sentinel_fusion.h"
+    ],
+    "build": {
+        "includeDir": ".",
+        "srcDir": ".",
+        "srcFilter": ["+<*.cpp>"]
+    }
+}

@@ -123,6 +123,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [WiFi CSI sensing quickstart](csi_quickstart.md) · [CSI modules](csi_modules.md) · [CSI developer API](csi_developer_api.md)
 - [mmWave radar design (MR60BHA2)](canary_sense_mr60bha2_design.md)
 - [Coarse mover-class from the Sense radar (design)](canary_sense_coarse_class_design.md) — the software-only "do it with what we have" upgrade: coarse large-vs-small mover class on the shipped 60 GHz radar, distilled from the BumbleBee micro-Doppler work, class-not-identity
+- [Canary Sentinel — multi-sensor fusion guardian (design + spec)](canary_sentinel_fusion_design.md) — the "near impossible to evade" doorway/window guardian: fuse physically independent channels (PIR + radar + WiFi CSI + WiFi/BLE + light + contact/tamper/vision), score corroboration across independent modalities, treat a blinded channel as suspicion (the ATM/fraud-detection posture); Lite/Standard/Heavy tiers, five presets, host-tested fusion core
 - [RF sensing HTTP routes](rf_sensing_phase12_http_routes.md)
 - [ESP32-S3 power resilience](esp32s3_power_resilience.md) · [thermal review](esp32s3_thermal_review.md) · [wireless review](seeed_xiao_esp32s3_wireless_review.md) · [BLE/WAP audit](esp32s3_ble_wap_audit.md)
 
