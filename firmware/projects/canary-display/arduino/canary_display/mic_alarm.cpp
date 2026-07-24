@@ -103,11 +103,10 @@ void chip_hide() {
   s_chip = nullptr;
 }
 
-// ES7210 front-end note (VERIFY at bench): the ADC ships in a default
-// state that may need register init before it clocks samples out. The
-// probe below only proves the silicon ACKs; if SNAP levels sit at 0 with
-// a live room, the codec init is the bench follow-up (board README §
-// bring-up — fill it in next to the pin values it needs anyway).
+// Does the ES7210 answer on I2C? The register bring-up (es7210_init below)
+// configures it to clock samples out; this only proves the silicon is on the
+// bus before we try. If SNAP levels sit at 0 in a live room, the bench knob
+// is the init's gain/OSR values, not this probe.
 bool codec_ack() {
   Wire.beginTransmission((uint8_t)AUDIO_ES7210_ADDR);
   return Wire.endTransmission() == 0;
@@ -152,6 +151,57 @@ void driver_uninstall() {
   i2s_driver_uninstall(MIC_I2S_PORT);  // pins released — the hard mute
 }
 
+// ── ES7210 mic-ADC bring-up ─────────────────────────────────────────────────
+//
+// The ES7210 powers up muted with its ADCs off, so it must be configured over
+// I2C before it clocks any samples onto the I2S bus. The sequence below is a
+// reference bring-up from the ES7210 datasheet register map (the addresses are
+// hardware facts): soft-reset, run as an I2S SLAVE (the ESP32 is I2S master and
+// generates MCLK/BCLK/LRCK), 16-bit I2S frame, power up the two mic channels
+// the array uses with a moderate PGA gain, high-pass the DC out.
+//
+// VERIFY at bench — the values are the *starting point*, not gospel: the clock
+// ratio (OSR reg 0x07 / LRCK divider) assumes MCLK = 256·fs, which is what our
+// i2s master emits, and the PGA gain (regs 0x43/0x44) is mid-scale. The pass
+// signal is the one already on the wire: `MIC1 SNAP rms` climbs off zero in a
+// live room, and a smoke alarm's TEST horn lands `acoustic_smoke_alarm`.
+// Adjust gain/OSR here if capture is silent or clipped; the mic contract and
+// the privacy barrier are unaffected (this only makes the ADC talk).
+bool es7210_w(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission((uint8_t)AUDIO_ES7210_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  return Wire.endTransmission() == 0;
+}
+
+// Returns the number of writes that failed to ACK (0 = the ES7210 took the
+// whole sequence). Register/value pairs, one per line, so the bench can read
+// and tune it against the datasheet.
+int es7210_init() {
+  static const uint8_t SEQ[][2] = {
+    {0x00, 0xff}, {0x00, 0x41},  // soft reset, then release
+    {0x01, 0x1f},                // master clock: all internal clocks on
+    {0x06, 0x00},                // digital power: normal (nothing powered down)
+    {0x07, 0x20},                // OSR = 32  (MCLK/LRCK ratio; VERIFY vs 256·fs)
+    {0x08, 0x10},                // mode: I2S SLAVE (ESP32 drives the clocks)
+    {0x09, 0x30}, {0x0a, 0x30},  // TDM/timing controls (datasheet defaults)
+    {0x20, 0x0a}, {0x21, 0x2a},  // ADC3/4 high-pass filter
+    {0x22, 0x0a}, {0x23, 0x2a},  // ADC1/2 high-pass filter (DC removal)
+    {0x11, 0x60}, {0x12, 0x00},  // serial data port: I2S, 16-bit
+    {0x40, 0xc3},                // analog: bias/reference on
+    {0x41, 0x70}, {0x42, 0x70},  // MIC1/2 and MIC3/4 bias
+    {0x43, 0x1e}, {0x44, 0x1e},  // MIC1/MIC2 PGA gain, mid-scale (VERIFY)
+    {0x47, 0x08}, {0x48, 0x08},  // MIC1/MIC2 power on
+    {0x4b, 0x00},                // MIC1/2 not powered down
+    {0x00, 0x71},                // start ADC
+  };
+  int fails = 0;
+  for (const auto& rv : SEQ) {
+    if (!es7210_w(rv[0], rv[1])) fails++;
+  }
+  return fails;
+}
+
 // Every session starts from silence and every stop forgets: envelope and
 // cadence state carry NOTHING across a mute. Without this, re-arming near
 // a sounding alarm would inherit a stale loud bit and a half-built beep
@@ -176,7 +226,14 @@ void apply_action(Action a) {
       reset_acoustic_state();
       s_frame_ms = millis();
       chip_show();
-      say_evt("start listening codec_ack=%d", codec_ack() ? 1 : 0);
+      // The I2S master is now clocking; bring the ES7210 up so it actually
+      // puts samples on the bus. codec_ack proves the silicon is there;
+      // init=<n> is how many config writes failed (0 = the ADC took it all).
+      // Either way we start capturing — a bad init shows as SNAP rms=0, the
+      // documented bench signal, not a hard failure.
+      const bool ack = codec_ack();
+      const int init_fails = ack ? es7210_init() : -1;
+      say_evt("start listening codec_ack=%d es7210_init=%d", ack ? 1 : 0, init_fails);
     } else {
       // Install failed: the gate must not claim a running driver.
       s_gate.running = false;

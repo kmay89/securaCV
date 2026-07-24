@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### canary-display — the 4.3C mic front end wired (ES7210 bring-up)
+
+- **`es7210_init` written**: with the I2S pins now vendor-exact, the ES7210
+  ADC gets a datasheet-grounded register bring-up (soft-reset → I2S slave →
+  16-bit frame → mic channels powered at mid-scale PGA → DC high-passed),
+  run the moment the I2S master starts clocking. This closes the last gap
+  between "pins are right" and "the mics actually capture."
+- Honest about what's proven: the sequence is compile-verified by the
+  `canary-display-dash-mic` env and **bench-validated by the `MIC1 SNAP rms`
+  line** — rms climbing off zero in a live room is the pass signal; the gain
+  (0x43/0x44) and clock-ratio (0x07) values are the two bench knobs if
+  capture is silent or clipped. The console now reports `es7210_init=<n>`
+  (writes the ADC refused; 0 = clean). Everything stays inside
+  `FEATURE_MIC_ALARM` (default/emulator builds byte-identical), off by
+  default, and arm-gated — the privacy contract is untouched.
+
 ### hardware — vendor board-facts snapshot, kept fresh, and the model made exact
 
 - **A machine-readable snapshot of the Waveshare dash boards' facts**

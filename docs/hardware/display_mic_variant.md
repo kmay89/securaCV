@@ -185,9 +185,16 @@ driver-uninstalled report. Panel note: the C's ST7701 controller may need
 an init sequence (VERIFY) — the mic layer runs headless either way, so the
 mic bench is not blocked on the glass.
 
-If the ES7210 needs register init before it clocks samples (likely), the
-`SNAP rms=0` line makes that visible instantly; the init lands in
-`mic_alarm.cpp` at the marked VERIFY point during the same session.
+The ES7210 needs register init before it clocks samples, and that init is
+now **written** (`es7210_init` in `mic_alarm.cpp`): a datasheet-grounded
+bring-up — soft-reset, I2S slave, 16-bit frame, mic channels powered with a
+mid-scale PGA gain, DC high-passed — run right after the I2S master starts.
+The bench job is no longer to write it but to **confirm its values**: the
+`SNAP rms` climbing off zero in a live room is the pass signal, and the gain
+(regs 0x43/0x44) and clock ratio (OSR reg 0x07) are the two knobs to turn if
+capture is silent or clipped. `es7210_init=<n>` on the `MIC1` console line
+reports how many config writes the ADC refused (0 = it took the whole
+sequence).
 
 After the bench passes, the contract faces its real judge: the
 [usability protocol](./display_usability_protocol.md)'s **task H** — five
@@ -203,6 +210,6 @@ invariant is host-tested; whether humans *read* it is tested there.
 | Gate + indicator invariant | `canary/io/mic_logic.h` + host test | **host-tested** (CI) |
 | T3/T4 cadence detection | same core + host test | **host-tested** (CI) |
 | I2S capture + hard mute + chip | `src/io/mic_alarm.cpp` | compile-gated (`canary-display-dash-mic`); bench-pending |
-| ES7210 init | `mic_alarm.cpp` VERIFY point | **bench** |
+| ES7210 init | `es7210_init` in `mic_alarm.cpp` | **written** (datasheet bring-up); compile-gated; bench-validate gain/OSR |
 | Settings row/page, debug line, transparency copy | gated UI edits | compile-gated; bench-pending |
 | Flasher/release product | — | after the bench pass (distinct product reserved: `securacv-canary-display-dash-mic`) |

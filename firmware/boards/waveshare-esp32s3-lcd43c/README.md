@@ -44,9 +44,9 @@ Same honesty rule as every board here. Two VERIFY clusters gate real use:
    GPIO15; PA enable on CH422G EXIO4) — captured in
    [`board_facts.json`](../../../canary-local/devices/board_facts.json) and
    drift-locked against this map, so they're facts, not guesses. The
-   remaining bench step is the **ES7210 register init** — the ADC may need
-   configuration before it clocks samples; `MIC1 SNAP rms=0` in a live room
-   makes that obvious. (The mic layer still refuses to start with any pin -1;
+   **ES7210 register init is now written** (`es7210_init`), so the bench step
+   is to *validate* it, not author it — turn the gain/OSR knobs if
+   `MIC1 SNAP rms=0` in a live room. (The mic layer still refuses to start with any pin -1;
    the guard stays, it just isn't tripped anymore.)
 
 ## Power, the battery, and the side switch
@@ -101,10 +101,11 @@ power cut it survives. Staged, not started.
    An ACK at **0x51** is the PCF85063 RTC saying hello (silicon confirmed;
    driver support is a separate follow-up — see the pin map's RTC note).
 3. The I2S GPIOs are already filled from the vendor pin-mapping table
-   (`pins/pins.h`; drift-locked to `board_facts.json`). If capture reads
-   silence (`MIC1 SNAP rms=0` in a live room), the **ES7210 register init**
-   is the follow-up — the ADC likely needs configuration before it clocks
-   samples; land it at the marked VERIFY point in `mic_alarm.cpp`.
+   (`pins/pins.h`; drift-locked to `board_facts.json`) and the **ES7210
+   register init (`es7210_init`) is written**. Arm it and watch `MIC1`: a
+   `SNAP rms` climbing off zero in a live room means capture works. If it
+   stays at 0, turn the init's gain (regs 0x43/0x44) / OSR (reg 0x07) knobs —
+   the sequence is a datasheet bring-up and those two are the usual culprits.
 4. Rebuild + flash. Settings → **microphone** → listening. The amber
    ● MIC chip must appear the same instant; `MIC1` SNAP lines start.
 5. Hold a smoke alarm's TEST button near the board: the T3 cadence should
