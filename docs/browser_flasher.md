@@ -67,16 +67,35 @@ generic serial/modem device. The honest picture, because it's silicon-deep:
   **hwcdc** (`ARDUINO_USB_MODE=1`), which reuses that same fixed USB-Serial-JTAG
   descriptor — so the running board also reads generic. Only a build in
   **USB-OTG / TinyUSB** mode (`ARDUINO_USB_MODE=0`) has a programmable
-  descriptor, where `USB.manufacturerName("SecuraCV")` + `USB.productName(
-  "SecuraCV Canary")` make the **Web Serial chooser, Windows, and USB device
-  info** read "SecuraCV Canary" (already wired in the `usb-onboard` build). Even
-  then, **macOS keeps the port node `/dev/cu.usbmodem…`** — that prefix is a
-  macOS CDC-ACM convention, not the product string, so it never changes.
+  descriptor. There the name is set by **build flags** — `-DUSB_MANUFACTURER` +
+  `-DUSB_PRODUCT` (env `usb-onboard`) — which is what actually takes: with
+  CDC-on-boot the core enumerates USB *before* `setup()`, so a runtime
+  `USB.productName()` lands too late. With the flags, the **Web Serial chooser,
+  Windows, and USB device info** read **`SecuraCV-Canary`** (hyphenated to match
+  the BLE GAP name — one identity across both radios). Even then, **macOS keeps
+  the port node `/dev/cu.usbmodem…`** — a macOS CDC-ACM convention, not the
+  product string, so it never changes.
 
-Net: the branded USB name is achievable only for the **runtime** connection of
-an **OTG/TinyUSB** build, and shows in the picker label, not the macOS device
-path. The BLE console (above) is the cleaner "it's a *branded* Canary" signal —
-it advertises `SecuraCV-Canary` by name.
+**Why it isn't the global default.** Two hard reasons, not laziness:
+
+1. **C3/C6 have no USB-OTG hardware.** `canary-vision` (C3) and `canary-sense`
+   (C6) expose *only* USB-Serial-JTAG — there is no TinyUSB path to a
+   programmable descriptor, so they can never be rebranded. "Every Canary reads
+   SecuraCV" is impossible on those units; it's an **S3-only** capability.
+2. **Flipping the S3 default touches flashing.** OTG mode changes how the board
+   enumerates for flashing (the native-USB DFU path), and the firmware's own
+   notes gate it behind on-device (Phase-2) validation and flag it as new USB
+   attack surface. Making it the shipping default is a **bench-validated**
+   change (does the one-click flasher still auto-enter download mode? does the
+   serial console still come up every boot?), not a blind flag flip — otherwise
+   it trades a cosmetic name for a "sometimes won't connect," the opposite of
+   the flasher's promise.
+
+Net: the branded USB name is a **build-flag** property of an **OTG/TinyUSB,
+S3-only** build, shown in the picker label (never the macOS device path), and
+promoting it to default is gated on a real-board test. The BLE console (above)
+is the cleaner cross-board "it's a *branded* Canary" signal — every board, C3/C6
+included, advertises `SecuraCV-Canary` by name.
 
 ## Self-healing (never get stuck)
 
