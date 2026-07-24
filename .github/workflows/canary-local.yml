@@ -118,6 +118,7 @@ jobs:
           node --test canary-local/tests/slicer.test.js
           node --test canary-local/tests/boardroom.test.js
           node --test canary-local/tests/homeassistant.test.js
+          node --test canary-local/tests/hub_wizard.test.js
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/audio.test.js

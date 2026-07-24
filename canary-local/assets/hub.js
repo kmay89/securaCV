@@ -20,6 +20,7 @@ import { Assembly, M } from "./assembly.js";
 import { PARTS } from "./hub-parts.js";
 import { buildTerminal, daysOld } from "./hub-term.js";
 import { buildHaDemo } from "./hub-ha-ui.js";
+import { buildHubWizard } from "./hub-setup-wizard.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -58,6 +59,7 @@ async function main() {
 
   renderVersionStrip(data, vars);
   renderWhy(data.why);
+  renderWizard(data);
   renderHardware(data.hardware);
   renderTerminal(data.terminal, vars);
   renderDemo(data.ha_demo, vars);
@@ -122,6 +124,16 @@ async function main() {
       grid.append(c);
     }
     s.append(grid);
+  }
+
+  // ── §setup wizard: hand-hold HA + MQTT so nobody gives up ──
+  function renderWizard(d) {
+    const s = section("setup", "set it up, step by step",
+      "Let’s get your hub running — together",
+      "Home Assistant and MQTT, explained plainly and walked one small step at a " +
+      "time. Every step tells you exactly what to type and has a “Stuck?” way " +
+      "forward, so you can’t get lost. It saves your place as you go.");
+    buildHubWizard(s, d);
   }
 
   // ── §hardware: needs list + the assembly stage ──
