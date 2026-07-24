@@ -29,7 +29,11 @@
       "accent": "#f5b301", "icon": "compass",
       "benches": [
         { "noun": "Meet the fleet", "slug": "fleet", "lab": "fleet.html", "real": true, "kind": "firmware", "status": "promote",
-          "desc": "3D cards that boot each device's real firmware behind the glass." },
+          "desc": "3D cards that boot each device's real firmware behind the glass.",
+          "depths": [
+            { "label": "What the mic hears (4.3C)", "lab": "dash-mic.html",
+              "desc": "The listening dash's decision core in the browser: alarm cadences, wake-on-sound, and the privacy barrier — what it does, and what it never does." }
+          ] },
         { "noun": "Find your Canary", "slug": "choose", "lab": "choose.html", "real": false, "kind": "chooser", "status": "keep",
           "desc": "Four questions → ranked device matches with honest release status." }
       ],
@@ -162,7 +166,8 @@
           { "noun": "Legacy Lab front door", "href": "index.html", "purpose": "Redirects old links to the Lab shell or fleet cards." },
           { "noun": "Isometric room", "href": "room.html", "purpose": "Embedded workshop overview used by the Lab shell." },
           { "noun": "Emulator harness", "href": "emulator/web/harness.html", "purpose": "Developer/CI boot harness for real display firmware compiled to WebAssembly." },
-          { "noun": "Kiri slicing fixture", "href": "tests/fixtures/kiri_harness.html", "purpose": "Offline test fixture for the enclosure/slicer bench." }
+          { "noun": "Kiri slicing fixture", "href": "tests/fixtures/kiri_harness.html", "purpose": "Offline test fixture for the enclosure/slicer bench." },
+          { "noun": "Canary Voice sound board", "href": "voice/index.html", "purpose": "Hear the display's acoustic signatures (boot, alerts, interactions) — generated from voice_score.h and CI-gated, so it never drifts from the firmware." }
         ]
       },
       {

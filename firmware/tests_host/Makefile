@@ -79,6 +79,15 @@ TESTCON_BIN = $(BUILD_DIR)/test_test_console
 BOOTPOL_HDR = ../common/health/boot_policy.h
 BOOTPOL_BIN = $(BUILD_DIR)/test_boot_policy
 
+# Power-event lineage + outage log (common/power/power_events.h): the pure
+# decision half of "harden against brownouts / flickers / outages and keep a
+# correct log of when the power went out." Proves the whole classification table
+# (cold boot vs clean reboot vs brownout vs restored outage vs fault), the honest
+# lower-bound outage arithmetic, and the durable ring + monotonic counters the
+# firmware persists to NVS. Pure header, no Arduino deps.
+POWEREVT_HDR = ../common/power/power_events.h
+POWEREVT_BIN = $(BUILD_DIR)/test_power_events
+
 # Console scene engine (common/ui/*.h): proves the drunken-bishop randomart is a
 # faithful, deterministic, bounded walk, and — the anti-fragile guarantee — that
 # the ASCII tier never emits an escape or non-7-bit byte and every framed line
@@ -185,6 +194,9 @@ $(TESTCON_BIN): test_test_console.cpp $(TESTCON_HDR) Makefile | $(BUILD_DIR)
 $(BOOTPOL_BIN): test_boot_policy.cpp $(BOOTPOL_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_boot_policy.cpp -o $@
 
+$(POWEREVT_BIN): test_power_events.cpp $(POWEREVT_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_power_events.cpp -o $@
+
 $(SCENE_BIN): test_console_scene.cpp $(SCENE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_console_scene.cpp -o $@
 
@@ -212,7 +224,7 @@ $(PRESET_DOOR_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/mailbox-lite/config.h Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -221,6 +233,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(USBONB_BIN)
 	./$(TESTCON_BIN)
 	./$(BOOTPOL_BIN)
+	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
 	./$(FLEETVIEW_BIN)
 	./$(FLEETSR_BIN)

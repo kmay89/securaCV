@@ -122,6 +122,16 @@ from.
 The privacy claim is a usability claim: **an untrained person must be able
 to answer "is it listening?" correctly, every time.**
 
+> **Comprehension pre-check (team-side, before recruiting).** The browser
+> bench [`canary-local/dash-mic.html`](../../canary-local/dash-mic.html) runs
+> the *same* decision core these probes test — the alarm cadences, the opt-in
+> wake-on-sound, and the "one loudness number crosses, nothing is recorded"
+> barrier — with the does / never-does copy right on the page. Read it against
+> this task first: if the words there don't answer probe 3 and probe 6 on
+> their own, fix the copy before you spend a session discovering it. (Don't
+> show it *to* participants mid-task — that's coaching. It's the copy's dress
+> rehearsal, not a prop.)
+
 1. *(Mic off, fresh boot.)* "Is the microphone on right now? How do you
    know?" — Success: "no", citing the absent chip and/or the Settings row.
 2. *"Turn it on."* — Success: Settings → microphone found; the amber
@@ -129,8 +139,10 @@ to answer "is it listening?" correctly, every time.**
    changed?").
 3. *(While listening.)* "What is it listening FOR? Could someone hear you
    talking through it?" — Success: alarm-patterns-only is understood from
-   the page caption / transparency sheet alone. Log the exact words they
-   use; if anyone says "I'm not sure", the caption copy failed.
+   the page caption / transparency sheet alone, **and** "no — it can't hear
+   words" is stated with a reason (it keeps a loudness number, not the sound).
+   Log the exact words they use; if anyone says "I'm not sure", the caption
+   copy failed.
 4. *"Turn it off so you'd trust it in a bedroom."* — Success: disarm +
    the chip vanishing is judged sufficient; ask *"do you believe it's
    really off? why?"* (the driver-uninstalled line on the page is the
@@ -138,7 +150,15 @@ to answer "is it listening?" correctly, every time.**
 5. *(Enter any gear with the mic armed.)* "Is it listening now?" —
    Success: "no" (no chip). The gears never listen; people should be able
    to see that.
-6. **The alarm test:** hold a smoke alarm's TEST button toward the case
+6. **Wake-on-sound (the opt-in convenience).** *(Turn wake-on-sound on in
+   Settings.)* "What did that just switch on?" then close a door near it.
+   Success: (a) the setting is understood as *the screen lights when the room
+   gets suddenly loud* — a door, a knock — **not** "it started recording" or
+   "it's listening for me"; and (b) when the screen wakes, the participant
+   reads it as *reacting to a sound*, and still answers probe 3's "could it
+   hear me?" with "no". If anyone reads wake-on-sound as "now it's recording",
+   the Settings caption failed — that's the one that most needs to land.
+7. **The alarm test:** hold a smoke alarm's TEST button toward the case
    top for two full cycles. Success: the Alert lands on the glass and the
    participant connects it ("it heard the smoke alarm") — then acks it
    with the ring, closing the loop from task C.

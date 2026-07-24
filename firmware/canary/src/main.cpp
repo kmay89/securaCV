@@ -104,6 +104,12 @@ static_assert(sizeof(csi_features_t) == 36,
 #include "securacv_power_policy.h"
 #endif
 
+// Power-event resilience: boot-lineage classification + the durable outage log,
+// feeding the shared host-tested core (firmware/common/power/power_events.h).
+// Unconditional — the "when did the power go out" record isn't gated on the
+// battery monitor. See docs/design/power_events.md.
+#include "canary_power_events.h"
+
 #if FEATURE_SETUP_WIZARD
 #include "securacv_setup.h"
 #include <WiFi.h>
@@ -615,6 +621,12 @@ void setup() {
                  "Abnormal reset detected", rst_name);
     }
   }
+
+  // Power-event lineage: classify how the last power session ended (brownout /
+  // clean reboot / restored outage / fault) and append it to the durable log —
+  // the honest "when did the power go out" record. Runs here, before risky
+  // init, so an outage is recorded even if a later stage faults.
+  canary_pe::on_boot();
 
   // Initialize battery/power monitoring (ADC on GPIO 1 or software inference)
 #if FEATURE_POWER_MONITOR
@@ -1264,6 +1276,10 @@ void setup() {
     Serial.printf("[OK] Boot attestation: seq=%u\n", boot_rec.seq);
   }
 
+  // Sign a witness record if THIS boot followed a real power incident (a
+  // restored outage or a brownout), now that the device is provisioned.
+  canary_pe::witness_incident();
+
   // Log boot event
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Device boot complete", FIRMWARE_VERSION);
 
@@ -1636,6 +1652,11 @@ void loop() {
     }
   }
 #endif
+
+  /* Persist the power-event liveness heartbeat (bounds the next outage's
+   * lower-bound duration). Cheap: skips the write unless the wall clock is set,
+   * so a clock-less board never writes it. */
+  canary_pe::heartbeat(now);
 
 #if FEATURE_THERMAL_WATCHDOG
   thermal_wd_process();  /* rate-limits internally (30 s sample, 10 min persist) */

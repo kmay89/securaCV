@@ -1,25 +1,30 @@
 name: Review Threads
 
-# Makes "every review comment gets addressed" an explicit, visible check
-# instead of a convention. The check fails while the PR has unresolved
-# review threads and lists them (file, author, first line) in the job log
-# and run summary.
+# Surfaces "does this PR still have unresolved review threads?" as a visible,
+# ADVISORY signal — a warning, never a merge blocker.
 #
-# Re-evaluation triggers: a review submitted/dismissed, a reply landing,
-# a new push. Thread RESOLUTION itself emits no event Actions can hear —
-# pull_request_review_thread is a webhook for GitHub Apps only, not a
-# workflow trigger (verified against the events-that-trigger-workflows
-# docs; actionlint rejects it too). So the gate absorbs the common flow
-# instead: a human replies first and clicks resolve a beat later, and a
-# run triggered by the reply would grade that stale in-between state and
-# flash red. On reply/review triggers the run now holds its verdict
-# through a short grace window, re-polling until the resolve lands. The
-# one flow still invisible to Actions is resolving WITHOUT replying and
-# without a follow-up push — for that, use "Re-run" on the failed check.
+# Why advisory: a thread is often *addressed* (the fix pushed, a reply posted)
+# a beat before — or without — anyone clicking the "Resolve" button. Hard-
+# failing on that bookkeeping gap flashed the whole PR red for work that was
+# actually done, and left PRs stuck not-green. So this check now lists the
+# unresolved threads as warnings + a run summary and exits GREEN. For a HARD
+# block, enable GitHub's native, correctly-timed gate:
+#   Settings → Branches → main → "Require conversation resolution before merging"
+# That rule blocks the merge button itself and clears the instant a thread is
+# resolved — something a workflow can't observe (see the timing note below).
 #
-# This mirrors GitHub's native "Require conversation resolution before
-# merging" branch-protection rule; enable that rule too if you want GitHub
-# itself to hard-block the merge button (Settings → Branches → main).
+# Timing — "grade the response, not the pre-response state":
+#   · The gate re-evaluates on a reply, a review, and a push — i.e. AFTER the
+#     author acts on a thread, not on the reviewer's comment alone.
+#   · Thread RESOLUTION emits no event Actions can hear (pull_request_review_
+#     thread is a GitHub-App-only webhook, not a workflow trigger — actionlint
+#     rejects it). A reply fires one beat BEFORE the human clicks resolve, so a
+#     run triggered by that reply holds its verdict through a short grace window,
+#     re-polling until the resolve lands, before it reports.
+#   · Because the verdict is only a warning, an early evaluation can never
+#     wrongly block a merge — it just annotates, and the next reply/push refreshes
+#     it. Resolving WITHOUT a reply or push simply clears on the next run (or use
+#     "Re-run"); it no longer strands the PR red in the meantime.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -43,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check for unresolved review threads
+      - name: Report unresolved review threads (advisory)
         uses: actions/github-script@v9
         with:
           script: |
@@ -83,12 +88,12 @@ jobs:
             let unresolved = await fetchUnresolved();
 
             // Reply-then-resolve grace: a reply/review event fires one beat
-            // BEFORE the human clicks "resolve", and resolution itself emits
-            // no event Actions can hear — so failing instantly would flash
-            // red on threads being addressed right now, with nothing to turn
-            // the check green again. Hold the verdict and re-poll through a
-            // grace window instead; push events skip it (their state is
-            // final, and a fix-push re-runs the check anyway).
+            // BEFORE the human clicks "resolve", and resolution itself emits no
+            // event Actions can hear. So a run triggered by the reply would read
+            // the stale in-between state. Hold the verdict and re-poll through a
+            // short window until the resolve lands — this is what makes the check
+            // reflect the state AFTER the response, not before. Push events skip
+            // it (their state is already final; a fix-push re-runs this anyway).
             const graced = ['pull_request_review', 'pull_request_review_comment'];
             if (unresolved.length > 0 && graced.includes(context.eventName)) {
               for (let i = 0; i < 6 && unresolved.length > 0; i++) {
@@ -103,7 +108,12 @@ jobs:
               return;
             }
 
-            core.summary.addHeading(`${unresolved.length} unresolved review thread(s)`);
+            // ADVISORY: surface the unresolved threads, but keep the check GREEN.
+            // This never blocks a merge — the fix-then-resolve gap is a
+            // bookkeeping state, not a defect. Enable branch protection's
+            // "Require conversation resolution before merging" if you want a hard
+            // gate (GitHub clears it the instant a thread resolves).
+            core.summary.addHeading(`${unresolved.length} unresolved review thread(s) — advisory`);
             const rows = [[
               { data: 'File', header: true },
               { data: 'From', header: true },
@@ -114,14 +124,17 @@ jobs:
               const author = c.author?.login ?? 'unknown';
               const preview = (c.body ?? '').split('\n')[0].slice(0, 120);
               const where = (t.path ?? '(PR-level)') + (t.isOutdated ? ' (outdated)' : '');
-              core.error(`unresolved thread — ${where} — @${author}: ${preview} ${c.url ?? ''}`);
+              core.warning(`unresolved review thread — ${where} — @${author}: ${preview} ${c.url ?? ''}`);
               rows.push([where, `@${author}`, c.url ? `<a href="${c.url}">${preview}</a>` : preview]);
             }
             core.summary.addTable(rows);
+            core.summary.addRaw(
+              '\n\n_Advisory only — this check stays green._ Resolve each thread ' +
+              '(reply, then click **Resolve**), or turn on branch protection\'s ' +
+              '"Require conversation resolution before merging" for a hard gate.\n');
             await core.summary.write();
-            core.setFailed(
-              `${unresolved.length} review thread(s) still unresolved. ` +
-              'Reply in each thread and mark it resolved — replies and pushes ' +
-              're-run this check automatically. If you resolved a thread ' +
-              'silently (no reply, no push), use "Re-run" on this check.'
-            );
+            core.notice(
+              `${unresolved.length} review thread(s) still unresolved — advisory, ` +
+              'not blocking merge. Resolve them (or enable branch protection\'s ' +
+              'conversation-resolution rule for a hard gate).');
+            // No core.setFailed: the job exits GREEN by design.
