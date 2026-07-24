@@ -9,22 +9,24 @@ the anti-rot loop: the writer should trust a repo-vouched hash, and that vouch
 must renew itself instead of aging.
 
 What a pin means here: for the HAOS version the Hub snapshot currently names,
-fetch Home Assistant's published `<image>.sha256` for each supported board AND
-GitHub's own asset digest for the same file, require the two independent
-channels to agree, and commit the agreed hash to
-canary-local/devices/hub_image_pins.json. gen_hub_image.py folds committed pins
-back into the catalog (pinned=true) only while they match the current version —
-a HAOS bump automatically un-pins until the ceremony runs again, so the catalog
-can claim exactly as much trust as it has.
+download each supported board's release asset and hash the actual bytes, cross-
+check that hash against GitHub's own asset digest when GitHub publishes one, and
+commit the verified hash to canary-local/devices/hub_image_pins.json. (Home
+Assistant ships no downloadable checksum of its own — no `<image>.sha256`
+sibling, no combined SHA256SUMS — so the bytes you'd flash are the authoritative
+source; the API digest is an independent cross-check, not the anchor.)
+gen_hub_image.py folds committed pins back into the catalog (pinned=true) only
+while they match the current version — a HAOS bump automatically un-pins until
+the ceremony runs again, so the catalog can claim exactly as much trust as it
+has.
 
 Failure posture, two modes on purpose:
 
-  · ceremony (default) is self-healing like the freshness refresh: if the
-    checksums cannot be fetched or the channels disagree, existing pins are left
-    untouched and the run exits 0 with a warning — the catalog degrades to the
-    honest unpinned state (writer falls back to HA's published .sha256 at flash
-    time), never to a wrong pin. Values only move forward on a verified,
-    double-sourced read.
+  · ceremony (default) is self-healing like the freshness refresh: if an asset
+    cannot be downloaded, or the API digest is present and disagrees, existing
+    pins are left untouched and the run exits 0 with a warning — the catalog
+    degrades to the honest unpinned state, never to a wrong pin. Values only
+    move forward on a verified read of the real bytes.
   · --verify is the loud alarm: re-fetch and compare against the COMMITTED pins
     and fail hard on a dead URL (link rot) or a hash that changed under a
     pinned version (upstream re-release or tampering — either way, a human
@@ -114,19 +116,25 @@ def load_pins() -> dict:
         sys.exit(f"pin_hub_image: {PINS_JSON.relative_to(REPO)} is unreadable ({e}) — fix or delete it")
 
 
-def published_sha256(image_url: str) -> str | None:
-    """HA's published checksum for a release asset: the `<image>.sha256` file
-    that ships next to it. None (with a warning) on any fetch/shape failure."""
-    url = image_url + ".sha256"
+def downloaded_sha256(image_url: str) -> str | None:
+    """The authoritative channel, data plane: stream the actual asset bytes over
+    TLS and hash them. Home Assistant publishes NO `<image>.sha256` sibling and
+    no combined SHA256SUMS file for its OS release assets (both 404), so the
+    only checksum that can't be faked out from under us is the one taken over
+    the very bytes a flasher would write. None (with a warning) on any fetch
+    failure — degrade to unpinned, never to a guess."""
+    import hashlib
+
     try:
-        text = _fetch(url).decode("utf-8", errors="replace")
+        req = urllib.request.Request(image_url, headers={"User-Agent": USER_AGENT})
+        hasher = hashlib.sha256()
+        with urllib.request.urlopen(req, timeout=120) as r:
+            for chunk in iter(lambda: r.read(1024 * 1024), b""):
+                hasher.update(chunk)
     except Exception as e:  # noqa: BLE001 — degrade to unpinned, never to a guess
-        _warn(f"could not fetch published checksum {url} ({e})")
+        _warn(f"could not download {image_url} to hash it ({e})")
         return None
-    sha = normalize_sha256(text)
-    if not sha:
-        _warn(f"published checksum at {url} is not a SHA-256 ({text[:80]!r})")
-    return sha
+    return hasher.hexdigest()
 
 
 def github_digests(version: str) -> dict[str, str]:
@@ -150,29 +158,41 @@ def github_digests(version: str) -> dict[str, str]:
 
 
 def fetch_agreed_pins(version: str) -> dict[str, dict] | None:
-    """Fetch and cross-check both channels for every supported board. Returns
-    {board_id: {asset, sha256}} only when EVERY board double-sourced cleanly;
-    None otherwise — a partial or contested ceremony pins nothing."""
+    """Mint a pin per board from the authoritative data-plane hash, cross-checked
+    against GitHub's asset digest whenever GitHub provides one. Returns
+    {board_id: {asset, sha256}} only when EVERY board hashed cleanly; None
+    otherwise — a partial ceremony pins nothing.
+
+    Trust model, now that HA ships no downloadable checksum of its own:
+      · the hash of the actual bytes is REQUIRED and is what we pin — it's the
+        one value taken over exactly what a flasher writes;
+      · GitHub's independent API digest is a cross-check: if present and it
+        disagrees, that's a tamper/re-release alarm and we refuse to pin; if
+        GitHub omits a digest, we pin the verified download anyway (with a
+        warning) rather than block forever on a channel upstream may not fill.
+    """
     digests = github_digests(version)
     pins: dict[str, dict] = {}
     for board in gen_hub_image.BOARDS:
         asset = f"{board['asset_stem']}-{version}.img.xz"
         url = f"{gen_hub_image.HAOS_RELEASE}/{version}/{asset}"
-        published = published_sha256(url)
-        if not published:
-            _warn(f"{board['id']}: no verifiable published checksum — not pinning")
+        hashed = downloaded_sha256(url)
+        if not hashed:
+            _warn(f"{board['id']}: could not hash the download — not pinning")
             return None
         api = digests.get(asset)
-        if not api:
-            _warn(f"{board['id']}: GitHub reports no digest for {asset} — one channel is not a pin")
-            return None
-        if api != published:
+        if api and api != hashed:
             _error(
-                f"{board['id']}: channel disagreement for {asset} — published .sha256 says "
-                f"{published}, GitHub's asset digest says {api}. Refusing to pin either."
+                f"{board['id']}: channel disagreement for {asset} — the downloaded bytes hash to "
+                f"{hashed}, but GitHub's asset digest says {api}. Refusing to pin either."
             )
             return None
-        pins[board["id"]] = {"asset": asset, "sha256": published}
+        if not api:
+            _warn(
+                f"{board['id']}: GitHub published no asset digest for {asset} — pinning the "
+                "verified download on its own (single-sourced)"
+            )
+        pins[board["id"]] = {"asset": asset, "sha256": hashed}
     return pins
 
 
@@ -187,16 +207,16 @@ def write_pins(version: str, pins: dict[str, dict], prev: dict) -> None:
         "$generated_by": "canary-local/tools/pin_hub_image.py — the pin ceremony; do not edit by hand",
         "$doc": (
             "Repo-vouched SHA-256 pins for the hub base-OS images (docs/design/"
-            "raspberry_pi_hub_flashing.md). Each hash was fetched from Home Assistant's published "
-            ".sha256 AND GitHub's asset digest and the two agreed; gen_hub_image.py folds these into "
-            "hub_image.json (pinned=true) only while they match the current haos_version, so a "
-            "version bump honestly un-pins until the ceremony re-runs. Re-verified weekly by "
-            "pin_hub_image.py --verify in the freshness workflow."
+            "raspberry_pi_hub_flashing.md). Each hash was taken over the actual downloaded asset "
+            "bytes and cross-checked against GitHub's asset digest where one was published; "
+            "gen_hub_image.py folds these into hub_image.json (pinned=true) only while they match "
+            "the current haos_version, so a version bump honestly un-pins until the ceremony "
+            "re-runs. Re-verified weekly by pin_hub_image.py --verify in the freshness workflow."
         ),
         "schema_version": 1,
         "haos_version": version,
         "pinned_at": pinned_at,
-        "channels": ["published .sha256 release asset", "GitHub release asset digest"],
+        "channels": ["downloaded asset bytes (sha256)", "GitHub release asset digest (cross-check)"],
         "boards": pins,
     }
     PINS_JSON.write_text(json.dumps(out, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
@@ -213,9 +233,10 @@ def ceremony() -> int:
             _warn(f"ceremony could not double-source HAOS {version}; keeping the existing pins verbatim")
         else:
             _warn(
-                f"ceremony could not double-source HAOS {version} and the committed pins cover "
-                f"{prev.get('haos_version') or 'nothing'} — the catalog stays honestly unpinned "
-                "(the writer verifies against HA's published .sha256 at flash time)"
+                f"ceremony could not verify HAOS {version} and the committed pins cover "
+                f"{prev.get('haos_version') or 'nothing'} — the catalog stays unpinned. Home "
+                "Assistant publishes no checksum to fall back on, so the writer cannot verify an "
+                "unpinned image and will refuse to flash it until this ceremony commits a pin."
             )
         gen_hub_image.main()  # keep the catalog consistent with whatever pins state we're in
         return 0
