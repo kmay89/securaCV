@@ -47,7 +47,12 @@ static inline size_t fsr__raw(char* out, size_t cap, size_t o, const char* s) {
 }
 static inline size_t fsr__jstr(char* out, size_t cap, size_t o, const char* s) {
   // JSON-escaped string *contents* (caller writes the surrounding quotes).
-  static const char* HEX = "0123456789abcdef";
+  // NOTE the name: Arduino's Print.h does `#define HEX 16` (and DEC/OCT/BIN),
+  // so a local called HEX expands to `static const char* 16 = ...` and every
+  // Arduino/ESP32 build of this header fails to compile. A plain g++ host test
+  // has no such macro and cannot catch it — hence the fsr__ prefix here and the
+  // Arduino-macro simulation at the top of test_fleet_selfreport.cpp.
+  static const char* fsr__hex = "0123456789abcdef";
   if (!out || cap == 0) return o;
   if (!s) return o;
   for (; *s; s++) {
@@ -63,7 +68,7 @@ static inline size_t fsr__jstr(char* out, size_t cap, size_t o, const char* s) {
       default:
         if (c < 0x20) {
           ubuf[0] = '\\'; ubuf[1] = 'u'; ubuf[2] = '0'; ubuf[3] = '0';
-          ubuf[4] = HEX[(c >> 4) & 0xf]; ubuf[5] = HEX[c & 0xf]; ubuf[6] = '\0';
+          ubuf[4] = fsr__hex[(c >> 4) & 0xf]; ubuf[5] = fsr__hex[c & 0xf]; ubuf[6] = '\0';
           rep = ubuf;
         }
         break;

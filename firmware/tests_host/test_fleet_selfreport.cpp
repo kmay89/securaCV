@@ -24,6 +24,25 @@
 #include <cstring>
 #include <string>
 
+/* ── Arduino macro-namespace simulation (regression guard) ────────────────────
+ *
+ * The header ships on ESP32 boards, where Arduino's Print.h has already done
+ * this to the preprocessor before any sketch include is reached. A local
+ * variable named HEX therefore expands to `static const char* 16 = ...` and
+ * EVERY Arduino/PlatformIO build fails to compile — while a plain g++ host
+ * test, which has no such macros, passes happily. That is exactly the gap that
+ * let a broken header through host tests and turn the whole firmware CI matrix
+ * red, so the macros are reproduced HERE, before the include, and the host
+ * build now fails the same way the device build would.
+ *
+ * Keep this block immediately above the include. Adding a name Arduino defines
+ * (see cores/esp32/Print.h and Arduino.h) is a feature, not noise.
+ */
+#define HEX 16
+#define DEC 10
+#define OCT 8
+#define BIN 2
+
 #include "fleet_selfreport/fleet_selfreport.h"
 
 static int g_failures = 0;
