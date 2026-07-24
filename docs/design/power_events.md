@@ -56,10 +56,15 @@ collects. The full table is pinned by the host test:
 | Deep-sleep wake | any | any | **Clean reboot** |
 | Power-on | set | — | **Clean reboot** (user powered off, then on) |
 | Power-on | clear | — | **Power restored (outage)** |
-| Software (esp_restart) | set | — | **Clean reboot** (OTA / user reboot) |
-| Software | clear | present | **Clean reboot** (power was held) |
-| Software | clear | absent | **Power restored (outage)** |
+| Software (esp_restart) | any | — | **Clean reboot** (OTA / user reboot / config apply — always intentional) |
+| Unknown | set | — | **Clean reboot** |
+| Unknown | clear | present | **Unknown** (not asserted) |
 | Unknown | clear | absent | **Power restored (outage)** (corroborated) |
+
+A Software reset is *always* our own firmware calling `esp_restart()`; a real
+power loss can only surface as a power-on or brownout reset, never as Software.
+So an OTA update or a user reboot is never mislabelled an outage — the reset
+cause alone settles it, no clean-shutdown flag required.
 
 The signals:
 
@@ -145,8 +150,11 @@ Early in `setup()`, before risky init:
 8. **Clear** the `clean_shutdown` flag for the run now beginning.
 
 In the main loop: persist the liveness heartbeat (`last_alive_epoch = now`) on a
-30–60 s cadence. In `power_graceful_shutdown()` / before an intended restart:
-**set** the `clean_shutdown` flag.
+cadence (5 min is a good wear/resolution trade-off), and only when the wall
+clock is actually set — so a board with no clock never writes a meaningless
+heartbeat. **Set** the `clean_shutdown` flag only in `power_graceful_shutdown()`
+(a deliberate power-off); a normal reboot needs nothing, because `esp_restart()`
+already surfaces as a Software reset the classifier treats as clean.
 
 Surface it per device: a console/diagnostic line and telemetry everywhere; the
 **on-glass "power" line** on the display boards (the 4.3B/4.3C, which have the
@@ -156,10 +164,18 @@ keeps witnessing"*).
 
 ## Status
 
-- **Done (this wave):** the pure decision core + outage-log ring, host-tested in
-  CI (`test_power_events.cpp`, 66 checks, `-Wall -Wextra -Werror`).
-- **Next wave (boot-path glue, hardware-validated):** wire `setup()`/loop per
-  firmware per the recipe. Priority order: **canary base** (reference, richest
-  NVS/witness plumbing) → **canary-display 4.3C** (has an RTC for real times and
-  the scoped UX) → wap / vision / sense / sentinel. Each is a small, isolated
-  change against the same proven core.
+- **Done:** the pure decision core + outage-log ring, host-tested in CI
+  (`test_power_events.cpp`, 66 checks, `-Wall -Wextra -Werror`).
+- **Done — canary base reference wiring:**
+  [`firmware/canary/include/canary_power_events.h`](../../firmware/canary/include/canary_power_events.h)
+  is the boot-path glue (the exact recipe above), wired into
+  `firmware/canary/src/main.cpp` at three sites — `on_boot()` (classify + log +
+  console), `witness_incident()` (sign a restored-outage/brownout record), and
+  `heartbeat()` (the loop liveness persist). It is the copy-me reference for the
+  other trees. *(Compiled on CI/hardware; the pure core it calls is the
+  host-tested part.)*
+- **Next (per firmware, hardware-validated):** apply the same three-call recipe.
+  Priority: **canary-display 4.3C** (has a PCF85063 RTC for real wall-clock
+  outage times + the scoped on-glass UX) → wap / vision / sense / sentinel.
+  Each is a small, isolated change against the same proven core; the base
+  helper is the template.

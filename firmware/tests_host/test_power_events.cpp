@@ -85,16 +85,20 @@ static void test_power_on_needs_a_clean_flag_to_not_be_an_outage() {
         "power-on: the clean flag, not the RTC hint, decides");
 }
 
-static void test_software_reset_uses_the_rtc_hint_when_unflagged() {
+static void test_software_reset_is_always_intentional() {
+  // esp_restart() is always our own code rebooting (OTA, user reset, config
+  // apply) — never a power event. A real loss surfaces as PowerOn/Brownout.
+  // So a Software reset is a clean reboot regardless of the flags.
   CHECK(classify(sig(ResetKind::Software, true, false)) ==
             BootPower::CleanReboot,
-        "software reset with a clean flag (OTA/user) => clean reboot");
+        "software reset with a clean flag => clean reboot");
   CHECK(classify(sig(ResetKind::Software, false, true)) ==
             BootPower::CleanReboot,
-        "unflagged software reset but power held (RTC marker) => reboot");
+        "software reset, no flag, power held => clean reboot");
   CHECK(classify(sig(ResetKind::Software, false, false)) ==
-            BootPower::OutageRestored,
-        "unflagged software reset with the RTC marker lost => outage");
+            BootPower::CleanReboot,
+        "software reset is intentional even with no flag and no marker "
+        "(so an OTA/reboot is never mislabelled an outage)");
 }
 
 static void test_unknown_reset_stays_honest() {
@@ -221,7 +225,7 @@ int main() {
   test_explicit_hardware_causes_reported_verbatim();
   test_deep_sleep_is_always_a_clean_return();
   test_power_on_needs_a_clean_flag_to_not_be_an_outage();
-  test_software_reset_uses_the_rtc_hint_when_unflagged();
+  test_software_reset_is_always_intentional();
   test_unknown_reset_stays_honest();
   test_terminology_is_correct_and_total();
   test_outage_bound_is_an_honest_lower_bound();

@@ -27,6 +27,14 @@
   the witnessed-event option are in `docs/design/power_events.md`. The 4.3C
   (which has a PCF85063 RTC for real wall-clock times) is the priority surface;
   its README's "staged, not started" outage line is now half-built.
+- **Canary base reference wiring.** `firmware/canary/include/canary_power_events.h`
+  is the boot-path glue — `on_boot()` (classify the previous session's ending +
+  append to the NVS log + console line), `witness_incident()` (sign a restored-
+  outage/brownout record), `heartbeat()` (the loop liveness persist, clock-
+  gated) — wired into `main.cpp` at three sites. It feeds the pure core real
+  signals (esp_reset_reason, an RTC-domain survival marker, the boot counter)
+  and is the copy-me template for the other firmwares. Its C++ + core-API usage
+  is verified against the real header signatures; the ESP build compiles on CI.
 
 ### canary-display — the mic does something useful: wake the screen on a sound
 

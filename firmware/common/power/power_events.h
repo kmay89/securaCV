@@ -33,8 +33,9 @@
  *   rtc_marker_present a magic value kept in RTC-domain NOINIT memory. It
  *                      survives a soft/brownout reset but not a true power loss,
  *                      so its ABSENCE corroborates a real outage. A secondary
- *                      hint only — used to disambiguate an unflagged software
- *                      reset, never to override an explicit reset cause.
+ *                      hint only — it breaks the tie on an UNKNOWN-cause reset,
+ *                      and never overrides an explicit reset cause. Boards
+ *                      without the marker pass false.
  *   have_prior_session boot_count > 0 (or any persisted heartbeat) — false only
  *                      on a factory-fresh first boot.
  *   last_alive_epoch   the newest heartbeat timestamp the running device
@@ -137,11 +138,14 @@ struct Signals {
 //   · No prior session at all → ColdBoot (nothing to have lost).
 //   · Brownout / Fault resets are explicit hardware causes → reported verbatim.
 //   · DeepSleepWake is always an intended return → CleanReboot.
-//   · A deliberate stop (clean_shutdown latched) → CleanReboot, whatever the
-//     reset cause: the user chose it, so a later power-on is not an "outage".
-//   · A PowerOn with no clean stop → OutageRestored (ran, lost mains, came back).
-//   · A Software reset with no clean flag is ambiguous — trust the RTC marker:
-//     present (power was held) → treat as a reboot; absent → OutageRestored.
+//   · A Software reset (esp_restart) is always our own code deciding to reboot —
+//     OTA, a user reset, a config apply — never a power event. A true power loss
+//     surfaces as PowerOn or Brownout, so Software is unconditionally CleanReboot.
+//   · A PowerOn whose predecessor stopped cleanly (clean_shutdown latched by a
+//     graceful power-off) → CleanReboot; otherwise → OutageRestored (ran, lost
+//     mains, came back).
+//   · An Unknown cause with no clean stop: only call it an outage if the RTC
+//     marker was ALSO lost (a corroborated power loss); otherwise stay honest.
 inline BootPower classify(const Signals& s) {
   if (!s.have_prior_session) return BootPower::ColdBoot;
 
@@ -149,17 +153,12 @@ inline BootPower classify(const Signals& s) {
     case ResetKind::Brownout:      return BootPower::Brownout;
     case ResetKind::Fault:         return BootPower::Fault;
     case ResetKind::DeepSleepWake: return BootPower::CleanReboot;
+    case ResetKind::Software:      return BootPower::CleanReboot;
     case ResetKind::PowerOn:
       return s.clean_shutdown ? BootPower::CleanReboot
                               : BootPower::OutageRestored;
-    case ResetKind::Software:
-      if (s.clean_shutdown) return BootPower::CleanReboot;
-      return s.rtc_marker_present ? BootPower::CleanReboot
-                                  : BootPower::OutageRestored;
     case ResetKind::Unknown:
     default:
-      // No cause and no clean stop: only call it an outage if the RTC marker
-      // was also lost (a corroborated power loss); otherwise stay honest.
       if (s.clean_shutdown) return BootPower::CleanReboot;
       return s.rtc_marker_present ? BootPower::Unknown
                                   : BootPower::OutageRestored;
