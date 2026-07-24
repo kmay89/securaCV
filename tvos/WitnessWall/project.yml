@@ -1,0 +1,91 @@
+# The Witness Wall — native tvOS, generated reproducibly by XcodeGen.
+#
+# The Xcode project is NOT committed, exactly as `ios/project.yml` documents:
+# it is regenerated from this spec on every build, so it can never rot or
+# drift. Edit THIS file, never a .pbxproj.
+#
+# Versioning follows the DESKTOP-app precedent (same as iOS): this app versions
+# independently, ships on its own `tvos-v*` tag, and stays OUT of
+# scripts/lint_version_sync.sh's four-file set. `scripts/release-tvos.sh` reads
+# MARKETING_VERSION from here and refuses to build if the tag disagrees, so the
+# tag and the binary can never claim different versions.
+
+name: WitnessWall
+options:
+  bundleIdPrefix: com.securacv
+  deploymentTarget:
+    tvOS: "17.0"        # Floor at 17 so the SwiftUI APIs the Wall leans on
+                        # (Observable, .focusable modifiers) are frozen, not fresh.
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: "$(APPLE_DEVELOPMENT_TEAM)"   # from env / CI, never committed
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: complete   # The Wall is a display over async I/O;
+                                         # data races here would show stale
+                                         # "verified" state, so be strict now.
+    TVOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "3"          # Apple TV
+
+    # Build identity for the About/Health panel — "never a guess, never stale",
+    # the same contract as the desktop build.rs stamp and ios/scripts/stamp_build.sh.
+    # CI overrides these on the xcodebuild command line with the real git rev.
+    SECURACV_BUILD_REV: "dev"
+    SECURACV_FW_TRAIN: "0.x"
+
+    # The Rust witness core. scripts/build-witness-core.sh stages the static
+    # library per platform into tvos/build/lib/<PLATFORM_NAME>/, so the SAME
+    # settings link the device build (appletvos) and the simulator build
+    # (appletvsimulator) — PR CI builds the simulator slice with no signing.
+    LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/../build/lib/$(PLATFORM_NAME)"
+    # The C header is imported through Support/module.modulemap rather than a
+    # bridging header, so the app target and the test target import it the same
+    # way (a bridging header is app-target-only).
+    SWIFT_INCLUDE_PATHS: "$(inherited) $(SRCROOT)/Support"
+
+targets:
+  WitnessWall:
+    type: application
+    platform: tvOS
+    sources:
+      - path: Sources/WitnessWall
+      # Apple TV will not accept an archive without an app icon and top-shelf
+      # art. The catalog is GENERATED and committed by
+      # scripts/make_app_icon.py (tvOS icons are layered image stacks — ~20
+      # files); tvos.yml regenerates and fails if it drifts.
+      - path: Support/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witnesswall
+        INFOPLIST_FILE: Support/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
+        OTHER_LDFLAGS: "$(inherited) -lsecuracv_witness_core"
+
+  WitnessWallTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - path: Tests/WitnessWallTests
+    dependencies:
+      - target: WitnessWall          # tests use `@testable import WitnessWall`
+    settings:
+      base:
+        # The test bundle links the core too: the FFI wrapper is the piece most
+        # worth testing, and it is worthless to test against a mock of itself.
+        OTHER_LDFLAGS: "$(inherited) -lsecuracv_witness_core"
+
+schemes:
+  WitnessWall:
+    build:
+      targets:
+        WitnessWall: all
+    test:
+      targets:
+        - WitnessWallTests
+      gatherCoverageData: true

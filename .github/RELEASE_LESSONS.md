@@ -62,7 +62,27 @@ any platform.
    workflows derive the tag from `tauri.conf.json`, so publishing without
    bumping rewrites the assets of a shipped release instead of cutting a new
    download. Bump first, then publish.
-9. **A new board reaches the flasher only when a release carries it.** The
+9. **A wired pipeline is not a working pipeline — build the DEV half too.**
+   A release workflow that is gated behind an account nobody has yet (an
+   Apple Developer program, a signing secret) verifies *nothing* until the day
+   someone enables it — which is the worst possible day to discover it never
+   worked. Every app target therefore gets a second, ungated workflow that
+   exercises everything not requiring permission: compile the app, run its
+   unit tests, on a simulator, with `CODE_SIGNING_ALLOWED=NO`. Today: `tvos.yml`
+   (dev) alongside `tvos-release.yml` (prod). The gate belongs on the *upload*,
+   never on the *build*.
+10. **One button that only does what's needed.** `release-everything.yml`
+   ("Update everything (only what needs it)") compares every target's source
+   version against what's actually been tagged and dispatches only what is
+   genuinely ahead — apps, firmware, and the site. Targets are declared in
+   `.github/release-targets.yml`; the decision engine
+   (`.github/scripts/release_plan.py`) is unit-tested, and the suite also
+   validates the catalog against the repo, so a renamed workflow or moved
+   version file fails CI instead of failing a release. Prefer it over pressing
+   per-target buttons and guessing what moved. `release-one-click.yml` remains
+   the unconditional "run these now" launcher for when you know exactly what
+   you want.
+11. **A new board reaches the flasher when a release carries it.** The
    in-browser flasher lights a product up from `manifest-flash.json` in the
    release it reads (`releases/latest`, or `fw-dev-latest` via
    `?channel=dev`). Adding a board to `flash.json` + the release workflows is
@@ -73,6 +93,71 @@ any platform.
 
 ## Entries
 
+### 2026-07-24 — A required store asset was missing, and the obvious gate for it would have failed for the wrong reason
+
+- **Symptom:** `tvos/WitnessWall/project.yml` set
+  `ASSETCATALOG_COMPILER_APPICON_NAME` to an asset catalog that did not exist.
+  The simulator build passed (icons aren't required there), so CI was green —
+  but `altool --validate-app` rejects a tvOS archive with no app icon or
+  top-shelf image, so the release path could never have shipped. Caught in
+  review, not by any check.
+- **Cause:** tvOS icons are not one PNG. The App Icon is a **layered image
+  stack** (Back/Middle/Front, parallaxed by the focus engine) in two sizes,
+  plus two top-shelf images at @1x and @2x — ~10 images and a tree of
+  `Contents.json`. Nothing verified they existed, and the only build that would
+  have noticed was the one gated behind an Apple account nobody had yet.
+- **Fix:** generate them (`tvos/scripts/make_app_icon.py`) and commit them —
+  the same generated-and-committed contract the website uses for its glTF
+  models. `release-tvos.sh` fails early and by name if the catalog is missing,
+  and `tvos/scripts/check_app_icon.py` runs in PR CI.
+- **The part worth generalizing:** that CI check is **structural, not a
+  byte-diff against a regenerated copy**. The icon composites a PNG through
+  Pillow, whose resampling output can differ between versions — so a byte-diff
+  would go red because a runner image bumped a dependency, with nothing wrong
+  in the change under test. A gate that fails for reasons unrelated to the diff
+  trains people to ignore it, which is worse than not having it. Assert the
+  property that actually matters (every required image exists, at the exact
+  size the store demands) and leave incidental bytes alone. Byte-exactness is
+  the right check only where the generator is genuinely deterministic and
+  dependency-free — which is why the website's `.glb` models *do* get one.
+- **Applies to:** every store asset on every platform (Apple icons, Samsung
+  `.wgt` icons, Play Store feature graphics). If a store requires an asset,
+  something in CI must assert it exists at the required size — the build
+  succeeding is not evidence, because the build that checks it is usually the
+  one you can't run yet.
+
+### 2026-07-24 — The tvOS pipeline was fully wired to an app that did not exist; every gate it had was green
+
+- **Symptom:** `tvos-release.yml` existed, passed `ci_policy_check.py`, and was
+  documented end to end in `docs/tvos/AUTOPIPELINE.md` — yet it could not have
+  produced a build. `tvos/WitnessWall/` (the Xcode project) and
+  `tvos/witness-core/` (the Rust core) were never written; both scripts were
+  honest stubs whose entire body was "this doesn't exist yet, exit 1". Nothing
+  in CI was red, because the workflow's `ENABLE_TVOS_BUILD` gate made every run
+  a green no-op. The failure was scheduled for the first day someone set the
+  variable — i.e. the day of the first real release.
+- **Cause:** the gate was on the **whole workflow** instead of on the **upload**.
+  Everything that needs no Apple account — compiling the Rust core, compiling
+  the SwiftUI app, running unit tests on the simulator — was gated behind a
+  paid developer account along with the parts that genuinely need one. A gate
+  that skips the build is indistinguishable from a build that passes, and
+  "wired and policy-clean" got mistaken for "works".
+- **Fix:** built the app and core for real (`tvos/witness-core` — the chain math,
+  pinned to the kernel's OWN `domain_separation_vectors.json` so the TV can
+  never verify a different chain than the source of truth — and
+  `tvos/WitnessWall`, a SwiftUI app generated by XcodeGen like `ios/`), then
+  split the pipeline in two: **`tvos.yml` (dev)** builds and unit-tests on the
+  tvOS simulator with `CODE_SIGNING_ALLOWED=NO` on every PR, ungated;
+  **`tvos-release.yml` (prod)** keeps the `ENABLE_TVOS_BUILD` gate but now only
+  gates signing and upload, gained a `publish: false` build-only path
+  (Principle 3), a version check so a `tvos-v*` tag and `MARKETING_VERSION`
+  cannot disagree, `altool --validate-app` before uploading, and a retrying
+  upload (the 2026-07-24 5xx lesson below).
+- **Applies to:** every gated target, present and future — the iOS build has
+  the identical shape (`ENABLE_IOS_BUILD`). If a workflow is skipped by default,
+  ask what is verifying the code it would have built. Gate the credential, not
+  the compiler. And when a doc describes a pipeline in the present tense, check
+  that the files it names exist.
 ### 2026-07-24 — Publishing an app without bumping its version rewrote a shipped release instead of cutting a new one → three merged features never reached an installer
 
 - **Symptom:** `flasher-v0.2.1` was published, complete and healthy, yet the

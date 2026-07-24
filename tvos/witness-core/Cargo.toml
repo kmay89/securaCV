@@ -1,0 +1,50 @@
+# The Witness Wall's verification core — the chain math, compiled for Apple TV.
+#
+# Standalone workspace on purpose (same reason as desktop/src-tauri): this crate
+# lives inside the securaCV repo, whose root Cargo.toml is the witness-kernel
+# package. An empty [workspace] stops Cargo from folding this into that build —
+# which matters here more than anywhere, because the kernel pulls
+# bundled-sqlcipher, GStreamer, and v4l, none of which cross-compile to
+# aarch64-apple-tvos.
+#
+# "Reuse, don't rebuild" (tvos/README.md) is honored the way the offline
+# JavaScript verifier honors it: this is not a second *definition* of the chain,
+# it is a second *implementation of the same pinned bytes*. `tests/vectors.rs`
+# checks it against the very fixtures the kernel checks itself against
+# (tests/fixtures/envelope/domain_separation_vectors.json), so a divergence
+# fails CI instead of shipping a TV that disagrees with the source of truth.
+[workspace]
+
+[package]
+name = "securacv-witness-core"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "SecuraCV chain verification for Apple TV (FFI core for the Witness Wall)"
+repository = "https://github.com/kmay89/securaCV"
+publish = false
+
+[lib]
+name = "securacv_witness_core"
+# staticlib is what Xcode links into the tvOS app; rlib keeps `cargo test`
+# (and any future Rust consumer) working on the host.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# Deliberately tiny and pure-Rust: every dependency here has to build for a
+# tier-3 Apple target with -Z build-std. Anything needing C, a system library,
+# or an allocator shim does not belong in this crate.
+sha2 = "0.10"
+ed25519-dalek = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+
+[profile.release]
+# The TV links this statically; small and panic-free-ish beats fast here, and
+# `panic = "abort"` matches the -Z build-std=std,panic_abort the tvOS target
+# builds with (a mismatch is a link error, not a warning).
+opt-level = "z"
+lto = true
+panic = "abort"
+strip = true

@@ -1,0 +1,12 @@
+// Makes the Rust core's C header importable as a Swift module.
+//
+// A module map rather than a bridging header on purpose: a bridging header is
+// app-target-only, and WitnessWallTests needs the same import to test the FFI
+// wrapper against the real core instead of a mock of itself.
+//
+// `project.yml` puts this directory on SWIFT_INCLUDE_PATHS; the header path is
+// relative to this file (tvos/WitnessWall/Support → tvos/witness-core/include).
+module SecuraCVWitnessCore {
+    header "../../witness-core/include/securacv_witness_core.h"
+    export *
+}

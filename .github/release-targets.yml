@@ -1,0 +1,129 @@
+# The catalog the "Update everything" button reads.
+#
+# One row per thing SecuraCV ships. `.github/scripts/release_plan.py` turns this
+# plus the repo's published releases into a plan: release what is genuinely
+# ahead of what's published, skip what isn't, and say plainly which targets need
+# a human to bump a version first.
+#
+# Adding a new app or firmware line? Add it HERE, not in the workflow. The
+# button, the summary, and the unit tests are all driven by this file, so a new
+# target is one entry rather than a new branch of YAML.
+#
+# Fields
+#   name          stable id, used in inputs (`only:`) and outputs
+#   label         what a human reads in the run summary
+#   kind          versioned  → compare source version to the newest release
+#                 pages      → no version; deploy when watched paths changed
+#   version       where the SOURCE version lives:
+#                   file + json_path   (a key in a JSON file)
+#                   file + regex       (capture group 1 of the first match)
+#   tag_prefix    release tags for this target, e.g. fw-v2.3.0
+#   workflow      the per-target workflow to dispatch (it keeps its own build
+#                 logic, signing, and concurrency guard — this only starts it)
+#   inputs        inputs for a REAL publish. `${version}` is substituted.
+#   dev_inputs    optional: inputs for a build-only run (the dry-run mode)
+#   watch         paths that, if changed since the target's last release tag,
+#                 mean "this really did change" — used to tell "nothing to do"
+#                 apart from "changed but nobody bumped the version"
+#   gate_var      optional repo variable that must be 'true' for this target to
+#                 be dispatchable (Apple targets need a developer account)
+
+targets:
+  - name: firmware
+    label: Canary firmware — every board, OTA images + browser-flasher factory images
+    kind: versioned
+    version:
+      file: canary-local/devices/registry.json
+      json_path: fw_train
+    tag_prefix: fw-v
+    workflow: firmware-release.yml
+    inputs:
+      channel: release
+      version: "${version}"
+    watch:
+      - firmware
+      - canary-local/devices/flash.json
+      - custom_components/securacv/manifest.json
+
+  - name: flasher
+    label: SecuraCV Flasher (macOS + Linux)
+    kind: versioned
+    version:
+      file: desktop/src-tauri/tauri.conf.json
+      json_path: version
+    tag_prefix: flasher-v
+    workflow: desktop-flasher-release.yml
+    inputs:
+      dry_run: "false"
+    dev_inputs:
+      dry_run: "true"
+    watch:
+      - desktop
+
+  - name: lab
+    label: SecuraCV Lab (macOS + Linux)
+    kind: versioned
+    version:
+      file: desktop-lab/src-tauri/tauri.conf.json
+      json_path: version
+    tag_prefix: app-v
+    workflow: desktop-release.yml
+    inputs:
+      publish: "true"
+    dev_inputs:
+      publish: "false"
+    watch:
+      - desktop-lab
+
+  - name: tvos
+    label: Witness Wall (Apple TV)
+    kind: versioned
+    version:
+      file: tvos/WitnessWall/project.yml
+      regex: '^\s*MARKETING_VERSION:\s*"?([0-9][0-9.]*)"?\s*$'
+    tag_prefix: tvos-v
+    workflow: tvos-release.yml
+    inputs:
+      publish: "true"
+      export_method: app-store-connect
+    dev_inputs:
+      publish: "false"
+      export_method: app-store-connect
+    watch:
+      - tvos
+    # Signing needs an Apple Developer account; without it the release workflow
+    # is a friendly no-op, so there is no point spending a macOS runner on it.
+    gate_var: ENABLE_TVOS_BUILD
+
+  - name: ios
+    label: SecuraCV companion (iPhone + iPad)
+    kind: versioned
+    version:
+      file: ios/project.yml
+      regex: '^\s*MARKETING_VERSION:\s*"?([0-9][0-9.]*)"?\s*$'
+    tag_prefix: ios-v
+    workflow: ios-release.yml
+    # `publish: true` is load-bearing, not decoration: without it this workflow
+    # only exports an .ipa as a build artifact, so the button would report iOS
+    # as released while users got nothing — and, with no ios-v* tag created,
+    # would re-dispatch it on every single press.
+    inputs:
+      publish: "true"
+      export_method: app-store-connect
+    dev_inputs:
+      publish: "false"
+      export_method: debugging
+    watch:
+      - ios
+    gate_var: ENABLE_IOS_BUILD
+
+  - name: web
+    label: canary.local site → GitHub Pages
+    kind: pages
+    workflow: pages.yml
+    inputs: {}
+    # Exactly the paths pages.yml itself deploys on — keeping these two lists in
+    # agreement is what makes "the docs need it" a real answer instead of a guess.
+    watch:
+      - canary-local
+      - docs/hardware/enclosure
