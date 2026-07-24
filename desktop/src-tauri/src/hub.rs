@@ -555,6 +555,22 @@ fn hub_flash_blocking(
         );
     };
 
+    // 0) Platform gate — fail before ANY work. Disk detection works everywhere
+    //    (hub-core enumerates + classifies on Linux/macOS/Windows), but the raw
+    //    disk *writer* only exists on Linux and macOS today. Stop here, before
+    //    the hundreds-of-MB download and ~2.5 GB decompress, rather than deep in
+    //    the write step — an operator on an unsupported OS gets an instant,
+    //    honest answer instead of a wasted wait. (`open_target` enforces the
+    //    same limit at the write itself, as belt-and-suspenders.)
+    if !hub_io::write::write_backend_available() {
+        return Err(
+            "Writing a Home Assistant hub card isn't supported on this operating system yet — \
+             detecting your disk works, but the card writer is currently Linux and macOS only. \
+             Please run the flasher on a Mac or Linux computer to flash the hub."
+                .to_string(),
+        );
+    }
+
     // 1) Resolve the plan from the embedded catalog.
     let (_, view) = parse_catalog()?;
     let plan = resolve(&view, &board_id).map_err(|e| e.message())?;
