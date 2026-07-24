@@ -438,16 +438,30 @@ async function startLive(btn) {
   }
 }
 
-// One int16-scale RMS from a 16 kHz frame — the same scalar the ES7210 path
-// produces on hardware (samples averaged to one number; the frame is dropped).
+// One int16-scale RMS from a 16 kHz frame, computed exactly like the firmware's
+// read_frame_rms: subtract the frame's DC mean, THEN RMS the deviations — so a
+// DC-biased mic can't inflate the scalar past what the device would compute and
+// feed the (otherwise drift-locked) core a different number than the hardware.
+// The frame is zeroed on the way out — the same `memset` the firmware calls
+// "the privacy barrier: nothing outlives this" — so the raw samples never
+// linger past the one scalar they reduce to. This IS the barrier, in-browser.
 function rmsI16(frameFloats) {
-  let sum = 0;
-  for (let i = 0; i < frameFloats.length; i++) {
+  const n = frameFloats.length;
+  let mean = 0;
+  for (let i = 0; i < n; i++) {
     let s = frameFloats[i];
     if (s > 1) s = 1; else if (s < -1) s = -1;
-    sum += s * s;
+    frameFloats[i] = s;
+    mean += s;
   }
-  const r = Math.sqrt(sum / frameFloats.length) * 32767;
+  mean /= n;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const d = frameFloats[i] - mean;
+    sum += d * d;
+  }
+  frameFloats.fill(0); // privacy barrier: the raw samples don't outlive their scalar
+  const r = Math.sqrt(sum / n) * 32767;
   return r > 65535 ? 65535 : Math.round(r);
 }
 
