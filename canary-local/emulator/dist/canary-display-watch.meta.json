@@ -1,7 +1,7 @@
 {
   "flavor": "watch",
   "fw_version": "2.3.0",
-  "git": "e22d311",
+  "git": "16e8d15",
   "lvgl": "v8.4.0",
   "arduinojson": "7.4.1"
 }
