@@ -15,19 +15,29 @@ Stdlib only — no dependencies.
 """
 import argparse
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-FLEET = {
-    "kernel": "reference-kernel",
-    "verified_through": "now",
-    "devices": [
-        {"name": "Front Door", "online": True, "chain": "ok", "product": "canary-wap"},
-        {"name": "Studio", "online": True, "chain": "ok", "product": "canary"},
-        {"name": "Garage", "online": True, "chain": "ok", "product": "canary-sense"},
-        {"name": "Back Gate", "online": True, "chain": "ok", "product": "canary"},
-        {"name": "Driveway", "online": False, "chain": "ok", "product": "canary-vision"},
-    ],
-}
+DEVICES = [
+    {"name": "Front Door", "online": True, "chain": "ok", "product": "canary-wap"},
+    {"name": "Studio", "online": True, "chain": "ok", "product": "canary"},
+    {"name": "Garage", "online": True, "chain": "ok", "product": "canary-sense"},
+    {"name": "Back Gate", "online": True, "chain": "ok", "product": "canary"},
+    {"name": "Driveway", "online": False, "chain": "ok", "product": "canary-vision"},
+]
+
+# Populated from CLI: after JOIN_AFTER seconds, a freshly "flashed" Canary joins
+# the fleet — so you can watch the emulator discover it appear live.
+START = time.monotonic()
+JOIN_AFTER = None
+JOIN_NAME = "Newly Flashed"
+
+
+def current_fleet():
+    devices = list(DEVICES)
+    if JOIN_AFTER is not None and (time.monotonic() - START) >= JOIN_AFTER:
+        devices.append({"name": JOIN_NAME, "online": True, "chain": "ok", "product": "canary"})
+    return {"kernel": "reference-kernel", "verified_through": "now", "devices": devices}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -44,7 +54,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.split("?", 1)[0] in ("/api/fleet", "/api/hello"):
-            body = json.dumps(FLEET).encode()
+            body = json.dumps(current_fleet()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._cors()
@@ -61,10 +71,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global JOIN_AFTER, JOIN_NAME
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8099)
     ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--join-after", type=float, default=None,
+                    help="seconds after start when a freshly-flashed Canary joins the fleet")
+    ap.add_argument("--join-name", default="Newly Flashed")
     args = ap.parse_args()
+    JOIN_AFTER, JOIN_NAME = args.join_after, args.join_name
+    if JOIN_AFTER is not None:
+        print(f"'{JOIN_NAME}' will join the fleet {JOIN_AFTER}s after start.")
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"SecuraCV reference kernel → http://{args.host}:{args.port}/api/fleet")
     print("Point the Witness Wall emulator's 'Connect your fleet' panel here.")
