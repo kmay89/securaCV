@@ -197,10 +197,17 @@ pub fn enumerate() -> Result<Vec<crate::hub_disk::TargetDisk>, String> {
     crate::hub_enumerate_macos::enumerate()
 }
 
+/// Windows: PowerShell `Get-Disk` output, parsed and judged by the pure
+/// functions in [`crate::hub_enumerate_windows`] — same contract as the others.
+#[cfg(target_os = "windows")]
+pub fn enumerate() -> Result<Vec<crate::hub_disk::TargetDisk>, String> {
+    crate::hub_enumerate_windows::enumerate()
+}
+
 /// Enumeration for platforms whose backend isn't written yet. Honest rather than
 /// empty: an empty list would read as "no disks found", inviting the UI to say
-/// the wrong thing. Windows (PowerShell `Get-Disk`) is the follow-up.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// the wrong thing. (Linux, macOS, and Windows are all covered above.)
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub fn enumerate() -> Result<Vec<crate::hub_disk::TargetDisk>, String> {
     Err("hub-disk enumeration isn't implemented on this OS yet".to_string())
 }
