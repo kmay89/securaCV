@@ -10,14 +10,37 @@ is never compiled by anything. The failure surfaces far from the cause: an
 undefined-reference at LINK time, in one board's build job, minutes into CI.
 
 That is exactly how `firmware/common/color` shipped in the nightstand look
-engine: it had no `library.json`, so PlatformIO's Library Dependency Finder
-never discovered it under `lib_extra_dirs = ../../common`. The `-I../../common`
-in the env made the *headers* resolve, which hides the problem at COMPILE time,
-so the only symptom was `canary-display-nightstand-s3` failing to link against
-`canary::color::led_color`.
+engine: nothing compiled its sources, the `-I../../common` in the env still
+made the *headers* resolve, and the only symptom was
+`canary-display-nightstand-s3` failing to link against
+`canary::color::wash_stops`.
 
 The header resolving is not evidence that the translation unit is built. This
 guard checks the second thing directly.
+
+WHICH ROUTE TO PICK (learned the hard way on that same bug)
+===========================================================
+
+Reach for `build_src_filter` FIRST. It is deterministic: the file is named, so
+it is compiled.
+
+A `library.json` only helps when the LDF already decided to look at the
+library, and it will not look if the only `#include` sits behind a flavor or
+feature conditional. These projects inherit `lib_ldf_mode = deep+` from
+common.ini, which EVALUATES preprocessor conditionals — and the flavor symbols
+(`CD_FLAVOR_NIGHTSTAND`, `FEATURE_AMBIENT_LED`, …) are not defined during that
+scan. So a conditionally-included library is invisible to the LDF no matter how
+correct its manifest is. Adding a manifest to common/color did not fix the
+link error; naming its two .cpp files in the nightstand env's build_src_filter
+did.
+
+`common/boot` is the contrast that makes the rule clear: it works through the
+LDF only because `boot/boot_banner.h` is included UNCONDITIONALLY from
+canary-display's main.cpp.
+
+Never satisfy both routes for the same file — that compiles the translation
+unit twice and fails the link on duplicate symbols (canary-sense.ini carries
+the same warning).
 
 THE RULE
 ========
@@ -239,13 +262,22 @@ def main() -> int:
         print("  undefined reference — not at compile time, because an")
         print("  -I../../common include path still resolves the headers.")
         print()
-        print("  Fix it one of three ways:")
-        print("    1. Add a library.json to the library directory so the")
-        print("       PlatformIO LDF discovers it (copy common/boot's shape:")
-        print("       includeDir '..', srcDir '.', srcFilter ['+<*.cpp>']).")
-        print("    2. Name the .cpp in the consuming env's build_src_filter")
-        print("       (see firmware/envs/platformio/canary-sense.ini).")
+        print("  Fix it one of three ways, in this order of preference:")
+        print("    1. PREFERRED — name the .cpp in the consuming env's")
+        print("       build_src_filter (see canary-sense.ini, or the")
+        print("       nightstand-s3 env in canary-display.ini). Deterministic:")
+        print("       the file is named, so it is compiled.")
+        print("    2. Add a library.json so the LDF discovers it (copy")
+        print("       common/boot: includeDir '..', srcDir '.', srcFilter")
+        print("       ['+<*.cpp>']). ONLY works if the header is included")
+        print("       UNCONDITIONALLY — these projects run lib_ldf_mode deep+,")
+        print("       which evaluates #ifdefs, so an include behind a flavor or")
+        print("       feature guard is invisible to the LDF and the manifest")
+        print("       changes nothing.")
         print("    3. Stage a flat copy into the Arduino sketch that uses it.")
+        print()
+        print("  Pick exactly ONE. Satisfying two compiles the TU twice and")
+        print("  fails the link on duplicate symbols.")
         print()
         print("  If the module is genuinely not wired up yet, add a WAIVERS")
         print("  entry with the reason instead of leaving it silently dead.")

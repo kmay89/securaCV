@@ -465,41 +465,59 @@
 - **What happened:** The nightstand look engine landed as
   `firmware/common/color/{color_engine,look_engine}.{h,cpp}`. Host tests passed,
   review passed, the headers resolved everywhere — and
-  `canary-display-nightstand-s3` failed at LINK with undefined references to
-  `canary::color::led_color`.
-- **Root cause:** `common/color` had no `library.json`, so PlatformIO's Library
-  Dependency Finder never treated it as a library under
-  `lib_extra_dirs = ../../common` and never compiled its translation units. The
+  `canary-display-nightstand-s3` failed at LINK with an undefined reference to
+  `canary::color::wash_stops`.
+- **Root cause:** nothing compiled the two translation units. The
   `-I${PROJECT_DIR}/../../common` in the env still resolved the *headers*, which
-  is what hides the problem at compile time. **A header resolving is not
+  is exactly what hides the problem at compile time. **A header resolving is not
   evidence that its .cpp is built.**
-- **Fix:** Added the manifest pair every other shared PIO library already
-  carries — see `common/boot` and `common/fleet_link` for the canonical shape:
-  `includeDir: ".."` so `"<lib>/<name>.h"` resolves, `srcDir: "."` +
-  `srcFilter: ["+<*.cpp>"]` so the sources compile.
-- **The second half, which cost a whole extra CI round:** the first attempt at
-  that manifest added "helpful" registry metadata — `description`, `keywords`,
-  `license`, `frameworks`, `platforms`, and a `headers` list. **`headers` is
-  what the LDF matches `#include` directives against, and it resolves relative
-  to `includeDir`.** Declaring `headers: ["look_engine.h"]` next to
-  `includeDir: ".."` told the LDF to look for `common/look_engine.h`, which
-  does not exist — so the library still never linked and the build failed with
-  the *identical* undefined-reference error, making it look as though the fix
-  had not applied at all. A manifest that EXISTS is not a manifest that WORKS.
-  **Match a proven precedent exactly before embellishing it:** `boot` and
-  `fleet_link` declare no `headers` field, and neither should this one.
+- **Two wrong fixes first, and why they were wrong — this is the real lesson.**
+  1. *Add a `library.json` so the LDF picks the library up.* Reasonable by
+     analogy with `common/boot` and `common/fleet_link`, which have one. It did
+     not change the error at all.
+  2. *The manifest must be malformed, then.* The first one carried registry
+     metadata including a `headers` list, which the LDF resolves relative to
+     `includeDir` — so `headers: ["look_engine.h"]` beside `includeDir: ".."`
+     pointed at a nonexistent `common/look_engine.h`. Plausible, checkable,
+     also not it: reducing the manifest to `boot`'s exact shape produced the
+     same link error a third time.
+  The actual cause is upstream of the manifest. These projects inherit
+  **`lib_ldf_mode = deep+`** from `common.ini`, and deep+ **evaluates
+  preprocessor conditionals** while scanning for libraries. Both callers reach
+  the engine from inside a guard — `portrait_ui.cpp` behind
+  `#ifdef CD_FLAVOR_NIGHTSTAND`, `ambient_led.cpp` behind `FEATURE_AMBIENT_LED
+  && HAS_RGBLED` — and those symbols are **not defined during the LDF scan**.
+  The LDF therefore judges both includes inactive and never looks at
+  `common/color` at all. **A manifest only matters for a library the LDF has
+  already decided to look at.** `common/boot` works through the LDF purely
+  because `boot/boot_banner.h` is included UNCONDITIONALLY from `main.cpp` —
+  that difference, not the manifest, is why one linked and the other didn't.
+- **Fix:** the repo's own established pattern, which `canary-sense.ini` already
+  documented for exactly this reason ("our shared common/ modules … are not
+  reliably mapped to LDF libraries — so compile them directly"): name the
+  sources in the consuming env's `build_src_filter`. The nightstand-s3 env now
+  lists `common/color/{color_engine,look_engine}.cpp`, and the manifest was
+  removed so the TUs cannot be compiled twice.
+- **The rule:** prefer `build_src_filter` — naming a file is deterministic.
+  Reach for a `library.json` only when the header is included unconditionally.
+  Never satisfy both routes for one file (duplicate symbols at link).
+- **Process lesson:** three CI rounds were spent because each attempt
+  pattern-matched a precedent (`boot` has a manifest, so add a manifest) without
+  first checking *why* the precedent works. The distinguishing fact —
+  unconditional vs. conditional include under deep+ LDF — was one grep away and
+  was already written down in `canary-sense.ini`. **Read the working example's
+  reason, not just its shape.**
 - **Regression check:** `firmware/scripts/check_common_build_reachability.py`
-  (Regression Guards), which enforces **both** halves. Every non-test .cpp under
-  `common/` must be reachable by a manifest, an explicit `build_src_filter`
-  entry, or a staged Arduino copy — *and* every manifest must actually work:
-  it must parse, and any `headers` it declares must resolve (against an explicit
-  `includeDir`, or PlatformIO's `include/` → `srcDir` → root fallback, which is
-  how `common/csi` resolves its `src/`-hosted headers). Verified against both
-  real failures: it flags the manifest-less `common/color` *and* the
-  metadata-rich manifest that was present but inert, while leaving `csi` alone.
-  It also surfaced a pre-existing orphan,
-  `common/bluetooth/ble_debug_beacon.cpp`, which is waived with a written reason
-  rather than silently ignored.
+  (Regression Guards). Every non-test .cpp under `common/` must be reachable by
+  a `build_src_filter` entry, a working manifest, or a staged Arduino copy —
+  and a manifest must actually work (parse, and any declared `headers` must
+  resolve, against an explicit `includeDir` or PlatformIO's `include/` →
+  `srcDir` → root fallback, which is how `common/csi` resolves its `src/`-hosted
+  headers). The guard's advice orders `build_src_filter` first and spells out
+  the deep+ conditional trap, so the next person does not repeat the three
+  rounds. It also surfaced a pre-existing orphan,
+  `common/bluetooth/ble_debug_beacon.cpp`, waived with a written reason rather
+  than silently ignored.
 - **Date learned:** 2026-07
 
 ### A host test cannot pin the target's preprocessor

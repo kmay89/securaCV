@@ -1,9 +1,0 @@
-{
-    "name": "canary_color",
-    "version": "1.0.0",
-    "build": {
-        "srcFilter": ["+<*.cpp>"],
-        "includeDir": "..",
-        "srcDir": "."
-    }
-}
