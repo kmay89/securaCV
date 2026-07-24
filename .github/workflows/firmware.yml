@@ -6,11 +6,23 @@ on:
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware.yml'
+      # The release workflow is a checked INPUT here, not just a neighbour:
+      # "Regression Guards" runs check_ota_channels.py, which reads the
+      # manifests firmware-release.yml publishes and fails when firmware polls
+      # one that nothing signs. Without this path, a PR that only edits the
+      # publishing side skips the very guard that covers it.
+      - '.github/workflows/firmware-release.yml'
   pull_request:
     branches: [main]
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware.yml'
+      # The release workflow is a checked INPUT here, not just a neighbour:
+      # "Regression Guards" runs check_ota_channels.py, which reads the
+      # manifests firmware-release.yml publishes and fails when firmware polls
+      # one that nothing signs. Without this path, a PR that only edits the
+      # publishing side skips the very guard that covers it.
+      - '.github/workflows/firmware-release.yml'
 
 concurrency:
   group: firmware-${{ github.ref }}

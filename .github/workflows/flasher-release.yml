@@ -188,11 +188,28 @@ jobs:
           fi
           cd firmware/projects/canary-display/arduino/canary_display
           for P in watch dash modes; do
+            # `modes` needs its gear flags staged: the profile pins the 4.3B
+            # board only, and CD_GEARS_COMPILED_IDENTITY (what makes the image
+            # a dash-modes product rather than plain dash) is derived from
+            # FEATURE_DEVMODE/DEMO_MODE/DEBUG_MODE/ARCADE in the git-ignored
+            # flavor_local.h. Unstaged, this ships a GEARLESS DASH image as the
+            # dash-modes factory image, so flashing "modes" would quietly give
+            # you plain dash. Older tags may predate the subcommand — fall back
+            # to skipping modes rather than packaging the wrong bytes.
+            if [ "$P" = modes ]; then
+              if ! ../../setup.sh flavor modes 2>/dev/null; then
+                echo "::warning::this tag's setup.sh has no 'flavor' subcommand — skipping dash-modes rather than packaging a gearless dash image as modes"
+                continue
+              fi
+            else
+              rm -f flavor_local.h
+            fi
             if ! arduino-cli compile --profile "$P" \
                 --output-dir "/tmp/display-${P}-build" canary_display.ino; then
               echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this rebuild"
             fi
           done
+          rm -f flavor_local.h
           cd "$GITHUB_WORKSPACE"
 
       - name: Build factory images + manifest-flash.json

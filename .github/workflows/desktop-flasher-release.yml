@@ -495,16 +495,33 @@ jobs:
           fi
           echo "updater manifest is self-consistent"
 
-      # ── give the fleet its update URL back ───────────────────────────────────
-      # Publishing this app release just made it GitHub's `releases/latest`,
-      # which is the URL every Canary in the field polls for its OTA manifest
-      # (config.h SECURACV_OTA_MANIFEST_URL). Left alone, the whole fleet 404s on
-      # its next check and quietly stops seeing updates. `if: always()` because a
-      # half-published release has already taken `latest` — a failed run needs
-      # this more than a clean one, not less.
-      - name: Keep releases/latest on the firmware
-        if: always()
-        uses: ./.github/actions/keep-firmware-latest
+  # ── give the fleet its update URL back ──────────────────────────────────────
+  # Publishing this app release makes it GitHub's `releases/latest`, which is the
+  # URL every Canary in the field polls for its OTA manifest (config.h
+  # SECURACV_OTA_MANIFEST_URL). Left alone, the whole fleet 404s on its next
+  # check and quietly stops seeing updates.
+  #
+  # Its own job, under `always()`, and NOT gated on `build` succeeding: with
+  # `fail-fast: false`, one matrix leg can publish the release and upload its
+  # installers while the other fails — and a job with `needs:` but no `always()`
+  # is skipped outright when a dependency fails, so a step-level `if: always()`
+  # inside `finalize` would never run. That partial publish is the case that
+  # needs the repair MOST: the release exists, it has taken `latest`, and being
+  # CI-created it fires no `release:` event for release-latest-guard.yml to
+  # catch. `always()` also covers cancellation, for the same reason.
+  keep-latest:
+    name: Keep releases/latest on the firmware
+    needs: build
+    if: always() && (github.ref_type == 'tag' || github.event.inputs.dry_run == 'false')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/keep-firmware-latest
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          context: ${{ steps.plan.outputs.tag }} publish
+          context: >-
+            ${{ github.ref_type == 'tag' && github.ref_name || 'flasher' }} publish
+            (build ${{ needs.build.result }})

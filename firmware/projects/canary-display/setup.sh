@@ -337,7 +337,17 @@ case "${1:-}" in
   # checks). Does NOT stage pins/flavor_config/secrets — those are per-flavor
   # and gitignored.
   regen)   remove_generated; generate_shared ;;
+  # flavor: write ONLY the git-ignored flavor_local.h — no regeneration, no
+  # secrets, no lv_conf. For callers that already have a good tree and just need
+  # the flavor's build flags, notably the release workflows: `--profile modes`
+  # pins the 4.3B board and libraries but NOT the gear flags, so a modes build
+  # without this produces a gearless dash image (see stage_flavor).
+  flavor)
+    if [ -z "${2:-}" ]; then
+      err "Pick a flavor: ./setup.sh flavor watch | dash | playground | modes"; exit 1
+    fi
+    stage_flavor "$2" ;;
   check)   check_toolchain ;;
   clean)   remove_generated; ok "Removed generated sketch sources" ;;
-  *) echo "Usage: ./setup.sh {arduino <watch|dash|playground|modes>|regen|check|clean}"; exit 1 ;;
+  *) echo "Usage: ./setup.sh {arduino <watch|dash|playground|modes>|flavor <watch|dash|playground|modes>|regen|check|clean}"; exit 1 ;;
 esac

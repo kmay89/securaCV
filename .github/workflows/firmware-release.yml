@@ -277,20 +277,40 @@ jobs:
         # profiles auto-install their own isolated core + libs, so no
         # --fqbn/--libraries here. The flavor dispatchers infer watch/dash
         # from each profile's board (fqbn esp32:esp32:XIAO_ESP32S3 -> watch,
-        # esp32:esp32:esp32s3 -> dash; the modes profile pins the 4.3B FQBN
-        # and carries the gear flags — a distinct flash product so a modes
-        # unit never cross-grades to plain dash). Non-blocking on purpose: a
-        # display build hiccup only drops those products from the browser
-        # flasher (build_flash_manifest warns per-variant) — it must never
-        # sink the signed OTA release around it.
+        # esp32:esp32:esp32s3 -> dash).
+        #
+        # `modes` is the exception, and it bites: the profile pins the 4.3B
+        # board and libraries but carries NO build flags. The gear flags
+        # (FEATURE_DEVMODE / DEMO_MODE / DEBUG_MODE / ARCADE) live in the
+        # git-ignored flavor_local.h, and CD_GEARS_COMPILED_IDENTITY — which is
+        # what makes the image identify as dash-modes instead of plain dash —
+        # is derived from them (config.h). Compile `--profile modes` without
+        # staging and you get a GEARLESS DASH binary labelled dash-modes:
+        # flashing it strips the modes build, and OTA-ing it onto a real modes
+        # unit cross-grades that unit down and leaves it polling as plain dash.
+        # `setup.sh flavor` writes only that one gitignored file, so the flag
+        # list has exactly one home.
+        #
+        # Non-blocking on purpose: a display build hiccup only drops those
+        # products from the browser flasher (build_flash_manifest warns
+        # per-variant) — it must never sink the signed OTA release around it.
         run: |
           cd firmware/projects/canary-display/arduino/canary_display
           for P in watch dash modes; do
+            if [ "$P" = modes ]; then
+              ../../setup.sh flavor modes
+            else
+              # No override: let board inference pick watch vs dash. Explicit
+              # so the loop is order-independent and a re-run can't inherit a
+              # stale staging.
+              rm -f flavor_local.h
+            fi
             if ! arduino-cli compile --profile "$P" \
                 --output-dir "/tmp/display-${P}-build" canary_display.ino; then
               echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this release"
             fi
           done
+          rm -f flavor_local.h
 
       - name: Assemble, sign, and verify release artifacts
         env:
@@ -400,6 +420,19 @@ jobs:
             cp "$SRC" "$OUT"
             if ! strings "$OUT" | grep -qFx "${VERSION}"; then
               echo "::warning::canary-display ${NAME} binary does not carry the version string '${VERSION}' — skipping its OTA manifest (bump CANARY_FW_VERSION in firmware/projects/canary-display/arduino/canary_display/version.h)"
+              rm -f "$OUT"
+              continue
+            fi
+            # The binary must AGREE that it is this product. SECURACV_OTA_PRODUCT
+            # is compiled in, and for `modes` it is derived from the gear flags —
+            # so a modes build that didn't get flavor_local.h staged reports
+            # "securacv-canary-display-dash" and this catches it. Publishing a
+            # manifest whose product the image doesn't claim is how you
+            # cross-grade a modes unit down to gearless dash: the engine's
+            # product check passes (it trusts the manifest), the gears vanish,
+            # and the device polls as plain dash forever after.
+            if ! strings "$OUT" | grep -qFx "securacv-canary-display-${NAME}"; then
+              echo "::warning::canary-display ${NAME} binary does not identify as 'securacv-canary-display-${NAME}' — skipping its OTA manifest rather than publishing a mislabelled image (a modes build needs 'setup.sh flavor modes' staged before compiling)"
               rm -f "$OUT"
               continue
             fi
