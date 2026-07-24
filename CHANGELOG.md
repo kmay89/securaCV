@@ -26,6 +26,38 @@
   when a clean fetch finds no factual change, so the freshness job only files
   a PR when facts actually move (the date means "as-of the current facts").
 
+### canary-local — the 4.3C mic made visible, and drift-locked against rot
+
+- **The decision core, in the browser.** New `assets/mic-sim.js` is a DOM-free
+  1:1 JavaScript port of the firmware's `mic_logic.h` — the adaptive
+  noise-floor `Envelope`, the NFPA-72 T3 / UL-2034 T4 `CadenceDetector`, the
+  opt-in wake-on-sound `TransientDetector`, the sensitivity presets, and the
+  listening `Gate` — with the same integer arithmetic. It takes an RMS
+  **scalar** per frame, never samples, exactly like the runtime past its
+  privacy barrier.
+- **No rot: it's re-pinned to the firmware every CI run.** New
+  `tests/mic.test.js` reads the committed Arduino mirror of `mic_logic.h`,
+  asserts every constant (presets, beep windows, gaps, wake threshold,
+  refractory, wire names) matches the port, **and replays the host test's own
+  scenarios through the JS** — smoke needs two cycles, a doorbell/speech never
+  alarms, zero-duration timing fails safe, the floor self-calibrates, wake
+  fires once per onset. A drift on either side breaks the build.
+- **The magic: it runs in the browser two ways.** New page `dash-mic.html`
+  drives that core from scripted sounds (smoke, CO, doorbell, a door close,
+  speech — the alarms fire, the non-alarms correctly don't) **or** from the
+  visitor's live microphone, reducing each 20 ms to one loudness number and
+  showing exactly that number as the only thing crossing the barrier. Same
+  gesture-gated, discard-every-frame, never-recorded safeguards as the WAP
+  acoustic bench, and a standing "demonstration, not a life-safety device"
+  line.
+- **Reassurance, from one source.** The page's does / never-does copy comes
+  from `MIC_FACTS` in the sim and the numbers from the drift-locked constants,
+  so the words and the figures can't disagree with the firmware. Linked from
+  the fleet emulator and the WAP bench; registered in the Lab manifest.
+- **The help + flasher match it.** The display usability protocol's mic task
+  gains wake-on-sound probes and a comprehension pre-check against the new
+  page; the flasher's display twin points to the same does/doesn't mic bench.
+
 ### canary-display — the 4.3C mic front end wired (ES7210 bring-up)
 
 - **`es7210_init` written**: with the I2S pins now vendor-exact, the ES7210

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>What a listening Canary hears — the Dash's ears · canary.local</title>
+  <meta name="description" content="See exactly what the mic-bearing Canary Dash (Waveshare 4.3C) does and does NOT do with sound. This bench runs the real firmware decision core — the adaptive noise floor, the NFPA-72 T3 / UL-2034 T4 alarm cadences, the sensitivity presets, and the opt-in wake-on-sound — ported 1:1 to JavaScript and drift-locked against the firmware header in CI. Play a smoke alarm, a doorbell, or a door close, or run it on your own microphone. Only one loudness number ever crosses the privacy barrier per frame — the audio is averaged to it and erased; nothing is recorded, stored, or sent. A demonstration of how the detector behaves — not a life-safety device." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+  <link rel="stylesheet" href="assets/dash-mic.css" />
+</head>
+<body>
+  <header id="hero" class="hub-hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+        <circle cx="26" cy="38" r="3.2" fill="#141414" opacity="0.55"/>
+      </svg>
+    </div>
+    <h1>What a listening Canary hears</h1>
+    <p class="lede">
+      One Canary in the line has a microphone — the <strong>Dash</strong> on the
+      Waveshare&nbsp;4.3C. It listens for the <em>cadence</em> a smoke or CO alarm
+      sounds, and — if you opt in — a sudden loud onset (a door) to wake the
+      screen. It never listens for <em>words</em>. This bench runs that exact
+      decision core — the firmware's own logic, ported 1:1 to JavaScript and
+      re-pinned to the header in CI — so you can watch what it does, and prove
+      what it doesn't, before you own a board.
+    </p>
+    <div id="mic-versions" aria-live="polite"></div>
+    <p class="fineprint">
+      <a href="fleet.html">← meet the fleet</a> ·
+      <a href="smoke.html">the WAP's ears (live acoustic bench)</a> ·
+      <a href="flash.html">flash it in your browser</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main id="mic">
+    <noscript><p class="muted">This bench needs JavaScript. The decision core it
+    runs is written out in
+    <code>firmware/projects/canary-display/include/canary/io/mic_logic.h</code>
+    and the contract in <code>docs/hardware/display_mic_variant.md</code>.</p></noscript>
+  </main>
+
+  <footer class="fineprint" id="foot">
+    <p>
+      Honest by construction: every number on this page — the sensitivity
+      presets, the T3/T4 beep windows, the wake threshold — is read from the
+      same constants the firmware compiles, and the verdict (is this a loud
+      onset, does this rhythm fit the grammar, does an Alert fire) is made by a
+      1:1 JavaScript port of
+      <code>firmware/projects/canary-display/…/mic_logic.h</code>, which
+      <code>canary-local/tests/mic.test.js</code> re-pins against the firmware
+      header and replays the host test's own scenarios through, every CI run.
+      In the synthetic mode nothing but a script drives it; in live mode your
+      microphone is the only new input, and only <strong>one loudness number
+      per 20&nbsp;ms</strong> ever crosses into the detector — the samples
+      behind it are averaged to it and erased, never recorded, stored, or sent.
+      This is a demonstration of how the detector behaves —
+      <strong>not</strong> a smoke or CO alarm, and no substitute for a
+      UL-listed one.
+    </p>
+  </footer>
+
+  <script type="module" src="assets/dash-mic.js"></script>
+</body>
+</html>
