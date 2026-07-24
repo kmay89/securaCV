@@ -1,0 +1,148 @@
+# One-button, idempotent firmware release: cut a release ONLY if the source
+# firmware train is newer than what's already published — otherwise do nothing.
+#
+# Press it any time. It compares the source version (registry.json `fw_train`,
+# which every variant's headers must match) against the newest published
+# `fw-v*` release, then:
+#   • source NEWER than latest  → dispatch firmware-release.yml (cuts it).
+#   • source == latest, but firmware/catalog changed since that tag →
+#     STOP and tell you to bump the version first (never ships stale silently).
+#   • source == latest, nothing changed → "already up to date", no-op.
+#
+# So it's safe to spam: it only ever releases the current source version once,
+# and it makes "did the firmware change since we last shipped?" a single click.
+# One firmware release rebuilds and publishes EVERY variant (all boards) at
+# once, which is why this updates "all the released firmwares" together.
+name: Firmware Release — if changed
+run-name: "Firmware release check (${{ inputs.channel }}) — @${{ github.actor }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Channel to cut IF a release is warranted: release (stable) or dev (prerelease)"
+        type: choice
+        options:
+          - release
+          - dev
+        default: release
+      force:
+        description: "Re-cut even if the source version already looks published (overwrites that release)"
+        type: boolean
+        default: false
+
+permissions:
+  actions: write   # to dispatch firmware-release.yml
+  contents: read
+
+concurrency:
+  group: firmware-release-if-changed
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Release firmware only if it's ahead of what's published
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # full history + tags, so we can diff since the last release
+
+      - name: Decide whether a release is needed
+        id: decide
+        uses: actions/github-script@v8
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          FORCE: ${{ inputs.force }}
+        with:
+          script: |
+            const fs = require("fs");
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const channel = process.env.CHANNEL || "release";
+            const force = process.env.FORCE === "true";
+
+            // ── source version = the train the catalogs + headers are on ──
+            const reg = JSON.parse(fs.readFileSync("canary-local/devices/registry.json", "utf8"));
+            const src = String(reg.fw_train || "").trim();
+            if (!/^\d+\.\d+\.\d+/.test(src)) {
+              core.setFailed(`registry.json fw_train is not a version: "${src}"`);
+              return;
+            }
+
+            // ── newest published STABLE fw-v release (the baseline we compare to) ──
+            const rels = await github.paginate(github.rest.repos.listReleases, { owner, repo, per_page: 100 });
+            const triple = (s) => (s.match(/^(\d+)\.(\d+)\.(\d+)/) || []).slice(1, 4).map(Number);
+            const cmp = (a, b) => { const x = triple(a), y = triple(b); for (let i = 0; i < 3; i++) if ((x[i]||0) !== (y[i]||0)) return (x[i]||0) - (y[i]||0); return 0; };
+            const published = rels
+              .filter((r) => !r.draft && /^fw-v\d+\.\d+\.\d+$/.test(r.tag_name)) // stable only (no -dev/-rc)
+              .map((r) => r.tag_name.replace(/^fw-v/, ""));
+            published.sort(cmp);
+            const latest = published.length ? published[published.length - 1] : null;
+
+            // ── decide ──
+            let dispatch = false, reason = "";
+            if (force) {
+              dispatch = true;
+              reason = `Force requested — re-cutting fw-v${src} (${channel}).`;
+            } else if (!latest) {
+              dispatch = true;
+              reason = `No published firmware release yet — cutting the first, fw-v${src}.`;
+            } else if (cmp(src, latest) > 0) {
+              dispatch = true;
+              reason = `Source train ${src} is newer than the latest release ${latest} — cutting fw-v${src}.`;
+            } else if (cmp(src, latest) === 0) {
+              // Same version already released — did the firmware change since that tag?
+              let changed = false;
+              try {
+                await exec.exec("git", ["fetch", "--depth=1", "origin", `refs/tags/fw-v${latest}:refs/tags/fw-v${latest}`], { ignoreReturnValue: true });
+                const paths = ["firmware", "canary-local/devices/flash.json", "custom_components/securacv/manifest.json"];
+                const code = await exec.exec("git", ["diff", "--quiet", `fw-v${latest}..HEAD`, "--", ...paths], { ignoreReturnValue: true });
+                changed = code !== 0; // non-zero = differences present
+              } catch (e) {
+                core.warning(`Could not diff against fw-v${latest} (${e.message}); assuming a bump is needed to be safe.`);
+                changed = true;
+              }
+              if (changed) {
+                reason = `Firmware/catalog CHANGED since fw-v${latest}, but fw_train is still ${src}. ` +
+                         `Bump the version in every variant's headers + registry.json fw_train, then run this again — ` +
+                         `a release must never ship under a version already published.`;
+              } else {
+                reason = `Firmware is already released at fw-v${latest} and unchanged since. Nothing to do. ✅`;
+              }
+            } else {
+              reason = `Source train ${src} is OLDER than the latest release ${latest}. That shouldn't happen — check registry.json fw_train.`;
+            }
+
+            core.setOutput("dispatch", String(dispatch));
+            core.setOutput("version", src);
+            core.setOutput("channel", channel);
+
+            await core.summary
+              .addHeading("Firmware release — if changed")
+              .addRaw(`**Source train:** \`${src}\``).addBreak()
+              .addRaw(`**Latest published:** ${latest ? `\`fw-v${latest}\`` : "_none_"}`).addBreak()
+              .addRaw(`**Decision:** ${dispatch ? `🚀 cut fw-v${src} (${channel})` : "no release"}`).addBreak()
+              .addRaw(reason)
+              .write();
+            core.notice(reason);
+
+      - name: Cut the firmware release
+        if: steps.decide.outputs.dispatch == 'true'
+        uses: actions/github-script@v8
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+          CHANNEL: ${{ steps.decide.outputs.channel }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ref = context.ref.replace("refs/heads/", "").replace("refs/tags/", "");
+            await github.rest.actions.createWorkflowDispatch({
+              owner, repo,
+              workflow_id: "firmware-release.yml",
+              ref,
+              inputs: { channel: process.env.CHANNEL, version: process.env.VERSION },
+            });
+            core.notice(`Dispatched firmware-release.yml — ${process.env.CHANNEL} fw-v${process.env.VERSION}. Watch that run for the build + publish.`);
