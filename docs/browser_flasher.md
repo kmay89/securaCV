@@ -97,6 +97,39 @@ promoting it to default is gated on a real-board test. The BLE console (above)
 is the cleaner cross-board "it's a *branded* Canary" signal — every board, C3/C6
 included, advertises `SecuraCV-Canary` by name.
 
+### Showing up on an iPhone over USB-C (the Files app)
+
+A flashed Canary does **not** appear in an iPhone's Files app today, and the
+reason is concrete, not mysterious. For a device to show up there it must
+enumerate as a **USB Mass Storage** drive — that's the *evidence drive* feature
+(`usb_evidence_drive`, `docs/design/usb_evidence_drive.md`). Four things all
+have to be true, and today none of the shipped images clear the first:
+
+1. **MSC has to be in the flashed image.** `FEATURE_USB_EVIDENCE_DRIVE` (and the
+   `usb-onboard` MSC) are **opt-in build flags, never in a release image** — the
+   stock firmware is hwcdc and presents only a serial port, no drive. So a
+   normally-flashed Canary offers the iPhone nothing to mount. *This is why "we
+   thought we had it" didn't work.* The feature's own header says Phase-2
+   on-device validation is still pending — it "has not yet enumerated on real
+   hosts."
+2. **OTG mode, so S3-only.** MSC needs TinyUSB (`ARDUINO_USB_MODE=0`). The C3/C6
+   boards have no USB-OTG at all, so `canary-vision` / `canary-sense` can **never**
+   present a drive to a phone — this is an ESP32-S3-only capability.
+3. **A filesystem iOS mounts.** iOS Files mounts **exFAT / FAT32 / HFS+ / APFS**
+   — *not FAT16*. The evidence LUN serves the **raw SD sectors**, so the SD card
+   itself must be **FAT32/exFAT** to appear. ⚠️ The PSRAM *update* drop-zone is
+   currently formatted **FAT16** (`fat16_format`), which iOS will not mount — so
+   the update-over-USB workflow is PC/Mac-only until that LUN is FAT32/exFAT.
+4. **Power.** Over USB-C↔USB-C the **iPhone is the host** and supplies limited
+   power; a Canary running WiFi/camera can trip iOS's "accessory needs too much
+   power." Give the Canary its **own power** (self-powered, or a powered hub with
+   data to the phone).
+
+So the honest path to "browse a Canary's witness files on an iPhone" is: an
+**opt-in OTG + evidence-drive S3 image**, a **FAT32/exFAT SD**, **self-powered**,
+and a **bench test on a real iPhone** (the Phase-2 step that hasn't run). It is
+buildable; it is not yet a validated, flashable option.
+
 ## Self-healing (never get stuck)
 
 The flasher tries to fix the common failures before asking the user to:
