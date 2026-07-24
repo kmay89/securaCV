@@ -27,6 +27,8 @@
 #include "canary/ui/theme.h"
 #include "canary/ui/canary_mark.h"
 #include "canary/ui/character.h"
+#include "canary/ui/look_state.h"
+#include "color/look_engine.h"
 
 namespace canary::ui {
 
@@ -201,9 +203,21 @@ void portrait_ui_update(const Fleet& fleet, uint32_t now,
   // The bird wears the mood the engine chose this pass.
   canary_mark_mood(st.bird);
 
-  // The wash carries the fleet's color; the ok/quiet wash is the calm green
-  // that says "alive and well", not nothing.
-  lv_obj_set_style_bg_color(s_wash, sev_color(worst, night), 0);
+  // The wash is the glass half of the look engine: the chosen scene's gradient
+  // when the fleet is calm, the true semantic color the instant anything needs
+  // attention (worst >= Warn, handled inside wash_stops). Top and bottom stops
+  // drive LVGL's vertical gradient; the breathing opacity animation (started in
+  // create) gives it life. The beacon runs the same engine, so pane and point
+  // of light always agree.
+  {
+    auto& lp = canary::ui::look_params();
+    lp.night = night;
+    canary::color::Rgb ws[2];
+    canary::color::wash_stops(now, lp, (canary::color::Sev)(uint8_t)worst,
+                              /*safe_dark=*/false, ws, 2);
+    lv_obj_set_style_bg_color(s_wash, lv_color_make(ws[0].r, ws[0].g, ws[0].b), 0);
+    lv_obj_set_style_bg_grad_color(s_wash, lv_color_make(ws[1].r, ws[1].g, ws[1].b), 0);
+  }
 
   // State word + hue.
   lv_label_set_text(s_state, state_word(worst));
