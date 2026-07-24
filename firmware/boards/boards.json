@@ -115,5 +115,31 @@
     "tier_evidence": "",
     "used_by": ["canary-display"],
     "notes": "The mic-bearing 'AI voice' dash sibling (sold as 4.3C-BOX, cased, mic grille on top): same 800x480 panel family (ST7701 controller - VERIFY init) + GT911 + CH422G, plus an ES8311/ES7210 audio stack fronting a dual-MIC array, a PCF85063 RTC (register map differs from the family PCF8563 - driver follow-up), and a BOX-edition terminal strip with functions to VERIFY. A DISTINCT privacy surface: own env (canary-display-dash-mic), own OTA product, mic off by default, alarm-pattern scalars only, hard mute = driver uninstalled, on-glass indicator while listening. Contract: docs/hardware/display_mic_variant.md."
+  },
+  {
+    "id": "xiao-esp32c6-sentinel",
+    "name": "Seeed Studio XIAO ESP32-C6 (Sentinel Standard head)",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-C6",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "seeed_xiao_esp32c6",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [],
+    "notes": "Canary Sentinel Standard/Heavy sensor head: MR60BHA2 60 GHz radar + PIR + BH1750 lux, WiFi-RF/CSI + BLE on the onboard radio. Phase 0 — the board-agnostic fusion core is host-tested (firmware/common/fusion, firmware/tests_host); the on-device PlatformIO build + bench validation are pending (see firmware/projects/canary-sentinel), so not yet in flavors.json and used_by is empty until it phases in like canary-sense."
+  },
+  {
+    "id": "xiao-esp32c3-sentinel-lite",
+    "name": "Seeed Studio XIAO ESP32-C3 (Sentinel Lite)",
+    "vendor": "Seeed Studio",
+    "mcu": "ESP32-C3",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "seeed_xiao_esp32c3",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [],
+    "notes": "Canary Sentinel Lite: PIR + BH1750 lux, WiFi-RF + BLE on the onboard radio, NO radar/CSI (honest low-cost tier limit). Phase 0 — fusion core host-tested; on-device build + bench pending (firmware/projects/canary-sentinel), so not yet in flavors.json and used_by is empty."
   }
 ]

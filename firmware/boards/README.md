@@ -20,6 +20,8 @@ environments consistent, so the table below cannot silently rot.
 | `waveshare-esp32s3-lcd43` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3" touch panel — "Canary Dash" |
 | `waveshare-esp32s3-lcd43b` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3B (isolated DI/DO, RS485, CAN, I2C header) — "Canary Dash B" / dev playground host |
 | `waveshare-esp32s3-lcd43c` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3C ("AI voice") — the MIC-BEARING dash: a distinct privacy surface, mic off by default (docs/hardware/display_mic_variant.md) |
+| `xiao-esp32c6-sentinel` | ESP32-C6 | compile-tested | — (Phase 0) | Canary Sentinel Standard/Heavy head — MR60BHA2 radar + PIR + lux + WiFi/BLE; fusion core host-tested, on-device build/bench pending |
+| `xiao-esp32c3-sentinel-lite` | ESP32-C3 | compile-tested | — (Phase 0) | Canary Sentinel Lite — PIR + lux + WiFi/BLE, no radar (honest tier limit); fusion core host-tested, on-device build/bench pending |
 
 **Tiers** (defined in [`../HARDWARE.md`](../HARDWARE.md)):
 **verified** = CI-built *and* validated on real hardware by a maintainer;

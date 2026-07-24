@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### canary-sentinel — the multi-sensor fusion guardian (Phase 0)
+
+- **A new project: a doorway/window guardian that fuses physically independent
+  sensing channels** — PIR (thermal), 60GHz radar (radio reflection), WiFi CSI
+  (channel perturbation), WiFi/BLE device counting (carried radio), ambient
+  light and — Heavy tier — door-contact/tamper/vision (mechanical/optical) —
+  into one debounced, privacy-preserving people-detection decision. The thesis
+  is corroboration across independent physics: to be invisible you must defeat
+  every modality class at once, and *blinding* a channel raises an alarm rather
+  than lowering the score.
+- **The novel core is host-tested, not just asserted.** `common/fusion`
+  (`sentinel_fusion.*` + `sentinel_channels.h`) is allocation-free, Arduino-free
+  and time-injected; `tests_host/test_sentinel_fusion.cpp` and
+  `test_sentinel_presets.cpp` pin the independence-weighted scoring, the
+  fraud-detection posture (denied-channel suspicion, blind-while-present →
+  Anomaly, uncorroborated silent-body dwell → Anomaly), the debounce/dwell FSM,
+  and the preset→`FusionConfig`→engine pipeline. 77 checks green under
+  `-Wall -Wextra -Werror`, wired into the existing host-tests job.
+- **One brain, three cost tiers, five presets.** Lite (C3, PIR+RF+BLE+light —
+  honestly labelled as evadable by a slow device-free intruder), Standard
+  (C6+MR60, +radar+CSI — the front-door recommendation), Heavy (dual-board,
+  +contact+tamper+vision — the rigged demo). Presets (`door`/`window`/`hallway`/
+  `mailbox-lite`/`perimeter-demo`) are pure config data; behaviour never forks
+  by preset, only the numbers do. Every channel is compile-time selectable and
+  runtime-weightable — fully modular.
+- Board pin maps (`xiao-esp32c6-sentinel`, `xiao-esp32c3-sentinel-lite`), build
+  envs (`envs/platformio/canary-sentinel.ini`), and the full spec
+  (`docs/canary_sentinel_fusion_design.md`, incl. the evasion threat model and
+  the ATM/fraud-detection lineage). The on-device witness/MQTT/OTA path is
+  Phase 1; the project is not yet in `flavors.json` (phases in like canary-sense).
+
 ### canary-display — mic detection presets, grounded in the standards
 
 - **The cadence windows are now derived from the alarm standards, not
