@@ -65,6 +65,7 @@ const state = {
   backup: null,         // { bytes, name, mac } once taken this session
   report: null,         // last health-check result
   busy: false,
+  ble: null,            // { device, characteristic } while a BLE console is open
 };
 
 // ── boot ───────────────────────────────────────────────────────────────────
@@ -370,6 +371,20 @@ function renderReassurance() {
   lessonP.append(a);
   help.append(lessonP);
   wrap.append(help);
+
+  // Already have a Canary running? Prove it's on over the air — a Bluetooth
+  // check that stands apart from flashing (it writes nothing), reachable any
+  // time, not just after a flash.
+  const bt = el("details", "flash-card flash-ble-entry");
+  bt.append(el("summary", null, "🔵 Already have a Canary? Test it over Bluetooth →"));
+  bt.append(el("p", "muted",
+    "Skip the cable: connect to a running Canary’s Bluetooth console and read " +
+    "its live snapshot — proof it’s powered, healthy, and reachable even when " +
+    "WiFi is down. Chromium browser on a computer or Android."));
+  const btBtn = el("button", "ghost small", "Open the Bluetooth check");
+  btBtn.addEventListener("click", () => setPhase(phaseBluetoothCheck()));
+  bt.append(btBtn);
+  wrap.append(bt);
 
   wrap.append(renderTrustCard());
 
@@ -3331,6 +3346,18 @@ function phaseDone(opts) {
     twin.title = proveSpec.emulated.how;
     row.append(twin);
   }
+  // AP-based Canaries (canary / WAP) run the read-only Bluetooth console, so
+  // offer the over-the-air "it's on" check right after the USB flash — the same
+  // proof, on the path that survives a WiFi outage.
+  const p = opts.product;
+  const bleCapable = p && !opts.isBackup &&
+    (core.productRole(p) === "wap" || p.provisioning === "ap");
+  if (bleCapable) {
+    const bt = el("button", "ghost", "Check over Bluetooth →");
+    bt.title = "Reach this Canary's read-only Bluetooth console and read its live snapshot";
+    bt.addEventListener("click", () => setPhase(phaseBluetoothCheck(() => setPhase(phaseDone(opts)))));
+    row.append(bt);
+  }
   row.append(again, tour);
   box.append(row);
   return box;
@@ -3347,6 +3374,166 @@ function twinLink(product) {
   a.rel = "noopener";
   a.title = spec.emulated.how;
   return a;
+}
+
+// ── the Bluetooth check: prove a Canary is really on and talking, over the air
+// The flash channel is USB (Web Serial); this is its companion — the same
+// "prove it's alive" idea, but over Bluetooth. A Canary's WAP firmware runs a
+// read-only BLE console (one GATT service, one snapshot characteristic; see
+// flash-core.js BLE_CONSOLE + firmware .../ble_console.h), the very path that
+// keeps working when WiFi is down. This phase answers three plain questions:
+// is Bluetooth on, can the browser reach a Canary, and what is it reporting —
+// no flashing, nothing written to the board.
+async function stopBle() {
+  const b = state.ble;
+  state.ble = null;
+  if (!b) return;
+  try { b.characteristic && await b.characteristic.stopNotifications(); } catch { /* already gone */ }
+  try {
+    if (b.device && b.device.gatt && b.device.gatt.connected) b.device.gatt.disconnect();
+  } catch { /* already gone */ }
+}
+
+function phaseBluetoothCheck(back) {
+  const goBack = back || (() => setPhase(phaseConnect()));
+  const box = el("section", "flash-card flash-ble");
+  box.append(el("div", "flash-big-emoji", "🔵"));
+  box.append(el("h2", null, "Is it on? Reach a Canary over Bluetooth"));
+  box.append(el("p", "muted",
+    "A separate check from flashing: a Canary keeps a read-only Bluetooth " +
+    "“console” alive even when WiFi is down. This asks your browser to find " +
+    "one, connect, and read its live snapshot — proof it’s on and talking. " +
+    "Nothing is written to the board."));
+
+  const status = el("p", "flash-ble-status muted", "");
+  box.append(status);
+
+  const support = core.bleSupport(navigator);
+  if (!support.supported) {
+    // Same shape as the Web Serial fallback: Chromium desktop / Android only.
+    status.classList.remove("muted");
+    box.append(errorBox("This browser can’t do Bluetooth here", support.reason));
+    const native = el("p", "fineprint",
+      "On iPhone or iPad, the SecuraCV app talks to a Canary over Bluetooth " +
+      "natively — Safari has no Web Bluetooth. On a computer, use a Chromium " +
+      "browser (Chrome, Edge, Brave).");
+    box.append(native);
+    const backBtn = el("button", "ghost", "← back");
+    backBtn.addEventListener("click", () => stopBle().then(goBack));
+    box.append(backBtn);
+    return box;
+  }
+
+  const result = el("div", "flash-ble-result");
+  box.append(result);
+
+  const connectBtn = el("button", "primary", "Find & connect a Canary");
+  const backBtn = el("button", "ghost", "← back");
+  const row = el("div", "flash-row");
+  row.append(connectBtn, backBtn);
+  box.append(row);
+  backBtn.addEventListener("click", () => stopBle().then(goBack));
+
+  const renderSnapshot = (snap, live) => {
+    result.innerHTML = "";
+    const card = el("div", "flash-card flash-ble-card");
+    card.append(el("h3", null, "✓ Connected — your Canary is on and talking"));
+    const rows = core.bleSnapshotRows(snap);
+    if (rows.length) {
+      const facts = el("div", "flash-facts");
+      rows.forEach((r) => facts.append(fact(r.label, r.value)));
+      card.append(facts);
+    } else {
+      card.append(el("p", "muted",
+        "Connected, but the snapshot was empty — the board is reachable over " +
+        "Bluetooth even so."));
+    }
+    card.append(el("p", "fineprint",
+      live
+        ? "Live — this updates on its own as the board pushes new snapshots."
+        : "A single read. Reconnect for live updates."));
+    result.append(card);
+  };
+
+  // Report whether the radio itself is switched on before asking for a device —
+  // getAvailability() is the honest "is Bluetooth on" signal Web Serial lacks.
+  const reportRadio = async () => {
+    status.textContent = "Checking Bluetooth…";
+    let available = true;
+    try {
+      if (navigator.bluetooth.getAvailability) {
+        available = await navigator.bluetooth.getAvailability();
+      }
+    } catch { available = true; /* some engines don't implement it — don't block */ }
+    status.textContent = available
+      ? "Bluetooth is available on this device. Click below and pick your Canary."
+      : "Bluetooth looks switched off (or blocked). Turn it on, then try again.";
+    return available;
+  };
+  reportRadio();
+
+  const connect = async () => {
+    connectBtn.disabled = true;
+    result.innerHTML = "";
+    status.textContent = "Opening the Bluetooth chooser…";
+    try {
+      await stopBle(); // drop any prior console first
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [core.BLE_CONSOLE.serviceUuid] }],
+        optionalServices: [core.BLE_CONSOLE.serviceUuid],
+      });
+      status.textContent = `Connecting to ${device.name || "the Canary"}…`;
+      device.addEventListener("gattserverdisconnected", () => {
+        if (state.ble && state.ble.device === device) {
+          state.ble = null;
+          status.textContent = "The Canary disconnected. Click to reconnect.";
+          connectBtn.disabled = false;
+          connectBtn.textContent = "Reconnect";
+        }
+      });
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(core.BLE_CONSOLE.serviceUuid);
+      const chr = await service.getCharacteristic(core.BLE_CONSOLE.snapshotUuid);
+      state.ble = { device, characteristic: chr };
+
+      // One read now, then subscribe for the board's periodic pushes.
+      const first = await chr.readValue();
+      renderSnapshot(core.parseBleSnapshot(first), false);
+      try {
+        await chr.startNotifications();
+        chr.addEventListener("characteristicvaluechanged", (ev) => {
+          const snap = core.parseBleSnapshot(ev.target.value);
+          if (snap) renderSnapshot(snap, true);
+        });
+        status.textContent = "Live — reading your Canary’s snapshot over Bluetooth.";
+      } catch {
+        status.textContent = "Connected (single read — live updates weren’t available).";
+      }
+      connectBtn.disabled = false;
+      connectBtn.textContent = "Reconnect";
+    } catch (e) {
+      connectBtn.disabled = false;
+      const name = (e && e.name) || "";
+      if (name === "NotFoundError") {
+        // User dismissed the chooser, or no Canary was advertising.
+        status.textContent =
+          "No Canary picked. Make sure it’s powered and nearby — its Bluetooth " +
+          "console advertises for a bonded phone; pick it from the list.";
+      } else if (name === "SecurityError" || name === "NotAllowedError") {
+        result.innerHTML = "";
+        result.append(errorBox("The console is bonded-only",
+          "The board answered but its snapshot is readable by paired devices " +
+          "only (that’s deliberate — same trust as the WiFi token). Pair this " +
+          "device with the Canary in your OS Bluetooth settings, then try again."));
+      } else {
+        result.innerHTML = "";
+        result.append(errorBox("Bluetooth connect failed",
+          (e && e.message) || "Couldn’t reach the Canary. Move closer, power-cycle it, and retry."));
+      }
+    }
+  };
+  connectBtn.addEventListener("click", connect);
+  return box;
 }
 
 // ── rescue: back to known-good, for any firmware past or future ─────────────
@@ -4644,6 +4831,7 @@ function errorRetry(title, e, backPhase) {
 
 async function onDisconnect(silent) {
   try { await stopVoice(); } catch {}
+  try { await stopBle(); } catch {}
   try { if (state.session) await state.session.transport.disconnect(); } catch {}
   state.session = null;
   state.chip = state.mac = state.flashBytes = state.current = null;

@@ -899,6 +899,10 @@
        "on": true,
        "note": "off-grid BLE chirp fallback (spec 6)"
       },
+      "FEATURE_BLE5_SCAN": {
+       "on": false,
+       "note": "BLE 5 ext/Coded-PHY long-range scan; bench-gated (spec 6, like CHIME)"
+      },
       "FEATURE_FLEET_LINK": {
        "on": true,
        "note": "off-grid BLE GATT pull of WAP status (spec 6)"
@@ -1064,6 +1068,10 @@
       "FEATURE_CHIRP_SCAN": {
        "on": true,
        "note": "off-grid BLE chirp fallback (spec 6)"
+      },
+      "FEATURE_BLE5_SCAN": {
+       "on": false,
+       "note": "BLE 5 ext/Coded-PHY long-range scan; bench-gated (spec 6, like CHIME)"
       },
       "FEATURE_FLEET_LINK": {
        "on": true,

@@ -18,6 +18,44 @@
   `FEATURE_MIC_ALARM` (default/emulator builds byte-identical), off by
   default, and arm-gated — the privacy contract is untouched.
 
+### canary-display — Canary Voice (the sound engine grows up) + BLE 5 long range
+
+- **The chime became a *voice*.** The severity-tiered chime engine is now a
+  full acoustic-signature engine (`hal/voice_score.h` — pure, host-tested —
+  behind the LEDC streamer `hal/chime.cpp`). On the same single passive piezo
+  it now renders **shaped envelopes** (an eased attack/release that de-clicks
+  every note — the difference between an instrument and a beeper),
+  **glissando** (a note can chirp), and **warble** (a fast vibrato — the
+  songbird it's named for). Nothing is blocking; a note is rendered a few ms
+  at a time from the main loop.
+- **A family of signatures, uniquely ours.** Beyond the four alert tiers there
+  are now Boot ("the canary wakes" — a rising warbled chirp), JoinSuccess
+  (onboarding), AckConfirm, PageTurn, and MuteOn/MuteOff, all drawn from a
+  warm **major pentatonic** so they share one timbre and can never clash — a
+  household learns them like a marque's startup chime. The **Tier-1 alarm
+  alone** keeps its frozen IEC 60601-1-8 pitches, deliberately outside the
+  pretty scale: a dead battery must never sound like an intruder.
+- **Volume that makes sense.** One knob (0–4: Off…Full, persisted to NVS).
+  Category **ceilings** keep a UI blip quieter than a fault; **night**
+  silences the interaction/ambient voices and attenuates notices while Wake
+  and Alert sound through; and the **Tier-1 alert keeps an audible floor at
+  every volume including Off** — the one sound allowed to break the night
+  can't be dialed to nothing. Interaction tones are the *optional* half
+  (a single toggle, default on). Wired at the real event sites (boot, ack,
+  page, mute, onboarding), all under `FEATURE_CHIME` so default builds stay
+  byte-identical; the pure grammar is pinned by `test_voice_score.cpp` in CI.
+- **BLE 5 long range for off-grid resilience — `FEATURE_BLE5_SCAN`.** The
+  passive Chirp scanner can now arm the BLE 5 extended scanner for
+  **Coded-PHY (LE Long Range)** chirps — ~4× the legacy-1M range, the
+  difference between the far-corner Canary's tamper reaching the glass with
+  the router cut and not. Same 17-byte chirp payload (BLE 5 buys range, not a
+  new format); the flag widens the scan dwell and raises the BLE heap gate
+  (`ble_gate.h`) for the extended scanner's larger controller footprint.
+  Compiled + CI-built (`canary-display-dash-ble5`) but **disabled by default**
+  and bench-gated exactly like the chime — real Coded-PHY reception also needs
+  the NimBLE build's extended advertising and a transmitting Canary, so a
+  radio coexistence + range soak is the last gate.
+
 ### hardware — vendor board-facts snapshot, kept fresh, and the model made exact
 
 - **A machine-readable snapshot of the Waveshare dash boards' facts**

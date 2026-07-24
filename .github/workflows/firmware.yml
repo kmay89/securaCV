@@ -890,6 +890,25 @@ jobs:
           /tmp/mic_logic | tee /tmp/mic_logic.log
           grep -q "ALL .* PASSED" /tmp/mic_logic.log
 
+      - name: Build + run canary-display voice score host test
+        # The Canary Voice acoustic core (voice_score.h): the pure score +
+        # audio math behind the sound engine, pinned without a piezo — the
+        # palette resolves for every signature, the pleasant voices stay in
+        # the pentatonic scale while the Tier-1 alarm keeps its frozen IEC
+        # pitches, the rise/fall contours carry the semantics (sunrise/boot
+        # rise, all-clear falls, mute-on/off mirror), every envelope
+        # de-clicks its edges, glissando/warble stay bounded, and the volume
+        # model is monotone, night-silences the gentle categories, and keeps
+        # the Tier-1 alert audible at every volume including Off.
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -I firmware/projects/canary-display/include \
+              firmware/projects/canary-display/tests_host/test_voice_score.cpp \
+              -o /tmp/voice_score
+          /tmp/voice_score | tee /tmp/voice_score.log
+          grep -q "ALL .* PASSED" /tmp/voice_score.log
+
       - name: Build + run canary-wap provisioning-logic host test
         # The first-run wizard's pure decisions (setup-window keep-alive,
         # scan-cache freshness, AP-only join suppression, AP teardown
