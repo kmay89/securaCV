@@ -2,6 +2,11 @@
 #include <stddef.h>
 #include <esp_heap_caps.h>
 
+// FEATURE_BLE5_SCAN is read below to size the heap margin. Both consumers
+// (chirp_scan.cpp, fleet_link.cpp) include the flavor <config.h> ahead of this
+// header, so the macro is already in scope; an undefined macro (a future
+// includer that forgets) simply falls back to the proven legacy floor.
+
 // Shared BLE heap gate for the display's passive-scan (chirp_scan.cpp) and
 // central/GATT (fleet_link.cpp) paths.
 //
@@ -20,8 +25,19 @@
 
 namespace canary::net {
 
+// BLE 5 extended/coded-PHY scanning (FEATURE_BLE5_SCAN) makes the controller
+// carry a second (coded) PHY's scan machinery and larger ext-adv reassembly
+// buffers, so it needs more contiguous internal RAM up front. Ask for a
+// wider margin when it's compiled in — the reboot-loop lesson is unforgiving,
+// and long-range is exactly the "router's unplugged" moment we must not brown
+// the glass out during. Legacy builds keep the proven 48/96 KB floor.
+#if defined(FEATURE_BLE5_SCAN) && FEATURE_BLE5_SCAN
+constexpr size_t BLE_MIN_FREE_BLOCK = 56 * 1024;
+constexpr size_t BLE_MIN_TOTAL_FREE = 112 * 1024;
+#else
 constexpr size_t BLE_MIN_FREE_BLOCK = 48 * 1024;
 constexpr size_t BLE_MIN_TOTAL_FREE = 96 * 1024;
+#endif
 
 // True when the internal/DMA heap has room to bring the BT controller up.
 // A thin pool here is the normal state mid-WiFi-reconnect, so callers treat a

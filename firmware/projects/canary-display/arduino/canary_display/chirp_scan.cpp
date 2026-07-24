@@ -172,8 +172,25 @@ bool ble_up() {
   scan->setAdvertisedDeviceCallbacks(&s_cb, /*wantDuplicates=*/true);
 #endif
   scan->setActiveScan(false);          // passive: we never transmit
+#if defined(FEATURE_BLE5_SCAN) && FEATURE_BLE5_SCAN
+  // BLE 5 long-range (spec §6, bench-gated like the chime). When the NimBLE
+  // library is built with extended advertising (CONFIG_BT_NIMBLE_EXT_ADV=1),
+  // the controller's extended scanner reports adverts on the Coded PHY too —
+  // ~4x the range of legacy 1M, the difference between hearing the garage
+  // Canary's tamper chirp and not, once the router's cut. We keep the same
+  // passive callback (a coded-PHY chirp carries the identical 17-byte mfg
+  // payload — BLE 5 buys range, not a new wire format), but widen the window
+  // to a continuous dwell so the sparser, slower coded adverts aren't missed
+  // between hops. No per-PHY Arduino call is needed: enabling ext-adv in the
+  // library IS the switch; this build flag raises the heap gate (ble_gate.h)
+  // and says so on the log.
+  scan->setInterval(160);
+  scan->setWindow(160);
+  log_line("CHIRP", "BLE 5 extended scan armed (Coded PHY / long range).");
+#else
   scan->setInterval(100);
   scan->setWindow(99);
+#endif
   s_ble_up = true;
   log_line("CHIRP", "BLE listener up (passive, broker-down bursts only).");
   return true;

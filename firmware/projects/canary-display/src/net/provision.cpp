@@ -26,6 +26,7 @@
 #include "canary/net/provision.h"
 #include "canary/net/provision_core.h"
 #include "canary/runtime_config.h"
+#include "canary/hal/chime.h"
 #include "canary/hal/display.h"
 #include "canary/ui/onboard_ui.h"
 #include "canary/log.h"
@@ -558,6 +559,10 @@ void provision_run(bool glass_ok) {
           ctx.phone_acked = false;
           enter(St::Success, now);
           ui_stage(canary::ui::ObStage::Success, nullptr);
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+          // You're in the fleet — the one unabashedly happy sound, earned once.
+          canary::hal::voice_play(canary::hal::Voice::JoinSuccess);
+#endif
           log_header("SETUP");
           canary::dbg_serial().printf("Joined \"%s\"  IP=%s\n", ctx.join_ssid,
                                       WiFi.localIP().toString().c_str());

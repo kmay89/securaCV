@@ -16,6 +16,16 @@
 //
 // Whole module is gated by FEATURE_CHIRP_SCAN (BLE is the one genuinely
 // expensive radio decision — flash, heap, and 2.4 GHz coexistence).
+//
+// FEATURE_BLE5_SCAN (bench-gated, off by default like FEATURE_CHIME) arms the
+// BLE 5 extended scanner so the Canaries' Coded-PHY (LE Long Range) chirps are
+// heard too — ~4x the range of legacy 1M, which is the difference between the
+// far-corner Canary's tamper reaching the glass with the router cut and not.
+// The chirp wire format is unchanged (BLE 5 buys range, not a new payload);
+// the flag widens the scan dwell and the BLE heap gate. Actual Coded-PHY
+// reception additionally needs the NimBLE build's extended advertising
+// (CONFIG_BT_NIMBLE_EXT_ADV) and a transmitting Canary — a radio soak is the
+// last gate (trailblazer spec §6).
 
 namespace canary::net {
 

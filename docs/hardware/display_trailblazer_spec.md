@@ -98,24 +98,57 @@ in the design language's budget (it earns its movement cryptographically).
 **Acceptance:** pulse absent whenever any witness is unverified, stale, or
 worse; absent at night.
 
-## 5. Sound identity — chime engine — `FEATURE_CHIME`
+## 5. Sound identity — Canary Voice — `FEATURE_CHIME`
 
 **User story.** "A dead sensor battery must never sound like an intruder"
 (Owlet's two-tone lesson) — and resolution deserves a sound, so silence
-keeps meaning "nothing new."
+keeps meaning "nothing new." Beyond safety, the sound should be *ours*: a
+family of acoustic signatures a household learns the way it learns a
+marque's startup chime, elegant enough to live with and never annoying.
 
-**Grammar** (IEC 60601-1-8-informed; LEDC tone, non-blocking):
+**The engine.** One passive piezo, one LEDC channel — monophonic square
+wave. The quality is in what we do *with* it, all non-blocking and rendered
+a few ms at a time so a note can **breathe** (shaped attack/release — the
+de-click that makes it an instrument, not a beeper), **chirp** (glissando —
+pitch glides across a note), and **trill** (warble — a fast vibrato, the
+bird it's named for). The pure score + audio math live in
+`voice_score.h` and are host-tested (`test_voice_score.cpp`); the LEDC
+streamer is `hal/chime.cpp`.
 
-| Tier | Trigger | Pattern | Quiet hours |
+**The palette.** Every pleasant voice is drawn from a warm **major
+pentatonic** (C6–E7) — a scale with no clashing intervals, so nothing can
+sound harsh — and shares one timbre, so the family reads as one identity.
+The alert alone stays *outside* that scale, on its frozen IEC pitches.
+
+| Voice | Trigger | Shape | Category / quiet hours |
 |---|---|---|---|
-| 1 | Alert/Tamper rising edge; re-voices every 30 s until ack | 10 fast pulses, alternating 2.6/3.1 kHz | **sounds** (the one exception) |
-| 2 | Warn rising edge (witness lost, chain failed) | 3 slow pulses, 1.8 kHz | silent |
-| all-clear | worst falls from ≥Warn to quiet | falling two-tone 1.3→0.9 kHz | silent |
+| **Alarm** (Tier 1) | Alert/Tamper edge; re-voices every 30 s until ack | 10 fast pulses, alt 2.6/3.1 kHz (frozen IEC 60601-1-8) | Alert — **sounds**, keeps an audible floor at every volume |
+| **Warn** (Tier 2) | Warn edge (witness lost, chain failed) | 3 slow 1.8 kHz pulses | Notice — silent |
+| **AllClear** | worst falls from ≥Warn to quiet | falling two-tone 1.3→0.9 kHz | Notice — silent |
+| **Sunrise** | wake alarm (nightstand wave) | two rising warbled notes | Wake — sounds through the night |
+| **Boot** | power-on | rising warbled chirp up an octave ("the canary wakes") | Notice |
+| **JoinSuccess** | onboarding joined the fleet | bright pentatonic arpeggio to the octave | Notice |
+| **AckConfirm** | long-press acknowledged | warm perfect-fifth rise that resolves | Interaction |
+| **PageTurn** | paging a witness (watch) | two light rising pips | Interaction |
+| **MuteOn / MuteOff** | per-witness mute toggled | mirrored fall / rise | Interaction |
+| **Tap / Heartbeat** | (available; not auto-wired — a per-minute chirp would nag) | soft pip / low swell | Interaction / Ambient |
+
+**Volume that makes sense.** One knob, 0–4 (Off, Soft, Low, Medium, Full),
+persisted in NVS (`scv-voice`). Category **ceilings** mean a UI blip is
+never as loud as a fault; **night** silences the Interaction and Ambient
+categories entirely and attenuates Notice, while Wake and Alert sound
+through; the **Tier-1 alert keeps a floor at every volume, including Off** —
+the one sound allowed to break the night can't be dialed to nothing.
+Interaction tones are the *optional* half of the grammar (a single toggle;
+default on). The alarm's soft→full **ramp** is unchanged (wake gently,
+escalate honestly).
 
 Engine ships compiled and CI-covered; `FEATURE_CHIME` stays 0 until the
 piezo pad is populated (`BUZZER_PIN`: watch GPIO1/D0, dash GPIO6 — both
-VERIFY at bench). **Acceptance:** tiers audibly distinct at 5 m; mode
-changes silent; all-clear plays exactly once per resolution.
+VERIFY at bench). **Acceptance:** tiers audibly distinct at 5 m; a dead
+battery never reads as a break-in; every note de-clicks; the all-clear
+plays exactly once per resolution; interactions and mode changes are silent
+at night.
 
 ---
 
@@ -135,8 +168,25 @@ silently dropped); ALERT/TAMPER chirps raise real fleet events labeled
 "(chirp)" — honestly coarser trust, no Ed25519 on chirps — and all types
 refresh liveness. Per-witness/per-kind 60 s dedupe absorbs re-broadcasts.
 Demo acceptance stands: *unplug the router; tamper still reaches the
-bedside puck in <10 s.* **Bench/next:** re-chirp relay (ESP-NOW/BLE,
-1-hop cap) once two displays are on the wall.
+bedside puck in <10 s.*
+
+**BLE 5 long range — `FEATURE_BLE5_SCAN` (compiled, bench-gated).** The
+scanner can arm the BLE 5 extended scanner so the Canaries' **Coded-PHY
+(LE Long Range)** chirps are heard too — roughly **4× the range** of legacy
+1M, which is the difference between the far-corner/garage Canary's tamper
+reaching the glass with the router cut and not. The chirp wire format is
+unchanged (BLE 5 buys range, not a new payload); the flag widens the
+passive-scan dwell and raises the BLE heap gate (`ble_gate.h`), since the
+extended/coded scanner carries more controller RAM (the reboot-loop lesson
+is unforgiving off-grid). It ships **compiled + CI-built (the
+`canary-display-dash-ble5` env) but disabled**, exactly like the chime —
+turning it into *actual* Coded-PHY reception also needs the NimBLE build's
+extended advertising (`CONFIG_BT_NIMBLE_EXT_ADV`) and a Canary transmitting
+on the Coded PHY, so a coexistence + range soak on real radios is the last
+gate before the default flag flips.
+
+**Bench/next:** re-chirp relay (ESP-NOW/BLE, 1-hop cap) once two displays
+are on the wall; the Coded-PHY radio soak above.
 
 ## 7. Semantic time machine — `FEATURE_TIME_MACHINE`
 
