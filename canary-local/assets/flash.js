@@ -2295,7 +2295,12 @@ function ensureManifest() {
       const errs = core.validateManifest(m);
       state.manifest = errs.length ? { __invalid: errs } : m;
     })
-    .catch(() => { state.manifest = { __missing: true }; })
+    // Keep WHY it's missing. "No release yet" and "the release this page is
+    // pinned to was never cut" look identical to a user otherwise, and the
+    // second one is a maintainer bug that hid for a whole release cycle.
+    .catch((err) => {
+      state.manifest = { __missing: true, why: String((err && err.message) || err) };
+    })
     .finally(refreshManifestState);
 }
 
@@ -2315,6 +2320,16 @@ function refreshManifestState() {
       ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
       : "No signed firmware release is published yet. When the maintainer cuts one, the official images appear here automatically. Until then, use Advanced → install a local file.";
     banner.append(note);
+    // Name the release we were pinned to. Every product reading "unavailable"
+    // because a tag was bumped but never released is indistinguishable from
+    // "no releases exist" without this line.
+    const pinned = m.__missing && core.releaseTagFromManifestUrl(activeManifestUrl());
+    if (pinned) {
+      banner.append(el("p", "fineprint",
+        `This page is pinned to firmware release ${pinned}` +
+        (m.why ? ` — ${m.why}.` : ".") +
+        " If that release exists, the images will appear on reload."));
+    }
     return;
   }
   // Manifest present. Note when it's a self-hosted override, not the release.

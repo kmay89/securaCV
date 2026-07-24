@@ -652,6 +652,36 @@ test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed c
   assert.ok(DEV_FLASH_MANIFEST_URL.startsWith("https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/"));
 });
 
+test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", async () => {
+  const { releaseTagFromManifestUrl, DEV_FLASH_MANIFEST_URL } = await core();
+  // The catalog's own pin — the case that matters. A tag bumped but never
+  // released is why every product can read "unavailable"; the page says which.
+  assert.strictEqual(
+    releaseTagFromManifestUrl(catalog.manifest_url),
+    `fw-v${registry.fw_train}`,
+  );
+  assert.strictEqual(
+    releaseTagFromManifestUrl(
+      "https://github.com/kmay89/securaCV/releases/download/fw-v2.3.0/manifest-flash.json"),
+    "fw-v2.3.0");
+  assert.strictEqual(
+    releaseTagFromManifestUrl(
+      "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.0-rc.1/manifest-flash.json"),
+    "fw-v2.4.0-rc.1");
+  // Not a pinned firmware release: the rolling dev pointer is a channel, not a
+  // version, and claiming it as one would misname what the page is showing.
+  assert.strictEqual(releaseTagFromManifestUrl(DEV_FLASH_MANIFEST_URL), null);
+  // Neither is an app release, a self-hosted override, or junk.
+  assert.strictEqual(
+    releaseTagFromManifestUrl(
+      "https://github.com/kmay89/securaCV/releases/download/flasher-v0.2.2/latest.json"),
+    null);
+  assert.strictEqual(releaseTagFromManifestUrl("http://canary.local/manifest-flash.json"), null);
+  assert.strictEqual(releaseTagFromManifestUrl(""), null);
+  assert.strictEqual(releaseTagFromManifestUrl(null), null);
+  assert.strictEqual(releaseTagFromManifestUrl(undefined), null);
+});
+
 // ── WiFi pre-provisioning (NVS image builder + QR payload) ──────────────────
 test("buildNvsWifiImage round-trips through the NVS parser with valid CRCs", async () => {
   const { buildNvsWifiImage, parseNvs, witnessSummary, crc32EspRom } = await core();
