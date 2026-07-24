@@ -80,6 +80,23 @@ jobs:
         working-directory: tvos/witness-core
         run: cargo test --all-targets
 
+      # The tvOS asset catalog is generated and committed (tvOS icons are
+      # layered image stacks — ~20 files). Same contract as the website's glTF
+      # models: the generator is the source of truth, and CI fails if the
+      # committed bytes drift from it. Without an icon, App Store Connect
+      # rejects the archive — so this failing here beats altool failing later.
+      - name: App icon matches its generator
+        run: |
+          set -euo pipefail
+          python3 tvos/scripts/make_app_icon.py
+          if ! git diff --quiet -- tvos/WitnessWall/Support/Assets.xcassets; then
+            echo "::error::the committed tvOS asset catalog no longer matches tvos/scripts/make_app_icon.py."
+            echo "Regenerate and commit it:  python3 tvos/scripts/make_app_icon.py"
+            git diff --stat -- tvos/WitnessWall/Support/Assets.xcassets
+            exit 1
+          fi
+          echo "Asset catalog matches its generator. ✅"
+
   # ── The app, on the tvOS simulator ─────────────────────────────────────────
   # No signing (CODE_SIGNING_ALLOWED=NO) and no secrets, so this runs on forks
   # and on every PR — the app is verified long before anyone has an Apple

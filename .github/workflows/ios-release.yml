@@ -14,14 +14,22 @@ name: iOS release
 on:
   workflow_dispatch:
     inputs:
+      publish:
+        description: "Upload to App Store Connect and tag the version (unchecked = build + export only)"
+        type: boolean
+        default: false
       export_method:
-        description: "Signing destination"
+        description: "Signing destination (must be app-store-connect to publish)"
         type: choice
         options: [debugging, release-testing, app-store-connect]
         default: debugging
 
+# `contents: write` so a publishing run can create its `ios-v*` tag. Before
+# this, the workflow only ever produced a build ARTIFACT — so the
+# Update-everything button would report iOS as released while users got
+# nothing, and, with no tag to see, would re-dispatch it on every press.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ios-release-${{ github.ref }}
@@ -39,6 +47,41 @@ jobs:
 
       - uses: actions/checkout@v4
         if: vars.ENABLE_IOS_BUILD == 'true'
+        with:
+          fetch-depth: 0   # tags, to refuse re-publishing a shipped version
+
+      # Resolved once so every later step reads the same answer.
+      - name: Resolve the release plan
+        id: plan
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          EXPORT_METHOD: ${{ inputs.export_method }}
+        run: |
+          set -euo pipefail
+          publish="${PUBLISH:-false}"
+          version=""
+          if [ "$publish" = "true" ]; then
+            if [ "$EXPORT_METHOD" != "app-store-connect" ]; then
+              echo "::error::publish needs export_method=app-store-connect (got '$EXPORT_METHOD')."
+              exit 1
+            fi
+            version="$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9][0-9.]*\)"\{0,1\} *$/\1/p' ios/project.yml | head -1)"
+            if [ -z "$version" ]; then
+              echo "::error::could not read MARKETING_VERSION from ios/project.yml."
+              exit 1
+            fi
+            if git rev-parse -q --verify "refs/tags/ios-v$version" >/dev/null; then
+              echo "::error::ios-v$version is already tagged, so that version has already shipped."
+              echo "Bump MARKETING_VERSION in ios/project.yml before publishing again."
+              exit 1
+            fi
+          fi
+          {
+            echo "publish=$publish"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "publish=$publish, version='${version:-(none)}'"
 
       - name: Select Xcode
         if: vars.ENABLE_IOS_BUILD == 'true'
@@ -109,6 +152,45 @@ jobs:
             -authenticationKeyPath "$APPLE_API_KEY_PATH" \
             -authenticationKeyID "$APPLE_API_KEY" \
             -authenticationKeyIssuerID "$APPLE_API_ISSUER"
+
+      # Prove the .ipa exists rather than letting a later glob fail obscurely
+      # (RELEASE_LESSONS Principle 4).
+      - name: Locate the exported .ipa
+        id: ipa
+        if: vars.ENABLE_IOS_BUILD == 'true'
+        run: |
+          set -euo pipefail
+          ipa="$(find "$RUNNER_TEMP/export" -name '*.ipa' -type f | head -1)"
+          if [ -z "$ipa" ] || [ ! -s "$ipa" ]; then
+            echo "::error::the export step produced no .ipa in $RUNNER_TEMP/export."
+            find "$RUNNER_TEMP/export" -maxdepth 2 -print || true
+            exit 1
+          fi
+          echo "path=$ipa" >> "$GITHUB_OUTPUT"
+          echo "exported: $ipa ($(wc -c < "$ipa" | tr -d ' ') bytes)"
+
+      # The actual publish. Shared with the Apple TV target so the validate +
+      # retry policy can't drift between them.
+      - name: Upload to App Store Connect
+        if: vars.ENABLE_IOS_BUILD == 'true' && steps.plan.outputs.publish == 'true'
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: bash .github/scripts/asc_publish.sh "${{ steps.ipa.outputs.path }}" ios
+
+      # Tag only after the upload succeeded — the tag is this repo's record
+      # that a version shipped, so it must not exist for a build that didn't.
+      - name: Tag the published version
+        if: vars.ENABLE_IOS_BUILD == 'true' && steps.plan.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "ios-v$VERSION" -m "SecuraCV companion $VERSION (uploaded to App Store Connect)"
+          git push origin "ios-v$VERSION"
+          echo "::notice::Tagged ios-v$VERSION — the Update-everything button now sees this version as shipped."
 
       - name: Upload .ipa
         if: vars.ENABLE_IOS_BUILD == 'true'

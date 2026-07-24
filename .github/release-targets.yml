@@ -103,9 +103,15 @@ targets:
       regex: '^\s*MARKETING_VERSION:\s*"?([0-9][0-9.]*)"?\s*$'
     tag_prefix: ios-v
     workflow: ios-release.yml
+    # `publish: true` is load-bearing, not decoration: without it this workflow
+    # only exports an .ipa as a build artifact, so the button would report iOS
+    # as released while users got nothing — and, with no ios-v* tag created,
+    # would re-dispatch it on every single press.
     inputs:
+      publish: "true"
       export_method: app-store-connect
     dev_inputs:
+      publish: "false"
       export_method: debugging
     watch:
       - ios

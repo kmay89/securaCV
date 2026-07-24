@@ -50,8 +50,12 @@ concurrency:
   group: tvos-release-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish }}
 
+# `contents: write` so a publishing dispatch can create its `tvos-v*` tag. That
+# tag is not decoration: `.github/scripts/release_plan.py` derives "has this
+# shipped?" from tags, so an untagged TestFlight upload would be invisible to
+# the Update-everything button and get re-dispatched on every press.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   tvos:
@@ -72,6 +76,10 @@ jobs:
 
       - uses: actions/checkout@v7
         if: vars.ENABLE_TVOS_BUILD == 'true'
+        with:
+          # Tags, so the plan step can refuse to re-publish a version that has
+          # already shipped, and so the publish step can create the new tag.
+          fetch-depth: 0
 
       # ── What this run is allowed to do ──────────────────────────────────
       # Resolved once, in one place, so every later step reads the same answer.
@@ -95,7 +103,25 @@ jobs:
           else
             publish="${INPUT_PUBLISH:-false}"
             export_method="${INPUT_EXPORT:-app-store-connect}"
+            # A publishing DISPATCH has no tag to read a version from, so take
+            # it from the app itself and tag afterwards. Without this the
+            # upload would be invisible to release_plan.py (which derives
+            # "shipped" from tags) and get re-dispatched on every press.
             version=""
+            if [ "$publish" = "true" ]; then
+              version="$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9][0-9.]*\)"\{0,1\} *$/\1/p' tvos/WitnessWall/project.yml | head -1)"
+              if [ -z "$version" ]; then
+                echo "::error::could not read MARKETING_VERSION from tvos/WitnessWall/project.yml."
+                exit 1
+              fi
+              # Refuse to re-publish a version that already shipped — the same
+              # guard firmware-release.yml applies to an existing tag.
+              if git rev-parse -q --verify "refs/tags/tvos-v$version" >/dev/null; then
+                echo "::error::tvos-v$version is already tagged, so that version has already shipped."
+                echo "Bump MARKETING_VERSION in tvos/WitnessWall/project.yml before publishing again."
+                exit 1
+              fi
+            fi
           fi
           {
             echo "publish=$publish"
@@ -178,6 +204,25 @@ jobs:
           PUBLISH: ${{ steps.plan.outputs.publish }}
           EXPECTED_VERSION: ${{ steps.plan.outputs.version }}
         run: bash scripts/release-tvos.sh
+
+      # Tag AFTER the upload succeeded, never before: the tag is this repo's
+      # record that a version shipped, so it must not exist for a build that
+      # didn't. (A tag-triggered run already has its tag — this is only for the
+      # dispatch path, e.g. the Update-everything button.)
+      - name: Tag the published version
+        if: >-
+          vars.ENABLE_TVOS_BUILD == 'true'
+          && github.event_name == 'workflow_dispatch'
+          && steps.plan.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "tvos-v$VERSION" -m "Witness Wall $VERSION (uploaded to App Store Connect)"
+          git push origin "tvos-v$VERSION"
+          echo "::notice::Tagged tvos-v$VERSION — the Update-everything button now sees this version as shipped."
 
       # A publish means a new TestFlight build is already on its way to every
       # Apple TV via phased release — no artifact to hand-carry. A build-only

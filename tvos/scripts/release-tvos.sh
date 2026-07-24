@@ -54,6 +54,24 @@ if [ ! -s "$CORE_LIB" ]; then
 fi
 echo "witness core: $CORE_LIB ($(wc -c < "$CORE_LIB" | tr -d ' ') bytes)"
 
+# P4 again: Apple TV rejects an archive with no app icon / top-shelf art, and
+# `altool` reports it as an opaque validation failure minutes later. Catch it
+# here, by name, in one line.
+ICONS="$PROJECT_DIR/Support/Assets.xcassets/App Icon & Top Shelf Image.brandassets"
+if [ ! -d "$ICONS" ]; then
+  echo "::error::the tvOS asset catalog is missing at $ICONS."
+  echo "App Store Connect will reject an archive with no app icon or top-shelf image."
+  echo "Regenerate it with: python3 scripts/make_app_icon.py"
+  exit 1
+fi
+icon_count="$(find "$ICONS" -name '*.png' | wc -l | tr -d ' ')"
+if [ "$icon_count" -lt 10 ]; then
+  echo "::error::the asset catalog has only $icon_count PNGs — the layered icon stacks are incomplete."
+  echo "Regenerate it with: python3 scripts/make_app_icon.py"
+  exit 1
+fi
+echo "asset catalog: $icon_count images"
+
 # ── 2. Regenerate the Xcode project (never committed, so it cannot rot) ──────
 if ! command -v xcodegen >/dev/null 2>&1; then
   echo "::error::xcodegen is not installed. The Xcode project is generated from"
@@ -167,51 +185,9 @@ if [ "$export_method" != "app-store-connect" ]; then
   exit 1
 fi
 
-# Validate before uploading. `altool --validate-app` catches the whole class of
-# rejections (missing icons, bad entitlements, a duplicate build number) in
-# seconds, instead of as a silent processing failure minutes after CI goes green.
-echo "── validating with App Store Connect ──"
-if ! xcrun altool --validate-app --type appletvos \
-      --file "$ipa" \
-      --apiKey "$APPLE_API_KEY" \
-      --apiIssuer "$APPLE_API_ISSUER"; then
-  echo "::error::App Store Connect rejected the build during validation — not uploading."
-  exit 1
-fi
-
-# The 2026-07-24 upload lesson, applied here: a transient 5xx must not fail a
-# publish. Retry with backoff, and treat "already uploaded" as success, so a
-# retry after a half-acknowledged upload converges instead of failing a release
-# that actually landed.
-echo "── uploading to App Store Connect ──"
-upload_log="$BUILD_DIR/altool-upload.log"
-uploaded=false
-delay=15
-for attempt in 1 2 3 4; do
-  echo "upload attempt $attempt…"
-  if xcrun altool --upload-app --type appletvos \
-        --file "$ipa" \
-        --apiKey "$APPLE_API_KEY" \
-        --apiIssuer "$APPLE_API_ISSUER" 2>&1 | tee "$upload_log"; then
-    uploaded=true
-    break
-  fi
-  if grep -qiE 'already been uploaded|redundant binary upload|bundle version.*already exists' "$upload_log"; then
-    echo "App Store Connect already has this build — treating as uploaded."
-    uploaded=true
-    break
-  fi
-  if [ "$attempt" -lt 4 ]; then
-    echo "::warning::upload attempt $attempt failed; retrying in ${delay}s."
-    sleep "$delay"
-    delay=$(( delay * 2 ))
-  fi
-done
-
-if [ "$uploaded" != "true" ]; then
-  echo "::error::upload failed after 4 attempts. The build was archived, signed, and"
-  echo "validated — only the upload failed, so re-running this job is safe."
-  exit 1
-fi
+# Validate + upload with retries. Shared with every other Apple target so the
+# retry policy can't drift between them (CLAUDE.md: apply a release fix to every
+# app target, not just the one that broke).
+bash "$(dirname "$0")/../../.github/scripts/asc_publish.sh" "$ipa" appletvos
 
 echo "Uploaded $marketing_version. Apple's phased release will carry it to every Apple TV."

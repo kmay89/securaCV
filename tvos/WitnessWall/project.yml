@@ -55,6 +55,11 @@ targets:
     platform: tvOS
     sources:
       - path: Sources/WitnessWall
+      # Apple TV will not accept an archive without an app icon and top-shelf
+      # art. The catalog is GENERATED and committed by
+      # scripts/make_app_icon.py (tvOS icons are layered image stacks — ~20
+      # files); tvos.yml regenerates and fails if it drifts.
+      - path: Support/Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.securacv.witnesswall

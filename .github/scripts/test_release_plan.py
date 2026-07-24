@@ -312,6 +312,49 @@ class TheRealCatalog(unittest.TestCase):
                 self.assertIsNotNone(version, f"{target['name']}'s version file/selector is wrong")
                 rp.version_key(version)  # raises if it isn't a version
 
+    def test_every_publishing_target_actually_publishes_and_tags(self):
+        """The button must never report a release that didn't happen.
+
+        Regression guard for a real bug: the iOS row dispatched
+        `ios-release.yml` with `export_method: app-store-connect`, but that
+        workflow only exported an .ipa as a build artifact — no upload, no
+        `ios-v*` tag. The summary claimed iOS shipped while users got nothing,
+        and because "shipped" is derived from tags, the target stayed eligible
+        and burned a macOS runner on every press.
+
+        So: every versioned target's publish inputs must actually reach a
+        publishing path, and its workflow must be able to create the tag this
+        planner reads back.
+        """
+        workflows_dir = os.path.join(rp.REPO_ROOT, ".github", "workflows")
+        for target in self.targets:
+            if target.get("kind") == "pages":
+                continue
+            name = target["name"]
+            with self.subTest(target=name):
+                path = os.path.join(workflows_dir, target["workflow"])
+                with open(path, encoding="utf-8") as handle:
+                    source = handle.read()
+
+                # It must be able to write the tag the planner reads.
+                self.assertIn(
+                    "contents: write",
+                    source,
+                    f"{name}: {target['workflow']} cannot create a {target['tag_prefix']}* tag "
+                    f"(no `contents: write`), so a successful publish would be invisible to "
+                    f"this planner and re-dispatched forever",
+                )
+                # And it must know about its own tag namespace at all — whether
+                # it creates the tag with `git tag` (the Apple targets) or via
+                # the release API's `tag_name` (firmware, and tauri-action for
+                # the desktop apps).
+                self.assertIn(
+                    target["tag_prefix"],
+                    source,
+                    f"{name}: {target['workflow']} never mentions {target['tag_prefix']}*, "
+                    f"so it cannot be producing the tags this planner reads back",
+                )
+
     def test_tag_prefixes_are_unique(self):
         prefixes = [t["tag_prefix"] for t in self.targets if t.get("tag_prefix")]
         self.assertEqual(len(prefixes), len(set(prefixes)))
