@@ -54,7 +54,7 @@ if (tv && stage) {
   const aptLog = [{ t: '3:02', w: 'Delivery · package left' }, { t: '1:18', w: 'Knock · no answer needed' }, { t: '11:40', w: 'Presence · hallway' }];
   let aptKnocking = false;
 
-  const esc = (s) => String(s);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function homeFleet() { return liveFleet ? liveFleet.map((d) => ({ n: d.name, off: d.online === false })) : homeTiles; }
 
   function tilesHTML(tiles) {
@@ -158,7 +158,6 @@ if (tv && stage) {
   }
 
   function renderApartment() {
-    const t = liveFleet ? (liveFleet[0] && liveFleet[0].name) : 'Front Door';
     stage.innerHTML =
       `<div class="apt">` +
         `<div class="door${aptKnocking ? ' knocking' : ''}">` +
