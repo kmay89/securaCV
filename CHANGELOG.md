@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### Release pipeline — three silent failures made loud, and guarded
+
+Three ways the pipeline could ship something broken while every workflow stayed
+green. Each is fixed *and* given a gate, because all three were invisible until
+someone went looking.
+
+- **`releases/latest` belongs to the firmware again.** Every Canary polls
+  `releases/latest/download/manifest-<product>.json`, and GitHub's "latest" is
+  the newest published release of any kind — so publishing the Flasher or the
+  Lab silently re-pointed the whole fleet's update URL at a release with no
+  manifests in it. Devices would 404 on their next check and stop seeing
+  updates, with nothing failing anywhere. New
+  `.github/actions/keep-firmware-latest` asserts the invariant and re-points
+  `latest` at the newest published `fw-v*` release; the app workflows call it
+  directly (CI-created releases don't fire `release:` events, which is exactly
+  the case that breaks the fleet) and `release-latest-guard.yml` covers every
+  release a human publishes, edits, or creates in the UI.
+- **The Canary Displays can update now.** Each display flavor's `config.h`
+  pointed `SECURACV_OTA_MANIFEST_URL` at `manifest-canary-display-<flavor>.json`
+  and **no workflow had ever signed one** — the boards were flashable over USB
+  and structurally unable to self-update, silently. `firmware-release.yml` now
+  signs, verifies, and indexes the watch / dash / dash-modes manifests,
+  best-effort like the display builds themselves: a flavor that didn't compile,
+  or whose binary doesn't carry this release's version, is dropped with a
+  warning rather than sinking the signed release or publishing a manifest that
+  would trap devices in a rollback loop. New
+  `firmware/scripts/check_ota_channels.py` (in "Regression Guards") proves
+  statically that every URL the firmware polls is one the release publishes —
+  or is declared unpublished with a reason, which is how the flavors with no
+  profile yet (`watch-modes`, `nightstand`, bare `canary-display`) are now
+  recorded instead of forgotten.
+- **A dark flasher says why it's dark.** `flash.json` pins `manifest_url` to an
+  exact `fw-v<train>` tag (right — `/latest/` is unsafe in a shared namespace),
+  but a tag bumped before its release is cut made every product read
+  "unavailable" behind a banner indistinguishable from "nothing has ever
+  shipped". The page now names the pin — "pinned to firmware release fw-v2.3.0
+  — no release manifest (HTTP 404)" — via the pure, host-tested
+  `releaseTagFromManifestUrl()`, and `canary-local` CI warns on every run while
+  the pin doesn't resolve (advisory: the bump-then-release window is
+  legitimate, being invisible was not).
+- **Smaller things on the same path.** The Flasher release fails fast on
+  `tauri.conf.json` / `package.json` version drift (they had drifted to 0.2.1 vs
+  0.1.3, so the app stated its version two ways); the resolved `usbboot` commit
+  is now a `::notice::` plus a run-summary line instead of buried build output,
+  so the session that finally pins `USBBOOT_REF` can read it off a build that
+  worked. All four lessons are written up in `.github/RELEASE_LESSONS.md` with
+  new Principles 6–8, and `docs/RELEASE_PROCESS.md` documents the
+  `releases/latest` ownership rule where releases are actually run from.
+
 ### SecuraCV Flasher 0.2.2 — the Witness Wall ships, and the release itself is hardened
 
 - **Version bump to cut a real download.** `flasher-v0.2.1` was published

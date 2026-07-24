@@ -733,6 +733,21 @@ export function detectBrowser(ua, maxTouchPoints = 0) {
 export const DEV_FLASH_MANIFEST_URL =
   "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
 
+// The release tag a manifest URL is pinned to ("fw-v2.3.0"), or null when the
+// URL isn't a pinned release asset (the rolling dev pointer, a self-hosted
+// override). The catalog pins an exact tag on purpose — gen_flash.py's
+// release_download_base() explains why /latest/ is unsafe here — and the
+// consequence is that a catalog pinned to a tag whose release hasn't been cut
+// fetches a 404 and every product reads "unavailable" with no hint as to why.
+// Naming the tag turns that dead end into an answer: the release is missing,
+// not your browser or your board.
+export function releaseTagFromManifestUrl(url) {
+  const m = /\/releases\/download\/([^/]+)\//.exec(String(url || ""));
+  if (!m) return null;
+  const tag = decodeURIComponent(m[1]);
+  return /^fw-v/.test(tag) ? tag : null;
+}
+
 export function channelFromSearch(search) {
   try {
     return new URLSearchParams(search || "").get("channel") === "dev" ? "dev" : "release";
@@ -1797,11 +1812,14 @@ export function reflexValuesToNvs(values, reflexes) {
 }
 
 // ── displays: the boards that SHOW — known to the flasher, honestly ─────────
-// Display builds aren't published over the release channel (yet), so they are
-// deliberately not flashable products. But the flasher should still KNOW them:
-// name the board when it reads a display build off the wire, and offer the
-// 1:1 firmware emulator (the same WASM build fleet.html boots) as the honest
-// preview of what the glass will show. catalog.displays carries the facts.
+// The display flavors ARE flashable products now (catalog.products carries
+// securacv-canary-display-watch / -dash / -dash-modes, and the release signs an
+// OTA manifest for each). catalog.displays is a different job: the *facts* about
+// display hardware, so the flasher can name the board when it reads a display
+// build off the wire, and offer the 1:1 firmware emulator (the same WASM build
+// fleet.html boots) as an honest preview of what the glass will show — for any
+// display board, including the flavors with no release channel yet (nightstand,
+// watch-modes; see firmware/scripts/check_ota_channels.py).
 export function displaysIn(catalog) {
   return (catalog && Array.isArray(catalog.displays)) ? catalog.displays : [];
 }

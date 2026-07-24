@@ -91,6 +91,12 @@ own output, greps binaries for the version string, generates the
 browser-flasher factory images + `manifest-flash.json`, and publishes. There
 are no manual artifact steps — if you did something by hand, that's the bug.
 
+The display three are **best-effort**, matching how they're built: a flavor
+that fails to compile, or whose binary doesn't carry the release's version, is
+left out of the release with a `::warning::` rather than sinking the signed OTA
+release around it — so check the run summary for display warnings after a
+release, and re-cut if a display flavor you needed was dropped.
+
 Promotion is a rebuild of the same commit from the same pinned workflow —
 the honest guarantee is "same source, same toolchain, re-verified
 signatures". (Bit-identical artifact promotion is a possible future
@@ -161,12 +167,40 @@ release-only.
 3. For the dev channel nothing special is needed: the next dev tag re-points
    `fw-dev-latest`.
 
+## `releases/latest` belongs to the firmware
+
+Every device's default OTA URL is
+`releases/latest/download/manifest-<product>.json`, and GitHub's "latest" is
+the newest published release of **any** kind. This repo also ships the desktop
+apps (`flasher-v*`, `app-v*`) from the same releases page, so an app release
+would otherwise re-point the whole fleet's update URL at a release with no
+manifests in it — every device 404s on its next check, silently.
+
+You don't have to remember this. `.github/actions/keep-firmware-latest`
+re-points `latest` at the newest published `fw-v*` release: the app release
+workflows call it as their last step (releases created by CI don't fire
+`release:` events, so a trigger alone would miss them), and
+`release-latest-guard.yml` catches every release a human publishes or edits.
+Both write what they did to the run summary. Two things follow:
+
+- **Publishing an app release is safe**, but check the guard's summary line if
+  a device stops seeing updates right after one.
+- **The browser flasher pins an exact tag** (`gen_flash.py`
+  `release_download_base()`) rather than riding `/latest/`, so it is immune by
+  construction — at the cost of needing the pinned release to exist. CI warns
+  on every `canary-local` run while it doesn't.
+
 ## Invariants CI enforces (don't fight them)
 
 - Signing key in CI must match the committed `ota_release_key.h` (rotation
   window via `ota_release_key_previous.h`).
 - Every manifest signature is re-verified after generation.
 - Binary version strings must match the tag's version.
+- Every `SECURACV_OTA_MANIFEST_URL` compiled into the firmware must be a
+  manifest the release signs, or be declared unpublished with a reason —
+  `firmware/scripts/check_ota_channels.py`, in firmware.yml's "Regression
+  Guards". A product that polls a manifest nobody publishes is flashable and
+  unable to ever update, and nothing else would tell you.
 - `canary-local` catalog drift gates (`gen_flash.py` etc.) keep the flasher
   honest against the firmware tree.
 - Prerelease tags can never move `releases/latest` — that's GitHub's

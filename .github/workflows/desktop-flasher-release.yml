@@ -75,6 +75,16 @@ jobs:
         id: plan
         shell: bash
         run: |
+          # tauri.conf.json is what names the release tag, so a package.json that
+          # disagrees is a version the repo states two ways — they drifted to
+          # 0.1.3 vs 0.2.1 unnoticed once, which makes "which version is this?"
+          # unanswerable from the source tree. Cheap to keep honest, so keep it.
+          tv=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+          pv=$(python3 -c "import json;print(json.load(open('desktop/package.json'))['version'])")
+          if [ "$tv" != "$pv" ]; then
+            echo "::error::version drift — desktop/src-tauri/tauri.conf.json says ${tv}, desktop/package.json says ${pv}. The release tag comes from tauri.conf.json; bump both."
+            exit 1
+          fi
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF_NAME}"; publish=true
           elif [[ "${{ github.event.inputs.dry_run }}" == "false" ]]; then
@@ -203,7 +213,14 @@ jobs:
           brew install libusb pkg-config
           git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
             https://github.com/raspberrypi/usbboot usbboot-src
-          (cd usbboot-src && git rev-parse HEAD && make rpiboot)
+          # Surface the resolved commit rather than burying it in build output —
+          # USBBOOT_REF is empty, so this tracks upstream's default branch
+          # (RELEASE_LESSONS Principle 2). The session that finally pins it needs
+          # the SHA of a build it watched work; read it off here.
+          usbboot_sha=$(cd usbboot-src && git rev-parse HEAD)
+          echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}') — pin USBBOOT_REF to this once validated on real hardware"
+          echo "- \`usbboot\` @ \`${usbboot_sha}\` (ref: \`${USBBOOT_REF:-upstream default branch}\`)" >> "$GITHUB_STEP_SUMMARY"
+          (cd usbboot-src && make rpiboot)
           bin=desktop/src-tauri/binaries
           res=desktop/src-tauri/resources/mass-storage-gadget64
           mkdir -p "$bin" "$res"
@@ -234,7 +251,14 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq libusb-1.0-0-dev
           git clone --depth 1 ${USBBOOT_REF:+--branch "$USBBOOT_REF"} \
             https://github.com/raspberrypi/usbboot usbboot-src
-          (cd usbboot-src && git rev-parse HEAD && make rpiboot)
+          # Surface the resolved commit rather than burying it in build output —
+          # USBBOOT_REF is empty, so this tracks upstream's default branch
+          # (RELEASE_LESSONS Principle 2). The session that finally pins it needs
+          # the SHA of a build it watched work; read it off here.
+          usbboot_sha=$(cd usbboot-src && git rev-parse HEAD)
+          echo "::notice title=usbboot resolved::${usbboot_sha} (USBBOOT_REF='${USBBOOT_REF:-<upstream default branch>}') — pin USBBOOT_REF to this once validated on real hardware"
+          echo "- \`usbboot\` @ \`${usbboot_sha}\` (ref: \`${USBBOOT_REF:-upstream default branch}\`)" >> "$GITHUB_STEP_SUMMARY"
+          (cd usbboot-src && make rpiboot)
           bin=desktop/src-tauri/binaries
           res=desktop/src-tauri/resources/mass-storage-gadget64
           mkdir -p "$bin" "$res"
@@ -470,3 +494,17 @@ jobs:
             echo "::error::release $TAG has a broken updater manifest — self-update would fail"; exit 1
           fi
           echo "updater manifest is self-consistent"
+
+      # ── give the fleet its update URL back ───────────────────────────────────
+      # Publishing this app release just made it GitHub's `releases/latest`,
+      # which is the URL every Canary in the field polls for its OTA manifest
+      # (config.h SECURACV_OTA_MANIFEST_URL). Left alone, the whole fleet 404s on
+      # its next check and quietly stops seeing updates. `if: always()` because a
+      # half-published release has already taken `latest` — a failed run needs
+      # this more than a clean one, not less.
+      - name: Keep releases/latest on the firmware
+        if: always()
+        uses: ./.github/actions/keep-firmware-latest
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: ${{ steps.plan.outputs.tag }} publish
