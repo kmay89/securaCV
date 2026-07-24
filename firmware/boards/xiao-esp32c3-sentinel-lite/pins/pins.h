@@ -46,5 +46,8 @@
 #define HAS_PIR           1
 #define HAS_WIFI          1     // 2.4 GHz — RF channel (CSI pipeline not wired on Lite)
 #define HAS_BLE           1     // BLE — BLE channel
+#define HAS_USB_CDC       1     // USB Serial/JTAG console
 #define HAS_CAMERA        0
 #define HAS_MICROPHONE    0
+#define HAS_SD_CARD       0
+#define HAS_PSRAM         0     // ESP32-C3 XIAO has no PSRAM
