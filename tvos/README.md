@@ -84,6 +84,18 @@ The least-headache runbook — from a 2-minute AirPlay demo (no account) to an
 on-device Xcode build (free Apple ID) to TestFlight — is
 **[`RUN_ON_APPLE_TV.md`](RUN_ON_APPLE_TV.md)**.
 
+## Find your real Canaries from a browser
+
+The tvOS app and the web emulator both show your actual fleet when it's
+reachable, over one tiny CORS'd endpoint (`GET /api/fleet`). The contract, the
+browser rules that decide where it can work, and a **runnable reference kernel**
+you can point the emulator at live are in
+**[`discovery/DISCOVERY.md`](discovery/DISCOVERY.md)**:
+
+```sh
+python3 tvos/discovery/mock-kernel.py     # then Connect the emulator to it
+```
+
 ## Trademarks
 
 Apple, Apple TV, tvOS, Siri, Mac, iPhone, iPad, HomeKit, AirPlay, Xcode, and
