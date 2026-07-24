@@ -141,5 +141,44 @@
     "tier_evidence": "",
     "used_by": [],
     "notes": "Canary Sentinel Lite: PIR + BH1750 lux, WiFi-RF + BLE on the onboard radio, NO radar/CSI (honest low-cost tier limit). Phase 0 — fusion core host-tested; on-device build + bench pending (firmware/projects/canary-sentinel), so not yet in flavors.json and used_by is empty."
+  },
+  {
+    "id": "waveshare-esp32c6-lcd147",
+    "name": "Waveshare ESP32-C6-LCD-1.47",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-C6",
+    "flash_mb": 4,
+    "psram_mb": 0,
+    "pio_board": "esp32-c6-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [],
+    "notes": "Nightstand Line display: ST7789 172x320 SPI (34-px column offset) + 1x WS2812 ambient LED (GPIO8, RMT), single-core C6, NO PSRAM (lean single-buffer). Phase 0 — pin map vendor-sourced/compile-pending; the ST7789 HAL, nightstand flavor, emulator, and registry entry are the next slice (see docs/hardware/display_nightstand_line.md), so not yet in flavors.json and used_by is empty."
+  },
+  {
+    "id": "waveshare-esp32s3-lcd147",
+    "name": "Waveshare ESP32-S3-LCD-1.47",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [],
+    "notes": "Nightstand Line display (USB-A stick): SAME ST7789 172x320 panel as the C6 sibling but every display pin differs; 1x WS2812 ambient LED (GPIO38, RMT), dual-core S3 with 8 MB PSRAM (can double-buffer/animate), native USB. Phase 0 — pin map compile-pending; HAL/flavor/emulator/registry are the next slice (docs/hardware/display_nightstand_line.md)."
+  },
+  {
+    "id": "waveshare-esp32s3-lcd7",
+    "name": "Waveshare ESP32-S3-Touch-LCD-7",
+    "vendor": "Waveshare",
+    "mcu": "ESP32-S3",
+    "flash_mb": 16,
+    "psram_mb": 8,
+    "pio_board": "esp32-s3-devkitc-1",
+    "tier": "compile-tested",
+    "tier_evidence": "",
+    "used_by": [],
+    "notes": "Nightstand Line big glass: 7\" 800x480 RGB565 parallel + GT911 5-point touch + CH422G IO expander (backlight + touch-reset) — electrically the 4.3\" Canary Dash at 7\", so it reuses the dash RGB HAL/GT911/CH422G. Requires the 8 MB octal PSRAM for the 768 KB framebuffer. Phase 0 — pin map compile-pending; the dash7 flavor + full 5-point touch + emulator/registry are the next slice (docs/hardware/display_nightstand_line.md)."
   }
 ]
