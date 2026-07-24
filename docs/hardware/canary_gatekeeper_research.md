@@ -56,6 +56,12 @@ imaginable. Two honest ways to power it:
 issue**; reach for **solar** only if you truly never want to swap a cell (a remote, hard‑to‑reach gate).
 Either is "super low power" — the design choice is *maintenance model*, not feasibility.
 
+For the full reasoning behind both calls, see the two shared references this device leans on:
+the [**cold‑weather envelope**](./cold_weather_envelope.md) (how cold each part runs; why a primary cell
+sidesteps the 0 °C charge wall) and the [**solar & battery sizing guide**](./solar_power_sizing.md)
+(the energy‑balance method and the "right‑size, not biggest" optimization — a µA gate is its clearest
+"solar is the wrong answer" example).
+
 ---
 
 ## 3 · The events it reports
