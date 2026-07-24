@@ -208,7 +208,10 @@ jobs:
           res=desktop/src-tauri/resources/mass-storage-gadget64
           mkdir -p "$bin" "$res"
           cp usbboot-src/rpiboot "$bin/rpiboot-aarch64-apple-darwin"
-          cp -R usbboot-src/mass-storage-gadget64/. "$res/"
+          # -L dereferences symlinks: upstream ships bootfiles.bin as a symlink
+          # into ../firmware/, which a plain -R copies as a dangling link that
+          # Tauri's resource bundler then rejects ("resource path … doesn't exist").
+          cp -RL usbboot-src/mass-storage-gadget64/. "$res/"
           # Make the sidecar self-contained: ship libusb in Resources and
           # point the binary at it relative to the app bundle.
           libusb=$(otool -L "$bin/rpiboot-aarch64-apple-darwin" | awk '/libusb/ {print $1}')
@@ -236,7 +239,10 @@ jobs:
           res=desktop/src-tauri/resources/mass-storage-gadget64
           mkdir -p "$bin" "$res"
           cp usbboot-src/rpiboot "$bin/rpiboot-x86_64-unknown-linux-gnu"
-          cp -R usbboot-src/mass-storage-gadget64/. "$res/"
+          # -L dereferences symlinks: upstream ships bootfiles.bin as a symlink
+          # into ../firmware/, which a plain -R copies as a dangling link that
+          # Tauri's resource bundler then rejects ("resource path … doesn't exist").
+          cp -RL usbboot-src/mass-storage-gadget64/. "$res/"
           chmod +x "$bin/rpiboot-x86_64-unknown-linux-gnu"
           file "$bin/rpiboot-x86_64-unknown-linux-gnu"
 
