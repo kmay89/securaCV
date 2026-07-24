@@ -506,9 +506,15 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           # On a tag push this is the pushed tag; on the one-click path it
-          # creates this tag at the built commit (github.sha), so tag and
-          # source can never disagree.
+          # creates this tag. target_commitish pins the created tag to the
+          # exact commit we checked out and BUILT (github.sha) — without it the
+          # create-release API defaults the new tag to the repo's default
+          # branch, so a dispatch from another ref (or main advancing during
+          # the ~90-min build) could point the tag/source archive at a
+          # different commit than the binaries + attestation. Ignored by the
+          # API when the tag already exists, so the tag-push path is unchanged.
           tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: "Canary Firmware ${{ steps.ver.outputs.version }}${{ steps.ver.outputs.prerelease == 'true' && ' (dev channel)' || '' }}"
           prerelease: ${{ steps.ver.outputs.prerelease }}
           body_path: /tmp/release_notes.md
