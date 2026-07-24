@@ -1313,6 +1313,220 @@
       }
     },
     {
+      "id": "canary-poolwatch",
+      "family": "canary-poolwatch",
+      "kind": "concept",
+      "name": "Canary Poolwatch",
+      "tagline": "An extra layer of awareness at the pool — never a replacement for a fence, an alarm, or a watching adult. Coming soon.",
+      "board": "Canary Vision Pro (starlight camera) + an owned BLE immersion tag (+ radar for fusion)",
+      "senses": [
+        "pool-zone entry / at-the-water presence, child-size biased (concept)",
+        "in-water event via an owned worn immersion tag (concept)",
+        "geese/animal in the pool, the low-stakes bonus (concept)"
+      ],
+      "shows": [],
+      "modality": "camera",
+      "network": {
+        "mdns": "advertise-only on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "PresenceInRestrictedZone / SmallObjectBoundaryCrossing + tiered alerts via the alert relay; inference on-device, no raw video"
+      },
+      "docs": [
+        "docs/hardware/canary_poolwatch_research.md"
+      ],
+      "status": "coming soon — concept; an AWARENESS AID, not a drowning-detection / life-safety device",
+      "concept": {
+        "idea": "A camera that watches a DEFINED pool zone and pokes your phone when a small person enters the pool area or is at the water unattended (and, optionally, when your child's worn immersion tag goes under) — one extra layer, BEHIND the fence and the grown-up. It is explicitly NOT a drowning detector and must never replace a four-sided isolation fence, a gate alarm, or a watching adult.",
+        "points": [
+          {
+            "k": "Obey the layers-of-protection doctrine",
+            "v": "drowning is the #1 killer of kids 1-4 and is silent + 20-60 s fast, so no alert can promise rescue. The proven primary layer is a 4-sided isolation fence + self-latching gate (~83% risk reduction), then a Water Watcher adult, then gate alarms. Poolwatch is a fourth-layer awareness aid that prevents nothing physically."
+          },
+          {
+            "k": "Drowning detection is NOT honestly achievable here",
+            "v": "even a $1,999 purpose-built underwater camera (Coral Manta) only claims 'unmoving body underwater ~15 s' and still won't call itself a substitute for supervision. A consumer above-water camera can't do it. The honest, achievable feature is a pool-zone ENTRY / edge-presence alert — catch the unsupervised approach early."
+          },
+          {
+            "k": "Why Pro tier: the night",
+            "v": "the defining scenario is a child wandering out at night/dawn while adults sleep — when supervision is weakest and an alert is worth the most. Vision Pro's starlight low-light sensing is the single most important capability; a daytime-only camera is blind exactly then."
+          },
+          {
+            "k": "Camera + an owned worn immersion tag",
+            "v": "split the problem: the camera catches the APPROACH/ENTRY (works for any child in frame); a Safety-Turtle-style owned BLE tag the child/pet wears gives a high-confidence IN-WATER event the camera can't. Honest limit: the tag protects only while worn (a toddler can remove it; a visitor isn't wearing one) — so the camera zone-alert and the fence still matter."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Primary camera",
+            "v": "Canary Vision Pro (starlight low-light) with on-device inference in a defined pool polygon zone; Grove Vision AI V2 is a supporting daytime/wildlife detector only (small sensor, short range, weak low light)"
+          },
+          {
+            "k": "In-water layer",
+            "v": "an owned BLE immersion wristband/collar (submersion-triggered) the specific child/pet wears — high-confidence in-water event, worn-only limit stated plainly"
+          },
+          {
+            "k": "Fusion corroborator",
+            "v": "radar confirms a real body in the zone vs a reflection/float and works in the dark, but can't tell child from pet from goose, so it is never the primary"
+          },
+          {
+            "k": "False-alarm stack (from day one)",
+            "v": "pool-zone polygon mask; person/animal + child-size bias (a bias, never a suppression gate); dwell/persistence; multi-sensor fusion before an in-water escalation; starlight night path; anti-glare placement away from water reflection; tiered alerts (pool-entry act-now vs geese informational)"
+          }
+        ],
+        "sources": [
+          {
+            "name": "CPSC — In-Home Drowning Safety (layers of protection)",
+            "url": "https://www.cpsc.gov/Safety-Education/Safety-Education-Centers/In-Home-Drowning-Safety-Information-Center"
+          },
+          {
+            "name": "CDC — 4-sided fencing ~83% drowning-risk reduction",
+            "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12353649/"
+          },
+          {
+            "name": "Coral Manta 3000 — the ~$1,999 consumer drowning-detection ceiling",
+            "url": "https://www.intheswim.com/p/coral-manta-3000-drowning-detection-system"
+          },
+          {
+            "name": "Safety Turtle 2.0 — the owned immersion wearable (worn-only limit)",
+            "url": "https://blog.diycontrols.com/index.php/new-safety-turtle-2-0-pool-alarm-faqs/"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_poolwatch_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: Vision Pro in a defined pool polygon zone -> a person-in-pool-zone alert (child-size biased) through the alert relay with tiered severity; on-device inference, no raw video.",
+          "Add the owned BLE immersion tag path for the high-confidence in-water event; fuse with the camera before escalating.",
+          "Wildlife: a coarse 'geese in the pool' class as a plain convenience feature + a fusion corroborator (animal-vs-child).",
+          "Tune the false-alarm stack on a real pool day and night (glare/ripple/float/pet); bias to sensitivity, never suppress a possible child.",
+          "Lock the verbatim positioning line into product copy, onboarding and marketing; mirror ASTM/PoolGuard disclaimer language; never cite a standard we don't certify."
+        ],
+        "request_title": "Concept request: Canary Poolwatch (pool-area awareness aid)",
+        "request_body": "Seen the Poolwatch concept card (an AWARENESS AID, not a drowning detector). What I'd want:\n\n- do you already have a 4-sided isolation fence + self-latching gate (required primary layer):\n- day only, or is night/dawn wandering the worry (starlight):\n- would the child/pet wear an immersion tag:\n- also want the 'geese in the pool' notification:\n"
+      },
+      "persona": {
+        "name": "Marlo the Poolside Lookout",
+        "accent": "pool aqua and caution yellow",
+        "shape": "watchful canary perched on a pool ladder with a whistle it never blows, one wing shading its eyes toward the water",
+        "story": "Marlo keeps an extra eye on the water — but it knows exactly what it is: a lookout, not a lifeguard, and never the fence or the grown-up. It can call out when a little one wanders to the pool's edge, and it will happily admit it can't see a quiet drowning and can't jump in. Marlo wears a concept ribbon because honest products say what is real, and on this one honesty saves lives: it will always tell you to keep your fence, your gate alarm, and your eyes on the child.",
+        "specialty": "Pool-area awareness concept (NOT a life-safety device)",
+        "good_for": [
+          "An extra heads-up when someone reaches the pool's edge, day or night",
+          "A high-confidence in-water alert via a worn immersion tag",
+          "Knowing when geese have taken over the pool"
+        ],
+        "catchphrase": "An extra set of eyes — never a fence, an alarm, or a watching adult."
+      }
+    },
+    {
+      "id": "canary-curbwatch",
+      "family": "canary-curbwatch",
+      "kind": "concept",
+      "name": "Canary Curbwatch",
+      "tagline": "A solar sensor at the yard's edge that can warn you when a child seems to be heading toward the street. An extra set of eyes — never a fence, never a guarantee. Coming soon.",
+      "board": "FMCW radar (always-on trigger) + Canary Vision Pro (starlight, wakes to confirm) + solar",
+      "senses": [
+        "a directional boundary-plane crossing toward the road (concept)",
+        "child-size-biased person classification on a woken camera (concept)",
+        "weather-immune radar direction + dwell trigger (concept)"
+      ],
+      "shows": [],
+      "modality": "camera",
+      "network": {
+        "mdns": "advertise-only on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "SmallObjectBoundaryCrossing (toward-street, child-size attrs) + a nearby-adult alert via the alert relay; inference on-device, no raw video"
+      },
+      "docs": [
+        "docs/hardware/canary_curbwatch_research.md"
+      ],
+      "status": "coming soon — concept; an AWARENESS AID (warns an adult), NOT a barrier",
+      "concept": {
+        "idea": "A solar sensor at the yard/street boundary that watches a VIRTUAL PLANE at the curb and warns a nearby adult when a small child appears to be crossing TOWARD the road — one extra set of eyes, never a fence. Modeled on roadside wildlife-detection systems, and honest about their hard lesson: it will sometimes miss and sometimes false-alarm, it cannot physically stop anyone, and it must never replace fences, gates, and active supervision.",
+        "points": [
+          {
+            "k": "The highway-wildlife lesson",
+            "v": "even DOT-funded roadside animal-detection ran >90% false positives in the field (desensitizing the people meant to react) and ~40% downtime in a snowstorm; operators found it 'impossible to eliminate false triggers while still guaranteeing large animals are detected'. The hard part is classifying the right target and rejecting everything else, in weather, cheaply — only partly solved by professionals."
+          },
+          {
+            "k": "A directional boundary-plane crossing, not motion",
+            "v": "a virtual plane at the curb, gated on crossing TOWARD the road (the line-crossing/tripwire analytic with direction) — this removes the biggest confound: walking along the sidewalk or playing safely in the yard. Only toward-street crossings count."
+          },
+          {
+            "k": "Fusion: radar triggers, starlight camera confirms",
+            "v": "radar (24/60 GHz FMCW) is the weather-immune always-on direction+dwell trigger but can't classify a child; a toward-street event wakes a Vision Pro starlight camera to confirm child-class and reject cars/adults/pets. Vision is worst at exactly the child class, so it must be the confirmation layer, not the trigger; radar-wakes-camera also fits the solar budget."
+          },
+          {
+            "k": "Children are the hardest class to detect",
+            "v": "detectors miss children ~20%+ more than adults (small bounding boxes, erratic movement, adult-biased training data). So size is a BIAS toward alerting, never a suppression gate — you cannot maximize child sensitivity AND minimize false alarms, so we bias to sensitivity and accept nuisance alerts. A 'zero false alarms' tuning is one that will one day stay silent for a real child."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Trigger (always-on)",
+            "v": "low-power 24/60 GHz FMCW radar: range + radial velocity (toward/away) + dwell, immune to fog/rain/snow/dark/blowing-leaves; defines the boundary zone and fires only on toward-street crossings"
+          },
+          {
+            "k": "Confirm (woken)",
+            "v": "Canary Vision Pro starlight camera + on-device line-crossing/person inference, child-size biased, to confirm and reject cars/adults; NOT Grove Vision AI V2 (tiny sensor, short range, weak low light for a wide yard at dusk)"
+          },
+          {
+            "k": "Meaning 'child toward street'",
+            "v": "AND four weak signals: directional crossing of the curb plane + zone geometry excluding sidewalk-parallel/in-yard + small-size/low-height bias + dwell/track persistence (kills leaves, rain streaks, single-frame blips)"
+          },
+          {
+            "k": "Solar / cold",
+            "v": "no lithium charges below 0 C -> LiFePO4 + low-temp-cutoff BMS, sized for winter worst-case with multi-day autonomy; duty-cycle (radar awake, camera only on a boundary event) keeps the winter budget feasible - the shared Fence Guard/Ranger rule"
+          }
+        ],
+        "sources": [
+          {
+            "name": "FHWA/WTI (Huijser et al.) roadside animal-detection test-bed",
+            "url": "https://www.wildlifecollisions.ca/docs/animaldetectionsystemsfinalapril2009huisijer.pdf"
+          },
+          {
+            "name": "FL panther US-41 RADS assessment (>90% false positives, desensitization)",
+            "url": "https://www.fws.gov/sites/default/files/documents/2016-03-31_FL_Panther_RIT_Transportation_SubTeam_US-41_Roadside_Animal_Detection_System_Report_02-25-2016.pdf"
+          },
+          {
+            "name": "Age bias in pedestrian detection — children missed more (arXiv 1906.10490)",
+            "url": "https://arxiv.org/pdf/1906.10490"
+          },
+          {
+            "name": "Battery University — no lithium charging below 0 C",
+            "url": "https://www.batteryuniversity.com/article/bu-410-charging-at-high-and-low-temperatures/"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_curbwatch_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: an FMCW radar at the curb -> a directional toward-street crossing + dwell trigger, weather-immune and low-power, through the alert relay as a coarse heads-up.",
+          "Wake a Vision Pro starlight camera on a radar trigger to confirm child-class and reject cars/adults; on-device inference, no raw video.",
+          "Tune the AND-of-four (direction + zone geometry + size bias + dwell) on a real yard, biasing to sensitivity; measure the nuisance-alert rate honestly.",
+          "Solar/cold hardening: LiFePO4 + low-temp-cutoff BMS, winter-worst-case sizing, radar-wakes-camera duty cycle.",
+          "Lock the verbatim positioning line into product copy; never a 'keeps your child safe' claim."
+        ],
+        "request_title": "Concept request: Canary Curbwatch (child-near-street awareness aid)",
+        "request_body": "Seen the Curbwatch concept card (an AWARENESS AID that warns an adult, NOT a barrier). What I'd want:\n\n- describe the yard/street boundary (curb, sidewalk, driveway):\n- day only or year-round incl. snow (solar sizing):\n- ok accepting nuisance alerts as the price of not missing a child:\n- confirm you'll keep fences/gates/supervision as the real safeguards:\n"
+      },
+      "persona": {
+        "name": "Scout the Edge Watcher",
+        "accent": "curb grey and warning red",
+        "shape": "alert little canary on a fencepost at the yard's edge, eyes on an invisible line at the curb, a faint radar fan toward the street",
+        "story": "Scout watches the line between the yard and the road, and calls out when a little one seems to be heading for it. It's honest about being just a lookout: it can miss a child, it can cry wolf at a blowing leaf or the neighbor's dog, and it can never grab a toddler's hand — only a fence and a grown-up can. Scout wears a concept ribbon because honest products say what is real, and it would rather bother you about a dog than ever stay quiet for a child.",
+        "specialty": "Boundary-plane child-warning concept (NOT a barrier)",
+        "good_for": [
+          "An earlier heads-up when a child heads toward the street",
+          "A weather-immune radar trigger + starlight camera confirmation",
+          "Solar, year-round boundary watching"
+        ],
+        "catchphrase": "I watch the line to the road — an extra warning, never a fence."
+      }
+    },
+    {
       "id": "canary-vision-pro",
       "family": "canary-vision-pro",
       "kind": "concept",
