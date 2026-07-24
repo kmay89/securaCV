@@ -27,6 +27,7 @@ import { wifiMemory } from "./wifi-memory.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
 import { chirp, chirpToggle } from "./chirp.js";
+import { mountBoardIdentity } from "./board-identity.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -1270,6 +1271,22 @@ function phaseConnected() {
 
   // Firmware picker (chip-guarded).
   wrap.append(renderPicker());
+
+  // "Which board am I holding?" — a labelled identity panel for each product
+  // this chip can be, drawn from the honest boards/enclosures catalogs so the
+  // user can match the board in their hand and see the product it becomes.
+  const idWrap = el("div", "flash-identity-wrap");
+  wrap.append(idWrap);
+  try {
+    const forChip = (state.catalog.products || []).filter((p) => p.chip === state.chip);
+    const seen = new Set();
+    for (const p of forChip) {
+      const key = core.shortName ? core.shortName(p.id) : p.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      mountBoardIdentity(idWrap, p); // async, best-effort; no-op on any miss
+    }
+  } catch { /* identity is a nicety — never block the flow */ }
 
   // The session's progression — a batch never loses its place.
   const roster = renderRosterStrip();
