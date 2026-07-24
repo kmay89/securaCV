@@ -399,6 +399,7 @@ jobs:
     needs: build
     if: github.ref_type == 'tag' || github.event.inputs.dry_run == 'false'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
