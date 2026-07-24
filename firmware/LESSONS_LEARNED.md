@@ -501,6 +501,14 @@
 - **The rule:** prefer `build_src_filter` — naming a file is deterministic.
   Reach for a `library.json` only when the header is included unconditionally.
   Never satisfy both routes for one file (duplicate symbols at link).
+- **A third independent attempt made the same mistake.** #1229 landed on main
+  while this was in flight and removed only the `headers` key, keeping the
+  manifest — the same remedy as attempt 2 above. Main built again and failed
+  again with the identical `wash_stops` undefined reference (run 30123437737 on
+  `ff7cc04`). Two people reasoning carefully from `boot_banner` reached the same
+  wrong conclusion, which is the strongest argument for writing the real
+  distinction down: `boot_banner`'s include is UNCONDITIONAL, and that — not its
+  manifest shape — is why it links.
 - **Process lesson:** three CI rounds were spent because each attempt
   pattern-matched a precedent (`boot` has a manifest, so add a manifest) without
   first checking *why* the precedent works. The distinguishing fact —
