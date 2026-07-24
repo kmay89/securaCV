@@ -133,3 +133,36 @@ any platform.
   the *build* must prove the catalog carries what the runtime needs. Never
   assume an upstream publishes a checksum you can fetch — if trust hinges on a
   hash, mint it from the bytes yourself and pin it in-repo.
+
+### 2026-07-24 — A transient GitHub upload 5xx left the release with a stale updater manifest (self-update broken; installs fine)
+
+- **Symptom:** a `flasher-v0.2.1` publish went red on the Linux job at the
+  *last* asset upload (`...AppImage.sig`) with `##[error]No server is currently
+  available to service your request.` The `.dmg`/`.AppImage`/`.deb` were all
+  uploaded and installable, but `latest.json` pointed at **deleted asset ids**
+  and carried a **stale signature** — so the in-app updater would fail while
+  fresh installs worked.
+- **Cause:** two compounding fragilities. (1) tauri-action has no upload retry,
+  so one transient 5xx fails the whole publish. (2) It writes each platform's
+  `url` as an **asset-id** link (`.../releases/assets/<id>`); those ids change
+  on every re-upload, and in a matrix build each job writes `latest.json` and
+  relies on merge-with-existing — so a re-run or a half-failed job leaves the
+  manifest pointing at ids that no longer exist, with a signature from a
+  different build. Nothing failed loudly; the release just quietly couldn't
+  self-update.
+- **Fix:** three layers, all on the publish path only. (a) A per-job
+  **"Reconcile release assets"** step re-uploads any missing installer/`.sig`
+  with backoff, so a transient 5xx self-heals within the run. (b) A single
+  **`finalize` job** (runs once, after both builds) rewrites `latest.json` via
+  `desktop/scripts/harden_updater_manifest.py` to use **stable name-based
+  download URLs** (immune to asset-id churn) with **signatures read from the
+  `.sig` assets the release actually carries** (can't drift from the bytes).
+  (c) A **consistency guard** in that job fails the release loudly unless every
+  updater URL resolves — an inconsistent manifest can never ship silently.
+- **Applies to:** any app target that publishes a Tauri/self-update manifest
+  from a **matrix** build (Flasher today; the Lab / iOS / iPad / tvOS / Mac if
+  they gain in-app updates). Treat the updater manifest as a single-writer,
+  post-build artifact with stable URLs and asset-sourced signatures — never as
+  something each matrix job races to write with churning asset-id links. And
+  give every release upload a retry (Principle 3 — prove the bundle, and here,
+  prove the *manifest*, before it counts as published).
