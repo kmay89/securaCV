@@ -270,13 +270,12 @@ pub fn serial_monitor_send(
     let control = active
         .as_ref()
         .ok_or_else(|| "serial monitor is not running".to_string())?;
-    let mut bytes = command.into_bytes();
-    if !bytes.ends_with(b"\n") && !bytes.ends_with(b"\r") {
-        bytes.push(b'\n');
-    }
+    // Send exactly what the caller asked for — the frontend owns the line
+    // ending (its picker includes "No line ending" for raw keystrokes /
+    // bootloader escape sequences), so the backend must not append one.
     control
         .send
-        .send(bytes)
+        .send(command.into_bytes())
         .map_err(|_| "serial monitor has already stopped".to_string())
 }
 

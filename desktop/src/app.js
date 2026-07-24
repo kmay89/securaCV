@@ -159,7 +159,9 @@ async function boot() {
   $("monitor-start").addEventListener("click", startMonitor);
   $("monitor-stop").addEventListener("click", stopMonitor);
   $("monitor-manifest").addEventListener("click", () =>
-    invoke("serial_monitor_send", { command: "j" }).catch((e) =>
+    // The backend no longer auto-appends a newline (so "No line ending" is
+    // honored), so callers that want one include it — the 'j' manifest does.
+    invoke("serial_monitor_send", { command: "j\n" }).catch((e) =>
       setStatus("monitor-status", String(e), "err"))
   );
   // Arduino-style controls: pause (freeze autoscroll), clear, expand, and a
