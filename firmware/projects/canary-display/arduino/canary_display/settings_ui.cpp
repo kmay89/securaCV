@@ -7,6 +7,11 @@
 // You Can Come Home To (visible reset that spares the calibration), Night Is
 // a Mode (schedule + glow + look + peek travel together).
 #include "flavor_config.h"
+// Nightstand borrows the watch's small-portrait modal rendering (see
+// splash.cpp for the rationale); the standing face is portrait_ui.cpp.
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
+#define CD_FLAVOR_WATCH 1
+#endif
 #include <Arduino.h>
 #include <lvgl.h>
 #include <stdio.h>
