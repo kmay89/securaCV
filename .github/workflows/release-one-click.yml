@@ -1,13 +1,22 @@
-# One-click whole-pipeline launcher — build/publish the apps AND deploy the web.
+# One-click whole-pipeline launcher — the firmware, the apps, AND the web.
 #
 # The single button that runs everything that ships SecuraCV to users:
+#   • Canary firmware → firmware-release.yml (the .bin OTA images AND the
+#     browser-flasher factory images + manifest-flash.json — i.e. what makes
+#     products appear, flashable, in the in-browser flasher)
 #   • SecuraCV Flasher (macOS + Linux) → desktop-flasher-release.yml
 #   • SecuraCV Lab     (macOS + Linux) → desktop-release.yml
 #   • canary.local site → GitHub Pages → pages.yml
 #
-# Use from GitHub: Actions → "Release — one click (apps + web)" → Run workflow.
-#   • Leave "publish" UNCHECKED for a dev pass — build-only smoke artifacts,
-#     nothing published. Check it to cut real releases.
+# Use from GitHub: Actions → "Release — one click (firmware + apps + web)" →
+# Run workflow.
+#   • "firmware" cuts a firmware release that populates the browser flasher:
+#     none (default) / dev (prerelease, dev channel) / release (stable). Set
+#     "firmware_version" to the version you bumped the headers to (e.g. 2.3.0,
+#     or 2.3.0-dev.1 for dev; blank = the source triple, release only).
+#   • "publish" governs the DESKTOP APPS: unchecked = build-only smoke run,
+#     checked = real app releases. (Firmware has its own selector above — a
+#     firmware release is always a publish, so it is opt-in, never smoke.)
 #   • "deploy_web" (default on) redeploys the live site.
 #   • "apps" picks which desktop apps to run (both / flasher / lab / none).
 #
@@ -16,16 +25,28 @@
 # target keeps its own build logic, signing, and concurrency guard. Watch the
 # linked runs it starts for progress — this job finishes as soon as they're
 # queued. Mirrors the proven fan-out in mac-apps-release.yml, extended to the
-# Linux app builds and the web deploy.
-name: Release — one click (apps + web)
+# firmware release, the Linux app builds, and the web deploy.
+name: Release — one click (firmware + apps + web)
 run-name: >-
-  Release — ${{ inputs.publish && 'PUBLISH' || 'dev build' }}${{ inputs.deploy_web && ' + deploy web' || '' }} (${{ inputs.apps }}) — @${{ github.actor }}
+  Release — ${{ inputs.firmware != 'none' && format('fw:{0} ', inputs.firmware) || '' }}${{ inputs.publish && 'PUBLISH apps' || 'apps dev build' }}${{ inputs.deploy_web && ' + web' || '' }} (${{ inputs.apps }}) — @${{ github.actor }}
 
 on:
   workflow_dispatch:
     inputs:
+      firmware:
+        description: "Cut a firmware release (populates the browser flasher): none / dev (prerelease) / release (stable)"
+        type: choice
+        options:
+          - none
+          - dev
+          - release
+        default: none
+      firmware_version:
+        description: "Firmware version, e.g. 2.3.0 (release) or 2.3.0-dev.1 (dev). Blank = source triple (release only). Must match the bumped version headers."
+        type: string
+        default: ""
       publish:
-        description: "Publish real releases (unchecked = dev build-only smoke run)"
+        description: "Publish real DESKTOP APP releases (unchecked = dev build-only smoke run)"
         type: boolean
         default: false
       apps:
@@ -65,6 +86,8 @@ jobs:
           PUBLISH: ${{ inputs.publish }}
           APPS: ${{ inputs.apps }}
           DEPLOY_WEB: ${{ inputs.deploy_web }}
+          FIRMWARE: ${{ inputs.firmware }}
+          FIRMWARE_VERSION: ${{ inputs.firmware_version }}
         with:
           script: |
             const owner = context.repo.owner;
@@ -73,13 +96,23 @@ jobs:
             const publish = process.env.PUBLISH === 'true';
             const apps = process.env.APPS;
             const deployWeb = process.env.DEPLOY_WEB === 'true';
+            const firmware = process.env.FIRMWARE;            // none | dev | release
+            const firmwareVersion = process.env.FIRMWARE_VERSION || '';
             const wantApp = (name) => apps === 'both' || apps === name;
 
             // Each target is the existing per-workflow contract:
+            //  - firmware-release:        channel=dev|release cuts a real
+            //    firmware release (the .bin OTA images + the browser-flasher
+            //    factory images/manifest). Always a publish — opt-in only.
             //  - desktop-flasher-release: dry_run=true means build-only
             //  - desktop-release (Lab):   publish=false means build-only
             //  - pages: no inputs; it deploys the current site
             const targets = [];
+            if (firmware && firmware !== 'none') targets.push({
+              workflow_id: 'firmware-release.yml',
+              label: `Canary firmware — ${firmware} channel${firmwareVersion ? ` (${firmwareVersion})` : ' (source version)'}`,
+              inputs: { channel: firmware, version: firmwareVersion },
+            });
             if (wantApp('flasher')) targets.push({
               workflow_id: 'desktop-flasher-release.yml',
               label: 'SecuraCV Flasher (macOS + Linux)',
@@ -97,7 +130,7 @@ jobs:
             });
 
             if (targets.length === 0) {
-              core.warning('Nothing selected: apps=none and deploy_web unchecked. No workflows dispatched.');
+              core.warning('Nothing selected: firmware=none, apps=none, and deploy_web unchecked. No workflows dispatched.');
               return;
             }
 
@@ -116,9 +149,13 @@ jobs:
               }
             }
 
+            const fwLine = (firmware && firmware !== 'none')
+              ? `🔩 firmware **${firmware}** release${firmwareVersion ? ` \`${firmwareVersion}\`` : ' (source version)'}`
+              : 'firmware: not this run';
             await core.summary
               .addHeading('One-click release launched')
-              .addRaw(`**Mode:** ${publish ? '🚀 PUBLISH real releases' : '🧪 dev build-only smoke run'}`).addBreak()
+              .addRaw(`**Firmware:** ${fwLine}`).addBreak()
+              .addRaw(`**Apps:** ${publish ? '🚀 PUBLISH real releases' : '🧪 dev build-only smoke run'} (${apps})`).addBreak()
               .addRaw(`**Ref:** \`${ref}\``).addBreak()
               .addHeading('Dispatched', 3)
               .addList(started.length ? started : ['(none)'])
@@ -131,8 +168,11 @@ jobs:
             }
 
             core.notice(
+              (firmware && firmware !== 'none'
+                ? `Firmware ${firmware} release cutting — it publishes the OTA .bin images AND the browser-flasher factory images + manifest-flash.json, so the products appear (flashable) in the in-browser flasher. `
+                : '') +
               (publish
-                ? 'Publishing: watch the linked runs — Flasher publishes directly, Lab creates a draft release'
-                : 'Dev smoke run: download each run’s build artifacts when they finish') +
+                ? 'Apps publishing: watch the linked runs — Flasher publishes directly, Lab creates a draft release'
+                : 'App dev smoke run: download each run’s build artifacts when they finish') +
               (deployWeb ? '. The site redeploys to GitHub Pages.' : '.')
             );
