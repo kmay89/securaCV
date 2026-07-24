@@ -42,7 +42,27 @@ any platform.
    per-target workflows by hand. `firmware-release.yml` also takes the same
    `channel` + `version` inputs directly (Actions → "Firmware Release"),
    which is what the launcher dispatches.
-6. **A new board reaches the flasher only when a release carries it.** The
+6. **`releases/latest` belongs to the firmware — the apps must never take it.**
+   Every Canary polls `releases/latest/download/manifest-<product>.json`
+   (each project's `config.h` `SECURACV_OTA_MANIFEST_URL`), and GitHub's
+   "latest" is the newest published release of **any** kind. The desktop apps
+   ship from the same release namespace, so publishing `flasher-v*` / `app-v*`
+   silently re-points the whole fleet's update URL at a release with no
+   manifests in it. `.github/actions/keep-firmware-latest` enforces it from
+   both sides — the app workflows call it (CI-created releases don't fire
+   `release:` events), and `release-latest-guard.yml` catches every
+   human-created one.
+7. **A compiled-in URL is a promise the release has to keep.** If firmware
+   polls a manifest, some workflow must *sign* that manifest — otherwise the
+   product is flashable and structurally unable to update, and says nothing
+   about it. `firmware/scripts/check_ota_channels.py` proves the two sides
+   match, statically, on every PR. A flavor with no channel yet is declared in
+   that script with a reason; silence is not an option.
+8. **An app release version that already exists is not a release.** The app
+   workflows derive the tag from `tauri.conf.json`, so publishing without
+   bumping rewrites the assets of a shipped release instead of cutting a new
+   download. Bump first, then publish.
+9. **A new board reaches the flasher only when a release carries it.** The
    in-browser flasher lights a product up from `manifest-flash.json` in the
    release it reads (`releases/latest`, or `fw-dev-latest` via
    `?channel=dev`). Adding a board to `flash.json` + the release workflows is
@@ -52,6 +72,124 @@ any platform.
    the wiring is.
 
 ## Entries
+
+### 2026-07-24 — Publishing an app without bumping its version rewrote a shipped release instead of cutting a new one → three merged features never reached an installer
+
+- **Symptom:** `flasher-v0.2.1` was published, complete and healthy, yet the
+  embedded Witness Wall (#1211), post-flash LAN discovery (#1216), and the
+  release hardening (#1219) were all on `main` and in none of its bytes.
+  Re-running "Desktop Flasher — build & release" with `dry_run: false` would
+  not have helped: it derives the tag from `tauri.conf.json`, so it re-uploads
+  over `flasher-v0.2.1` — same release, new assets, no new download for anyone
+  who already has it, and an existing installed base that sees no update.
+- **Cause:** the version bump and the publish are separate acts, and only the
+  bump decides whether a publish is a *release*. `desktop/package.json` had
+  also drifted to `0.1.3` against `tauri.conf.json`'s `0.2.1`, so the source
+  tree stated the app's version two different ways and neither was obviously
+  authoritative.
+- **Fix:** bumped to `0.2.2` and published that (its release carries all three).
+  Added a drift guard to the workflow's plan step: `tauri.conf.json` and
+  `package.json` must agree or the build fails with both values named, before
+  anything is built. Principle 8 above states the rule.
+- **Applies to:** the Lab and every future app target with a version-derived
+  tag. Before pressing publish, ask what tag the workflow will compute and
+  whether that release already exists — if it does, you are editing history,
+  not shipping.
+
+### 2026-07-24 — Desktop app releases were quietly taking `releases/latest`, the URL the whole fleet polls for OTA
+
+- **Symptom:** none visible, which is the point. After publishing
+  `flasher-v0.2.2`, `GET /repos/kmay89/securaCV/releases/latest` returned the
+  **Flasher app release** — so every device's compiled-in manifest URL
+  (`releases/latest/download/manifest-<product>.json`) resolved to a release
+  containing installers and no manifests. Devices 404 on their next check and
+  stop seeing updates. No workflow fails, no log says anything, and the only
+  way to notice is to ask that endpoint by hand.
+- **Cause:** firmware and apps share one release namespace, and GitHub's
+  "latest" is the newest published non-prerelease of any kind — so the most
+  recent *app* release always wins it. `gen_flash.py` already knew this and
+  dodged it for the browser flasher by pinning its catalog to an exact
+  `fw-v<train>` tag (see `release_download_base()`), but **devices can't
+  dodge it**: their URL is compiled in, and changing it means shipping
+  firmware, which needs the very channel that is broken. Latent so far only
+  because the zero OTA key hard-disables installs — the day the key ceremony
+  lands, the next app release would break the fleet.
+- **Fix:** `.github/actions/keep-firmware-latest` (one implementation, two
+  callers) asserts `releases/latest` is a `fw-v*` release and re-points it at
+  the newest published firmware release when an app has taken it. The app
+  release workflows call it directly, because releases created with
+  `GITHUB_TOKEN` do **not** fire `release:` events (GitHub's recursion guard),
+  so a workflow-only trigger would miss exactly the case that breaks the fleet.
+  `release-latest-guard.yml` covers everything a human does — publishing a
+  draft, creating a release in the UI. It re-points the firmware release
+  explicitly rather than setting the app release to `make_latest:false`, since
+  that only makes GitHub recompute by date and can land on another app release.
+  With no firmware release published yet it warns instead of failing.
+- **Applies to:** every repo that ships device firmware and host apps from one
+  releases page — today the Flasher and the Lab, tomorrow the iPhone / iPad /
+  tvOS / Mac targets if they ever publish here. Treat `releases/latest` as
+  owned by whatever the *fielded hardware* reads, and enforce it from outside
+  the workflow that publishes, because the publisher can't see the collision.
+
+### 2026-07-24 — Firmware polled display OTA manifests that no release has ever signed → flashable boards that can never update, silently
+
+- **Symptom:** the three Canary Display flavors were fully wired for USB
+  flashing — `flash.json`, `build_flash_manifest.py`, factory images in both
+  release workflows — and each flavor's `config.h` pointed
+  `SECURACV_OTA_MANIFEST_URL` at `manifest-canary-display-<flavor>.json`. No
+  workflow anywhere wrote such a file. `manifest-index.json` listed 7 products;
+  the displays were not among them. A display board therefore fetches a 404 on
+  every OTA check, forever, and reports nothing wrong.
+- **Cause:** the display build steps were added to `firmware-release.yml` for
+  the *browser flasher* (they feed `build_flash_manifest.py`'s factory images),
+  and that felt like "displays are in the release". The signing half was never
+  written. Nothing connected the URL the firmware *polls* to the manifests the
+  release *publishes*, so the two could disagree indefinitely — and the only
+  observable difference is a device that never updates.
+- **Fix:** `firmware-release.yml` now signs, verifies, and indexes
+  `manifest-canary-display-{watch,dash,dash-modes}.json` from the flavors CI
+  builds. Best-effort like the display builds themselves: a flavor that didn't
+  compile, or whose binary doesn't carry this release's version, is left out
+  with a `::warning::` rather than sinking the signed release or publishing a
+  manifest that would make devices install, boot reporting the old version,
+  witness a rollback, and be re-offered the same update forever. The durable
+  half is `firmware/scripts/check_ota_channels.py` (in "Regression Guards"):
+  it parses every `SECURACV_OTA_MANIFEST_URL` in the tree and every manifest
+  the release's variant index publishes, and fails when a polled manifest is
+  neither published nor declared unpublished-with-a-reason. Verified it fails
+  by removing flavors from the release loop and watching it go red.
+- **Applies to:** every product that gains an OTA URL — the display flavors
+  with no profile yet (`watch-modes`, `nightstand`, bare `canary-display`) are
+  now *declared* rather than forgotten. Generally: a compiled-in URL is a
+  contract with the release, and a contract nobody checks is a wish. Check it
+  statically, on the PR that adds the flavor, not on a release nobody inspects.
+
+### 2026-07-24 — The flasher catalog was pinned to a firmware release that had never been cut → every product read "unavailable", with no way to tell why
+
+- **Symptom:** `flash.html` showed every product as unavailable. The previous
+  entry below blamed the release predating the boards; the live cause on
+  2026-07-24 was simpler and separate — `flash.json`'s `manifest_url` pointed
+  at `fw-v2.3.0`, a tag that did not exist, so the page fetched a 404 and hid
+  everything. The banner said "No signed firmware release is published yet",
+  which is indistinguishable from a repo that has never cut one.
+- **Cause:** `fw_train` was bumped to 2.3.0 (correctly — the headers moved) and
+  `gen_flash.py` regenerated the pin to match, but the release itself was
+  blocked on the missing OTA signing key. The bump-then-release window is a
+  legitimate state; what was missing was any *signal* while it lasted, and any
+  way for a user or maintainer to tell "pinned to a release that isn't cut"
+  apart from "nothing has ever shipped".
+- **Fix:** two halves, neither of which blocks the legitimate window.
+  `canary-local.yml` warns on every run (title + run summary) while the pinned
+  `manifest_url` doesn't resolve, naming the tag and the HTTP code — advisory
+  because the site is much more than the flasher, but impossible to miss. And
+  the page itself now names the pin: `releaseTagFromManifestUrl()` (pure,
+  host-tested) turns the dead end into "this page is pinned to firmware release
+  fw-v2.3.0 — no release manifest (HTTP 404)".
+- **Applies to:** any client pinned to an exact release asset. Pinning is right
+  (see the `releases/latest` entry above — `/latest/` is unsafe in a shared
+  namespace), but a pin is a claim about something outside the repo, so
+  something must notice when the claim stops being true, and the failure must
+  name the claim rather than shrug.
 
 ### 2026-07-24 — New boards wired into the flasher but never cut into a release → invisible in the flasher; firmware releases were tag-only and not one-click
 

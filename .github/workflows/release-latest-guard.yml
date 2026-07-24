@@ -1,0 +1,50 @@
+# `releases/latest` belongs to the FIRMWARE. Keep it there.
+#
+# Every Canary in the field polls
+#   releases/latest/download/manifest-<product>.json
+# for updates. GitHub's "latest" is the newest published release of ANY kind,
+# and this repo also ships the desktop apps (`flasher-v*`, `app-v*`) from the
+# same release namespace — so an app release silently re-points the whole
+# fleet's update URL at a release with no manifests in it. Nothing fails; every
+# device just 404s on its next check and stops seeing updates.
+#
+# The logic lives in .github/actions/keep-firmware-latest (one implementation,
+# because a copy would drift). This workflow is the half that covers releases a
+# HUMAN causes: a hand-published draft, a release created in the UI, a tag
+# pushed by a person. Releases created by CI with GITHUB_TOKEN do NOT fire
+# `release:` events — GitHub's recursion guard — so the app release workflows
+# call the same action directly at the end of their publish path.
+#
+# It converges: a repair fires `release: edited`, the next run sees a correct
+# `latest`, and stops. With no `fw-v*` release published yet (the pre-key
+# state) it warns rather than failing — there is nothing to point at.
+name: Release latest guard
+
+on:
+  release:
+    types: [published, released, edited, deleted, unpublished]
+  # Runnable by hand after any manual fiddling on the Releases page.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialize: two release events must not race to set `latest`.
+concurrency:
+  group: release-latest-guard
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: releases/latest points at firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/keep-firmware-latest
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: >-
+            ${{ github.event_name == 'release'
+                && format('{0} {1}', github.event.action, github.event.release.tag_name)
+                || 'manual run' }}

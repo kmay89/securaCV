@@ -6,7 +6,8 @@ name: Firmware Release
 #
 # Produces a GitHub Release carrying, for each supported variant
 # (canary, canary-wap, canary-vision incl. xiao-c3/xiao-s3, canary-sense
-# incl. wellbeing — 7 products total):
+# incl. wellbeing, canary-display watch/dash/dash-modes — 10 products; the
+# display three are best-effort, see the display steps below):
 #   - the firmware binary           (<variant>-<ver>.bin)
 #   - a signed per-variant manifest (manifest-<variant>.json)
 #   - a variant index               (manifest-index.json)
@@ -276,20 +277,40 @@ jobs:
         # profiles auto-install their own isolated core + libs, so no
         # --fqbn/--libraries here. The flavor dispatchers infer watch/dash
         # from each profile's board (fqbn esp32:esp32:XIAO_ESP32S3 -> watch,
-        # esp32:esp32:esp32s3 -> dash; the modes profile pins the 4.3B FQBN
-        # and carries the gear flags — a distinct flash product so a modes
-        # unit never cross-grades to plain dash). Non-blocking on purpose: a
-        # display build hiccup only drops those products from the browser
-        # flasher (build_flash_manifest warns per-variant) — it must never
-        # sink the signed OTA release around it.
+        # esp32:esp32:esp32s3 -> dash).
+        #
+        # `modes` is the exception, and it bites: the profile pins the 4.3B
+        # board and libraries but carries NO build flags. The gear flags
+        # (FEATURE_DEVMODE / DEMO_MODE / DEBUG_MODE / ARCADE) live in the
+        # git-ignored flavor_local.h, and CD_GEARS_COMPILED_IDENTITY — which is
+        # what makes the image identify as dash-modes instead of plain dash —
+        # is derived from them (config.h). Compile `--profile modes` without
+        # staging and you get a GEARLESS DASH binary labelled dash-modes:
+        # flashing it strips the modes build, and OTA-ing it onto a real modes
+        # unit cross-grades that unit down and leaves it polling as plain dash.
+        # `setup.sh flavor` writes only that one gitignored file, so the flag
+        # list has exactly one home.
+        #
+        # Non-blocking on purpose: a display build hiccup only drops those
+        # products from the browser flasher (build_flash_manifest warns
+        # per-variant) — it must never sink the signed OTA release around it.
         run: |
           cd firmware/projects/canary-display/arduino/canary_display
           for P in watch dash modes; do
+            if [ "$P" = modes ]; then
+              ../../setup.sh flavor modes
+            else
+              # No override: let board inference pick watch vs dash. Explicit
+              # so the loop is order-independent and a re-run can't inherit a
+              # stale staging.
+              rm -f flavor_local.h
+            fi
             if ! arduino-cli compile --profile "$P" \
                 --output-dir "/tmp/display-${P}-build" canary_display.ino; then
               echo "::warning::canary-display '${P}' build failed — absent from the browser flasher this release"
             fi
           done
+          rm -f flavor_local.h
 
       - name: Assemble, sign, and verify release artifacts
         env:
@@ -371,7 +392,71 @@ jobs:
               "/tmp/release/canary-sense${SUFFIX}-${VERSION}.bin"
           done
 
-          # Variant index (tooling + future variants)
+          # canary-display (watch / dash / dash-modes) — the flavors CI builds
+          # above. Without these, every display board polls a manifest URL that
+          # no release carries (config.h SECURACV_OTA_MANIFEST_URL): USB-flashable
+          # but structurally unable to self-update.
+          #
+          # Non-blocking, for the same reason the display BUILD step is: a flavor
+          # that didn't compile is left OUT of the release rather than sinking the
+          # signed OTA release around it. A flavor whose binary doesn't carry THIS
+          # version is also left out — publishing that manifest would have devices
+          # install the image, boot reporting the old version, witness it as a
+          # rollback, and be offered the same update forever.
+          #
+          # The other flavors in config.h (watch-modes, nightstand, bare
+          # canary-display) have no sketch.yaml profile, so they have no published
+          # channel yet — declared, not accidental: check_ota_channels.py holds
+          # that list and fails if a NEW flavor appears with neither.
+          DISPLAY_INDEX=""
+          for D in "watch:watch" "dash:dash" "dash-modes:modes"; do
+            NAME="${D%%:*}"; DIR="${D##*:}"
+            SRC="/tmp/display-${DIR}-build/canary_display.ino.bin"
+            OUT="/tmp/release/canary-display-${NAME}-${VERSION}.bin"
+            if [ ! -s "$SRC" ]; then
+              echo "::warning::canary-display ${NAME} produced no binary — absent from this OTA release (it cannot self-update until the next release carries it)"
+              continue
+            fi
+            cp "$SRC" "$OUT"
+            if ! strings "$OUT" | grep -qFx "${VERSION}"; then
+              echo "::warning::canary-display ${NAME} binary does not carry the version string '${VERSION}' — skipping its OTA manifest (bump CANARY_FW_VERSION in firmware/projects/canary-display/arduino/canary_display/version.h)"
+              rm -f "$OUT"
+              continue
+            fi
+            # The binary must AGREE that it is this product. SECURACV_OTA_PRODUCT
+            # is compiled in, and for `modes` it is derived from the gear flags —
+            # so a modes build that didn't get flavor_local.h staged reports
+            # "securacv-canary-display-dash" and this catches it. Publishing a
+            # manifest whose product the image doesn't claim is how you
+            # cross-grade a modes unit down to gearless dash: the engine's
+            # product check passes (it trusts the manifest), the gears vanish,
+            # and the device polls as plain dash forever after.
+            if ! strings "$OUT" | grep -qFx "securacv-canary-display-${NAME}"; then
+              echo "::warning::canary-display ${NAME} binary does not identify as 'securacv-canary-display-${NAME}' — skipping its OTA manifest rather than publishing a mislabelled image (a modes build needs 'setup.sh flavor modes' staged before compiling)"
+              rm -f "$OUT"
+              continue
+            fi
+            python firmware/scripts/ota_release.py manifest \
+              --private-key /tmp/releaser.pem \
+              --product "securacv-canary-display-${NAME}" \
+              --version "${VERSION}" \
+              --url "${DL}/canary-display-${NAME}-${VERSION}.bin" \
+              --release-notes "$NOTES" \
+              --release-url "$RELURL" \
+              --out "/tmp/release/manifest-canary-display-${NAME}.json" \
+              "$OUT"
+            python firmware/scripts/ota_release.py verify \
+              --pubkey firmware/common/ota/src/ota_release_key.h \
+              --manifest "/tmp/release/manifest-canary-display-${NAME}.json" \
+              "$OUT"
+            DISPLAY_INDEX="${DISPLAY_INDEX} securacv-canary-display-${NAME}=${DL}/manifest-canary-display-${NAME}.json"
+            echo "canary-display ${NAME}: signed and verified for OTA."
+          done
+
+          # Variant index (tooling + future variants). $DISPLAY_INDEX is
+          # deliberately unquoted — it word-splits into one arg per display
+          # flavor that actually built, and is empty when none did.
+          # shellcheck disable=SC2086
           python firmware/scripts/ota_release.py index \
             "securacv-canary=${DL}/manifest-canary.json" \
             "securacv-canary-wap=${DL}/manifest-canary-wap.json" \
@@ -380,6 +465,7 @@ jobs:
             "securacv-canary-vision-xiao-s3=${DL}/manifest-canary-vision-xiao-s3.json" \
             "securacv-canary-sense=${DL}/manifest-canary-sense.json" \
             "securacv-canary-sense-wellbeing=${DL}/manifest-canary-sense-wellbeing.json" \
+            ${DISPLAY_INDEX} \
             --out /tmp/release/manifest-index.json
 
           # Verify every signature against the COMMITTED public key before
@@ -528,6 +614,8 @@ jobs:
             /tmp/release/canary-vision-xiao-s3-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-sense-${{ steps.ver.outputs.version }}.bin
             /tmp/release/canary-sense-wellbeing-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/canary-display-*-${{ steps.ver.outputs.version }}.bin
+            /tmp/release/manifest-canary-display-*.json
             /tmp/release/manifest-canary.json
             /tmp/release/manifest-canary-wap.json
             /tmp/release/manifest-canary-vision.json
@@ -567,5 +655,6 @@ jobs:
             /tmp/release/manifest-canary-vision-xiao-s3.json
             /tmp/release/manifest-canary-sense.json
             /tmp/release/manifest-canary-sense-wellbeing.json
+            /tmp/release/manifest-canary-display-*.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt

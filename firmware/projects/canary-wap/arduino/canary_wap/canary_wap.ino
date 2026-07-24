@@ -141,6 +141,7 @@
 #include <new>                       // placement-new for the PSRAM GPS ring
 #include "catchall_logic.h"          // pure, host-tested canary.local claim decisions
 #include "witness_store.h"           // pure, host-tested /WITNESS jsonl format + recovery
+#include "fleet_selfreport.h"        // shared /api/fleet body builder (parity by architecture)
 #include "camera_gate_logic.h"       // pure, host-tested camera standby/peek gating
 #include "power_gate_logic.h"        // pure, host-tested round-two power gate decisions
 #include "health_store_logic.h"      // pure, host-tested /HEALTH jsonl format
@@ -6524,6 +6525,45 @@ static esp_err_t handle_fleet_scan_auth(httpd_req_t* req) {
   return handle_fleet_scan(req);
 }
 
+/* GET /api/fleet — the coarse, UNAUTHENTICATED fleet presence/health contract
+ * (tvos/discovery/DISCOVERY.md). This is what the public Witness Wall emulator's
+ * "Connect your fleet" reads and what the Flasher's post-flash LAN discovery
+ * (witness_discover) hits to make a just-flashed Canary appear on the wall — no
+ * hub required, this single AP-fronting device answers for itself.
+ *
+ * The wire shape is built by the ONE shared builder (fleet_selfreport.h, in
+ * firmware/common, host-tested), so EVERY networked board answers byte-for-byte
+ * identically — a change to the shape is a change to that one header, never a
+ * per-board edit. Distinct from /api/fleet-scan above, which is the rich,
+ * Bearer-gated mDNS browser for the operator UI; this one is presence-only and
+ * carries no secrets and no media, safe to read anonymously.
+ */
+static esp_err_t handle_fleet(httpd_req_t* req) {
+  g_health.http_requests++;
+  FleetSelfDevice self{};
+  const char* nm = setup_wizard::get_device_name();
+  self.name    = (nm && nm[0]) ? nm : (const char*)g_device.device_id;
+  self.product = "canary-wap";
+  self.online  = 1;   // we are answering this request, so we are up
+  // Honest coarse chain state: OK unless tamper is latched or a witness record
+  // failed verification. No hashes, no seq internals leaked beyond the height.
+  self.chain_ok     = (!g_device.tamper_active && g_health.verify_failures == 0) ? 1 : 0;
+  self.chain_height = (int)(g_device.seq & 0x7fffffff);
+  char body[256];
+  fleet_selfreport_build(body, sizeof(body), &self);
+  return http_send_json(req, body);
+}
+
+/* OPTIONS /api/fleet — CORS preflight (DISCOVERY.md). A same-origin or simple
+ * cross-origin GET doesn't trigger a preflight, but answering it keeps stricter
+ * clients happy. http_send_json already sends Access-Control-Allow-Origin: *. */
+static esp_err_t handle_fleet_options(httpd_req_t* req) {
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, OPTIONS");
+  httpd_resp_set_status(req, "204 No Content");
+  return httpd_resp_send(req, "", 0);
+}
+
 /* Pairing QR: SVG QR of the compact provisioning receipt, scanned by the
  * Canary Vision companion app's "Scan pairing QR" fallback.
  *
@@ -8129,12 +8169,13 @@ static void start_http_server() {
 #else
   const int ble_discovery_handlers = 0;
 #endif
+  const int fleet_handlers = 2;       // /api/fleet GET + OPTIONS (DISCOVERY.md)
   const int handler_headroom = 24;    // Reserve for future additions
   const int total_handlers = base_handlers + csi_handlers + wifi_presence_handlers
       + rf_presence_handlers + datamgmt_handlers + household_handlers
       + audible_chirp_handlers + audio_handlers + camera_handlers + qr_handlers
       + vault_handlers + mesh_handlers + chirp_handlers + bluetooth_handlers
-      + ble_discovery_handlers + handler_headroom;
+      + ble_discovery_handlers + fleet_handlers + handler_headroom;
 
   // ── Start HTTPS server (port 443) if TLS cert is available ──
 #if SECURACV_HAS_HTTPS_SERVER
@@ -8480,6 +8521,14 @@ register_extra_routes:
   // Bearer-gated from day one (see spec/beacon_channel_v0.md §10).
   beacon_api::register_routes(active_server, g_device.api_token_str);
 #endif
+
+  // Coarse, unauthenticated fleet presence — the DISCOVERY.md /api/fleet
+  // contract the Witness Wall + Flasher read. Discoverable at
+  // canary.local/api/fleet (this device already advertises canary.local).
+  httpd_uri_t fleet_get = { .uri = "/api/fleet", .method = HTTP_GET, .handler = handle_fleet };
+  httpd_register_uri_handler(active_server, &fleet_get);
+  httpd_uri_t fleet_opt = { .uri = "/api/fleet", .method = HTTP_OPTIONS, .handler = handle_fleet_options };
+  httpd_register_uri_handler(active_server, &fleet_opt);
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "API server started",
              g_tls_enabled ? "HTTPS port 443" : "HTTP port 80");

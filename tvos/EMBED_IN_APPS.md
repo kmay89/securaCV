@@ -52,12 +52,18 @@ Every step is wrapped so it can **never** affect the flash flow; if nothing
 answers (older build, or nothing serving `/api/fleet` yet), the simulated
 appearance stands.
 
-> **Honest prerequisite for *real* devices to populate:** something on the LAN
-> has to answer `GET /api/fleet` — the hub/kernel, or a `canary-wap` firmware
-> endpoint (the contract in [`discovery/DISCOVERY.md`](discovery/DISCOVERY.md)).
-> That firmware/kernel endpoint is the remaining real-world enabler; until it
-> ships, `witness_discover` simply finds nothing and the simulated appear is
-> what you see. Verifying the native command still needs a macOS/Tauri build.
+> **Real devices now populate:** the firmware answers `GET /api/fleet` — both
+> `canary-wap` (ESP-IDF `esp_http_server`) and `canary-display` (Arduino
+> `WebServer`) serve the coarse presence/health contract from one shared,
+> host-tested builder (the parity core in
+> `firmware/common/fleet_selfreport/`; see
+> [`discovery/DISCOVERY.md`](discovery/DISCOVERY.md) and
+> [`../docs/FLEET_PARITY.md`](../docs/FLEET_PARITY.md)). So a just-flashed
+> `canary-wap` at `canary.local/api/fleet` is exactly what `witness_discover`
+> finds and populates the wall from. If a board on the LAN doesn't serve the
+> route yet (older build), `witness_discover` simply finds nothing and the
+> simulated appear stands. Verifying the native command still needs a
+> macOS/Tauri build.
 
 ## The Flasher — the magic moment
 
