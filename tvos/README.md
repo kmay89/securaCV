@@ -96,6 +96,13 @@ you can point the emulator at live are in
 python3 tvos/discovery/mock-kernel.py     # then Connect the emulator to it
 ```
 
+## Put it inside the Flasher & the Lab
+
+The emulator is one self-contained web view, so it drops into both Tauri apps —
+including the "flash a Canary and watch it appear on the wall" moment in the
+Flasher. The integration plan (and why it needs a macOS/Tauri build to verify
+before shipping) is in **[`EMBED_IN_APPS.md`](EMBED_IN_APPS.md)**.
+
 ## Trademarks
 
 Apple, Apple TV, tvOS, Siri, Mac, iPhone, iPad, HomeKit, AirPlay, Xcode, and
