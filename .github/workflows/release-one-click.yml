@@ -1,0 +1,138 @@
+# One-click whole-pipeline launcher — build/publish the apps AND deploy the web.
+#
+# The single button that runs everything that ships SecuraCV to users:
+#   • SecuraCV Flasher (macOS + Linux) → desktop-flasher-release.yml
+#   • SecuraCV Lab     (macOS + Linux) → desktop-release.yml
+#   • canary.local site → GitHub Pages → pages.yml
+#
+# Use from GitHub: Actions → "Release — one click (apps + web)" → Run workflow.
+#   • Leave "publish" UNCHECKED for a dev pass — build-only smoke artifacts,
+#     nothing published. Check it to cut real releases.
+#   • "deploy_web" (default on) redeploys the live site.
+#   • "apps" picks which desktop apps to run (both / flasher / lab / none).
+#
+# This is a thin launcher: it dispatches the existing per-target workflows
+# (the same ones you can run individually) via createWorkflowDispatch, so each
+# target keeps its own build logic, signing, and concurrency guard. Watch the
+# linked runs it starts for progress — this job finishes as soon as they're
+# queued. Mirrors the proven fan-out in mac-apps-release.yml, extended to the
+# Linux app builds and the web deploy.
+name: Release — one click (apps + web)
+run-name: >-
+  Release — ${{ inputs.publish && 'PUBLISH' || 'dev build' }}${{ inputs.deploy_web && ' + deploy web' || '' }} (${{ inputs.apps }}) — @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish real releases (unchecked = dev build-only smoke run)"
+        type: boolean
+        default: false
+      apps:
+        description: "Which desktop apps to build/publish"
+        type: choice
+        options:
+          - both
+          - flasher
+          - lab
+          - none
+        default: both
+      deploy_web:
+        description: "Also deploy the canary.local site to GitHub Pages"
+        type: boolean
+        default: true
+
+# Dispatching other workflows needs actions: write; nothing here touches
+# contents directly (each dispatched workflow elevates its own permissions).
+permissions:
+  actions: write
+  contents: read
+
+# One launcher per ref; a double-click queues rather than fanning out twice.
+concurrency:
+  group: release-one-click-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    name: Launch the whole pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch app + web workflows
+        uses: actions/github-script@v8
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          APPS: ${{ inputs.apps }}
+          DEPLOY_WEB: ${{ inputs.deploy_web }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ref = context.ref.replace('refs/heads/', '').replace('refs/tags/', '');
+            const publish = process.env.PUBLISH === 'true';
+            const apps = process.env.APPS;
+            const deployWeb = process.env.DEPLOY_WEB === 'true';
+            const wantApp = (name) => apps === 'both' || apps === name;
+
+            // Each target is the existing per-workflow contract:
+            //  - desktop-flasher-release: dry_run=true means build-only
+            //  - desktop-release (Lab):   publish=false means build-only
+            //  - pages: no inputs; it deploys the current site
+            const targets = [];
+            if (wantApp('flasher')) targets.push({
+              workflow_id: 'desktop-flasher-release.yml',
+              label: 'SecuraCV Flasher (macOS + Linux)',
+              inputs: { dry_run: String(!publish) },
+            });
+            if (wantApp('lab')) targets.push({
+              workflow_id: 'desktop-release.yml',
+              label: 'SecuraCV Lab (macOS + Linux)',
+              inputs: { publish: String(publish) },
+            });
+            if (deployWeb) targets.push({
+              workflow_id: 'pages.yml',
+              label: 'canary.local site → GitHub Pages',
+              inputs: {},
+            });
+
+            if (targets.length === 0) {
+              core.warning('Nothing selected: apps=none and deploy_web unchecked. No workflows dispatched.');
+              return;
+            }
+
+            const started = [];
+            const failed = [];
+            for (const t of targets) {
+              try {
+                core.info(`Dispatching ${t.label} on ${ref} (publish=${publish})`);
+                await github.rest.actions.createWorkflowDispatch({
+                  owner, repo, workflow_id: t.workflow_id, ref, inputs: t.inputs,
+                });
+                started.push(t.label);
+              } catch (err) {
+                failed.push(`${t.label} — ${err.message}`);
+                core.error(`Failed to dispatch ${t.label}: ${err.message}`);
+              }
+            }
+
+            await core.summary
+              .addHeading('One-click release launched')
+              .addRaw(`**Mode:** ${publish ? '🚀 PUBLISH real releases' : '🧪 dev build-only smoke run'}`).addBreak()
+              .addRaw(`**Ref:** \`${ref}\``).addBreak()
+              .addHeading('Dispatched', 3)
+              .addList(started.length ? started : ['(none)'])
+              .write();
+
+            if (failed.length) {
+              await core.summary.addHeading('Failed to dispatch', 3).addList(failed).write();
+              core.setFailed(`Some workflows were not dispatched:\n${failed.join('\n')}`);
+              return;
+            }
+
+            core.notice(
+              (publish
+                ? 'Publishing: watch the linked runs — Flasher publishes directly, Lab creates a draft release'
+                : 'Dev smoke run: download each run’s build artifacts when they finish') +
+              (deployWeb ? '. The site redeploys to GitHub Pages.' : '.')
+            );
