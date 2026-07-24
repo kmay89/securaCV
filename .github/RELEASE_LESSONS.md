@@ -73,6 +73,39 @@ any platform.
 
 ## Entries
 
+### 2026-07-24 — A required store asset was missing, and the obvious gate for it would have failed for the wrong reason
+
+- **Symptom:** `tvos/WitnessWall/project.yml` set
+  `ASSETCATALOG_COMPILER_APPICON_NAME` to an asset catalog that did not exist.
+  The simulator build passed (icons aren't required there), so CI was green —
+  but `altool --validate-app` rejects a tvOS archive with no app icon or
+  top-shelf image, so the release path could never have shipped. Caught in
+  review, not by any check.
+- **Cause:** tvOS icons are not one PNG. The App Icon is a **layered image
+  stack** (Back/Middle/Front, parallaxed by the focus engine) in two sizes,
+  plus two top-shelf images at @1x and @2x — ~10 images and a tree of
+  `Contents.json`. Nothing verified they existed, and the only build that would
+  have noticed was the one gated behind an Apple account nobody had yet.
+- **Fix:** generate them (`tvos/scripts/make_app_icon.py`) and commit them —
+  the same generated-and-committed contract the website uses for its glTF
+  models. `release-tvos.sh` fails early and by name if the catalog is missing,
+  and `tvos/scripts/check_app_icon.py` runs in PR CI.
+- **The part worth generalizing:** that CI check is **structural, not a
+  byte-diff against a regenerated copy**. The icon composites a PNG through
+  Pillow, whose resampling output can differ between versions — so a byte-diff
+  would go red because a runner image bumped a dependency, with nothing wrong
+  in the change under test. A gate that fails for reasons unrelated to the diff
+  trains people to ignore it, which is worse than not having it. Assert the
+  property that actually matters (every required image exists, at the exact
+  size the store demands) and leave incidental bytes alone. Byte-exactness is
+  the right check only where the generator is genuinely deterministic and
+  dependency-free — which is why the website's `.glb` models *do* get one.
+- **Applies to:** every store asset on every platform (Apple icons, Samsung
+  `.wgt` icons, Play Store feature graphics). If a store requires an asset,
+  something in CI must assert it exists at the required size — the build
+  succeeding is not evidence, because the build that checks it is usually the
+  one you can't run yet.
+
 ### 2026-07-24 — The tvOS pipeline was fully wired to an app that did not exist; every gate it had was green
 
 - **Symptom:** `tvos-release.yml` existed, passed `ci_policy_check.py`, and was

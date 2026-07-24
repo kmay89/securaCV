@@ -81,21 +81,18 @@ jobs:
         run: cargo test --all-targets
 
       # The tvOS asset catalog is generated and committed (tvOS icons are
-      # layered image stacks — ~20 files). Same contract as the website's glTF
-      # models: the generator is the source of truth, and CI fails if the
-      # committed bytes drift from it. Without an icon, App Store Connect
-      # rejects the archive — so this failing here beats altool failing later.
-      - name: App icon matches its generator
-        run: |
-          set -euo pipefail
-          python3 tvos/scripts/make_app_icon.py
-          if ! git diff --quiet -- tvos/WitnessWall/Support/Assets.xcassets; then
-            echo "::error::the committed tvOS asset catalog no longer matches tvos/scripts/make_app_icon.py."
-            echo "Regenerate and commit it:  python3 tvos/scripts/make_app_icon.py"
-            git diff --stat -- tvos/WitnessWall/Support/Assets.xcassets
-            exit 1
-          fi
-          echo "Asset catalog matches its generator. ✅"
+      # layered image stacks). Without it, App Store Connect rejects the
+      # archive — so checking here beats altool failing minutes later.
+      #
+      # Deliberately a STRUCTURAL check, not a byte-diff against a regenerated
+      # copy. The icon composites brands/logo_512x512.png through Pillow, and
+      # Pillow's resampling output can differ between versions — a byte-diff
+      # would go red because a runner image bumped a dependency, which is
+      # exactly the kind of spurious failure this pipeline must not have. What
+      # actually matters is that every required image exists at the exact size
+      # Apple demands, and that is what this asserts.
+      - name: App icon catalog is complete and correctly sized
+        run: python3 tvos/scripts/check_app_icon.py
 
   # ── The app, on the tvOS simulator ─────────────────────────────────────────
   # No signing (CODE_SIGNING_ALLOWED=NO) and no secrets, so this runs on forks

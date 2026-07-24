@@ -36,6 +36,9 @@ tvos/
 └── scripts/
     ├── build-witness-core.sh     ← builds + stages the core (device + simulator)
     ├── stamp_build.sh            ← build identity for the About/Health panel
+    ├── make_app_icon.py          ← generates the icon: our standard Canary on
+    │                               a birdfeeder, across the 3 parallax layers
+    ├── check_app_icon.py         ← CI gate: every image, at Apple's exact sizes
     └── release-tvos.sh           ← xcodebuild archive + export + upload to ASC
 ```
 
