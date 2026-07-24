@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+### firmware/common — power-event resilience + an honest outage log (shared core)
+
+- **A pure, host-tested decision core for "when did the power go out."** New
+  `firmware/common/power/power_events.h` classifies how the *previous* power
+  session ended, from the reset cause plus a clean-shutdown flag, an RTC-domain
+  survival marker, and a liveness heartbeat — and names each event the correct
+  way: **cold boot**, **clean reboot**, **brownout reset** (supply *sagged*
+  below the detector), **power restored (outage)** (mains lost while running,
+  now back), and **fault reset** (a crash, tracked separately). It keeps a
+  durable ring of the last events plus monotonic counters (outages, brownouts,
+  longest outage). Crucially honest: a device can't record the instant it lost
+  power (it's off), so an outage carries an explicit **lower-bound** duration
+  (now − last-seen-alive), never a fabricated timestamp.
+- **Proven, not reviewed.** `firmware/tests_host/test_power_events.cpp` (66
+  checks, `-Wall -Wextra -Werror`, wired into the common host suite) pins the
+  whole classification table, the terminology, the lower-bound arithmetic, and
+  the ring/counter behavior.
+- **Shared by construction.** The header sits on every firmware's include path
+  (`-I firmware/common`), so all Canaries adopt the same logic. Following the
+  repo's core-first convention (as with `boot_policy.h`), the pure core lands
+  here host-tested; the per-firmware boot-path glue lands separately and
+  hardware-validated — the recipe, the brownout-detector hardening notes, and
+  the witnessed-event option are in `docs/design/power_events.md`. The 4.3C
+  (which has a PCF85063 RTC for real wall-clock times) is the priority surface;
+  its README's "staged, not started" outage line is now half-built.
+- **Canary base reference wiring.** `firmware/canary/include/canary_power_events.h`
+  is the boot-path glue — `on_boot()` (classify the previous session's ending +
+  append to the NVS log + console line), `witness_incident()` (sign a restored-
+  outage/brownout record), `heartbeat()` (the loop liveness persist, clock-
+  gated) — wired into `main.cpp` at three sites. It feeds the pure core real
+  signals (esp_reset_reason, an RTC-domain survival marker, the boot counter)
+  and is the copy-me template for the other firmwares. Its C++ + core-API usage
+  is verified against the real header signatures; the ESP build compiles on CI.
+
 ### canary-display — Canary Voice: a browser preview that can't rot, and a sound clearance guard
 
 - **You can hear the signatures now — and the preview can't drift.** A browser
@@ -46,6 +80,38 @@
   now keeps a board's committed entry — `verified_utc` included — verbatim
   when a clean fetch finds no factual change, so the freshness job only files
   a PR when facts actually move (the date means "as-of the current facts").
+
+### canary-local — the 4.3C mic made visible, and drift-locked against rot
+
+- **The decision core, in the browser.** New `assets/mic-sim.js` is a DOM-free
+  1:1 JavaScript port of the firmware's `mic_logic.h` — the adaptive
+  noise-floor `Envelope`, the NFPA-72 T3 / UL-2034 T4 `CadenceDetector`, the
+  opt-in wake-on-sound `TransientDetector`, the sensitivity presets, and the
+  listening `Gate` — with the same integer arithmetic. It takes an RMS
+  **scalar** per frame, never samples, exactly like the runtime past its
+  privacy barrier.
+- **No rot: it's re-pinned to the firmware every CI run.** New
+  `tests/mic.test.js` reads the committed Arduino mirror of `mic_logic.h`,
+  asserts every constant (presets, beep windows, gaps, wake threshold,
+  refractory, wire names) matches the port, **and replays the host test's own
+  scenarios through the JS** — smoke needs two cycles, a doorbell/speech never
+  alarms, zero-duration timing fails safe, the floor self-calibrates, wake
+  fires once per onset. A drift on either side breaks the build.
+- **The magic: it runs in the browser two ways.** New page `dash-mic.html`
+  drives that core from scripted sounds (smoke, CO, doorbell, a door close,
+  speech — the alarms fire, the non-alarms correctly don't) **or** from the
+  visitor's live microphone, reducing each 20 ms to one loudness number and
+  showing exactly that number as the only thing crossing the barrier. Same
+  gesture-gated, discard-every-frame, never-recorded safeguards as the WAP
+  acoustic bench, and a standing "demonstration, not a life-safety device"
+  line.
+- **Reassurance, from one source.** The page's does / never-does copy comes
+  from `MIC_FACTS` in the sim and the numbers from the drift-locked constants,
+  so the words and the figures can't disagree with the firmware. Linked from
+  the fleet emulator and the WAP bench; registered in the Lab manifest.
+- **The help + flasher match it.** The display usability protocol's mic task
+  gains wake-on-sound probes and a comprehension pre-check against the new
+  page; the flasher's display twin points to the same does/doesn't mic bench.
 
 ### canary-display — the 4.3C mic front end wired (ES7210 bring-up)
 

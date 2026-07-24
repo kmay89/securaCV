@@ -82,7 +82,16 @@ the glass stays lit. Switch ON + charged pack, pull USB — stays lit
 worth wanting is the 4.3B capability map's battery line, on this board:
 *"cut the power, the Canary keeps witnessing"* — a schematic-confirmed
 sense pin plus an on-battery/outage event would let the dash report the
-power cut it survives. Staged, not started.
+power cut it survives. **Half-built now:** the decision + log half exists
+and is host-tested —
+[`firmware/common/power/power_events.h`](../../common/power/power_events.h),
+which classifies a boot's power lineage (cold boot / clean reboot / brownout
+/ restored outage) and keeps a durable outage log with an honest lower-bound
+duration (see [`docs/design/power_events.md`](../../../docs/design/power_events.md)).
+This board is the *ideal* home for it — its PCF85063 RTC gives real
+wall-clock times for the log. What remains is the board-side glue: the
+schematic-confirmed battery/mains-present sense pin (for the on-battery
+transition) and the `setup()`/loop wiring per the recipe.
 
 ## Bench bring-up (the session this board is bought for)
 
