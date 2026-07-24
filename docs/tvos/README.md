@@ -165,9 +165,22 @@ is built so it can't quietly rot. Full mapping in
 [`.github/workflows/tvos-release.yml`](../../.github/workflows/tvos-release.yml),
 gated to a friendly no-op until you enable it — see [`../../tvos/README.md`](../../tvos/README.md).
 
+Want to try it on hardware? The fast, low-headache runbook — AirPlay demo,
+on-device Xcode build with a free Apple ID, then TestFlight — is
+[`tvos/RUN_ON_APPLE_TV.md`](../../tvos/RUN_ON_APPLE_TV.md).
+
 ---
 
 Related reading: [`spec/invariants.md`](../../spec/invariants.md) ·
 [`docs/RELEASE_PROCESS.md`](../RELEASE_PROCESS.md) ·
 [`docs/firmware_ota.md`](../firmware_ota.md) ·
 [`desktop-lab/MOBILE.md`](../../desktop-lab/MOBILE.md)
+
+## Trademarks
+
+Apple, Apple TV, tvOS, Siri, Mac, iPhone, iPad, HomeKit, AirPlay, Xcode, and
+TestFlight are trademarks of Apple Inc., registered in the U.S. and other
+countries and regions. App Store and App Store Connect are service marks of
+Apple Inc. SecuraCV is an independent project by Errer Labs and is **not
+affiliated with, endorsed, sponsored, or certified by Apple Inc.** References to
+Apple products are nominative — for identification and interoperability only.

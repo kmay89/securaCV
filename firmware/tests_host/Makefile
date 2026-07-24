@@ -122,6 +122,29 @@ VISION_PIPE_HDR = $(VISION_INC)/canary/vision/detection_pipeline.h \
                   $(VISION_INC)/canary/types.h
 VISION_PIPE_BIN = $(BUILD_DIR)/test_vision_detection_pipeline
 
+# Sentinel multi-sensor fusion brain (common/fusion/sentinel_fusion.*): the
+# board-agnostic evidence-fusion engine compiled by projects/canary-sentinel on
+# device and here on the host. Pins the anti-evasion scoring (independence
+# bonus, denied-channel suspicion, silent-body anomaly) and the debounced
+# decision FSM. Built with -DSENTINEL_FUSION_TEST_HOST so the reference
+# default_standard_config() is available to the suite. Pure C++, no Arduino.
+FUSION_DIR  = ../common/fusion
+FUSION_SRC  = $(FUSION_DIR)/sentinel_fusion.cpp
+FUSION_HDR  = $(FUSION_DIR)/sentinel_fusion.h $(FUSION_DIR)/sentinel_channels.h
+FUSION_BIN  = $(BUILD_DIR)/test_sentinel_fusion
+
+# Preset -> FusionConfig -> engine pipeline (projects/canary-sentinel's
+# sentinel_config.h over configs/canary-sentinel/<preset>). Built once per
+# preset: the preset dir is placed on the include path so <config.h> resolves
+# to it, and its name is passed for the banner. Two presets cover both the
+# full stack (door) and the reduced Lite tier (mailbox-lite, radar/CSI off).
+SENT_PROJ_INC = ../projects/canary-sentinel/include
+SENT_CFG_DIR  = ../configs/canary-sentinel
+SENT_PRESET_HDR = $(SENT_PROJ_INC)/canary/sentinel_config.h \
+                  $(FUSION_DIR)/sentinel_fusion.h $(FUSION_DIR)/sentinel_channels.h
+PRESET_DOOR_BIN = $(BUILD_DIR)/test_sentinel_preset_door
+PRESET_LITE_BIN = $(BUILD_DIR)/test_sentinel_preset_mailbox_lite
+
 .PHONY: all run clean
 all: run
 
@@ -167,7 +190,16 @@ $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 $(VISION_PIPE_BIN): test_vision_detection_pipeline.cpp $(VISION_PIPE_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_detection_pipeline.cpp -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN)
+$(FUSION_BIN): test_sentinel_fusion.cpp $(FUSION_SRC) $(FUSION_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@
+
+$(PRESET_DOOR_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/door/config.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="door"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/door test_sentinel_presets.cpp $(FUSION_SRC) -o $@
+
+$(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/mailbox-lite/config.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -181,6 +213,9 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(MANIFEST_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
+	./$(FUSION_BIN)
+	./$(PRESET_DOOR_BIN)
+	./$(PRESET_LITE_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)
