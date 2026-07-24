@@ -992,6 +992,327 @@
       }
     },
     {
+      "id": "canary-clime",
+      "family": "canary-clime",
+      "kind": "concept",
+      "name": "Canary Clime",
+      "tagline": "Watches a room's temperature, humidity, air quality — and whether it still has power — and pokes you when it drifts out of your pet's safe band. Coming soon.",
+      "board": "XIAO ESP32-S3/C6 + SHT4x (+ Sensirion SEN5x/SCD41 or an AirGradient node) + mains sense (+ Wio-SX1262 for the outage mesh path)",
+      "senses": [
+        "temperature + humidity vs a species/zone safe band (concept)",
+        "air quality: PM2.5 / CO2 / VOC, honest thresholds (concept)",
+        "mains power loss, by absence-inference over mesh (concept)"
+      ],
+      "shows": [],
+      "modality": "contact",
+      "network": {
+        "mdns": "advertise-only on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "wellbeing channel (non-diagnostic, P1 opt-in, HA-only) + coarse threshold alerts via the alert relay + optional TamperDetected for mains-lost"
+      },
+      "docs": [
+        "docs/hardware/canary_clime_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A small node that watches a room's temperature, humidity, and air quality — and whether it still has power — and pokes your phone when the room leaves your pet's safe band, the air turns smoky or stuffy, the HVAC seems to have failed, or the power goes out. Folds pet temp/thermostat, air quality, and power-outage alerting into one environmental node, because they share sensors, thresholds, and the same remote-alert relay.",
+        "points": [
+          {
+            "k": "Detect HVAC FAILURE, not just a threshold",
+            "v": "a fixed threshold is slow. Watch rate-of-change — temp rising when the AC should cool, or falling in winter past a slope — to catch a furnace/AC (or power) failure minutes early; species/zone safe bands, not one number (a cold-blooded pet in a failed vivarium heater is a fast emergency)."
+          },
+          {
+            "k": "Air quality: integrate then own",
+            "v": "integrate AirGradient now (open HW+FW, local HTTP API + MQTT, zero new firmware) -> build our own XIAO + Sensirion SEN5x + SCD41 node later. Wildfire-smoke PM2.5 (a rate-of-change spike) is the killer use case; first alert at EPA AQI 101 (PM2.5 > 35.4)."
+          },
+          {
+            "k": "Two honesty rules the design encodes",
+            "v": "eCO2 is NOT CO2 (it's a VOC-derived guess — use true NDIR for CO2); and CO is NOT CO2 (carbon monoxide is a separate, acute killer needing a dedicated life-safety alarm). The '1000 ppm CO2 = unhealthy' line is a retired ASHRAE myth — CO2 is a ventilation proxy, framed 'ventilate', never 'danger'."
+          },
+          {
+            "k": "The outage is the same design problem",
+            "v": "losing power is the alert whose transport must survive losing power. Detect it by ABSENCE (heartbeat silence, not a heroic last gasp) and carry the poke out over LoRa/Meshtastic to an independently-powered gateway, because WiFi/internet die too. Payoff for pets: power out -> HVAC dead -> you're told while you can still act."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Temp/RH",
+            "v": "Sensirion SHT4x (or BME280 for pressure) — accurate, cheap, low-power; away from self-heating parts"
+          },
+          {
+            "k": "Air quality (own node)",
+            "v": "Sensirion SEN5x (PM1/2.5/10 + VOC/NOx index + T/RH in one) + SCD41 true NDIR CO2; CO stays a separate dedicated life-safety sensor, never conflated with CO2"
+          },
+          {
+            "k": "Air quality (integrate)",
+            "v": "an off-the-shelf AirGradient ONE via GET /measures/current or its native MQTT (mqttBrokerUrl) -> our adapter maps JSON to wellbeing signals + threshold alerts; no cloud, no fork"
+          },
+          {
+            "k": "Power / outage",
+            "v": "opto/mains-present input + a mains-node heartbeat; a battery/solar/mesh peer infers the outage from silence; a supercap last-gasp is a best-effort bonus, never trusted"
+          },
+          {
+            "k": "Thresholds",
+            "v": "EPA AQI 101 (PM2.5 > 35.4) first alert + a wildfire-smoke rate-of-change spike; CO2 > ~1000 ppm 'ventilate', > ~1400 'poorly ventilated'; WHO 2021 (annual 5, 24h 15) for the healthy-air framing"
+          }
+        ],
+        "sources": [
+          {
+            "name": "AirGradient — open firmware + local API/MQTT",
+            "url": "https://github.com/airgradienthq/arduino/blob/master/docs/local-server.md"
+          },
+          {
+            "name": "EPA 2024 AQI PM2.5 breakpoints",
+            "url": "https://www.epa.gov/system/files/documents/2024-02/pm-naaqs-air-quality-index-fact-sheet.pdf"
+          },
+          {
+            "name": "ASHRAE indoor-CO2 position (the retired 1000 ppm myth)",
+            "url": "https://www.ashrae.org/file%20library/about/position%20documents/pd-on-indoor-carbon-dioxide-english.pdf"
+          },
+          {
+            "name": "Sensirion SCD4x true-NDIR CO2 datasheet",
+            "url": "https://sensirion.com/media/documents/48C4B7FB/64C134E7/Sensirion_SCD4x_Datasheet.pdf"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_clime_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: XIAO + SHT4x + a mains-present input -> temp/humidity wellbeing signals + safe-band + rate-of-change HVAC-failure alerts through the alert relay.",
+          "Air quality v1: integrate an AirGradient node via local API/MQTT; map PM2.5/CO2/VOC to wellbeing signals + EPA-AQI/CO2 threshold alerts (eCO2 and CO kept honest/separate).",
+          "Outage: mains-node heartbeat + absence-inference on a battery/mesh peer; carry the poke over Meshtastic to a powered gateway; supercap last-gasp as a bonus.",
+          "Air quality v2 (never-rot): our own XIAO + SEN5x + SCD41 node signing claims on-device.",
+          "Tune safe-band defaults per species and the HVAC/ smoke-spike slopes on real rooms; seed golden vectors."
+        ],
+        "request_title": "Concept request: Canary Clime (environmental & power witness)",
+        "request_body": "Seen the Clime concept card. What I'd want from an environmental/pet-climate + power node:\n\n- which animal/room and its safe temp/humidity band:\n- most worried about heat, cold, smoke/air, or power loss:\n- run Home Assistant, or want the ntfy/mesh path:\n- integrate an AirGradient you have, or want our own air node:\n"
+      },
+      "persona": {
+        "name": "Wisp the Weatherkeeper",
+        "accent": "sky blue and ember orange",
+        "shape": "soft canary with a little weather-vane crest and a barometer locket, one wing testing the air",
+        "story": "Wisp keeps the room the way your animals need it. It feels the heat, the chill, the stuffiness and the smoke, and it notices the moment the furnace quits or the power dies — then finds a way to reach you even when the house has gone dark and offline. It never films the room and never pretends a stuffy day is a dangerous one. Wisp wears a concept ribbon because honest products say what is real, and it will always tell you 'ventilate' instead of crying 'danger', and keep your CO alarm's job separate from its own.",
+        "specialty": "Environmental & power wellbeing concept",
+        "good_for": [
+          "Pets in rooms that must stay in a safe temp/humidity band",
+          "Wildfire-smoke and stuffy-room air awareness",
+          "Knowing the power (and the heat) went out while you're away"
+        ],
+        "catchphrase": "I keep the room right for them — and tell you the moment it isn't, even in the dark."
+      }
+    },
+    {
+      "id": "canary-hearth",
+      "family": "canary-hearth",
+      "kind": "concept",
+      "name": "Canary Hearth",
+      "tagline": "A low-res thermal sensor under the hood that notices a burner left hot and unattended, and relays your existing smoke alarm to your phone. No camera. Coming soon.",
+      "board": "XIAO ESP32-S3 + MLX90640 (32x24 thermal) + presence sensor + mic",
+      "senses": [
+        "unattended hot cooktop via low-res thermal + presence (concept)",
+        "dry-pan / scorch / flare / boil-over thermal signatures (concept)",
+        "relay of your existing smoke/CO alarm's T3/T4 tone (concept)"
+      ],
+      "shows": [],
+      "modality": "contact",
+      "network": {
+        "mdns": "advertise-only on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "AcousticImpulseInZone (alarm relay) + coarse cooking-awareness alerts via the alert relay; thermal frames processed on-device, never sent"
+      },
+      "docs": [
+        "docs/hardware/canary_hearth_research.md"
+      ],
+      "status": "coming soon — concept, awareness aid only (NOT a fire detector)",
+      "concept": {
+        "idea": "A low-resolution thermal sensor under the range hood that notices when a burner's been left hot and unattended — the leading cause of home fires — and a microphone that relays your existing smoke/CO alarm to your phone while you're out. Camera-free, alert-only. It is an AWARENESS AID, explicitly not a fire detector, not a substitute for UL smoke/CO alarms, and not an auto-shutoff.",
+        "points": [
+          {
+            "k": "The value is unattended cooking, not flames",
+            "v": "cooking is the #1 cause of home fires and unattended cooking is by far the leading ignition factor (~a third; NFPA ~172,900 fires/yr). So the hero detection is 'a hot cooktop persisting with NO motion in the room for N minutes' — thermal + presence fusion, not flame spectroscopy."
+          },
+          {
+            "k": "MLX90640, NOT AMG8833",
+            "v": "the hero is a 32x24 thermal array reading to +300 C (a pan runs 150-250 C, a dry pan 300 C+). The cheaper AMG8833 (8x8) saturates at 80 C and can't tell a simmer from a scorching dry pan — disqualifying. 768 pixels is witness-grade (no faces, no text): a sensor, not a camera."
+          },
+          {
+            "k": "Relay your existing alarm (the clever cheap add)",
+            "v": "a mic that matches the standardized T3 (fire) / T4 (CO) alarm cadence — not loudness — turns any UL alarm you own into a remote 'we heard your alarm' notification. Maps to the existing AcousticImpulseInZone claim; real prior art (FireAvert, ESPHome listeners)."
+          },
+          {
+            "k": "The honest safety line (non-negotiable)",
+            "v": "we have no actuator, so we're alert-only (the Wallflower lane), NOT the EN 50615 prevention lane. It does not replace UL smoke/CO alarms or an auto-shutoff, cannot suppress or shut off a fire, and may miss or false-alarm. We skip flame sensors (a flame != a hazard on gas, blind on electric/induction) and don't claim gas-leak detection."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Hero sensor",
+            "v": "Melexis MLX90640 32x24 thermal IR array (-40..+300 C), mounted under the hood looking down, ~2-4 Hz; detects per-burner hot/on, dry-pan scorch (runaway temp on low thermal mass), flare (hot-area growth), boil-over (hot region spreading past the pot footprint)"
+          },
+          {
+            "k": "Presence fusion",
+            "v": "a PIR or a reused kitchen Canary Sense radar -> 'hot cooktop + no human motion for N minutes' = the unattended-cooking alert, mirroring how Innohome/Inirv define hazard (minus their auto-shutoff — we have no actuator)"
+          },
+          {
+            "k": "Alarm relay",
+            "v": "an I2S/analog mic + a temporal-cadence matcher for the ISO 8201 / NFPA 72 T3 (three pulses) and T4 (four pulses) patterns at ~3-4 kHz; match cadence not loudness to reject kitchen clatter"
+          },
+          {
+            "k": "Privacy & scope",
+            "v": "thermal frames processed on-device, only the derived coarse claim leaves; no camera, no video. Gas leak (unlit gas) needs a proper catalytic/NDIR sensor and is explicitly out of scope; CO stays your dedicated alarm's job"
+          }
+        ],
+        "sources": [
+          {
+            "name": "NFPA — Home Cooking Fires (unattended = leading factor)",
+            "url": "https://www.nfpa.org/education-and-research/home-fire-safety/cooking"
+          },
+          {
+            "name": "Melexis MLX90640 datasheet (-40..+300 C)",
+            "url": "https://www.melexis.com/-/media/files/documents/datasheets/mlx90640-datasheet-melexis.pdf"
+          },
+          {
+            "name": "Panasonic Grid-EYE AMG8833 datasheet (0-80 C ceiling)",
+            "url": "https://cdn.sparkfun.com/assets/4/1/c/0/1/Grid-EYE_Datasheet.pdf"
+          },
+          {
+            "name": "ESPHome/HA smoke-alarm (T3) listener prior art",
+            "url": "https://theitgarage.wordpress.com/2020/07/22/adding-conventional-smoke-alarms-to-home-assistant/"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_hearth_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: MLX90640 under a hood + a presence sensor -> the unattended-cooking alert (hot region persisting with no motion for N minutes) through the alert relay; thermal processed on-device.",
+          "Add the acoustic T3/T4 alarm-cadence matcher -> AcousticImpulseInZone 'we heard your alarm'.",
+          "Tune per-burner clustering at real hood heights + dry-pan/flare/boil-over thresholds; golden vectors for classify_thermal_window() and match_alarm_cadence().",
+          "Lock the honest positioning copy (awareness aid, not a fire detector / not a substitute for UL alarms / no shutoff) into the product surface, not just docs.",
+          "Decide whether the thermal hazard earns its own claim kind or stays a relay alert (the one open dictionary question)."
+        ],
+        "request_title": "Concept request: Canary Hearth (stove awareness aid)",
+        "request_body": "Seen the Hearth concept card (awareness aid, NOT a fire detector). What I'd want:\n\n- gas, electric, or induction cooktop:\n- range hood height above the cooktop (for the thermal FOV):\n- most want unattended-cooking alerts, boil-over, or the smoke-alarm relay:\n- confirm you'll keep your UL smoke/CO alarms in place:\n"
+      },
+      "persona": {
+        "name": "Ember the Hearth Watcher",
+        "accent": "warm copper and safe amber",
+        "shape": "calm canary in a little chef's kerchief perched on a hood rail, watching the cooktop with a warm glow, no camera in sight",
+        "story": "Ember keeps an eye on the stove the honest way — by feeling the heat, not by filming your kitchen. It notices when a burner's been left hot with nobody around, and it listens for your real smoke alarm so it can tell you if it goes off while you're out. Ember wears a concept ribbon because honest products say what is real, and it will never call itself a fire alarm or ask you to unplug the one on your ceiling. It gives you a heads-up; it can't put out a fire.",
+        "specialty": "Cooking-awareness concept (alert-only)",
+        "good_for": [
+          "Knowing a burner was left hot and unattended",
+          "Relaying your existing smoke/CO alarm to your phone",
+          "Camera-free kitchen awareness that keeps your certified alarms in charge"
+        ],
+        "catchphrase": "I feel the heat, not film your kitchen — and I'll never replace your smoke alarm."
+      }
+    },
+    {
+      "id": "canary-chore",
+      "family": "canary-chore",
+      "kind": "concept",
+      "name": "Canary Chore",
+      "tagline": "Stick it on the washer or dryer; it knows from vibration when the cycle's running and — more usefully — when it's done, and pokes you. Coming soon.",
+      "board": "XIAO ESP32-C3/C6 + LIS3DH accelerometer (the Fence Guard part)",
+      "senses": [
+        "appliance running via sustained vibration (concept)",
+        "cycle done via vibration ceasing, absence-inferred (concept)",
+        "optional unbalanced-load 'washer is walking' thud (concept)"
+      ],
+      "shows": [],
+      "modality": "contact",
+      "network": {
+        "mdns": "advertise-only on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "coarse 'cycle done' poke via the alert relay; optional ContactStateChange (running<->idle)"
+      },
+      "docs": [
+        "docs/hardware/canary_chore_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A coin-sized node you stick on the washer or dryer (or any machine that shakes while it works) that knows — purely from vibration — when the cycle is running and, more usefully, when it's done, and pokes your phone so the laundry doesn't sit and sour. No electrical work, no smart plug, no per-appliance wiring: an accelerometer on the shell, and 'done' inferred from stillness.",
+        "points": [
+          {
+            "k": "Vibration is the universal tell",
+            "v": "a washer/dryer vibrates while running and goes still when done. A stick-on accelerometer works on any brand, gas or electric, with no electrical access — cheaper and simpler than a smart plug, CT clamp, or a brand-specific end-of-cycle-beep listener."
+          },
+          {
+            "k": "'Done' by absence, the fleet's idiom",
+            "v": "running = sustained vibration above a learned floor; done = vibration ceasing for N minutes — the same presence-via-active-signal / absence-via-timeout pattern used for Car Mode, Guardian, the meshtastic adapter and the power-outage witness. Robust, no coupling to the machine's electronics."
+          },
+          {
+            "k": "Reuses the Fence Guard part",
+            "v": "the sensor is an LIS3DH accelerometer on I2C with a hardware motion/vibration interrupt so the MCU deep-sleeps and wakes only when the machine shakes — the exact part Fence Guard specs, ~$1-2, adhesive-mount, months on a small battery."
+          },
+          {
+            "k": "A convenience witness, not a safety device",
+            "v": "on-device processing emits only the coarse state, never a raw motion trace; it senses a MACHINE's vibration, nothing about people. It won't catch a leak or an overheat — it's 'your laundry's done / your washer's walking', delivered through the alert relay."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Sensor",
+            "v": "LIS3DH (or MPU-class) accelerometer, hardware vibration-wake interrupt -> deep-sleep until the machine shakes; a brief auto-learn of the idle floor and running band on first use (machines vibrate differently)"
+          },
+          {
+            "k": "Detection",
+            "v": "sustained-vibration = running (short debounce rejects a door slam / passing truck); ceasing-for-N-minutes = done; an off-rhythm spike = optional unbalanced-load 'walking' nudge"
+          },
+          {
+            "k": "Why not the alternatives",
+            "v": "smart plug/CT clamp needs electrical access (240 V dryer circuits, panel); a contact sensor tells door state not cycle-done; an end-of-cycle-beep listener is brand-specific and easily masked — vibration is the stick-on universal"
+          },
+          {
+            "k": "Latency, honestly",
+            "v": "'done' reports shortly after the machine stops (the absence timeout, a couple of minutes), not the instant — because instant-stop is exactly the unreliable signal we avoid elsewhere"
+          }
+        ],
+        "sources": [
+          {
+            "name": "LIS3DH accelerometer datasheet (motion-wake interrupt)",
+            "url": "https://www.st.com/resource/en/datasheet/lis3dh.pdf"
+          },
+          {
+            "name": "Fence Guard research (the shared LIS3DH vibration kit)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_fence_guard_research.md"
+          },
+          {
+            "name": "ESPHome accelerometer / vibration sensor component",
+            "url": "https://esphome.io/components/sensor/mpu6050.html"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_chore_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: LIS3DH on a XIAO stuck to a real washer/dryer, logging vibration traces to tune the running/done thresholds + debounce and to seed golden vectors for a pure classify_cycle() function.",
+          "Auto-learn the idle floor + running band on first use so it adapts to any machine.",
+          "Emit 'cycle done' as a coarse poke through the alert relay; optional ContactStateChange for the timeline.",
+          "Add the optional unbalanced-load 'washer is walking' anomaly nudge.",
+          "Deep-sleep-until-vibration power validation for multi-month battery, or USB if mains is handy."
+        ],
+        "request_title": "Concept request: Canary Chore (appliance-cycle witness)",
+        "request_body": "Seen the Chore concept card. What I'd want from a stick-on laundry/appliance sensor:\n\n- washer, dryer, or another vibrating machine:\n- battery or a nearby USB outlet:\n- want just 'done', or also the 'washer is walking' unbalanced-load nudge:\n- which alert channel (ntfy / Home Assistant / other):\n"
+      },
+      "persona": {
+        "name": "Tumble the Chore Minder",
+        "accent": "fresh-linen white and soft suds blue",
+        "shape": "round little canary riding a spinning drum like a wheel, feeling the rhythm with both feet",
+        "story": "Tumble rides along on the washing machine and feels the cycle in its feet — the busy shake of a running load, then the stillness that means it's done. When the machine goes quiet, Tumble lets you know so the laundry doesn't sit and sour. It knows nothing about you, only the rhythm of the machine. Tumble wears a concept ribbon because honest products say what is real, and it will admit it tells you a couple of minutes after the drum stops, not the very instant — because guessing the instant is the one thing that isn't reliable.",
+        "specialty": "Appliance-cycle convenience concept",
+        "good_for": [
+          "Knowing the laundry's done without hovering",
+          "Any brand of washer/dryer, no electrical work",
+          "A 'your washer is walking' unbalanced-load heads-up"
+        ],
+        "catchphrase": "I feel the machine's rhythm and tell you when it stops — nothing about you, just the drum."
+      }
+    },
+    {
       "id": "canary-vision-pro",
       "family": "canary-vision-pro",
       "kind": "concept",
