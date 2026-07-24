@@ -5,6 +5,11 @@
 // carries zero onboarding baggage at steady state — the WebServer, the DNS
 // socket, and the scan cache all free on return.
 #include <config.h>
+// Nightstand borrows the watch's small-portrait rendering (see splash.cpp for
+// the rationale); the standing face is portrait_ui.cpp.
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
+#define CD_FLAVOR_WATCH 1
+#endif
 
 // Library includes live ABOVE the feature gate on purpose: PlatformIO's LDF
 // (deep+ mode) evaluates preprocessor conditionals using build flags only —

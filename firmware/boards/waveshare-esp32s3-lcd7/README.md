@@ -43,8 +43,13 @@ and registry wiring are the next slice.
 
 ## Used By
 
-Not yet wired into a flavor (`used_by: []`). The Nightstand Line firmware —
-including the 5-point touch gestures — is staged in
-[`docs/hardware/display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md).
+| Flavor | Env | Notes |
+|--------|-----|-------|
+| `canary-display` | `canary-display-dash7` | Dash layout on 7" glass (reuses `dash_ui`) |
+
+Same firmware as the 4.3" Dash — only board pins + OTA product differ. Full
+5-point touch gestures are the follow-up (the pins already carry
+`TOUCH_MAX_POINTS 5`). Design:
+[`docs/hardware/display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md) §6.
 
 Pin definitions: [`pins/pins.h`](pins/pins.h) (authoritative).

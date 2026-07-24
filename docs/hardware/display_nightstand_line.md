@@ -1,8 +1,12 @@
 # The Nightstand Line — three new display boards (design & bring-up)
 
-**Status:** design + hardware bring-up reference. **Board pin maps landed** (`firmware/boards/…/pins/pins.h`,
-compile-pending, not bench-validated); the HAL / flavor / emulator / registry work is the next slice
-(§7). This doc extends the existing display design — [`display_living_canary.md`](./display_living_canary.md),
+**Status:** design + hardware bring-up reference. **Firmware landed** for the 172×320 portrait flavor
+(the `nightstand` flavor: `display_1in47.cpp` ST7789 HAL, `portrait_ui.cpp` face, `ambient_led.cpp`
+WS2812 beacon) and the `dash7` flavor (the 7" reusing the Dash), both compiled in CI via the
+`canary-display-nightstand-s3` and `canary-display-dash7` build envs — **compile-tested, not
+bench-validated**. Still staged (§7): the **C6 build** (toolchain-blocked on core-2.x vs 3.x graphics),
+the **emulator / Lab** wasm wiring, portrait-native **modal polish**, and true **5-point touch gestures**.
+This doc extends the existing display design — [`display_living_canary.md`](./display_living_canary.md),
 [`display_nightstand.md`](./display_nightstand.md), [`display_care_wave.md`](./display_care_wave.md),
 [`display_character.md`](./display_character.md) — it does **not** replace them.
 
@@ -125,31 +129,45 @@ is **true 5-point multitouch** (the GT911 already reports up to 5; the pins carr
 
 ---
 
-## 7 · Build plan — the remaining (coupled) slice
+## 7 · Build status — landed vs. staged
 
-The pin maps landed this pass. The rest is a **coupled unit** that must land together to stay CI-green (the
-build matrix + the byte-drift-gated emulator + the registry/`fw_train` tests), and needs the PlatformIO /
-Emscripten toolchain to compile and verify — so it is the next focused slice, honestly staged, **not faked**:
+**Landed this pass** (real firmware, compiled in CI on the S3 core-2.x graphics stack):
 
 1. **HAL** — `src/hal/display_1in47.cpp` (ST7789 via Arduino_GFX, the 34-px offset, per-board pins, LEDC
-   backlight, the WS2812 via RMT) behind a new `CD_FLAVOR_NIGHTSTAND` guard; the 7" reuses `display_dash.cpp`.
-2. **Config + envs + catalog** — `configs/canary-display/nightstand/config.h` (+ a `dash7` config), new
-   `[env:…]` per board in `envs/platformio/canary-display.ini` (each with its **own OTA product** string),
-   entries in `firmware/boards/boards.json` and the `firmware/flavors.json` build matrix + `size_guard`.
-3. **UI** — the 172×320 portrait layout (§5) and the 7" roomier Dash layout + 5-point gestures (§6).
-4. **Emulator** — new flavor branches in `canary-local/emulator/build.sh`
-   (`EXPORT_NAME=createCanaryEmuNightstand` / `…Dash7`), built `dist/*.js` + `.meta.json` with
-   `fw_version == fw_train == version.h`.
-5. **Lab wiring** — `registry.json` entries (`kind:"display"`, `glass{172,320,round:false,…}` / `{800,480,…}`,
-   `emulator{module,factory}`, `bench`, `persona`), the `<script>` tags in `canary-local/fleet.html`, and an
-   `app.js` `buildDisplaySheet()` **glass-sizing case for 172×320 portrait** (today it hardcodes
-   `round ? 232 : 464`).
-6. **Docs/tests** — index this doc; the `fw_train`/emulator drift tests must stay green.
+   day/night backlight profiles) behind the new `CD_FLAVOR_NIGHTSTAND` guard. The 7" reuses `display_dash.cpp`.
+2. **Ambient beacon** — `src/hal/ambient_led.cpp` + `include/canary/hal/ambient_led.h`: the WS2812 driven by
+   the core's RMT `neopixelWrite`, breathing the `canary_mark` waveform, hue = worst severity, **dark-when-safe
+   at night**. Ticked every loop pass in `main.cpp` (smooth breath), gated `FEATURE_AMBIENT_LED`.
+3. **The portrait face** — `src/ui/portrait_ui.cpp` (§5): the breathing color wash, the full-height living
+   canary (reusing the `canary_mark` engine), the severity-ordered witness column, the glance line.
+4. **Config + envs + catalog** — `configs/canary-display/{nightstand,dash7}/config.h`, the
+   `CD_FLAVOR_NIGHTSTAND` OTA branches, `[env:canary-display-nightstand-s3]` + `[env:canary-display-dash7]`
+   (each its own OTA product) added to `flavors.json`'s build matrix, and `boards.json` `used_by` wired.
+5. **Shared-surface fold-in** — the nightstand borrows the watch's small-portrait rendering for the shared
+   modal/support surfaces (`splash`/`settings`/`commission`/`onboard`/`provision`, via a per-TU flavor alias);
+   the standing fleet face is the bespoke `portrait_ui`.
 
-**Honest status tiering** (the repo's `compile-tested → verified` ladder): the pin maps are *vendor-sourced,
-compile-pending*; nothing here is bench-validated. The §7 slice starts at *compile-tested* once the toolchain
-builds it, and only reaches *verified* on real hardware — with the RGB timings, the CH422G bit map, and the
-ST7789 offset confirmed against the actual boards.
+**Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**
+
+- **The C6 build** (`canary-display-nightstand-c6`). Toolchain-blocked, not design-blocked: the ESP32-C6 needs
+  arduino-esp32 3.x (the pioarduino fork), but `canary-display`'s graphics stack is pinned to
+  `GFX@1.4.9` — the last **core-2.x**-compatible release. A core-3.x display base (GFX@^1.5.0 + an LVGL/NimBLE
+  3.x audit) is the gating work. The firmware itself is already C6-ready (single internal buffer, RMT LED); the
+  S3 sibling carries the flavor today.
+- **Emulator + Lab** — `build.sh` `createCanaryEmuNightstand`/`…Dash7`, the `dist/*.js` + `.meta.json`
+  (`fw_version == fw_train`), `registry.json` display entries (`glass{172,320,round:false,…}` / `{800,480,…}`),
+  the `fleet.html` `<script>` tags, and the `app.js` `buildDisplaySheet()` **172×320 portrait sizing case**
+  (today it hardcodes `round ? 232 : 464`). Needs Emscripten to build the committed wasm the `canary_local`
+  tests assert on — a toolchain-session slice.
+- **Portrait-native modal polish** — the shared modals render in the watch's 240-wide style on the 172-wide
+  glass (functional, slightly overflowing); a portrait pass is a follow-up.
+- **BOOT-button input + true 5-point gestures** — the 1.47" boards have no touch, so the button is the peek /
+  summon-nightlight / acknowledge surface (unwired today); the 7" GT911 5-point gestures (§6) ride the dash UI.
+
+**Honest status tiering** (`compile-tested → verified`): the landed flavors are *compile-tested* (CI builds
+`nightstand-s3` + `dash7`); nothing is bench-validated. *Verified* waits on real hardware — the RGB/ST7789
+timings, the CH422G bit map, the ST7789 offset, the S3 BGR/HSPI quirks, and the WS2812 color order confirmed
+against the actual boards.
 
 ---
 

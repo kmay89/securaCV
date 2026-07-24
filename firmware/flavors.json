@@ -33,7 +33,7 @@
   {
     "name": "canary-display",
     "dir": "firmware/projects/canary-display",
-    "build_envs": ["canary-display-watch", "canary-display-dash", "canary-display-playground", "canary-display-dash-b", "canary-display-dash-rs485", "canary-display-dash-can", "canary-display-dash-vault", "canary-display-dash-rtc", "canary-display-dash-espnow", "canary-display-dash-ble5", "canary-display-dash-modes", "canary-display-watch-modes", "canary-display-dash-mic"],
+    "build_envs": ["canary-display-watch", "canary-display-dash", "canary-display-playground", "canary-display-dash-b", "canary-display-dash-rs485", "canary-display-dash-can", "canary-display-dash-vault", "canary-display-dash-rtc", "canary-display-dash-espnow", "canary-display-dash-ble5", "canary-display-dash-modes", "canary-display-watch-modes", "canary-display-dash-mic", "canary-display-nightstand-s3", "canary-display-dash7"],
     "check_env": "canary-display-watch",
     "pre_step": "secrets_header",
     "size_guard": {
