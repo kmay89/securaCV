@@ -124,6 +124,12 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #ifdef CD_FLAVOR_DASH
 #include "dash_ui.h"
 #endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+#include "portrait_ui.h"
+#endif
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+#include "ambient_led.h"  // WS2812 across-room state beacon
+#endif
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
 #include <esp_task_wdt.h>
@@ -365,6 +371,9 @@ static void ui_ack_hold(bool active) {
 #endif
 #ifdef CD_FLAVOR_DASH
   canary::ui::dash_ui_ack_hold(active);
+#endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+  canary::ui::portrait_ui_ack_hold(active);
 #endif
 }
 
@@ -635,6 +644,9 @@ static void render(uint32_t now) {
 #ifdef CD_FLAVOR_DASH
       canary::ui::dash_ui_create();
 #endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+      canary::ui::portrait_ui_create();
+#endif
     }
   }
   // "Night look" (settings wave): the red-shifted palette is the default
@@ -682,6 +694,16 @@ static void render(uint32_t now) {
   st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
   st.bird = bird;
   canary::ui::dash_ui_update(fleet, now, st);
+#endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+  canary::ui::PortraitState st;
+  st.night = night_look;
+  st.wifi_ok = canary::net::wifi_connected();
+  st.mqtt_ok = canary::net::mqtt_connected();
+  st.acked = fleet.ack_active(now);
+  st.time_valid = local_time(&st.clock_hh, &st.clock_mm);
+  st.bird = bird;
+  canary::ui::portrait_ui_update(fleet, now, st);
 #endif
 
   apply_brightness(now, night);
@@ -754,8 +776,22 @@ void setup() {
   boot_kvf("RGB",    "DE=%d VS=%d HS=%d PCLK=%d @ %d Hz",
            LCD_PIN_DE, LCD_PIN_VSYNC, LCD_PIN_HSYNC, LCD_PIN_PCLK, LCD_PCLK_HZ);
 #endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+  boot_kv("Glass",   "ST7789 1.47\" 172x320 portrait SPI (no touch)");
+  boot_kvf("SPI",    "SCK=%d MOSI=%d CS=%d DC=%d BL=%d(PWM) off=%d",
+           TFT_PIN_SCK, TFT_PIN_MOSI, TFT_PIN_CS, TFT_PIN_DC, TFT_PIN_BL,
+           TFT_COL_OFFSET);
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+  boot_kvf("Beacon", "WS2812 x%d on GPIO%d (RMT) — the state channel",
+           RGBLED_COUNT, RGBLED_PIN);
+#endif
+#endif
+#if !defined(CD_FLAVOR_NIGHTSTAND)
+  // The 1.47" nightstand boards have no touch controller (TOUCH_I2C_ADDR is
+  // not defined on those pin maps) — the I2C header there is sensor-only.
   boot_kvf("Touch",  "I2C SDA=%d SCL=%d  addr 0x%02X",
            I2C_PIN_SDA, I2C_PIN_SCL, TOUCH_I2C_ADDR);
+#endif
   boot_kvf("Fleet",  "up to %d witnesses, stale %lus, lost %lus",
            CD_FLEET_MAX_DEVICES,
            (unsigned long)(CD_STALE_AFTER_MS / 1000),
@@ -805,6 +841,11 @@ void setup() {
   // "listening" state beats a black disc while WiFi retries.
   g_display_ok = canary::hal::display_init();
   if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+  // The across-room state beacon comes up dark and stays dark until the first
+  // render tick colors it — no boot flash on a nightstand.
+  canary::hal::ambient_led_init();
+#endif
   if (g_display_ok) {
     // Boot splash, then face, then the curtain lift. splash_play() ends by
     // dropping an opaque curtain over the glass instead of fading into the
@@ -817,6 +858,9 @@ void setup() {
 #endif
 #ifdef CD_FLAVOR_DASH
     canary::ui::dash_ui_create();
+#endif
+#ifdef CD_FLAVOR_NIGHTSTAND
+    canary::ui::portrait_ui_create();
 #endif
     render(canary::ms_now());
     lv_timer_handler();
@@ -1186,6 +1230,25 @@ void loop() {
     g_last_render_ms = now;
     render(now);
   }
+
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+  // The ambient beacon breathes every loop pass (not just on render ticks) so
+  // the point of light animates smoothly. The honest rule holds: night +
+  // all-quiet + healthy links -> dark (a never-configured hub counts as the
+  // standalone all-quiet case, exactly like apply_brightness's night floor).
+  {
+    using canary::fleet::Sev;
+    const bool led_night = in_quiet_hours();
+    const Sev led_worst = fleet.worst(now);
+    const bool links_ok =
+        canary::net::wifi_connected() && canary::net::mqtt_connected();
+    const bool safe_dark =
+        led_night && (canary::net::mqtt_broker_is_placeholder() ||
+                      (links_ok && led_worst < Sev::Warn));
+    canary::hal::ambient_led_tick(now, led_worst, led_night, safe_dark);
+  }
+#endif
+
   if (g_display_ok) lv_timer_handler();
 
   delay(5);

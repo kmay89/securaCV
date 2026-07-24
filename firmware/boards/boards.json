@@ -153,7 +153,7 @@
     "tier": "compile-tested",
     "tier_evidence": "",
     "used_by": [],
-    "notes": "Nightstand Line display: ST7789 172x320 SPI (34-px column offset) + 1x WS2812 ambient LED (GPIO8, RMT), single-core C6, NO PSRAM (lean single-buffer). Phase 0 — pin map vendor-sourced/compile-pending; the ST7789 HAL, nightstand flavor, emulator, and registry entry are the next slice (see docs/hardware/display_nightstand_line.md), so not yet in flavors.json and used_by is empty."
+    "notes": "Nightstand Line display: ST7789 172x320 SPI (34-px column offset) + 1x WS2812 ambient LED (GPIO8, RMT), single-core C6, NO PSRAM (lean single-buffer). The nightstand firmware (display_1in47.cpp HAL + portrait_ui.cpp + ambient_led.cpp) is C6-ready, BUT the build is toolchain-blocked: the C6 needs arduino-esp32 3.x while canary-display's graphics stack is pinned to GFX@1.4.9 (last core-2.x release). So no C6 env is in the CI matrix yet (used_by empty pending a core-3.x display base) — the S3 sibling (-lcd147) carries the same flavor today. See docs/hardware/display_nightstand_line.md §7."
   },
   {
     "id": "waveshare-esp32s3-lcd147",
@@ -165,8 +165,8 @@
     "pio_board": "esp32-s3-devkitc-1",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": [],
-    "notes": "Nightstand Line display (USB-A stick): SAME ST7789 172x320 panel as the C6 sibling but every display pin differs; 1x WS2812 ambient LED (GPIO38, RMT), dual-core S3 with 8 MB PSRAM (can double-buffer/animate), native USB. Phase 0 — pin map compile-pending; HAL/flavor/emulator/registry are the next slice (docs/hardware/display_nightstand_line.md)."
+    "used_by": ["canary-display"],
+    "notes": "Nightstand Line display (USB-A stick): SAME ST7789 172x320 panel as the C6 sibling but every display pin differs; 1x WS2812 ambient LED (GPIO38, RMT), dual-core S3 with 8 MB PSRAM, native USB. Wired as the canary-display 'nightstand' flavor (env canary-display-nightstand-s3): display_1in47.cpp HAL + portrait_ui.cpp + ambient_led.cpp. Bench validation pending (docs/hardware/display_nightstand_line.md)."
   },
   {
     "id": "waveshare-esp32s3-lcd7",
@@ -178,7 +178,7 @@
     "pio_board": "esp32-s3-devkitc-1",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": [],
-    "notes": "Nightstand Line big glass: 7\" 800x480 RGB565 parallel + GT911 5-point touch + CH422G IO expander (backlight + touch-reset) — electrically the 4.3\" Canary Dash at 7\", so it reuses the dash RGB HAL/GT911/CH422G. Requires the 8 MB octal PSRAM for the 768 KB framebuffer. Phase 0 — pin map compile-pending; the dash7 flavor + full 5-point touch + emulator/registry are the next slice (docs/hardware/display_nightstand_line.md)."
+    "used_by": ["canary-display"],
+    "notes": "Nightstand Line big glass: 7\" 800x480 RGB565 parallel + GT911 5-point touch + CH422G IO expander (backlight + touch-reset) — electrically the 4.3\" Canary Dash at 7\", so it reuses the dash RGB HAL/GT911/CH422G. Requires the 8 MB octal PSRAM for the 768 KB framebuffer. Wired as the canary-display 'dash7' flavor (env canary-display-dash7): dash config + pins only, same HAL/UI. Full 5-point touch gestures + bench validation pending (docs/hardware/display_nightstand_line.md)."
   }
 ]

@@ -50,8 +50,11 @@ slice.
 
 ## Used By
 
-Not yet wired into a flavor (`used_by: []`). The Nightstand Line firmware is
-staged in
-[`docs/hardware/display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md).
+| Flavor | Env | Notes |
+|--------|-----|-------|
+| `canary-display` | `canary-display-nightstand-s3` | Nightstand portrait face + WS2812 beacon |
+
+Firmware: `display_1in47.cpp` (HAL), `portrait_ui.cpp` (face), `ambient_led.cpp`
+(beacon). Design: [`docs/hardware/display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md).
 
 Pin definitions: [`pins/pins.h`](pins/pins.h) (authoritative).

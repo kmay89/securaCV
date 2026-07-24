@@ -41,17 +41,23 @@ richly). Same look, two budgets — do not share a pin map.
 
 ## Support Status
 
-**Compile-tested** (see [`boards.json`](../boards.json)) — actually
-**Phase 0**: the pin map is compiled from Waveshare's wiki + the
-CircuitPython/espp board defs but has **not** been bench-validated, and the
-ST7789 HAL, nightstand flavor, emulator, and registry wiring are the next
-slice. Verify the backlight/RGB-LED lines and the ST7789 offset against your
-board revision before relying on them.
+**Compile-tested** in name (see [`boards.json`](../boards.json)), but the C6
+build is **toolchain-blocked** today: the ESP32-C6 needs arduino-esp32 3.x
+(the pioarduino fork, as `canary-sense` pins), while `canary-display`'s
+graphics stack is pinned to `GFX Library for Arduino@1.4.9` — the last
+**core-2.x**-compatible release. So there is **no C6 env in the CI build
+matrix yet**; a core-3.x display base (GFX@^1.5.0 + an LVGL/NimBLE 3.x audit)
+is the gating slice. Verify the backlight/RGB-LED lines and the ST7789 offset
+against your board revision before relying on them.
 
 ## Used By
 
-Not yet wired into a flavor (`used_by: []`). The Nightstand Line firmware is
-staged in
-[`docs/hardware/display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md).
+The `canary-display` **nightstand** firmware (`display_1in47.cpp` HAL,
+`portrait_ui.cpp`, `ambient_led.cpp`) is already C6-ready — single internal
+buffer (no PSRAM), RMT-driven LED. It runs today on the S3 sibling
+([`waveshare-esp32s3-lcd147`](../waveshare-esp32s3-lcd147/README.md), env
+`canary-display-nightstand-s3`); `used_by` stays empty here until the
+core-3.x display base lands. See
+[`docs/hardware/display_nightstand_line.md`](../../../docs/hardware/display_nightstand_line.md) §7.
 
 Pin definitions: [`pins/pins.h`](pins/pins.h) (authoritative).

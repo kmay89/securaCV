@@ -118,8 +118,10 @@ void handle_glass() {
   static char body[2688];
   size_t o = 0;
   const size_t C = sizeof(body);
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH)
   const char* flavor = "watch";
+#elif defined(CD_FLAVOR_NIGHTSTAND)
+  const char* flavor = "nightstand";
 #else
   const char* flavor = "dash";
 #endif
@@ -223,8 +225,10 @@ void handle_device() {
   static char body[1024];
   size_t o = 0;
   const size_t C = sizeof(body);
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH)
   const char* flavor = "watch";
+#elif defined(CD_FLAVOR_NIGHTSTAND)
+  const char* flavor = "nightstand";
 #else
   const char* flavor = "dash";
 #endif

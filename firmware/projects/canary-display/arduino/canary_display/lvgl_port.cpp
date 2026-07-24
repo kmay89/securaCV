@@ -30,7 +30,10 @@ namespace canary::ui {
 
 namespace {
 
-#ifdef CD_FLAVOR_WATCH
+// The nightstand (ST7789 172x320) shares the watch's internal-RAM partial
+// buffer path: a small SPI panel with a static quarter-height buffer, no
+// PSRAM required (the C6 has none). SCR_W/H come from its own TFT_WIDTH/HEIGHT.
+#if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
 constexpr int16_t SCR_W = TFT_WIDTH;
 constexpr int16_t SCR_H = TFT_HEIGHT;
 constexpr size_t BUF_PX = (size_t)SCR_W * 60;
@@ -48,7 +51,7 @@ constexpr size_t BUF_BYTES = BUF_PX * 2;
 
 #if LVGL_VERSION_MAJOR >= 9
 
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
 alignas(4) uint8_t s_buf[BUF_BYTES];
 #endif
 
@@ -67,7 +70,7 @@ void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
 
 #else  // LVGL v8
 
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
 lv_color_t s_buf[BUF_PX];
 #endif
 
@@ -94,7 +97,7 @@ bool lvgl_port_init() {
 
   void* buf = nullptr;
   size_t buf_bytes = 0;
-#ifdef CD_FLAVOR_WATCH
+#if defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
   buf = s_buf;
   buf_bytes = BUF_BYTES;
 #endif

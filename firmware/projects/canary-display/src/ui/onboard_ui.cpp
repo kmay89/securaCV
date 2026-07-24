@@ -4,6 +4,11 @@
 // scenes are deliberately spare — a setup flow earns trust by being calm,
 // not busy. Every animation here is enumerated in onboard_ui.h's budget.
 #include <config.h>
+// Nightstand borrows the watch's small-portrait modal rendering (see
+// splash.cpp for the rationale); the standing face is portrait_ui.cpp.
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
+#define CD_FLAVOR_WATCH 1
+#endif
 #if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
 
 #include <Arduino.h>
