@@ -11,7 +11,8 @@
 # Self-healing, same posture as homeassistant-freshness.yml:
 #   · the refresher moves a board's facts forward ONLY on a clean fetch+parse;
 #     a 403 / dead feed / reshaped page keeps the last good snapshot verbatim
-#     (→ "no diff, no PR"), never a broken file. `verified_utc` advances only
+#     (→ "no diff, no PR", and an unchanged fetch keeps the entry — date
+#     included — verbatim, so no weekly date-only PRs). `verified_utc` moves only
 #     on a real read, and the reference page shows that date's age — a broken
 #     loop tells on itself.
 #   · changes land as a PR, so the drift-lock (board_facts.test.mjs, which

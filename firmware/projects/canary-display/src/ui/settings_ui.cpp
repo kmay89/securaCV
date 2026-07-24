@@ -106,7 +106,7 @@ enum : int {
   IT_ROW_SIREN,
 #endif
 #ifdef CD_SET_MIC
-  IT_ROW_MIC, IT_ROW_MIC_SENS, IT_OPT_C,
+  IT_ROW_MIC, IT_ROW_MIC_SENS, IT_ROW_MIC_WAKE, IT_OPT_C,
 #endif
 #ifdef CD_SET_MODES
   IT_ROW_DEV,   // the root doorway row ("modes" / "dev mode")
@@ -686,12 +686,18 @@ void build_edit_mic() {
   // cadence is standards-fixed; this only sets the noise-floor margin.
   mk_row(y, "sensitivity", canary::io::mic_sensitivity_name(), IT_ROW_MIC_SENS);
   y += ROW_H;
+  // Opt-in: a loud sound (a door close) wakes the screen. Same envelope the
+  // alarm uses — never speech, nothing recorded. Off by default.
+  mk_row(y, "wake on sound", canary::io::mic_wake_on_sound() ? "on" : "off",
+         IT_ROW_MIC_WAKE, canary::io::mic_wake_on_sound());
+  y += ROW_H;
   lv_obj_t* cap = mk_label(s_host, font_caption(), col_faint());
   lv_label_set_text(cap,
-      pins ? "hears alarm patterns only - never speech;\n"
-             "audio never leaves this board. the amber\n"
-             "MIC chip is lit whenever it listens; off\n"
-             "uninstalls the driver (a real mute)."
+      pins ? "hears alarm patterns - and, with wake on,\n"
+             "loud sounds (a door) to light the screen.\n"
+             "never speech; nothing recorded, nothing\n"
+             "leaves this board. amber chip = listening;\n"
+             "off is a real mute (driver uninstalled)."
            : "audio pins are unset (VERIFY in pins.h) -\n"
              "the mics are provably un-driven until the\n"
              "bench fills them. see the board README.");
@@ -975,6 +981,12 @@ void dispatch(int id) {
     case Page::EditMic:
       if (id == IT_BACK) { build(Page::Root); return; }
       if (id == IT_ROW_MIC_SENS) { build(Page::EditMicSens); return; }
+      if (id == IT_ROW_MIC_WAKE) {
+        // Toggle-on-tap: flip the opt-in and redraw the row's on/off value.
+        canary::io::mic_set_wake_on_sound(!canary::io::mic_wake_on_sound());
+        build(Page::EditMic);
+        return;
+      }
       if (id == IT_OPT_A || id == IT_OPT_B) {
         // Landing IS choosing. mic_set_armed persists to NVS and performs
         // the gate action in the same call — driver AND the amber chip

@@ -173,8 +173,14 @@
 #define AUDIO_PIN_I2S_MCLK      6     // I2S master clock (GPIO6)
 #define AUDIO_PIN_I2S_SCLK      44    // I2S bit clock / SCLK (GPIO44)
 #define AUDIO_PIN_I2S_LRCK      16    // I2S word/LR clock (GPIO16)
-#define AUDIO_PIN_I2S_SDIN      15    // mic data in — ES7210 DSDIN (GPIO15)
-#define AUDIO_PIN_I2S_ASDOUT    43    // speaker data out — ES8311 (GPIO43, unused)
+// The vendor signal names are from the CODEC's point of view, so the
+// direction inverts vs the ESP32's: ASDOUT = "ADC Serial Data OUT" = the
+// ES7210 mic ADC's output = what the ESP32 READS (data_in). DSDIN = "DAC
+// Serial Data IN" = the ES8311 speaker DAC's input = the ESP32's data_out.
+// Confirmed against Waveshare's own speaker_microphone example. Reading the
+// wrong one = a silent SNAP rms, so this is the load-bearing pin.
+#define AUDIO_PIN_I2S_SDIN      43    // mic data IN — ES7210 ASDOUT (GPIO43)
+#define AUDIO_PIN_I2S_ASDOUT    15    // speaker data out — ES8311 DSDIN (GPIO15, unused)
 #define AUDIO_PIN_PA_ENABLE     -1    // speaker amp enable = CH422G EXIO4 (PA_CTRL),
                                       // not a native GPIO — driven via the expander
 

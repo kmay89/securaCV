@@ -36,13 +36,25 @@ that is host-tested or compile-gated, not by promises.
 | **T3** (NFPA 72 / ISO 8201) | three ~0.5 s beeps, pause, repeat — every smoke alarm | `acoustic_smoke_alarm` | Alert |
 | **T4** (UL 2034) | four ~0.1 s beeps, long pause, repeat — every CO alarm | `acoustic_co_alarm` | Alert |
 
-That's the entire vocabulary. A smoke alarm screaming in an empty house is
-exactly the event a fleet display exists to surface, and it requires no
+That's the entire alarm vocabulary. A smoke alarm screaming in an empty house
+is exactly the event a fleet display exists to surface, and it requires no
 speech, no recognition, no cloud. One detection needs **two consecutive
 on-grammar cycles** (one group of beeps can be a horn; two matching cycles
 are an alarm — host-tested), re-raises at most every 30 s while standing,
 and lands as an **unsigned local event** (a display holds no signing key —
 same honest footing as the 4.3B's door contacts).
+
+**And one opt-in convenience: wake the screen on a sound.** A dark wall dash
+can light up the moment you walk in — a door close, a knock, a footfall
+crossing a quiet room. This is **off by default** (Settings → microphone →
+wake on sound) and, crucially, **rides the exact same barrier**: it watches
+the same one-number-per-frame RMS envelope the alarm path does — a loud
+*onset* well above the tracked ambient (host-tested `TransientDetector`,
+refractory-gated so one door is one wake) — and never learns *what* the sound
+was. A wake is "the room got suddenly loud", nothing more: no sample, no
+classification, no recording, nothing sent. It only ever sets a wake window,
+the identical path a finger-tap gives the glass. When it's off, the mic is
+back to alarm patterns only.
 
 **The cadence windows are the standards, not guesses.** The detector's
 beep-duration windows are derived from the published timing plus what a room
@@ -185,9 +197,16 @@ driver-uninstalled report. Panel note: the C's ST7701 controller may need
 an init sequence (VERIFY) — the mic layer runs headless either way, so the
 mic bench is not blocked on the glass.
 
-If the ES7210 needs register init before it clocks samples (likely), the
-`SNAP rms=0` line makes that visible instantly; the init lands in
-`mic_alarm.cpp` at the marked VERIFY point during the same session.
+The ES7210 needs register init before it clocks samples, and that init is
+now **written** (`es7210_init` in `mic_alarm.cpp`): a datasheet-grounded
+bring-up — soft-reset, I2S slave, 16-bit frame, mic channels powered with a
+mid-scale PGA gain, DC high-passed — run right after the I2S master starts.
+The bench job is no longer to write it but to **confirm its values**: the
+`SNAP rms` climbing off zero in a live room is the pass signal, and the gain
+(regs 0x43/0x44) and clock ratio (OSR reg 0x07) are the two knobs to turn if
+capture is silent or clipped. `es7210_init=<n>` on the `MIC1` console line
+reports how many config writes the ADC refused (0 = it took the whole
+sequence).
 
 After the bench passes, the contract faces its real judge: the
 [usability protocol](./display_usability_protocol.md)'s **task H** — five
@@ -203,6 +222,6 @@ invariant is host-tested; whether humans *read* it is tested there.
 | Gate + indicator invariant | `canary/io/mic_logic.h` + host test | **host-tested** (CI) |
 | T3/T4 cadence detection | same core + host test | **host-tested** (CI) |
 | I2S capture + hard mute + chip | `src/io/mic_alarm.cpp` | compile-gated (`canary-display-dash-mic`); bench-pending |
-| ES7210 init | `mic_alarm.cpp` VERIFY point | **bench** |
+| ES7210 init | `es7210_init` in `mic_alarm.cpp` | **written** (datasheet bring-up); compile-gated; bench-validate gain/OSR |
 | Settings row/page, debug line, transparency copy | gated UI edits | compile-gated; bench-pending |
 | Flasher/release product | — | after the bench pass (distinct product reserved: `securacv-canary-display-dash-mic`) |

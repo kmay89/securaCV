@@ -52,6 +52,16 @@ void mic_set_sensitivity(uint8_t index);
 uint8_t mic_sensitivity();        // current preset index
 const char* mic_sensitivity_name();
 
+// Wake-the-screen-on-a-sound: an opt-in that lets a loud onset (a door
+// close, a knock) wake a dark dash — envelope-only, same scalars the alarm
+// path sees, never speech. Only fires while the mic is listening. Persists
+// to NVS; off by default.
+void mic_set_wake_on_sound(bool on);
+bool mic_wake_on_sound();
+// main.cpp drains this each loop: true once per qualifying sound-wake, which
+// it turns into a wake window (the same path a touch takes). Cleared on read.
+bool mic_take_wake_request();
+
 }  // namespace io
 }  // namespace canary
 

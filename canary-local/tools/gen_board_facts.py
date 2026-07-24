@@ -19,7 +19,9 @@ Two jobs, mirroring the Home-Assistant freshness loop
     rewrite the snapshot. **Self-healing:** a board's values move forward ONLY
     on a clean fetch+parse; a dead feed, a 403, or a reshaped page keeps the
     previous snapshot verbatim for that board (→ "no diff, no PR"), never a
-    broken file. `verified_utc` only advances on a real read; the reference
+    broken file. `verified_utc` moves only when the FACTS move (a clean fetch
+    that finds nothing new leaves the entry — date included — verbatim, so the
+    weekly job never files a date-only PR); the reference
     page shows that date's age so a broken loop tells on itself.
 
   * `--from-file <html>` parses a local HTML file instead of the network — how
@@ -319,6 +321,13 @@ def refresh_board(bid: str, snap: dict, html: str | None, stamp: str) -> bool:
         print(f"::warning::board_facts: {bid} parse failed ({e}); keeping the committed snapshot.")
         return False
     changed = (prev or {}).get("facts", {}).get("content_hash") != facts["content_hash"]
+    if not changed:
+        # A clean fetch that finds nothing new leaves the committed entry —
+        # verified_utc included — VERBATIM. Otherwise a weekly no-op fetch
+        # would bump the date, dirty the file, and the freshness job would
+        # open a date-only PR every week. So verified_utc means "the date these
+        # facts were last confirmed to have this value", not "last fetched".
+        return False
     snap["boards"][bid] = {
         "vendor": meta["vendor"],
         "product": meta["product"],
@@ -329,10 +338,10 @@ def refresh_board(bid: str, snap: dict, html: str | None, stamp: str) -> bool:
             "snapshot of the pin map / silicon / parameters, refreshed by "
             "gen_board_facts.py so it can't go stale."
         ),
-        "verified_utc": stamp,  # advances only on this clean read
+        "verified_utc": stamp,  # the date this fact set was recorded / last moved
         "facts": facts,
     }
-    return changed
+    return True
 
 
 def main() -> int:
