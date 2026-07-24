@@ -162,9 +162,45 @@ async function boot() {
     invoke("serial_monitor_send", { command: "j" }).catch((e) =>
       setStatus("monitor-status", String(e), "err"))
   );
+  // Arduino-style controls: pause (freeze autoscroll), clear, expand, and a
+  // free-text command line with a line-ending picker.
+  $("monitor-pause").addEventListener("click", () => {
+    state.monitorPaused = !state.monitorPaused;
+    const b = $("monitor-pause");
+    b.textContent = state.monitorPaused ? "Resume" : "Pause";
+    b.setAttribute("aria-pressed", String(state.monitorPaused));
+    if (!state.monitorPaused) { const c = $("serial-console"); c.scrollTop = c.scrollHeight; }
+  });
+  $("monitor-clear").addEventListener("click", () => { $("serial-console").textContent = ""; });
+  $("monitor-expand").addEventListener("click", () => {
+    const on = $("serial-monitor").classList.toggle("monitor-expanded");
+    const b = $("monitor-expand");
+    b.textContent = on ? "Shrink" : "Expand";
+    b.setAttribute("aria-pressed", String(on));
+  });
+  $("monitor-cmd-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const input = $("monitor-cmd");
+    const cmd = input.value;
+    if (!cmd) return;
+    const endMap = { "\\n": "\n", "\\r\\n": "\r\n", "\\r": "\r", "": "" };
+    const ending = endMap[$("monitor-lineend").value] ?? "\n";
+    invoke("serial_monitor_send", { command: cmd + ending })
+      .then(() => { input.value = ""; })
+      .catch((e) => setStatus("monitor-status", String(e), "err"));
+  });
   $("update-btn").addEventListener("click", onInstallUpdate);
   const rerollBtn = $("cert-reroll");
   if (rerollBtn) rerollBtn.addEventListener("click", rerollCertificate);
+  const printBtn = $("cert-print");
+  if (printBtn) printBtn.addEventListener("click", () => {
+    // The print stylesheet isolates just the certificate on the page.
+    document.body.classList.add("printing-cert");
+    const done = () => document.body.classList.remove("printing-cert");
+    if (window.matchMedia) { const m = window.matchMedia("print"); const fn = (e) => { if (!e.matches) { done(); m.removeListener(fn); } }; m.addListener(fn); }
+    window.addEventListener("afterprint", done, { once: true });
+    try { window.print(); } catch (_) { done(); }
+  });
   $("update-dismiss").addEventListener("click", () =>
     $("update-banner").classList.add("hidden")
   );
@@ -609,6 +645,9 @@ async function onFlash() {
   btn.disabled = true;
   btn.textContent = "Flashing…";
   setStatus("flash-result", "");
+  // Reflash must start from a clean slate — never show the PREVIOUS flash's
+  // green result, receipts, certificate, or a stale "Broken pipe" monitor line.
+  resetOutcome();
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
@@ -637,6 +676,10 @@ async function onFlash() {
     } else {
       setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓", "ok");
       maybeHatch();
+      // The serial monitor should just work — start it automatically so the
+      // live boot log is right there, no "Start" click. It reconnects on its
+      // own across the reboot (native side), so this is safe to fire now.
+      startMonitor();
     }
   } catch (e) {
     setStatus("flash-result", String(e), "err");
@@ -752,12 +795,36 @@ function setMonitorButtons(running) {
   $("monitor-start").disabled = running;
   $("monitor-stop").disabled = !running;
   $("monitor-manifest").disabled = !running;
+  $("monitor-pause").disabled = !running;
+  $("monitor-cmd").disabled = !running;
+  $("monitor-lineend").disabled = !running;
+  $("monitor-send").disabled = !running;
+}
+
+// Wipe every "how did the last flash go" surface so a reflash never shows a
+// stale green result, old receipts, a leftover certificate, or a dead monitor.
+function resetOutcome() {
+  setStatus("flash-result", "");
+  try { hideHatchCard(); } catch (_) {}
+  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; state.vision.module = null; }
+  try { renderReceipts(); } catch (_) {}
+  const con = $("serial-console");
+  if (con) con.textContent = "";
+  const ms = $("monitor-status");
+  if (ms) ms.textContent = "";
+  $("serial-monitor").classList.add("hidden");
 }
 
 function appendConsole(id, text) {
   const con = $(id);
   con.textContent += String(text);
-  con.scrollTop = con.scrollHeight;
+  // Keep the buffer bounded — a long boot log shouldn't grow without limit.
+  const CAP = 200_000;
+  if (con.textContent.length > CAP) {
+    con.textContent = con.textContent.slice(con.textContent.length - CAP);
+  }
+  // Autoscroll unless the user paused it (Arduino-style "freeze the view").
+  if (!state.monitorPaused) con.scrollTop = con.scrollHeight;
 }
 
 function setReceipt(id, ok, text) {
@@ -1100,11 +1167,24 @@ function showHatchCard(product) {
 // embedded hatch.json the website also ships, so both surfaces hatch alike.
 let lastCert = null;
 
-function mintCertificate(product) {
+// Bases used this run + across sessions (from the local fleet), so a fresh
+// hatch never reuses a name until the whole pool has been spent.
+const usedBases = new Set();
+function pickFreshBase(first, avoid) {
+  const spent = new Set(usedBases);
+  for (const c of (prefs.fleet || [])) if (c.base) spent.add(c.base);
+  if (avoid) spent.add(avoid);
+  const open = first.filter((b) => !spent.has(b));
+  const pool = open.length ? open : first; // pool exhausted → allow reuse
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function mintCertificate(product, avoidBase) {
   const h = state.hatch;
   if (!h || !Array.isArray(h.first) || !h.first.length) return null;
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  const base = pick(h.first);
+  const base = pickFreshBase(h.first, avoidBase);
+  usedBases.add(base);
   const withTitle = Array.isArray(h.titles) && h.titles.length &&
     Math.random() < (typeof h.title_chance === "number" ? h.title_chance : 0.6);
   const house = (Array.isArray(h.house) && h.house.length) ? pick(h.house) : "";
@@ -1180,7 +1260,7 @@ function rerollCertificate() {
   }
   const product = (state.catalog && state.catalog.products || [])
     .find((p) => p.name === prev.species) || { name: prev.species };
-  const next = mintCertificate(product);
+  const next = mintCertificate(product, prev.base); // never re-roll the same name
   if (next) { next.ringId = prev.ringId; next.ts = prev.ts; renderCertificate(next); }
 }
 
