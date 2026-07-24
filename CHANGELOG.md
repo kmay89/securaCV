@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### firmware/common — power-event resilience + an honest outage log (shared core)
+
+- **A pure, host-tested decision core for "when did the power go out."** New
+  `firmware/common/power/power_events.h` classifies how the *previous* power
+  session ended, from the reset cause plus a clean-shutdown flag, an RTC-domain
+  survival marker, and a liveness heartbeat — and names each event the correct
+  way: **cold boot**, **clean reboot**, **brownout reset** (supply *sagged*
+  below the detector), **power restored (outage)** (mains lost while running,
+  now back), and **fault reset** (a crash, tracked separately). It keeps a
+  durable ring of the last events plus monotonic counters (outages, brownouts,
+  longest outage). Crucially honest: a device can't record the instant it lost
+  power (it's off), so an outage carries an explicit **lower-bound** duration
+  (now − last-seen-alive), never a fabricated timestamp.
+- **Proven, not reviewed.** `firmware/tests_host/test_power_events.cpp` (66
+  checks, `-Wall -Wextra -Werror`, wired into the common host suite) pins the
+  whole classification table, the terminology, the lower-bound arithmetic, and
+  the ring/counter behavior.
+- **Shared by construction.** The header sits on every firmware's include path
+  (`-I firmware/common`), so all Canaries adopt the same logic. Following the
+  repo's core-first convention (as with `boot_policy.h`), the pure core lands
+  here host-tested; the per-firmware boot-path glue lands separately and
+  hardware-validated — the recipe, the brownout-detector hardening notes, and
+  the witnessed-event option are in `docs/design/power_events.md`. The 4.3C
+  (which has a PCF85063 RTC for real wall-clock times) is the priority surface;
+  its README's "staged, not started" outage line is now half-built.
+
 ### canary-display — the mic does something useful: wake the screen on a sound
 
 - **Opt-in "wake on sound".** A dark 4.3C dash now lights the moment you walk
