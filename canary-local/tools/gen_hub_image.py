@@ -30,11 +30,13 @@ Honest before an image is pinned: the base image URL is derivable from the
 version (HA's release-asset naming), but the sha256 stays empty and
 `pinned` is false until the pin ceremony sets it — the same honest-before-release
 posture as flash.json shipping an all-zero release key until the signing
-ceremony. The writer verifies the download against HA's published .sha256 in the
-meantime.
+ceremony. Home Assistant publishes no checksum of its own for these assets, so
+an unpinned image cannot be verified and the writer refuses to flash it until
+the ceremony commits a pin.
 
   5. canary-local/devices/hub_image_pins.json .. the pin ceremony's output
-     (pin_hub_image.py): double-sourced sha256 per board. Folded in ONLY
+     (pin_hub_image.py): verified sha256 per board (hash of the downloaded
+     bytes, cross-checked against GitHub's asset digest when present). Folded in ONLY
      while it names the current haos_version — a version bump honestly
      un-pins the catalog until the ceremony re-runs.
 
@@ -308,14 +310,15 @@ def main() -> None:
             "arch": "aarch64",
             "pinned": pinned,
             "pin_note": (
-                "sha256 was double-sourced by the pin ceremony (pin_hub_image.py: HA's published "
-                ".sha256 + GitHub's asset digest, required to agree) and is re-verified weekly by "
-                "--verify in the freshness workflow. A HAOS version bump un-pins until the "
-                "ceremony re-runs."
+                "sha256 was taken over the actual downloaded asset bytes by the pin ceremony "
+                "(pin_hub_image.py), cross-checked against GitHub's asset digest where one is "
+                "published, and is re-verified weekly by --verify in the freshness workflow. A "
+                "HAOS version bump un-pins until the ceremony re-runs."
                 if pinned
                 else "sha256 is set by the pin ceremony (pin_hub_image.py, mirroring the OTA "
-                "signing ceremony). Until then the writer verifies the download against HA's "
-                "published .sha256 and these stay empty."
+                "signing ceremony). Home Assistant publishes no checksum of its own, so until the "
+                "ceremony pins the verified download hash the writer cannot verify an image and "
+                "these stay empty."
             ),
             "boards": boards,
             "excluded_boards": EXCLUDED_BOARDS,

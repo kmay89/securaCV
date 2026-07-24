@@ -280,6 +280,34 @@ jobs:
             python3 -c 'import json,sys; p="src-tauri/tauri.conf.json"; c=json.load(open(p)); c["plugins"]["updater"]["pubkey"]=sys.argv[1].strip(); json.dump(c,open(p,"w"),indent=2); print("patched embedded pubkey for ephemeral build")' "$(cat "$RUNNER_TEMP/flasher.key.pub")"
           fi
 
+      # ── the hub catalog must be verifiable before we ship it ──────────────
+      # Home Assistant publishes no checksum of its own, so an UNPINNED catalog
+      # makes the hub flasher dead-end at 100% (it downloads the image, then has
+      # nothing to verify it against and refuses to write). That must never
+      # reach a user: fail the release loudly here, with the fix, instead of
+      # shipping a flasher that can't flash. Dev/CI-check builds are unaffected —
+      # this guard runs only on the release path.
+      - name: Guard — hub image catalog is pinned
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          cat = json.load(open("canary-local/devices/hub_image.json"))
+          base = cat["base_os"]
+          boards = base.get("boards", [])
+          bad = [b["id"] for b in boards if not b.get("sha256")]
+          if not base.get("pinned") or bad or not boards:
+              sys.exit(
+                  "hub_image.json is not pinned"
+                  + (f" (boards missing sha256: {bad})" if bad else "")
+                  + " — Home Assistant ships no checksum to fall back on, so this build would "
+                  "dead-end at 100%. Run the pin ceremony and commit:\n"
+                  "    python3 canary-local/tools/pin_hub_image.py"
+              )
+          print(f"hub catalog pinned for HAOS {base['version']}: {len(boards)} boards, all with sha256")
+          PY
+
       - name: Build & release
         id: tauri
         uses: tauri-apps/tauri-action@v1
