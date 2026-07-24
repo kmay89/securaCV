@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### SecuraCV Flasher 0.2.2 — the Witness Wall ships, and the release itself is hardened
+
+- **Version bump to cut a real download.** `flasher-v0.2.1` was published
+  before the Witness Wall embed, LAN discovery, and the release-hardening work
+  landed, so those three never reached an installer. `tauri.conf.json` moves to
+  **0.2.2**, which is what the "Desktop Flasher — build & release" workflow
+  reads to name the tag — so this release carries:
+  - the **embedded Witness Wall**, with a just-flashed Canary appearing on it,
+  - **real LAN discovery** after a flash, so the wall fills with live devices,
+  - the **hardened publish path** — per-job asset reconciliation with backoff,
+    a single-writer `latest.json` rewritten with stable name-based URLs and
+    signatures read from the `.sig` assets the release actually carries, and a
+    consistency guard that fails the release rather than shipping an updater
+    manifest that can't self-update.
+- **Nothing else changes in the app.** This is a packaging release: the bump
+  exists so the above reaches users as a downloadable `.dmg` / `.AppImage` /
+  `.deb` instead of sitting on `main` behind an already-published tag.
+
 ### canary-display — the emulator now VOICES the Canary, and the sound board is on the map
 
 - **Hear the display in context.** The in-browser emulator (`canary-local/`)
