@@ -910,13 +910,38 @@ test("parseSelfManifest: extracts the signed manifest from a noisy boot log", as
 // ── the BLE offline console (Web Bluetooth "it's really on" test) ───────────
 test("BLE_CONSOLE UUIDs match the firmware + iOS contract", async () => {
   const { BLE_CONSOLE } = await core();
-  // Pinned to firmware .../ble_console.h and ios .../BLEConsole.swift — a drift
-  // here means the browser scans for a service no Canary advertises.
+  // Console service/char — pinned to firmware .../ble_console.h.
   assert.strictEqual(BLE_CONSOLE.serviceUuid, "8fc1cee0-b162-4401-9607-c8ac21383e90");
   assert.strictEqual(BLE_CONSOLE.snapshotUuid, "8fc1cee1-b162-4401-9607-c8ac21383e90");
+  // Pairing service — what the board ADVERTISES (bluetooth_channel.h SERVICE_UUID);
+  // this is what the chooser filter matches, NOT the console UUID above.
+  assert.strictEqual(BLE_CONSOLE.pairingServiceUuid, "8fc1ceca-b162-4401-9607-c8ac21383e90");
+  assert.notStrictEqual(BLE_CONSOLE.serviceUuid, BLE_CONSOLE.pairingServiceUuid,
+    "console and pairing services are distinct — the reason v1's filter matched nothing");
   // Web Bluetooth requires lower-case UUIDs.
   assert.strictEqual(BLE_CONSOLE.serviceUuid, BLE_CONSOLE.serviceUuid.toLowerCase());
+  assert.strictEqual(BLE_CONSOLE.pairingServiceUuid, BLE_CONSOLE.pairingServiceUuid.toLowerCase());
+  // Branded GAP name, single-sourced from bluetooth_channel.cpp's default.
+  assert.strictEqual(BLE_CONSOLE.brandName, "SecuraCV-Canary");
+  assert.ok(BLE_CONSOLE.brandName.startsWith(BLE_CONSOLE.brandNamePrefix));
   assert.ok(BLE_CONSOLE.maxPayloadBytes >= 200, "payload cap should leave MTU headroom");
+});
+
+test("bleRequestOptions: discovers by advertised identity, can reach the console", async () => {
+  const { bleRequestOptions, BLE_CONSOLE } = await core();
+  const opts = bleRequestOptions();
+  // The chooser must match what the firmware ADVERTISES: the branded name
+  // prefix, or the pairing service — never the console UUID (which isn't in the
+  // advert, so filtering on it left the chooser empty in v1).
+  const names = opts.filters.filter((f) => f.namePrefix).map((f) => f.namePrefix);
+  const svcs = opts.filters.filter((f) => f.services).flatMap((f) => f.services);
+  assert.ok(names.includes("SecuraCV"), "must match the branded name prefix");
+  assert.ok(svcs.includes(BLE_CONSOLE.pairingServiceUuid), "must match the advertised pairing service");
+  assert.ok(!svcs.includes(BLE_CONSOLE.serviceUuid),
+    "must NOT filter on the console service — it isn't advertised");
+  // …but the console service must be reachable once connected.
+  assert.ok(opts.optionalServices.includes(BLE_CONSOLE.serviceUuid),
+    "console service must be in optionalServices so getPrimaryService is allowed");
 });
 
 test("bleSupport: present entry point supported, absent → guided fallback copy", async () => {
