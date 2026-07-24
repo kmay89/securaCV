@@ -58,6 +58,7 @@ The Canary Display's design record, from platform vision to bring-up:
 | [`display_character.md`](./display_character.md) | The canary character — how the mascot behaves and why. |
 | [`display_living_canary.md`](./display_living_canary.md) | The living-canary mood engine — honest moods mirroring system health. |
 | [`display_care_wave.md`](./display_care_wave.md) | The care wave — gentle presence signals between households. |
+| [`display_sound_clearance.md`](./display_sound_clearance.md) | Canary Voice acoustic clearance — every signature original and unencumbered, and provably not confusable with a regulated fire/CO alarm cadence (CI-guarded). |
 | [`display_nightstand.md`](./display_nightstand.md) | The nightstand ("watch") variant — sleep, glanceability, bedside manners. |
 | [`display_nightstand_line.md`](./display_nightstand_line.md) | **The Nightstand Line — three new display boards** (Waveshare ESP32-C6/S3 1.47" 172×320 + ESP32-S3 7" 800×480 touch): the hardware bring-up (ST7789 34-px offset, WS2812 ambient LED, GT911 + CH422G), color-as-primary language with the RGB LED as the across-the-room attention beacon, the honest night-light two-channel split (state-glow stays dark-when-safe; a summoned warm light is separate), the new 172×320 portrait layout, the 7" Dash-reuse + real 5-point touch, and the staged build plan. Board `pins.h` landed; HAL/emulator/registry are the next slice. |
 | [`display_onboarding.md`](./display_onboarding.md) | On-glass onboarding flows. |
