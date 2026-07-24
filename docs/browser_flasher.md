@@ -67,16 +67,71 @@ generic serial/modem device. The honest picture, because it's silicon-deep:
   **hwcdc** (`ARDUINO_USB_MODE=1`), which reuses that same fixed USB-Serial-JTAG
   descriptor — so the running board also reads generic. Only a build in
   **USB-OTG / TinyUSB** mode (`ARDUINO_USB_MODE=0`) has a programmable
-  descriptor, where `USB.manufacturerName("SecuraCV")` + `USB.productName(
-  "SecuraCV Canary")` make the **Web Serial chooser, Windows, and USB device
-  info** read "SecuraCV Canary" (already wired in the `usb-onboard` build). Even
-  then, **macOS keeps the port node `/dev/cu.usbmodem…`** — that prefix is a
-  macOS CDC-ACM convention, not the product string, so it never changes.
+  descriptor. There the name is set by **build flags** — `-DUSB_MANUFACTURER` +
+  `-DUSB_PRODUCT` (env `usb-onboard`) — which is what actually takes: with
+  CDC-on-boot the core enumerates USB *before* `setup()`, so a runtime
+  `USB.productName()` lands too late. With the flags, the **Web Serial chooser,
+  Windows, and USB device info** read **`SecuraCV-Canary`** (hyphenated to match
+  the BLE GAP name — one identity across both radios). Even then, **macOS keeps
+  the port node `/dev/cu.usbmodem…`** — a macOS CDC-ACM convention, not the
+  product string, so it never changes.
 
-Net: the branded USB name is achievable only for the **runtime** connection of
-an **OTG/TinyUSB** build, and shows in the picker label, not the macOS device
-path. The BLE console (above) is the cleaner "it's a *branded* Canary" signal —
-it advertises `SecuraCV-Canary` by name.
+**Why it isn't the global default.** Two hard reasons, not laziness:
+
+1. **C3/C6 have no USB-OTG hardware.** `canary-vision` (C3) and `canary-sense`
+   (C6) expose *only* USB-Serial-JTAG — there is no TinyUSB path to a
+   programmable descriptor, so they can never be rebranded. "Every Canary reads
+   SecuraCV" is impossible on those units; it's an **S3-only** capability.
+2. **Flipping the S3 default touches flashing.** OTG mode changes how the board
+   enumerates for flashing (the native-USB DFU path), and the firmware's own
+   notes gate it behind on-device (Phase-2) validation and flag it as new USB
+   attack surface. Making it the shipping default is a **bench-validated**
+   change (does the one-click flasher still auto-enter download mode? does the
+   serial console still come up every boot?), not a blind flag flip — otherwise
+   it trades a cosmetic name for a "sometimes won't connect," the opposite of
+   the flasher's promise.
+
+Net: the branded USB name is a **build-flag** property of an **OTG/TinyUSB,
+S3-only** build, shown in the picker label (never the macOS device path), and
+promoting it to default is gated on a real-board test. The BLE console (above)
+is the cleaner cross-board "it's a *branded* Canary" signal — every board, C3/C6
+included, advertises `SecuraCV-Canary` by name.
+
+### Showing up on an iPhone over USB-C (the Files app)
+
+A flashed Canary does **not** appear in an iPhone's Files app today, and the
+reason is concrete, not mysterious. For a device to show up there it must
+enumerate as a **USB Mass Storage** drive — that's the *evidence drive* feature
+(`usb_evidence_drive`, `docs/design/usb_evidence_drive.md`). Four things all
+have to be true, and today none of the shipped images clear the first:
+
+1. **MSC has to be in the flashed image.** `FEATURE_USB_EVIDENCE_DRIVE` (and the
+   `usb-onboard` MSC) are **opt-in build flags, never in a release image** — the
+   stock firmware is hwcdc and presents only a serial port, no drive. So a
+   normally-flashed Canary offers the iPhone nothing to mount. *This is why "we
+   thought we had it" didn't work.* The feature's own header says Phase-2
+   on-device validation is still pending — it "has not yet enumerated on real
+   hosts."
+2. **OTG mode, so S3-only.** MSC needs TinyUSB (`ARDUINO_USB_MODE=0`). The C3/C6
+   boards have no USB-OTG at all, so `canary-vision` / `canary-sense` can **never**
+   present a drive to a phone — this is an ESP32-S3-only capability.
+3. **A filesystem iOS mounts.** iOS Files mounts **exFAT / FAT32 / HFS+ / APFS**
+   — *not FAT16*. The evidence LUN serves the **raw SD sectors**, so the SD card
+   itself must be **FAT32/exFAT** to appear. ⚠️ The PSRAM *update* drop-zone is
+   currently formatted **FAT16** (`fat16_format`), which iOS will not mount — so
+   the update-over-USB workflow is PC/Mac-only until that LUN is FAT32/exFAT.
+4. **Power.** Over USB-C↔USB-C the **iPhone is the host** and supplies limited
+   power; a Canary running WiFi/camera can trip iOS's "accessory needs too much
+   power." Give the Canary its **own power** (self-powered, or a powered hub with
+   data to the phone).
+
+So the honest path to "browse a Canary's witness files on an iPhone" is: an
+**opt-in OTG + evidence-drive S3 image**, a **FAT32/exFAT SD**, **self-powered**,
+and a **bench test on a real iPhone** (the Phase-2 step that hasn't run). That
+build now exists as the **`canary-wap-usbdrive`** env (it also carries the
+branded USB name, so one flash validates both) — flash it and run the checklist
+in [`docs/hardware/usb_drive_bench.md`](hardware/usb_drive_bench.md). It is
+compile-verified in CI; what remains is the on-device/iPhone confirmation.
 
 ## Self-healing (never get stuck)
 

@@ -40,6 +40,34 @@ Rules:
   triple, numeric within a band — so promoting a build offers a real update
   to every dev-channel device, and anti-rollback floors stay coherent.
 
+## First-time only — the OTA signing key ceremony
+
+A release cannot be signed until an Ed25519 release key exists and its public
+half is embedded in the firmware. If `ota_release_key.h` is all zeros (the
+default), OTA is hard-disabled and `firmware-release.yml` fails fast with
+`OTA_SIGNING_KEY_PEM secret is not set`. Do this once, on your own machine —
+**never** in CI or any shared/cloud shell:
+
+```sh
+# From the repo root, on your own machine. Writes releaser.pem OUTSIDE the repo.
+firmware/scripts/setup_release_key.sh --key ~/securacv-releaser.pem
+```
+
+That helper (idempotent, refuses to write the key inside the repo) generates
+the private key, embeds the **public** header in the canonical location, and
+syncs the two committed Arduino copies so `check_ota_sync.sh` stays green.
+Then, exactly as it prints:
+
+1. Add the private key as the `OTA_SIGNING_KEY_PEM` GitHub Actions secret
+   (Settings → Secrets and variables → Actions → New repository secret) — the
+   full PEM, `-----BEGIN PRIVATE KEY-----` through `-----END PRIVATE KEY-----`.
+2. Commit **only** the public `ota_release_key.h` files (never `releaser.pem`;
+   `*.pem` is already gitignored).
+3. Cut a release (below) — CI signs with the secret.
+
+The private key is the master signing key: keep it offline, back it up
+privately, rotate via `ota_release_key_previous.h` (see `docs/firmware_ota.md`).
+
 ## Shipping — the whole ceremony
 
 ```sh
