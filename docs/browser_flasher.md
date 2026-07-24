@@ -53,6 +53,31 @@ bridge), there is usually **no driver to install** — the single biggest
 "it won't connect" support cause simply isn't present. A USB-C **data** cable
 (not charge-only) is the one requirement.
 
+### What the Canary is called over USB
+
+A common wish is for the board to show up as "SecuraCV Canary" instead of a
+generic serial/modem device. The honest picture, because it's silicon-deep:
+
+- **Flashing always talks to the ROM.** To flash, the S3 is in download mode,
+  where its **USB-Serial-JTAG** peripheral presents a descriptor fixed in
+  Espressif's mask ROM ("USB JTAG/serial debug unit", VID `0x303A`). No firmware
+  runs, so nothing we ship can rebrand the name in the flash chooser — on any
+  board, in any USB mode. That's a property of the recovery channel, not a bug.
+- **At runtime it depends on the USB mode.** The stock profile boots
+  **hwcdc** (`ARDUINO_USB_MODE=1`), which reuses that same fixed USB-Serial-JTAG
+  descriptor — so the running board also reads generic. Only a build in
+  **USB-OTG / TinyUSB** mode (`ARDUINO_USB_MODE=0`) has a programmable
+  descriptor, where `USB.manufacturerName("SecuraCV")` + `USB.productName(
+  "SecuraCV Canary")` make the **Web Serial chooser, Windows, and USB device
+  info** read "SecuraCV Canary" (already wired in the `usb-onboard` build). Even
+  then, **macOS keeps the port node `/dev/cu.usbmodem…`** — that prefix is a
+  macOS CDC-ACM convention, not the product string, so it never changes.
+
+Net: the branded USB name is achievable only for the **runtime** connection of
+an **OTG/TinyUSB** build, and shows in the picker label, not the macOS device
+path. The BLE console (above) is the cleaner "it's a *branded* Canary" signal —
+it advertises `SecuraCV-Canary` by name.
+
 ## Self-healing (never get stuck)
 
 The flasher tries to fix the common failures before asking the user to:

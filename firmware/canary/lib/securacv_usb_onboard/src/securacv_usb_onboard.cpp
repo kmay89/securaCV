@@ -193,6 +193,13 @@ bool begin(const Config& cfg) {
       Serial.println("[usb-onboard] MSC not started (SD not mounted?) — HID only");
     }
   }
+  // Branded USB identity — only reachable here because this build runs in
+  // USB-OTG/TinyUSB mode (ARDUINO_USB_MODE=0), where the descriptor strings are
+  // programmable. In the stock hwcdc profile the S3's USB-Serial-JTAG descriptor
+  // is fixed in silicon and can't be rebranded (see docs/browser_flasher.md
+  // § "What the Canary is called over USB"). Set the manufacturer too so the
+  // Web Serial chooser reads "SecuraCV Canary" by SecuraCV, not a bare product.
+  USB.manufacturerName("SecuraCV");
   USB.productName("SecuraCV Canary");
   USB.begin();
   apply(step(State::Off, Event::Enable));   // Off → Idle
