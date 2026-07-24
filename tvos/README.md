@@ -77,3 +77,18 @@ never-rot mapping.
 bash scripts/build-witness-core.sh
 # then open WitnessWall/ in Xcode and run on the tvOS Simulator or an Apple TV
 ```
+
+## Get it onto a real Apple TV, fast
+
+The least-headache runbook — from a 2-minute AirPlay demo (no account) to an
+on-device Xcode build (free Apple ID) to TestFlight — is
+**[`RUN_ON_APPLE_TV.md`](RUN_ON_APPLE_TV.md)**.
+
+## Trademarks
+
+Apple, Apple TV, tvOS, Siri, Mac, iPhone, iPad, HomeKit, AirPlay, Xcode, and
+TestFlight are trademarks of Apple Inc., registered in the U.S. and other
+countries and regions. App Store and App Store Connect are service marks of
+Apple Inc. SecuraCV is an independent project by Errer Labs and is **not
+affiliated with, endorsed, sponsored, or certified by Apple Inc.** References to
+Apple products are nominative — for identification and interoperability only.
