@@ -1,0 +1,18 @@
+{
+    "name": "canary_color",
+    "version": "1.0.0",
+    "description": "Board-agnostic, integer-only color + look engine for Canary displays: gamma-2.2 LUT, HSV->RGB, warmth (white balance), palette interpolation, breath easing, and the scene catalog. The honest override lives here — any severity at or above Warn abandons the scene and returns the true semantic color.",
+    "keywords": ["color", "gamma", "hsv", "led", "ws2812", "lvgl", "esp32"],
+    "license": "Apache-2.0",
+    "frameworks": ["arduino", "espidf"],
+    "platforms": ["espressif32", "native"],
+    "headers": [
+        "color_engine.h",
+        "look_engine.h"
+    ],
+    "build": {
+        "srcFilter": ["+<*.cpp>"],
+        "includeDir": "..",
+        "srcDir": "."
+    }
+}

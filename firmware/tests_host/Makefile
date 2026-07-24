@@ -154,6 +154,16 @@ SENT_PRESET_HDR = $(SENT_PROJ_INC)/canary/sentinel_config.h \
 PRESET_DOOR_BIN = $(BUILD_DIR)/test_sentinel_preset_door
 PRESET_LITE_BIN = $(BUILD_DIR)/test_sentinel_preset_mailbox_lite
 
+# Nightstand look engine (common/color/*): the gamma LUT, integer HSV→RGB,
+# warmth, palette sampling, breath easing, and the scene→beacon/wash engine
+# with its honest severity override. Pure integer C++ (no float, no Arduino),
+# so the whole color pipeline is proven on the host before it ever reaches the
+# FPU-less C6.
+LOOK_DIR  = ../common/color
+LOOK_SRC  = $(LOOK_DIR)/color_engine.cpp $(LOOK_DIR)/look_engine.cpp
+LOOK_HDRS = $(LOOK_DIR)/color_engine.h $(LOOK_DIR)/look_engine.h
+LOOK_BIN  = $(BUILD_DIR)/test_look_engine
+
 .PHONY: all run clean
 all: run
 
@@ -211,7 +221,10 @@ $(PRESET_DOOR_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/mailbox-lite/config.h Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN)
+$(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@
+
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -229,6 +242,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FUSION_BIN)
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)
+	./$(LOOK_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)
