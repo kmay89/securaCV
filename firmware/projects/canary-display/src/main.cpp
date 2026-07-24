@@ -378,6 +378,9 @@ static void toggle_mute(const canary::fleet::Witness& w, uint32_t now) {
     fleet.set_mute(w.id, false, 0);
     canary::fleet::mute_store_put(w.id, 0);
     boot_line("[input] long-press -> unmute witness");
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+    canary::hal::voice_play(canary::hal::Voice::MuteOff);  // rising: back on
+#endif
     return;
   }
   const uint32_t until_epoch = canary::care::mute_until_morning_epoch();
@@ -393,6 +396,9 @@ static void toggle_mute(const canary::fleet::Witness& w, uint32_t now) {
   }
   fleet.set_mute(w.id, true, until_ms);
   boot_line("[input] long-press -> mute witness until morning");
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+  canary::hal::voice_play(canary::hal::Voice::MuteOn);  // falling: going quiet
+#endif
 }
 #endif
 
@@ -518,6 +524,9 @@ static void handle_touch(uint32_t now) {
 
     // Long-press: acknowledge. Quiet, deliberate, works half-asleep.
     fleet.acknowledge_by(now, canary::cfg::get().device_id);
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+    canary::hal::voice_play(canary::hal::Voice::AckConfirm);  // a warm "got it"
+#endif
 #if defined(FEATURE_ACK_SYNC) && FEATURE_ACK_SYNC
     // Household ack-sync (spec §2): tell the sibling displays — only with
     // a real clock (no guessed timestamps on the wire).
@@ -549,6 +558,9 @@ static void handle_touch(uint32_t now) {
     if (was_awake) {
       g_page = (g_page + 1) % canary::ui::glance_page_count();
       g_page_touched_ms = now;
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+      canary::hal::voice_play(canary::hal::Voice::PageTurn);  // a light flip
+#endif
 #if defined(FEATURE_FLEET_LINK) && FEATURE_FLEET_LINK
       // Tapping to a witness detail page queues an off-grid GATT status pull
       // for that WAP (no-op online; the loop only acts while broker-down).
@@ -772,9 +784,14 @@ void setup() {
   canary::trust::init();
 
 #if defined(FEATURE_CHIME) && FEATURE_CHIME
-  // Chime engine (spec §5) — only ever initialized when the piezo pad is
+  // Canary Voice (spec §5) — only ever initialized when the piezo pad is
   // populated; the engine TU itself is always compiled for CI coverage.
   canary::hal::chime_init(BUZZER_PIN);
+  // Seed night state before the first voice so a reboot during quiet hours
+  // speaks at the night-attenuated level, and sound our boot signature —
+  // "the canary wakes." (voice_play no-ops if the pin was never populated.)
+  canary::hal::voice_set_night(in_quiet_hours());
+  canary::hal::voice_play(canary::hal::Voice::Boot);
 #endif
 #if defined(FEATURE_WAKE_ALARM) && FEATURE_WAKE_ALARM
   // OUTSIDE the chime gate on purpose (review catch): the sunrise ramp is
@@ -1053,6 +1070,14 @@ void loop() {
   }
 
   const bool broker = mqtt_supervise(now);
+
+#if defined(FEATURE_CHIME) && FEATURE_CHIME
+  // Keep the Voice loudness model in step with quiet hours every pass — the
+  // model silences the gentle categories at night and only lets Wake/Alert
+  // through (voice_score.h::voice_peak_duty). Cheap; in_quiet_hours() is
+  // already read several times a loop.
+  canary::hal::voice_set_night(in_quiet_hours());
+#endif
 
 #if defined(FEATURE_CARE) && FEATURE_CARE
   // Care wave (display_care_wave.md): the attention policy drives the chime

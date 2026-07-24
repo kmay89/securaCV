@@ -55,6 +55,14 @@ ARCADE_SRC = test_arcade_logic.cpp
 MIC_BIN = test_mic_logic
 MIC_SRC = test_mic_logic.cpp
 
+# Canary Voice acoustic core (canary/hal/voice_score.h): the pure score +
+# audio math behind the sound engine — palette completeness, pentatonic
+# membership, the frozen IEC alarm grammar, the rise/fall contours, envelope
+# de-click, glissando/warble bounds, and the volume model (monotone, night
+# silencing, the Tier-1 always-audible floor).
+VOICE_BIN = test_voice_score
+VOICE_SRC = test_voice_score.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -79,7 +87,10 @@ $(ARCADE_BIN): $(ARCADE_SRC)
 $(MIC_BIN): $(MIC_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(MIC_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN)
+$(VOICE_BIN): $(VOICE_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(VOICE_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -87,6 +98,7 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(DEMO_BIN)
 	./$(ARCADE_BIN)
 	./$(MIC_BIN)
+	./$(VOICE_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN)
