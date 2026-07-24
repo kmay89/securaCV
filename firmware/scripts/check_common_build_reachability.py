@@ -32,6 +32,17 @@ one of the three routes this repo actually uses to compile shared code:
      and .cpp at the dir root, `includeDir: ".."` so `"<lib>/<name>.h"`
      resolves, `srcDir: "."` + `srcFilter: ["+<*.cpp>"]` so the TUs build.)
 
+     A manifest that EXISTS is not automatically a manifest that WORKS. The
+     optional `headers` field is what the LDF matches `#include` directives
+     against, and it is interpreted relative to `includeDir` — so declaring
+     `headers: ["look_engine.h"]` alongside `includeDir: ".."` tells the LDF
+     to look for `common/look_engine.h`, which does not exist, and the library
+     is silently never linked. That is the second half of the common/color
+     bug: adding the manifest was necessary but the extra `headers` metadata
+     made it inert, and the link error did not change at all. The guard below
+     therefore checks that every declared header actually resolves.
+     If in doubt, declare no `headers` field — boot and fleet_link don't.
+
   2. Explicit `build_src_filter` — the .cpp is named in a PlatformIO env, the
      pattern canary-sense / canary-sentinel use for the modules they compile
      directly rather than through the LDF.
@@ -77,19 +88,70 @@ def read(path: Path) -> str:
 
 
 def manifest_dirs() -> tuple[set[Path], list[tuple[Path, str]]]:
-    """Library dirs declaring a PlatformIO manifest, plus any malformed ones.
+    """Library dirs declaring a PlatformIO manifest, plus any broken ones.
 
-    A manifest that doesn't parse is not a manifest — PlatformIO would ignore
-    it and skip the sources, which is the same silent failure by another route.
+    "Broken" covers both ways a manifest can be present but useless:
+      * it doesn't parse — PlatformIO ignores it and skips the sources;
+      * it declares `headers` that don't resolve relative to `includeDir`,
+        so the LDF cannot match the project's #include and never links the
+        library. This one is nastier: the build failure is identical to
+        having no manifest at all, so it looks like the fix didn't apply.
     """
     good: set[Path] = set()
     bad: list[tuple[Path, str]] = []
     for man in sorted(COMMON.rglob("library.json")):
         try:
-            json.loads(read(man))
+            data = json.loads(read(man))
         except json.JSONDecodeError as exc:
-            bad.append((man, str(exc)))
+            bad.append((man, f"not valid JSON ({exc})"))
             continue
+
+        build = data.get("build") or {}
+        declared = data.get("headers") or []
+
+        # Where the LDF resolves declared headers.
+        #
+        # An EXPLICIT includeDir is authoritative — that is the single path a
+        # dependent project sees, which is why common/color's `includeDir: ".."`
+        # meant its headers had to be declared as "color/<name>.h".
+        #
+        # With no includeDir, PlatformIO falls back through include/ then the
+        # source dir then the library root — which is how common/csi resolves
+        # `#include <csi_types.h>` from its src/ directory.
+        if "includeDir" in build:
+            roots = [(man.parent / build["includeDir"]).resolve()]
+            where = f"includeDir '{build['includeDir']}'"
+        else:
+            roots = [
+                (man.parent / "include").resolve(),
+                (man.parent / build.get("srcDir", "src")).resolve(),
+                man.parent.resolve(),
+            ]
+            where = "the default include/ → srcDir → library-root fallback"
+
+        unresolved = [
+            h for h in declared
+            if not any((r / h).is_file() for r in roots)
+        ]
+        if unresolved:
+            def show(p: Path) -> str:
+                try:
+                    return str(p.relative_to(REPO))
+                except ValueError:
+                    return str(p)
+            bad.append((
+                man,
+                f"declares headers the LDF cannot resolve under {where} "
+                f"(looked in {', '.join(show(r) for r in roots)}): "
+                f"{', '.join(unresolved)}. The `headers` field is what the LDF "
+                f"matches #include directives against, so an entry that does "
+                f"not resolve means the library is never linked — the same "
+                f"link error as having no manifest at all. Declare them the "
+                f"way projects include them, or omit the field entirely, as "
+                f"common/boot and common/fleet_link do."
+            ))
+            continue
+
         good.add(man.parent)
     return good, bad
 
@@ -120,10 +182,11 @@ def main() -> int:
 
     manifests, invalid = manifest_dirs()
     if invalid:
+        print("::error::library.json present but ineffective — PlatformIO's LDF")
+        print("         would skip these libraries' sources entirely, which")
+        print("         fails at LINK time exactly as if no manifest existed:")
         for man, err in invalid:
-            print(f"::error file={man.relative_to(REPO)}::"
-                  f"library.json is not valid JSON ({err}) — PlatformIO would "
-                  f"ignore it and skip this library's sources.")
+            print(f"::error file={man.relative_to(REPO)}::{err}")
         return 1
 
     inis = build_filter_text()

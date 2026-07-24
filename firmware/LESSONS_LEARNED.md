@@ -477,12 +477,27 @@
   carries — see `common/boot` and `common/fleet_link` for the canonical shape:
   `includeDir: ".."` so `"<lib>/<name>.h"` resolves, `srcDir: "."` +
   `srcFilter: ["+<*.cpp>"]` so the sources compile.
+- **The second half, which cost a whole extra CI round:** the first attempt at
+  that manifest added "helpful" registry metadata — `description`, `keywords`,
+  `license`, `frameworks`, `platforms`, and a `headers` list. **`headers` is
+  what the LDF matches `#include` directives against, and it resolves relative
+  to `includeDir`.** Declaring `headers: ["look_engine.h"]` next to
+  `includeDir: ".."` told the LDF to look for `common/look_engine.h`, which
+  does not exist — so the library still never linked and the build failed with
+  the *identical* undefined-reference error, making it look as though the fix
+  had not applied at all. A manifest that EXISTS is not a manifest that WORKS.
+  **Match a proven precedent exactly before embellishing it:** `boot` and
+  `fleet_link` declare no `headers` field, and neither should this one.
 - **Regression check:** `firmware/scripts/check_common_build_reachability.py`
-  (Regression Guards). Every non-test .cpp under `common/` must be reachable by
-  a manifest, an explicit `build_src_filter` entry, or a staged Arduino copy;
-  anything else fails in seconds instead of minutes into a board build. Verified
-  against the real bug: it flags the pre-fix `common/color` and passes with the
-  manifest. It also surfaced a pre-existing orphan,
+  (Regression Guards), which enforces **both** halves. Every non-test .cpp under
+  `common/` must be reachable by a manifest, an explicit `build_src_filter`
+  entry, or a staged Arduino copy — *and* every manifest must actually work:
+  it must parse, and any `headers` it declares must resolve (against an explicit
+  `includeDir`, or PlatformIO's `include/` → `srcDir` → root fallback, which is
+  how `common/csi` resolves its `src/`-hosted headers). Verified against both
+  real failures: it flags the manifest-less `common/color` *and* the
+  metadata-rich manifest that was present but inert, while leaving `csi` alone.
+  It also surfaced a pre-existing orphan,
   `common/bluetooth/ble_debug_beacon.cpp`, which is waived with a written reason
   rather than silently ignored.
 - **Date learned:** 2026-07
