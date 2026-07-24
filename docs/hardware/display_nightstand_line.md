@@ -171,6 +171,38 @@ against the actual boards.
 
 ---
 
+## 8 · The look engine — tremendous, gamma-true, honest
+
+The nightstand's color is not hard-coded any more: it runs a small **look engine**
+([`firmware/common/color`](../../firmware/common/color/)) that both ambient channels — the WS2812 beacon and
+the glass wash — read, so the point of light and the pane always agree.
+
+- **`color_engine`** — a gamma-2.2 LUT, integer HSV→RGB, warmth (white-balance), palette sampling with
+  shortest-path hue interpolation, and the shared breath easing. **All integer / fixed-point**: the C6 has no
+  FPU, so a float HSV per LED frame would be soft-float; LUT + integer keeps it cheap enough to run every loop
+  pass on the single core. This is the honest form of "machine-code-level optimization" — hand-tuned fixed
+  point + tables, not literal assembly.
+- **`look_engine`** — nine **Hue-inspired scenes** (Canary Dawn, Ember, Aurora, Deep Calm, Forest, Tropical,
+  Lantern, Nocturne, and Signal) as small HSV palettes with per-scene motion (Breathe / Sweep / Shimmer /
+  Pulse / Comet). `led_color()` returns the beacon RGB for an instant; `wash_stops()` fills the glass gradient.
+- **The inviolable rule, in code:** a scene only ever dresses the **calm**. The moment `worst >= Warn`, the
+  engine abandons the scene and returns the true **semantic** color (amber / red) — the look can never hide an
+  alarm — and `safe_dark` returns black, so darkness at night still means safe. This is unit-tested
+  ([`firmware/tests_host/test_look_engine.cpp`](../../firmware/tests_host/test_look_engine.cpp)): the whole
+  integer pipeline (gamma monotonic, HSV primaries, palette, breath, and the honest override) is proven on the
+  host — a scene-blue Deep Calm still goes red under Alert — before it ever reaches a board.
+
+The live controls (`LookParams`: scene, motion, brightness, speed, warmth, gamma, night) are held in
+[`look_state.cpp`](../../firmware/projects/canary-display/src/ui/look_state.cpp). The **Look Studio** preview
+(the interactive design artifact) is the faithful, playable spec for all of it.
+
+**Staged next** (the alive info layer the studio previews): the on-glass **info carousel** — boot splash →
+firmware version → witnessing count → sending status → chain verified, cycling with organic crossfades — plus
+the **settings-surface scene picker** and an **MQTT look topic** (so a scene can be set from Home Assistant),
+and the **BOOT-button** summon/cycle. The engine already produces everything they need.
+
+---
+
 *Hardware sourced from the Waveshare wikis + the CircuitPython/espp/TFT_eSPI board definitions (pin maps,
 ST7789 offset, GT911 + CH422G, RGB-LED GPIOs, PSRAM). Design extends the existing display docs cited above;
 the state-color source of truth is `src/ui/theme.cpp` / `character.cpp`, and the "silence is never safety"
