@@ -55,7 +55,12 @@ final class WallModel {
         self.hubAddress = defaults.string(forKey: Self.hubKey) ?? ""
     }
 
-    deinit { pollTask?.cancel() }
+    // No `deinit` cancelling the poll task, for two reasons. It cannot compile
+    // under complete concurrency checking — `deinit` is nonisolated and
+    // `pollTask` is @MainActor — and it would be unreachable anyway: the task
+    // holds `self` for the duration of each `pollLoop` call, so deinit cannot
+    // run while a loop is in flight. The lifecycle is `start()`/`stop()`,
+    // driven by the view's `onAppear`/`onDisappear`.
 
     /// Start (or restart) the poll loop for the saved address. Safe to call
     /// repeatedly — an in-flight loop is always cancelled first, so a viewer
