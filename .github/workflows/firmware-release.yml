@@ -26,9 +26,30 @@ name: Firmware Release
 #   loudly if they drift, because devices would reject every artifact.
 
 on:
+  # Path A — the git-tag ceremony (unchanged): push a fw-v* tag and this cuts
+  # the release for exactly that tag/commit.
   push:
     tags:
       - 'fw-v*'
+  # Path B — one-click from the Actions tab (or the whole-pipeline launcher).
+  # Same build, same signing, same guards; it just creates the tag for you
+  # from the version you pick, so the tag and the commit can never disagree.
+  # The channel is a safety cross-check against the version's grammar
+  # (release = a clean triple; dev = a -dev.N / -rc.N suffix) — see
+  # docs/RELEASE_PROCESS.md.
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Channel: release (stable, latest moves) or dev (prerelease, dev channel only)"
+        type: choice
+        options:
+          - release
+          - dev
+        default: release
+      version:
+        description: "Version to cut, e.g. 2.3.0 (release) or 2.3.0-dev.1 (dev). Blank = read the triple from source (release only). Must match the bumped FIRMWARE_VERSION / CANARY_FW_VERSION in every variant."
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -50,15 +71,55 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Derive version + channel from tag
+      - name: Derive version, tag, and channel
         id: ver
+        env:
+          # workflow_dispatch inputs (empty on a tag push)
+          IN_CHANNEL: ${{ inputs.channel }}
+          IN_VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#fw-v}"
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # One-click path: derive VERSION + TAG from the inputs. The source
+            # triple (canary's FIRMWARE_VERSION) is the fallback for a release.
+            SRC_TRIPLE="$(grep -E '#define[[:space:]]+FIRMWARE_VERSION' firmware/canary/include/canary_config.h | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+            VERSION="${IN_VERSION#fw-v}"     # tolerate a pasted fw-v* tag
+            if [ -z "$VERSION" ]; then
+              if [ "$IN_CHANNEL" = "dev" ]; then
+                echo "::error::dev channel needs an explicit -dev.N / -rc.N version (e.g. ${SRC_TRIPLE}-dev.1) — the binary must carry that exact string. Bump the version headers and enter it here."
+                exit 1
+              fi
+              VERSION="$SRC_TRIPLE"
+            fi
+            # Safety cross-check: the picked channel must match the version's
+            # grammar, so a typo can't publish a dev build as stable (or vice
+            # versa) — the two would then disagree about releases/latest.
+            case "$VERSION" in
+              *-dev.*|*.dev.*|*-rc.*|*.rc.*) VER_KIND=dev ;;
+              *)                             VER_KIND=release ;;
+            esac
+            if [ "$VER_KIND" != "$IN_CHANNEL" ]; then
+              echo "::error::channel '${IN_CHANNEL}' disagrees with version '${VERSION}' (that version looks like '${VER_KIND}'). A dev build needs a -dev.N / -rc.N suffix; a release must have none."
+              exit 1
+            fi
+            TAG="fw-v${VERSION}"
+            # Refuse to clobber an already-published tag — bump the version.
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::error::tag ${TAG} already exists. Bump FIRMWARE_VERSION / CANARY_FW_VERSION in every variant (and the CHANGELOG) to the next version first."
+              exit 1
+            fi
+            echo "Firmware ${IN_CHANNEL}-channel release ${VERSION} (one-click) → will create tag ${TAG} at ${GITHUB_SHA}"
+          else
+            # Tag-push path (unchanged): the tag is the control surface.
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#fw-v}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          # Channel gating happens HERE, not in any client: a dev/rc tag is a
-          # GitHub prerelease, so releases/latest — the URL every default
-          # device polls — never moves for it. Release-channel devices are
-          # structurally unable to see dev builds (docs/RELEASE_PROCESS.md).
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Channel gating happens HERE, not in any client: a dev/rc version is a
+          # GitHub prerelease, so releases/latest — the URL every default device
+          # polls — never moves for it. Release-channel devices are structurally
+          # unable to see dev builds (docs/RELEASE_PROCESS.md).
           case "$VERSION" in
             *-dev.*|*.dev.*|*-rc.*|*.rc.*)
               echo "prerelease=true"  >> "$GITHUB_OUTPUT"
@@ -234,7 +295,7 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/release
@@ -405,7 +466,7 @@ jobs:
           python3 firmware/scripts/build_flash_manifest.py \
             --version "$VERSION" \
             --repo "${{ github.repository }}" \
-            --tag "${{ github.ref_name }}" \
+            --tag "${{ steps.ver.outputs.tag }}" \
             --out-dir /tmp/release \
             --notes "$NOTES" \
             --signing-key /tmp/releaser.pem
@@ -444,6 +505,16 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          # On a tag push this is the pushed tag; on the one-click path it
+          # creates this tag. target_commitish pins the created tag to the
+          # exact commit we checked out and BUILT (github.sha) — without it the
+          # create-release API defaults the new tag to the repo's default
+          # branch, so a dispatch from another ref (or main advancing during
+          # the ~90-min build) could point the tag/source archive at a
+          # different commit than the binaries + attestation. Ignored by the
+          # API when the tag already exists, so the tag-push path is unchanged.
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: "Canary Firmware ${{ steps.ver.outputs.version }}${{ steps.ver.outputs.prerelease == 'true' && ' (dev channel)' || '' }}"
           prerelease: ${{ steps.ver.outputs.prerelease }}
           body_path: /tmp/release_notes.md
