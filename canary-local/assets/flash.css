@@ -889,3 +889,47 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-settings .flash-row { margin-top: 8px; }
 .flash-settings-vendors { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 4px; }
 .flash-settings-vendors .flash-knob { margin: 0; }
+
+/* ── "which board am I holding?" identity panel ── */
+.flash-identity-wrap { display: flex; flex-direction: column; gap: 14px; margin: 16px 0 4px; }
+.flash-identity {
+  position: relative; border-radius: 14px; overflow: hidden;
+  border: 1px solid rgba(255,212,79,0.18);
+  background: linear-gradient(180deg, #14140f 0%, #0d0d0f 100%);
+}
+/* the enclosure / product frame behind the card */
+.flash-identity-frame {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 11px 16px 22px; background:
+    radial-gradient(140% 120% at 85% -10%, rgba(255,212,79,0.10), transparent 60%);
+}
+.flash-identity-kicker { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted, #8a8a8a); }
+.flash-identity-product { font-size: 15px; font-weight: 680; color: #ffe8a3; }
+.flash-identity-note { font-size: 12px; color: var(--muted, #8a8a8a); }
+/* the white "what it is" card, lifted over the frame */
+.flash-identity-card {
+  position: relative; margin: -12px 12px 12px; padding: 15px 16px;
+  background: #f7f7f4; color: #1a1a1a; border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+}
+.flash-identity-card h3 { margin: 0 0 3px; font-size: 16px; color: #141414; }
+.flash-identity-facts { font-size: 12px; color: #5a5f66; margin-bottom: 8px; }
+.flash-identity-lead { font-size: 12.5px; color: #454b52; margin: 0 0 12px; }
+.flash-identity-pins { display: flex; flex-direction: column; gap: 6px; }
+.flash-identity-pin { display: flex; align-items: baseline; gap: 9px; font-size: 12.5px; line-height: 1.4; }
+.flash-identity-cls {
+  flex: 0 0 auto; min-width: 52px; text-align: center; padding: 2px 7px;
+  border-radius: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em;
+}
+.flash-identity-pin-body { color: #23282e; }
+.flash-identity-pin-body b { color: #111; }
+.flash-identity-where { color: #6b7178; font-variant-numeric: tabular-nums; }
+.flash-identity-use { display: block; color: #6b7178; font-size: 11.5px; margin-top: 1px; }
+.flash-identity-planned {
+  flex: 0 0 auto; align-self: center; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: #8a6d1f; background: #f6e6b0; padding: 1px 6px; border-radius: 5px;
+}
+.flash-identity-more { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e4e4de; }
+.flash-identity-more .ghost { color: #7a5c00; }
+.flash-identity-more .ghost:hover { color: #a37b00; }
+@media (prefers-reduced-motion: reduce) { .flash-identity { transition: none; } }
