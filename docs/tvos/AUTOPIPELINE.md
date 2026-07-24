@@ -42,3 +42,11 @@ Developer account, the App Store Connect API key, and flipping
 `ENABLE_TVOS_BUILD=true`. The checklist is in [`../../tvos/README.md`](../../tvos/README.md).
 Until then the pipeline is a friendly no-op — wired, tested for policy, and
 waiting, exactly like the iOS build was before it.
+
+---
+
+**Trademarks.** Apple, Apple TV, tvOS, and Xcode are trademarks of Apple Inc.,
+registered in the U.S. and other countries and regions; App Store and App Store
+Connect are service marks of Apple Inc. SecuraCV is an independent project by
+Errer Labs, not affiliated with or endorsed by Apple Inc.; references are
+nominative only.
