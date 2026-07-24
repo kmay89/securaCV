@@ -28,6 +28,28 @@ export function wizardSteps(facts) {
   const ver = f.integration_version ? `v${f.integration_version}` : "the latest";
   return [
     {
+      id: "why",
+      kicker: "Before anything — why bother?",
+      title: "What you’re building, and why it’s worth it",
+      what:
+        "Right now each Canary watches its own corner alone. This one-time setup " +
+        "connects them into a single private guardian for your home: one place " +
+        "that sees every room at once, tells you the moment something matters, and " +
+        "keeps an honest record of what happened — all running on a box in your " +
+        "house, with no cloud, no account, and no monthly fee.",
+      do: [
+        "You gain: instant alerts (a phone buzz, a light, a siren — your choice) the second a Canary witnesses something.",
+        "You gain: one timeline of your whole home — what happened and when, never who. It records events, not faces.",
+        "You gain: it keeps working in a blackout or with the internet down, because it all lives at home. Nobody can switch it off from outside, and nothing is ever sold or leaked.",
+        "You gain: it’s yours — no subscription, no lock-in. Add or move Canaries anytime and they just join in.",
+        "The catch: the pieces need to meet each other once. That’s the next 15 minutes — we’ll do it together, and you can’t break anything.",
+      ],
+      stuck: [
+        "Not sure it’s worth it yet? You can flash and use a single Canary without any of this — the hub is what turns several into a household. Come back when you’re ready.",
+        "Worried it’s too technical? That’s exactly what this wizard is for. Every step tells you the precise thing to click, and nothing here can harm your devices.",
+      ],
+    },
+    {
       id: "what",
       kicker: "First, the two words",
       title: "What are Home Assistant and MQTT?",
