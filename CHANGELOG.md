@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### canary-display — the emulator now VOICES the Canary, and the sound board is on the map
+
+- **Hear the display in context.** The in-browser emulator (`canary-local/`)
+  now plays the real Canary Voice grammar — the boot chirp on power-on, the
+  alert/warn/all-clear tiers as the emulated fleet changes, and the
+  ack/page/mute interaction tones as you touch the glass. `FEATURE_CHIME` is
+  enabled **in the emulator build only** (it's not real hardware, so the
+  piezo-unpopulated gate that keeps it off in shipped firmware doesn't apply).
+- **Faithful, not a beeper.** The emulator's chime is now a persistent Web-Audio
+  "piezo" voice whose frequency *and* gain follow the firmware's real
+  per-control-tick LEDC writes: the tone channel's duty drives audio amplitude
+  (`emu_support.cpp` routes it to `onTone`), so you hear the actual envelope,
+  glissando, warble, and volume model — not a flat square blip. Because the
+  sound is the real firmware driving it, it cannot drift from `voice_score.h`.
+  A remembered corner mute toggle keeps the room yours; audio primes on the
+  boot gesture so the power-on chirp isn't lost to the autoplay policy.
+- **The sound board has a home.** The standalone board (`canary-local/voice/`)
+  is now registered in `build-line.json` — the one manifest every nav surface
+  reads (sitemap, room, app) — so it's reachable, and a new
+  `voice_nav_probe.mjs` (in CI) fails if it ever loses its spot or stops being
+  the generated artifact. Between that, the preview drift gate, and the dist
+  drift gate, every way you can hear these sounds is now guarded against rot.
+
 ### firmware/common — power-event resilience + an honest outage log (shared core)
 
 - **A pure, host-tested decision core for "when did the power go out."** New

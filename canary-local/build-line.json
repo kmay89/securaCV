@@ -166,7 +166,8 @@
           { "noun": "Legacy Lab front door", "href": "index.html", "purpose": "Redirects old links to the Lab shell or fleet cards." },
           { "noun": "Isometric room", "href": "room.html", "purpose": "Embedded workshop overview used by the Lab shell." },
           { "noun": "Emulator harness", "href": "emulator/web/harness.html", "purpose": "Developer/CI boot harness for real display firmware compiled to WebAssembly." },
-          { "noun": "Kiri slicing fixture", "href": "tests/fixtures/kiri_harness.html", "purpose": "Offline test fixture for the enclosure/slicer bench." }
+          { "noun": "Kiri slicing fixture", "href": "tests/fixtures/kiri_harness.html", "purpose": "Offline test fixture for the enclosure/slicer bench." },
+          { "noun": "Canary Voice sound board", "href": "voice/index.html", "purpose": "Hear the display's acoustic signatures (boot, alerts, interactions) — generated from voice_score.h and CI-gated, so it never drifts from the firmware." }
         ]
       },
       {
