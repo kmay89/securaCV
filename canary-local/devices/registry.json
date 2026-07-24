@@ -663,6 +663,335 @@
       }
     },
     {
+      "id": "canary-feeder",
+      "family": "canary-feeder",
+      "kind": "concept",
+      "name": "Canary Feeder",
+      "tagline": "A solar bird-feeder cam that wakes when a bird lands, decides 'a bird visited' on-device, and never ships raw video. Coming soon.",
+      "board": "XIAO ESP32-S3 Sense (+ optional Grove Vision AI V2 NPU); perch break-beam/load-cell trigger; solar",
+      "senses": [
+        "on-device bird-vs-not + coarse species bucket (concept)",
+        "perch landing via break-beam or load cell (concept)",
+        "a bird visit as a small-object claim, snapshot local-only (concept)"
+      ],
+      "shows": [],
+      "modality": "camera",
+      "network": {
+        "mdns": "advertise-only when on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "SmallObjectBoundaryCrossing claim + signed chain; snapshot stays local, never sealed"
+      },
+      "docs": [
+        "docs/hardware/canary_feeder_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A solar-powered camera on your feeder that wakes when a bird actually lands (a perch break-beam or load cell, ~0 mA until triggered — not a twitchy PIR), confirms 'a bird visited' with a tiny on-device model, seals that as a coarse small-object claim, keeps a snapshot LOCALLY for your delight, and never ships raw video anywhere. A Vision-family device: on-device inference in, coarse claim out.",
+        "points": [
+          {
+            "k": "Why a perch trigger, not PIR",
+            "v": "a small bird is a marginal thermal target, PIR false-fires on sun/wind and CAN'T see through the camera's glass (needs its own HDPE window); a break-beam/load-cell on the fixed landing point is weather-immune and near-zero false-wakes — and false wakes are a power-survival bug on a solar node."
+          },
+          {
+            "k": "The honest ID ceiling",
+            "v": "'10,000 species' is a CLOUD claim (Bird Buddy uploads video). On a ~$15 ESP32-S3 node, 'a bird is present' is reliable and coarse buckets (songbird/dove/corvid/squirrel) work with a locally-trimmed dataset. So the sealed claim is 'a bird visited (coarse bucket)' — the achievable and privacy-right thing."
+          },
+          {
+            "k": "No lithium charges below 0 C",
+            "v": "the most misunderstood point: LiFePO4 does NOT solve cold charging (it's stricter). Its win is cycle life + cold DISCHARGE. Size for 5-10 days autonomy with a low-temp-cutoff BMS; autonomy, not chemistry, carries you through a freeze."
+          },
+          {
+            "k": "A sealed box fogs the lens",
+            "v": "full sealing traps humid air and fogs the lens at dawn — use a breathable Gore vent + rechargeable desiccant, a hydrophobic lens coating and a short hood, camera aimed slightly down so water runs off."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Trigger",
+            "v": "perch break-beam or load cell (HX711) — the bird's landing IS the wake, ~0 mA idle, immune to sun/snow/wind/cold; camera confirms via FOMO. Skip RCWL/HB100 radar here (5-8 m over-range, metal-feeder false triggers)"
+          },
+          {
+            "k": "Inference",
+            "v": "XIAO ESP32-S3 Sense (Edge Impulse FOMO, bird-vs-not + a few buckets, ~$14) or step up to Grove Vision AI V2 (Himax + Ethos-U55 NPU, dependable buckets at ~0.35 W, ~$49); reCamera is Linux-class idle power, not a sleep/wake node"
+          },
+          {
+            "k": "Power",
+            "v": "LiFePO4 ~6-10 Wh + low-temp-charge-cutoff BMS; oversize the panel to 5-10 W (STC) tilted ~60 deg for weak winter sun + snow-shedding; optional supercap to buffer the ~250 mA wake pulses when the cold battery is current-limited"
+          },
+          {
+            "k": "Demand",
+            "v": "sleep-dominated: ~1-5 mA deep sleep (camera rail OFF), ~160-300 mA for 1-3 s per wake -> ~0.5-1 Wh/day; killing false wakes matters more than shaving inference time"
+          },
+          {
+            "k": "Weatherproofing",
+            "v": "IP66/67 box + Gore vent + desiccant (assembled dry), hydrophobic cover glass + printed hood, downward tilt; electronics/battery in the insulated feeder base"
+          }
+        ],
+        "sources": [
+          {
+            "name": "ESP32-CAM + HX711 feeder (perch load-cell trigger)",
+            "url": "https://shillehtek.com/blogs/news/esp32-cam-hx711-pir-bird-feeder-dashboard"
+          },
+          {
+            "name": "Edge Impulse — Grove Vision AI V2 on-device object detection",
+            "url": "https://www.edgeimpulse.com/blog/launching-official-support-for-seeed-grove-vision-ai-v2/"
+          },
+          {
+            "name": "RELiON — LiFePO4 cold-temperature charging reality",
+            "url": "https://www.relionbattery.com/knowledge/how-do-lifepo4-batteries-perform-in-cold-temperatures"
+          },
+          {
+            "name": "Security Today — camera condensation / breathable vent beats sealed",
+            "url": "https://securitytoday.com/articles/2015/04/01/condensation-reduction.aspx"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_feeder_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: a perch break-beam/load-cell wake + XIAO ESP32-S3 Sense FOMO 'bird-vs-not' + the existing webhook claim path — a real feeder node on the bench, measuring false-wake rate and capture power.",
+          "Train coarse local-species buckets on a trimmed regional dataset (not a universal model); map the bucket to a SmallObjectBoundaryCrossing attribute.",
+          "Local-only snapshot for the owner's delight (never sealed, never uploaded) — same posture as Vision's local preview.",
+          "Winter power hardening: LiFePO4 + low-temp-cutoff BMS + oversized tilted panel + autonomy sizing; optional supercap pulse buffer.",
+          "Enclosure: a printed feeder body with an integrated break-beam/load-cell perch, Gore vent + desiccant, hydrophobic hooded lens — printed and validated like every Canary shell."
+        ],
+        "request_title": "Concept request: Canary Feeder (solar bird-feeder witness)",
+        "request_body": "Seen the Feeder concept card. What I'd want from a solar bird-feeder cam:\n\n- your latitude / how brutal are your winters:\n- coarse 'a bird visited' or do you want local-species buckets:\n- squirrel-vs-bird a priority:\n- touch-free feeder (needs PIR+HDPE) or is a perch trigger fine:\n"
+      },
+      "persona": {
+        "name": "Sunny the Feeder Host",
+        "accent": "seed gold and morning green",
+        "shape": "cheerful canary wearing a tiny solar-panel sunhat, perched beside a feeder port with a welcoming wing out",
+        "story": "Sunny keeps the feeder and greets the guests. All day it dozes on sunlight, waking only when a real visitor lands to note 'a bird came by' — a chickadee, a dove, a cheeky squirrel — and to save you one happy snapshot. It never films the yard and never sends your visitors anywhere. Sunny wears a concept ribbon because honest products say what is real, and it would rather say 'a small songbird' truthfully than promise ten thousand species it can't tell apart on a sunhat's worth of power.",
+        "specialty": "Solar wildlife witness concept",
+        "good_for": [
+          "Knowing (and delighting in) who visits the feeder",
+          "A camera that stays camera-honest — coarse claim, local snapshot, no cloud video",
+          "Off-grid solar operation, winters included, if sized right"
+        ],
+        "catchphrase": "I greet the guests and count them true — no film of your yard, ever."
+      }
+    },
+    {
+      "id": "canary-litter",
+      "family": "canary-litter",
+      "kind": "concept",
+      "name": "Canary Litter",
+      "tagline": "A weight platform under the litter box that learns each cat's weight and bathroom pattern and flags what's worth a vet call — no camera. Coming soon.",
+      "board": "XIAO ESP32-C3/S3 + HX711 + load cell(s) (+ optional VL53L1X ToF, optional RFID)",
+      "senses": [
+        "cat body-weight trend via load cells (concept)",
+        "visit frequency / duration / coarse deposit bucket (concept)",
+        "urinary-blockage pattern: many visits, ~zero output (concept)"
+      ],
+      "shows": [],
+      "modality": "contact",
+      "network": {
+        "mdns": "advertise-only on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "wellbeing channel (non-diagnostic, P1 opt-in, HA-only) + optional coarse litter-visit presence claim"
+      },
+      "docs": [
+        "docs/hardware/canary_litter_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A weight platform under a STANDARD litter box (the Purina Petivity pattern) that quietly learns each cat's body weight and bathroom pattern from a load-cell stream, and — as opt-in, non-diagnostic wellbeing signals, never a camera — surfaces the changes vets treat as early warnings, including the one that's a genuine emergency. The honest claim is 'we surface changes worth asking your vet about', never 'we detect kidney disease'.",
+        "points": [
+          {
+            "k": "It's vet-credible, not cute",
+            "v": "Purina Petivity's litter-box data trained a peer-reviewed model that flags CKD at ~90% F1 (Quimby et al., Ohio State). Body-weight-trend down -> CKD/diabetes/hyperthyroid; up frequency + volume -> polyuria; MANY short straining visits with ~zero output -> urinary blockage, a life-threatening emergency mostly in male cats (24-48 h)."
+          },
+          {
+            "k": "Size the load cell to the load",
+            "v": "the HX711 gives ~+/-0.1% of full scale, so a 4x50 kg (200 kg) array is +/-200 g — too coarse for a 30-100 g clump. A single 5-10 kg bar (~+/-5-10 g) suits a small box; recover the body-weight TREND with heavy plateau averaging + a multi-day rolling median."
+          },
+          {
+            "k": "Drift is the real enemy, not resolution",
+            "v": "load cells drift with temperature and creep; continuous AUTO-TARE (re-baseline when flat and no visit) absorbs litter scatter, scooping, refills and evaporation, and a big-refill re-baseline stops a top-up logging as a giant 'deposit'."
+          },
+          {
+            "k": "Health data never touches the sealed log",
+            "v": "weight/frequency/duration ride the wellbeing channel exactly like Canary Sense's vitals: non-diagnostic, P1 opt-in, HA-only, never sealed-logged. The descriptor allowlist makes it structurally impossible for a health number to seal an event. Multi-cat by weight (or an owned RFID tag) — never a camera."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Core sensor",
+            "v": "load cell(s) + HX711 24-bit ADC under a standard box -> body weight (plateau minus tare), per-visit deposit (baseline delta), visit detection (step edges); trimmed-median over the plateau because a moving cat is the dominant noise source"
+          },
+          {
+            "k": "Entry gate (optional)",
+            "v": "a single VL53L1X ToF at the entrance for crisp entry/exit duration + the paws-on-rim half-step-in case; a $1 PIR is the budget fallback"
+          },
+          {
+            "k": "Multi-cat",
+            "v": "weight-based clustering (free, reliable when cats differ by >~0.5 kg; blurs for same-weight cats) with an optional opt-in RFID/BLE collar tag + entrance reader as the certainty upgrade — the same you-own-the-tag posture as the rest of the fleet"
+          },
+          {
+            "k": "Calibration",
+            "v": "two-point calibration at install stored in NVS; continuous auto-tare; visit segmentation with a min-weight + min-duration gate to reject paw-on-rim; report body weight as a multi-day rolling median where the clinical value lives"
+          }
+        ],
+        "sources": [
+          {
+            "name": "MDPI Animals — smart litter-box CKD detection (~90% F1)",
+            "url": "https://www.mdpi.com/2076-2615/16/9/1319"
+          },
+          {
+            "name": "Univ. of Illinois — Blocked Cats (male-cat emergency)",
+            "url": "https://vetmed.illinois.edu/pet-health-columns/blocked-cats-an-emergency-for-male-cats/"
+          },
+          {
+            "name": "SparkFun — HX711 load-cell resolution reality",
+            "url": "https://learn.sparkfun.com/tutorials/load-cell-amplifier-hx711-breakout-hookup-guide/all"
+          },
+          {
+            "name": "Purina Petivity — the weight-mat-under-a-standard-box pattern",
+            "url": "https://www.amazon.com/Petivity-Powered-Purina-Litter-Monitor/dp/B0C7S7NPMX"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_litter_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: a single-bar load cell + HX711 + XIAO under a standard box, ESPHome-style, logging raw weight traces to tune segmentation and auto-tare and to seed golden vectors for a pure segment_visit() function.",
+          "Derive the wellbeing signals (body-weight rolling median, visit frequency/duration, coarse deposit bucket) and route them on the wellbeing channel — non-diagnostic, P1 opt-in, HA-only.",
+          "The urgent path: the 'many visits, ~zero output' blockage detector with its own threshold and a careful, non-alarmist 'this can be an emergency for male cats, see a vet today' message.",
+          "Multi-cat: weight clustering first; add the optional RFID collar-tag + entrance reader for same-weight households.",
+          "Optional coarse litter-visit presence claim for owners who want visits on the timeline (coarse presence only, no metrics)."
+        ],
+        "request_title": "Concept request: Canary Litter (litter-box health witness)",
+        "request_body": "Seen the Litter concept card. What I'd want from a litter-box health monitor:\n\n- how many cats, and do any weigh within ~0.5 kg of each other:\n- box size (picks the load-cell rating):\n- most interested in weight trend, visit patterns, or the blockage alert:\n- ok with an optional collar tag for multi-cat certainty:\n"
+      },
+      "persona": {
+        "name": "Clover the Quiet Nurse",
+        "accent": "soft clinic teal and warm cream",
+        "shape": "gentle canary in a tiny nurse's cap perched on the edge of a scale, watching over a sleeping cat",
+        "story": "Clover sits under the litter box and does nothing but notice. It learns what each cat weighs and how often they go, and when the numbers drift the way vets worry about — weight slipping, too many trips, or the frightening one, lots of trips with nothing to show — it gently says 'this is worth a call'. It never watches with a camera and never pretends to diagnose. Clover wears a concept ribbon because honest products say what is real, and a good nurse says 'let's ask the vet', never 'it's kidney disease'.",
+        "specialty": "Pet-health wellbeing concept",
+        "good_for": [
+          "Catching feline weight loss early (CKD / diabetes / thyroid)",
+          "The male-cat urinary-blockage emergency pattern",
+          "Multi-cat households, camera-free, health data that never leaves as evidence"
+        ],
+        "catchphrase": "I notice what's worth a vet call — quietly, and never on camera."
+      }
+    },
+    {
+      "id": "canary-paw",
+      "family": "canary-paw",
+      "kind": "concept",
+      "name": "Canary Paw",
+      "tagline": "Knows when your dog is at the door WAITING to come in — not just passing by — in sun, rain, cold and snow, no camera. Coming soon.",
+      "board": "XIAO ESP32 + a trained IP65 paw-button (Tier 1) and/or a 24 GHz FMCW radar behind a radome (Tier 2)",
+      "senses": [
+        "a trained paw-button press as a contact event (concept)",
+        "a waiting dog via FMCW radar zone + dwell (concept)",
+        "optional owned-collar-tag identity confirmation (concept)"
+      ],
+      "shows": [],
+      "modality": "contact",
+      "network": {
+        "mdns": "advertise-only on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "ContactStateChange (button) or PresenceInRestrictedZone (radar dwell) + signed chain"
+      },
+      "docs": [
+        "docs/hardware/canary_paw_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A cheap, weatherproof, camera-free sensor that knows when your dog is at the door WAITING to come in (not merely passing), in all weather. No single cheap sensor does this reliably, so it ships as two honest tiers: a trained IP65 paw-button (a switch closes = a ContactStateChange claim), and a 24 GHz FMCW radar behind a radome with a zone + dwell rule (PresenceInRestrictedZone). Pick the tier, or hybridize for the strongest result.",
+        "points": [
+          {
+            "k": "Two problems, not one",
+            "v": "(1) detecting a dog through snow/sun/cold — only RF (radar / owned tag) is weather-immune; PIR, mats, capacitive and break-beams all fail. (2) 'waiting' vs 'passing' — a zone+dwell+identity problem only FMCW radar (position+persistence) or a collar tag (identity+proximity) can express."
+          },
+          {
+            "k": "Tier 1: the trained paw-button (cheapest, most reliable)",
+            "v": "an IP65 waterproof button with a SELF-POWERED RF activator: near-zero false alarms (only a deliberate press), literally a ContactStateChange claim. Costs: you must train the dog, and the button can snow-bury/ice (mount sheltered and angled; add a radar backstop)."
+          },
+          {
+            "k": "Tier 2: FMCW radar, and it MUST be FMCW not Doppler",
+            "v": "a waiting dog is nearly still, so cheap Doppler (RCWL/HB100 — the Ranger tier) goes blind exactly when needed; FMCW (HLK-LD2410/LD2450) senses a still target + gives position. 'Waiting not passing' = target in a ~0.5 m zone AND velocity ~0 AND dwell >= N seconds. Behind a radome, RF sees through iced-over plastic."
+          },
+          {
+            "k": "The honest radar limit",
+            "v": "single-radar dog-vs-person is THE classification that fails (~90% only with 4 radars). Mitigate by aiming the sensed slab knee-height (a standing adult's torso falls outside it) and/or adding an OWNED collar tag for identity — never pretend radar tells a dog from a bending person on its own."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Tier 1 hardware",
+            "v": "trained IP65 paw/nose button (Mighty Paw ~$30 or generic $13-18), self-powered RF fob activator, door-side XIAO receiver turns the press into a signed ContactStateChange"
+          },
+          {
+            "k": "Tier 2 hardware",
+            "v": "HLK-LD2410 (~$4-9) or LD2450 (X/Y + speed for up to 3 targets, ~$10-15) sealed in an IP67 enclosure that doubles as a low-loss radome (polycarbonate ~2.3 mm class); ESPHome-style zone/dwell logic on a XIAO"
+          },
+          {
+            "k": "Identity (optional)",
+            "v": "an OWNED BLE collar tag + door anchor confirms 'it's our dog, within 1 m' and inherently rejects people/cats/clutter (no tag); IP67-potted, CR2032 lasts months but sags in deep cold"
+          },
+          {
+            "k": "What loses, and why",
+            "v": "PIR (no contrast vs snow, can't see through glass, can't hold 'still waiting'); pressure mat (snow burial); capacitive (rain bridges it); break-beam (a crossing = passing, not waiting); Doppler radar (blind to a still dog)"
+          },
+          {
+            "k": "Weather residuals",
+            "v": "storm clutter drops radar detection 10-30% (CFAR + trajectory + dwell suppress, not eliminate); a thick wet-snow slab still degrades the radome; button/tag cold-battery sag — the honest reason the tiers back each other up"
+          }
+        ],
+        "sources": [
+          {
+            "name": "Mighty Paw Smart Bell (trained waterproof dog doorbell)",
+            "url": "https://mightypaw.com/products/mighty-paw-smart-bell-2-0"
+          },
+          {
+            "name": "HLK-LD2450 FMCW radar (X/Y + speed, ESPHome zones)",
+            "url": "https://esphome.io/components/sensor/ld2450/"
+          },
+          {
+            "name": "TI — radar radome design (RF through plastic/glass)",
+            "url": "https://www.ti.com/lit/pdf/swra705"
+          },
+          {
+            "name": "IEEE — single-radar human-vs-animal classification limits",
+            "url": "https://ieeexplore.ieee.org/document/11028970"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_paw_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0 (cheapest): a trained IP65 paw-button + a door-side XIAO receiver -> a signed ContactStateChange claim. Real, near-zero-false-alarm, needs only dog training.",
+          "Tier 2: an LD2450 behind a printed radome with a zone + velocity~0 + dwell>=N rule for 'waiting not passing'; tune the knee-height geometry on a real door and dog.",
+          "Add the optional owned BLE collar tag for identity confirmation (rejects people/cats/clutter; confirms our dog).",
+          "Hybrid: button primary + radar backstop for snow-buried-button days; or radar+tag for the no-training install.",
+          "Enclosure: an IP67 radome door mount (sheltered, angled) reusing Ranger's radome and Fence Guard's cold-battery guidance; printed and validated."
+        ],
+        "request_title": "Concept request: Canary Paw (dog-at-the-door witness)",
+        "request_body": "Seen the Paw concept card. What I'd want from a dog-at-the-door sensor:\n\n- willing to train the dog to a button, or need no-training (radar):\n- how brutal is the winter at that door (snow burial risk):\n- one dog or several (collar-tag identity helps):\n- wants-in only, or wants-in and wants-out:\n"
+      },
+      "persona": {
+        "name": "Biscuit the Door Herald",
+        "accent": "hearth amber and snow blue",
+        "shape": "sturdy little canary in a doorman's cap by a doorframe, one wing cupped to listen, a soft radar ring at paw height",
+        "story": "Biscuit waits by the door and listens for one thing: your dog, standing there wanting in. It knows the difference between waiting and just passing, and it works when the porch is buried in snow and the button is iced over. It has no camera and never watches the street — it only ever says 'your dog is at the door'. Biscuit wears a concept ribbon because honest products say what is real, and it will happily admit a radar can't always tell a dog from a bending person — that's why it likes a paw-press or a collar tag to be sure.",
+        "specialty": "All-weather dog-at-door concept",
+        "good_for": [
+          "Knowing your dog wants in, in snow/rain/cold, camera-free",
+          "Telling 'waiting to come in' from 'just passing by'",
+          "A weatherproof alternative to a doggie door or a cold wait outside"
+        ],
+        "catchphrase": "Your dog's at the door — waiting, not passing. I can tell the difference."
+      }
+    },
+    {
       "id": "canary-vision-pro",
       "family": "canary-vision-pro",
       "kind": "concept",
