@@ -36,13 +36,25 @@ that is host-tested or compile-gated, not by promises.
 | **T3** (NFPA 72 / ISO 8201) | three ~0.5 s beeps, pause, repeat — every smoke alarm | `acoustic_smoke_alarm` | Alert |
 | **T4** (UL 2034) | four ~0.1 s beeps, long pause, repeat — every CO alarm | `acoustic_co_alarm` | Alert |
 
-That's the entire vocabulary. A smoke alarm screaming in an empty house is
-exactly the event a fleet display exists to surface, and it requires no
+That's the entire alarm vocabulary. A smoke alarm screaming in an empty house
+is exactly the event a fleet display exists to surface, and it requires no
 speech, no recognition, no cloud. One detection needs **two consecutive
 on-grammar cycles** (one group of beeps can be a horn; two matching cycles
 are an alarm — host-tested), re-raises at most every 30 s while standing,
 and lands as an **unsigned local event** (a display holds no signing key —
 same honest footing as the 4.3B's door contacts).
+
+**And one opt-in convenience: wake the screen on a sound.** A dark wall dash
+can light up the moment you walk in — a door close, a knock, a footfall
+crossing a quiet room. This is **off by default** (Settings → microphone →
+wake on sound) and, crucially, **rides the exact same barrier**: it watches
+the same one-number-per-frame RMS envelope the alarm path does — a loud
+*onset* well above the tracked ambient (host-tested `TransientDetector`,
+refractory-gated so one door is one wake) — and never learns *what* the sound
+was. A wake is "the room got suddenly loud", nothing more: no sample, no
+classification, no recording, nothing sent. It only ever sets a wake window,
+the identical path a finger-tap gives the glass. When it's off, the mic is
+back to alarm patterns only.
 
 **The cadence windows are the standards, not guesses.** The detector's
 beep-duration windows are derived from the published timing plus what a room

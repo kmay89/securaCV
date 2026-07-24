@@ -41,7 +41,7 @@ Same honesty rule as every board here. Two VERIFY clusters gate real use:
    support; wire it behind this board's macro).
 2. **Audio front end.** `AUDIO_PIN_I2S_*` are now **filled from the vendor's
    own pin-mapping table** (MCLK GPIO6, SCLK GPIO44, LRCK GPIO16, mic-data-in
-   GPIO15; PA enable on CH422G EXIO4) — captured in
+   GPIO43 = the ES7210 ADC's serial-data-out; PA enable on CH422G EXIO4) — captured in
    [`board_facts.json`](../../../canary-local/devices/board_facts.json) and
    drift-locked against this map, so they're facts, not guesses. The
    **ES7210 register init is now written** (`es7210_init`), so the bench step

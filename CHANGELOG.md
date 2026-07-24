@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### canary-display — the mic does something useful: wake the screen on a sound
+
+- **Opt-in "wake on sound".** A dark 4.3C dash now lights the moment you walk
+  in — a door close, a knock, a footfall. It's a pure, host-tested
+  `TransientDetector`: a loud *onset* well above the tracked ambient
+  (refractory-gated, seeded so the capture-start glitch can't fire it),
+  running on the **same RMS envelope the alarm path uses** — no samples, no
+  classification, never speech. The mic layer only latches a request;
+  `main.cpp` turns it into a wake window, the identical path a finger-tap
+  takes. Off by default (Settings → microphone → wake on sound), NVS-
+  persisted, active only while the mic is listening. The mic contract doc +
+  the on-glass caption now state the second use honestly; everything stays
+  inside `FEATURE_MIC_ALARM` (default/emulator builds byte-identical).
+- **Fix (review): mic capture was pointed at the speaker line.** The vendor
+  I2S signal names are from the codec's view, so `ASDOUT` (ADC Serial Data
+  OUT = the mic ADC's output = the ESP32's data-IN) is **GPIO43**, not the
+  GPIO15 `DSDIN` (DAC data-in = speaker path) we'd filled. Confirmed against
+  Waveshare's own speaker-microphone example. Reading the wrong one would have
+  left `SNAP rms` silent; `AUDIO_PIN_I2S_SDIN` now = GPIO43.
+- **Fix (review): no weekly date-only board-facts PRs.** `gen_board_facts.py`
+  now keeps a board's committed entry — `verified_utc` included — verbatim
+  when a clean fetch finds no factual change, so the freshness job only files
+  a PR when facts actually move (the date means "as-of the current facts").
+
 ### canary-display — the 4.3C mic front end wired (ES7210 bring-up)
 
 - **`es7210_init` written**: with the I2S pins now vendor-exact, the ES7210
@@ -72,7 +96,7 @@
   loop.
 - **Our model made exact.** The 4.3C's I2S audio pins — long shipped as `-1`
   because "never ship a guessed mic pin" — are now filled from the vendor's
-  own pin-mapping table (MCLK 6, SCLK 44, LRCK 16, mic-data-in 15; PA on
+  own pin-mapping table (MCLK 6, SCLK 44, LRCK 16, mic-data-in 43; PA on
   CH422G EXIO4). They're facts now, not guesses; only the ES7210 register
   init remains bench-pending, and the mic stays off-by-default + arm-gated.
   A drift-lock test (`canary-local/tests/board_facts.test.mjs`) proves every

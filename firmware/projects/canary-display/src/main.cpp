@@ -1125,6 +1125,15 @@ void loop() {
   // Drain mic frames into the cadence detector (scalars only — samples are
   // zeroed inside the module). Self-throttled; 4.3C only.
   canary::io::mic_loop(now);
+  // Opt-in "wake on a sound": a loud onset (a door close) lights a dark dash,
+  // the same wake a touch or a presence event gives it. The mic layer only
+  // raises the request while it's actually listening; we turn it into a wake
+  // window here so the display keeps a single owner of that state.
+  if (canary::io::mic_take_wake_request()) {
+    const bool night = in_quiet_hours();
+    g_wake_until_ms = now + wake_window_ms(night);
+    g_last_wake_event_ms = now;
+  }
 #endif
 
 #if defined(FEATURE_RTC) && FEATURE_RTC

@@ -39,6 +39,7 @@ constexpr i2s_port_t MIC_I2S_PORT = I2S_NUM_0;
 constexpr const char* MIC_NS = "scv-mic";
 constexpr const char* MIC_KEY = "armed";
 constexpr const char* SENS_KEY = "sens";  // sensitivity preset index
+constexpr const char* WAKE_KEY = "wake";  // wake-the-screen-on-a-sound opt-in
 
 // Detection rate ceiling: a standing alarm re-raises at most once/30 s
 // (the fleet model's own tamper-style dedupe is event-name blind).
@@ -47,6 +48,9 @@ constexpr uint32_t REDETECT_MS = 30000;
 Gate s_gate;
 Envelope s_env;
 CadenceDetector s_det;
+TransientDetector s_transient;  // loud-onset → the opt-in screen wake
+bool s_wake_on_sound = false;   // NVS opt-in; only useful while listening
+bool s_wake_request = false;    // latch: a sound-wake fired, main.cpp drains it
 uint8_t s_sens_index = SENS_DEFAULT_INDEX;
 char s_self_id[48] = {0};
 bool s_display_ok = false;
@@ -212,6 +216,7 @@ void reset_acoustic_state() {
   s_env = Envelope();
   s_env.set_profile(sensitivity_by_index(s_sens_index));  // room preset applied
   s_det = CadenceDetector();
+  s_transient = TransientDetector();  // re-arm the onset detector for the session
   s_level = 0;
   // A fresh listening session earns a fresh "first detection is immediate":
   // re-arming next to a sounding alarm should surface it now, not after the
@@ -286,6 +291,7 @@ void mic_begin(const char* self_id, bool display_ok) {
       s_gate.armed = p.getBool(MIC_KEY, false);  // OFF is the default
       const uint8_t idx = (uint8_t)p.getUChar(SENS_KEY, SENS_DEFAULT_INDEX);
       s_sens_index = idx < SENS_COUNT ? idx : SENS_DEFAULT_INDEX;
+      s_wake_on_sound = p.getBool(WAKE_KEY, false);  // OFF by default
       p.end();
     }
   }
@@ -315,6 +321,16 @@ void mic_loop(uint32_t now) {
     s_level = rms;
     s_frame_ms += frame_ms;
     const bool loud = s_env.update(rms);
+    // Opt-in screen wake: a loud onset (a door close, a knock) over the same
+    // envelope the alarm path uses — no samples, just "the room got loud."
+    // We only latch the request; main.cpp turns it into a wake window, the
+    // exact path a touch or a presence event takes.
+    if (s_wake_on_sound &&
+        s_transient.update(rms, s_env.noise_floor(), s_frame_ms)) {
+      s_wake_request = true;
+      say_evt("sound-wake rms=%u floor=%u", (unsigned)rms,
+              (unsigned)s_env.noise_floor());
+    }
     const Detection d = s_det.update(loud, s_frame_ms);
     if (d.event != Event::None &&
         (!s_event_fired ||
@@ -374,6 +390,29 @@ void mic_set_sensitivity(uint8_t index) {
 
 uint8_t mic_sensitivity() { return s_sens_index; }
 const char* mic_sensitivity_name() { return sensitivity_name(s_sens_index); }
+
+void mic_set_wake_on_sound(bool on) {
+  s_wake_on_sound = on;
+  {
+    Preferences p;
+    if (p.begin(MIC_NS, /*readOnly=*/false)) {
+      p.putBool(WAKE_KEY, on);
+      p.end();
+    }
+  }
+  s_wake_request = false;  // don't carry a stale request across a toggle
+  say_evt("wake-on-sound=%d", on ? 1 : 0);
+}
+
+bool mic_wake_on_sound() { return s_wake_on_sound; }
+
+// main.cpp drains this once per loop: true exactly once per qualifying
+// sound-wake, and only while the mic is actually listening.
+bool mic_take_wake_request() {
+  if (!s_wake_request) return false;
+  s_wake_request = false;
+  return true;
+}
 
 bool mic_armed() { return s_gate.armed; }
 bool mic_listening() { return s_gate.running; }

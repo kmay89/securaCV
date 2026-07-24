@@ -296,6 +296,58 @@ static void test_presets_order_by_sensitivity() {
   CHECK(std::strcmp(sensitivity_name(2), "noisy") == 0, "index 2 names noisy");
 }
 
+// ── transient / loud-onset (the sound-wake) ─────────────────────────────────
+
+static void test_transient_fires_once_on_a_loud_onset() {
+  TransientDetector t;
+  const uint16_t floor = 200;               // a quiet room
+  const uint16_t thr = (uint16_t)((uint32_t)floor * t.rise_pct / 100);
+  uint32_t now = 0;
+  // Quiet frames first: arm the detector (seed) below threshold.
+  for (int i = 0; i < 5; i++) { CHECK(!t.update(50, floor, now), "quiet doesn't wake"); now += 20; }
+  // A door close: rms leaps over threshold — fires exactly once on the edge.
+  CHECK(t.update((uint16_t)(thr + 2000), floor, now), "loud onset wakes"); now += 20;
+  CHECK(!t.update((uint16_t)(thr + 2000), floor, now), "held-loud doesn't re-wake");
+}
+
+static void test_transient_refractory_debounces_repeats() {
+  TransientDetector t;
+  const uint16_t floor = 200, hi = 4000;
+  uint32_t now = 0;
+  t.update(50, floor, now); now += 20;            // seed
+  CHECK(t.update(hi, floor, now), "first onset wakes");
+  // Drop and rise again within the refractory window — no second wake.
+  now += 100; t.update(50, floor, now);
+  now += 100; CHECK(!t.update(hi, floor, now), "a second onset within 4 s is suppressed");
+  // After the refractory window, a fresh onset wakes again.
+  now += t.refractory_ms; t.update(50, floor, now);
+  now += 20; CHECK(t.update(hi, floor, now), "after the refractory gap it wakes again");
+}
+
+static void test_transient_ignores_the_arming_glitch() {
+  // If the very first frames after arming are loud (capture start, or arming
+  // into a noisy room), the detector must NOT count that as an onset — it
+  // arms only after seeing the room quiet once.
+  TransientDetector t;
+  const uint16_t floor = 200, hi = 4000;
+  uint32_t now = 0;
+  CHECK(!t.update(hi, floor, now), "loud-at-start does not wake (not seeded)"); now += 20;
+  CHECK(!t.update(hi, floor, now), "still loud, still no wake"); now += 20;
+  t.update(50, floor, now); now += 20;            // room goes quiet -> seeded
+  CHECK(t.update(hi, floor, now), "now a real onset wakes");
+}
+
+static void test_transient_scales_with_the_room() {
+  // The threshold rides the tracked floor, so a level that wakes a quiet room
+  // is just "the room" in a loud one — no false wakes where it's already loud.
+  TransientDetector quiet, loud;
+  uint32_t now = 0;
+  quiet.update(50, 200, now); loud.update(50, 1500, now); now += 20;
+  const uint16_t mid = 2000;  // ~+20 dB over 200, but below 1500*6
+  CHECK(quiet.update(mid, 200, now), "2000 is an onset over a quiet floor");
+  CHECK(!loud.update(mid, 1500, now), "the same 2000 is not an onset over a loud floor");
+}
+
 static void test_wire_names_match_the_real_classifier_vocabulary() {
   // classify_event(): "smoke" and "co_alarm" both land Sev::Alert — these
   // names are chosen to hit those substrings (the demo-script host test
@@ -327,6 +379,10 @@ int main() {
   test_floor_tracks_ambient();
   test_self_calibration_same_level_reads_differently();
   test_presets_order_by_sensitivity();
+  test_transient_fires_once_on_a_loud_onset();
+  test_transient_refractory_debounces_repeats();
+  test_transient_ignores_the_arming_glitch();
+  test_transient_scales_with_the_room();
   test_wire_names_match_the_real_classifier_vocabulary();
 
   if (g_fail == 0) {

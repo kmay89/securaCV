@@ -289,6 +289,51 @@ inline const char* event_wire_name(Event e) {
   }
 }
 
+// ── Loud-onset ("transient") detector ───────────────────────────────────────
+//
+// A door closing, a knock, someone crossing a quiet room: a sudden loud
+// ONSET. This is the mechanism behind the opt-in "wake the screen on a sound"
+// feature — a dark wall dash that lights to show the house the moment you walk
+// in. It is ENVELOPE-ONLY, exactly like the alarm path: it watches the same
+// RMS-vs-floor scalar (no samples, no new data crossing the privacy barrier)
+// and never learns WHAT the sound was, only that the room got suddenly loud.
+//
+// Design: fire on the rising crossing of a threshold set well ABOVE the
+// alarm's on-threshold — a real thump, not a TV murmur or speech — relative
+// to the tracked noise floor (so it self-scales: a louder room needs a louder
+// event). Refractory-gated so one door-close is one wake, and seeded on the
+// first quiet frame so the driver-start transient can't fire it.
+struct TransientDetector {
+  // onset threshold = floor * rise_pct/100. 600 ≈ +15.6 dB over ambient —
+  // clearly louder than the +10 dB an alarm beep clears, so speech/TV at
+  // conversational level won't trip it. Tunable.
+  uint16_t rise_pct = 600;
+  uint32_t refractory_ms = 4000;  // one wake per event; ignore repeats 4 s
+  bool prev_over = false;
+  bool seeded = false;            // saw a below-threshold frame yet?
+  bool has_fired = false;         // the refractory gap only applies BETWEEN wakes
+  uint32_t last_fire_ms = 0;
+
+  // Feed the frame's rms, the envelope's tracked noise floor, and the frame
+  // time. Returns true once on a qualifying loud onset.
+  bool update(uint16_t rms, uint16_t floor, uint32_t now) {
+    const uint32_t thresh = (uint32_t)floor * rise_pct / 100;
+    const bool over = rms >= thresh;
+    bool fired = false;
+    if (over && !prev_over && seeded &&
+        (!has_fired || (uint32_t)(now - last_fire_ms) >= refractory_ms)) {
+      fired = true;
+      has_fired = true;
+      last_fire_ms = now;
+    }
+    // Arm only after the room has been below threshold once, so a loud
+    // capture-start glitch (or arming mid-noise) can't count as an onset.
+    if (!over) seeded = true;
+    prev_over = over;
+    return fired;
+  }
+};
+
 }  // namespace mic
 }  // namespace io
 }  // namespace canary

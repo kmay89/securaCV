@@ -24,9 +24,10 @@ they can't quietly go stale under us.
 | **Our firmware pin maps** (authoritative for what we build) | [`firmware/boards/waveshare-esp32s3-lcd43*/pins/pins.h`](../../firmware/boards/) |
 | **Drift-lock** proving our `pins.h` matches the vendor snapshot | [`canary-local/tests/board_facts.test.mjs`](../../canary-local/tests/board_facts.test.mjs) |
 
-The snapshot carries a `verified_utc` date per board — the last time the facts
-were confirmed against the live vendor page. If the freshness loop ever breaks,
-that date stops advancing and the age gives it away.
+The snapshot carries a `verified_utc` date per board — when these facts were
+last recorded (it moves only when a fact actually changes, so a stable board's
+date reads "unchanged since"). The freshness workflow's own run history (the
+Actions tab) is where you confirm the loop is alive.
 
 ## The three boards
 
@@ -64,8 +65,9 @@ Canonical: <https://docs.waveshare.com/ESP32-S3-Touch-LCD-4.3C> · our map:
 The one display in the family that physically carries **microphones**: a
 dual-MIC array behind an **ES7210** ADC, an **ES8311** codec alongside for the
 speaker path, both on the shared I²C bus. Its I²S lines are vendor-documented
-(MCLK GPIO6, SCLK GPIO44, LRCK GPIO16, mic-data-in GPIO15, speaker-data-out
-GPIO43; the power-amp enable is CH422G `EXIO4`). It also brings the PCF85063
+(MCLK GPIO6, SCLK GPIO44, LRCK GPIO16, mic-data-in GPIO43 — the ES7210 ADC's
+serial-data-out — speaker-data-out GPIO15; the power-amp enable is CH422G
+`EXIO4`). It also brings the PCF85063
 RTC, a backlight-PWM line via the expander (`EXIO_PWM`), and isolated I/O
 (`EXIO0/5/6/7`). Because it hears, it's a **distinct privacy surface** — see the
 [listening contract](./display_mic_variant.md).
