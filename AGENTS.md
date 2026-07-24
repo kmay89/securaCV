@@ -240,6 +240,23 @@ fn detect(&mut self, ...) -> Result<DetectionResult>;
 
 ---
 
+## Release & Packaging (all app targets)
+
+Before touching **any** app build/release workflow — the Flasher, the Lab,
+or the **iPhone / iPad / tvOS / Mac** targets — read
+[`.github/RELEASE_LESSONS.md`](.github/RELEASE_LESSONS.md). It's the canonical,
+growable home for build/release lessons (each a real failure paid for once),
+with principles that hold on every platform: dereference symlinks when copying
+a payload into a bundle (`cp -RL`), pin-or-log every upstream ref, prove the
+bundle with the build-only/`dry_run` path before publishing, and verify
+bundled resources exist in the copy step. When you fix a release/packaging
+bug, **append a dated entry there** (symptom → cause → fix → applies-to) and
+generalize it to the other targets — don't fix only the one that broke. The
+whole pipeline (apps + web deploy) runs from one button:
+`.github/workflows/release-one-click.yml`.
+
+---
+
 ## Dependencies Policy
 
 ### Always allowed
