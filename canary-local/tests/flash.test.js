@@ -907,6 +907,91 @@ test("parseSelfManifest: extracts the signed manifest from a noisy boot log", as
   assert.strictEqual(formatFingerprint(""), "");
 });
 
+// ── the BLE offline console (Web Bluetooth "it's really on" test) ───────────
+test("BLE_CONSOLE UUIDs match the firmware + iOS contract", async () => {
+  const { BLE_CONSOLE } = await core();
+  // Pinned to firmware .../ble_console.h and ios .../BLEConsole.swift — a drift
+  // here means the browser scans for a service no Canary advertises.
+  assert.strictEqual(BLE_CONSOLE.serviceUuid, "8fc1cee0-b162-4401-9607-c8ac21383e90");
+  assert.strictEqual(BLE_CONSOLE.snapshotUuid, "8fc1cee1-b162-4401-9607-c8ac21383e90");
+  // Web Bluetooth requires lower-case UUIDs.
+  assert.strictEqual(BLE_CONSOLE.serviceUuid, BLE_CONSOLE.serviceUuid.toLowerCase());
+  assert.ok(BLE_CONSOLE.maxPayloadBytes >= 200, "payload cap should leave MTU headroom");
+});
+
+test("bleSupport: present entry point supported, absent → guided fallback copy", async () => {
+  const { bleSupport } = await core();
+  assert.strictEqual(bleSupport({ bluetooth: { requestDevice() {} } }).supported, true);
+  // Safari / Firefox / iOS: no navigator.bluetooth at all.
+  const none = bleSupport({});
+  assert.strictEqual(none.supported, false);
+  assert.match(none.reason, /Chromium|Chrome/);
+  // A bluetooth object without the real entry point is not enough.
+  assert.strictEqual(bleSupport({ bluetooth: {} }).supported, false);
+  assert.strictEqual(bleSupport(null).supported, false);
+});
+
+test("parseBleSnapshot: reads JSON from bytes, DataView, ArrayBuffer, string", async () => {
+  const { parseBleSnapshot } = await core();
+  const sample = '{"up":12345,"heap":154832,"wifi":"connected","wrssi":-55,' +
+    '"ctx":"home","owner_min":1,"hh":3,"ble":8421,"motion":12,"id":"3A4C","fw":"2.1.0"}';
+  const bytes = new TextEncoder().encode(sample);
+
+  const fromStr = parseBleSnapshot(sample);
+  assert.strictEqual(fromStr.raw.id, "3A4C");
+  assert.strictEqual(fromStr.raw.wrssi, -55);
+
+  assert.deepStrictEqual(parseBleSnapshot(bytes).raw, fromStr.raw);
+  assert.deepStrictEqual(parseBleSnapshot(bytes.buffer).raw, fromStr.raw);
+  // A DataView is exactly what Web Bluetooth's readValue() hands back.
+  assert.deepStrictEqual(
+    parseBleSnapshot(new DataView(bytes.buffer)).raw, fromStr.raw);
+});
+
+test("parseBleSnapshot: garbage / partial / non-object never throws, returns null", async () => {
+  const { parseBleSnapshot } = await core();
+  assert.strictEqual(parseBleSnapshot(null), null);
+  assert.strictEqual(parseBleSnapshot(""), null);
+  assert.strictEqual(parseBleSnapshot("not json"), null);
+  assert.strictEqual(parseBleSnapshot('{"up":123'), null);   // truncated read
+  assert.strictEqual(parseBleSnapshot("[1,2,3]"), null);     // array, not a snapshot
+  assert.strictEqual(parseBleSnapshot("42"), null);
+  assert.strictEqual(parseBleSnapshot(new Uint8Array([0xff, 0xfe])), null);
+});
+
+test("bleSnapshotRows: friendly rows, only present fields, minimal payload ok", async () => {
+  const { parseBleSnapshot, bleSnapshotRows, formatUptime } = await core();
+  const snap = parseBleSnapshot('{"up":90061,"heap":154832,"wifi":"connected",' +
+    '"wrssi":-55,"ctx":"home","ovr":true,"owner_min":2,"hh":3,"ble":8421,' +
+    '"ble_hh":4,"motion":12,"id":"3A4C","fw":"2.1.0"}');
+  const rows = bleSnapshotRows(snap);
+  const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.value]));
+  assert.strictEqual(byLabel.Identity, "3A4C");
+  assert.strictEqual(byLabel.Firmware, "2.1.0");
+  assert.strictEqual(byLabel.Uptime, formatUptime(90061)); // "1d 1h"
+  assert.strictEqual(byLabel.WiFi, "connected (-55 dBm)");
+  assert.strictEqual(byLabel.Context, "home (override)");
+  assert.strictEqual(byLabel["BLE adverts seen"], "8421 (4 known)");
+
+  // A minimal snapshot (firmware drops optional fields under MTU pressure)
+  // renders only what's there — never invents a field, never throws.
+  const minimal = bleSnapshotRows(parseBleSnapshot(
+    '{"up":5,"heap":100000,"wifi":"portal","ctx":"away","hh":1}'));
+  assert.ok(minimal.length >= 3);
+  assert.ok(!minimal.some((r) => r.label === "Identity"));
+  assert.deepStrictEqual(bleSnapshotRows(null), []);
+});
+
+test("formatUptime: days/hours/minutes/seconds, human and bounded", async () => {
+  const { formatUptime } = await core();
+  assert.strictEqual(formatUptime(5), "5s");
+  assert.strictEqual(formatUptime(65), "1m 5s");
+  assert.strictEqual(formatUptime(3720), "1h 2m");
+  assert.strictEqual(formatUptime(90061), "1d 1h");
+  assert.strictEqual(formatUptime(-10), "0s");
+  assert.strictEqual(formatUptime("nonsense"), "0s");
+});
+
 // ── release signature verification (in-browser, pinned key) ─────────────────
 const nodeCrypto = require("node:crypto");
 function makeSignedImage() {
