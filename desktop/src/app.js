@@ -289,6 +289,36 @@ function announceToWitness(product) {
   } catch (_) { /* the wall must never break a flash */ }
 }
 
+// The real thing: the device we just flashed joins the Wi-Fi we provisioned,
+// so — because this is the native app, not a sandboxed browser — we can find it
+// on the LAN and populate the wall with the REAL fleet. The Rust `witness_discover`
+// command does the LAN reach (no CSP; `.local` resolves via the OS). We poll it
+// while the board boots + joins Wi-Fi; if nothing answers (or an older build),
+// the simulated appearance from announceToWitness() stands. Never throws into
+// the flash flow.
+function witnessBases() {
+  const bases = [];
+  const host = $("mqtt-host") && $("mqtt-host").value && $("mqtt-host").value.trim();
+  if (host) { bases.push("http://" + host + ":8099"); bases.push("http://" + host); }
+  bases.push("http://canary.local:8099", "http://canary.local");
+  return bases;
+}
+function discoverAndPopulate(product) {
+  try {
+    const frame = $("witness-frame");
+    const post = (m) => { try { if (frame && frame.contentWindow) frame.contentWindow.postMessage(m, "*"); } catch (_) {} };
+    const bases = witnessBases();
+    const deadline = Date.now() + 30000;
+    const tick = async () => {
+      let fleet = null;
+      try { fleet = await invoke("witness_discover", { bases }); } catch (_) { /* not up yet, or older build */ }
+      if (fleet) { post({ type: "witness:fleet", fleet, highlight: witnessName(product) }); return; }
+      if (Date.now() < deadline) setTimeout(tick, 2500);
+    };
+    tick();
+  } catch (_) { /* discovery is best-effort — never affects flashing */ }
+}
+
 function initShell() {
   document.querySelectorAll(".nav-item").forEach((b) =>
     b.addEventListener("click", () => navigate(b.dataset.nav))
@@ -692,7 +722,8 @@ async function onFlash() {
     state.vision.hostBoot = null;
     clearSecretFields();
     renderReceipts();
-    announceToWitness(state.product);
+    announceToWitness(state.product);   // instant, so the wall reacts right away
+    discoverAndPopulate(state.product); // then replace with the REAL fleet off the LAN
     if (requiresLiveReceipt(state.product)) {
       setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
       state.busy = false;

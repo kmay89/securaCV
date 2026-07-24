@@ -29,6 +29,36 @@ both Tauri apps, which are already web-frontend shells.
   iframe + `demo-fleet.json` fetch; no CSP change. A real LAN kernel needs
   `connect-src` widened (a deliberate, separate change).
 
+## Real LAN discovery after a flash (native, not simulated)
+
+The Flasher is a **native app**, so — unlike the sandboxed browser page — it can
+reach the LAN. And it just provisioned the device's Wi-Fi, so it knows the
+Canary is about to join the same network. So the appear can be **real**:
+
+1. `onFlash` fires `announceToWitness()` (instant, simulated) so the wall reacts
+   immediately, then `discoverAndPopulate()`.
+2. `discoverAndPopulate()` polls the Rust command **`witness_discover(bases)`**
+   for ~30s (the board takes a moment to boot + join Wi-Fi). Candidate bases are
+   built from the provisioned host (the MQTT/HA host field) plus `canary.local`.
+3. **`witness_discover`** (native, `reqwest`) GETs `{base}/api/fleet` on each
+   candidate and returns the first that answers. No CSP applies (native), and
+   `.local` resolves via the OS — **no mDNS crate**. It reuses the existing
+   `reqwest` dependency and mirrors `fetch_manifest`.
+4. The frontend posts `{type:'witness:fleet', fleet, highlight}` to the iframe;
+   the emulator swaps the demo fleet for the **real** Canaries and highlights the
+   one you just flashed.
+
+Every step is wrapped so it can **never** affect the flash flow; if nothing
+answers (older build, or nothing serving `/api/fleet` yet), the simulated
+appearance stands.
+
+> **Honest prerequisite for *real* devices to populate:** something on the LAN
+> has to answer `GET /api/fleet` — the hub/kernel, or a `canary-wap` firmware
+> endpoint (the contract in [`discovery/DISCOVERY.md`](discovery/DISCOVERY.md)).
+> That firmware/kernel endpoint is the remaining real-world enabler; until it
+> ships, `witness_discover` simply finds nothing and the simulated appear is
+> what you see. Verifying the native command still needs a macOS/Tauri build.
+
 ## The Flasher — the magic moment
 
 **Goal:** after the Flasher writes firmware to a Canary, that Canary *appears*

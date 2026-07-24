@@ -394,6 +394,20 @@ if (tv && stage) {
     const name = flashPool.find((n) => base.indexOf(n) === -1) || ('Canary ' + (base.length + 1));
     appearDevice({ name: name, online: true }, 'just flashed');
   }
+  // Populate from a REAL fleet a host discovered on the LAN (the Flasher's
+  // native side finds the just-flashed device and posts it here).
+  function applyFleet(data, highlight) {
+    const devs = Array.isArray(data) ? data : ((data && (data.devices || data.canaries || data.fleet)) || []);
+    if (!devs.length) return;
+    liveFleet = devs.map((x) => ({ name: String(x.name || x.id || x.hostname || 'Canary').slice(0, 40), online: x.online !== false }));
+    liveHost = 'your LAN';
+    setLive(true, liveHost);
+    if (highlight) justAppeared = String(highlight).slice(0, 40);
+    if (edition !== 'home' || homeMode !== 'wall') { edition = 'home'; homeMode = 'wall'; }
+    render(); renderDevices();
+    showToast('✨ Found on your network · ' + liveFleet.length + ' Canaries');
+    setTimeout(() => { justAppeared = null; }, 1700);
+  }
 
   // ---------- connect to a real kernel ----------
   const kernelUrl = $('kernelUrl'), connectBtn = $('connectBtn'), demoBtn = $('demoBtn'), liveDemoBtn = $('liveDemoBtn'),
@@ -477,6 +491,7 @@ if (tv && stage) {
   window.witnessWall = {
     appear: (name, label) => { if (name) appearDevice({ name: String(name).slice(0, 40), online: true }, label || 'just flashed'); },
     connect: (url) => { if (url) connectFleet(String(url), false); },
+    fleet: (data, highlight) => applyFleet(data, highlight),
     skin: (name) => applySkin(name, true),
     simulateFlash,
   };
@@ -485,6 +500,7 @@ if (tv && stage) {
     if (!d || typeof d !== 'object') return;
     if (d.type === 'witness:appear' && d.name) window.witnessWall.appear(d.name, d.label);
     else if (d.type === 'witness:connect' && d.url) window.witnessWall.connect(d.url);
+    else if (d.type === 'witness:fleet' && d.fleet) window.witnessWall.fleet(d.fleet, d.highlight);
     else if (d.type === 'witness:skin' && d.skin) window.witnessWall.skin(d.skin);
   });
   // Tell an embedding host we're ready to receive appear()/connect() messages.
