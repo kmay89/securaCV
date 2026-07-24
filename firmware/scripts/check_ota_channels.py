@@ -45,6 +45,21 @@ UNPUBLISHED: dict[str, str] = {
         "products from their PlatformIO envs, which CI does not build for release",
     "manifest-canary-display.json":
         "bare-flavor fallback for an un-flavored display build; no release target",
+    # PlatformIO-only display envs. The release builds display flavors through
+    # arduino-cli sketch.yaml profiles (watch / dash / modes) and never runs
+    # `pio run` for canary-display, so these three carry an OTA identity with no
+    # channel behind it. Each is a distinct board, so giving them one means a
+    # release build target, not just a manifest.
+    "manifest-canary-display-dash-mic.json":
+        "canary-display-dash-mic env (4.3C + ES7210 mic) — PlatformIO-only, no "
+        "sketch.yaml profile and no release build target",
+    "manifest-canary-display-dash7.json":
+        "canary-display-dash7 env (7-inch dash) — PlatformIO-only, no sketch.yaml "
+        "profile and no release build target",
+    "manifest-canary-display-nightstand-s3.json":
+        "canary-display-nightstand-s3 env (Waveshare ESP32-S3-LCD-1.47) — "
+        "PlatformIO-only, no release build target; the env does not currently link "
+        "on main either (canary::color::wash_stops, see firmware.yml)",
 }
 
 
@@ -52,9 +67,21 @@ UNPUBLISHED: dict[str, str] = {
 # expands to. Anchoring on the quote is what keeps `#ifndef
 # SECURACV_OTA_MANIFEST_URL` from swallowing the `#define` on the next line —
 # an earlier version did exactly that and silently checked a third of the tree.
-OTA_URL_DEFINE = re.compile(r'SECURACV_OTA_MANIFEST_URL[\s\\]*"([^"]*)"')
+OTA_URL_DEFINE = re.compile(r'SECURACV_OTA_MANIFEST_URL[\s\\]*=?[\s\\]*\\?"([^"]*)"')
 MANIFEST_IN_URL = re.compile(r"/(manifest-[A-Za-z0-9._-]+\.json)")
-SOURCE_GLOBS = ("firmware/**/*.h", "firmware/**/*.ino", "firmware/**/*.cpp")
+
+# BOTH ways a device learns its manifest URL, because checking only one is how
+# this guard shipped with a blind spot the first time: the C/C++ `#define`
+# fallbacks, AND the PlatformIO `-DSECURACV_OTA_MANIFEST_URL="…"` build flags in
+# the env files. The per-board envs are precisely where the exotic flavors live
+# (nightstand-s3, dash7, dash-mic), so an .ini-only URL is the likeliest kind to
+# have no channel — exactly what must not slip through.
+SOURCE_GLOBS = (
+    "firmware/**/*.h",
+    "firmware/**/*.ino",
+    "firmware/**/*.cpp",
+    "firmware/**/*.ini",
+)
 
 
 def polled_manifests() -> dict[str, list[str]]:

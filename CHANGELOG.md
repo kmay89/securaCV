@@ -30,9 +30,13 @@ someone went looking.
   would trap devices in a rollback loop. New
   `firmware/scripts/check_ota_channels.py` (in "Regression Guards") proves
   statically that every URL the firmware polls is one the release publishes —
-  or is declared unpublished with a reason, which is how the flavors with no
-  profile yet (`watch-modes`, `nightstand`, bare `canary-display`) are now
-  recorded instead of forgotten.
+  or is declared unpublished with a reason. It reads **both** places a device
+  learns that URL: the C/C++ `#define` fallbacks and the PlatformIO
+  `-DSECURACV_OTA_MANIFEST_URL=` build flags in the env files. That second half
+  matters — the per-board envs are where the exotic flavors live, and they turned
+  out to hold three more identities with no channel behind them
+  (`dash-mic`, `dash7`, `nightstand-s3`), now declared alongside the Arduino-path
+  ones (`watch-modes`, `nightstand`, bare `canary-display`) instead of forgotten.
 - **A dark flasher says why it's dark.** `flash.json` pins `manifest_url` to an
   exact `fw-v<train>` tag (right — `/latest/` is unsafe in a shared namespace),
   but a tag bumped before its release is cut made every product read
