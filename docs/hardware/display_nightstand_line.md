@@ -1,0 +1,159 @@
+# The Nightstand Line — three new display boards (design & bring-up)
+
+**Status:** design + hardware bring-up reference. **Board pin maps landed** (`firmware/boards/…/pins/pins.h`,
+compile-pending, not bench-validated); the HAL / flavor / emulator / registry work is the next slice
+(§7). This doc extends the existing display design — [`display_living_canary.md`](./display_living_canary.md),
+[`display_nightstand.md`](./display_nightstand.md), [`display_care_wave.md`](./display_care_wave.md),
+[`display_character.md`](./display_character.md) — it does **not** replace them.
+
+**The idea:** three ordered boards that join the Canary Display family as **nightstand / ambient** nodes,
+where **color is the primary language** — the onboard RGB LED and the glass communicate fleet state at a
+glance across a dark room, the bird **breathes and lives**, and **a touch reveals detail**.
+
+---
+
+## 1 · The three boards and their roles
+
+| Board (`BOARD_ID`) | MCU | Panel | Ambient LED | Role |
+|---|---|---|---|---|
+| `waveshare-esp32c6-lcd147` | ESP32-C6, 1-core 160 MHz, **no PSRAM** | ST7789 172×320 SPI | 1× WS2812 (GPIO8) | nightstand (pin-header) |
+| `waveshare-esp32s3-lcd147` | ESP32-S3, 2-core 240 MHz, 8 MB PSRAM | ST7789 172×320 SPI (same panel) | 1× WS2812 (GPIO38) | plug-in ambient (USB-A stick) |
+| `waveshare-esp32s3-lcd7` | ESP32-S3R8, 8 MB **octal** PSRAM | 800×480 RGB parallel + GT911 5-pt touch | — | the big glass (desk) |
+
+**Two families, not three:** the two 1.47" boards **share the ST7789 172×320 panel** → one new SPI HAL,
+two pin maps. The 7" is **electrically the 4.3" Canary Dash at the same 800×480** → it reuses the Dash's
+RGB HAL, GT911 driver, and CH422G handling; the only new work is the roomier layout and full 5-point touch.
+
+**Hardware bring-up gotchas** (baked into the `pins.h` headers; full detail there):
+- **ST7789 X-offset = 34** — the 172-px glass is a window into 240-wide controller RAM; every draw needs a
+  34-px column offset at rotation 0, migrating on rotation.
+- **Every 1.47" display pin differs C6↔S3**; the RGB LED is GPIO8 (C6) vs GPIO38 (S3); drive it via **RMT**
+  (a bit-banged strobe glitches under Wi-Fi on the single-core C6).
+- **C6 has no PSRAM + one core** → lean single-buffer rendering; the S3 (8 MB PSRAM, 2 cores) can double-buffer
+  and animate richly. *Same look, two budgets.*
+- **7": PSRAM is mandatory** (768 KB framebuffer), and **the backlight *and* the GT911 touch-reset ride the
+  CH422G I2C expander (0x24), not native GPIOs** — the GT911 won't enumerate until reset through the expander.
+  This is the #1 thing that breaks naive ports; the Dash already handles it.
+
+---
+
+## 2 · Color is the language — and the RGB LED is the primary ambient channel
+
+The state vocabulary already exists and is the single source of truth ([`src/ui/theme.cpp`](../../firmware/projects/canary-display/src/ui/theme.cpp),
+`character.cpp` `k_sem_canonical`): **safe = green `0x43A047`, check = amber `0xFB8C00`, help = red
+`0xE53935`, signed = blue `0x03A9F4`**, with the red-shifted night palette (`theme.h` `ncol_*`). The new
+boards don't invent colors — they push that language onto **two ambient surfaces**:
+
+- **The onboard RGB LED** becomes the **primary across-the-room glance** — a single point of color you can
+  read from bed without the screen lighting the room. It **breathes in sync with the bird** (§3) and is
+  colored by the **worst active severity** in the fleet.
+- **The glass** is the **detail-on-touch layer** — the living canary, the witness halo/cards, the timeline.
+  At rest it's calm (or dark, §4); a touch brings the detail up.
+
+This is the "utilize every bit of pixel and color" you asked for: the 262K-color panel for the rich detail
+view, plus a whole extra color channel (the LED) for the ambient signal.
+
+---
+
+## 3 · Breathing & alive — reuse the engine, extend it to the LED
+
+The "alive" behavior is **already built and host-tested** — we extend it, not rebuild it:
+- [`bird_mood.h`](../../firmware/projects/canary-display/include/canary/care/bird_mood.h) — anxiety/trust →
+  the face ladder (Calm/Worried/Searching/Calling/Distressed/Asleep/Hidden).
+- [`canary_mark.cpp`](../../firmware/projects/canary-display/src/ui/canary_mark.cpp) `start_bob()` — the
+  always-on breath (half-period = arousal: calm 1.4 s, alert 1.1 s, asleep 2.8 s).
+
+**New:** the RGB LED **breathes the same waveform** — its brightness follows `start_bob()`'s phase and its
+hue is `sev_color(worst_severity)`, so the point of light *inhales and exhales* with the bird. On the tall
+172×320 glass the bird gets a **full-height portrait pose** (more vertical room than the 240 round), with a
+soft color wash behind it keyed to the same severity. `canary_mark`'s brand hues and reaction one-shots
+(Tilt/Startle/Greeting/Joyful) carry over unchanged.
+
+---
+
+## 4 · The honest night-light — the key design decision
+
+Your "night light that shows state in color" collides with a **hard product invariant** the codebase enforces
+everywhere ([`display_nightstand.md`](./display_nightstand.md) §Night): **silence/darkness must never be
+rendered as safety** — a dark screen genuinely means "all is well," and *any* glow means "something wants
+you." A green "safe" glow at night would make darkness ambiguous and teach people to ignore the glow. The
+resolution is a **two-channel split** that keeps the ambient honest *and* gives you a real night light:
+
+1. **The state channel (RGB LED + screen glow) stays honest.** At night, all-quiet + links-up → **dark**
+   (the LED off, backlight 0), exactly as today. The LED/glass **breathe a color only when something wants
+   you**: amber = check, red = help, blue = a fresh signed event. **"Safe" at night is *darkness*, never a
+   green glow.** So the across-the-room LED is a *pure attention beacon* — dark = sleep easy, any color = look.
+2. **The night-light proper is a separate, user-summoned mode**, decoupled from state. Tap/hold (or the BOOT
+   button on the LED-only boards) turns on a **dim warm room light** at the calibrated night floor
+   (`CD_BRIGHT_PEEK`-class), which **times out** — it is *not* a state signal, so it can be any comforting
+   warm hue without ever lying about the fleet. Want a nightlight? Ask for one. The ambient channel still
+   never says "safe" by glowing.
+
+Everything else in the nightstand wave (dim-red tap-to-peek clock + comfort words, the two-phase wake, the
+`character_set_night()` red-shift, the per-panel calibrated night floor) applies to these boards as-is; the
+1.47" boards **add the LED as the after-dark attention beacon** the round/dash panels don't have.
+
+---
+
+## 5 · The 172×320 portrait layout (the real new UI work)
+
+The existing layouts are geometry-specific — `glance_ui.cpp` assumes the 240 round (`mk_ring(…,232,10)`,
+halo arc math); `dash_ui.cpp` assumes 800×480. **A tall 172×320 portrait is a genuinely new layout**, and
+it's the largest firmware task here (not a config change). The design:
+
+- **Top band — the living canary**, full-height portrait pose + a severity color wash.
+- **Middle — the witness column:** instead of a round halo, a **vertical stack of witness rows** (one per
+  Canary), each a color chip (`sev_color`) + room name; the worst floats up. Fits the narrow width naturally.
+- **Bottom — the glance line:** `all quiet · N canaries` / time / comfort word, in the `theme` semantic colors.
+- **Night:** dark by default; tap/BOOT peeks the dim-red clock + comfort line; the LED is the after-dark beacon.
+- **Budget:** the **C6 renders single-buffered, dirty-region** (no PSRAM), trimming the wash/animation frame
+  rate; the **S3 double-buffers** and runs the full breath/flourish set. Same layout, `#ifdef`-gated richness.
+
+---
+
+## 6 · The 7" big glass + real 5-point touch
+
+Same 800×480 canvas as the Dash → **the Dash layout ports straight over**, just breathier (larger type,
+fatter touch targets, more whitespace) — "bigger physical glass, same pixels," as expected. The new capability
+is **true 5-point multitouch** (the GT911 already reports up to 5; the pins carry `TOUCH_MAX_POINTS 5`):
+
+- **Tap** a witness card → peek its detail (the existing Startle reaction fires).
+- **Two-finger spread** on a card → zoom into that witness's timeline/proof; **pinch** → back out.
+- **Swipe** between fleet card pages / the roll-call.
+- Wire the **full 5-point report array**, not just point 0, so multi-finger gestures are real rather than a
+  single clumsy poke — and remember the **CH422G touch-reset must fire before the GT911 enumerates**.
+
+---
+
+## 7 · Build plan — the remaining (coupled) slice
+
+The pin maps landed this pass. The rest is a **coupled unit** that must land together to stay CI-green (the
+build matrix + the byte-drift-gated emulator + the registry/`fw_train` tests), and needs the PlatformIO /
+Emscripten toolchain to compile and verify — so it is the next focused slice, honestly staged, **not faked**:
+
+1. **HAL** — `src/hal/display_1in47.cpp` (ST7789 via Arduino_GFX, the 34-px offset, per-board pins, LEDC
+   backlight, the WS2812 via RMT) behind a new `CD_FLAVOR_NIGHTSTAND` guard; the 7" reuses `display_dash.cpp`.
+2. **Config + envs + catalog** — `configs/canary-display/nightstand/config.h` (+ a `dash7` config), new
+   `[env:…]` per board in `envs/platformio/canary-display.ini` (each with its **own OTA product** string),
+   entries in `firmware/boards/boards.json` and the `firmware/flavors.json` build matrix + `size_guard`.
+3. **UI** — the 172×320 portrait layout (§5) and the 7" roomier Dash layout + 5-point gestures (§6).
+4. **Emulator** — new flavor branches in `canary-local/emulator/build.sh`
+   (`EXPORT_NAME=createCanaryEmuNightstand` / `…Dash7`), built `dist/*.js` + `.meta.json` with
+   `fw_version == fw_train == version.h`.
+5. **Lab wiring** — `registry.json` entries (`kind:"display"`, `glass{172,320,round:false,…}` / `{800,480,…}`,
+   `emulator{module,factory}`, `bench`, `persona`), the `<script>` tags in `canary-local/fleet.html`, and an
+   `app.js` `buildDisplaySheet()` **glass-sizing case for 172×320 portrait** (today it hardcodes
+   `round ? 232 : 464`).
+6. **Docs/tests** — index this doc; the `fw_train`/emulator drift tests must stay green.
+
+**Honest status tiering** (the repo's `compile-tested → verified` ladder): the pin maps are *vendor-sourced,
+compile-pending*; nothing here is bench-validated. The §7 slice starts at *compile-tested* once the toolchain
+builds it, and only reaches *verified* on real hardware — with the RGB timings, the CH422G bit map, and the
+ST7789 offset confirmed against the actual boards.
+
+---
+
+*Hardware sourced from the Waveshare wikis + the CircuitPython/espp/TFT_eSPI board definitions (pin maps,
+ST7789 offset, GT911 + CH422G, RGB-LED GPIOs, PSRAM). Design extends the existing display docs cited above;
+the state-color source of truth is `src/ui/theme.cpp` / `character.cpp`, and the "silence is never safety"
+invariant is enforced in `display_nightstand.md` and `theme.cpp`.*
