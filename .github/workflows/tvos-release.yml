@@ -1,4 +1,4 @@
-# SecuraCV on Apple TV — the Witness Wall (native tvOS).
+# SecuraCV on Apple TV — the Witness Wall (native tvOS). The PROD half.
 #
 # Same control surface as every other SecuraCV release: a git tag is the only
 # button. Push `tvos-v*` and CI builds the native SwiftUI app, links the shared
@@ -6,11 +6,26 @@
 # App Store Connect / TestFlight. No manual artifact steps — "if you did
 # something by hand, that's the bug" (docs/RELEASE_PROCESS.md).
 #
+# The DEV half is tvos.yml: it builds and unit-tests the app on the tvOS
+# simulator and runs the core's kernel-agreement vectors on every PR, with no
+# signing and no Apple account. So the app is verified continuously even while
+# this workflow is still a no-op.
+#
+# Three ways to run, in increasing order of consequence (Principle 3 — prove
+# the bundle before you publish):
+#   1. workflow_dispatch, publish unchecked  → build + sign + export, upload
+#      NOTHING, keep the .ipa as an artifact. This is the smoke test.
+#   2. workflow_dispatch, publish checked    → a real TestFlight upload.
+#   3. push a `tvos-v*` tag                  → a real TestFlight upload, with
+#      the tag's version checked against the app's MARKETING_VERSION first.
+#
 # Like the iOS pipeline, this NO-OPS cleanly until tvOS is enabled (repo
 # variable ENABLE_TVOS_BUILD=true) with Apple signing set up — so a curious
 # "Run workflow" click, or an early `tvos-v*` tag, succeeds with a helpful
 # message instead of hard-failing. Full setup: tvos/README.md.
 name: tvOS release (Witness Wall)
+run-name: >-
+  Witness Wall — ${{ github.event_name == 'push' && 'TAG publish' || (inputs.publish && 'PUBLISH' || 'build only') }} — @${{ github.actor }}
 
 on:
   push:
@@ -18,18 +33,22 @@ on:
       - "tvos-v*"
   workflow_dispatch:
     inputs:
+      publish:
+        description: "Upload to App Store Connect (unchecked = build + sign + export only, the smoke test)"
+        type: boolean
+        default: false
       export_method:
-        description: "Xcode export method"
+        description: "Xcode export method (must be app-store-connect to publish)"
         type: choice
         options: [debugging, release-testing, app-store-connect]
         default: app-store-connect
 
 # One release build per ref. A `tvos-v*` tag build must never be cancelled
 # mid-upload (a half-delivered TestFlight build), so only the cheap manual
-# smoke-test dispatch auto-cancels.
+# smoke-test dispatch auto-cancels — and only when it is NOT publishing.
 concurrency:
   group: tvos-release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish }}
 
 permissions:
   contents: read
@@ -37,43 +56,90 @@ permissions:
 jobs:
   tvos:
     name: Build, sign, and upload the Witness Wall
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - name: Gate — tvOS builds enabled?
         if: vars.ENABLE_TVOS_BUILD != 'true'
         run: |
           echo "::notice::tvOS builds are not enabled yet — skipping."
+          echo "The app itself is still verified on every PR by tvos.yml (simulator"
+          echo "build + unit tests + the core's kernel-agreement vectors) — only the"
+          echo "signed upload is gated, because only that needs an Apple account."
+          echo
           echo "Set the repo variable ENABLE_TVOS_BUILD=true and the Apple signing"
           echo "secrets (see tvos/README.md), then push a tvos-v* tag or re-run."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: vars.ENABLE_TVOS_BUILD == 'true'
 
-      # The app is a thin SwiftUI shell over the SAME Rust witness core that
-      # verifies the sealed log everywhere else — compiled for Apple TV so the
-      # chain math is byte-identical to desktop, firmware, and the kernel.
-      # tvOS is a tier-3 Rust target, so the core is built with the std source
-      # (nightly + -Z build-std); the gate keeps a missing toolchain from
-      # failing anyone who just clicks Run.
+      # ── What this run is allowed to do ──────────────────────────────────
+      # Resolved once, in one place, so every later step reads the same answer.
+      # A tag push always publishes; a dispatch publishes only if asked.
+      - name: Resolve the release plan
+        id: plan
+        if: vars.ENABLE_TVOS_BUILD == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_EXPORT: ${{ inputs.export_method }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            publish=true
+            export_method=app-store-connect
+            # tvos-v1.4.0 → 1.4.0, checked against MARKETING_VERSION by
+            # release-tvos.sh so the tag and the binary cannot disagree.
+            version="${REF_NAME#tvos-v}"
+          else
+            publish="${INPUT_PUBLISH:-false}"
+            export_method="${INPUT_EXPORT:-app-store-connect}"
+            version=""
+          fi
+          {
+            echo "publish=$publish"
+            echo "export_method=$export_method"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "publish=$publish, export_method=$export_method, expected version='${version:-(none)}'"
+
+      # The app is a thin SwiftUI shell over the SAME chain math that verifies
+      # the sealed log everywhere else — compiled for Apple TV. tvOS is a
+      # tier-3 Rust target, so the core is built with the std source
+      # (nightly + -Z build-std).
       - name: Set up Rust (+ tvOS core target)
         if: vars.ENABLE_TVOS_BUILD == 'true'
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
-          targets: aarch64-apple-tvos
 
       - name: Cache Rust build
         if: vars.ENABLE_TVOS_BUILD == 'true'
-        uses: swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: tvos/witness-core -> target
-          key: tvos
+          key: tvos-release
+
+      # Re-run the kernel-agreement vectors on the release path too. tvos.yml
+      # already gates PRs, but a release must not depend on a PR having run —
+      # this is the last chance to catch a TV that would verify a different
+      # chain than the source of truth, and it costs seconds.
+      - name: Prove the core still agrees with the kernel
+        if: vars.ENABLE_TVOS_BUILD == 'true'
+        working-directory: tvos/witness-core
+        run: cargo test --test vectors
 
       - name: Build the witness core (aarch64-apple-tvos)
         if: vars.ENABLE_TVOS_BUILD == 'true'
         working-directory: tvos
+        env:
+          TVOS_SLICES: device
         run: bash scripts/build-witness-core.sh
+
+      - name: Install XcodeGen
+        if: vars.ENABLE_TVOS_BUILD == 'true'
+        run: brew install xcodegen
 
       # App Store Connect API-key signing needs the .p8 as a real file on disk;
       # a secret is a string, so materialize it here and point xcodebuild at it.
@@ -94,9 +160,13 @@ jobs:
           keyfile="$keydir/AuthKey_${APPLE_API_KEY}.p8"
           echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$keyfile"
           chmod 600 "$keyfile"
+          if [ ! -s "$keyfile" ]; then
+            echo "::error::APPLE_API_KEY_BASE64 did not decode to a key — check that the secret is base64 of the .p8 file."
+            exit 1
+          fi
           echo "path=$keyfile" >> "$GITHUB_OUTPUT"
 
-      - name: Build & upload to App Store Connect
+      - name: Build, export, and (if publishing) upload
         if: vars.ENABLE_TVOS_BUILD == 'true'
         working-directory: tvos
         env:
@@ -104,18 +174,37 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_PATH: ${{ steps.asc_key.outputs.path }}
-          EXPORT_METHOD: ${{ inputs.export_method || 'app-store-connect' }}
+          EXPORT_METHOD: ${{ steps.plan.outputs.export_method }}
+          PUBLISH: ${{ steps.plan.outputs.publish }}
+          EXPECTED_VERSION: ${{ steps.plan.outputs.version }}
         run: bash scripts/release-tvos.sh
 
-      # A tvos-v* tag with app-store-connect export means a new TestFlight build
-      # is already on its way to every Apple TV via phased App Store release —
-      # no artifact to hand-carry. The manual smoke run keeps the .ipa so a
-      # human can sideload it to a dev device.
-      - name: Upload .ipa (manual smoke runs)
-        if: vars.ENABLE_TVOS_BUILD == 'true' && github.event_name == 'workflow_dispatch'
+      # A publish means a new TestFlight build is already on its way to every
+      # Apple TV via phased release — no artifact to hand-carry. A build-only
+      # run keeps the .ipa so a human can sideload it to a dev device.
+      - name: Upload .ipa (build-only runs)
+        if: vars.ENABLE_TVOS_BUILD == 'true' && steps.plan.outputs.publish != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: securacv-witness-wall-tvos
-          path: tvos/build/**/*.ipa
-          if-no-files-found: warn
+          path: tvos/build/export/*.ipa
+          if-no-files-found: error   # the script already proved it exists; a
+                                     # miss here means the path drifted
           retention-days: 14
+
+      - name: Summary
+        if: vars.ENABLE_TVOS_BUILD == 'true'
+        env:
+          PUBLISHED: ${{ steps.plan.outputs.publish }}
+          METHOD: ${{ steps.plan.outputs.export_method }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          {
+            echo "## Witness Wall (tvOS)"
+            echo
+            if [ "$PUBLISHED" = "true" ]; then
+              echo "🚀 **Uploaded to App Store Connect**${VERSION:+ (\`$VERSION\`)} — Apple's phased release carries it to every Apple TV."
+            else
+              echo "🧪 **Build-only smoke run** (\`$METHOD\`) — signed and exported, nothing uploaded. The \`.ipa\` is attached to this run."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

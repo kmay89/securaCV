@@ -5,26 +5,53 @@ record** — not a video wall. The what-and-why lives in
 [`../docs/tvos/README.md`](../docs/tvos/README.md); the self-heal / self-publish /
 self-update design is in [`../docs/tvos/AUTOPIPELINE.md`](../docs/tvos/AUTOPIPELINE.md).
 
-> **Status: design + pipeline scaffold, not yet built.** The release pipeline
-> ([`.github/workflows/tvos-release.yml`](../.github/workflows/tvos-release.yml))
-> is wired and passes the CI policy checks, but it **no-ops** until you enable
-> it — a push of a `tvos-v*` tag today prints a helpful message and exits
-> green. The first real build needs **your Apple Developer account**; that
-> can't come from CI or this repo alone. This doc is the exact checklist, and
-> it's the same shape as [`../desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md).
+> **Status: built and continuously tested; the App Store upload is waiting on
+> an Apple Developer account.** The app and its verification core are real and
+> are exercised on every PR by
+> [`.github/workflows/tvos.yml`](../.github/workflows/tvos.yml) — the Rust core
+> (including the check that pins its chain math to the kernel's own fixtures)
+> and a full SwiftUI build + unit-test run on the **tvOS Simulator**, with no
+> signing and no secrets. What still no-ops is only the *signed upload*
+> ([`tvos-release.yml`](../.github/workflows/tvos-release.yml)): a `tvos-v*`
+> tag today prints a helpful message and exits green until you enable it,
+> because signing needs **your Apple Developer account** and that can't come
+> from CI or this repo alone. The checklist below is the whole remaining gap,
+> and it's the same shape as [`../desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md).
 
-## Intended layout
+## Layout
 
 ```
 tvos/
 ├── README.md                     ← you are here
-├── WitnessWall/                  ← the SwiftUI tvOS app (Xcode project)
-├── witness-core/                 ← thin crate wrapping the shared Rust verifier
-│                                    for the aarch64-apple-tvos target (FFI to Swift)
+├── WitnessWall/                  ← the SwiftUI tvOS app
+│   ├── project.yml               ← XcodeGen spec; the .xcodeproj is GENERATED,
+│   │                               never committed (same rule as ios/project.yml)
+│   ├── Sources/WitnessWall/      ← the app: FFI wrapper, fleet client, state, views
+│   ├── Support/                  ← Info.plist + the module map for the C header
+│   └── Tests/WitnessWallTests/   ← unit tests, run on the simulator in CI
+├── witness-core/                 ← the chain math, compiled for Apple TV
+│   ├── src/                      ← verify + fleet parsing + the C ABI
+│   ├── include/                  ← the hand-written C header Swift imports
+│   └── tests/vectors.rs          ← pins the math to the KERNEL'S OWN fixtures
 └── scripts/
-    ├── build-witness-core.sh     ← builds witness-core for Apple TV
+    ├── build-witness-core.sh     ← builds + stages the core (device + simulator)
+    ├── stamp_build.sh            ← build identity for the About/Health panel
     └── release-tvos.sh           ← xcodebuild archive + export + upload to ASC
 ```
+
+### Why there is a second implementation of the chain math
+
+`tvos/witness-core` does not import the kernel crate — it *can't*: the kernel is
+welded to `rusqlite`/sqlcipher and GStreamer, none of which cross-compile to
+`aarch64-apple-tvos`. So it follows the precedent the offline JavaScript
+verifier already set (`viewer/verify_core.js`): re-implement the **pinned
+bytes**, then prove byte-identity in CI against
+`tests/fixtures/envelope/domain_separation_vectors.json` — the same fixtures
+`src/crypto/signatures.rs` checks itself against. That check
+(`tvos/witness-core/tests/vectors.rs`) runs on every PR *and* again on the
+release path. If it ever fails, the TV is wrong. Never "fix" it by regenerating
+the vectors from this crate — that deletes the only thing keeping the two in
+agreement.
 
 The point, same as iOS: **reuse, don't rebuild.** The chain-verification logic
 is the workspace's existing Rust core, compiled for Apple TV — never a second
@@ -70,13 +97,30 @@ it to every Apple TV — nothing to sideload. See
 [`../docs/tvos/AUTOPIPELINE.md`](../docs/tvos/AUTOPIPELINE.md) for the full
 never-rot mapping.
 
-## Run it locally (once the app exists)
+## Run it locally
 
 ```sh
-# build the shared verifier for Apple TV
+# 1. build + stage the verification core (device and simulator slices)
 bash scripts/build-witness-core.sh
-# then open WitnessWall/ in Xcode and run on the tvOS Simulator or an Apple TV
+#    …or just the simulator, which is all you need to run on a Mac:
+TVOS_SLICES=simulator bash scripts/build-witness-core.sh
+
+# 2. generate the Xcode project from project.yml (never commit the .xcodeproj)
+brew install xcodegen                 # once
+cd WitnessWall && xcodegen generate
+
+# 3. open it, then run on the tvOS Simulator or a real Apple TV
+open WitnessWall.xcodeproj
 ```
+
+No Mac handy? The part most worth testing runs anywhere:
+
+```sh
+cd witness-core && cargo test          # chain math + the kernel-agreement vectors
+```
+
+Point the running app at a fleet with the reference kernel below
+(`python3 tvos/discovery/mock-kernel.py`, then enter `http://localhost:8099`).
 
 ## Get it onto a real Apple TV, fast
 

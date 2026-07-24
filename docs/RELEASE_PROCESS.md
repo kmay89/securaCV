@@ -120,6 +120,30 @@ source can never disagree.
   `firmware_version`) and it dispatches the firmware release above alongside
   the desktop apps and the site deploy. Leave `firmware: none` to ship only
   the apps/web.
+- **Actions → "Update everything (only what needs it)".** The button to reach
+  for when you just want the world to be current and don't want to think about
+  which targets moved. It reads `.github/release-targets.yml`, compares every
+  target's **source version** with what has actually been tagged, and
+  dispatches **only** the ones that are genuinely ahead:
+  - ahead of its newest tag → released (which is what cuts the tag);
+  - never released → the first one is cut;
+  - same version but the watched files changed → it says **"bump the version
+    first"** and ships everything else, because a release must never carry a
+    version that is already published;
+  - same version, nothing changed → skipped, so pressing it twice costs
+    nothing;
+  - the site is redeployed only if the pages it publishes changed since the
+    last successful deploy;
+  - an Apple target whose `ENABLE_*_BUILD` variable is off is left alone
+    rather than spending a macOS runner on a workflow that would no-op.
+
+  Leave `publish` unchecked for build-only smoke runs, tick it for real
+  releases, or tick `plan_only` to see the table without dispatching anything.
+  It goes red only if a dispatch that was supposed to happen failed — "needs a
+  bump" and "already up to date" are answers, not failures. The decision logic
+  is `.github/scripts/release_plan.py`, unit-tested in CI along with the
+  catalog itself (every workflow it names must exist, every version file it
+  points at must be readable).
 - **Actions → "Flasher Factory Images"** rebuilds *only* the browser-flasher
   factory images + `manifest-flash.json` for an existing tag (e.g. after a
   packaging-tooling fix) without cutting a new version. Blank tag = the
