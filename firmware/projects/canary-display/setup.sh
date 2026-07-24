@@ -66,6 +66,7 @@ flatten_includes() {
   sed -i -E 's|#include "identity/|#include "|g' "$f"
   sed -i -E 's|#include "core/|#include "|g' "$f"
   sed -i -E 's|#include "provision_qr/|#include "|g' "$f"
+  sed -i -E 's|#include "fleet_selfreport/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -122,6 +123,7 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/ota/src/securacv_ota.cpp"
     "${FIRMWARE_ROOT}/common/ota/src/ota_release_key.h"
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
+    "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
   )
   for cf in "${common_files[@]}"; do
     cp "$cf" "${SKETCH_DIR}/$(basename "$cf")"
@@ -337,7 +339,17 @@ case "${1:-}" in
   # checks). Does NOT stage pins/flavor_config/secrets — those are per-flavor
   # and gitignored.
   regen)   remove_generated; generate_shared ;;
+  # flavor: write ONLY the git-ignored flavor_local.h — no regeneration, no
+  # secrets, no lv_conf. For callers that already have a good tree and just need
+  # the flavor's build flags, notably the release workflows: `--profile modes`
+  # pins the 4.3B board and libraries but NOT the gear flags, so a modes build
+  # without this produces a gearless dash image (see stage_flavor).
+  flavor)
+    if [ -z "${2:-}" ]; then
+      err "Pick a flavor: ./setup.sh flavor watch | dash | playground | modes"; exit 1
+    fi
+    stage_flavor "$2" ;;
   check)   check_toolchain ;;
   clean)   remove_generated; ok "Removed generated sketch sources" ;;
-  *) echo "Usage: ./setup.sh {arduino <watch|dash|playground|modes>|regen|check|clean}"; exit 1 ;;
+  *) echo "Usage: ./setup.sh {arduino <watch|dash|playground|modes>|flavor <watch|dash|playground|modes>|regen|check|clean}"; exit 1 ;;
 esac

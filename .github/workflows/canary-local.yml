@@ -243,6 +243,42 @@ jobs:
           print(f"BUILD map covers all {len(catalog['products'])} flasher products.")
           PY
 
+      - name: Flasher release pin is published (advisory)
+        # The catalog pins manifest_url to an exact fw-v<train> tag (gen_flash.py
+        # release_download_base explains why /latest/ is unsafe). If that release
+        # hasn't been cut, the page fetches a 404 and EVERY product reads
+        # "unavailable" — which is how the display boards stayed invisible after
+        # being correctly wired everywhere else.
+        #
+        # The MISSING RELEASE is advisory: the window between bumping fw_train and
+        # cutting the release is a legitimate state, and the site is much more
+        # than the flasher. But it must be *visible* — a warning on every run
+        # until the release exists, rather than something you learn from a user.
+        # This step going WRONG (no readable manifest_url) is fatal, because a
+        # guard that can't see what it guards must not pass quietly.
+        run: |
+          set -uo pipefail
+          url=$(python3 -c "import json;print(json.load(open('canary-local/devices/flash.json'))['manifest_url'])")
+          if [ -z "$url" ]; then
+            echo "::error::could not read manifest_url out of canary-local/devices/flash.json — this check cannot see the flasher's pin, so it is not proving anything"
+            exit 1
+          fi
+          code=$(curl -sSL -o /dev/null -w '%{http_code}' "$url" || echo 000)
+          if [ "$code" = "200" ]; then
+            echo "flasher pin resolves: $url"
+            exit 0
+          fi
+          tag=$(printf '%s\n' "$url" | sed -n 's|.*/download/\([^/]*\)/.*|\1|p')
+          echo "::warning title=In-browser flasher has nothing to offer::manifest_url returns HTTP ${code} — ${url}. Release ${tag:-?} carries no manifest-flash.json, so every product shows as \"unavailable\". Cut that firmware release (docs/RELEASE_PROCESS.md), or run the \"Flasher Factory Images\" workflow for the tag if the OTA signing key isn't in place yet."
+          {
+            echo "### In-browser flasher: pinned release missing"
+            echo ""
+            echo "\`manifest_url\` → HTTP \`${code}\`"
+            echo ""
+            echo "- URL: \`${url}\`"
+            echo "- Every product on flash.html reads **unavailable** until \`${tag:-?}\` carries \`manifest-flash.json\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   wasm-build-and-boot:
     name: firmware → wasm → boots in a browser
     runs-on: ubuntu-latest

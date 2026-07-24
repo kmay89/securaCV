@@ -105,6 +105,16 @@ FLEETVIEW_HDRS = ../common/ui/fleet_view.h ../common/ui/console_theme.h \
                  ../common/fleet_link/fleet_beacon.h ../common/fleet_link/fleet_roster.h
 FLEETVIEW_BIN = $(BUILD_DIR)/test_fleet_view
 
+# Fleet self-report (common/fleet_selfreport/fleet_selfreport.h): the ONE shared
+# builder for the GET /api/fleet body every networked Canary answers — the
+# "parity by architecture" core (write the wire shape once, all boards serve it
+# identically). Pins the DISCOVERY.md contract shape, JSON-escaping of
+# attacker-influenced device names (same discipline as the web XSS fix), the
+# bounded/NUL-terminated writer, and the open/append/close hub composition.
+# Pure header, no Arduino deps.
+FLEETSR_HDR = ../common/fleet_selfreport/fleet_selfreport.h
+FLEETSR_BIN = $(BUILD_DIR)/test_fleet_selfreport
+
 # Device self-manifest (common/attest/self_manifest.h): the machine-readable
 # JSON the device emits on 'j' and the website parses over WebSerial. Pins the
 # schema + every key, proves string escaping, and that the bounded writer never
@@ -203,6 +213,9 @@ $(SCENE_BIN): test_console_scene.cpp $(SCENE_HDRS) Makefile | $(BUILD_DIR)
 $(FLEETVIEW_BIN): test_fleet_view.cpp $(FLEETVIEW_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_fleet_view.cpp -o $@
 
+$(FLEETSR_BIN): test_fleet_selfreport.cpp $(FLEETSR_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common test_fleet_selfreport.cpp -o $@
+
 $(MANIFEST_BIN): test_self_manifest.cpp $(MANIFEST_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_self_manifest.cpp -o $@
 
@@ -224,7 +237,7 @@ $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -236,6 +249,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
 	./$(FLEETVIEW_BIN)
+	./$(FLEETSR_BIN)
 	./$(MANIFEST_BIN)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)

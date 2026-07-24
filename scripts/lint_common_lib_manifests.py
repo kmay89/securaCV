@@ -1,53 +1,45 @@
 #!/usr/bin/env python3
-"""Guard the PlatformIO manifests under firmware/common/.
+"""Guard how firmware/common/ sources get compiled into PlatformIO builds.
 
-Why this exists
----------------
-A shared library in firmware/common/ is reached two different ways at once,
-and the two can disagree in silence:
+The rule
+--------
+A library under firmware/common/ can be reached two ways, and only one of
+them actually compiles its .cpp files:
 
-  * the **compiler** finds its header through `-I .../firmware/common`, so
-    callers write the path-prefixed form, e.g. `#include "color/look_engine.h"`;
-  * PlatformIO's **LDF** decides separately whether to *compile* the library's
-    .cpp files, and when library.json declares a `headers` list it matches
-    against that list *exclusively*.
+  * **Bare include, standard layout** — `#include "securacv_ota.h"` resolves
+    through the library's own include dir, PlatformIO's LDF matches it, and
+    the library gets built. common/ota and common/csi work this way.
 
-Declaring the bare filename (`look_engine.h`) while every caller writes the
-prefixed form means nothing ever matches, the LDF skips the library, and the
-break does not surface at compile time — it surfaces as an undefined
-reference at link time, long after the compile step everyone watches has gone
-green.
+  * **Path-prefixed include** — `#include "color/look_engine.h"` resolves
+    through `-I .../firmware/common`, i.e. through a plain include path rather
+    than through the library. The LDF does not follow that, so the headers
+    compile fine and the .cpp files are never built. The only symptom is an
+    undefined reference at link time, long after the compile step everyone
+    watches has gone green.
 
-That is not hypothetical. It is how `canary_color` shipped to main in #1222
-and broke the canary-display-nightstand-s3 link with
+So: **anything included path-prefixed must be compiled explicitly**, by naming
+its .cpp in a `build_src_filter`. That is what canary-sense.ini does for
+boot_banner.cpp, canary-vision.ini for the identity signer, canary-sentinel.ini
+for sentinel_fusion.cpp — and now canary-display.ini for the color engine.
+The rule holds for every prefixed library in the tree with no exceptions.
 
-    undefined reference to `canary::color::wash_stops(...)'
+Why it is written this way
+--------------------------
+This started as a manifest-shape check, and that framing was wrong twice.
 
-while `boot_banner` — same layout, same prefixed includes, same build node,
-but no `headers` key — linked correctly the whole time.
+canary_color shipped to main in #1222 with a library.json declaring bare
+`headers` names, and canary-display-nightstand-s3 failed to link
+`canary::color::wash_stops`. The first fix dropped the `headers` key so the
+manifest exactly matched common/boot's, on the theory that boot proved the LDF
+would then discover it. **That theory was wrong: the link failed again,
+identically.** common/boot is not evidence for LDF discovery at all — its .cpp
+is compiled explicitly by canary-sense.ini, and canary-wap keeps a
+sketch-local copy.
 
-What this checks
-----------------
-Manifest shape alone is the wrong test: `sentinel-fusion` declares bare
-`headers` and *is* included prefixed, yet builds fine, because
-canary-sentinel.ini names its .cpp in `build_src_filter` explicitly. That is
-a legitimate second mechanism and must not be flagged.
-
-So the real predicate is the conjunction — a library is broken when:
-
-  1. it ships .cpp files that must be linked, and
-  2. its declared `headers` cannot match how sources actually include it, and
-  3. no env rescues it by naming those .cpp files in a `build_src_filter`.
-
-Anything failing all three is a link error waiting to happen. Fix it by
-dropping the `headers` key (letting the LDF scan normally, as boot_banner
-does) or by adding an explicit build_src_filter entry.
-
-`library.properties` is deliberately not consulted: its `includes=` field is
-an Arduino IDE convenience hint, inert for the LDF. boot_banner carries a
-bare `includes=boot_banner.h` and still links, which is the proof.
+The manifest was never the deciding factor. How the source includes the header
+is. Hence this check ignores manifests entirely and asks the question that
+actually predicts a link error.
 """
-import json
 import pathlib
 import re
 import sys
@@ -55,95 +47,171 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 COMMON = ROOT / "firmware" / "common"
 ENVS = ROOT / "firmware" / "envs" / "platformio"
-# Only the PlatformIO project trees. firmware/tests_host/ is a plain host
-# Makefile build that compiles common/ sources directly, so its (bare) include
-# spellings say nothing about what the LDF will resolve on-device — counting
-# them would mask exactly the bug this lint exists to catch.
-SEARCH = [ROOT / "firmware" / "projects"]
+PROJECTS = ROOT / "firmware" / "projects"
 SRC_EXT = {".cpp", ".c", ".h", ".hpp", ".ino"}
 
 
-def include_strings():
-    """Every `#include "..."` spelling used across firmware sources."""
+def project_includes():
+    """Every `#include "..."` spelling used by the PlatformIO project trees.
+
+    tests_host is excluded on purpose: it is a plain host Makefile that
+    compiles common/ sources directly, so its bare spellings say nothing about
+    what the LDF resolves on-device — counting them would mask the bug.
+    """
     seen = set()
-    for base in SEARCH:
-        if not base.exists():
+    if not PROJECTS.exists():
+        return seen
+    for path in PROJECTS.rglob("*"):
+        if path.suffix not in SRC_EXT or not path.is_file():
             continue
-        for path in base.rglob("*"):
-            if path.suffix not in SRC_EXT or not path.is_file():
-                continue
-            try:
-                text = path.read_text(errors="ignore")
-            except OSError:
-                continue
-            seen.update(re.findall(r'#\s*include\s+"([^"]+)"', text))
+        if "_archive" in path.parts or "arduino" in path.parts:
+            continue
+        try:
+            seen.update(re.findall(r'#\s*include\s+"([^"]+)"',
+                                   path.read_text(errors="ignore")))
+        except OSError:
+            pass
     return seen
 
 
-def src_filter_blob():
-    """All build_src_filter text, where explicit .cpp rescues are declared."""
+def env_src_filters():
+    """{section name: set of common/<path>.cpp it compiles}, comments stripped.
+
+    Per-section, not one blob: whether a translation unit is compiled is a
+    property of the individual env, and the closure check below has to reason
+    about one env's set at a time.
+    """
+    out = {}
+    if not ENVS.exists():
+        return out
+    for path in ENVS.glob("*.ini"):
+        section = None
+        for line in path.read_text(errors="ignore").splitlines():
+            code = line.split(";", 1)[0]
+            header = re.match(r"\s*\[([^\]]+)\]", code)
+            if header:
+                section = f"{path.name}:{header.group(1)}"
+                continue
+            for m in re.finditer(r"\+<[^>]*common/([A-Za-z0-9_/]+\.cpp)>", code):
+                if section:
+                    out.setdefault(section, set()).add(m.group(1))
+    return out
+
+
+def env_blob():
+    """All env .ini text with `;` comments stripped.
+
+    The comments matter: canary-wap.ini contains the line "Do NOT also pull in
+    ../../common/boot/boot_banner.cpp here", and matching that would count a
+    warning *against* compiling a file as evidence that it is compiled.
+    """
     if not ENVS.exists():
         return ""
-    return "\n".join(p.read_text(errors="ignore") for p in ENVS.glob("*.ini"))
+    out = []
+    for path in ENVS.glob("*.ini"):
+        for line in path.read_text(errors="ignore").splitlines():
+            code = line.split(";", 1)[0]
+            if code.strip():
+                out.append(code)
+    return "\n".join(out)
 
 
 def main() -> int:
-    includes = include_strings()
-    rescues = src_filter_blob()
+    includes = project_includes()
+    envs = env_blob()
     problems, checked = [], 0
 
-    for manifest in sorted(COMMON.glob("*/library.json")):
-        lib = manifest.parent.name
-        try:
-            data = json.loads(manifest.read_text())
-        except json.JSONDecodeError as exc:
-            problems.append(f"{manifest.relative_to(ROOT)}: invalid JSON — {exc}")
-            continue
-
-        checked += 1
-        declared = data.get("headers")
-        if not declared:
-            continue  # LDF scans normally — the boot_banner pattern, always fine
-
-        sources = [p for p in manifest.parent.rglob("*.cpp")
-                   if not p.name.endswith(("_test.cpp", "test.cpp"))]
+    for lib in sorted(p for p in COMMON.iterdir() if p.is_dir()):
+        name = lib.name
+        sources = [p for p in lib.rglob("*.cpp")
+                   if "test" not in p.name.lower()]
         if not sources:
             continue  # header-only: nothing to link, nothing to lose
 
-        # The LDF needs only ONE declared header to match a real include to
-        # decide the library is wanted; it then builds everything srcFilter
-        # selects. So the question is not whether every spelling is declared,
-        # it is whether *any* declared spelling is ever actually used.
-        own = {p.name for p in manifest.parent.rglob("*.h")}
-        used = {inc for inc in includes if inc.split("/")[-1] in own}
-        if set(declared) & used:
-            continue  # at least one match — the LDF pulls the library in
-        unmatchable = sorted(used)
-        if not unmatchable:
-            continue  # nothing includes it at all; not this lint's business
+        prefixed = sorted(i for i in includes if i.startswith(f"{name}/"))
+        if not prefixed:
+            continue  # bare include / standard layout — the LDF handles it
 
-        # Is it rescued by an explicit build_src_filter naming its .cpp?
-        if any(f"common/{lib}/{p.name}" in rescues for p in sources):
+        checked += 1
+        # Match on the path relative to firmware/common/, not name+basename —
+        # common/sensors nests its drivers (sensors/bh1750/bh1750.cpp), and a
+        # basename-only match would miss the build_src_filter entry that
+        # actually compiles it.
+        compiled = [p for p in sources
+                    if f"common/{p.relative_to(COMMON).as_posix()}" in envs]
+        if compiled:
             continue
 
         problems.append(
-            f"{manifest.relative_to(ROOT)}: declares headers {declared}, but "
-            f"sources include it as {unmatchable}.\n"
-            f"    Those spellings can never match, so the LDF will silently skip "
-            f"compiling {[p.name for p in sources]} —\n"
-            f"    an undefined reference at link time, not a compile error, and "
-            f"no env rescues it via build_src_filter.\n"
-            f'    Fix: drop the "headers" key (as common/boot does), or name the '
-            f".cpp in a build_src_filter."
+            f"common/{name}: included path-prefixed as {prefixed[0]!r}, which "
+            f"resolves through -I firmware/common rather than through the\n"
+            f"    library, so the LDF will not compile "
+            f"{sorted(p.name for p in sources)}. That is an undefined "
+            f"reference at link time,\n"
+            f"    not a compile error. Name the .cpp in a build_src_filter, as "
+            f"canary-sense.ini does for boot_banner.cpp."
         )
 
+    # Naming one .cpp of a library is not enough. build_src_filter compiles
+    # exactly the TUs it lists, so an env that compiles look_engine.cpp but
+    # not color_engine.cpp still fails to link — and the check above, which
+    # only asks whether *any* source is named, would call that green.
+    #
+    # Requiring every source is too strong: common/sensors is a set of
+    # independent drivers, and canary-sentinel legitimately compiles three of
+    # the four (it has no use for mr60_vitals.cpp). So the rule is closure —
+    # if a compiled source includes a sibling header that has its own .cpp,
+    # that .cpp has to be compiled by the same env too.
+    for section, compiled in sorted(env_src_filters().items()):
+        for rel in sorted(compiled):
+            src = COMMON / rel
+            if not src.is_file():
+                continue
+            try:
+                text = src.read_text(errors="ignore")
+            except OSError:
+                continue
+            lib = COMMON / rel.split("/")[0]
+            # Walk includes transitively through the library's own headers:
+            # look_engine.cpp includes only look_engine.h, and the dependency
+            # on color_engine.cpp arrives through look_engine.h including
+            # color_engine.h. A direct-includes-only walk misses it entirely.
+            seen, queue, reached = set(), [text], {}
+            while queue:
+                for inc in re.findall(r'#\s*include\s+"([^"]+)"', queue.pop()):
+                    stem = pathlib.Path(inc).stem
+                    if stem in seen:
+                        continue
+                    seen.add(stem)
+                    reached[stem] = inc
+                    for hdr in lib.rglob(f"{stem}.h"):
+                        try:
+                            queue.append(hdr.read_text(errors="ignore"))
+                        except OSError:
+                            pass
+            for stem, inc in sorted(reached.items()):
+                for sibling in lib.rglob(f"{stem}.cpp"):
+                    if "test" in sibling.name.lower():
+                        continue
+                    need = sibling.relative_to(COMMON).as_posix()
+                    if need != rel and need not in compiled:
+                        problems.append(
+                            f"{section}: compiles {rel}, which pulls in "
+                            f"{inc!r}, but does not compile {need}.\n"
+                            f"    build_src_filter compiles only what it "
+                            f"names, so this links against symbols from a "
+                            f"translation unit\n    that is never built — "
+                            f"undefined reference at link time. Add it "
+                            f"alongside {rel}."
+                        )
+
     if problems:
-        print("common/ library manifest problems:\n", file=sys.stderr)
+        print("firmware/common/ sources that will not link:\n", file=sys.stderr)
         for p in problems:
             print(f"  - {p}\n", file=sys.stderr)
         return 1
 
-    print(f"✓ {checked} common/ library.json manifests are LDF-consistent.")
+    print(f"✓ {checked} path-prefixed common/ libraries are explicitly compiled.")
     return 0
 
 

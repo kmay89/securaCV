@@ -85,9 +85,26 @@ real kernel's address the same way.
 
 ## Making a real Canary answer this
 
-- **The hub/kernel** (Rust) is the natural home — add the `/api/fleet` route
-  with the CORS headers above next to its existing HTTP surface.
-- **`canary-wap`** already serves a web UI; the same route + `MDNS.begin("canary")`
-  (advertising `canary.local`) makes a single device discoverable with no hub.
-- Keep it **coarse and unauthenticated-read** (presence/health only). Anything
-  that touches sealed evidence stays behind break-glass, never here.
+**The firmware answers it now.** `GET /api/fleet` ships in the firmware, served
+identically by every networked board because the wire shape is built by one
+shared header — `firmware/common/fleet_selfreport/fleet_selfreport.h` (host-
+tested in `firmware/tests_host/test_fleet_selfreport.cpp`). See
+[`docs/FLEET_PARITY.md`](../../docs/FLEET_PARITY.md) for the "parity by
+architecture" doctrine that makes a fleet-wide capability like this a
+one-header change instead of a per-board copy-paste.
+
+- **`canary-wap`** (ESP-IDF `esp_http_server`) answers `GET /api/fleet` and the
+  CORS `OPTIONS` preflight, and already advertises `canary.local` — so a single
+  device is discoverable with no hub. This is exactly what the Flasher's
+  post-flash `witness_discover` hits.
+- **`canary-display`** (Arduino `WebServer`) answers the same contract from the
+  *other* server style — the parity core means both emit byte-identical JSON. A
+  display holds no witness chain of its own, so it honestly reports
+  `chain: "unknown"`.
+- **The hub/kernel** (Rust) is the natural aggregator home — add the `/api/fleet`
+  route with the CORS headers above next to its existing HTTP surface; it can
+  reuse the same open/append/close shape to list its peers.
+- It is **coarse and unauthenticated-read** by design (presence/health only) —
+  documented public in the canary-wap route-security allowlist. Anything that
+  touches sealed evidence stays behind the Bearer-gated `/api/fleet-scan` and
+  break-glass paths, never here.

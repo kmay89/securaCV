@@ -6,15 +6,44 @@ on:
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware.yml'
+      # The release workflow is a checked INPUT here, not just a neighbour:
+      # "Regression Guards" runs check_ota_channels.py, which reads the
+      # manifests firmware-release.yml publishes and fails when firmware polls
+      # one that nothing signs. Without this path, a PR that only edits the
+      # publishing side skips the very guard that covers it.
+      - '.github/workflows/firmware-release.yml'
   pull_request:
     branches: [main]
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware.yml'
+      # The release workflow is a checked INPUT here, not just a neighbour:
+      # "Regression Guards" runs check_ota_channels.py, which reads the
+      # manifests firmware-release.yml publishes and fails when firmware polls
+      # one that nothing signs. Without this path, a PR that only edits the
+      # publishing side skips the very guard that covers it.
+      - '.github/workflows/firmware-release.yml'
 
+# A new push to a PR branch supersedes its in-flight run; main is never
+# cancelled.
+#
+# This used to cancel on every ref, main included, and that quietly destroyed
+# the signal this workflow exists to produce. The build takes ~30 minutes and
+# merges arrive in bursts — three landed within about a minute on 2026-07-24 —
+# so each merge killed the previous run before it could report. Four of the
+# five main builds that day ended `cancelled`, including both halves of a
+# link-error fix; the one that did finish reported the failure, but by then
+# the broken commit was already on main and the next merge cancelled the
+# correction's build too.
+#
+# A cancelled build is not a neutral outcome. It is indistinguishable at a
+# glance from one that has not finished, so main can sit broken while looking
+# merely busy. Queueing costs runner minutes; cancelling costs the ability to
+# know whether main compiles. This matches what nearly every other workflow
+# here already does, and what the website's site-checks.yml does.
 concurrency:
   group: firmware-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -441,6 +470,19 @@ jobs:
           chmod +x firmware/scripts/check_fleet_beacon_sync.sh
           firmware/scripts/check_fleet_beacon_sync.sh
 
+      - name: Verify fleet self-report header copies match the canonical /api/fleet wire shape
+        # fleet_selfreport.h is the ONE place the coarse /api/fleet presence JSON
+        # shape lives (the DISCOVERY.md contract the Witness Wall emulator + the
+        # Flasher's post-flash LAN discovery read). Canonical at
+        # firmware/common/fleet_selfreport/ (included directly by the PIO builds
+        # via -I, and host-tested there) and committed byte-identical next to the
+        # canary-wap Arduino sketch. If the copies diverge, boards answer
+        # /api/fleet with different shapes and the wall/Flasher misparse them,
+        # with no compile error — this guard catches the drift either direction.
+        run: |
+          chmod +x firmware/scripts/check_fleet_selfreport_sync.sh
+          firmware/scripts/check_fleet_selfreport_sync.sh
+
       - name: Verify OTA engine copies in the canary-wap + canary-display sketch dirs match canonical source
         # The signed pull-OTA engine is canonical at firmware/common/ota/src/
         # and committed byte-identical next to BOTH Arduino sketches (canary-wap
@@ -502,6 +544,26 @@ jobs:
         # tier_evidence for any board claiming hardware validation.
         # Contract: firmware/PORTING.md.
         run: python3 firmware/scripts/check_board_registry.py
+
+      - name: Check shared common/ sources are actually compiled
+        # A .cpp under firmware/common/ that no manifest, build_src_filter, or
+        # staged Arduino copy picks up is silently dropped from every image —
+        # and only surfaces as an undefined reference at LINK time, in one
+        # board's build job. The -I../../common include path resolves the
+        # headers either way, which is what makes it so easy to miss in review.
+        # This is a seconds-long check for a failure that otherwise costs a
+        # full firmware matrix run. Contract: the script's module docstring.
+        run: python3 firmware/scripts/check_common_build_reachability.py
+
+      - name: Check OTA channels (polled manifests are published ones)
+        # Every SECURACV_OTA_MANIFEST_URL compiled into the firmware must be a
+        # manifest firmware-release.yml actually signs — or be declared as
+        # having no channel yet, with a reason. The Canary Displays shipped
+        # polling a manifest no release ever published: flashable over USB,
+        # structurally unable to self-update, and silent about it (a device
+        # just fetches a 404 forever). Static and offline, so it fails on the
+        # PR that adds the flavor instead of a release nobody inspects.
+        run: python3 firmware/scripts/check_ota_channels.py
 
       - name: Verify LESSONS_LEARNED.md exists
         run: |

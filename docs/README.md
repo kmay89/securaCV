@@ -75,6 +75,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Getting started with Canaries](getting_started_canary.md) — first device, end to end
 - [Hardware guides & BOMs](hardware/README.md) — build plans, bring-up benches, enclosures, per-device guides
 - [Firmware OTA](firmware_ota.md) — signed pull-updates with rollback
+- [Parity by architecture](FLEET_PARITY.md) — how a fleet-wide capability (like the `/api/fleet` self-report) lives in one host-tested `common/` core so one edit reaches every board, never a per-board copy-paste
 - [Release process & channels](RELEASE_PROCESS.md) — tags → releases; how the dev channel stays invisible to release devices
 - [USB evidence drive (design)](design/usb_evidence_drive.md) — the Canary as a read-only USB drive + drop-file signed updates
 - [USB onboarding (design)](design/usb_onboard.md) — "plug me in": consented HID help-launch, read-only drive, guided recovery/unsealing
@@ -148,6 +149,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <summary><strong>The engineering record</strong> — audits, reviews, research, and roadmaps</summary>
 
 - **v1:** [roadmap](v1-roadmap.md) · [launch review](V1_LAUNCH_REVIEW.md) · [bench-test runbook](V1_BENCH_TEST_RUNBOOK.md)
+- **Next steps:** [what the last ~100 PRs built, and what they left open (2026-07)](NEXT_STEPS_2026-07.md) — the open edges after `#1080 → #1226`, checked against the tree rather than the roadmaps: the inert A/B rollback net, the Nightstand Line's tail, the missing fleet aggregator, and a three-wave sequence
 - **Audits:** [firmware full audit 2026-07](audit/esp32s3_firmware_full_audit_2026-07.md) · [hardware verification checklist](audit/hardware_verification_checklist.md) · [mesh & chirp audit](audit/mesh_and_chirp_audit_v1.md) · [v0.3 closeout](audit/v0.3_closeout.md) · [WAP multi-device UX audit](audit/wap_multi_device_ux_audit.md) · [UX/UI audit 2026-06](ux_ui_audit_2026-06.md) · [legal, claims & risk audit 2026-07](legal-audit-2026-07.md)
 - **Code reviews:** [Docker container](reviews/2026-06-10_docker_container_review.md) · [full repo](reviews/2026-06-10_full_repo_code_review.md) · [HA setup audit](reviews/2026-07-11_home_assistant_setup_audit.md) · [flasher hatching](reviews/2026-07-22_flasher_hatching_review.md) · [Arduino demo commands](reviews/arduino_demo_review_commands.md) · [Arduino demo tasks](reviews/arduino_demo_review_tasks.md) · [frame-trigger pipeline plan](reviews/kernel_frame_trigger_pipeline_plan.md)
 - **Requirements review series:** [review/README](review/README.md)

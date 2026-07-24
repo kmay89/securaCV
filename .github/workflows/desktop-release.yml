@@ -5,6 +5,14 @@
 # desktop-lab/package.json AND desktop-lab/src-tauri/tauri.conf.json first.)
 # Also runnable manually (workflow_dispatch) — leave `publish` unchecked for a
 # throwaway build-only smoke test, or check it to cut a draft release.
+#
+# On `releases/latest`: this workflow needs no keep-firmware-latest step (unlike
+# desktop-flasher-release.yml) because it only ever creates a DRAFT, and a draft
+# is never GitHub's "latest". The moment a human publishes that draft it DOES
+# take `latest` — the URL every Canary polls for OTA — but a human-published
+# release fires a `release:` event, so release-latest-guard.yml catches it and
+# re-points `latest` at the firmware. CI-published releases don't fire that
+# event, which is why the Flasher has to call the action itself.
 name: Desktop app release
 
 on:

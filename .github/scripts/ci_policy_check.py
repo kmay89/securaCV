@@ -145,6 +145,35 @@ def check_workflow(path: str, policy: dict) -> list[str]:
             f"comment."
         )
 
+    # R3 (branch half) — a workflow that runs on pushes to a branch is the
+    # thing that tells you whether that branch is healthy. A bare
+    # `cancel-in-progress: true` applies to main as well as PR branches, so a
+    # burst of merges kills each build before it reports and main's real state
+    # goes unknown while merely looking busy.
+    #
+    # That is not theoretical: firmware.yml carried a bare `true`, and on
+    # 2026-07-24 three merges landed within about a minute against a
+    # ~30-minute build. Four of five main builds that day ended `cancelled`,
+    # including both halves of a link-error fix — the broken commit reached
+    # main and the correction's build was cancelled too.
+    #
+    # CI.md's R3 prose already prescribes the conditional form; only the
+    # publish half was ever enforced, so this case slipped through for as long
+    # as it existed. `false` and `${{ ... }}` conditions pass — the robot
+    # catches the blunt footgun, reviewers judge the condition.
+    fires_on_branch = isinstance(push_spec, dict) and push_spec.get("branches")
+    if (fires_on_branch and isinstance(conc, dict)
+            and name not in set(policy.get("branch_cancel_ok") or [])
+            and conc.get("cancel-in-progress") is True):
+        problems.append(
+            f"{name}: R3 — runs on branch pushes but sets a bare "
+            f"`cancel-in-progress: true`, so a merge landing behind another "
+            f"cancels the first one's build and main's state goes unknown. "
+            f"Use `${{{{ github.event_name == 'pull_request' }}}}` to "
+            f"supersede PR runs without ever cancelling main, or exempt in "
+            f"branch_cancel_ok with a reason."
+        )
+
     # R4 — pinned action refs, in workflows AND composite actions (collected
     # by caller passing composite files through this same function is not
     # needed; see check_action_pins()).
