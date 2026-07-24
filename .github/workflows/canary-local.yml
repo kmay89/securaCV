@@ -135,6 +135,7 @@ jobs:
           node --test canary-local/tests/flash_select.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
+          node --test canary-local/tests/board_facts.test.mjs
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py
@@ -142,6 +143,8 @@ jobs:
             echo "::error::generated catalog stale — run canary-local/tools/gen_enclosures.py and commit"
             exit 1
           fi
+      - name: Board-facts snapshot shape (vendor pin maps — refreshed by board-facts-freshness.yml)
+        run: python3 canary-local/tools/gen_board_facts.py
       - name: Hub data drift (deterministic run — upstream snapshot preserved verbatim)
         run: |
           python3 canary-local/tools/gen_homeassistant.py

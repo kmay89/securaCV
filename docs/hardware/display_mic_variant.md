@@ -18,9 +18,10 @@ that is host-tested or compile-gated, not by promises.
 > **Status: Built · compile-gated · bench-pending.** The decision core is
 > host-tested (`tests_host/test_mic_logic.cpp`, in CI); the runtime is
 > compile-verified by the `canary-display-dash-mic` env; the **audio pins
-> ship `-1` (VERIFY)** so the mics are provably un-driven until the bench
-> session below fills them from the vendor schematic. A distinct privacy
-> surface = a distinct product: its own board map
+> are now filled from the vendor's own pin-mapping table** (captured in
+> `board_facts.json`, drift-locked to the board map) — facts, not guesses —
+> leaving the **ES7210 register init** as the one remaining bench step. A
+> distinct privacy surface = a distinct product: its own board map
 > (`boards/waveshare-esp32s3-lcd43c`), env, and OTA product
 > (`securacv-canary-display-dash-mic`) that never cross-installs with the
 > mic-free dashes — the same rule that separates Sense from
@@ -198,7 +199,7 @@ invariant is host-tested; whether humans *read* it is tested there.
 
 | Piece | Where | Status |
 |---|---|---|
-| Board map (pins, caps, codec addrs) | `boards/waveshare-esp32s3-lcd43c` | compile-tested; audio pins **-1 (VERIFY)** |
+| Board map (pins, caps, codec addrs) | `boards/waveshare-esp32s3-lcd43c` | compile-tested; audio pins **vendor-filled** (drift-locked to `board_facts.json`) |
 | Gate + indicator invariant | `canary/io/mic_logic.h` + host test | **host-tested** (CI) |
 | T3/T4 cadence detection | same core + host test | **host-tested** (CI) |
 | I2S capture + hard mute + chip | `src/io/mic_alarm.cpp` | compile-gated (`canary-display-dash-mic`); bench-pending |

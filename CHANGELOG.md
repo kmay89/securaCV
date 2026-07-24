@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### hardware — vendor board-facts snapshot, kept fresh, and the model made exact
+
+- **A machine-readable snapshot of the Waveshare dash boards' facts**
+  (`canary-local/devices/board_facts.json`): the full pin maps, onboard
+  silicon, and parameters for the **4.3 / 4.3B / 4.3C**, transcribed (facts
+  only — Waveshare's wiki stays canonical and linked) from their pages by a
+  new parser/refresher `canary-local/tools/gen_board_facts.py`.
+- **It can't go stale.** A weekly (+ on-demand) freshness loop
+  (`.github/workflows/board-facts-freshness.yml`, modelled on the
+  Home-Assistant one) re-pulls each vendor page and opens a PR when any fact
+  moves. Self-healing: a board's facts advance only on a clean fetch+parse; a
+  403 / dead feed / reshaped page keeps the last good snapshot verbatim, and
+  `verified_utc` (shown as an age on the reference page) tells on a broken
+  loop.
+- **Our model made exact.** The 4.3C's I2S audio pins — long shipped as `-1`
+  because "never ship a guessed mic pin" — are now filled from the vendor's
+  own pin-mapping table (MCLK 6, SCLK 44, LRCK 16, mic-data-in 15; PA on
+  CH422G EXIO4). They're facts now, not guesses; only the ES7210 register
+  init remains bench-pending, and the mic stays off-by-default + arm-gated.
+  A drift-lock test (`canary-local/tests/board_facts.test.mjs`) proves every
+  board's firmware RGB/LCD map equals the vendor snapshot, so our `pins.h`
+  and the vendor page can't silently diverge.
+- **First-party reference** `docs/hardware/waveshare_board_reference.md` — our
+  own words over the facts (pin maps, the CH422G "switched" EXIO bits, the
+  per-board interface differences, mechanicals), the vendor page linked as
+  canonical, and the freshness mechanism explained. Stale mic-doc / board-
+  README claims about `-1` audio pins corrected to match.
+
 ### release pipeline — one-click firmware release (dev or prod), and the flasher gap it closes
 
 - **`firmware-release.yml` is now dispatchable** (Actions → "Firmware

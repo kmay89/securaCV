@@ -1,0 +1,38 @@
+<!--
+  Synthetic fixture for gen_board_facts.py's parser — NOT vendor content.
+  Hand-authored to mimic the two Waveshare wiki table STYLES (the "X
+  Interface:" summary and the "... to X Pin Mapping Table" summary), with
+  made-up pins, so the parser is exercised without shipping anyone's page.
+  If the parser rots, board_facts.test.mjs catches it against this file.
+-->
+<html><body>
+<h2>Product Parameters</h2>
+<table><tbody>
+<tr><td>Processor</td><td>Example LX7 dual-core</td></tr>
+<tr><td>Flash</td><td>16MB Flash</td></tr>
+</tbody></table>
+
+<h2>Onboard Resources</h2>
+<ol>
+<li><b>EXAMPLE-SOC-1</b><br>Wi-Fi/Bluetooth SoC, example role<br>Stacked memory</li>
+<li><strong>EXAMPLE-CODEC</strong>: an example codec role (strong+colon style)</li>
+</ol>
+
+<h2>Interface Description</h2>
+<details><summary><strong>LCD Interface: Connector for the LCD cable (click to expand)</strong></summary>
+<table><thead><tr><th>ESP32-S3</th><th>LCD</th><th>Description</th></tr></thead><tbody>
+<tr><td>GPIO90</td><td>G3</td><td>Green data bit 3 (fake)</td></tr>
+<tr><td>GPIO91</td><td>DE</td><td>Data enable (fake)</td></tr>
+<tr><td>EXIO2</td><td>DISP</td><td>Backlight enable pin</td></tr>
+</tbody></table></details>
+
+<details><summary>ESP32-S3 / IO EXTENSION to Touch Pin Mapping Table (Click to expand)</summary>
+<table><thead><tr><th>ESP32-S3</th><th>Touch</th><th>Description</th></tr></thead><tbody>
+<tr><td>GPIO92</td><td>TP_IRQ</td><td>Touch interrupt pin (fake)</td></tr>
+</tbody></table></details>
+
+<details><summary>I2C Interface: Connects to the touch interface and expander (click to expand)</summary>
+<table><thead><tr><th>ESP32-S3</th><th>I2C</th><th>Description</th></tr></thead><tbody>
+<tr><td>GPIO93</td><td>SDA</td><td>I2C data pin (fake)</td></tr>
+</tbody></table></details>
+</body></html>

@@ -39,12 +39,15 @@ Same honesty rule as every board here. Two VERIFY clusters gate real use:
    — VERIFY). If the glass stays dark at bench: confirm the reset bit, then
    the init-sequence follow-up is the fix (Arduino_GFX carries ST7701
    support; wire it behind this board's macro).
-2. **Audio front end.** `AUDIO_PIN_I2S_*` are **deliberately -1** — the
-   vendor's public material doesn't land the audio GPIOs unambiguously, and
-   a guessed microphone pin is the one guess this repo must never ship. The
-   mic layer refuses to start while any pin is -1 (glass shows "mic: pins
-   unset"; console says `[MIC] pins unset`). The mics are provably
-   un-driven until you fill them in.
+2. **Audio front end.** `AUDIO_PIN_I2S_*` are now **filled from the vendor's
+   own pin-mapping table** (MCLK GPIO6, SCLK GPIO44, LRCK GPIO16, mic-data-in
+   GPIO15; PA enable on CH422G EXIO4) — captured in
+   [`board_facts.json`](../../../canary-local/devices/board_facts.json) and
+   drift-locked against this map, so they're facts, not guesses. The
+   remaining bench step is the **ES7210 register init** — the ADC may need
+   configuration before it clocks samples; `MIC1 SNAP rms=0` in a live room
+   makes that obvious. (The mic layer still refuses to start with any pin -1;
+   the guard stays, it just isn't tripped anymore.)
 
 ## Power, the battery, and the side switch
 
@@ -97,8 +100,11 @@ power cut it survives. Staged, not started.
    codec silicon and the shared-bus wiring before any audio pin is touched.
    An ACK at **0x51** is the PCF85063 RTC saying hello (silicon confirmed;
    driver support is a separate follow-up — see the pin map's RTC note).
-3. Read the I2S GPIOs (MCLK/SCLK/LRCK/SDIN) off the vendor wiki/schematic
-   for your board revision and fill `AUDIO_PIN_I2S_*` in `pins/pins.h`.
+3. The I2S GPIOs are already filled from the vendor pin-mapping table
+   (`pins/pins.h`; drift-locked to `board_facts.json`). If capture reads
+   silence (`MIC1 SNAP rms=0` in a live room), the **ES7210 register init**
+   is the follow-up — the ADC likely needs configuration before it clocks
+   samples; land it at the marked VERIFY point in `mic_alarm.cpp`.
 4. Rebuild + flash. Settings → **microphone** → listening. The amber
    ● MIC chip must appear the same instant; `MIC1` SNAP lines start.
 5. Hold a smoke alarm's TEST button near the board: the T3 cadence should
