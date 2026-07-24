@@ -1306,8 +1306,38 @@ export const BLE_CONSOLE = {
   // (iOS) fold case themselves, so all three agree on the same console.
   serviceUuid: "8fc1cee0-b162-4401-9607-c8ac21383e90",
   snapshotUuid: "8fc1cee1-b162-4401-9607-c8ac21383e90",
+  // What the Canary actually ADVERTISES: its pairing service UUID
+  // (bluetooth_channel.h SERVICE_UUID) plus its branded GAP name in the scan
+  // response. It does NOT advertise the console service above — a BLE adv packet
+  // only fits one 128-bit UUID, so NimBLE puts the pairing UUID in the advert
+  // and the name in the scan response. So the browser must DISCOVER the board by
+  // its advertised identity (branded name / pairing UUID), then reach the
+  // console service over the open connection — both services live on the same
+  // GATT server, so it's there once connected. (Filtering on the console UUID,
+  // as v1 did, matched nothing and the chooser stayed empty.)
+  pairingServiceUuid: "8fc1ceca-b162-4401-9607-c8ac21383e90",
+  brandName: "SecuraCV-Canary",   // the default GAP name (bluetooth_channel.cpp)
+  brandNamePrefix: "SecuraCV",    // owner-renamed units keep this prefix
   maxPayloadBytes: 220,
 };
+
+// The exact navigator.bluetooth.requestDevice() options. Match the Canary by
+// its ADVERTISED identity — branded name prefix OR the pairing service UUID (OR
+// semantics across filters, so a renamed unit still matches on the service, and
+// a unit whose UUID didn't fit the advert still matches on the name). Web
+// Bluetooth requires every service you later read to appear in a filter or in
+// optionalServices, so the console + pairing services are listed there. Pure so
+// tests pin the filter against what the firmware advertises — the drift that
+// left the v1 chooser empty can't come back silently.
+export function bleRequestOptions() {
+  return {
+    filters: [
+      { namePrefix: BLE_CONSOLE.brandNamePrefix },
+      { services: [BLE_CONSOLE.pairingServiceUuid] },
+    ],
+    optionalServices: [BLE_CONSOLE.serviceUuid, BLE_CONSOLE.pairingServiceUuid],
+  };
+}
 
 // Static "can this browser even try Bluetooth?" — just the presence of the Web
 // Bluetooth entry point. Whether the *radio* is switched on is a separate async

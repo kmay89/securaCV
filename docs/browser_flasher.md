@@ -53,6 +53,31 @@ bridge), there is usually **no driver to install** — the single biggest
 "it won't connect" support cause simply isn't present. A USB-C **data** cable
 (not charge-only) is the one requirement.
 
+### What the Canary is called over USB
+
+A common wish is for the board to show up as "SecuraCV Canary" instead of a
+generic serial/modem device. The honest picture, because it's silicon-deep:
+
+- **Flashing always talks to the ROM.** To flash, the S3 is in download mode,
+  where its **USB-Serial-JTAG** peripheral presents a descriptor fixed in
+  Espressif's mask ROM ("USB JTAG/serial debug unit", VID `0x303A`). No firmware
+  runs, so nothing we ship can rebrand the name in the flash chooser — on any
+  board, in any USB mode. That's a property of the recovery channel, not a bug.
+- **At runtime it depends on the USB mode.** The stock profile boots
+  **hwcdc** (`ARDUINO_USB_MODE=1`), which reuses that same fixed USB-Serial-JTAG
+  descriptor — so the running board also reads generic. Only a build in
+  **USB-OTG / TinyUSB** mode (`ARDUINO_USB_MODE=0`) has a programmable
+  descriptor, where `USB.manufacturerName("SecuraCV")` + `USB.productName(
+  "SecuraCV Canary")` make the **Web Serial chooser, Windows, and USB device
+  info** read "SecuraCV Canary" (already wired in the `usb-onboard` build). Even
+  then, **macOS keeps the port node `/dev/cu.usbmodem…`** — that prefix is a
+  macOS CDC-ACM convention, not the product string, so it never changes.
+
+Net: the branded USB name is achievable only for the **runtime** connection of
+an **OTG/TinyUSB** build, and shows in the picker label, not the macOS device
+path. The BLE console (above) is the cleaner "it's a *branded* Canary" signal —
+it advertises `SecuraCV-Canary` by name.
+
 ## Self-healing (never get stuck)
 
 The flasher tries to fix the common failures before asking the user to:
@@ -109,16 +134,24 @@ the iOS app's `BLEConsole.swift` speaks the same UUIDs). The flasher's
 **Bluetooth check** (reachable any time from the reassurance strip, and offered
 after flashing an AP/WAP board) answers three plain questions with **Web
 Bluetooth** — is Bluetooth on (`navigator.bluetooth.getAvailability()`), can this
-browser reach a Canary (`requestDevice` filtered to the console's service UUID),
-and what is it reporting (read + subscribe the snapshot, rendered as a live
-identity card). It writes **nothing** to the board — it's a connectivity test,
-not a flash channel (you can't flash an ESP32 over BLE with esptool). Web
+browser reach a Canary (`requestDevice` matched to the board's **advertised**
+identity — its branded GAP name `SecuraCV-Canary` and its pairing service UUID,
+since a BLE advert only fits one 128-bit UUID and the console service isn't the
+one advertised; the console service is then reached over the open connection via
+`optionalServices`), and what is it reporting (read + subscribe the snapshot,
+rendered as a live identity card that names the board). It writes **nothing** to
+the board — it's a connectivity test, not a flash channel (you can't flash an
+ESP32 over BLE with esptool). Web
 Bluetooth is Chromium-only just like Web Serial (desktop or Android; never
 Safari/Firefox/iOS), and the console is **bonded-peers-only** by design, so an
-unpaired browser is told to pair first rather than dead-ending. The UUIDs, the
-availability gate, and the snapshot parser live in `flash-core.js` (`BLE_CONSOLE`,
-`bleSupport`, `parseBleSnapshot`, `bleSnapshotRows`), pinned by
-`tests/flash.test.js`; `flash.js` owns the GATT dance.
+unpaired browser is told to pair first rather than dead-ending. A "can't find
+it" failure also names the **external antenna** first: on the XIAO ESP32-S3 the
+u.FL WiFi/BT antenna must be seated or — per Seeed's own Bluetooth guide — *BLE
+may not work at all*, so it's the first thing to check before range or power.
+The UUIDs, the availability gate, and the snapshot parser live in
+`flash-core.js` (`BLE_CONSOLE`, `bleRequestOptions`, `bleSupport`, `parseBleSnapshot`,
+`bleSnapshotRows`), pinned by `tests/flash.test.js`; `flash.js` owns the GATT
+dance.
 
 ## How it fits the release system
 

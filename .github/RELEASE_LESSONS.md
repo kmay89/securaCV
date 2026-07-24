@@ -104,3 +104,32 @@ any platform.
   cloned upstream. Today only the Flasher does; if the Lab / iOS / iPad /
   tvOS / Mac builds ever vendor an external payload into their app bundle,
   dereference on copy (Principle 1) and verify it exists (Principle 4).
+
+### 2026-07-24 — Hub catalog shipped unpinned → flasher downloads the OS image, then dead-ends at 100% with nothing to verify against
+
+- **Symptom:** on real hardware, the Raspberry Pi hub flow downloaded the HAOS
+  image to 100%, then errored ("didn't download properly") and never reached
+  the write step. Reproduced on every attempt, Pi 5.
+- **Cause:** the hub-image catalog (`hub_image.json`) was **unpinned**
+  (`pinned:false`, empty `sha256`), and the whole verification design assumed
+  Home Assistant publishes a `<image>.sha256` sibling to fall back on. It does
+  **not** — that URL 404s, and there's no combined `SHA256SUMS` either. So
+  after a clean download the writer had neither a repo pin nor a published
+  checksum, hit `VerifyError::NoChecksumAvailable`, and refused to write (it
+  will not flash an unverifiable OS image). The pin ceremony *also* depended on
+  that dead `.sha256` channel as one of its two required sources, so it
+  silently pinned nothing — the catalog stayed unpinned and no CI check
+  noticed, because CI never downloads the real image.
+- **Fix:** re-point the pin ceremony's authoritative channel at the **actual
+  downloaded bytes** (stream + hash), cross-checked against GitHub's asset
+  digest when present (best-effort, alarms on disagreement) — HA's own bytes
+  are the only checksum that exists. Committed real pins for HAOS 18.1
+  (`hub_image_pins.json`) and regenerated the catalog (`pinned:true`). Added a
+  release guard in `desktop-flasher-release.yml` that fails the build if the
+  shipped catalog isn't pinned, so a broken flasher can never reach a user
+  (Principle 4 — prove it before you publish).
+- **Applies to:** any app that bundles a catalog whose entries are verified at
+  runtime. The runtime refuses to act on an unverifiable entry (correct), so
+  the *build* must prove the catalog carries what the runtime needs. Never
+  assume an upstream publishes a checksum you can fetch — if trust hinges on a
+  hash, mint it from the bytes yourself and pin it in-repo.

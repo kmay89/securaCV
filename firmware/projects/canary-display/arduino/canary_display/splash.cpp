@@ -8,6 +8,15 @@
 // a tap that always advances (respect beats spectacle). Every later boot
 // plays the short familiar splash instead: you have already met.
 #include "flavor_config.h"
+// The nightstand (172x320 portrait, no touch) borrows the watch's
+// small-portrait rendering for the shared modal/support surfaces; only its
+// standing fleet face (portrait_ui.cpp) is bespoke. Aliasing the flavor here,
+// per-TU, keeps those surfaces one-renderer without threading a third
+// geometry through every branch. The hero faces stay separate: glance_ui.cpp
+// is guarded CD_FLAVOR_WATCH and never compiles for the nightstand.
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
+#define CD_FLAVOR_WATCH 1
+#endif
 #include <Arduino.h>
 #include <Preferences.h>
 #include <lvgl.h>

@@ -63,6 +63,13 @@ MIC_SRC = test_mic_logic.cpp
 VOICE_BIN = test_voice_score
 VOICE_SRC = test_voice_score.cpp
 
+# Acoustic clearance (canary/hal/voice_score.h): no signature reproduces a
+# regulated life-safety cadence (ISO 8201 T3 fire / T4 CO) — a status chirp
+# must never be confusable with a real alarm — plus the originality invariants
+# that back docs/hardware/display_sound_clearance.md.
+CLEAR_BIN = test_voice_clearance
+CLEAR_SRC = test_voice_clearance.cpp
+
 .PHONY: all run clean
 all: run
 
@@ -90,7 +97,10 @@ $(MIC_BIN): $(MIC_SRC)
 $(VOICE_BIN): $(VOICE_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(VOICE_SRC)
 
-run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN)
+$(CLEAR_BIN): $(CLEAR_SRC)
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(CLEAR_SRC)
+
+run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -99,6 +109,7 @@ run: $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARC
 	./$(ARCADE_BIN)
 	./$(MIC_BIN)
 	./$(VOICE_BIN)
+	./$(CLEAR_BIN)
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN)

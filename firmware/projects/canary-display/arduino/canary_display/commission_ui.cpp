@@ -1,6 +1,11 @@
 // src/ui/commission_ui.cpp — "add a canary" commissioning surface.
 // See commission_ui.h and docs/hardware/canary_qr_onboarding.md.
 #include "flavor_config.h"
+// Nightstand borrows the watch's small-portrait modal rendering (see
+// splash.cpp for the rationale); the standing face is portrait_ui.cpp.
+#if defined(CD_FLAVOR_NIGHTSTAND) && !defined(CD_FLAVOR_WATCH)
+#define CD_FLAVOR_WATCH 1
+#endif
 #include <Arduino.h>
 #include <lvgl.h>
 #include <stdio.h>

@@ -5,10 +5,59 @@ page + `js/tv-emulator.js` + `js/highlight.js` + `demo-fleet.json`, no build
 step, no framework, CSP-safe (`script-src 'self'`). That makes it a drop-in for
 both Tauri apps, which are already web-frontend shells.
 
-> **Status: plan, not yet wired.** This touches the app frontends and their
-> build/release flows, so per [`../CLAUDE.md`](../CLAUDE.md) it needs a real
-> **macOS + Tauri** build to verify before shipping. Everything below is the
-> exact integration; give the go-ahead and it gets wired and built.
+> **Status: Flasher — wired; web layer verified. Lab — same pattern, pending.**
+> The Flasher integration below is implemented and the web layer is verified in
+> a headless browser (the `witness:appear` postMessage makes a just-flashed
+> Canary show up on the wall; skins, connect, and the highlighted JSON all
+> work inside the app-origin iframe). The remaining gate is a real **macOS +
+> Tauri build/run** of the Flasher (per [`../CLAUDE.md`](../CLAUDE.md) /
+> `RELEASE_LESSONS`) — that can't be done from CI or a browser. The Lab is the
+> identical pattern; wire it the same way once the Flasher build is confirmed.
+
+## As wired in the Flasher (this repo)
+
+- `desktop/src/witness/` — the vendored emulator (`witness.html` +
+  `tv-emulator.js` + `highlight.js` + `demo-fleet.json`), self-contained and
+  loaded in an isolated `<iframe>`. See `witness/PROVENANCE.txt` for the sync.
+- `desktop/src/index.html` — a **Your Fleet** tab (`data-nav="fleet"`) and a
+  `#fleet-view` holding `<iframe id="witness-frame" src="witness/witness.html">`.
+- `desktop/src/app.js` — `VIEWS` includes `fleet`; `announceToWitness()` posts
+  `{type:'witness:appear', name}` to the iframe right after a successful flash
+  (`onFlash`), wrapped in try/catch so it can **never** break the flash flow;
+  a "new" badge draws attention until you open the tab.
+- Works within the app's existing CSP (`default-src 'self'`) — same-origin
+  iframe + `demo-fleet.json` fetch; no CSP change. A real LAN kernel needs
+  `connect-src` widened (a deliberate, separate change).
+
+## Real LAN discovery after a flash (native, not simulated)
+
+The Flasher is a **native app**, so — unlike the sandboxed browser page — it can
+reach the LAN. And it just provisioned the device's Wi-Fi, so it knows the
+Canary is about to join the same network. So the appear can be **real**:
+
+1. `onFlash` fires `announceToWitness()` (instant, simulated) so the wall reacts
+   immediately, then `discoverAndPopulate()`.
+2. `discoverAndPopulate()` polls the Rust command **`witness_discover(bases)`**
+   for ~30s (the board takes a moment to boot + join Wi-Fi). Candidate bases are
+   built from the provisioned host (the MQTT/HA host field) plus `canary.local`.
+3. **`witness_discover`** (native, `reqwest`) GETs `{base}/api/fleet` on each
+   candidate and returns the first that answers. No CSP applies (native), and
+   `.local` resolves via the OS — **no mDNS crate**. It reuses the existing
+   `reqwest` dependency and mirrors `fetch_manifest`.
+4. The frontend posts `{type:'witness:fleet', fleet, highlight}` to the iframe;
+   the emulator swaps the demo fleet for the **real** Canaries and highlights the
+   one you just flashed.
+
+Every step is wrapped so it can **never** affect the flash flow; if nothing
+answers (older build, or nothing serving `/api/fleet` yet), the simulated
+appearance stands.
+
+> **Honest prerequisite for *real* devices to populate:** something on the LAN
+> has to answer `GET /api/fleet` — the hub/kernel, or a `canary-wap` firmware
+> endpoint (the contract in [`discovery/DISCOVERY.md`](discovery/DISCOVERY.md)).
+> That firmware/kernel endpoint is the remaining real-world enabler; until it
+> ships, `witness_discover` simply finds nothing and the simulated appear is
+> what you see. Verifying the native command still needs a macOS/Tauri build.
 
 ## The Flasher — the magic moment
 

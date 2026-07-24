@@ -171,6 +171,10 @@ static constexpr uint32_t HEAP_HYSTERESIS      = 5000;
 #    define SECURACV_OTA_PRODUCT "securacv-canary-display-dash-modes"
 #  elif defined(CD_FLAVOR_DASH)
 #    define SECURACV_OTA_PRODUCT "securacv-canary-display-dash"
+#  elif defined(CD_FLAVOR_NIGHTSTAND)
+     // The two nightstand boards (c6/s3) each get a board-specific product
+     // via the PlatformIO env -D; this is the Arduino-path fallback only.
+#    define SECURACV_OTA_PRODUCT "securacv-canary-display-nightstand"
 #  else
 #    define SECURACV_OTA_PRODUCT "securacv-canary-display"
 #  endif
@@ -189,6 +193,9 @@ static constexpr const char* OTA_PRODUCT = SECURACV_OTA_PRODUCT;
 #  elif defined(CD_FLAVOR_DASH)
 #    define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-dash.json"
+#  elif defined(CD_FLAVOR_NIGHTSTAND)
+#    define SECURACV_OTA_MANIFEST_URL \
+  "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-nightstand.json"
 #  else
 #    define SECURACV_OTA_MANIFEST_URL \
   "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display.json"
