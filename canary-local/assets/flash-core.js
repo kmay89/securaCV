@@ -1290,6 +1290,129 @@ export function formatFingerprint(hex, maxBytes = 8) {
   return pairs.length > maxBytes ? shown + "…" : shown;
 }
 
+// ── the BLE offline console (Web Bluetooth "it's really on" test) ───────────
+// The Canary WAP firmware exposes a read-only GATT "console": one service with
+// one snapshot characteristic (READ + NOTIFY) carrying a ≤220-byte UTF-8 JSON
+// blob of live device state — the same fields the SPA shows over WiFi, but on a
+// path that keeps working when WiFi is down. Contract + payload are pinned by
+// firmware/projects/canary-wap/arduino/canary_wap/ble_console.h (the iOS app's
+// BLEConsole.swift speaks the same UUIDs). Web Serial owns *flashing*; this is
+// the after-the-fact "prove it's alive over the air" test — is Bluetooth on,
+// can the browser reach the board, and what is it reporting. Pure + host-tested
+// here; flash.js owns navigator.bluetooth and the GATT dance.
+
+export const BLE_CONSOLE = {
+  // Web Bluetooth wants lower-case UUIDs; NimBLE (firmware) and CoreBluetooth
+  // (iOS) fold case themselves, so all three agree on the same console.
+  serviceUuid: "8fc1cee0-b162-4401-9607-c8ac21383e90",
+  snapshotUuid: "8fc1cee1-b162-4401-9607-c8ac21383e90",
+  maxPayloadBytes: 220,
+};
+
+// Static "can this browser even try Bluetooth?" — just the presence of the Web
+// Bluetooth entry point. Whether the *radio* is switched on is a separate async
+// question (navigator.bluetooth.getAvailability(), handled in flash.js); this
+// answers only "is the API here", so the page can fall straight to the guided /
+// native path without touching hardware. Web Bluetooth is Chromium on a
+// computer or Android — never Safari, Firefox, or anything on iOS/iPadOS, the
+// same shape as the Web Serial gate. Pure: pass a navigator-like object.
+export function bleSupport(nav) {
+  const n = nav || {};
+  if (n.bluetooth && typeof n.bluetooth.requestDevice === "function") {
+    return { supported: true, reason: "" };
+  }
+  return {
+    supported: false,
+    reason:
+      "This browser has no Web Bluetooth. Use Chrome, Edge, Brave, or another " +
+      "Chromium browser on a computer or Android — not Safari, Firefox, or " +
+      "anything on iPhone / iPad.",
+  };
+}
+
+// Turn a raw snapshot read (bytes off the characteristic, or a JSON string)
+// into a parsed object. Accepts a Uint8Array, an ArrayBuffer, a DataView (what
+// Web Bluetooth hands back from readValue), or a plain string. Returns
+// { raw } on success, or null for anything that isn't the console's JSON — a
+// partial/garbage read never throws, it's just "no snapshot yet".
+export function parseBleSnapshot(input) {
+  if (input == null) return null;
+  let text;
+  if (typeof input === "string") {
+    text = input;
+  } else {
+    let bytes;
+    if (input instanceof Uint8Array) {
+      bytes = input;
+    } else if (typeof ArrayBuffer !== "undefined" && input instanceof ArrayBuffer) {
+      bytes = new Uint8Array(input);
+    } else if (input && input.buffer instanceof ArrayBuffer) {
+      // DataView / typed-array view (readValue returns a DataView).
+      bytes = new Uint8Array(input.buffer, input.byteOffset || 0, input.byteLength);
+    } else {
+      return null;
+    }
+    try {
+      text = new TextDecoder("utf-8").decode(bytes);
+    } catch {
+      // No TextDecoder (ancient host) — the payload is ASCII JSON in practice.
+      text = String.fromCharCode.apply(null, Array.from(bytes));
+    }
+  }
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  return { raw: obj };
+}
+
+// Human uptime out of a second count: "3d 4h" / "4h 12m" / "12m 5s" / "5s".
+export function formatUptime(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+// The snapshot as readable {label, value} rows, in a friendly order — only the
+// fields actually present (the firmware drops optional ones under MTU pressure,
+// so the reader must tolerate a minimal payload). Fields mirror
+// ble_console.cpp's build_snapshot: up, heap, wifi, wrssi, ctx, owner_min, ovr,
+// hh, ble, ble_hh, motion, id, fw.
+export function bleSnapshotRows(snap) {
+  const f = snap && (snap.raw || (typeof snap === "object" ? snap : null));
+  if (!f || typeof f !== "object") return [];
+  const rows = [];
+  const push = (label, value) => {
+    if (value !== undefined && value !== null && value !== "") {
+      rows.push({ label, value: String(value) });
+    }
+  };
+  if (f.id != null) push("Identity", f.id);
+  if (f.fw != null) push("Firmware", f.fw);
+  if (f.up != null) push("Uptime", formatUptime(f.up));
+  if (f.wifi != null) {
+    push("WiFi", f.wrssi != null ? `${f.wifi} (${f.wrssi} dBm)` : String(f.wifi));
+  }
+  if (f.ctx != null) push("Context", f.ovr ? `${f.ctx} (override)` : String(f.ctx));
+  if (f.owner_min != null) push("Owner last seen", `${f.owner_min} min ago`);
+  if (f.hh != null) push("Household devices", f.hh);
+  if (f.ble != null) {
+    push("BLE adverts seen", f.ble_hh != null ? `${f.ble} (${f.ble_hh} known)` : String(f.ble));
+  }
+  if (f.motion != null) push("Motion score", f.motion);
+  if (f.heap != null) push("Free memory", formatBytes(f.heap));
+  return rows;
+}
+
 // ── post-flash: the ONE obvious next step for THIS board ────────────────────
 // After a Canary proves itself over the console, tell the user the single next
 // thing to do — tailored to how the board is set up and what it senses — so the

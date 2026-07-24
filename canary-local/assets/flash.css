@@ -933,3 +933,9 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-identity-more .ghost { color: #7a5c00; }
 .flash-identity-more .ghost:hover { color: #a37b00; }
 @media (prefers-reduced-motion: reduce) { .flash-identity { transition: none; } }
+
+/* ── the Bluetooth check (prove a Canary is on, over the air) ─────────────── */
+.flash-ble-entry summary { cursor: pointer; }
+.flash-ble-status { min-height: 1.2em; }
+.flash-ble-card { border-left: 3px solid var(--ok); }
+.flash-ble-card h3 { color: var(--ok); margin: 0 0 6px; }

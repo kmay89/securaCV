@@ -97,6 +97,29 @@ mouth — the same self-verify [`securacv.com/canary`](self_star_roadmap.md) doe
 — and it never leaves the page. Variants without a serial console simply don't
 show the card (the boot log still streams). (`parseSelfManifest`.)
 
+### The Bluetooth check — proof over the air, not the cable
+
+The self-manifest above proves the flash *over USB*. Its companion proves the
+board is alive *over the air*: a Canary's WAP firmware keeps a **read-only BLE
+console** running — one GATT service, one snapshot characteristic (READ +
+NOTIFY) carrying a ≤220-byte UTF-8 JSON blob of live state — the same fields the
+SPA shows over WiFi, on the path that keeps working when WiFi is down
+([`firmware/.../ble_console.h`](../firmware/projects/canary-wap/arduino/canary_wap/ble_console.h);
+the iOS app's `BLEConsole.swift` speaks the same UUIDs). The flasher's
+**Bluetooth check** (reachable any time from the reassurance strip, and offered
+after flashing an AP/WAP board) answers three plain questions with **Web
+Bluetooth** — is Bluetooth on (`navigator.bluetooth.getAvailability()`), can this
+browser reach a Canary (`requestDevice` filtered to the console's service UUID),
+and what is it reporting (read + subscribe the snapshot, rendered as a live
+identity card). It writes **nothing** to the board — it's a connectivity test,
+not a flash channel (you can't flash an ESP32 over BLE with esptool). Web
+Bluetooth is Chromium-only just like Web Serial (desktop or Android; never
+Safari/Firefox/iOS), and the console is **bonded-peers-only** by design, so an
+unpaired browser is told to pair first rather than dead-ending. The UUIDs, the
+availability gate, and the snapshot parser live in `flash-core.js` (`BLE_CONSOLE`,
+`bleSupport`, `parseBleSnapshot`, `bleSnapshotRows`), pinned by
+`tests/flash.test.js`; `flash.js` owns the GATT dance.
+
 ## How it fits the release system
 
 ```
@@ -325,7 +348,7 @@ fully offline posture the OTA engine also offers.
 |---|---|
 | `canary-local/flash.html` | the page shell (hero + `<main>` + module script); carries the strict CSP + the SRI import map |
 | `canary-local/assets/flash.js` | the renderer + esptool-js glue (the theatre) |
-| `canary-local/assets/flash-core.js` | DOM-free core: chip guard, image parsers, manifest logic (tested) |
+| `canary-local/assets/flash-core.js` | DOM-free core: chip guard, image parsers, manifest logic, BLE console contract + snapshot parser (tested) |
 | `canary-local/assets/flash.css` | styles, on the Lab's design tokens |
 | `canary-local/assets/vendor/esptool-js/` | vendored esptool-js (self-hosted, no CDN) |
 | `canary-local/assets/vendor/md5/` | vendored MD5 (ESM) for read-back verify |
@@ -347,3 +370,9 @@ fully offline posture the OTA engine also offers.
   firmware that isn't regenerated is a red X.
 - **Bench (real board):** plug into Chrome, flash a variant, pull the cable
   mid-write to prove it recovers, then reflash and watch it boot.
+- **Bluetooth check:** the UUID contract, availability gate, and snapshot
+  parser are pinned in `flash.test.js` (`BLE_CONSOLE`, `bleSupport`,
+  `parseBleSnapshot`, `bleSnapshotRows`, `formatUptime`). On a real board:
+  open the Bluetooth check, confirm it reports Bluetooth on, pick a running
+  Canary, and watch its live snapshot card fill in; a non-Chromium browser
+  should get the guided fallback instead of a dead end.
