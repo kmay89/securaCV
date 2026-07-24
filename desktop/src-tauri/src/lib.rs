@@ -282,6 +282,36 @@ async fn fetch_manifest(manifest_url: String) -> Result<Value, String> {
         .map_err(|e| format!("release manifest is malformed: {e}"))
 }
 
+/// Find a freshly-flashed Canary on the LAN and return its kernel's fleet.
+///
+/// After a flash the device joins the Wi-Fi the Flasher just provisioned, so —
+/// unlike a sandboxed browser page (the embedded Witness Wall runs under a
+/// tight `connect-src 'self'` CSP) — the native app can reach it directly.
+/// `.local` hostnames resolve through the OS resolver (Bonjour / avahi), so no
+/// mDNS crate is needed. This does ONE pass over the candidate bases and
+/// returns the first `/api/fleet` that answers; the frontend polls it while the
+/// board boots and joins the network. Coarse presence/health only — the same
+/// endpoint the emulator's "connect" uses (see `tvos/discovery/DISCOVERY.md`).
+#[tauri::command]
+async fn witness_discover(bases: Vec<String>) -> Result<Value, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("SecuraCV-Flasher")
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| e.to_string())?;
+    for base in &bases {
+        let url = format!("{}/api/fleet", base.trim_end_matches('/'));
+        if let Ok(resp) = client.get(&url).send().await {
+            if resp.status().is_success() {
+                if let Ok(v) = resp.json::<Value>().await {
+                    return Ok(v);
+                }
+            }
+        }
+    }
+    Err("no kernel answered on the LAN yet".to_string())
+}
+
 /// Resolve → download → flash. Streams every line espflash prints over the
 /// `flash:log` event so the UI is a live console, then returns Ok on a clean
 /// exit or a human error otherwise.
@@ -756,6 +786,7 @@ pub fn run() {
             list_ports,
             detect_chip,
             fetch_manifest,
+            witness_discover,
             flash,
             flash_vision_module,
             hub::load_hub_catalog,
