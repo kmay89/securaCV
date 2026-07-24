@@ -74,6 +74,30 @@ def project_includes():
     return seen
 
 
+def env_src_filters():
+    """{section name: set of common/<path>.cpp it compiles}, comments stripped.
+
+    Per-section, not one blob: whether a translation unit is compiled is a
+    property of the individual env, and the closure check below has to reason
+    about one env's set at a time.
+    """
+    out = {}
+    if not ENVS.exists():
+        return out
+    for path in ENVS.glob("*.ini"):
+        section = None
+        for line in path.read_text(errors="ignore").splitlines():
+            code = line.split(";", 1)[0]
+            header = re.match(r"\s*\[([^\]]+)\]", code)
+            if header:
+                section = f"{path.name}:{header.group(1)}"
+                continue
+            for m in re.finditer(r"\+<[^>]*common/([A-Za-z0-9_/]+\.cpp)>", code):
+                if section:
+                    out.setdefault(section, set()).add(m.group(1))
+    return out
+
+
 def env_blob():
     """All env .ini text with `;` comments stripped.
 
@@ -127,6 +151,59 @@ def main() -> int:
             f"    not a compile error. Name the .cpp in a build_src_filter, as "
             f"canary-sense.ini does for boot_banner.cpp."
         )
+
+    # Naming one .cpp of a library is not enough. build_src_filter compiles
+    # exactly the TUs it lists, so an env that compiles look_engine.cpp but
+    # not color_engine.cpp still fails to link — and the check above, which
+    # only asks whether *any* source is named, would call that green.
+    #
+    # Requiring every source is too strong: common/sensors is a set of
+    # independent drivers, and canary-sentinel legitimately compiles three of
+    # the four (it has no use for mr60_vitals.cpp). So the rule is closure —
+    # if a compiled source includes a sibling header that has its own .cpp,
+    # that .cpp has to be compiled by the same env too.
+    for section, compiled in sorted(env_src_filters().items()):
+        for rel in sorted(compiled):
+            src = COMMON / rel
+            if not src.is_file():
+                continue
+            try:
+                text = src.read_text(errors="ignore")
+            except OSError:
+                continue
+            lib = COMMON / rel.split("/")[0]
+            # Walk includes transitively through the library's own headers:
+            # look_engine.cpp includes only look_engine.h, and the dependency
+            # on color_engine.cpp arrives through look_engine.h including
+            # color_engine.h. A direct-includes-only walk misses it entirely.
+            seen, queue, reached = set(), [text], {}
+            while queue:
+                for inc in re.findall(r'#\s*include\s+"([^"]+)"', queue.pop()):
+                    stem = pathlib.Path(inc).stem
+                    if stem in seen:
+                        continue
+                    seen.add(stem)
+                    reached[stem] = inc
+                    for hdr in lib.rglob(f"{stem}.h"):
+                        try:
+                            queue.append(hdr.read_text(errors="ignore"))
+                        except OSError:
+                            pass
+            for stem, inc in sorted(reached.items()):
+                for sibling in lib.rglob(f"{stem}.cpp"):
+                    if "test" in sibling.name.lower():
+                        continue
+                    need = sibling.relative_to(COMMON).as_posix()
+                    if need != rel and need not in compiled:
+                        problems.append(
+                            f"{section}: compiles {rel}, which pulls in "
+                            f"{inc!r}, but does not compile {need}.\n"
+                            f"    build_src_filter compiles only what it "
+                            f"names, so this links against symbols from a "
+                            f"translation unit\n    that is never built — "
+                            f"undefined reference at link time. Add it "
+                            f"alongside {rel}."
+                        )
 
     if problems:
         print("firmware/common/ sources that will not link:\n", file=sys.stderr)
