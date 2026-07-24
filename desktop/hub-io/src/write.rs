@@ -31,6 +31,20 @@ use std::path::Path;
 /// SD/SSD erase-block size that matters and keeps syscall overhead irrelevant.
 const CHUNK: usize = 4 * 1024 * 1024;
 
+/// Whether this platform actually has a raw-disk write backend (`open_target`).
+///
+/// Disk *detection* works everywhere — `hub_core::hub_enumerate` enumerates and
+/// classifies candidates on Linux, macOS, and Windows alike — but *writing* a
+/// card only exists on Linux and macOS today. The flasher checks this **up
+/// front**, before the hundreds-of-MB download and ~2.5 GB decompress, so an
+/// operator on an unsupported OS gets an instant, honest answer instead of
+/// waiting out the whole preparation only to fail at the write. This mirrors
+/// `open_target`'s own `#[cfg]` gate exactly (they share the same expression),
+/// which stays as the belt-and-suspenders on the type-level write path.
+pub const fn write_backend_available() -> bool {
+    cfg!(any(target_os = "linux", target_os = "macos"))
+}
+
 /// What a completed, read-back-verified write proved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteReceipt {
@@ -378,6 +392,17 @@ mod tests {
     use hub_core::hub_disk::TargetDisk;
     use hub_core::hub_flash::authorize_write;
     use hub_core::hub_image::{verify_download, WritePlan};
+
+    #[test]
+    fn write_backend_available_agrees_with_open_target() {
+        // The predicate the flasher gates on must match the platform
+        // open_target actually provides — true on Linux/macOS, false elsewhere
+        // — so the up-front check and the real write can never disagree.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        assert!(write_backend_available());
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        assert!(!write_backend_available());
+    }
 
     fn image_bytes() -> Vec<u8> {
         (0..3_000_000u32)
