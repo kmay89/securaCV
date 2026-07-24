@@ -1527,6 +1527,109 @@
       }
     },
     {
+      "id": "canary-gatekeeper",
+      "family": "canary-gatekeeper",
+      "kind": "concept",
+      "name": "Canary Gatekeeper",
+      "tagline": "Stick it on a gate: it knows when the gate opens, closes, or gets left open — years on a tiny cell, or forever on a scrap of solar. Coming soon.",
+      "board": "XIAO ESP32-C3/C6 + LIS3DH accelerometer (recommended) or a reed switch (+ Wio-SX1262 for a far gate)",
+      "senses": [
+        "gate opened/closed from tilt + motion, or a reed contact (concept)",
+        "gate left open too long, absence-inferred (concept)",
+        "gate rattled/climbed vibration, the security bonus (concept)"
+      ],
+      "shows": [],
+      "modality": "contact",
+      "network": {
+        "mdns": "advertise-only on home WiFi",
+        "web": "first-boot portal only",
+        "mqtt": "ContactStateChange (open/closed) + optional TamperDetected (climb/rattle); alerts via the alert relay"
+      },
+      "docs": [
+        "docs/hardware/canary_gatekeeper_research.md"
+      ],
+      "status": "coming soon — concept, research staged",
+      "concept": {
+        "idea": "A coin-sized, ultra-low-power node you stick on a gate that tells you when it opens, closes, or gets left open — and, if you want, when someone's rattling or climbing it — running for years on a tiny cell or forever on a scrap of solar. Mostly an assembly of bricks we already have: Fence Guard's sensor/mesh/solar research, the ContactStateChange claim, the alert relay, and the absence-inference idiom.",
+        "points": [
+          {
+            "k": "Accelerometer = one stick-on unit, no alignment",
+            "v": "an LIS3DH on the gate leaf (the Fence Guard part) reads the resting TILT (open-vs-closed as an angle) and the swing (motion) on a wake-on-motion interrupt, sleeping at ~single-uA between events. One self-contained unit, open-ANGLE not just open/closed, and a rattle/climb/shove is a distinct vibration signature (Fence Guard's trick) — a security bonus for free."
+          },
+          {
+            "k": "Reed switch = the dead-simple cheapest binary",
+            "v": "a magnet on the gate + a sealed reed on the post: truly ~0 uA quiescent, unambiguous open/closed, ~$1, weatherproof commodity. Trade-offs: two ALIGNED parts, the gap must stay in range, and it can't tell angle or sense a climb. Both map to the existing ContactStateChange claim — no new vocabulary."
+          },
+          {
+            "k": "Super low power: a primary cell often beats solar",
+            "v": "at a few wake-on-interrupt events a day, a primary lithium cell (CR2032, or LiSOCl2 for the cold) runs for YEARS and sidesteps the cold-battery problem entirely — since it's never charged, the 'no lithium charges below 0 C' rule that bites every rechargeable simply doesn't apply. Solar + a small LiFePO4 is the 'never touch it' option, but for a cold gate a multi-year primary cell is often simpler."
+          },
+          {
+            "k": "Reports the states that matter",
+            "v": "opened/closed (ContactStateChange); LEFT OPEN too long (absence-inference: no 'closed' within N minutes -> a 'gate still open' nag, the Car Mode/Guardian/Chore pattern); and rattled/climbed (a tamper signal, TamperDetected). All processed on-device to a coarse state; only the state/alert leaves."
+          }
+        ],
+        "radio": [
+          {
+            "k": "Sensor",
+            "v": "LIS3DH accelerometer (recommended, single stick-on, angle + climb) or a sealed reed switch + magnet (cheapest binary); a brief auto-learn of the closed resting angle on install since every gate hangs differently"
+          },
+          {
+            "k": "Power",
+            "v": "a multi-year primary cell (CR2032 / LiSOCl2) OR small solar + LiFePO4 + a low-temp-charge-cutoff BMS; the choice is a maintenance model, not a feasibility question — both are 'super low power'"
+          },
+          {
+            "k": "Transport",
+            "v": "a gate is often past the WiFi, so LoRa/Meshtastic (the XIAO + Wio-SX1262 kit) for a far gate, or WiFi/BLE if it's near the house; the coarse event rides the alert relay ('Back gate opened', 'Gate left open 10 min')"
+          },
+          {
+            "k": "Reuse",
+            "v": "almost pure reuse — Fence Guard's LIS3DH + Meshtastic + solar/cold research, ContactStateChange, the alert relay, and absence-inference. Nothing bespoke in the kernel; no new claim vocabulary"
+          }
+        ],
+        "sources": [
+          {
+            "name": "LIS3DH accelerometer datasheet (motion-wake interrupt, -40..+85 C)",
+            "url": "https://www.st.com/resource/en/datasheet/lis3dh.pdf"
+          },
+          {
+            "name": "Fence Guard research (shared LIS3DH + Meshtastic + solar/cold kit)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_fence_guard_research.md"
+          },
+          {
+            "name": "Tadiran LiSOCl2 primary cells (cold, multi-year, the no-charge-needed option)",
+            "url": "https://tadiranbat.com/lithium-thionyl-chloride-batteries.html"
+          },
+          {
+            "name": "full dossier (this repo)",
+            "url": "https://github.com/kmay89/securaCV/blob/main/docs/hardware/canary_gatekeeper_research.md"
+          }
+        ],
+        "plan": [
+          "Phase 0: an LIS3DH on a real gate + a XIAO -> opened/closed via tilt+motion, ContactStateChange through the alert relay; auto-learn the closed resting angle, log traces to tune the open-angle threshold + debounce (a gust vs a real open) and seed golden vectors for classify_gate().",
+          "Add 'left open too long' via absence-inference and 'rattled/climbed' via the vibration signature (TamperDetected).",
+          "Offer the reed-switch build as the cheapest binary alternative for installs that prefer it.",
+          "Power: validate a multi-year primary cell (dodges cold-charging) vs solar + LiFePO4 for a reachable gate; pick per install.",
+          "Transport: Meshtastic for a far gate, WiFi/BLE for a near one."
+        ],
+        "request_title": "Concept request: Canary Gatekeeper (solar gate-open witness)",
+        "request_body": "Seen the Gatekeeper concept card. What I'd want from a gate-open sensor:\n\n- swing gate, sliding gate, or a door:\n- how far from the house (WiFi vs mesh):\n- ok with a multi-year replaceable cell, or want solar / never-touch-it:\n- also want 'left open' nags and 'someone's climbing it' alerts:\n"
+      },
+      "persona": {
+        "name": "Wicket the Gate Minder",
+        "accent": "iron grey and latch brass",
+        "shape": "tidy little canary perched on a gate latch, one wing resting on the hinge, feeling the swing",
+        "story": "Wicket sits on the gate and feels it move — the swing of it opening, the settle of it closing, the long stillness that means someone left it open. It knows nothing about who passed, only the gate itself. Wicket wears a concept ribbon because honest products say what is real, and it is proud that it can nap for years on a single little cell and still never miss the gate swinging.",
+        "specialty": "Ultra-low-power gate/contact concept",
+        "good_for": [
+          "Knowing a gate opened, closed, or was left open",
+          "A far gate past the WiFi, on mesh, years on one cell",
+          "A 'someone's climbing the gate' tamper heads-up"
+        ],
+        "catchphrase": "I feel the gate swing and tell you — nothing about who, just the gate."
+      }
+    },
+    {
       "id": "canary-vision-pro",
       "family": "canary-vision-pro",
       "kind": "concept",
