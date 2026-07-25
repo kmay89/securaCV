@@ -54,6 +54,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - Onboarding flows: [multiple Canaries](onboarding_multiple_canaries.md) · [the unified wizard](onboarding_unified_wizard.md) · [workflow evaluation](onboarding_workflow_evaluation.md)
 - [The one-flash Pi hub (design)](design/raspberry_pi_hub_flashing.md) — RFC: type Wi-Fi, write the card, boot a self-healing Home Assistant hub — built on HAOS so it never rots
 - [Hub hardware-validation runbook](hub_validation_runbook.md) — the one-Pi-5 session that gates a tagged flasher release: write/read-back, Wi-Fi seed, USB-C gadget, account-restore mechanism
+- [The Hub as network witness (concept)](design/hub_network_witness.md) — CONCEPT, no code: a Hub-hosted DNS witness/shield — see which devices phone home, mute them per-device, verify the fleet's self-manifests over LAN; counters-not-logs by invariant, engine research (Pi-hole vs blocky) recorded
 
 </details>
 
