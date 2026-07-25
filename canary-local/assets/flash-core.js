@@ -949,6 +949,18 @@ export function wifiMemoryStatus(saved, persisted) {
   };
 }
 
+// Whether the "using your saved Wi-Fi" banner should show RIGHT NOW, given what's
+// currently typed in the fields. It shows only while the fields still hold the
+// saved network exactly — the moment the user edits the SSID or password for this
+// board, `show` goes false so the banner can never claim a network the fields no
+// longer carry (it returns if they undo the edit). Pure + host-tested.
+export function wifiBannerState(fieldSsid, fieldPass, saved, persisted) {
+  const st = wifiMemoryStatus(saved, persisted);
+  const show = st.hasSaved &&
+    String(fieldSsid) === saved.ssid && String(fieldPass) === (saved.pass || "");
+  return { ...st, show };
+}
+
 // ── error classification (turn raw failures into an actionable first line) ──
 // Web Serial + esptool + fetch all throw wildly different messages for the
 // handful of things that actually go wrong at a USB port. Fold them into one

@@ -781,6 +781,24 @@ test("wifiMemoryStatus: makes 'type once' visible, and honest about persistence"
   assert.doesNotMatch(kept.detail, /Tick/i);
 });
 
+test("wifiBannerState: shows only while the fields still hold the saved network", async () => {
+  const { wifiBannerState } = await core();
+  const saved = { ssid: "HomeNet", pass: "s3cret" };
+  // Untouched fields (equal the saved) → banner shows and names the network.
+  const shown = wifiBannerState("HomeNet", "s3cret", saved, false);
+  assert.strictEqual(shown.show, true);
+  assert.strictEqual(shown.hasSaved, true);
+  assert.match(shown.headline, /HomeNet/);
+  // Editing the SSID or the password hides it — it must not claim a network the
+  // fields no longer carry.
+  assert.strictEqual(wifiBannerState("OtherNet", "s3cret", saved, false).show, false);
+  assert.strictEqual(wifiBannerState("HomeNet", "different", saved, false).show, false);
+  // Nothing saved → never shows.
+  assert.strictEqual(wifiBannerState("HomeNet", "s3cret", null, false).show, false);
+  // Open network (empty saved password) with the matching empty field → shows.
+  assert.strictEqual(wifiBannerState("Cafe", "", { ssid: "Cafe", pass: "" }, false).show, true);
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");
