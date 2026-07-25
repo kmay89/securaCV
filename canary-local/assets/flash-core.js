@@ -85,6 +85,25 @@ export function parsePartitionTable(bytes) {
   return { entries, apps };
 }
 
+// A local file is written at offset 0, where only a MERGED factory image
+// belongs (bootloader + partition table + app — make_factory.py's output).
+// An app-only build also starts with the 0xE9 image magic, so the only
+// honest discriminator is the partition table at 0x8000: no table, no
+// factory image. Refusing app-only files here is what keeps "install a
+// local file" from writing an app over the bootloader and leaving the
+// board unbootable until a USB re-flash (same check, same reason, as the
+// desktop Flasher's flash_local_file).
+export function localImageShape(bytes) {
+  if (!bytes || bytes.length <= 0x8000 + 32) {
+    return { factory: false, reason: "shorter than the 0x8000 partition-table offset — an app-only build, not a merged factory image" };
+  }
+  const { entries } = parsePartitionTable(bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
+  if (!entries.length) {
+    return { factory: false, reason: "no partition table at 0x8000 — an app-only build, not a merged factory image" };
+  }
+  return { factory: true, reason: "" };
+}
+
 // Which app partition to read a version out of: prefer ota_0, then factory,
 // then whatever app comes first. Used when otadata could not be read — the
 // install verdict compares against the booted slot via pickBootedAppPartition.

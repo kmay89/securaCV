@@ -2414,6 +2414,18 @@ async function onLocalFile(ev) {
   const skip = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
+  // Factory-shape gate (core.localImageShape): everything here is written at
+  // offset 0, so an app-only build would land on the bootloader and the
+  // board wouldn't boot until a USB re-flash. Same refusal, same words, as
+  // the desktop Flasher.
+  const shape = core.localImageShape(bytes);
+  if (!shape.factory) {
+    ev.target.value = ""; // let the corrected file re-fire the picker
+    setPhase(errorRetry("That file isn’t a factory image",
+      new Error(`${shape.reason}. The flasher writes whole factory images at offset 0, so an app-only .bin would overwrite the bootloader and the board wouldn't boot. Merge one with firmware/scripts/make_factory.py or use dev_flash.sh <env> -f.`),
+      phaseConnected));
+    return;
+  }
   startFlash({ localBytes: bytes, label: file.name, isLocal: true, skipBackup: skip });
 }
 

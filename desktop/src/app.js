@@ -630,11 +630,18 @@ function activeManifestUrl() {
   return state.devChannel ? DEV_FLASH_MANIFEST_URL : state.catalog.manifest_url;
 }
 
+// Stale-fetch guard: a stable and a dev fetch can be in flight at once (the
+// toggle mid-fetch), and the network decides which lands last — only the
+// NEWEST refresh may write state, or the products shown belong to the other
+// channel.
+let manifestGeneration = 0;
 function refreshManifest() {
+  const generation = ++manifestGeneration;
   state.manifest = null;
   state.manifestError = null;
   invoke("fetch_manifest", { manifestUrl: activeManifestUrl() })
     .then((m) => {
+      if (generation !== manifestGeneration) return; // superseded by a newer refresh
       state.manifest = m;
       state.manifestError = null;
       renderProducts();
@@ -644,6 +651,7 @@ function refreshManifest() {
     // shipped" — when the real answer was "the release this build is pinned
     // to was never cut". renderProducts() turns it into that sentence.
     .catch((e) => {
+      if (generation !== manifestGeneration) return; // superseded by a newer refresh
       state.manifestError = String((e && e.message) || e || "unreachable");
       renderProducts();
     });
@@ -783,8 +791,14 @@ function showModuleFlow() {
 
 // ── step 3: flash ───────────────────────────────────────────────────────────
 async function onFlash() {
-  const provisioning = readProvisioning(state.product);
-  if (state.product.provisioning === "usb-secrets" && !provisioning) return;
+  // Snapshot the chosen product and channel for this write: a dev-channel
+  // toggle clears state.product, and the receipt logic below must keep
+  // judging the product that was actually written, not whatever the UI
+  // holds by the time the flash finishes.
+  const product = state.product;
+  const manifestUrl = activeManifestUrl();
+  const provisioning = readProvisioning(product);
+  if (product.provisioning === "usb-secrets" && !provisioning) return;
   persistProv();
   const btn = $("flash-btn");
   const con = $("console");
@@ -792,6 +806,7 @@ async function onFlash() {
   con.classList.remove("hidden");
   btn.disabled = true;
   btn.textContent = "Flashing…";
+  $("dev-channel").disabled = true;
   setStatus("flash-result", "");
   // Reflash must start from a clean slate — never show the PREVIOUS flash's
   // green result, receipts, certificate, or a stale "Broken pipe" monitor line.
@@ -807,8 +822,8 @@ async function onFlash() {
   try {
     const receipt = await invoke("flash", {
       port: state.port,
-      productId: state.product.id,
-      manifestUrl: activeManifestUrl(),
+      productId: product.id,
+      manifestUrl,
       baud: state.catalog.flash_baud || 921600,
       detectedChip: state.chip,
       provisioning,
@@ -817,9 +832,9 @@ async function onFlash() {
     state.vision.hostBoot = null;
     clearSecretFields();
     renderReceipts();
-    announceToWitness(state.product);   // instant, so the wall reacts right away
-    discoverAndPopulate(state.product); // then replace with the REAL fleet off the LAN
-    if (requiresLiveReceipt(state.product)) {
+    announceToWitness(product);   // instant, so the wall reacts right away
+    discoverAndPopulate(product); // then replace with the REAL fleet off the LAN
+    if (requiresLiveReceipt(product)) {
       setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
       state.busy = false;
       await startMonitor();
@@ -839,6 +854,7 @@ async function onFlash() {
     unlisten();
     btn.disabled = false;
     btn.textContent = "Flash my Canary";
+    $("dev-channel").disabled = false;
     state.busy = false;
     // The board reboots after a flash; let the watcher re-sync from scratch.
     state.chip = null;
@@ -882,6 +898,7 @@ async function onFlashModule() {
   const btn = $("module-flash-btn");
   btn.disabled = true;
   btn.textContent = "Flashing model…";
+  $("dev-channel").disabled = true;
   state.busy = true;
   $("console").textContent = "";
   $("console").classList.remove("hidden");
@@ -909,11 +926,20 @@ async function onFlashModule() {
     state.busy = false;
     btn.disabled = false;
     btn.textContent = "Flash & prove the Vision module";
+    $("dev-channel").disabled = false;
   }
 }
 
 // ── Advanced: dev channel + local file ──────────────────────────────────────
 function onDevChannelToggle() {
+  // Never mid-flash: the in-flight write already resolved its manifest, and
+  // clearing state under it would leave the receipt logic waiting on a
+  // product that no longer exists. The checkbox is disabled while busy too —
+  // this guard covers any path that flips it anyway.
+  if (state.busy) {
+    $("dev-channel").checked = state.devChannel;
+    return;
+  }
   state.devChannel = $("dev-channel").checked;
   $("dev-banner").classList.toggle("hidden", !state.devChannel);
   logEvent("info", state.devChannel
@@ -952,7 +978,7 @@ async function onPickLocalFile() {
     path = await window.__TAURI__.dialog.open({
       multiple: false,
       directory: false,
-      filters: [{ name: "Firmware image", extensions: ["bin"] }],
+      filters: [{ name: "Factory firmware image", extensions: ["bin"] }],
     });
   } catch (e) {
     setStatus("local-result", String(e), "err");
@@ -972,13 +998,14 @@ async function onPickLocalFile() {
     const magic = $("local-magic");
     magic.classList.toggle("hidden", state.localFile.esp_magic);
     if (!state.localFile.esp_magic) {
-      // Advisory only: a factory/merged image starts with the bootloader
-      // image, which itself begins 0xE9 — so a missing magic is worth a
-      // sentence, never a refusal.
+      // Advisory only: the backend already required the factory shape (the
+      // partition table at 0x8000), and on the catalog's chips the
+      // bootloader sits at 0x0 — so a missing 0xE9 is worth a sentence,
+      // never a refusal.
       magic.textContent =
         "⚠ This file doesn't start with 0xE9 — the ESP32's own “program " +
-        "starts here” marker, which a factory/merged image opens with. It " +
-        "can still be written; the board can't be bricked.";
+        "starts here” marker, which a factory image for these chips opens " +
+        "with. It can still be written; the board can't be bricked.";
     }
     $("local-info").classList.remove("hidden");
   } catch (e) {
@@ -1014,6 +1041,7 @@ async function onFlashLocalFile() {
   con.classList.remove("hidden");
   btn.disabled = true;
   btn.textContent = "Writing…";
+  $("dev-channel").disabled = true;
   setStatus("local-result", "");
   resetOutcome();
   state.busy = true; // pause the watcher so it can't grab the port
@@ -1025,10 +1053,15 @@ async function onFlashLocalFile() {
   });
 
   try {
+    // The inspected size + fingerprint ride along so the backend can prove
+    // the confirmed bytes are the ones still on disk — a changed file is
+    // refused, never silently written.
     const receipt = await invoke("flash_local_file", {
       port: state.port,
       baud: state.catalog.flash_baud || 921600,
       path: file.path,
+      expectedSize: file.size,
+      expectedSha256: file.sha256,
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
@@ -1049,6 +1082,7 @@ async function onFlashLocalFile() {
   } finally {
     unlisten();
     btn.textContent = "Write this file to the board";
+    $("dev-channel").disabled = false;
     state.busy = false;
     // The board reboots after a flash; let the watcher re-sync from scratch.
     state.chip = null;

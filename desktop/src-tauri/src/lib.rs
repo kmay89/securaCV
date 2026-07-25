@@ -70,6 +70,14 @@ const DEV_FLASH_MANIFEST_URL: &str =
 // path refuses it before reading further.
 const LOCAL_IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
 
+// The shape of a merged factory image: the ESP32 partition table lives at
+// 0x8000 on every variant, and its 32-byte entries open with the magic bytes
+// 0xAA 0x50 (u16le 0x50AA) — the same constants
+// firmware/scripts/make_factory.py merges by. This is what tells a factory
+// image apart from an app-only build, because BOTH start with 0xE9.
+const PARTITION_TABLE_OFFSET: usize = 0x8000;
+const PARTITION_MAGIC_LE: [u8; 2] = [0xAA, 0x50];
+
 // The one sidecar we ship. This is the RUNTIME name: the bundler flattens the
 // `externalBin` "binaries/espflash-<triple>" to plain `espflash` next to the
 // app binary (Contents/MacOS/espflash), and Tauri resolves the sidecar by that
@@ -597,17 +605,34 @@ async fn flash(
 }
 
 /// The cheap refusals for a user-picked firmware file: an empty file or one
-/// larger than any Canary's flash is a wrong pick, not a firmware image.
-/// Anything subtler (a valid-looking image for the wrong board) is on the
-/// user — a personal file has no catalog entry to check it against.
-fn check_local_image(len: u64) -> Result<(), String> {
-    if len == 0 {
+/// larger than any Canary's flash is a wrong pick, and a file without a
+/// partition table at 0x8000 is an app-only build — this path writes whole
+/// factory images at offset 0, so an app-only .bin would land on the
+/// bootloader and the board wouldn't boot (recoverable over USB download
+/// mode, but a guaranteed bad hour). The 0xE9 image magic can't make that
+/// call — an app-only build starts with 0xE9 too. Anything subtler (a real
+/// factory image for the wrong board) is on the user — a personal file has
+/// no catalog entry to check it against.
+fn check_local_image(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() {
         return Err("that file is empty — there's nothing to write".into());
     }
-    if len > LOCAL_IMAGE_MAX_BYTES {
+    if bytes.len() as u64 > LOCAL_IMAGE_MAX_BYTES {
         return Err(format!(
-            "that file is {len} bytes — no Canary carries more than 32 MiB of flash, so this can't be a firmware image"
+            "that file is {} bytes — no Canary carries more than 32 MiB of flash, so this can't be a firmware image",
+            bytes.len()
         ));
+    }
+    let factory_shape = bytes.len() > PARTITION_TABLE_OFFSET + 32
+        && bytes[PARTITION_TABLE_OFFSET..PARTITION_TABLE_OFFSET + 2] == PARTITION_MAGIC_LE;
+    if !factory_shape {
+        return Err(
+            "this looks like an app-only build, not a merged factory image — there's no \
+             partition table at 0x8000. The flasher writes whole factory images at offset 0, \
+             so an app-only .bin would overwrite the bootloader and the board wouldn't boot. \
+             Merge one with firmware/scripts/make_factory.py or use `dev_flash.sh <env> -f`."
+                .into(),
+        );
     }
     Ok(())
 }
@@ -627,7 +652,7 @@ pub struct LocalFileInfo {
 #[tauri::command]
 async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
-    check_local_image(bytes.len() as u64)?;
+    check_local_image(&bytes)?;
     Ok(LocalFileInfo {
         size: bytes.len() as u64,
         sha256: release::sha256_hex(&bytes),
@@ -639,15 +664,20 @@ async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
 /// catalog product, no manifest, no signature — a personal file has no origin
 /// we can verify, so nothing here claims "verified": the file is fingerprinted
 /// (SHA-256 + size) so the receipt names exactly what was written, and that is
-/// all the receipt claims. The write mechanics are identical to flash():
-/// private staged temp file, `write-bin 0x0` via the bundled espflash,
-/// `flash:log` streaming.
+/// all the receipt claims. `expected_size`/`expected_sha256` are the values
+/// inspect_local_file showed and the user confirmed — the file is re-read and
+/// re-hashed here, so a file that changed on disk between the two calls is
+/// refused rather than silently written. The write mechanics are identical to
+/// flash(): private staged temp file, `write-bin 0x0` via the bundled
+/// espflash, `flash:log` streaming.
 #[tauri::command]
 async fn flash_local_file(
     app: AppHandle,
     port: String,
     baud: u32,
     path: String,
+    expected_size: u64,
+    expected_sha256: String,
 ) -> Result<FlashReceipt, String> {
     let emit = |app: &AppHandle, line: String| {
         let _ = app.emit("flash:log", line);
@@ -659,8 +689,13 @@ async fn flash_local_file(
         .unwrap_or_else(|| "local file".to_string());
     emit(&app, format!("→ reading {file_name} from this computer…"));
     let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
-    check_local_image(bytes.len() as u64)?;
+    check_local_image(&bytes)?;
     let sha = release::sha256_hex(&bytes);
+    // The confirm was over the inspected fingerprint, not over a path — a
+    // path can point at different bytes a moment later.
+    if bytes.len() as u64 != expected_size || !sha.eq_ignore_ascii_case(&expected_sha256) {
+        return Err("the file changed since it was inspected — pick it again".into());
+    }
     emit(
         &app,
         format!(
@@ -669,13 +704,14 @@ async fn flash_local_file(
         ),
     );
     if bytes[0] != 0xE9 {
-        // Warn, never block: 0xE9 is the ESP32 image magic, and a merged
-        // factory image starts with the bootloader image, which begins 0xE9
-        // itself — but the board can't be bricked either way.
+        // Warn, never block: the partition table at 0x8000 already vouched
+        // for the factory shape, and on the catalog's chips (C3/C6/S3) the
+        // bootloader sits at 0x0, so a factory image normally opens with the
+        // 0xE9 image magic — but the board can't be bricked either way.
         emit(
             &app,
             format!(
-                "⚠ first byte is 0x{:02X}, not the ESP32 image magic 0xE9 — this may not be a factory/merged image. Writing anyway; the board can't be bricked.",
+                "⚠ first byte is 0x{:02X}, not the ESP32 image magic 0xE9 — unusual for a C3/C6/S3 factory image. Writing anyway; the board can't be bricked.",
                 bytes[0]
             ),
         );
@@ -1000,6 +1036,28 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running SecuraCV Flasher");
+}
+
+#[cfg(test)]
+mod local_image_tests {
+    use super::{check_local_image, PARTITION_TABLE_OFFSET};
+
+    #[test]
+    fn app_only_builds_are_refused_and_factory_shapes_pass() {
+        assert!(check_local_image(&[]).is_err());
+        // An app-only PlatformIO build starts with 0xE9 too — the refusal
+        // must come from the missing partition table, not the image magic.
+        let app_only = vec![0xE9; PARTITION_TABLE_OFFSET / 2];
+        assert!(check_local_image(&app_only).is_err());
+        // Right length, no 0xAA 0x50 at 0x8000 → still not a factory image.
+        let unmerged = vec![0xE9; PARTITION_TABLE_OFFSET + 64];
+        assert!(check_local_image(&unmerged).is_err());
+        let mut factory = vec![0xFF; PARTITION_TABLE_OFFSET + 64];
+        factory[0] = 0xE9;
+        factory[PARTITION_TABLE_OFFSET] = 0xAA;
+        factory[PARTITION_TABLE_OFFSET + 1] = 0x50;
+        assert!(check_local_image(&factory).is_ok());
+    }
 }
 
 #[cfg(test)]

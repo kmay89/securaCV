@@ -265,10 +265,13 @@
 
             <details class="hint" id="adv-local">
               <summary>Install a local file</summary>
-              <p>Install a firmware file from your computer (a .bin you built, or one
-                for an air-gapped setup). We can’t check a personal file’s signature,
-                but the board still can’t be bricked, and we verify the write against
-                the chip.</p>
+              <p>Install a <strong>factory</strong> firmware image from your computer
+                (a factory .bin you built — <span class="mono">dev_flash.sh &lt;env&gt; -f</span>
+                or <span class="mono">firmware/scripts/make_factory.py</span> makes one —
+                or one saved for an air-gapped setup). An app-only build won’t do: it
+                gets written at offset 0, where only a merged factory image belongs.
+                We can’t check a personal file’s signature, but the board still can’t
+                be bricked, and we verify the write against the chip.</p>
               <div class="row">
                 <button id="local-pick" class="btn btn-ghost btn-small">Choose a .bin…</button>
                 <span id="local-name" class="muted"></span>
