@@ -3069,7 +3069,7 @@ async function startFlash(opts) {
     // settings region in the same pass as the firmware. If we can't locate
     // that region, the install continues — never block a flash on a
     // convenience.
-    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null;
+    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "";
     if ((opts.wifi || opts.mqtt || opts.detect || opts.reflex) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
@@ -3091,6 +3091,9 @@ async function startFlash(opts) {
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
         seededDials = opts.detect || null;
         seededReflex = opts.reflex || null;
+        // Only a device id that was actually written to NVS may appear as the
+        // certificate's Ring ID (this line is reached only on a successful bake).
+        bakedDeviceId = prov.strings.dev_id || "";
       } catch (e) {
         box.stage("Couldn’t bake the settings (" + String(e.message || e) +
           ") — continuing; everything is still tunable after boot");
@@ -3153,7 +3156,7 @@ async function startFlash(opts) {
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
-      wifiSsid, seededDials, seededReflex, wifi: null }));
+      wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId, wifi: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -3266,7 +3269,15 @@ async function renderHatchCert(slot, opts) {
           product: opts.product, deviceId: opts.deviceId,
           fleet: _hatchFleet, usedBases: _hatchUsed, avoidBase: cert.base, now: cert.ts,
         });
-        if (next) { next.ringId = cert.ringId; cert = next; paint(); } // same bird, new whimsy
+        if (!next) return;
+        next.ringId = cert.ringId;                 // same bird, new whimsy
+        // Record the accepted base and replace (not stack) this hatch's fleet
+        // entry, so a further reroll can't repeat a name and the next board
+        // can't reuse this base while still calling itself "the First".
+        _hatchUsed.add(next.base);
+        if (_hatchFleet[0]) _hatchFleet[0] = { base: next.base, ringId: cert.ringId };
+        cert = next;
+        paint();
       });
       fig.append(reroll);
       slot.append(fig);
@@ -3304,7 +3315,7 @@ function phaseDone(opts) {
     box.append(certSlot);
     renderHatchCert(certSlot, {
       product: opts.product,
-      deviceId: (opts.mqtt && opts.mqtt.deviceId) || "",
+      deviceId: opts.provDeviceId || "", // only the id actually written to NVS becomes the Ring ID
     });
   }
 
