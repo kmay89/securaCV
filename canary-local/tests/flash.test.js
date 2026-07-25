@@ -748,6 +748,61 @@ test("buildNvsWifiImage round-trips through the NVS parser with valid CRCs", asy
   assert.ok(parseNvs(open).find((i) => i.key === "wifi_pass"));
 });
 
+test("mqttProvisioningToNvs: maps the optional broker/identity fields to native's NVS keys", async () => {
+  const { mqttProvisioningToNvs } = await core();
+  // Full set → exactly the keys/values native's build_nvs writes.
+  const full = mqttProvisioningToNvs({
+    deviceId: "canary_vision_ab12", mqttHost: "homeassistant.local",
+    mqttPort: 1883, mqttUser: "canary", mqttPass: "broker-secret",
+  });
+  assert.deepStrictEqual(full.strings, {
+    dev_id: "canary_vision_ab12", mqtt_host: "homeassistant.local",
+    mqtt_user: "canary", mqtt_pass: "broker-secret",
+  });
+  assert.deepStrictEqual(full.u16, { mqtt_port: 1883 });
+
+  // Every field is optional — empty in, omitted out (no empty NVS keys written).
+  assert.deepStrictEqual(mqttProvisioningToNvs({}), { strings: {}, u16: {} });
+  assert.deepStrictEqual(mqttProvisioningToNvs({ deviceId: "just_me" }), { strings: { dev_id: "just_me" }, u16: {} });
+  // A broker host with no user/pass (open broker) still writes host + port.
+  assert.deepStrictEqual(
+    mqttProvisioningToNvs({ mqttHost: "10.0.0.2", mqttPort: 1883 }),
+    { strings: { mqtt_host: "10.0.0.2" }, u16: { mqtt_port: 1883 } });
+
+  // Validation mirrors native — bad values throw before anything is built.
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 0 }), /port/i);
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "h", mqttPort: 70000 }), /port/i);
+  assert.throws(() => mqttProvisioningToNvs({ mqttHost: "x".repeat(64), mqttPort: 1 }), /host/i);
+  assert.throws(() => mqttProvisioningToNvs({ deviceId: "d".repeat(33) }), /Device ID/i);
+});
+
+test("buildNvsSeedImage bakes dev_id + MQTT the firmware reads back — same keys/types as native", async () => {
+  const { buildNvsSeedImage, mqttProvisioningToNvs, parseNvs } = await core();
+  const { strings, u16 } = mqttProvisioningToNvs({
+    deviceId: "canary_vision_ab12", mqttHost: "homeassistant.local",
+    mqttPort: 1883, mqttUser: "canary", mqttPass: "s3cret!!",
+  });
+  const img = buildNvsSeedImage(
+    { wifi: { ssid: "Bird House", pass: "correct horse" }, wifiScheme: "string", strings, u16 }, 0x5000);
+
+  // Read it back exactly as the firmware would (string keys allow-listed).
+  const items = parseNvs(img, ["wifi_ssid", "wifi_pass", "dev_id", "mqtt_host", "mqtt_user", "mqtt_pass"]);
+  const get = (k) => items.find((i) => i.namespace === "securacv" && i.key === k);
+  const strOf = (k) => Buffer.from(get(k).bytes).toString();
+  // Strings are ESP-IDF type 0x21 (Preferences getString), NUL stripped on read.
+  assert.strictEqual(get("dev_id").type, 0x21);
+  assert.strictEqual(strOf("dev_id"), "canary_vision_ab12");
+  assert.strictEqual(strOf("mqtt_host"), "homeassistant.local");
+  assert.strictEqual(strOf("mqtt_user"), "canary");
+  assert.strictEqual(strOf("mqtt_pass"), "s3cret!!");
+  assert.strictEqual(strOf("wifi_ssid"), "Bird House"); // string scheme, like usb-secrets boards
+  // mqtt_port is a u16 (Preferences putUShort → type 0x02), not a string.
+  assert.strictEqual(get("mqtt_port").type, 0x02);
+  assert.strictEqual(get("mqtt_port").value, 1883);
+  // Nothing bled past the one NVS page.
+  assert.ok(img.subarray(4096).every((b) => b === 0xff));
+});
+
 test("wifiQrString escapes the special characters and handles open networks", async () => {
   const { wifiQrString } = await core();
   assert.strictEqual(wifiQrString("MyWifi", "pass1234"), "WIFI:T:WPA;S:MyWifi;P:pass1234;;");

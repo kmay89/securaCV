@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Through Canary eyes — your webcam, its firmware · canary.local</title>
+  <meta name="description" content="Point your webcam at the room and watch the Canary Vision presence engine — the real firmware's detection filter, voxel tracker and presence FSM, compiled to WebAssembly — decide presence, dwell and events from boxes alone. The browser stages motion boxes at the same sensor boundary the camera module occupies on hardware; no pixel ever crosses it. Frames are examined locally and discarded, never recorded, stored, or sent anywhere. A demonstration of how the presence engine behaves — not a security device." />
+  <link rel="stylesheet" href="assets/canary-local.css" />
+  <link rel="stylesheet" href="assets/eyes-bench.css" />
+</head>
+<body>
+  <header id="hero" class="hub-hero">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="44" height="44">
+        <circle cx="32" cy="36" r="17" fill="#FFD44F"/>
+        <circle cx="41" cy="24" r="10" fill="#FFD44F"/>
+        <circle cx="44.5" cy="22.5" r="1.8" fill="#141414"/>
+        <path d="M50 25.5 l7 2.2 -7 2.2 z" fill="#F08C2E"/>
+        <ellipse cx="26" cy="38" rx="8.5" ry="6" fill="#E3B33C"/>
+        <path d="M15 36 q-7 1 -9 6 q6 0 10 -2 z" fill="#E3B33C"/>
+        <circle cx="26" cy="38" r="3.2" fill="#141414" opacity="0.55"/>
+      </svg>
+    </div>
+    <h1>Through Canary eyes</h1>
+    <p class="lede">
+      On a Canary <strong>Vision</strong>, the camera module hands the firmware
+      <em>boxes</em> — six integers per moving thing — and the firmware never
+      sees a pixel. This bench puts <strong>your</strong> webcam on the sensor
+      side of that boundary: a stand-in motion sensor stages the boxes, and the
+      real firmware — the same detection filter, voxel tracker and presence
+      engine the device runs, compiled to WebAssembly — makes every call after
+      it. Walk into frame and watch yourself become a box, a voxel, and a
+      <strong>presence</strong> event. Never a picture.
+    </p>
+    <div id="eyes-versions" aria-live="polite"></div>
+    <p class="fineprint">
+      <a href="index.html">← the family</a> ·
+      <a href="vision.html">the Vision's guided bench</a> ·
+      <a href="smoke.html">the WAP's ears (mic bench)</a> ·
+      <a href="house.html">the whole house</a> ·
+      works offline · nothing here phones anywhere
+    </p>
+  </header>
+
+  <main id="eyes">
+    <noscript><p class="muted">This bench needs JavaScript. How the presence
+    engine works is also written out in
+    <code>firmware/projects/canary-vision/src/state/presence_fsm.cpp</code>.</p></noscript>
+  </main>
+
+  <footer class="fineprint" id="foot">
+    <p>
+      Honest by construction: the person class, score threshold, timeouts and
+      voxel grid shown here are read from the running firmware, and every
+      verdict — is someone present, are they dwelling, which event fires — is
+      made by <code>firmware/projects/canary-vision</code>'s
+      <code>detect_config.cpp</code>, <code>voxel_tracker.cpp</code> and
+      <code>presence_fsm.cpp</code> compiled to WebAssembly, the same sources
+      the Vision bench drives with staged actors and CI rebuilds and
+      byte-diffs. Your camera is the only new input; its frames are examined
+      in this page and never recorded, stored, or sent anywhere — only boxes
+      cross the sensor boundary, exactly as on hardware. The stand-in sensor
+      is a motion detector, humbler than the real module. This is a
+      demonstration of how the presence engine behaves —
+      <strong>not</strong> a security device.
+    </p>
+  </footer>
+
+  <script src="emulator/dist/canary-vision-core.js"></script>
+  <script type="module" src="assets/eyes-bench.js"></script>
+</body>
+</html>

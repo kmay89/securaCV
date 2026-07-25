@@ -502,8 +502,135 @@ async function verifyEnvelope(envelope) {
   }
 }
 
+// ---- export-bundle verification ------------------------------------------
+// Mirrors the Rust `verify_export_bundle` (src/lib.rs) check-for-check and in
+// the same order: receipt entry hash → signature → artifact binding. Pinned to
+// the same fixture as the Rust side (tests/fixtures/export_bundle/).
+//
+// Trust caveat, mirrored from `export_verify`: the bundle carries its own
+// device key, so without a caller-supplied trusted key the verdict means
+// "internally consistent and signed by the key the bundle names" — authorship
+// is self-attested, not confirmed against an external identity. Passing
+// `opts.trustedDeviceKeyHex` upgrades the verdict to confirmed authorship
+// (or fails it, if the keys differ).
+
+function looksLikeExportBundle(obj) {
+  return !!(obj && typeof obj === 'object' && obj.artifact && obj.receipt_entry && obj.device_public_key);
+}
+
+function looksLikeEnvelope(obj) {
+  return !!(obj && typeof obj === 'object' && obj.envelope_format === ENVELOPE_FORMAT);
+}
+
+async function verifyExportBundle(bundle, opts = {}) {
+  const result = {
+    kind: 'export_bundle',
+    ok: false, status: 'compromised', checks: [], warnings: [], error: null,
+    events: 0, failures: 0, buckets: 0, batches: 0,
+    authorship: 'bundle', device_public_key: null, artifact_hash: null, entry_hash: null,
+  };
+  try {
+    if (!looksLikeExportBundle(bundle)) {
+      throw new Error('not an export bundle: missing artifact / receipt_entry / device_public_key');
+    }
+    const pubKey = toBytes(bundle.device_public_key);
+    if (pubKey.length !== 32) throw new Error('device_public_key must be 32 bytes');
+    result.device_public_key = bytesToHex(pubKey);
+    result.checks.push('Export bundle structure recognized');
+
+    // Authorship: compare the bundle's key against a caller-supplied trusted
+    // key BEFORE the signature check, so "verified" means verified under the
+    // key the caller trusts — the same semantics as the Rust `export_verify`.
+    const trustedHex = (opts.trustedDeviceKeyHex || '').trim().toLowerCase();
+    if (trustedHex) {
+      let trusted;
+      try { trusted = hexToBytes(trustedHex); } catch { throw new Error('the supplied device key is not valid hex'); }
+      if (trusted.length !== 32) throw new Error('the supplied device key must be 32 bytes (64 hex characters)');
+      if (!bytesEqual(trusted, pubKey)) {
+        throw new Error('device key mismatch: this bundle names a different device key than the one you supplied');
+      }
+      result.authorship = 'trusted';
+      result.checks.push('Bundle device key matches the trusted key you supplied');
+    }
+
+    // 1. Entry hash: serialize the receipt in serde field order (NOT the input
+    //    JSON's key order) so a key-reordered-but-equivalent bundle still
+    //    re-derives the signed entry_hash.
+    const rEntry = bundle.receipt_entry;
+    const computedEntryHash = await hashEntry(toBytes(rEntry.prev_hash), serExportReceipt(rEntry.receipt));
+    if (!bytesEqual(computedEntryHash, toBytes(rEntry.entry_hash))) {
+      throw new Error('export receipt entry_hash mismatch');
+    }
+    result.entry_hash = bytesToHex(computedEntryHash);
+    result.checks.push('Export receipt entry hash recomputed and matches');
+
+    // 2. Signature (domain-separated) under the device key.
+    const sigCheckable = await ed25519Supported();
+    if (sigCheckable) {
+      const msg = await domainSeparatedHash(V1_MANIFEST.signature_domains.export_receipt, toBytes(rEntry.entry_hash));
+      const sig = Uint8Array.from(rEntry.signatures.ed25519_signature);
+      if (!(await verifyEd25519(pubKey, sig, msg))) throw new Error('export receipt signature verification failed');
+      result.checks.push(result.authorship === 'trusted'
+        ? 'Export receipt signature valid (authorship confirmed against your trusted key)'
+        : 'Export receipt signature valid under the device key named in the bundle');
+    }
+
+    // 3. Artifact binding: recompute the artifact hash exactly as the device
+    //    did (serde-faithful bytes) and require it to equal the signed hash.
+    const artifactHash = await sha256(utf8(serExportArtifact(bundle.artifact)));
+    if (!bytesEqual(artifactHash, toBytes(rEntry.receipt.artifact_hash))) {
+      throw new Error('export artifact hash mismatch');
+    }
+    result.artifact_hash = bytesToHex(artifactHash);
+    result.checks.push('Human-readable artifact bound to the signed export hash');
+
+    if (result.authorship !== 'trusted') {
+      result.warnings.push('device key taken from the bundle itself — authorship is self-attested; compare the key against one published by the device owner, or supply it to confirm');
+    }
+    if (bundle.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');
+
+    // Content stats (display only — the checks above are what prove them).
+    for (const batch of bundle.artifact.batches || []) {
+      result.batches++;
+      for (const bucket of batch.buckets || []) {
+        result.buckets++;
+        result.events += (bucket.events || []).length;
+        result.failures += (bucket.failures || []).length;
+      }
+    }
+    if (result.failures > 0) result.warnings.push(`${result.failures} failure record(s) present (explicit gaps)`);
+
+    // Same inconclusive semantics as the envelope path: deterministic checks
+    // all passed but device authorship was not cryptographically confirmed.
+    if (!sigCheckable) {
+      result.status = 'inconclusive';
+      result.ok = false;
+      result.inconclusive = true;
+      result.warnings.unshift('signatures not checked: this browser lacks Ed25519 Web Crypto support');
+      result.error = 'This browser cannot check Ed25519 signatures, so device authorship was not confirmed. ' +
+        'The bundle was NOT rejected — its receipt hash and the artifact-to-signed-hash binding both checked out, ' +
+        'so any tampering would have been caught. To confirm the signature too, reopen this page in a current ' +
+        'Chrome, Edge, Firefox, or Safari 17+, or run the securaCV Rust verifier (export_verify).';
+      return result;
+    }
+
+    result.ok = true;
+    result.status = result.warnings.length === 0 ? 'ok' : 'valid_with_warnings';
+    return result;
+  } catch (err) {
+    result.ok = false;
+    result.status = 'compromised';
+    result.error = err.message || String(err);
+    result.failure = err.failure || null;
+    return result;
+  }
+}
+
 const api = {
   verifyEnvelope,
+  verifyExportBundle,
+  looksLikeExportBundle,
+  looksLikeEnvelope,
   ed25519Supported,
   computeWholeEnvelopeDigest,
   canonicalize,

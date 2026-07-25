@@ -1,0 +1,109 @@
+/* canary-local/assets/eyes-bench.css — the "through Canary eyes" bench.
+   Uses the shared palette (canary-local.css :root vars). */
+
+#eyes { max-width: 1060px; margin: 0 auto; padding: 0 16px 48px; }
+
+.eyes-disclaimer {
+  border: 1px solid rgba(229,57,53,0.4);
+  background: rgba(229,57,53,0.07);
+  border-radius: 12px; padding: 11px 15px; margin: 14px 0 18px;
+  font-size: 13px; line-height: 1.5; color: #f0c9c7;
+}
+.eyes-disclaimer strong { color: #ffb3ae; }
+
+.eyes-card {
+  border: 1px solid var(--edge, #262626);
+  background: linear-gradient(180deg, #16160f 0%, #0e0e10 100%);
+  border-radius: var(--radius, 18px); padding: 20px 22px;
+}
+.eyes-card h2 { margin: 0 0 10px; font-size: 19px; color: var(--canary, #ffd44f); }
+
+.eyes-how { margin: 0 0 14px; padding-left: 20px; color: #cfcfcf; line-height: 1.6; font-size: 14px; }
+.eyes-how strong { color: #fff; }
+
+.eyes-priv {
+  display: flex; gap: 8px; align-items: flex-start;
+  background: rgba(3,169,244,0.06); border: 1px solid rgba(3,169,244,0.22);
+  border-radius: 10px; padding: 10px 13px; font-size: 12.5px; line-height: 1.5;
+  color: #bcd; margin: 0 0 16px;
+}
+.eyes-priv-key { font-size: 15px; }
+
+.eyes-warn {
+  border: 1px solid rgba(240,140,46,0.4); background: rgba(240,140,46,0.08);
+  border-radius: 10px; padding: 10px 13px; font-size: 13px; color: #f0cfae;
+}
+
+.eyes-start, .eyes-stop {
+  font: inherit; font-weight: 700; font-size: 15px; cursor: pointer;
+  border-radius: 999px; padding: 10px 22px;
+  border: 1px solid var(--canary, #ffd44f);
+  background: var(--canary, #ffd44f); color: #141414;
+}
+.eyes-start:hover { filter: brightness(1.06); }
+.eyes-stop {
+  background: transparent; color: var(--text, #ededed);
+  border-color: var(--edge, #262626); font-size: 13px; padding: 7px 14px;
+}
+.eyes-stop:hover { border-color: var(--canary, #ffd44f); }
+
+.eyes-live-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  font-size: 14px; color: #cfcfcf;
+}
+.eyes-live-head .eyes-stop { margin-left: auto; }
+.eyes-watching-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--ok, #7bd88f); flex: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .eyes-watching-dot { animation: eyes-pulse 2s ease-in-out infinite; }
+  @keyframes eyes-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+}
+
+.eyes-panes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .eyes-panes { grid-template-columns: 1fr; } }
+
+.eyes-pane {
+  border: 1px solid var(--edge, #262626); border-radius: 12px;
+  padding: 12px 13px; background: #0c0c0e;
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.eyes-pane h3 { margin: 0; font-size: 13.5px; color: var(--text, #ededed); }
+.eyes-pane-sub { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--muted, #8a8a8a); }
+
+.eyes-stage { position: relative; border-radius: 9px; overflow: hidden; background: #000; aspect-ratio: 1 / 1; }
+.eyes-stage video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; transform: scaleX(-1);
+}
+.eyes-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.eyes-aim { width: 100%; aspect-ratio: 1 / 1; border-radius: 9px; background: #08090b; }
+.eyes-payload {
+  display: block; font-size: 10.5px; line-height: 1.5; color: var(--muted, #8a8a8a);
+  word-break: break-all; min-height: 3em;
+}
+
+.eyes-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.eyes-chip {
+  font-size: 11px; border-radius: 999px; padding: 3px 10px;
+  border: 1px solid var(--edge, #262626); color: var(--muted, #8a8a8a);
+}
+.eyes-chip.on { color: #141414; background: var(--canary, #ffd44f); border-color: var(--canary, #ffd44f); font-weight: 700; }
+
+.eyes-events {
+  list-style: none; margin: 0; padding: 0; font-size: 12px; line-height: 1.5;
+  color: #cfcfcf; overflow-y: auto; max-height: 220px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.eyes-events li {
+  border: 1px solid var(--edge, #262626); border-radius: 8px; padding: 6px 9px;
+}
+.eyes-events li strong { color: var(--canary, #ffd44f); }
+
+.eyes-facts { margin-top: 16px; font-size: 13px; color: #cfcfcf; }
+.eyes-facts summary { cursor: pointer; color: var(--muted, #8a8a8a); }
+.eyes-facts table { margin-top: 8px; border-collapse: collapse; }
+.eyes-facts td { border: 1px solid var(--edge, #262626); padding: 4px 12px; font-size: 12.5px; }
+.eyes-facts td:first-child { color: var(--muted, #8a8a8a); }
