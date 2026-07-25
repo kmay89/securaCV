@@ -78,6 +78,8 @@ BOARD_CHIP = {
     "seeed_xiao_esp32c6": "ESP32-C6",
     "esp32-c3-devkitm-1": "ESP32-C3",
     "waveshare_esp32s3_lcd43": "ESP32-S3",  # the Dash's 4.3B host (generic S3 FQBN)
+    "esp32-s3-devkitc-1": "ESP32-S3",  # dash7 + nightstand-s3 envs (generic devkit profile)
+    "esp32-c6-devkitc-1": "ESP32-C6",  # nightstand-c6 env (generic devkit profile)
 }
 
 # Flash silicon per board, in MB — the second half of board identification
@@ -93,6 +95,8 @@ BOARD_FLASH_MB = {
     "seeed_xiao_esp32c6": 4,
     "esp32-c3-devkitm-1": 4,
     "waveshare_esp32s3_lcd43": 16,  # dash profiles: FlashSize=16M / huge_app
+    "esp32-s3-devkitc-1": 16,  # both Waveshare boards on this id carry the 16 MB part (envs pin flash_size = 16MB)
+    "esp32-c6-devkitc-1": 4,   # Waveshare C6-LCD-1.47's 4 MB part (env pins flash_size = 4MB)
 }
 
 # Per-chip human copy. Every Canary board is native-USB (the ESP32 chip's own
@@ -250,6 +254,51 @@ PRODUCTS = [
         "project": "firmware/projects/canary-display",
         "env": "profile:modes",
         "board": "waveshare_esp32s3_lcd43",
+        "provisioning": "on-glass",
+    },
+    # The Nightstand Line boards (docs/hardware/display_nightstand_line.md).
+    # Unlike the three profile-built displays above, these are PlatformIO-env
+    # builds — the same envs firmware.yml compiles on every push — exported by
+    # firmware-release.yml into the display staging layout (see its "Build
+    # canary-display board envs" step). Board pins/geometry live in the env,
+    # so there is no flavor_local.h staging to get wrong.
+    {
+        "id": "securacv-canary-display-dash7",
+        "family": "display",
+        "board_label": "Waveshare 7″ panel module",
+        "pick_label": "Dash 7 — the 7″ big glass",
+        "name": "Canary Dash 7",
+        "tagline": "The 4.3″ Dash grown to 7″ — same quiet truth, room-scale glass.",
+        "asset_stem": "canary-display-dash7",
+        "project": "firmware/projects/canary-display",
+        "env": "canary-display-dash7",
+        "board": "esp32-s3-devkitc-1",
+        "provisioning": "on-glass",
+    },
+    {
+        "id": "securacv-canary-display-nightstand-s3",
+        "family": "display",
+        "board_label": "Waveshare ESP32-S3-LCD-1.47 (USB-A stick)",
+        "pick_label": "Nightstand — the 1.47″ USB-A stick",
+        "name": "Canary Nightstand",
+        "tagline": "The 1.47″ portrait glance with an ambient light — plugs straight into a USB port.",
+        "asset_stem": "canary-display-nightstand-s3",
+        "project": "firmware/projects/canary-display",
+        "env": "canary-display-nightstand-s3",
+        "board": "esp32-s3-devkitc-1",
+        "provisioning": "on-glass",
+    },
+    {
+        "id": "securacv-canary-display-nightstand-c6",
+        "family": "display",
+        "board_label": "Waveshare ESP32-C6-LCD-1.47 (pin-header)",
+        "pick_label": "Nightstand C6 — the 1.47″ pin-header board",
+        "name": "Canary Nightstand C6",
+        "tagline": "The 1.47″ portrait glance on the Wi-Fi 6 pin-header board — breadboard-friendly.",
+        "asset_stem": "canary-display-nightstand-c6",
+        "project": "firmware/projects/canary-display",
+        "env": "canary-display-nightstand-c6",
+        "board": "esp32-c6-devkitc-1",
         "provisioning": "on-glass",
     },
 ]

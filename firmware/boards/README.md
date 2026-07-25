@@ -22,9 +22,9 @@ environments consistent, so the table below cannot silently rot.
 | `waveshare-esp32s3-lcd43c` | ESP32-S3 | compile-tested | canary-display | Waveshare 4.3C ("AI voice") — the MIC-BEARING dash: a distinct privacy surface, mic off by default (docs/hardware/display_mic_variant.md) |
 | `xiao-esp32c6-sentinel` | ESP32-C6 | compile-tested | — (Phase 0) | Canary Sentinel Standard/Heavy head — MR60BHA2 radar + PIR + lux + WiFi/BLE; fusion core host-tested, on-device build/bench pending |
 | `xiao-esp32c3-sentinel-lite` | ESP32-C3 | compile-tested | — (Phase 0) | Canary Sentinel Lite — PIR + lux + WiFi/BLE, no radar (honest tier limit); fusion core host-tested, on-device build/bench pending |
-| `waveshare-esp32c6-lcd147` | ESP32-C6 | compile-tested | — (Phase 0) | Nightstand Line 1.47" — ST7789 172x320 SPI + 1x WS2812 ambient LED, single-core C6, no PSRAM; HAL/flavor/emulator pending (docs/hardware/display_nightstand_line.md) |
-| `waveshare-esp32s3-lcd147` | ESP32-S3 | compile-tested | — (Phase 0) | Nightstand Line 1.47" (USB-A stick) — same ST7789 172x320 panel, all pins differ, 8 MB PSRAM (can animate); HAL/flavor/emulator pending |
-| `waveshare-esp32s3-lcd7` | ESP32-S3 | compile-tested | — (Phase 0) | Nightstand Line 7" big glass — 800x480 RGB + GT911 5-point touch + CH422G; electrically the 4.3" Dash at 7", reuses the dash HAL; `dash7` flavor pending |
+| `waveshare-esp32c6-lcd147` | ESP32-C6 | compile-tested | canary-display | Nightstand Line 1.47" — ST7789 172x320 SPI + 1x WS2812 ambient LED, single-core C6, no PSRAM; `nightstand` flavor on the core-3.x base (env `canary-display-nightstand-c6`), bench pending (docs/hardware/display_nightstand_line.md) |
+| `waveshare-esp32s3-lcd147` | ESP32-S3 | compile-tested | canary-display | Nightstand Line 1.47" (USB-A stick) — same ST7789 172x320 panel, all pins differ, 8 MB PSRAM (can animate); `nightstand` flavor (env `canary-display-nightstand-s3`), bench pending |
+| `waveshare-esp32s3-lcd7` | ESP32-S3 | compile-tested | canary-display | Nightstand Line 7" big glass — 800x480 RGB + GT911 5-point touch + CH422G; electrically the 4.3" Dash at 7", reuses the dash HAL (env `canary-display-dash7`), bench pending |
 
 **Tiers** (defined in [`../HARDWARE.md`](../HARDWARE.md)):
 **verified** = CI-built *and* validated on real hardware by a maintainer;

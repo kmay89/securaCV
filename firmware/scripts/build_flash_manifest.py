@@ -56,6 +56,12 @@ BUILD = {
     "securacv-canary-display-watch":      {"toolchain": "arduino", "dir": "/tmp/display-watch-build", "sketch": "canary_display", "vsuffix": ""},
     "securacv-canary-display-dash":       {"toolchain": "arduino", "dir": "/tmp/display-dash-build", "sketch": "canary_display", "vsuffix": ""},
     "securacv-canary-display-dash-modes": {"toolchain": "arduino", "dir": "/tmp/display-modes-build", "sketch": "canary_display", "vsuffix": ""},
+    # The Nightstand Line boards release from their PlatformIO envs (the same
+    # envs firmware.yml compiles on every push) — board pins and flash
+    # geometry live in the env, so there is no sketch profile to stage.
+    "securacv-canary-display-dash7":         {"toolchain": "pio", "dir": "firmware/projects/canary-display/.pio/build/canary-display-dash7", "vsuffix": ""},
+    "securacv-canary-display-nightstand-s3": {"toolchain": "pio", "dir": "firmware/projects/canary-display/.pio/build/canary-display-nightstand-s3", "vsuffix": ""},
+    "securacv-canary-display-nightstand-c6": {"toolchain": "pio", "dir": "firmware/projects/canary-display/.pio/build/canary-display-nightstand-c6", "vsuffix": ""},
 }
 
 

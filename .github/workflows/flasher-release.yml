@@ -212,6 +212,43 @@ jobs:
           rm -f flavor_local.h
           cd "$GITHUB_WORKSPACE"
 
+      - name: Build canary-display board envs (PlatformIO, non-blocking)
+        # The Nightstand Line boards (dash7 / nightstand-s3 / nightstand-c6)
+        # release from their PlatformIO envs — same step as
+        # firmware-release.yml, same older-tag tolerance as the profile builds
+        # above: a tag whose ini predates an env just warns that env away
+        # (build_flash_manifest only packages the build dirs that exist). The
+        # C6 env gets its own PLATFORMIO_CORE_DIR — it rides the pioarduino
+        # core-3.x platform, which cannot share a core dir with the
+        # espressif32 platform the sibling envs use.
+        run: |
+          if [ ! -d firmware/projects/canary-display ]; then
+            echo "::warning::this tag predates canary-display — board-env products absent from this rebuild"
+            exit 0
+          fi
+          cd firmware/projects/canary-display
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic factory build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          for E in canary-display-dash7 canary-display-nightstand-s3; do
+            if ! pio run -e "$E"; then
+              echo "::warning::${E} build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
+            fi
+          done
+          if ! PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-display-nightstand-c6" \
+              pio run -e canary-display-nightstand-c6; then
+            echo "::warning::canary-display-nightstand-c6 build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
+          fi
+          cd "$GITHUB_WORKSPACE"
+
       - name: Build factory images + manifest-flash.json
         env:
           VERSION: ${{ steps.tag.outputs.version }}

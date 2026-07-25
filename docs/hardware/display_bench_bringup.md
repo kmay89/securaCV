@@ -34,6 +34,7 @@ Capture the artifact named at each track's end.
 | W | Seeed **XIAO ESP32-S3** seated in the **Round Display for XIAO** (1.28" 240×240) | USB-C **data** cable; optional passive piezo (1–3 kHz) for the chime step |
 | D | **Waveshare ESP32-S3-Touch-LCD-4.3B** (800×480, GT911, CH422G) + plastic case | USB-C **data** cable; 5 V/1 A+ supply (RGB panel + backlight draw more than a laptop port likes); optional passive piezo |
 | F | both of the above + **≥1 Canary WAP** already passing its Track A | HA + Mosquitto broker on the LAN |
+| N | **Waveshare ESP32-S3-Touch-LCD-7**, **ESP32-S3-LCD-1.47** (USB-A stick), **ESP32-C6-LCD-1.47** (pin-header) | USB-C **data** cables; 5 V/1 A+ supply for the 7″ |
 
 > The 4.3**C** "AI Voice" variant (mic array, different expander wiring) is a
 > **sibling, not a drop-in** — if that's what you have, treat every Dash
@@ -176,6 +177,66 @@ CH422G is **write-only**, addresses `0x24` (sys) / `0x38` (out); backlight is
 If fitted to **GPIO6 ↔ GND** (free of the RGB/touch/expander nets), set
 `FEATURE_CHIME 1` in `firmware/configs/canary-display/dash/config.h` and
 re-flash. Same pass criteria as W5. **→ clears `BUZZER_PIN` VERIFY.**
+
+---
+
+## Track N — Nightstand Line day one (1.47″ ×2 + the 7″)
+
+**Goal:** first light on the three Waveshare boards the moment they land on
+the bench — flash, boot, panel, beacon — clearing each board's `VERIFY`
+lines. Full design + staged work: [`display_nightstand_line.md`](./display_nightstand_line.md).
+
+| Board | Env | Notes |
+|---|---|---|
+| **ESP32-S3-Touch-LCD-7** (800×480, GT911, CH422G) | `canary-display-dash7` | Electrically the Dash at 7″ — run **Track D** (D1–D4) against this env; the `VERIFY`s are the RGB porch timings, `TOUCH_PIN_INT 4`, and the CH422G bit map, which Waveshare has respun across V1.x revs. Needs a 5 V/1 A+ supply. |
+| **ESP32-S3-LCD-1.47** (USB-A stick) | `canary-display-nightstand-s3` | ST7789 portrait + WS2812. `VERIFY`s: HSPI + **BGR** color order, active-HIGH backlight, the 34-px `TFT_COL_OFFSET`, WS2812 on GPIO38, `SD_PIN_CS`. Plugs straight into a USB-A port. |
+| **ESP32-C6-LCD-1.47** (pin-header) | `canary-display-nightstand-c6` | Same panel, **every display pin differs**; WS2812 on GPIO8; no touch (BOOT button is the input). Single-core, no PSRAM — the lean single-buffer path. Console is USB-Serial/JTAG (no CDC-on-boot). |
+
+### N1. Flash & boot — the bench loop
+
+One command per board, from the repo root (it finds the project, stages dev
+placeholder secrets if you haven't written real ones, isolates the C6's
+pioarduino core dir, and can open the monitor):
+
+```bash
+firmware/scripts/dev_flash.sh canary-display-dash7 -m
+firmware/scripts/dev_flash.sh canary-display-nightstand-s3 -m
+firmware/scripts/dev_flash.sh canary-display-nightstand-c6 -m
+```
+
+Prefer real Wi-Fi/broker values? `cp secrets/secrets.example.h secrets/secrets.h`
+in `firmware/projects/canary-display` first, exactly as Tracks W/D do.
+No board attached yet? `-n -f` builds and merges a **factory image** you can
+install later from the browser flasher (Advanced → local `.bin` file) or with
+`espflash write-bin 0x0 <file>`.
+
+**Pass:** clean boot banner enumerating the board's pins; no watchdog reset
+over 10 min idle. **Artifact:** serial boot log per board.
+
+> The C6 builds on the pioarduino core-3.x platform — `dev_flash.sh` gives it
+> its own `PLATFORMIO_CORE_DIR` automatically (mixing it with the espressif32
+> core dir corrupts both; same isolation CI uses).
+
+### N2. Panel — ST7789 offset & color order (1.47″ boards)
+
+Portrait face fills the glass edge-to-edge. **Fail signatures:** a 34-px
+garbage stripe = `TFT_COL_OFFSET` wrong for this revision; red/blue swapped =
+BGR flag wrong (S3 stick sets it, C6 doesn't); mirrored/rotated = rotation
+offset not recomputed (the offset migrates edges with rotation — HAL comment).
+**→ clears the ST7789 `VERIFY`s.**
+
+### N3. Ambient beacon — WS2812 (`VERIFY: pin + GRB order`)
+
+The beacon breathes the fleet color (dark-when-safe at night). Solid wrong
+hue = GRB/RGB order; dead LED = wrong pin for this revision; color glitches
+under Wi-Fi load on the C6 = the driver fell off RMT (it must never bit-bang
+on the single-core part). **→ clears `RGBLED_*` VERIFYs.**
+
+### N4. Backlight day/night (`VERIFY: TFT_PIN_BL`)
+
+Same pass criteria as W4 — LEDC dimming to the bedroom floor, no flicker at
+the night duty. On the S3 stick confirm active-HIGH; a backlight that starts
+*off* on this board usually means the polarity flag, not the pin.
 
 ---
 

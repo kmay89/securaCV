@@ -152,8 +152,8 @@
     "pio_board": "esp32-c6-devkitc-1",
     "tier": "compile-tested",
     "tier_evidence": "",
-    "used_by": [],
-    "notes": "Nightstand Line display: ST7789 172x320 SPI (34-px column offset) + 1x WS2812 ambient LED (GPIO8, RMT), single-core C6, NO PSRAM (lean single-buffer). The nightstand firmware (display_1in47.cpp HAL + portrait_ui.cpp + ambient_led.cpp) is C6-ready, BUT the build is toolchain-blocked: the C6 needs arduino-esp32 3.x while canary-display's graphics stack is pinned to GFX@1.4.9 (last core-2.x release). So no C6 env is in the CI matrix yet (used_by empty pending a core-3.x display base) — the S3 sibling (-lcd147) carries the same flavor today. See docs/hardware/display_nightstand_line.md §7."
+    "used_by": ["canary-display"],
+    "notes": "Nightstand Line display: ST7789 172x320 SPI (34-px column offset) + 1x WS2812 ambient LED (GPIO8, RMT), single-core C6, NO PSRAM (lean single-buffer). Wired as the canary-display 'nightstand' flavor on the core-3.x display base (env canary-display-nightstand-c6: pioarduino platform + GFX 1.6.6 / LVGL 9.x / NimBLE 2.x — the same core-3 library row the Arduino CI proves): display_1in47.cpp HAL + portrait_ui.cpp + ambient_led.cpp. Bench validation pending (docs/hardware/display_nightstand_line.md §7)."
   },
   {
     "id": "waveshare-esp32s3-lcd147",

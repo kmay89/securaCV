@@ -45,21 +45,15 @@ UNPUBLISHED: dict[str, str] = {
         "products from their PlatformIO envs, which CI does not build for release",
     "manifest-canary-display.json":
         "bare-flavor fallback for an un-flavored display build; no release target",
-    # PlatformIO-only display envs. The release builds display flavors through
-    # arduino-cli sketch.yaml profiles (watch / dash / modes) and never runs
-    # `pio run` for canary-display, so these three carry an OTA identity with no
-    # channel behind it. Each is a distinct board, so giving them one means a
-    # release build target, not just a manifest.
+    # PlatformIO-only display env with no release build target. The Nightstand
+    # Line boards (dash7 / nightstand-s3 / nightstand-c6) graduated: the
+    # release now runs `pio run` for their envs and stages the binaries into
+    # the display signing loop, so their manifests moved to the published set.
+    # The mic-bearing 4.3C stays deliberate: a distinct privacy surface earns
+    # its channel only with a bench pass (docs/hardware/display_mic_variant.md).
     "manifest-canary-display-dash-mic.json":
         "canary-display-dash-mic env (4.3C + ES7210 mic) — PlatformIO-only, no "
         "sketch.yaml profile and no release build target",
-    "manifest-canary-display-dash7.json":
-        "canary-display-dash7 env (7-inch dash) — PlatformIO-only, no sketch.yaml "
-        "profile and no release build target",
-    "manifest-canary-display-nightstand-s3.json":
-        "canary-display-nightstand-s3 env (Waveshare ESP32-S3-LCD-1.47) — "
-        "PlatformIO-only, no release build target; the env does not currently link "
-        "on main either (canary::color::wash_stops, see firmware.yml)",
 }
 
 
