@@ -397,7 +397,10 @@ and CI fails if a product exists without a build recipe.
 ### Rebuilding or publishing out of band (`flasher-release.yml`)
 
 The flasher assets have a second, manual workflow — **Actions → Flasher Factory
-Images → Run workflow**, with a `fw-v*` tag — for two cases:
+Images → Run workflow**. It has a `channel` input, and the two channels answer
+different questions.
+
+**`channel: release`** — a `fw-v*` tag that already exists:
 
 - **Rebuild without a new version.** Fixed `make_factory.py` or the packaging
   and want to regenerate the factory images for an existing tag? Run it with
@@ -413,6 +416,40 @@ Images → Run workflow**, with a `fw-v*` tag — for two cases:
   the missing key — tag the release, then run `flasher-release.yml` by hand for
   that tag. It builds the images and **creates the release if one doesn't exist
   yet**, so the flasher lights up while OTA waits on the key.
+
+This channel checks the tag *out*, so the tag has to exist; the workflow now
+says so by name (and points at `channel: dev`) instead of dying in
+`actions/checkout`.
+
+**`channel: dev`** — no tag at all. It builds the dispatch ref's HEAD and
+publishes to the rolling **`fw-dev-latest`** prerelease, which is the one fixed
+address the flasher's dev channel reads. No version bump, no tag ceremony, no
+signing key:
+
+```
+Actions → Flasher Factory Images → Run workflow
+  branch:  <the branch you want built>
+  channel: dev
+  tag:     (leave blank)
+```
+
+Then in either flasher: **Advanced → dev channel**. Every product the build
+produced — displays included — becomes installable, verified by SHA-256 against
+the manifest. Use it when hardware is on the bench and you need a real image
+today; use a signed release for anything a stranger will install.
+
+Two consequences worth knowing:
+
+- The images are **unsigned** while `release_pubkey` is the all-zero
+  placeholder, so `imageVerificationPolicy()` resolves to `checksum-only` and
+  both the banner and the receipt say so. That is the honest state, not a
+  downgrade — the same manifest gains signatures the moment the ceremony lands,
+  and the policy tightens itself.
+- `firmware-release.yml` mirrors only *manifests* to `fw-dev-latest` (its
+  binaries live at the real `fw-v*-dev.*` tag); this path has no such tag, so it
+  uploads binaries there too and points the manifest at them. Each is
+  self-consistent — whichever ran last owns that release's
+  `manifest-flash.json`.
 
 On a normal signed release you don't touch this — `firmware-release.yml` already
 produces the flasher assets in the same run. It's dispatch-only precisely so it
