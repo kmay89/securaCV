@@ -106,6 +106,7 @@ class Idempotency(unittest.TestCase):
             },
             "addons": {MOSQUITTO_SUP: "started", FRIGATE_SUP: "started", SECURACV_SUP: "started"},
             "existing_files": {"/addon_configs/ccab4aaf_frigate/config.yml"},
+            "addon_options": {SECURACV_SUP: {"mode": "frigate"}},
         }
 
     def test_all_actions_skip(self):
@@ -172,17 +173,30 @@ class Describe(unittest.TestCase):
 
 
 class FakeClient:
-    """Records the calls execute() makes, in order. Optionally fails one kind."""
+    """Records the calls execute() makes, in order. Also serves observe(). Can
+    be told to fail one action kind, and to report pre-existing add-on options."""
 
-    def __init__(self, fail_on: str | None = None):
+    def __init__(self, fail_on: str | None = None, current_options: dict | None = None):
         self.base = "http://supervisor"
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list = []
         self.fail_on = fail_on
+        self.current_options = current_options or {}
 
     def _maybe_fail(self, kind: str):
         if self.fail_on == kind:
             raise hsa.SupervisorError(f"boom on {kind}")
 
+    # observe() surface
+    def get_repositories(self):
+        return set()
+
+    def get_addons(self):
+        return {}
+
+    def get_addon_options(self, slug):
+        return dict(self.current_options.get(slug, {}))
+
+    # execute() surface (records)
     def register_repository(self, url):
         self._maybe_fail("register_repo")
         self.calls.append(("register_repo", url))
@@ -190,6 +204,10 @@ class FakeClient:
     def install_addon(self, slug):
         self._maybe_fail("install_addon")
         self.calls.append(("install_addon", slug))
+
+    def set_addon_options(self, slug, options):
+        self._maybe_fail("set_options")
+        self.calls.append(("set_options", slug, options))
 
     def start_addon(self, slug):
         self._maybe_fail("start_addon")
@@ -259,6 +277,76 @@ class ExecuteLoop(unittest.TestCase):
         steps = hsa.plan_actions(seed, hsa.FRESH_HUB)
         with self.assertRaises(SystemExit):
             hsa.execute(steps, FakeClient(), hsa.REPO)
+
+
+class KernelFrigateMode(unittest.TestCase):
+    """P1: the kernel must be put in `frigate` mode before start, or it boots the
+    wizard and never produces a claim."""
+
+    def test_securacv_step_is_install_then_setopts_then_start(self):
+        steps = hsa.plan_actions(REAL_PLAN, hsa.FRESH_HUB)
+        sec = next(s for s in steps if s.id == "install-securacv")
+        self.assertEqual([a.kind for a in sec.actions], ["install_addon", "set_options", "start_addon"])
+        setopts = next(a for a in sec.actions if a.kind == "set_options")
+        self.assertEqual(setopts.slug, SECURACV_SUP)
+        self.assertEqual(setopts.options, {"mode": "frigate"})
+        self.assertFalse(setopts.already)  # fresh hub: options not set yet
+
+    def test_setopts_skipped_when_mode_already_frigate(self):
+        obs = dict(hsa.FRESH_HUB)
+        obs["addon_options"] = {SECURACV_SUP: {"mode": "frigate", "cameras": ["front"]}}
+        sec = next(s for s in hsa.plan_actions(REAL_PLAN, obs) if s.id == "install-securacv")
+        setopts = next(a for a in sec.actions if a.kind == "set_options")
+        self.assertTrue(setopts.already)
+
+    def test_options_satisfied_helper(self):
+        self.assertTrue(hsa.options_satisfied({"mode": "frigate"}, {"mode": "frigate", "x": 1}))
+        self.assertFalse(hsa.options_satisfied({"mode": "frigate"}, {"mode": "standalone"}))
+        self.assertFalse(hsa.options_satisfied({"mode": "frigate"}, {}))
+
+    def test_execute_merges_options_without_wiping(self):
+        seed = {
+            "steps": [
+                {"id": "install-securacv", "title": "k", "why": "w", "for_what": "f",
+                 "addon": "privacy_witness_kernel", "supervisor_slug": SECURACV_SUP,
+                 "options": {"mode": "frigate"}, "start": True},
+            ]
+        }
+        # the hub already has an unrelated user option set; we must not lose it
+        client = FakeClient(current_options={SECURACV_SUP: {"go2rtc_discovery": False}})
+        observed = {"repositories": set(), "addons": {}, "existing_files": set(),
+                    "addon_options": {}}  # not installed yet => set_options planned
+        steps = hsa.plan_actions(seed, observed)
+        hsa.execute(steps, client, hsa.REPO)
+        setcall = next(c for c in client.calls if c[0] == "set_options")
+        self.assertEqual(setcall[2], {"go2rtc_discovery": False, "mode": "frigate"})
+
+
+class ConfigExtension(unittest.TestCase):
+    """P2: an existing config.yaml must count as present so we never write a
+    duplicate config.yml over the user's camera setup."""
+
+    def test_config_siblings_covers_both_extensions(self):
+        self.assertEqual(
+            sorted(hsa.config_siblings("/addon_configs/ccab4aaf_frigate/config.yml")),
+            ["/addon_configs/ccab4aaf_frigate/config.yaml", "/addon_configs/ccab4aaf_frigate/config.yml"],
+        )
+        # a non-yaml dest is returned as-is
+        self.assertEqual(hsa.config_siblings("/etc/thing.conf"), ["/etc/thing.conf"])
+
+    def test_observe_sees_existing_yaml_when_plan_wants_yml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            # user's config is config.yaml; the plan targets config.yml
+            (tmp / "config.yaml").write_text("cameras: {}\n")
+            seed = {"steps": [{"id": "write-frigate-config", "dest": str(tmp / "config.yml"),
+                               "source": "x", "never_overwrite": True}]}
+            observed = hsa.observe(FakeClient(), seed)
+            self.assertIn(str(tmp / "config.yml"), observed["existing_files"])
+            # and the planner therefore skips the write
+            cfg = next(s for s in hsa.plan_actions(seed, observed) if s.id == "write-frigate-config")
+            write = next(a for a in cfg.actions if a.kind == "write_config")
+            self.assertTrue(write.already)
 
 
 if __name__ == "__main__":

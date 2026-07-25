@@ -247,16 +247,27 @@ def main() -> None:
         {
             "id": "install-securacv",
             "title": "Install the securaCV witness kernel",
-            "what": f"Install and start the `{kernel['slug']}` add-on.",
+            "what": f"Install the `{kernel['slug']}` add-on, set it to Frigate mode, and start it.",
             "why": (
                 "This is the part that makes the system a witness rather than a camera system. It "
                 "subscribes to Frigate's detections, strips identity, and writes each one into a "
-                "signed, hash-chained log that can be verified later without trusting us. It "
-                "auto-discovers the broker installed above, so there's no MQTT to type."
+                "signed, hash-chained log that can be verified later without trusting us. We set it "
+                "to `frigate` mode BEFORE starting: its factory default is `standalone`, which only "
+                "serves a setup wizard, so without this the 'unattended' install would quietly stop "
+                "short of ever producing a claim. In frigate mode it auto-discovers the broker "
+                "installed above (no MQTT to type) and generates + persists your device signing key "
+                "automatically — open the add-on panel afterwards to back that key up, because "
+                "losing it means you can't verify your own log."
             ),
             "for_what": "Turns detections into tamper-evident, privacy-preserving claims.",
             "addon": kernel["slug"],
             "supervisor_slug": kernel_sup,
+            # Set the add-on's options before starting. `mode: frigate` is what
+            # flips run.sh out of "serve the wizard only" and into consuming
+            # Frigate's MQTT events; the broker and topic_prefix ("frigate",
+            # matching homeassistant/frigate/config.yaml) auto-discover from
+            # their defaults, so mode is the one option that must be set.
+            "options": {"mode": "frigate"},
             "start": True,
             "reversible": True,
         },

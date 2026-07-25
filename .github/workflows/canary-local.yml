@@ -195,6 +195,7 @@ jobs:
             "d0491a67_privacy_witness_kernel" \
             "ccab4aaf_frigate" \
             "POST http://supervisor/store/repositories" \
+            '{"mode":"frigate"}' \
             "recordings AND snapshots OFF"; do
             if ! printf '%s' "$out" | grep -qF -- "$needle"; then
               echo "::error::hub_seed_apply.py --dry-run no longer mentions '$needle' — the executor and the plan have drifted apart"

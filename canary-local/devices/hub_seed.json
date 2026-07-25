@@ -83,11 +83,14 @@
     {
       "id": "install-securacv",
       "title": "Install the securaCV witness kernel",
-      "what": "Install and start the `privacy_witness_kernel` add-on.",
-      "why": "This is the part that makes the system a witness rather than a camera system. It subscribes to Frigate's detections, strips identity, and writes each one into a signed, hash-chained log that can be verified later without trusting us. It auto-discovers the broker installed above, so there's no MQTT to type.",
+      "what": "Install the `privacy_witness_kernel` add-on, set it to Frigate mode, and start it.",
+      "why": "This is the part that makes the system a witness rather than a camera system. It subscribes to Frigate's detections, strips identity, and writes each one into a signed, hash-chained log that can be verified later without trusting us. We set it to `frigate` mode BEFORE starting: its factory default is `standalone`, which only serves a setup wizard, so without this the 'unattended' install would quietly stop short of ever producing a claim. In frigate mode it auto-discovers the broker installed above (no MQTT to type) and generates + persists your device signing key automatically \u2014 open the add-on panel afterwards to back that key up, because losing it means you can't verify your own log.",
       "for_what": "Turns detections into tamper-evident, privacy-preserving claims.",
       "addon": "privacy_witness_kernel",
       "supervisor_slug": "d0491a67_privacy_witness_kernel",
+      "options": {
+        "mode": "frigate"
+      },
       "start": true,
       "reversible": true
     }

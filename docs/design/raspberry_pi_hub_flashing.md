@@ -317,8 +317,12 @@ Raspberry Pi Imager.
     otherwise; the plan now carries this, computed once in `gen_hub_seed.py`).
     `--dry-run` narrates the full sequence — every `why`/`for_what` verbatim from
     the plan, plus the exact API call — needing no hub, and never overwrites an
-    existing Frigate config. Real runs fail **closed**: any error stops with a
-    "safe to re-run, it's idempotent" note rather than leaving a half-built hub.
+    existing Frigate config (either `config.yml` or `config.yaml`, since Frigate
+    accepts both). It also sets the kernel's `mode: frigate` option **before**
+    starting it — the add-on's factory default is `standalone`, which serves only
+    a setup wizard, so without that the "unattended" install would come up
+    producing no claims. Real runs fail **closed**: any error stops with a "safe
+    to re-run, it's idempotent" note rather than leaving a half-built hub.
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS
     keychain, and build the **seed assembler** that carries the curated
     **full-stack** backup (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards

@@ -87,19 +87,44 @@ def norm_url(url: str) -> str:
     return url.strip().rstrip("/").lower()
 
 
+def config_siblings(dest: str) -> list[str]:
+    """Every path that would mean "this config already exists" for `dest`.
+
+    Frigate accepts its config as either `config.yml` or `config.yaml`, and
+    scripts/install.sh treats BOTH as a user's existing configuration. So seeding
+    `config.yml` next to a user's `config.yaml` would create a SECOND config and
+    break the never-overwrite promise — we must treat the sibling extension as
+    present too.
+    """
+    root, ext = os.path.splitext(dest)
+    if ext in (".yml", ".yaml"):
+        return [root + ".yml", root + ".yaml"]
+    return [dest]
+
+
+def options_satisfied(desired: dict, current: dict) -> bool:
+    """True when every desired option already holds the desired value (shallow).
+
+    Used to make setting add-on options idempotent: on a re-run we skip the
+    write rather than stomping options the user may have since customised.
+    """
+    return all(current.get(k) == v for k, v in desired.items())
+
+
 @dataclass
 class Action:
     """One concrete thing to do (or skip). The atom the executor performs."""
 
-    kind: str  # register_repo | install_addon | start_addon | write_config
+    kind: str  # register_repo | install_addon | set_options | start_addon | write_config
     label: str  # human-facing target (a URL, a slug, a path)
     already: bool = False  # true => this is already satisfied; skip it
     reason: str = ""  # why it is being skipped, or an extra note
     url: str = ""  # register_repo
-    slug: str = ""  # install_addon / start_addon (the Supervisor slug)
+    slug: str = ""  # install_addon / set_options / start_addon (the Supervisor slug)
     friendly: str = ""  # the friendly slug, for display
     src: str = ""  # write_config: repo-relative source
     dest: str = ""  # write_config: absolute on-device destination
+    options: dict = field(default_factory=dict)  # set_options: the options to apply
 
 
 @dataclass
@@ -115,9 +140,10 @@ class StepPlan:
     user_must_finish: str = ""
 
 
-# A fresh hub: nothing registered, nothing installed, no config written. This is
-# the assumption --dry-run makes so it always prints the FULL plan.
-FRESH_HUB: dict = {"repositories": set(), "addons": {}, "existing_files": set()}
+# A fresh hub: nothing registered, nothing installed, no config written, no
+# options set. This is the assumption --dry-run makes so it always prints the
+# FULL plan.
+FRESH_HUB: dict = {"repositories": set(), "addons": {}, "existing_files": set(), "addon_options": {}}
 
 
 def plan_actions(seed: dict, observed: dict) -> list[StepPlan]:
@@ -138,6 +164,7 @@ def plan_actions(seed: dict, observed: dict) -> list[StepPlan]:
     repos_present = observed.get("repositories", set())
     addons = observed.get("addons", {})
     files_present = observed.get("existing_files", set())
+    opts_present = observed.get("addon_options", {})
 
     out: list[StepPlan] = []
     for step in seed.get("steps", []):
@@ -177,6 +204,23 @@ def plan_actions(seed: dict, observed: dict) -> list[StepPlan]:
                     reason="already installed" if installed else "",
                 )
             )
+            if step.get("options"):
+                desired = step["options"]
+                # Configure BEFORE starting: the kernel reads its mode at launch,
+                # and `mode: frigate` is what stops it from booting into the
+                # wizard-only path and never consuming Frigate.
+                satisfied = options_satisfied(desired, opts_present.get(sup, {}))
+                sp.actions.append(
+                    Action(
+                        kind="set_options",
+                        label=friendly,
+                        slug=sup,
+                        friendly=friendly,
+                        options=desired,
+                        already=satisfied,
+                        reason="options already set" if satisfied else "",
+                    )
+                )
             if step.get("start"):
                 running = addons.get(sup) == "started"
                 sp.actions.append(
@@ -233,6 +277,9 @@ def describe(action: Action, base_url: str) -> str:
         return f"register repository {action.url}  (POST {base_url}/store/repositories)"
     if action.kind == "install_addon":
         return f"install add-on {action.slug}  (POST {base_url}/store/addons/{action.slug}/install)"
+    if action.kind == "set_options":
+        opts = json.dumps(action.options, separators=(",", ":"), sort_keys=True)
+        return f"set options {opts} on {action.slug}  (POST {base_url}/addons/{action.slug}/options)"
     if action.kind == "start_addon":
         return f"start add-on {action.slug}  (POST {base_url}/addons/{action.slug}/start)"
     if action.kind == "write_config":
@@ -307,11 +354,20 @@ class SupervisorClient:
         items = data.get("addons") if isinstance(data, dict) else data
         return {it["slug"]: it.get("state", "") for it in (items or []) if it.get("slug")}
 
+    def get_addon_options(self, slug: str) -> dict:
+        r = self._req("GET", f"/addons/{slug}/info")
+        data = r.get("data", r)
+        opts = data.get("options") if isinstance(data, dict) else None
+        return opts or {}
+
     def register_repository(self, url: str) -> None:
         self._req("POST", "/store/repositories", {"repository": url})
 
     def install_addon(self, slug: str) -> None:
         self._req("POST", f"/store/addons/{slug}/install", timeout=self.install_timeout)
+
+    def set_addon_options(self, slug: str, options: dict) -> None:
+        self._req("POST", f"/addons/{slug}/options", {"options": options})
 
     def start_addon(self, slug: str) -> None:
         self._req("POST", f"/addons/{slug}/start")
@@ -320,10 +376,22 @@ class SupervisorClient:
 def observe(client: SupervisorClient, seed: dict) -> dict:
     """Snapshot the hub so plan_actions can decide what still needs doing."""
     dests = [s["dest"] for s in seed.get("steps", []) if s.get("dest")]
+    addons = client.get_addons()
+    # Current options for any installed add-on a step will configure — so we can
+    # skip the write when it is already set (and merge, not stomp, when it isn't).
+    addon_options: dict = {}
+    for s in seed.get("steps", []):
+        if s.get("options"):
+            sup = s.get("supervisor_slug") or s.get("addon")
+            if sup in addons:
+                addon_options[sup] = client.get_addon_options(sup)
     return {
         "repositories": client.get_repositories(),
-        "addons": client.get_addons(),
-        "existing_files": {d for d in dests if os.path.exists(d)},
+        "addons": addons,
+        # A config is "present" if EITHER accepted extension exists (see
+        # config_siblings) — otherwise we'd write a duplicate config.yml.
+        "existing_files": {d for d in dests if any(os.path.exists(p) for p in config_siblings(d))},
+        "addon_options": addon_options,
     }
 
 
@@ -392,6 +460,11 @@ def _perform(a: Action, client: SupervisorClient, assets_root: Path) -> None:
         client.register_repository(a.url)
     elif a.kind == "install_addon":
         client.install_addon(a.slug)
+    elif a.kind == "set_options":
+        # Merge over whatever is currently set so we change only the keys we
+        # mean to (e.g. `mode`) and never wipe a user's other options.
+        merged = {**client.get_addon_options(a.slug), **a.options}
+        client.set_addon_options(a.slug, merged)
     elif a.kind == "start_addon":
         client.start_addon(a.slug)
     elif a.kind == "write_config":
