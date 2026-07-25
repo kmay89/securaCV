@@ -25,8 +25,14 @@
 #   watch         paths that, if changed since the target's last release tag,
 #                 mean "this really did change" — used to tell "nothing to do"
 #                 apart from "changed but nobody bumped the version"
-#   gate_var      optional repo variable that must be 'true' for this target to
-#                 be dispatchable (Apple targets need a developer account)
+#   gate_var      optional precondition key that must be true for this target to
+#                 be dispatchable. Usually a repo VARIABLE (the Apple targets
+#                 need a developer account), but the workflow can compute one —
+#                 the firmware's gate is "does the OTA signing key exist", which
+#                 is derived, not configured.
+#   gate_reason   optional text shown when the gate is closed. Say what is
+#                 missing and how to fix it; the default text only describes the
+#                 repo-variable case, which would be a lie for a derived gate.
 
 targets:
   - name: firmware
@@ -44,6 +50,25 @@ targets:
       - firmware
       - canary-local/devices/flash.json
       - custom_components/securacv/manifest.json
+    # Firmware is the one target with a precondition the repo can check for
+    # itself: a release cannot be SIGNED without both halves of the Ed25519
+    # release key. Without them firmware-release.yml fails ~20s in at its key
+    # guard and publishes nothing — so dispatching it would burn a runner to
+    # produce an error, and the button would have reported "releasing firmware"
+    # while nothing shipped. The workflow computes this from the committed
+    # public header (ota_key_state.py) AND the presence of the secret.
+    gate_var: OTA_SIGNING_KEY_READY
+    gate_reason: >-
+      The Ed25519 release signing key is not ready, so no firmware release can be
+      signed and nothing was dispatched. Both halves are required: the PUBLIC key
+      committed in firmware/common/ota/src/ota_release_key.h (all zeros means OTA
+      is hard-disabled in firmware), and the PRIVATE key as the
+      OTA_SIGNING_KEY_PEM Actions secret. One-time ceremony, on your own machine:
+      `firmware/scripts/setup_release_key.sh --key ~/securacv-releaser.pem`, then
+      add the secret and commit the public headers plus the regenerated
+      canary-local/devices/flash.json. Until then the in-browser flasher shows
+      every product as unavailable and no device can update. Walkthrough:
+      docs/RELEASE_BUTTONS.md § "Firmware will not release".
 
   - name: flasher
     label: SecuraCV Flasher (macOS + Linux)

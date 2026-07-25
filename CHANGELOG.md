@@ -21,6 +21,65 @@ offline (no OpenSSL, no HTTP backend, no TSA); the hash-chained log remains
 the root of trust. Design: `docs/design/c2pa_export.md`. Tests run in CI
 (`cargo test --features c2pa-export`).
 
+### Releasing is one button, and every dead end now names itself
+
+Following the release path as a first-time operator found the pipeline blocked on
+one missing key — and *every* button's answer to that was silence. Fixed by making
+preconditions part of the plan instead of a surprise in someone else's workflow run.
+
+- **The master button knows why firmware can't ship.** "Update everything (only
+  what needs it)" used to dispatch a firmware release that dies 20 seconds later
+  when the Ed25519 signing key is absent, having reported *releasing firmware*.
+  It now reports firmware as **gated, with the one-time ceremony inline**, and
+  ships every other target. Implemented through the existing tested gate
+  machinery: `release-targets.yml` gained `gate_var` + a new `gate_reason` (the
+  default text describes a repo *variable*, which for a derived gate would send
+  you hunting a flag that was never the problem). Four new unit tests — 47 total.
+- **A key-state answer that needs no key.** `firmware/scripts/ota_key_state.py`
+  reports whether the release public key is embedded or still all zeros (OTA
+  hard-disabled), with the key id, from the committed header alone. Any button —
+  or any human, locally — can ask. Also printed on every `lint.yml` run, because
+  a repo without a key is legitimate but a *silent* one is what made every product
+  read "unavailable" with no clue why.
+- **"Do exactly this" now refuses the impossible.** `release-one-click.yml` stops
+  before dispatching a firmware release that cannot be signed, and warns when
+  publishing an app version that is already released — which overwrites that
+  release's assets rather than cutting a new download. Its input descriptions now
+  say when *not* to use it, and it points at the master button.
+- **One version per app, enforced.** `desktop/scripts/check_app_versions.py`
+  requires `tauri.conf.json` (names the release tag), `package.json`, and
+  `Cargo.toml` (**what the app shows the user**) to agree — for both apps, on
+  every PR. The previous check compared two of the three and missed the one
+  humans read, so the Flasher shipped as `0.2.2` displaying `v0.1.0`. Flasher
+  bumped to **0.2.3** across all three files and `Cargo.lock`.
+- **Both flashers name the pinned tag.** The desktop app used to swallow the
+  manifest fetch error entirely; it now says *"pinned to firmware release
+  fw-v2.3.0, which has no published images"* — matching the browser flasher.
+  They share no frontend, so this is a fix that has to be made twice, and that
+  is now written down in `CLAUDE.md`, `AGENTS.md`, and Principle 14.
+- **The ceremony script tells the whole truth.** `setup_release_key.sh` printed a
+  commit list that omitted the regenerated `canary-local/devices/flash.json` —
+  following it exactly turned `canary-local` red on the next push and left the
+  flasher on checksum-only verification. It now lists all four files, says to
+  clear the clipboard after pasting a master signing key, and explains the PEP 668
+  venv escape when `pip install cryptography` is refused by a Homebrew Python.
+- **[`docs/RELEASE_BUTTONS.md`](docs/RELEASE_BUTTONS.md)** — the operator's index:
+  every button, when to press it, when not to, the three failures that have cost
+  real time, and the invariants CI holds up so a red run makes sense. Linked from
+  the docs index, `CLAUDE.md`, and `AGENTS.md`.
+### Home Assistant — a Philips Hue bulb becomes an alert beacon
+
+A new importable blueprint,
+[`docs/blueprints/securacv_hue_alert_light.yaml`](docs/blueprints/securacv_hue_alert_light.yaml),
+drives any color light HA controls (Philips Hue is the reference setup) as a
+silent alert signal for a Canary: critical events — tamper, smoke/CO heard,
+witness-chain failure — snapshot the light, pulse it red, and hold solid red
+until the sensors clear; the all-clear blinks green and restores the light's
+previous state, and a device going offline gives three gentle amber pulses.
+No firmware or integration changes — it rides the binary sensors the HA
+integration already exposes. Referenced from the setup guide (Step 5) and
+picked up by the hub image catalog.
+
 ### Release pipeline — three silent failures made loud, and guarded
 
 Three ways the pipeline could ship something broken while every workflow stayed
@@ -2710,7 +2769,6 @@ FEATURE_DATA_MGMT.
 ### Fixed
 - `log_verify` now verifies break-glass receipt chain (called from `main`)
 - Receipt verification uses `[u8; 32]` device key signature input and supports `--verbose`
-
 
 All notable changes to the Privacy Witness Kernel will be documented in this file.
 

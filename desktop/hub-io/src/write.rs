@@ -135,10 +135,45 @@ impl<T> SyncStorage for std::io::Cursor<T> {
 }
 
 impl SyncStorage for std::fs::File {
+    // fsync, not flush: flush() is a no-op for File and leaves the bytes in the
+    // kernel cache, where a counterfeit card's lies are invisible.
+    #[cfg(not(target_os = "macos"))]
     fn sync_storage(&mut self) -> std::io::Result<()> {
-        // fsync, not flush: flush() is a no-op for File and leaves the bytes
-        // in the kernel cache, where a counterfeit card's lies are invisible.
         self.sync_all()
+    }
+    #[cfg(target_os = "macos")]
+    fn sync_storage(&mut self) -> std::io::Result<()> {
+        use std::os::unix::io::AsRawFd;
+        // fsync / F_FULLFSYNC isn't valid on a raw character device (/dev/rdiskN)
+        // and returns ENOTTY ("inappropriate ioctl for device", errno 25) — or
+        // ENOTSUP on some devices. But writing through rdisk only bypasses the
+        // *kernel* buffer cache; it is NOT durability. The card's own volatile
+        // write cache may still hold the bytes, and a read-back could even be
+        // served from that cache — so a "verified" card could lose its final
+        // writes on eject or power loss. When fsync can't do it, ask the DEVICE
+        // to flush its cache with DKIOCSYNCHRONIZECACHE, the raw-disk cache-sync
+        // ioctl (what Disk Utility / imagers use). Regular files — the host
+        // tests — still sync normally through sync_all().
+        match self.sync_all() {
+            Ok(()) => Ok(()),
+            Err(e) if matches!(e.raw_os_error(), Some(libc::ENOTTY) | Some(libc::ENOTSUP)) => {
+                // DKIOCSYNCHRONIZECACHE = _IO('d', 22) from <sys/disk.h>.
+                const DKIOCSYNCHRONIZECACHE: libc::c_ulong = 0x2000_6416;
+                if unsafe { libc::ioctl(self.as_raw_fd(), DKIOCSYNCHRONIZECACHE) } == 0 {
+                    return Ok(());
+                }
+                // The device reports no syncable cache / no such ioctl: the raw
+                // write already skipped the kernel cache and there is nothing
+                // more we can flush, so accept it. Any OTHER error (EIO, …) is
+                // real — a write we cannot make durable must not pass as verified.
+                let e2 = std::io::Error::last_os_error();
+                match e2.raw_os_error() {
+                    Some(libc::ENOTTY) | Some(libc::ENOTSUP) => Ok(()),
+                    _ => Err(e2),
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
     #[cfg(target_os = "linux")]
     fn drop_read_cache(&mut self) -> std::io::Result<()> {
@@ -156,13 +191,18 @@ impl SyncStorage for std::fs::File {
     fn drop_read_cache(&mut self) -> std::io::Result<()> {
         use std::os::unix::io::AsRawFd;
         // Raw rdisk I/O is already uncached; F_NOCACHE covers the /dev/disk
-        // and regular-file cases.
+        // and regular-file cases. On the raw device itself F_NOCACHE can report
+        // ENOTTY / ENOTSUP — harmless, because that device is already uncached,
+        // so tolerate it rather than fail the verify of a good write.
         let rc = unsafe { libc::fcntl(self.as_raw_fd(), libc::F_NOCACHE, 1) };
         if rc == -1 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(())
+            let e = std::io::Error::last_os_error();
+            return match e.raw_os_error() {
+                Some(libc::ENOTTY) | Some(libc::ENOTSUP) => Ok(()),
+                _ => Err(e),
+            };
         }
+        Ok(())
     }
 }
 

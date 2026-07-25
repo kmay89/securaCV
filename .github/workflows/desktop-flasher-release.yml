@@ -75,16 +75,12 @@ jobs:
         id: plan
         shell: bash
         run: |
-          # tauri.conf.json is what names the release tag, so a package.json that
-          # disagrees is a version the repo states two ways — they drifted to
-          # 0.1.3 vs 0.2.1 unnoticed once, which makes "which version is this?"
-          # unanswerable from the source tree. Cheap to keep honest, so keep it.
-          tv=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
-          pv=$(python3 -c "import json;print(json.load(open('desktop/package.json'))['version'])")
-          if [ "$tv" != "$pv" ]; then
-            echo "::error::version drift — desktop/src-tauri/tauri.conf.json says ${tv}, desktop/package.json says ${pv}. The release tag comes from tauri.conf.json; bump both."
-            exit 1
-          fi
+          # All THREE version files must agree before we build a release out of
+          # them. The first version of this check compared two of the three and
+          # missed Cargo.toml — the one the app shows the user in its footer — so
+          # 0.2.2 shipped reporting itself as v0.1.0. One script now, both apps,
+          # also run on every PR by lint.yml.
+          python3 desktop/scripts/check_app_versions.py
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF_NAME}"; publish=true
           elif [[ "${{ github.event.inputs.dry_run }}" == "false" ]]; then
@@ -233,10 +229,14 @@ jobs:
           # point the binary at it relative to the app bundle.
           libusb=$(otool -L "$bin/rpiboot-aarch64-apple-darwin" | awk '/libusb/ {print $1}')
           cp "$libusb" desktop/src-tauri/resources/libusb-1.0.0.dylib
-          # tauri.macos.conf.json maps the dylib to Resources/libusb-1.0.0.dylib;
-          # sidecars live in Contents/MacOS, one level below Contents/Resources.
+          # tauri.macos.conf.json bundles the dylib as a signed FRAMEWORK at
+          # Contents/Frameworks/libusb-1.0.0.dylib; sidecars live in Contents/MacOS,
+          # one level below Contents/Frameworks. Bundling it as a framework (not a
+          # plain resource) is what lets Tauri code-sign it with our Developer ID —
+          # notarization rejects any unsigned nested Mach-O, and a dylib parked in
+          # Resources/ would be exactly that. (RELEASE_LESSONS 2026-07-25.)
           install_name_tool -change "$libusb" \
-            "@executable_path/../Resources/libusb-1.0.0.dylib" \
+            "@executable_path/../Frameworks/libusb-1.0.0.dylib" \
             "$bin/rpiboot-aarch64-apple-darwin"
           lipo -create -output "$bin/rpiboot-universal-apple-darwin" "$bin/rpiboot-aarch64-apple-darwin"
           cp "$bin/rpiboot-aarch64-apple-darwin" "$bin/rpiboot-x86_64-apple-darwin"
@@ -332,8 +332,17 @@ jobs:
           print(f"hub catalog pinned for HAOS {base['version']}: {len(boards)} boards, all with sha256")
           PY
 
-      - name: Build & release
-        id: tauri
+      # Apple code-signing + notarization is OPT-IN via the ENABLE_MACOS_SIGNING
+      # repository variable (Settings → Secrets and variables → Actions →
+      # Variables), the same switch the Lab uses (desktop-release.yml). Two steps
+      # on purpose: tauri's macOS bundler treats APPLE_CERTIFICATE as "sign me"
+      # whenever the env key is DEFINED AT ALL — even empty — then fails importing
+      # it. So the default (unsigned) build must define NO APPLE_* env keys. Turn
+      # signing on by setting the variable to `true` once the Developer ID cert +
+      # the APPLE_* secrets are in place — see desktop/SIGNING.md. On Linux the
+      # APPLE_* env is inert, so one gate drives both matrix legs.
+      - name: Build & release (unsigned)
+        if: vars.ENABLE_MACOS_SIGNING != 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -346,8 +355,40 @@ jobs:
           releaseBody: |
             The SecuraCV Lab as a native app — flash a Canary with no browser and no terminal.
 
-            **macOS:** it isn't from the App Store, so first launch needs one command —
-            see the install steps in `desktop/INSTALL.md`. Universal build: one download
+            **macOS:** unless this build is signed & notarized, first launch needs one
+            command — see `desktop/INSTALL.md`. Universal build: one download for Apple
+            Silicon and Intel.
+
+            **Linux:** grab the `.AppImage` (self-updating) or the `.deb`.
+          releaseDraft: false
+          prerelease: ${{ steps.plan.outputs.prerelease }}
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      - name: Build & release (signed + notarized macOS)
+        if: vars.ENABLE_MACOS_SIGNING == 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Developer ID signing + notarization. Tauri imports APPLE_CERTIFICATE
+          # (base64 .p12), signs the .app + the espflash/rpiboot sidecars + the
+          # libusb framework with APPLE_SIGNING_IDENTITY under the hardened
+          # runtime, then notarizes with the Apple ID + app-specific password and
+          # staples the ticket. Inert on Linux. Setup: desktop/SIGNING.md.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: desktop
+          tagName: ${{ steps.plan.outputs.tag }}
+          releaseName: "SecuraCV Flasher __VERSION__"
+          releaseBody: |
+            The SecuraCV Lab as a native app — flash a Canary with no browser and no terminal.
+
+            **macOS:** signed & notarized — just open it. Universal build: one download
             for Apple Silicon and Intel.
 
             **Linux:** grab the `.AppImage` (self-updating) or the `.deb`.

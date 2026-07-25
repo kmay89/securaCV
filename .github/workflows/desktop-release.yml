@@ -86,6 +86,15 @@ jobs:
         working-directory: desktop-lab
         run: npm ci
 
+      - name: All three version files agree
+        # On the RELEASE path, not just in lint: a pushed `app-v*` tag, or a
+        # dispatch from a branch lint hasn't run on, would otherwise publish a
+        # bundle whose tag (tauri.conf.json), npm version, and user-visible
+        # version (Cargo.toml → the app's own footer) disagree. The Flasher
+        # gained this check first; a guard on one app target and not the other is
+        # exactly the half-fix RELEASE_LESSONS keeps warning about.
+        run: python3 desktop/scripts/check_app_versions.py
+
       # Codesigning/notarization is OPT-IN via the `ENABLE_MACOS_SIGNING`
       # repository variable (Settings → Secrets and variables → Actions →
       # Variables). It is split into two steps on purpose: tauri's macOS

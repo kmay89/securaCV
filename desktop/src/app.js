@@ -29,6 +29,18 @@ const openExternal = (url) =>
 // same guard the Rust side and the website use.
 const normChip = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
 
+// The firmware release tag a manifest URL is pinned to ("fw-v2.3.0"), or null if
+// it isn't a pinned release asset. Deliberately the same behaviour as
+// canary-local/assets/flash-core.js releaseTagFromManifestUrl() — the two
+// flashers do NOT share a frontend, so a diagnostic added to one has to be
+// added to the other or half our users keep getting the vague version.
+const releaseTagFromManifestUrl = (url) => {
+  const m = /\/releases\/download\/([^/]+)\//.exec(String(url || ""));
+  if (!m) return null;
+  const tag = decodeURIComponent(m[1]);
+  return /^fw-v/.test(tag) ? tag : null;
+};
+
 const POLL_MS = 1000;
 const WE2_VID = 0x1a86;
 const WE2_PID = 0x55d3;
@@ -533,9 +545,17 @@ async function identify(portInfo) {
     invoke("fetch_manifest", { manifestUrl: state.catalog.manifest_url })
       .then((m) => {
         state.manifest = m;
+        state.manifestError = null;
         renderProducts();
       })
-      .catch(() => {});
+      // Keep WHY. Swallowing this is how every product came to read "no
+      // published release yet" — indistinguishable from "nothing has ever
+      // shipped" — when the real answer was "the release this build is pinned
+      // to was never cut". renderProducts() turns it into that sentence.
+      .catch((e) => {
+        state.manifestError = String((e && e.message) || e || "unreachable");
+        renderProducts();
+      });
     renderProducts();
     enableCard("step-pick");
   } catch (e) {
@@ -612,7 +632,44 @@ function renderProducts() {
     $("pick-sub").textContent = `No firmware in the catalog targets ${state.chip}.`;
     return;
   }
-  $("pick-sub").textContent = `Images built for your ${state.chip}:`;
+  // The catalog pins an EXACT firmware release (canary-local/tools/gen_flash.py
+  // explains why /latest/ is unsafe in a shared release namespace). If that
+  // release hasn't been cut, the fetch 404s and every row below reads "no
+  // published release yet" — which reads like the project has never shipped.
+  // Name the tag instead, so the answer is "that release is missing", not "your
+  // board, your network, or this app is broken".
+  if (state.manifestError && !state.manifest) {
+    const pinned = releaseTagFromManifestUrl(state.catalog.manifest_url);
+    // A pinned URL that didn't load does NOT prove the release is missing: the
+    // machine may be offline, or DNS/TLS may have failed, in which case telling
+    // someone to "wait for the release to be cut" sends them to look at the
+    // wrong thing. The Rust command distinguishes the two (see fetch_manifest:
+    // an HTTP status means the server answered), so only claim the release is
+    // uncut when we actually got a status back.
+    const status = /\bHTTP (\d{3})\b/.exec(state.manifestError);
+    if (status && pinned) {
+      $("pick-sub").textContent =
+        `Images for your ${state.chip} — but this build is pinned to firmware ` +
+        `release ${pinned}, and that release has no published images ` +
+        `(HTTP ${status[1]}). Install a local file under Advanced until it is cut.`;
+    } else if (status) {
+      $("pick-sub").textContent =
+        `Images for your ${state.chip} — the firmware manifest returned HTTP ` +
+        `${status[1]}. Install a local file under Advanced.`;
+    } else {
+      // "didn't load" rather than "couldn't reach": with no HTTP status this is
+      // either a transport failure OR a manifest that arrived malformed, and the
+      // second one did reach us.
+      $("pick-sub").textContent =
+        `Images for your ${state.chip} — the firmware manifest didn't load ` +
+        `(${state.manifestError}). ` +
+        (pinned ? `This build is pinned to firmware release ${pinned}; if that ` +
+                  `release exists, the images appear once you're back online. ` : "") +
+        `Install a local file under Advanced.`;
+    }
+  } else {
+    $("pick-sub").textContent = `Images built for your ${state.chip}:`;
+  }
 
   const selectedId = state.product ? state.product.id : null;
 
@@ -1414,7 +1471,6 @@ const hub = {
   eta: { stage: null, t0: 0, done0: 0 },
   fbTimer: null, // first-boot poll
   resumeTimer: null, // resume-across-restart poll
-  sawMacWriteHint: false,
 };
 
 const HUB_HOST = "homeassistant.local:8123";
@@ -1508,15 +1564,6 @@ function hubInit() {
     $("hub-stage").textContent = HUB_STAGE_COPY[stage] || stage;
     hubRenderPills(stage);
 
-    // A one-time, calm heads-up that macOS is about to ask for disk permission,
-    // so a walked-away user knows the flash isn't frozen — it's waiting on them.
-    if (stage === "write" && hub.platform === "macos" && !hub.sawMacWriteHint) {
-      hub.sawMacWriteHint = true;
-      const el = $("hub-console");
-      el.classList.remove("hidden");
-      el.textContent += "→ macOS may now ask permission to write the disk — click Allow.\n";
-    }
-
     const fill = $("hub-bar-fill");
     if (total) {
       fill.classList.remove("indet");
@@ -1532,6 +1579,17 @@ function hubInit() {
     // what stopping mid-write means for the card.
     $("hub-stop-btn").textContent =
       stage === "write" || stage === "verify" ? "Stop (card will need a fresh flash)" : "Stop";
+  });
+  // Fired by the backend a beat BEFORE macOS's authopen prompt appears (see
+  // hub.rs). Put a prominent, by-name cue in the big status line so the Touch ID
+  // / password dialog reads as expected, not sketchy. The next progress event —
+  // the write actually moving, i.e. they approved — overwrites this via
+  // HUB_STAGE_COPY, so it clears itself.
+  listen("hub:mac-auth", () => {
+    $("hub-progress-wrap").classList.remove("hidden");
+    $("hub-stage").textContent =
+      "👆 Approve the macOS prompt — Touch ID or your password. It's “authopen”, Apple's built-in disk-writing helper (the same one Raspberry Pi Imager uses).";
+    $("hub-console").classList.remove("hidden");
   });
   $("hub-stop-btn").addEventListener("click", async () => {
     $("hub-stop-btn").disabled = true;
@@ -1761,7 +1819,7 @@ async function hubPreflight() {
     } else {
       line.textContent =
         hub.platform === "macos"
-          ? "Heads up: macOS will ask permission to write the disk — that's normal."
+          ? "Heads up: when the write starts, macOS asks for Touch ID or your password — a prompt from “authopen”, Apple's built-in disk-writing helper. That's expected; approve it and the flash continues."
           : "";
     }
   } catch (_) {
@@ -2056,7 +2114,6 @@ async function hubFlash() {
   if (!target || hub.busy) return;
   hubStopFirstBoot(); // a fresh flash supersedes any prior first-boot watch
   hub.busy = true;
-  hub.sawMacWriteHint = false;
   state.busy = true; // pause the Canary port watcher during the heavy write
   $("hub-flash-btn").disabled = true;
   $("hub-stop-btn").classList.remove("hidden");
