@@ -128,6 +128,16 @@ Import the SecuraCV Alert Blueprint for one-click notification setup:
 
 Or copy automations from `docs/homeassistant_automations.yaml` for manual setup.
 
+**Have a Philips Hue (or any color) bulb?** Import the Alert Light blueprint
+the same way — URL:
+`https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_hue_alert_light.yaml`
+— pick your Canary's sensors and a bulb, and the light becomes a silent
+beacon: it pulses and holds red on tamper / smoke or CO heard / chain
+failure, blinks green and restores itself when the sensors clear, and gives
+three gentle amber pulses if the device goes offline. Pair the bulb first
+via HA's built-in Hue integration (**Settings > Devices & Services > Add
+Integration > Philips Hue**, press the bridge button).
+
 **Radar (canary-sense / MR60BHA2) witnesses** get three extra blueprints —
 after-hours presence (with optional two-physics corroboration),
 lights-out-with-presence tamper, and a non-diagnostic welfare check — plus a
