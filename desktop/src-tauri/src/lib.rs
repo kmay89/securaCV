@@ -53,6 +53,23 @@ const EMBEDDED_CATALOG: &str = include_str!(concat!(env!("OUT_DIR"), "/flash.jso
 // identically to the web Lab, offline, and can never drift from it.
 const EMBEDDED_HATCH: &str = include_str!(concat!(env!("OUT_DIR"), "/hatch.json"));
 
+// The dev channel's one stable address: the rolling fw-dev-latest prerelease
+// that CI re-points on every fw-v*-dev.*/-rc.* tag. This is a fixed
+// first-party constant, deliberately NOT a general manifest-URL override —
+// the dev toggle can only ever mean this URL. It is the ONE alternative
+// flash() accepts to the catalog's pinned manifest_url; everything downstream
+// (chip guard, release origin, size/SHA, signature policy) is identical.
+// Mirrors canary-local/assets/flash-core.js DEV_FLASH_MANIFEST_URL — the
+// desktop-parity test fails if the two drift.
+const DEV_FLASH_MANIFEST_URL: &str =
+    "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
+
+// A firmware image can't reasonably exceed the largest flash any Canary
+// carries (32 MiB parts exist; nothing bigger does). A file past this is a
+// wrong pick — a disk image, a video — not a firmware image, so the local-file
+// path refuses it before reading further.
+const LOCAL_IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
 // The one sidecar we ship. This is the RUNTIME name: the bundler flattens the
 // `externalBin` "binaries/espflash-<triple>" to plain `espflash` next to the
 // app binary (Contents/MacOS/espflash), and Tauri resolves the sidecar by that
@@ -102,6 +119,9 @@ pub struct FlashReceipt {
     installed_sha256: String,
     bytes_written: usize,
     release_verification: &'static str,
+    /// "stable" | "dev" for manifest flashes, "local" for a file off this
+    /// computer's disk — so the receipt names which train the bytes came from.
+    channel: &'static str,
     chip_write_verified: bool,
     provisioned: bool,
 }
@@ -342,8 +362,23 @@ async fn flash(
     );
     let catalog: Value = serde_json::from_str(EMBEDDED_CATALOG)
         .map_err(|e| format!("bundled catalog is corrupt: {e}"))?;
-    if catalog.get("manifest_url").and_then(Value::as_str) != Some(manifest_url.as_str()) {
+    // Exactly two manifests are ever resolved: the catalog's pinned stable
+    // release, and the fixed fw-dev-latest constant. Anything else is an
+    // unbundled URL and is refused before a byte moves.
+    let channel = if catalog.get("manifest_url").and_then(Value::as_str)
+        == Some(manifest_url.as_str())
+    {
+        "stable"
+    } else if manifest_url == DEV_FLASH_MANIFEST_URL {
+        "dev"
+    } else {
         return Err("refusing an unbundled firmware manifest URL".into());
+    };
+    if channel == "dev" {
+        emit(
+            &app,
+            "→ DEV CHANNEL: resolving the rolling fw-dev-latest prerelease, not the pinned stable release".into(),
+        );
     }
     let product = catalog
         .get("products")
@@ -550,8 +585,159 @@ async fn flash(
             installed_sha256: installed_sha,
             bytes_written: bytes.len(),
             release_verification,
+            channel,
             chip_write_verified: true,
             provisioned,
+        })
+    } else {
+        Err(format!(
+            "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again."
+        ))
+    }
+}
+
+/// The cheap refusals for a user-picked firmware file: an empty file or one
+/// larger than any Canary's flash is a wrong pick, not a firmware image.
+/// Anything subtler (a valid-looking image for the wrong board) is on the
+/// user — a personal file has no catalog entry to check it against.
+fn check_local_image(len: u64) -> Result<(), String> {
+    if len == 0 {
+        return Err("that file is empty — there's nothing to write".into());
+    }
+    if len > LOCAL_IMAGE_MAX_BYTES {
+        return Err(format!(
+            "that file is {len} bytes — no Canary carries more than 32 MiB of flash, so this can't be a firmware image"
+        ));
+    }
+    Ok(())
+}
+
+/// What the Advanced local-file panel shows BEFORE anything is written: size,
+/// SHA-256 fingerprint, and whether the file starts with 0xE9 — the ESP32's
+/// own "program starts here" marker, which a merged factory image also opens
+/// with (it begins with the bootloader image). A missing magic only informs;
+/// the write path never blocks on it.
+#[derive(Serialize)]
+pub struct LocalFileInfo {
+    size: u64,
+    sha256: String,
+    esp_magic: bool,
+}
+
+#[tauri::command]
+async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
+    check_local_image(bytes.len() as u64)?;
+    Ok(LocalFileInfo {
+        size: bytes.len() as u64,
+        sha256: release::sha256_hex(&bytes),
+        esp_magic: bytes.first() == Some(&0xE9),
+    })
+}
+
+/// Flash a firmware file straight off this computer's disk (Advanced). No
+/// catalog product, no manifest, no signature — a personal file has no origin
+/// we can verify, so nothing here claims "verified": the file is fingerprinted
+/// (SHA-256 + size) so the receipt names exactly what was written, and that is
+/// all the receipt claims. The write mechanics are identical to flash():
+/// private staged temp file, `write-bin 0x0` via the bundled espflash,
+/// `flash:log` streaming.
+#[tauri::command]
+async fn flash_local_file(
+    app: AppHandle,
+    port: String,
+    baud: u32,
+    path: String,
+) -> Result<FlashReceipt, String> {
+    let emit = |app: &AppHandle, line: String| {
+        let _ = app.emit("flash:log", line);
+    };
+
+    let file_name = std::path::Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "local file".to_string());
+    emit(&app, format!("→ reading {file_name} from this computer…"));
+    let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
+    check_local_image(bytes.len() as u64)?;
+    let sha = release::sha256_hex(&bytes);
+    emit(
+        &app,
+        format!(
+            "→ fingerprint only — we can't vouch for a personal file's origin. SHA-256 {}…",
+            &sha[..16]
+        ),
+    );
+    if bytes[0] != 0xE9 {
+        // Warn, never block: 0xE9 is the ESP32 image magic, and a merged
+        // factory image starts with the bootloader image, which begins 0xE9
+        // itself — but the board can't be bricked either way.
+        emit(
+            &app,
+            format!(
+                "⚠ first byte is 0x{:02X}, not the ESP32 image magic 0xE9 — this may not be a factory/merged image. Writing anyway; the board can't be bricked.",
+                bytes[0]
+            ),
+        );
+    }
+
+    // Same staging discipline as the release path: a private, RAII-removed
+    // temp file, alive until espflash exits.
+    let staged = stage_firmware(&bytes, "local-file")?;
+    let staged_path = staged.path();
+    emit(
+        &app,
+        format!("→ {} bytes staged, writing to the board…", bytes.len()),
+    );
+
+    let args = vec![
+        "write-bin".into(),
+        "0x0".into(),
+        staged_path.to_string_lossy().to_string(),
+        "--port".into(),
+        port,
+        "--baud".into(),
+        baud.to_string(),
+    ];
+    let cmd = app
+        .shell()
+        .sidecar(ESPFLASH)
+        .map_err(|e| format!("bundled espflash missing: {e}"))?
+        .args(args);
+    let (mut rx, _child) = cmd
+        .spawn()
+        .map_err(|e| format!("could not start espflash: {e}"))?;
+
+    let mut code = -1;
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
+                    emit(&app, line.to_string());
+                }
+            }
+            CommandEvent::Terminated(payload) => {
+                code = payload.code.unwrap_or(-1);
+            }
+            _ => {}
+        }
+    }
+    // (`staged` removes the private image on scope exit.)
+
+    if code == 0 {
+        emit(&app, "✓ chip write verified — your file is on the board.".into());
+        Ok(FlashReceipt {
+            target: "esp32-host",
+            product_id: file_name,
+            version: "local".to_string(),
+            release_sha256: sha.clone(),
+            installed_sha256: sha,
+            bytes_written: bytes.len(),
+            release_verification: "local-file (fingerprint only)",
+            channel: "local",
+            chip_write_verified: true,
+            provisioned: false,
         })
     } else {
         Err(format!(
@@ -794,6 +980,8 @@ pub fn run() {
             fetch_manifest,
             witness_discover,
             flash,
+            inspect_local_file,
+            flash_local_file,
             flash_vision_module,
             hub::load_hub_catalog,
             hub::list_hub_targets,

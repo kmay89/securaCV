@@ -318,6 +318,29 @@ kbd {
 }
 .banner #update-text { flex: 1; }
 
+/* ── dev-channel banner ───────────────────────────────────────────────── */
+/* Deliberately loud: hazard stripes in the caution amber, so a prerelease
+   flash can never be mistaken for the pinned stable release. */
+.dev-banner {
+  display: flex; align-items: baseline; gap: 6px;
+  background:
+    repeating-linear-gradient(-45deg,
+      color-mix(in srgb, var(--caution) 14%, transparent) 0 12px,
+      transparent 12px 24px),
+    var(--caution-bg);
+  color: var(--caution);
+  border: 1px solid var(--caution); border-radius: 12px;
+  padding: 11px 15px; margin-bottom: 14px; font-size: 13.5px;
+  box-shadow: var(--shadow-1);
+}
+.dev-banner strong { letter-spacing: .06em; }
+.dev-banner span { color: var(--text-secondary); font-weight: 500; }
+.dev-banner .mono { color: var(--caution); }
+
+/* ── Advanced: local-file fingerprint panel ───────────────────────────── */
+.local-info { display: grid; gap: 7px; margin-top: 12px; }
+.local-info .receipt strong { word-break: break-all; text-align: right; }
+
 /* ── live connection bar ──────────────────────────────────────────────── */
 .connbar {
   display: flex; align-items: center; gap: 10px;

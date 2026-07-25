@@ -120,6 +120,14 @@
             <button id="recheck" class="link-btn hidden">re-read chip</button>
           </div>
 
+          <!-- dev-channel banner: loud on purpose — nobody should flash a
+               prerelease without a stripe telling them so. -->
+          <div id="dev-banner" class="dev-banner hidden" role="status">
+            <strong>DEV CHANNEL</strong>
+            <span>— <span class="mono">fw-dev-latest</span>, not the pinned stable release.
+              Turn it off under Advanced to go back.</span>
+          </div>
+
           <section class="card" id="step-detect">
             <div class="step-head"><span class="step-n">1</span><h2>Plug in your Canary</h2></div>
             <p class="muted">Connect it over USB-C with a <em>data</em> cable. It's picked up
@@ -239,6 +247,45 @@
                 </div>
               </figure>
             </section>
+          </section>
+
+          <section class="card" id="step-advanced">
+            <div class="step-head"><span class="step-n">⚙</span><h2>Advanced — you can skip all of this</h2></div>
+
+            <details class="hint" id="adv-dev">
+              <summary>Dev channel — flash the rolling prerelease</summary>
+              <p>Dev images come from the rolling <span class="mono">fw-dev-latest</span>
+                prerelease — cut ahead of stable, verified exactly the same way (chip
+                guard, SHA-256, and the release signature once the signing ceremony
+                lands). The toggle can only ever mean <span class="mono">fw-dev-latest</span>;
+                it is not a way to point at an arbitrary manifest.</p>
+              <label class="check"><input type="checkbox" id="dev-channel">
+                Use the dev channel</label>
+            </details>
+
+            <details class="hint" id="adv-local">
+              <summary>Install a local file</summary>
+              <p>Install a firmware file from your computer (a .bin you built, or one
+                for an air-gapped setup). We can’t check a personal file’s signature,
+                but the board still can’t be bricked, and we verify the write against
+                the chip.</p>
+              <div class="row">
+                <button id="local-pick" class="btn btn-ghost btn-small">Choose a .bin…</button>
+                <span id="local-name" class="muted"></span>
+              </div>
+              <div id="local-info" class="local-info hidden">
+                <div class="receipt pending"><span>Size</span><strong id="local-size">—</strong></div>
+                <div class="receipt pending"><span>SHA-256 fingerprint</span><strong id="local-sha">—</strong></div>
+                <p class="muted">We can't vouch for a personal file's origin — that part is on you.</p>
+                <p id="local-magic" class="muted hidden"></p>
+                <p id="local-chip-note" class="muted"></p>
+              </div>
+              <div class="row">
+                <button id="local-flash-btn" class="btn btn-primary" disabled>Write this file to the board</button>
+              </div>
+              <pre id="local-console" class="console hidden" aria-live="polite"></pre>
+              <p id="local-result" class="status"></p>
+            </details>
           </section>
         </section>
 

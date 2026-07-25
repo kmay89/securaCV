@@ -75,6 +75,31 @@ test("WE2 model slot: catalog, native, and browser all agree on the flash addres
     "we2-core.js WE2.MODEL_ADDR != catalog we2_module.model_addr");
 });
 
+test("dev channel: browser, native backend, and native frontend pin the same fw-dev-latest URL", () => {
+  // Three DEV_FLASH_MANIFEST_URL constants exist on purpose — each is a fixed
+  // first-party address deliberately NOT routed through its side's URL guard,
+  // so "dev channel" can only ever mean this one URL. That safety argument
+  // collapses the instant any copy drifts, so pin all three to each other.
+  const sources = [
+    ["canary-local/assets/flash-core.js", read(join(CANARY, "assets/flash-core.js"))],
+    ["desktop/src-tauri/src/lib.rs", libRs],
+    ["desktop/src/app.js", read(join(ROOT, "desktop/src/app.js"))],
+  ];
+  const urls = sources.map(([label, src]) => {
+    const m = src.match(/DEV_FLASH_MANIFEST_URL[^"]*"(https:\/\/[^"]+)"/);
+    assert.ok(m, `couldn't parse DEV_FLASH_MANIFEST_URL from ${label}`);
+    return [label, m[1]];
+  });
+  const [refLabel, ref] = urls[0];
+  assert.match(ref, /\/releases\/download\/fw-dev-latest\//,
+    `${refLabel} DEV_FLASH_MANIFEST_URL doesn't point at the fw-dev-latest tag`);
+  for (const [label, url] of urls.slice(1)) {
+    assert.strictEqual(url, ref,
+      `${label} DEV_FLASH_MANIFEST_URL (${url}) != ${refLabel} (${ref}) — ` +
+      `the two flashers would flash different dev releases`);
+  }
+});
+
 test("release origin: native's download-host guard matches the catalog's manifest host", () => {
   // Native guards every download with a literal origin prefix; the browser derives
   // its host from the catalog's manifest_url. They must name the same release host,
