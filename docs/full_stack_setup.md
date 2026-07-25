@@ -112,9 +112,35 @@ Install the **Frigate** add-on (its store repo:
 `https://github.com/blakeblackshear/frigate-hass-addons`, add-on slug
 `ccab4aaf_frigate`) and use our curated config as the starting point:
 [`homeassistant/frigate/config.yaml`](../homeassistant/frigate/config.yaml) →
-place it at `/addon_configs/ccab4aaf_frigate/config.yml`. Add your camera's RTSP
-URL and restart. CPU detection on a Pi works but is slow; a **Coral USB TPU**
-makes it real-time.
+place it at `/addon_configs/ccab4aaf_frigate/config.yml`.
+
+Then edit the `cameras:` block — **two edits, and the second is easy to miss**:
+
+```yaml
+cameras:
+  front_door:                    # name it whatever you like
+    enabled: true                # ← the template ships `false`; you MUST flip this
+    ffmpeg:
+      inputs:
+        - path: rtsp://USER:PASS@10.0.0.20:554/stream   # ← your camera's real URL
+          roles: [detect]
+    detect: { width: 1280, height: 720, fps: 5 }
+```
+
+Restart the add-on. (The example camera ships **disabled** so the config is valid
+before you've added anything — leave it `false` and Frigate silently ignores it.)
+
+**Using a Coral USB TPU?** Plugging it in changes nothing on its own — the
+curated config selects the **CPU** detector. Swap that block too:
+
+```yaml
+detectors:
+  coral:
+    type: edgetpu
+    device: usb      # PCIe/M.2 Coral: use `pci`
+```
+
+Without this you stay on the slow CPU path with a TPU sitting idle.
 
 ### Option B — on a Jetson Orin Nano (GPU, smoothest)
 A dedicated detector node — `docker compose up`, no Coral needed:
