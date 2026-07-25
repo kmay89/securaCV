@@ -6,9 +6,11 @@
 // mismatch (a board the browser flashes but native rejects; a moved release host)
 // into a loud CI failure that names the exact file to fix.
 //
-// This runs under the existing "page logic tests" check (node --test canary-local/
-// tests/*.test.js). It reads source text, not compiled Rust, so it needs no
-// desktop toolchain. When a future change makes native DERIVE one of these from the
+// This runs under the "page logic tests" check — canary-local.yml enumerates each
+// test file, and this one is in that list; its `paths:` filters also include the
+// native source (lib.rs / we2.rs) so a native-side edit triggers the gate too. It
+// reads source text, not compiled Rust, so it needs no desktop toolchain. When a
+// future change makes native DERIVE one of these from the
 // embedded catalog instead of hardcoding it, update the matching assertion here —
 // the drift risk is gone once there's a single source.
 
