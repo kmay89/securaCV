@@ -2741,6 +2741,21 @@ function renderWifiFields(box, product) {
   if (whd) wh.append(whd);
   sec.append(wh);
 
+  // A visible "you already typed this" banner so remembering is OBVIOUS — not a
+  // silent pre-fill the user re-types board after board out of doubt. Refreshed
+  // whenever the saved state changes (forget / remember toggle) so it's honest.
+  const savedBanner = el("div", "flash-wifi-saved flash-hidden");
+  sec.append(savedBanner);
+  const refreshBanner = () => {
+    const st = core.wifiMemoryStatus(wifiMemory.recall(), wifiMemory.isPersisted());
+    savedBanner.classList.toggle("flash-hidden", !st.hasSaved);
+    savedBanner.textContent = "";
+    if (st.hasSaved) {
+      savedBanner.append(el("span", "flash-wifi-saved-i", "✓"),
+        el("strong", null, st.headline), document.createTextNode(" — " + st.detail));
+    }
+  };
+
   const ssid = el("input"), pass = el("input");
   ssid.type = "text"; ssid.placeholder = "network name (SSID)"; ssid.autocomplete = "off";
   pass.type = "password"; pass.placeholder = "password";
@@ -2797,17 +2812,17 @@ function renderWifiFields(box, product) {
   forgetBtn.addEventListener("click", () => {
     wifiMemory.forget();
     ssid.value = ""; pass.value = ""; rememberChk.checked = false;
-    refreshForget();
+    refreshForget(); refreshBanner();
   });
   // Ticking/unticking persists (or un-persists) immediately when a network is
   // already typed, so the checkbox is honest about what's saved right now.
   rememberChk.addEventListener("change", () => {
     if (ssid.value) { wifiMemory.remember({ ssid: ssid.value, pass: pass.value }, rememberChk.checked); }
-    refreshForget();
+    refreshForget(); refreshBanner();
   });
   remRow.append(remLabel, forgetBtn);
   sec.append(remRow);
-  refreshForget();
+  refreshForget(); refreshBanner();
 
   // Bonus for camera Canaries: the same fields can mint a standard WiFi QR
   // (generated right here, nothing sent anywhere) to show the lens later.

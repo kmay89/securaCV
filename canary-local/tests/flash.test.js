@@ -757,6 +757,30 @@ test("wifiQrString escapes the special characters and handles open networks", as
   assert.strictEqual(wifiQrString("open-net", ""), "WIFI:T:nopass;S:open-net;;");
 });
 
+test("wifiMemoryStatus: makes 'type once' visible, and honest about persistence", async () => {
+  const { wifiMemoryStatus } = await core();
+  // Nothing saved → no banner.
+  const none = wifiMemoryStatus(null, false);
+  assert.strictEqual(none.hasSaved, false);
+  assert.strictEqual(wifiMemoryStatus({ ssid: "" }, true).hasSaved, false);
+  assert.strictEqual(wifiMemoryStatus({ ssid: "   " }, false).hasSaved, false); // whitespace only
+
+  // Session-only → names the network + nudges persistence.
+  const sess = wifiMemoryStatus({ ssid: "HomeNet", pass: "x" }, false);
+  assert.strictEqual(sess.hasSaved, true);
+  assert.strictEqual(sess.persisted, false);
+  assert.strictEqual(sess.ssid, "HomeNet");
+  assert.match(sess.headline, /HomeNet/);
+  assert.match(sess.detail, /session/i);
+  assert.match(sess.detail, /Remember on this computer/i);
+
+  // Persisted → says it's kept on this computer, no persistence nudge.
+  const kept = wifiMemoryStatus({ ssid: "HomeNet", pass: "x" }, true);
+  assert.strictEqual(kept.persisted, true);
+  assert.match(kept.detail, /this computer/i);
+  assert.doesNotMatch(kept.detail, /Tick/i);
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");
