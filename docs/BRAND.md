@@ -6,6 +6,18 @@ file wins. Keep it short; keep it true.
 
 ---
 
+## The mission (one word)
+
+**Trust.** Not "trust us" — the engineered kind: **you don't have to.**
+Every promise is structural, *can't* rather than *won't*: the camera
+can't rat you out, the log can't be silently edited, the witness can't
+phone home, the record can't be turned into a surveillance tool — even by
+us. Where a guarantee can't be structural yet, we say so out loud (the
+"what still has to be true" section below exists for exactly that).
+The test for any claim, feature, or sentence of copy: does it *show*
+proof, or does it *ask for* faith? Anything that asks for faith is
+off-mission, full stop.
+
 ## The one thing to remember
 
 **The hero noun is the *Canary*.** A person can't repeat a system, but they
@@ -59,6 +71,13 @@ every launch, not a buried `/lab` link.
 
 ## Naming rules (non-negotiable)
 
+- **The name is "SecuraCV" — capital S, capital CV, exactly that casing.**
+  It's an initialism: **Secure Computer Vision**. Prose, UI strings, store
+  listings, and legal filings all write `SecuraCV`. The code layer stays
+  lowercase `securacv` (domains, package names, bundle IDs, MQTT topics,
+  repo slugs) — that's convention, not a third style. Mixed forms like
+  `securaCV` in copy are typos to fix on sight; existing paths and repo
+  names are grandfathered code-layer, not precedent for prose.
 - **Never "flock."** A group of Canaries is a **fleet**. The word is banned
   in all user-facing copy, device strings, product names, identifiers, and
   comments (a company called Flock soured it). The *only* exception is the
