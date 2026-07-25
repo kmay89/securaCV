@@ -84,6 +84,20 @@ struct Args {
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
+    /// Also sign a C2PA Content Credentials sidecar manifest
+    /// (`<output>.c2pa`) over the exact bundle bytes, so the artifact is
+    /// verifiable by any Content Credentials tool. Fully offline; the
+    /// signing credential derives from the device key seed
+    /// (docs/design/c2pa_export.md).
+    #[cfg(feature = "c2pa-export")]
+    #[arg(long)]
+    c2pa: bool,
+    /// With --c2pa: also write the device CA trust anchor (PEM) here, for
+    /// handing to third-party verifiers. The anchor is deterministic in the
+    /// seed, so this is a convenience copy, not state.
+    #[cfg(feature = "c2pa-export")]
+    #[arg(long, requires = "c2pa", value_name = "PATH")]
+    c2pa_anchor_out: Option<std::path::PathBuf>,
 }
 
 /// Resolve --start/--end/--last into a bucket-aligned window (floor start,
@@ -202,8 +216,46 @@ fn main() -> Result<()> {
     };
     {
         let _stage = ui.stage("Write export bundle");
-        std::fs::write(&output_path, json)?;
+        std::fs::write(&output_path, &json)?;
     }
+    #[cfg(feature = "c2pa-export")]
+    let c2pa_sidecar: Option<(std::path::PathBuf, String)> = if args.c2pa {
+        use witness_kernel::c2pa_export;
+        let _stage = ui.stage("Sign C2PA sidecar");
+        let credentials = c2pa_export::credentials_from_seed(&cfg.device_key_seed)?;
+        let binding = c2pa_export::WitnessBinding {
+            receipt_entry_hash: hex::encode(bundle.receipt_entry.entry_hash),
+            artifact_hash: hex::encode(bundle.receipt_entry.receipt.artifact_hash),
+            device_public_key: hex::encode(
+                witness_kernel::verifying_key_from_seed(&cfg.device_key_seed)?.to_bytes(),
+            ),
+            auth_mode: if args.self_export {
+                "self_export".to_string()
+            } else {
+                "break_glass".to_string()
+            },
+            ruleset_id: cfg.ruleset_id.clone(),
+            kernel_version: cfg.kernel_version.clone(),
+        };
+        let manifest = c2pa_export::sign_export_sidecar(
+            &json,
+            &credentials,
+            &binding,
+            "SecuraCV witness export",
+        )?;
+        let sidecar_path = {
+            let mut name = output_path.file_name().unwrap_or_default().to_os_string();
+            name.push(".c2pa");
+            output_path.with_file_name(name)
+        };
+        std::fs::write(&sidecar_path, manifest)?;
+        if let Some(anchor_path) = &args.c2pa_anchor_out {
+            std::fs::write(anchor_path, credentials.ca_cert_pem.as_bytes())?;
+        }
+        Some((sidecar_path, credentials.ca_fingerprint()?))
+    } else {
+        None
+    };
     let pruned = match (&args.output_dir, args.keep) {
         (Some(dir), Some(keep)) => prune_exports(dir, keep)?,
         _ => 0,
@@ -237,6 +289,23 @@ fn main() -> Result<()> {
         "  receipt: signed export receipt {}… appended to the tamper-evident log",
         &hex::encode(bundle.receipt_entry.entry_hash)[..16]
     );
+    #[cfg(feature = "c2pa-export")]
+    if let Some((sidecar_path, ca_fingerprint)) = c2pa_sidecar {
+        println!(
+            "  c2pa: Content Credentials sidecar written to {}",
+            sidecar_path.display()
+        );
+        println!(
+            "  c2pa: device CA anchor fingerprint sha256:{}…",
+            &ca_fingerprint[..16]
+        );
+        if let Some(anchor_path) = &args.c2pa_anchor_out {
+            println!(
+                "  c2pa: trust anchor PEM written to {}",
+                anchor_path.display()
+            );
+        }
+    }
     if args.jitter_s > 0 {
         println!(
             "  note: exported times are coarsened to {}-minute buckets and jittered ±{}s \

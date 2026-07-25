@@ -76,6 +76,11 @@ jobs:
       run: cargo check --features pqc-signatures,pqc-vault,pqc-tls
     - name: Test with PQC features
       run: cargo test --features pqc-signatures,pqc-vault
+    # c2pa-export tests actually execute here (not just compile-gate): the
+    # sidecar sign/verify round-trip and tamper rejection are security
+    # behavior, same rationale as the adapter job.
+    - name: Test with C2PA export feature
+      run: cargo test --features c2pa-export
 
   adapters:
     name: Adapters (behavioral tests, all features)
@@ -198,6 +203,8 @@ jobs:
       run: cargo clippy --all-targets --features backend-tract -- -D warnings
     - name: Clippy (ingest-v4l2)
       run: cargo clippy --all-targets --features ingest-v4l2 -- -D warnings
+    - name: Clippy (c2pa-export)
+      run: cargo clippy --all-targets --features c2pa-export -- -D warnings
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)

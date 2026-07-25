@@ -48,6 +48,8 @@ use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
 pub mod adapter;
 pub mod api;
 pub mod break_glass;
+#[cfg(feature = "c2pa-export")]
+pub mod c2pa_export;
 pub mod canonical_json;
 pub mod config;
 pub mod crypto;
