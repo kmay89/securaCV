@@ -179,6 +179,77 @@ Then one tap to silence. No list URLs, no regex, no dashboard safari.
 Curated plain-language toggles ("Block TV snooping", "Block ad trackers")
 map to maintained HaGeZi/OISD lists underneath.
 
+## 5b. The experience bar: the phone-call test
+
+The acceptance test for the whole setup arc, stated as a scene:
+
+> **Someone who has never owned a Raspberry Pi finishes setup in a few
+> minutes of their own effort, and calls a relative to say "this was
+> amazing — look what I have."**
+
+If the flow doesn't produce that phone call, it isn't done — same spirit
+as the wizard canon's "end on proof, not a checkmark." The bar breaks down
+into commitments the wizard must keep:
+
+- **The timeline is truthful, down to the minute.** Before anything
+  starts, the user sees the whole schedule — "Write card ~4 min · first
+  boot ~12 min · your part: about 3 minutes total" — from *measured*
+  medians (the validation runbook is where they get measured), not
+  guesses. Long unattended waits (the HAOS first boot) get a live
+  countdown and are used, not endured: that's when the wizard teaches the
+  three faces, so the wait is a tour, not a spinner.
+- **Rewarding at every step, encouraging on every stumble.** Each step
+  ends with something visibly *alive* (the come-to-life rule from
+  [`flasher_experience.md`](flasher_experience.md)), and no error screen
+  exists without a next step written for a first-timer. The tone assumes
+  success is normal: "almost there," never "operation failed."
+- **Choices are present, but pre-decided.** Every decision ships with a
+  bolded recommended default and is framed as an outcome ("Block TV
+  snooping — recommended"), never as configuration (list URLs, ports,
+  upstream IPs). One question per screen, maximum. Maker-depth escape
+  hatches exist but are invisible until sought.
+- **Anything automatable is one click — or zero.** Wi-Fi typed once and
+  seeded onto the card (ships today), the add-on pre-installed in the hub
+  image (open question 6 leans yes), router auto-detect attempted before
+  the user is ever asked to look at their router. The ceiling to aim for:
+  the only mandatory human inputs in the whole arc are the Wi-Fi password
+  and physical acts (insert card, plug in).
+- **It just works — and proves it.** The arc ends on the proof moment
+  (§5's first-hour report), which is also the thing the relative gets
+  shown on the phone call.
+
+These commitments govern the DNS-witness onboarding specifically, but the
+bar is the same one the one-flash hub design
+([`raspberry_pi_hub_flashing.md`](raspberry_pi_hub_flashing.md)) is being
+built to — one arc, one standard.
+
+## 5c. The no-breakage rule, and the witness that teaches
+
+Two standing laws for the product after setup day:
+
+- **It must never block something useful. Zero complaints is the spec,
+  not a stretch goal.** Overblocking is the classic reason DNS filters
+  get unplugged — one broken smart-TV app and the whole product is
+  blamed. So: *witnessing is default-on, blocking is by consent* — the
+  product observes everything and blocks nothing until the user chooses,
+  which means it structurally cannot break what it didn't promise to
+  touch. Default lists are the conservative, liveability-first tier
+  (OISD's stated philosophy); aggressive lists live behind the maker
+  hatch. Every mute is one tap to undo, and when a device misbehaves
+  after a mute, "undo the mute" is the first suggestion offered — the
+  product apologizes with a working fix, never with a settings safari.
+  A mute that keeps causing un-mutes should quietly suggest staying off.
+- **It only adds value if it teaches.** The witness face is an education,
+  not just a tally. Every observed or muted domain is explained in plain
+  words — what it's for, who runs it, what typically flows ("this one
+  reports what you watch, about once an hour") — so a user finishes their
+  first week understanding what telemetry and tracking *are*, not just
+  having them counted. Same register as every guide page: "an imaginative
+  ten-year-old and a security-grade maker in the same breath"
+  ([`BRAND.md`](../BRAND.md)). Curating those explanations for the
+  common-offender domains is product work on par with the lists
+  themselves — the lists are borrowed; the understanding is ours.
+
 ## 6. Naming, trademark, and casing
 
 - **The product name stays out of the Canary namespace.** Two reasons:
