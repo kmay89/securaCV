@@ -129,6 +129,7 @@ jobs:
           node --test canary-local/tests/hub_wizard.test.js
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/vision.test.js
+          node --test canary-local/tests/eyes.test.js
           node --test canary-local/tests/audio.test.js
           node --test canary-local/tests/board_identity.test.js
           node --test canary-local/tests/we2.test.js
@@ -360,6 +361,8 @@ jobs:
         run: node canary-local/tests/wap_probe.mjs
       - name: Vision probe — two ports, model load + preview, boot, MQTT, aim
         run: node canary-local/tests/vision_probe.mjs
+      - name: Eyes probe — webcam bench renders, real wasm decides presence in-browser, camera path
+        run: node canary-local/tests/eyes_probe.mjs
       - name: Sense probe — radar lab, serial, MQTT + flavor-gated entities
         run: node canary-local/tests/sense_probe.mjs
       - name: Sense Lab probe — placement bench, pipeline, cards, stall path
