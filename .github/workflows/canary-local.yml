@@ -170,6 +170,13 @@ jobs:
             echo "::error::generated hub image catalog stale — a source moved (HAOS version, hub_disk.rs card floor, add-on config, or the dashboards/automations/blueprints). Run canary-local/tools/gen_hub_image.py and commit"
             exit 1
           fi
+      - name: Hub seed drift (the first-boot provisioning plan — rides the hub catalog + Frigate config)
+        run: |
+          python3 canary-local/tools/gen_hub_seed.py
+          if ! git diff --exit-code -- canary-local/devices/hub_seed.json; then
+            echo "::error::generated hub seed plan stale — a source moved (add-on slugs/repositories in hub_image.json, or homeassistant/frigate/config.yaml). Run canary-local/tools/gen_hub_seed.py and commit"
+            exit 1
+          fi
       - name: Get Started data drift (rides the Hub snapshot + README install strings)
         run: |
           python3 canary-local/tools/gen_start.py

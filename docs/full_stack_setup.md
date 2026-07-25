@@ -102,6 +102,13 @@ Detail: [`homeassistant_setup.md`](homeassistant_setup.md).
 
 **Working looks like:** a SecuraCV panel in the sidebar, add-on healthy.
 
+> **Why this order, in machine-readable form:** the whole provisioning sequence —
+> every step, what it does, *why it exists*, and what it buys you — is generated
+> into [`canary-local/devices/hub_seed.json`](../canary-local/devices/hub_seed.json)
+> from the repo's own sources. The installer that runs it, this guide, and the
+> flasher UI all read that one plan, so they can't drift apart. If you ever wonder
+> "what is this about to do to my house?", that file answers it line by line.
+
 ## Step 4 — The eyes: camera detection
 
 Frigate does the vision; securaCV subscribes to it over MQTT and turns detections

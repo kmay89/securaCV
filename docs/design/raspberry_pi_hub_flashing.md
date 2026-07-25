@@ -292,6 +292,17 @@ Raspberry Pi Imager.
     securaCV consumes Frigate over MQTT, the same recipe serves a Pi-with-Coral
     or a dedicated NVIDIA Jetson detector — see
     [`integrations/jetson-detector/`](../../integrations/jetson-detector/README.md).
+  - *Provisioning plan (landed 2026-07-25):* `gen_hub_seed.py` →
+    `canary-local/devices/hub_seed.json` is the ordered first-boot sequence —
+    register the add-on repositories (the step the `ha` CLI **cannot** do, so it
+    names the Supervisor API `POST /store/repositories` that can), install the
+    broker, install Frigate, write its config to the add-on's *own* config dir,
+    then start the witness kernel. Every step carries `why` + `for_what` in plain
+    language so an installer can narrate what it's doing to someone's home.
+    Derived from `hub_image.json` (slugs/repositories) + the curated Frigate
+    config and drift-gated, so a slug fixed in the catalog can't stay wrong here;
+    an add-on that vanishes fails the generator loudly rather than emitting a
+    wrong plan (both behaviours verified).
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS
     keychain, and build the **seed assembler** that carries the curated
     **full-stack** backup (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards
