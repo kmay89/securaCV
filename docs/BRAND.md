@@ -6,6 +6,18 @@ file wins. Keep it short; keep it true.
 
 ---
 
+## The mission (one word)
+
+**Trust.** Not "trust us" — the engineered kind: **you don't have to.**
+Every promise is structural, *can't* rather than *won't*: the camera
+can't rat you out, the log can't be silently edited, the witness can't
+phone home, the record can't be turned into a surveillance tool — even by
+us. Where a guarantee can't be structural yet, we say so out loud (the
+"what still has to be true" section below exists for exactly that).
+The test for any claim, feature, or sentence of copy: does it *show*
+proof, or does it *ask for* faith? Anything that asks for faith is
+off-mission, full stop.
+
 ## The one thing to remember
 
 **The hero noun is the *Canary*.** A person can't repeat a system, but they
