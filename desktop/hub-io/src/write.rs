@@ -143,16 +143,34 @@ impl SyncStorage for std::fs::File {
     }
     #[cfg(target_os = "macos")]
     fn sync_storage(&mut self) -> std::io::Result<()> {
-        // A macOS raw character device (/dev/rdiskN) is unbuffered, so fsync /
-        // F_FULLFSYNC doesn't apply to it and returns ENOTTY ("inappropriate
-        // ioctl for device", errno 25) — or ENOTSUP on some devices. The bytes
-        // already went straight to the medium (that is exactly why the writer
-        // targets rdisk), so there is nothing to flush: treat it as done rather
-        // than fail a good write. Regular files — the host tests — still sync.
+        use std::os::unix::io::AsRawFd;
+        // fsync / F_FULLFSYNC isn't valid on a raw character device (/dev/rdiskN)
+        // and returns ENOTTY ("inappropriate ioctl for device", errno 25) — or
+        // ENOTSUP on some devices. But writing through rdisk only bypasses the
+        // *kernel* buffer cache; it is NOT durability. The card's own volatile
+        // write cache may still hold the bytes, and a read-back could even be
+        // served from that cache — so a "verified" card could lose its final
+        // writes on eject or power loss. When fsync can't do it, ask the DEVICE
+        // to flush its cache with DKIOCSYNCHRONIZECACHE, the raw-disk cache-sync
+        // ioctl (what Disk Utility / imagers use). Regular files — the host
+        // tests — still sync normally through sync_all().
         match self.sync_all() {
             Ok(()) => Ok(()),
             Err(e) if matches!(e.raw_os_error(), Some(libc::ENOTTY) | Some(libc::ENOTSUP)) => {
-                Ok(())
+                // DKIOCSYNCHRONIZECACHE = _IO('d', 22) from <sys/disk.h>.
+                const DKIOCSYNCHRONIZECACHE: libc::c_ulong = 0x2000_6416;
+                if unsafe { libc::ioctl(self.as_raw_fd(), DKIOCSYNCHRONIZECACHE) } == 0 {
+                    return Ok(());
+                }
+                // The device reports no syncable cache / no such ioctl: the raw
+                // write already skipped the kernel cache and there is nothing
+                // more we can flush, so accept it. Any OTHER error (EIO, …) is
+                // real — a write we cannot make durable must not pass as verified.
+                let e2 = std::io::Error::last_os_error();
+                match e2.raw_os_error() {
+                    Some(libc::ENOTTY) | Some(libc::ENOTSUP) => Ok(()),
+                    _ => Err(e2),
+                }
             }
             Err(e) => Err(e),
         }
