@@ -184,3 +184,94 @@ describe('runtime without Ed25519 support', () => {
     }
   });
 });
+
+describe('export-bundle verification parity', () => {
+  const BUNDLE_FIXTURES = path.join(__dirname, '..', 'tests', 'fixtures', 'export_bundle');
+  const loadBundle = () => JSON.parse(fs.readFileSync(path.join(BUNDLE_FIXTURES, 'valid_bundle.json'), 'utf8'));
+
+  it('recognizes the two input kinds', () => {
+    assert.equal(V.looksLikeExportBundle(loadBundle()), true);
+    assert.equal(V.looksLikeEnvelope(loadBundle()), false);
+    const envelope = loadFixture('valid_envelope.json');
+    assert.equal(V.looksLikeEnvelope(envelope), true);
+    assert.equal(V.looksLikeExportBundle(envelope), false);
+  });
+
+  it('verifies the fixture the Rust verifier pins (tests/export_bundle_fixtures.rs)', async () => {
+    const report = await V.verifyExportBundle(loadBundle());
+    assert.equal(report.ok, true, report.error);
+    // Self-attested authorship: valid, with the key-provenance note.
+    assert.equal(report.status, 'valid_with_warnings');
+    assert.equal(report.authorship, 'bundle');
+    assert.ok(report.warnings.some((w) => /self-attested/.test(w)));
+    assert.equal(report.events, 3);
+    assert.equal(report.failures, 0);
+    assert.ok(report.checks.some((c) => /artifact bound/i.test(c)));
+  });
+
+  it('confirms authorship when the matching trusted key is supplied', async () => {
+    const bundle = loadBundle();
+    const keyHex = bundle.device_public_key.map((b) => b.toString(16).padStart(2, '0')).join('');
+    const report = await V.verifyExportBundle(bundle, { trustedDeviceKeyHex: keyHex });
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.authorship, 'trusted');
+    assert.equal(report.status, 'ok');
+    assert.ok(!report.warnings.some((w) => /self-attested/.test(w)));
+  });
+
+  it('rejects a non-matching trusted key', async () => {
+    const bundle = loadBundle();
+    const report = await V.verifyExportBundle(bundle, { trustedDeviceKeyHex: '00'.repeat(32) });
+    assert.equal(report.ok, false);
+    assert.match(report.error, /device key mismatch/);
+  });
+
+  it('rejects a tampered artifact (mirrors the Rust tampered_artifact test)', async () => {
+    const bundle = loadBundle();
+    bundle.artifact.batches[0].buckets[0].events[0].zone_id = 'zone:forged';
+    const report = await V.verifyExportBundle(bundle);
+    assert.equal(report.ok, false);
+    assert.match(report.error, /artifact hash mismatch/);
+  });
+
+  it('rejects a tampered receipt (mirrors the Rust tampered_receipt test)', async () => {
+    const bundle = loadBundle();
+    bundle.receipt_entry.receipt.batch_size += 1;
+    const report = await V.verifyExportBundle(bundle);
+    assert.equal(report.ok, false);
+    assert.match(report.error, /entry_hash mismatch/);
+  });
+
+  it('rejects a swapped device key at the signature check', async () => {
+    const bundle = loadBundle();
+    bundle.device_public_key[0] ^= 0x01;
+    const report = await V.verifyExportBundle(bundle);
+    assert.equal(report.ok, false);
+  });
+
+  it('is inconclusive — never rejected — without Ed25519, but still catches tamper', async () => {
+    const realImport = globalThis.crypto.subtle.importKey.bind(globalThis.crypto.subtle);
+    globalThis.crypto.subtle.importKey = (fmt, key, algo, ext, usages) =>
+      (algo && algo.name === 'Ed25519')
+        ? Promise.reject(new Error('Ed25519 unsupported (simulated)'))
+        : realImport(fmt, key, algo, ext, usages);
+    delete require.cache[require.resolve('./verify_core')];
+    const noEd = require('./verify_core');
+    try {
+      const clean = await noEd.verifyExportBundle(loadBundle());
+      assert.equal(clean.status, 'inconclusive');
+      assert.equal(clean.ok, false);
+      assert.ok(clean.checks.some((c) => /artifact bound/i.test(c)), 'artifact binding must still run');
+      assert.ok(!clean.checks.some((c) => /signature/i.test(c)), 'no signature check should be claimed');
+
+      const tampered = loadBundle();
+      tampered.artifact.batches[0].buckets[0].events[0].confidence = 0.5;
+      const report = await noEd.verifyExportBundle(tampered);
+      assert.equal(report.status, 'compromised');
+      assert.match(report.error, /artifact hash mismatch/);
+    } finally {
+      globalThis.crypto.subtle.importKey = realImport;
+      delete require.cache[require.resolve('./verify_core')];
+    }
+  });
+});

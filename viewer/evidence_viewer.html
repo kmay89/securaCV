@@ -64,6 +64,12 @@
   button.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.btn.primary:hover { filter:brightness(1.05); color:#fff; }
 
+  .keyopt { margin-top:14px; }
+  .keyopt input { width:100%; font-size:13px; padding:9px 11px; border:1px solid var(--line);
+                  border-radius:8px; background:var(--panel); color:var(--fg); outline:none; }
+  .keyopt input:focus { border-color:var(--accent); }
+  .keyopt .hint { text-align:center; }
+
   .trust { margin-top:22px; }
   .trust summary { cursor:pointer; font-weight:600; color:var(--muted); font-size:13px; padding:6px 0;
                    list-style:none; }
@@ -173,14 +179,22 @@
   <section id="intake">
     <div id="drop" role="button" tabindex="0" aria-label="Drop an evidence bundle or press Enter to choose a file">
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      <div class="big">Drop an evidence bundle (.json) to verify</div>
+      <div class="big">Drop an evidence bundle or event export (.json) to verify</div>
       <div class="hint">or click to choose a file — nothing is uploaded, nothing is changed, and checking
-        can't hurt the file. Verification runs locally.</div>
+        can't hurt the file. Verification runs locally. Both bundle kinds are recognized automatically:
+        a full evidence envelope, or an event export from <span class="mono">export_events</span>.</div>
       <input type="file" id="file" accept="application/json,.json">
     </div>
     <div class="actions">
       <button class="btn primary" id="choose" type="button">Choose file…</button>
-      <button class="btn" id="sample" type="button">Try the sample bundle</button>
+      <button class="btn" id="sample" type="button">Try the sample envelope</button>
+      <button class="btn" id="samplebundle" type="button">Try the sample export</button>
+    </div>
+    <div class="keyopt">
+      <input id="trustkey" class="mono" type="text" spellcheck="false" autocomplete="off"
+             placeholder="Optional: expected device key (64 hex chars) — confirms who signed an event export">
+      <div class="hint">Leave blank to check integrity only. With the key the device owner published, the
+        result also confirms authorship.</div>
     </div>
 
     <details class="trust">
@@ -717,8 +731,135 @@ async function verifyEnvelope(envelope) {
   }
 }
 
+// ---- export-bundle verification ------------------------------------------
+// Mirrors the Rust `verify_export_bundle` (src/lib.rs) check-for-check and in
+// the same order: receipt entry hash → signature → artifact binding. Pinned to
+// the same fixture as the Rust side (tests/fixtures/export_bundle/).
+//
+// Trust caveat, mirrored from `export_verify`: the bundle carries its own
+// device key, so without a caller-supplied trusted key the verdict means
+// "internally consistent and signed by the key the bundle names" — authorship
+// is self-attested, not confirmed against an external identity. Passing
+// `opts.trustedDeviceKeyHex` upgrades the verdict to confirmed authorship
+// (or fails it, if the keys differ).
+
+function looksLikeExportBundle(obj) {
+  return !!(obj && typeof obj === 'object' && obj.artifact && obj.receipt_entry && obj.device_public_key);
+}
+
+function looksLikeEnvelope(obj) {
+  return !!(obj && typeof obj === 'object' && obj.envelope_format === ENVELOPE_FORMAT);
+}
+
+async function verifyExportBundle(bundle, opts = {}) {
+  const result = {
+    kind: 'export_bundle',
+    ok: false, status: 'compromised', checks: [], warnings: [], error: null,
+    events: 0, failures: 0, buckets: 0, batches: 0,
+    authorship: 'bundle', device_public_key: null, artifact_hash: null, entry_hash: null,
+  };
+  try {
+    if (!looksLikeExportBundle(bundle)) {
+      throw new Error('not an export bundle: missing artifact / receipt_entry / device_public_key');
+    }
+    const pubKey = toBytes(bundle.device_public_key);
+    if (pubKey.length !== 32) throw new Error('device_public_key must be 32 bytes');
+    result.device_public_key = bytesToHex(pubKey);
+    result.checks.push('Export bundle structure recognized');
+
+    // Authorship: compare the bundle's key against a caller-supplied trusted
+    // key BEFORE the signature check, so "verified" means verified under the
+    // key the caller trusts — the same semantics as the Rust `export_verify`.
+    const trustedHex = (opts.trustedDeviceKeyHex || '').trim().toLowerCase();
+    if (trustedHex) {
+      let trusted;
+      try { trusted = hexToBytes(trustedHex); } catch { throw new Error('the supplied device key is not valid hex'); }
+      if (trusted.length !== 32) throw new Error('the supplied device key must be 32 bytes (64 hex characters)');
+      if (!bytesEqual(trusted, pubKey)) {
+        throw new Error('device key mismatch: this bundle names a different device key than the one you supplied');
+      }
+      result.authorship = 'trusted';
+      result.checks.push('Bundle device key matches the trusted key you supplied');
+    }
+
+    // 1. Entry hash: serialize the receipt in serde field order (NOT the input
+    //    JSON's key order) so a key-reordered-but-equivalent bundle still
+    //    re-derives the signed entry_hash.
+    const rEntry = bundle.receipt_entry;
+    const computedEntryHash = await hashEntry(toBytes(rEntry.prev_hash), serExportReceipt(rEntry.receipt));
+    if (!bytesEqual(computedEntryHash, toBytes(rEntry.entry_hash))) {
+      throw new Error('export receipt entry_hash mismatch');
+    }
+    result.entry_hash = bytesToHex(computedEntryHash);
+    result.checks.push('Export receipt entry hash recomputed and matches');
+
+    // 2. Signature (domain-separated) under the device key.
+    const sigCheckable = await ed25519Supported();
+    if (sigCheckable) {
+      const msg = await domainSeparatedHash(V1_MANIFEST.signature_domains.export_receipt, toBytes(rEntry.entry_hash));
+      const sig = Uint8Array.from(rEntry.signatures.ed25519_signature);
+      if (!(await verifyEd25519(pubKey, sig, msg))) throw new Error('export receipt signature verification failed');
+      result.checks.push(result.authorship === 'trusted'
+        ? 'Export receipt signature valid (authorship confirmed against your trusted key)'
+        : 'Export receipt signature valid under the device key named in the bundle');
+    }
+
+    // 3. Artifact binding: recompute the artifact hash exactly as the device
+    //    did (serde-faithful bytes) and require it to equal the signed hash.
+    const artifactHash = await sha256(utf8(serExportArtifact(bundle.artifact)));
+    if (!bytesEqual(artifactHash, toBytes(rEntry.receipt.artifact_hash))) {
+      throw new Error('export artifact hash mismatch');
+    }
+    result.artifact_hash = bytesToHex(artifactHash);
+    result.checks.push('Human-readable artifact bound to the signed export hash');
+
+    if (result.authorship !== 'trusted') {
+      result.warnings.push('device key taken from the bundle itself — authorship is self-attested; compare the key against one published by the device owner, or supply it to confirm');
+    }
+    if (bundle.pq_public_key) result.warnings.push('post-quantum signatures present but not verified in this offline viewer');
+
+    // Content stats (display only — the checks above are what prove them).
+    for (const batch of bundle.artifact.batches || []) {
+      result.batches++;
+      for (const bucket of batch.buckets || []) {
+        result.buckets++;
+        result.events += (bucket.events || []).length;
+        result.failures += (bucket.failures || []).length;
+      }
+    }
+    if (result.failures > 0) result.warnings.push(`${result.failures} failure record(s) present (explicit gaps)`);
+
+    // Same inconclusive semantics as the envelope path: deterministic checks
+    // all passed but device authorship was not cryptographically confirmed.
+    if (!sigCheckable) {
+      result.status = 'inconclusive';
+      result.ok = false;
+      result.inconclusive = true;
+      result.warnings.unshift('signatures not checked: this browser lacks Ed25519 Web Crypto support');
+      result.error = 'This browser cannot check Ed25519 signatures, so device authorship was not confirmed. ' +
+        'The bundle was NOT rejected — its receipt hash and the artifact-to-signed-hash binding both checked out, ' +
+        'so any tampering would have been caught. To confirm the signature too, reopen this page in a current ' +
+        'Chrome, Edge, Firefox, or Safari 17+, or run the securaCV Rust verifier (export_verify).';
+      return result;
+    }
+
+    result.ok = true;
+    result.status = result.warnings.length === 0 ? 'ok' : 'valid_with_warnings';
+    return result;
+  } catch (err) {
+    result.ok = false;
+    result.status = 'compromised';
+    result.error = err.message || String(err);
+    result.failure = err.failure || null;
+    return result;
+  }
+}
+
 const api = {
   verifyEnvelope,
+  verifyExportBundle,
+  looksLikeExportBundle,
+  looksLikeEnvelope,
   ed25519Supported,
   computeWholeEnvelopeDigest,
   canonicalize,
@@ -1512,6 +1653,430 @@ const SAMPLE_ENVELOPE = {
   },
   "whole_envelope_digest": "fd9ab7b974e60aa3d16bcc23a5d2e64fd4197aac8c5cbf3bad99e116c58fdd4d"
 };
+const SAMPLE_BUNDLE = {
+  "artifact": {
+    "batches": [
+      {
+        "buckets": [
+          {
+            "time_bucket": {
+              "start_epoch_s": 600,
+              "size_s": 600
+            },
+            "events": [
+              {
+                "event_type": "BoundaryCrossingObjectLarge",
+                "time_bucket": {
+                  "start_epoch_s": 600,
+                  "size_s": 600
+                },
+                "zone_id": "zone:a",
+                "confidence": 1.0,
+                "kernel_version": "fixture-0",
+                "ruleset_id": "ruleset:fixture",
+                "ruleset_hash": [
+                  45,
+                  16,
+                  147,
+                  155,
+                  48,
+                  1,
+                  124,
+                  155,
+                  46,
+                  224,
+                  30,
+                  69,
+                  59,
+                  240,
+                  139,
+                  120,
+                  230,
+                  181,
+                  59,
+                  185,
+                  144,
+                  28,
+                  64,
+                  211,
+                  27,
+                  188,
+                  18,
+                  159,
+                  147,
+                  107,
+                  182,
+                  233
+                ]
+              }
+            ],
+            "failures": []
+          },
+          {
+            "time_bucket": {
+              "start_epoch_s": 1200,
+              "size_s": 600
+            },
+            "events": [
+              {
+                "event_type": "BoundaryCrossingObjectLarge",
+                "time_bucket": {
+                  "start_epoch_s": 1200,
+                  "size_s": 600
+                },
+                "zone_id": "zone:b",
+                "confidence": 0.85,
+                "kernel_version": "fixture-0",
+                "ruleset_id": "ruleset:fixture",
+                "ruleset_hash": [
+                  45,
+                  16,
+                  147,
+                  155,
+                  48,
+                  1,
+                  124,
+                  155,
+                  46,
+                  224,
+                  30,
+                  69,
+                  59,
+                  240,
+                  139,
+                  120,
+                  230,
+                  181,
+                  59,
+                  185,
+                  144,
+                  28,
+                  64,
+                  211,
+                  27,
+                  188,
+                  18,
+                  159,
+                  147,
+                  107,
+                  182,
+                  233
+                ]
+              }
+            ],
+            "failures": []
+          },
+          {
+            "time_bucket": {
+              "start_epoch_s": 1800,
+              "size_s": 600
+            },
+            "events": [
+              {
+                "event_type": "BoundaryCrossingObjectLarge",
+                "time_bucket": {
+                  "start_epoch_s": 1800,
+                  "size_s": 600
+                },
+                "zone_id": "zone:a",
+                "confidence": 0.8734212,
+                "kernel_version": "fixture-0",
+                "ruleset_id": "ruleset:fixture",
+                "ruleset_hash": [
+                  45,
+                  16,
+                  147,
+                  155,
+                  48,
+                  1,
+                  124,
+                  155,
+                  46,
+                  224,
+                  30,
+                  69,
+                  59,
+                  240,
+                  139,
+                  120,
+                  230,
+                  181,
+                  59,
+                  185,
+                  144,
+                  28,
+                  64,
+                  211,
+                  27,
+                  188,
+                  18,
+                  159,
+                  147,
+                  107,
+                  182,
+                  233
+                ]
+              }
+            ],
+            "failures": []
+          }
+        ]
+      }
+    ],
+    "max_events_per_batch": 50,
+    "jitter_s": 0,
+    "jitter_step_s": 60
+  },
+  "receipt_entry": {
+    "receipt": {
+      "time_bucket": {
+        "start_epoch_s": 1784970000,
+        "size_s": 600
+      },
+      "ruleset_hash": [
+        45,
+        16,
+        147,
+        155,
+        48,
+        1,
+        124,
+        155,
+        46,
+        224,
+        30,
+        69,
+        59,
+        240,
+        139,
+        120,
+        230,
+        181,
+        59,
+        185,
+        144,
+        28,
+        64,
+        211,
+        27,
+        188,
+        18,
+        159,
+        147,
+        107,
+        182,
+        233
+      ],
+      "batch_size": 50,
+      "artifact_hash": [
+        26,
+        209,
+        92,
+        4,
+        53,
+        3,
+        101,
+        36,
+        44,
+        86,
+        207,
+        80,
+        63,
+        125,
+        85,
+        201,
+        80,
+        214,
+        17,
+        144,
+        192,
+        119,
+        60,
+        223,
+        185,
+        54,
+        85,
+        38,
+        238,
+        202,
+        35,
+        17
+      ],
+      "auth_mode": "self_export"
+    },
+    "prev_hash": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "entry_hash": [
+      241,
+      237,
+      240,
+      27,
+      248,
+      217,
+      237,
+      37,
+      38,
+      24,
+      3,
+      140,
+      205,
+      21,
+      200,
+      23,
+      195,
+      69,
+      80,
+      7,
+      62,
+      204,
+      212,
+      25,
+      95,
+      136,
+      183,
+      56,
+      175,
+      80,
+      81,
+      47
+    ],
+    "signatures": {
+      "ed25519_scheme": "ed25519",
+      "ed25519_signature": [
+        152,
+        96,
+        53,
+        155,
+        244,
+        167,
+        222,
+        190,
+        149,
+        254,
+        248,
+        213,
+        98,
+        187,
+        243,
+        38,
+        68,
+        17,
+        83,
+        217,
+        43,
+        201,
+        32,
+        106,
+        148,
+        79,
+        197,
+        82,
+        19,
+        154,
+        137,
+        141,
+        212,
+        180,
+        232,
+        211,
+        96,
+        176,
+        61,
+        208,
+        73,
+        75,
+        146,
+        141,
+        31,
+        236,
+        30,
+        170,
+        206,
+        198,
+        183,
+        210,
+        67,
+        46,
+        212,
+        92,
+        2,
+        201,
+        144,
+        194,
+        142,
+        40,
+        201,
+        7
+      ]
+    }
+  },
+  "device_public_key": [
+    0,
+    185,
+    139,
+    13,
+    84,
+    161,
+    96,
+    69,
+    244,
+    82,
+    19,
+    80,
+    158,
+    166,
+    203,
+    7,
+    104,
+    209,
+    191,
+    150,
+    211,
+    227,
+    242,
+    191,
+    225,
+    108,
+    123,
+    188,
+    6,
+    92,
+    160,
+    179
+  ]
+};
 const V = globalThis.SecuraCVVerify;
 const $ = (id) => document.getElementById(id);
 const out = $('out'), drop = $('drop'), fileInput = $('file');
@@ -1534,7 +2099,8 @@ const wait = (ms) => (REDUCED || ms <= 0) ? Promise.resolve() : new Promise((r) 
 drop.addEventListener('click', () => fileInput.click());
 drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
 $('choose').addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
-$('sample').addEventListener('click', (e) => { e.stopPropagation(); process(SAMPLE_ENVELOPE, 'sample bundle'); });
+$('sample').addEventListener('click', (e) => { e.stopPropagation(); process(SAMPLE_ENVELOPE, 'sample envelope'); });
+$('samplebundle').addEventListener('click', (e) => { e.stopPropagation(); process(SAMPLE_BUNDLE, 'sample event export'); });
 fileInput.addEventListener('change', (e) => { const f = e.target.files[0]; if (f) readFile(f); });
 ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('hover'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('hover'); }));
@@ -1568,6 +2134,11 @@ function fmtBucket(tb) {
 // always available and can never drift apart in meaning.
 const CHECK_PLAIN = [
   [/^Envelope format and version/, 'This file is a genuine securaCV evidence bundle'],
+  [/^Export bundle structure recognized/, 'This file is a securaCV event export'],
+  [/^Bundle device key matches the trusted key/, 'The export names exactly the device key you supplied'],
+  [/^Export receipt entry hash recomputed/, 'The signed receipt recomputes from scratch — the record matches what was sealed'],
+  [/^Export receipt signature valid \(authorship confirmed/, 'This export was signed by the device you named — authorship confirmed'],
+  [/^Export receipt signature valid under the device key named/, 'This export carries a valid signature from the device key it names'],
   [/^Manifest matches the canonical/, 'The privacy rules travelled inside the bundle and match the official spec'],
   [/^Bundle fingerprint recomputed/, 'The bundle’s fingerprint recomputes from scratch — the file is exactly what was exported'],
   [/^Sealed-event hash chain intact/, 'Every event is chained to the one before it — nothing added, removed, or reordered'],
@@ -1612,6 +2183,12 @@ async function process(envelope, sourceLabel) {
   const stale = () => seq !== runSeq;
   out.innerHTML = '<section id="run"></section><section id="report"></section>';
   if (!envelope || typeof envelope !== 'object') return renderBad('That does not look like an evidence bundle.', '');
+
+  // An event export (ExportBundle from `export_events`) is a different shape
+  // from a full evidence envelope; route it to its own verify + report path.
+  if (V.looksLikeExportBundle(envelope) && !V.looksLikeEnvelope(envelope)) {
+    return processBundle(envelope, sourceLabel, stale);
+  }
 
   // Verify first (it takes milliseconds), then reveal the real results
   // check by check. Nothing shown is speculative.
@@ -1685,6 +2262,122 @@ async function process(envelope, sourceLabel) {
   html += actions(true);
   $('report').innerHTML = `<div class="fade-in">${html}</div>`;
   wire();
+}
+
+// Event-export path: same reveal machinery and verdict language as envelopes,
+// with panels for what an ExportBundle actually contains — the signed receipt
+// (the disclosure record), the device key, and the event timeline.
+async function processBundle(bundle, sourceLabel, stale) {
+  let report;
+  try {
+    report = await V.verifyExportBundle(bundle, { trustedDeviceKeyHex: $('trustkey').value });
+  } catch (e) { if (!stale()) renderBad('The verifier hit an unexpected error.', e.message); return; }
+  if (stale()) return;
+
+  await playChecks(report, stale);
+  await wait(300);
+  if (stale()) return;
+
+  if (report.status === 'inconclusive') return renderInconclusive(report, sourceLabel);
+
+  const cls = report.status === 'ok' ? 'ok' : report.status === 'valid_with_warnings' ? 'warn' : 'bad';
+  const icon = report.ok ? (report.warnings.length ? ICONS.warn : ICONS.ok) : ICONS.bad;
+  const title = report.ok ? (report.warnings.length ? 'Verified — with notes' : 'Verified — integrity intact') : 'Not verified — export rejected';
+  const sub = report.ok
+    ? 'Every cryptographic check above was recomputed locally on this device — and every one passed.'
+    : 'A check failed. Do not trust the contents of this export.';
+
+  let html = `<div class="banner ${cls}">${icon}<div>${title}<small>${esc(sub)}</small></div></div>`;
+  html += whatThisMeans(report.ok ? (report.warnings.length ? 'notes' : 'verified') : 'rejected');
+  html += metaPanel(sourceLabel, title);
+
+  if (!report.ok) {
+    html += `<div class="panel"><h2>What failed</h2>
+      <div class="hint">Raw error:</div><div class="mono" style="color:var(--bad)">${esc(report.error || 'unknown error')}</div></div>`;
+    html += provesPanel();
+    html += actions(true);
+    $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+    wire();
+    return;
+  }
+
+  html += `<div class="panel"><h2>Device key (Ed25519)</h2>
+    <div class="finger"><code id="fp">${esc(report.device_public_key || '')}</code>
+      <button class="btn copy" id="copyfp" type="button">Copy</button></div>
+    <div class="hint">${report.authorship === 'trusted'
+      ? 'Matches the key you supplied — authorship confirmed.'
+      : 'Taken from the export itself. To confirm authorship, compare it against the key published by the device owner (or paste that key above and re-verify).'}</div></div>`;
+
+  html += `<div class="panel"><h2>Contents</h2><div class="stats">
+    ${stat(report.events, 'Verified events')}
+    ${stat(report.failures, 'Recorded gaps')}
+    ${stat(report.buckets, 'Time buckets')}
+    ${stat(report.batches, 'Batches')}
+  </div></div>`;
+
+  const r = bundle.receipt_entry.receipt;
+  html += `<div class="panel"><h2>Disclosure record — the signed export receipt</h2><dl class="kv">
+    <dt>Authorization</dt><dd>${esc(r.auth_mode || 'not recorded (legacy export)')}</dd>
+    <dt>Exported at</dt><dd>${fmtBucket(r.time_bucket)}</dd>
+    <dt>Window</dt><dd>${r.window
+      ? esc(new Date(r.window.start_epoch_s * 1000).toISOString().replace('.000Z', 'Z')) + ' → ' + esc(new Date(r.window.end_epoch_s * 1000).toISOString().replace('.000Z', 'Z'))
+      : 'full retained history'}</dd>
+    <dt>Events in batch</dt><dd>${esc(String(r.batch_size))}</dd>
+    <dt>Artifact hash</dt><dd class="mono">${esc(report.artifact_hash || '')}</dd>
+    <dt>Receipt entry hash</dt><dd class="mono">${esc(report.entry_hash || '')}</dd>
+  </dl>
+  <div class="hint">This export itself left a signed, hash-chained receipt on the device — disclosures
+    are auditable. On the device, <span class="mono">export_verify</span> can confirm this receipt sits
+    in the tamper-evident log (and check a C2PA Content Credentials sidecar, if one was issued).</div></div>`;
+
+  if (report.warnings.length) {
+    html += `<div class="panel"><h2>Notes</h2><ul class="warns">${report.warnings.map((w) => {
+      const hint = warningHint(w) || bundleWarningHint(w);
+      return `<li>${esc(w)}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</li>`;
+    }).join('')}</ul></div>`;
+  }
+
+  html += renderBundleTimeline(bundle);
+  html += `<div class="panel"><h2>Privacy coarsening (by design)</h2><div class="hint" style="margin-top:0">
+    Times are grouped into ${esc(String((bundle.artifact.batches[0] && bundle.artifact.batches[0].buckets[0] && bundle.artifact.batches[0].buckets[0].time_bucket.size_s / 60) || 10))}-minute buckets${bundle.artifact.jitter_s > 0 ? ` and jittered ±${esc(String(bundle.artifact.jitter_s))}s (step ${esc(String(bundle.artifact.jitter_step_s))}s)` : ''}
+    to protect bystanders — the export proves <em>what</em> was witnessed without exposing precise timing. See spec/event_contract.md.</div></div>`;
+  html += provesPanel();
+  html += actions(true);
+  $('report').innerHTML = `<div class="fade-in">${html}</div>`;
+  wire();
+}
+
+// One-line context for export-bundle-specific notes.
+function bundleWarningHint(w) {
+  if (/self-attested/.test(w)) {
+    return 'Integrity is fully proven either way — this note is only about which device signed it. The device owner can publish their key fingerprint, or hand you the C2PA trust anchor for the same export.';
+  }
+  return null;
+}
+
+function renderBundleTimeline(bundle) {
+  const rows = [];
+  for (const batch of bundle.artifact.batches || []) {
+    for (const bucket of batch.buckets || []) {
+      for (const e of bucket.events || []) {
+        rows.push(`<tr><td>${fmtBucket(e.time_bucket)}</td>
+          <td><span class="tag">${esc(typeof e.event_type === 'string' ? e.event_type : JSON.stringify(e.event_type))}</span></td>
+          <td>${esc(e.zone_id || '—')}</td><td>${typeof e.confidence === 'number' ? e.confidence.toFixed(2) : '—'}</td></tr>`);
+      }
+      for (const f of bucket.failures || []) {
+        rows.push(`<tr><td>${fmtBucket(f.time_bucket)}</td>
+          <td><span class="tag fail">${esc(typeof f.failure_type === 'string' ? f.failure_type : JSON.stringify(f.failure_type))}</span></td>
+          <td colspan="2">${esc(f.details || 'recorded gap')}</td></tr>`);
+      }
+    }
+  }
+  if (!rows.length) return `<div class="panel"><h2>Timeline</h2><div class="hint">No events in this export's window.</div></div>`;
+  return `<div class="panel"><h2>Timeline — verified events</h2>
+    <table><thead><tr><th>Time bucket (UTC)</th><th>Event</th><th>Zone</th><th>Conf.</th></tr></thead>
+    <tbody>${rows.join('')}</tbody></table>
+    <div class="hint">Rendered from the artifact that was just cryptographically bound to the signed
+      receipt — not from any unverified summary. Gaps (times the device could not observe) are shown
+      inline, never hidden.</div></div>`;
 }
 
 // Reveal the verifier's real, already-computed results one check at a time,
