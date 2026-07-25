@@ -1,0 +1,4 @@
+# Never commit real broker credentials, recorded media, or the compiled model.
+.env
+media/
+config/model_cache/

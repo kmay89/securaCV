@@ -89,15 +89,10 @@
         "source": "ha-community"
       },
       {
-        "slug": "go2rtc",
-        "name": "go2rtc",
-        "why": "camera discovery/restreaming (config.yaml go2rtc_discovery / go2rtc_url)",
-        "source": "ha-community"
-      },
-      {
-        "slug": "frigate",
+        "slug": "ccab4aaf_frigate",
         "name": "Frigate NVR",
-        "why": "the recommended camera detection path (config.yaml mode: frigate)",
+        "repository": "https://github.com/blakeblackshear/frigate-hass-addons",
+        "why": "the recommended camera-detection path (config.yaml mode: frigate). go2rtc \u2014 camera restreaming/discovery \u2014 is built INTO Frigate; it is not a separate add-on, so it is configured in the Frigate config, not installed.",
         "source": "ha-community"
       }
     ],
@@ -162,6 +157,12 @@
         "file": "docs/blueprints/securacv_hue_alert_light.yaml",
         "name": "hue alert light"
       }
+    ],
+    "frigate_config": [
+      {
+        "file": "homeassistant/frigate/config.yaml",
+        "name": "config"
+      }
     ]
   },
   "provisioning": {
@@ -179,6 +180,7 @@
       "privacy_witness_kernel/config.yaml",
       "homeassistant/lovelace/*.yaml",
       "homeassistant/automations/*.yaml",
+      "homeassistant/frigate/*.yaml",
       "docs/blueprints/*.yaml",
       "canary-local/devices/hub_image_pins.json"
     ]
