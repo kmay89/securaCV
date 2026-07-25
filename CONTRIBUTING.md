@@ -113,6 +113,25 @@ Every non-trivial PR **must** include:
 
 PRs without these will not be reviewed.
 
+## Licensing & provenance of contributions
+
+The legal canon is [`docs/LEGAL.md`](docs/LEGAL.md); the short version:
+
+- **Inbound = outbound.** By submitting a contribution you license it
+  under **Apache-2.0**, the same license the project grants out
+  (Apache-2.0 §5). You keep your copyright — there is no CLA and no
+  copyright assignment, on purpose.
+- **Sign your commits off** (`git commit -s`) on non-trivial PRs — the
+  [Developer Certificate of Origin 1.1](https://developercertificate.org/)
+  is your on-record statement that you have the right to submit the work.
+- **Only submit what you may submit.** No employer-owned code without
+  permission, no copied code without a compatible permissive license and
+  attribution intact. The dependency gate is permissive-only (no
+  GPL/AGPL/EUPL in-tree) and CI enforces it.
+- **AI-assisted work is your work.** Same certificate, same standard —
+  you vouch for its provenance. This project is built with AI assistance
+  in the open; the rule applies to the maintainers first.
+
 ## Issue Templates
 
 When reporting regressions or drift, use the structured issue forms:

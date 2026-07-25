@@ -48,6 +48,18 @@ preconditions part of the plan instead of a surprise in someone else's workflow 
   every button, when to press it, when not to, the three failures that have cost
   real time, and the invariants CI holds up so a red run makes sense. Linked from
   the docs index, `CLAUDE.md`, and `AGENTS.md`.
+### Home Assistant — a Philips Hue bulb becomes an alert beacon
+
+A new importable blueprint,
+[`docs/blueprints/securacv_hue_alert_light.yaml`](docs/blueprints/securacv_hue_alert_light.yaml),
+drives any color light HA controls (Philips Hue is the reference setup) as a
+silent alert signal for a Canary: critical events — tamper, smoke/CO heard,
+witness-chain failure — snapshot the light, pulse it red, and hold solid red
+until the sensors clear; the all-clear blinks green and restores the light's
+previous state, and a device going offline gives three gentle amber pulses.
+No firmware or integration changes — it rides the binary sensors the HA
+integration already exposes. Referenced from the setup guide (Step 5) and
+picked up by the hub image catalog.
 
 ### Release pipeline — three silent failures made loud, and guarded
 

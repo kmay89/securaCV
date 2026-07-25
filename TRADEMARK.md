@@ -9,9 +9,11 @@ product. It follows the pattern that healthy open-hardware ecosystems
 may use freely, and primary marks by simple public grant.**
 
 The marks covered: the **SecuraCV** name, the **SecuraCV logo**, and the
-**canary mascot** (owned by Errer Labs). The plain English word "canary" is
-nobody's property, ours included — we claim it only in combination, as in
-"SecuraCV Canary."
+**canary mascot** (owned by Errer Labs). "Canary" is a common word, but note
+that others hold trademark rights in "CANARY" for security cameras; we use
+it only in combination, as "SecuraCV Canary," and are reviewing our
+long-term naming. Third parties should not rely on this document as
+clearance to use "Canary" for camera products.
 
 ## 1. What never needs permission
 

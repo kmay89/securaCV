@@ -54,6 +54,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - Onboarding flows: [multiple Canaries](onboarding_multiple_canaries.md) · [the unified wizard](onboarding_unified_wizard.md) · [workflow evaluation](onboarding_workflow_evaluation.md)
 - [The one-flash Pi hub (design)](design/raspberry_pi_hub_flashing.md) — RFC: type Wi-Fi, write the card, boot a self-healing Home Assistant hub — built on HAOS so it never rots
 - [Hub hardware-validation runbook](hub_validation_runbook.md) — the one-Pi-5 session that gates a tagged flasher release: write/read-back, Wi-Fi seed, USB-C gadget, account-restore mechanism
+- [The Hub as network witness (concept)](design/hub_network_witness.md) — CONCEPT, no code: a Hub-hosted DNS witness/shield — see which devices phone home, mute them per-device, verify the fleet's self-manifests over LAN; counters-not-logs by invariant, engine research (Pi-hole vs blocky) recorded
 
 </details>
 
@@ -74,6 +75,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 
 - [Getting started with Canaries](getting_started_canary.md) — first device, end to end
 - [Hardware guides & BOMs](hardware/README.md) — build plans, bring-up benches, enclosures, per-device guides
+- [Board ownership research](board_market_research.md) — installed-base numbers (ESP32 vs Pi vs Arduino vs the rest) and which boards deserve firmware first; names the classic ESP32 (ESP32-CAM / WROOM-32) as the highest-value next port
 - [Firmware OTA](firmware_ota.md) — signed pull-updates with rollback
 - [Parity by architecture](FLEET_PARITY.md) — how a fleet-wide capability (like the `/api/fleet` self-report) lives in one host-tested `common/` core so one edit reaches every board, never a per-board copy-paste
 - [Which button do I press?](RELEASE_BUTTONS.md) — the operator's index: every release button, when to press it, when not to, and the three failures that cost us time (no signing key, a dark flasher, an app version that already shipped)
@@ -157,6 +159,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - **Research:** [bitchat protocol](research/bitchat_protocol_review.md) · [display market](research/display_market_research.md) · [harm-reduction prior art](research/harm_reduction_prior_art.md)
 - **Strategy series (01–17):** [strategy/README](strategy/README.md)
 - **Ecosystem & branding:** [brand & positioning](BRAND.md) — the canonical "the Canary" positioning, the one-line promise, and who we learn from · [trademark & branding policy](../TRADEMARK.md) · [trademark grants registry](trademark-grants.md) — the free "Works with SecuraCV" badge, the "… for SecuraCV" naming rule, and the public record of primary-mark grants (strategy doc 19 §5)
+- **Legal:** [legal posture — copyright, licensing & the rules](LEGAL.md) — the canonical copyright line, Apache-2.0 rationale, inbound=outbound + DCO, the trademark moat strategy, claims-discipline rules, and the counsel punch list · [encryption & export note](ENCRYPTION.md)
 - **Marketing:** [launch posts](marketing/launch_posts.md)
 
 </details>

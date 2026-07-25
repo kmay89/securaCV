@@ -450,3 +450,38 @@ any platform.
   something each matrix job races to write with churning asset-id links. And
   give every release upload a retry (Principle 3 — prove the bundle, and here,
   prove the *manifest*, before it counts as published).
+
+### 2026-07-25 — The Flasher shipped unsigned while the Lab had the signing scaffold; and a loadable dylib in Resources/ is a notarization trap
+
+- **Symptom:** the macOS Flasher had no Apple code-signing or notarization at
+  all — `desktop-flasher-release.yml` passed only the Tauri *updater* keys
+  (`TAURI_SIGNING_*`) to tauri-action, no `APPLE_*` — so every build shipped
+  unsigned and users had to `xattr -dr com.apple.quarantine` on first launch.
+  The Lab (`desktop-release.yml`) already had the opt-in `ENABLE_MACOS_SIGNING`
+  scaffold; the Flasher — the app people actually run to flash hardware — never
+  got it.
+- **Cause:** the signing scaffold was added to one target and not generalized to
+  the other (the exact anti-pattern this file exists to stop). Separately, the
+  Flasher bundles a loadable `libusb-1.0.0.dylib` (the rpiboot sidecar needs it),
+  declared under `bundle.resources` → copied into `Contents/Resources/`. Tauri
+  signs the app, the `externalBin` sidecars, and frameworks — but **not** an
+  arbitrary dylib in Resources. Notarization rejects any unsigned nested Mach-O,
+  so the moment signing was switched on the Flasher would have failed
+  notarization on libusb, with a confusing per-binary error.
+- **Fix:** gave the Flasher the same opt-in signed/unsigned split as the Lab
+  (`ENABLE_MACOS_SIGNING` var + the six `APPLE_*` secrets, honoring the
+  "define no `APPLE_*` keys when off" gotcha), and moved libusb from
+  `bundle.resources` to **`bundle.macOS.frameworks`** so Tauri copies it to
+  `Contents/Frameworks/` **and code-signs it** with the app's Developer ID under
+  the hardened runtime; the rpiboot `install_name_tool` re-point now targets
+  `@executable_path/../Frameworks/libusb-1.0.0.dylib`. Runbook: `desktop/SIGNING.md`.
+  The switch stays OFF until a `dry_run:true` build proves notarization passes
+  (Principle 3 / 9 — the credential gates the *upload*, not the *build*, and a
+  dry-run still signs + notarizes locally in CI).
+- **Applies to:** every app target that bundles a third-party dylib or helper
+  (the Lab if it ever gains one; iPhone / iPad / tvOS / Mac). A loadable Mach-O
+  must live somewhere the bundler signs it — `Frameworks/` (or an `externalBin`
+  sidecar), never `Resources/` — or notarization fails on it. And when you add a
+  signing/release capability to one target, generalize it to the siblings the
+  same day: a scaffold on one app and not the app users actually run is a gap
+  waiting for the worst day to surface.

@@ -313,6 +313,14 @@ button.flash-map-key:hover { color: var(--text); }
 
 /* ── WiFi chooser (confirm card) ───────────────────────────────────────── */
 .flash-wifi { margin: 16px 0 4px; border-top: 1px solid var(--edge); padding-top: 14px; }
+/* "Using your saved Wi-Fi X" — makes type-once visible instead of a silent pre-fill. */
+.flash-wifi-saved {
+  display: flex; gap: 8px; align-items: baseline; margin: 10px 0 2px;
+  border: 1px solid rgba(67,160,71,0.32); background: rgba(67,160,71,0.09);
+  border-radius: 12px; padding: 9px 12px; color: #cfe9d0; font-size: 13.5px; line-height: 1.45;
+}
+.flash-wifi-saved-i { color: #7CFF9B; font-weight: 700; flex: none; }
+.flash-wifi-saved strong { color: #dff1e0; font-weight: 640; }
 .flash-wifi-inputs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .flash-wifi-inputs input {
   flex: 1; min-width: 180px; background: #0c0c0d; border: 1px solid var(--edge);
