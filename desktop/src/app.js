@@ -640,12 +640,33 @@ function renderProducts() {
   // board, your network, or this app is broken".
   if (state.manifestError && !state.manifest) {
     const pinned = releaseTagFromManifestUrl(state.catalog.manifest_url);
-    $("pick-sub").textContent = pinned
-      ? `Images for your ${state.chip} — but this build is pinned to firmware ` +
-        `release ${pinned}, which has no published images (${state.manifestError}). ` +
-        `Install a local file under Advanced until that release is cut.`
-      : `Images for your ${state.chip} — the firmware manifest is unreachable ` +
-        `(${state.manifestError}). Install a local file under Advanced.`;
+    // A pinned URL that didn't load does NOT prove the release is missing: the
+    // machine may be offline, or DNS/TLS may have failed, in which case telling
+    // someone to "wait for the release to be cut" sends them to look at the
+    // wrong thing. The Rust command distinguishes the two (see fetch_manifest:
+    // an HTTP status means the server answered), so only claim the release is
+    // uncut when we actually got a status back.
+    const status = /\bHTTP (\d{3})\b/.exec(state.manifestError);
+    if (status && pinned) {
+      $("pick-sub").textContent =
+        `Images for your ${state.chip} — but this build is pinned to firmware ` +
+        `release ${pinned}, and that release has no published images ` +
+        `(HTTP ${status[1]}). Install a local file under Advanced until it is cut.`;
+    } else if (status) {
+      $("pick-sub").textContent =
+        `Images for your ${state.chip} — the firmware manifest returned HTTP ` +
+        `${status[1]}. Install a local file under Advanced.`;
+    } else {
+      // "didn't load" rather than "couldn't reach": with no HTTP status this is
+      // either a transport failure OR a manifest that arrived malformed, and the
+      // second one did reach us.
+      $("pick-sub").textContent =
+        `Images for your ${state.chip} — the firmware manifest didn't load ` +
+        `(${state.manifestError}). ` +
+        (pinned ? `This build is pinned to firmware release ${pinned}; if that ` +
+                  `release exists, the images appear once you're back online. ` : "") +
+        `Install a local file under Advanced.`;
+    }
   } else {
     $("pick-sub").textContent = `Images built for your ${state.chip}:`;
   }
