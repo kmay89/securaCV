@@ -11,11 +11,15 @@ tiers & scope), [firmware/boards/boards.json](../firmware/boards/boards.json)
 
 ## TL;DR
 
-The numbers say we are already on the right horse. The ESP32 family's
-installed base (~2.5 **billion** chips) is roughly 30× the entire Raspberry
-Pi board line (~75M) and two orders of magnitude beyond official Arduino
-(~10M Unos), and it is the only family in the list that natively covers all
-three of our witness pillars: camera, Wi-Fi CSI, and cheap radios. The one
+The numbers say we are already on the right horse. The ESP32 family has
+shipped ~2.5 **billion** chips/modules — a different unit than the Raspberry
+Pi board line (~75M boards) or official Arduino (~10M Unos), since much of it
+is soldered into finished products; but even the owner-accessible slice
+(ESP32-CAM, DevKits, NodeMCU-32, D1 Mini, XIAO — the boards every 2025
+ESPHome/Home Assistant guide assumes) is by every available proxy the
+largest repurposable dev-board population in the hobby, and ESP32 is the
+only family in the list that natively covers all three of our witness
+pillars: camera, Wi-Fi CSI, and cheap radios. The one
 big gap in our tree is the **classic ESP32 (WROOM-32 / ESP32-CAM)** — the
 single most-owned camera-capable dev board in the world — and that should be
 the next port. Raspberry Pi and Arduino AVR are better served as *hosts* and
@@ -27,7 +31,7 @@ the next port. Raspberry Pi and Arduino AVR are better served as *hosts* and
 
 | Platform | Cumulative units | What the number means | Camera? | Wi-Fi (CSI)? | Fit for witness role |
 |---|---|---|---|---|---|
-| **ESP32 family (all variants)** | **~2.5B chips/modules** (early 2026; passed 1B in 2023) | Chips shipped by Espressif across ESP32/S2/S3/C3/C6/H2 | ✅ (S3, S2, classic) | ✅ native CSI | **Ideal — already our platform** |
+| **ESP32 family (all variants)** | **~2.5B chips/modules** (early 2026; passed 1B in 2023) | Chips shipped by Espressif across ESP32/S2/S3/C3/C6/H2 — includes modules soldered into products, so not directly comparable to the board counts below; no public split isolates owner-accessible dev boards | ✅ (S3, S2, classic) | ✅ native CSI | **Ideal — already our platform** |
 | **Raspberry Pi (SBCs)** | ~75M boards (FY2025 results; 61M in early 2024) | Linux single-board computers, all models | ✅ (CSI-2 cam, USB) | ❌ (no ESP-style CSI; Linux Wi-Fi) | Host/server lane, not MCU firmware |
 | **Raspberry Pi Pico / RP2040 / RP2350** | ~10M+ (≈4M Picos by mid-2024; 5.7M RP chips in 2024 alone, 8.4M semis in FY2025) | MCU chips + Pico boards | ❌ | ❌ (Pico W: CYW43, no CSI) | Weak — no camera, no CSI, wireless only on W variants |
 | **Arduino (official)** | ~10M Unos lifetime; ~10M+ active users across the ecosystem | Classic AVR Uno has no radio; ecosystem is mostly clones | ❌ | ❌ (Uno R4 WiFi's radio *is* an ESP32-S3) | Non-goal as hardware; we already use the Arduino *core* as our framework |
@@ -67,8 +71,15 @@ particular:
   they discover SecuraCV.
 - The **ESP32-WROOM-32 DevKit** is the same story without the camera — the
   single most common "an ESP32" that people own.
-- Classic ESP32 supports **Wi-Fi CSI** and the camera driver, so a port
-  keeps PEEK + CSI + mic — a real Canary, not a stripped one. The 4MB flash
+- Classic ESP32 supports **Wi-Fi CSI** and the camera driver, so a stock
+  ESP32-CAM port keeps PEEK + CSI — the two sensing pillars that justify the
+  priority. **Mic is not stock**: neither the ESP32-CAM nor the WROOM DevKit
+  has an onboard microphone (our acoustic path is wired to the XIAO
+  ESP32-S3 Sense's built-in PDM mic, with the pins overridable via the
+  `MIC_PIN_CLK`/`MIC_PIN_DATA` build flags in
+  `firmware/canary/lib/securacv_audio/`), so mic support on classic ESP32
+  means an external PDM/I2S mic plus a documented pin map — an optional
+  add-on, not part of the baseline port. The 4MB flash
   parts fit our `partitions_ota.csv` (1.9MB A/B) dev/release levels; only
   the `full` level (8MB, BLE+mesh) would be out of reach, which our
   level system already expresses.
@@ -94,8 +105,9 @@ overlap — all well-trodden territory.
 3. **ESP32-C6 — keep.** Smaller owned base today but the strategic radio
    set (Thread/Zigbee/Matter, Wi-Fi 6); already in tree via XIAO + Waveshare.
 4. **NEW: classic ESP32 port — `esp32cam-ai-thinker` and/or
-   `esp32-wroom-devkit`.** Largest owned base we don't serve; full witness
-   feature set minus the 8MB `full` level; enters compile-tested per the
+   `esp32-wroom-devkit`.** Largest owned base we don't serve; camera + CSI
+   witness set on stock hardware (mic only via an external PDM/I2S part;
+   the 8MB `full` level stays out of reach); enters compile-tested per the
    existing tier rules. This is the highest-value next port.
 5. **Raspberry Pi (SBC): support as a host, not a firmware target.**
    Document the "run canary-vision / Home Assistant / viewer on a Pi" story;
