@@ -795,7 +795,9 @@ function nvsWr32(page, o, v) {
 export function buildNvsSeedImage(opts, partitionSize) {
   const wifi = opts && opts.wifi;
   const u8s = (opts && opts.u8) || {};
+  const u16s = (opts && opts.u16) || {};
   const u32s = (opts && opts.u32) || {};
+  const strs = (opts && opts.strings) || {}; // string entries (dev_id, mqtt_*)
   const enc = new TextEncoder();
   let ssidB = null, passB = null;
   if (wifi) {
@@ -806,12 +808,14 @@ export function buildNvsSeedImage(opts, partitionSize) {
     if (passB.length !== 0 && (passB.length < 8 || passB.length > 63))
       throw new Error("WiFi password must be 8-63 characters (or empty for an open network)");
   }
-  for (const [k, v] of [...Object.entries(u8s), ...Object.entries(u32s)]) {
+  for (const [k, v] of [...Object.entries(u8s), ...Object.entries(u16s), ...Object.entries(u32s)]) {
     if (!k || k.length > 15) throw new Error(`NVS key "${k}" must be 1-15 chars`);
     if (!Number.isInteger(v) || v < 0) throw new Error(`NVS value for "${k}" must be a non-negative integer`);
   }
   for (const v of Object.values(u8s)) if (v > 0xff) throw new Error("u8 value out of range");
+  for (const v of Object.values(u16s)) if (v > 0xffff) throw new Error("u16 value out of range");
   for (const v of Object.values(u32s)) if (v > 0xffffffff) throw new Error("u32 value out of range");
+  for (const k of Object.keys(strs)) if (!k || k.length > 15) throw new Error(`NVS key "${k}" must be 1-15 chars`);
   if (!(partitionSize >= NVS_PAGE)) throw new Error("nvs partition too small");
 
   const img = new Uint8Array(partitionSize).fill(0xff);
@@ -902,7 +906,11 @@ export function buildNvsSeedImage(opts, partitionSize) {
       writeInt("wifi_en", 0x01, 1, 1); // Preferences putBool stores a u8
     }
   }
+  // String entries (dev_id, mqtt_*) — type 0x21, byte-identical to the native
+  // app's provisioning.rs writer.string(); NVS is key-indexed so order is free.
+  for (const [k, v] of Object.entries(strs)) writeString(k, enc.encode(String(v)));
   for (const [k, v] of Object.entries(u8s)) writeInt(k, 0x01, 1, v);
+  for (const [k, v] of Object.entries(u16s)) writeInt(k, 0x02, 2, v); // Preferences putUShort
   for (const [k, v] of Object.entries(u32s)) writeInt(k, 0x04, 4, v);
 
   // Page header: ACTIVE, seq 0, version 0xFE (v2); CRC over bytes 4..27.
@@ -918,6 +926,43 @@ export function buildNvsSeedImage(opts, partitionSize) {
 // existing caller and test goes through the general builder above.
 export function buildNvsWifiImage(ssid, pass, partitionSize) {
   return buildNvsSeedImage({ wifi: { ssid, pass } }, partitionSize);
+}
+
+// Turn the optional broker/identity fields into buildNvsSeedImage `strings`/`u16`
+// entries the firmware's runtime_config reads back — the SAME namespace ("securacv"),
+// keys, and NVS types the native app writes (desktop/src-tauri/src/provisioning.rs:
+// build_nvs), so a board provisioned in the browser and one provisioned natively are
+// equivalent. Each field is optional: an empty device-id is omitted, and the MQTT
+// keys are written as a unit only when a broker host is given. Validates like native
+// (throws on a bad value); pure + host-tested. The parity of the KEY SET with native
+// is drift-gated in tests/desktop_parity.test.js.
+export function mqttProvisioningToNvs(p = {}) {
+  const strings = {}, u16 = {};
+  const enc = new TextEncoder();
+  const blen = (v) => enc.encode(v).length;
+  const str = (v) => (v == null ? "" : String(v));
+
+  const dev = str(p.deviceId).trim();
+  if (dev) {
+    if (blen(dev) > 32) throw new Error("Device ID must be 1–32 bytes");
+    strings.dev_id = dev;
+  }
+  const host = str(p.mqttHost).trim();
+  if (host) {
+    if (blen(host) > 63) throw new Error("MQTT broker host must be 1–63 bytes");
+    strings.mqtt_host = host;
+    const port = Number(p.mqttPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      throw new Error("MQTT port must be a whole number 1–65535");
+    u16.mqtt_port = port;
+    const user = str(p.mqttUser);
+    if (blen(user) > 32) throw new Error("MQTT username must be ≤32 bytes");
+    if (user) strings.mqtt_user = user;
+    const pass = str(p.mqttPass);
+    if (blen(pass) > 64) throw new Error("MQTT password must be ≤64 bytes");
+    if (pass) strings.mqtt_pass = pass;
+  }
+  return { strings, u16 };
 }
 
 // The standard WiFi-QR payload (WPA assumed unless the password is empty).

@@ -1,0 +1,159 @@
+# The Witness Reading Room — log viewer + verifier — scope
+
+Status: **Draft (scoping RFC)** — no code yet; this document decides what to
+build, on which foundations, in what order.
+Intended Status: Informative (product + architecture scope)
+Last Updated: 2026-07-25
+Companion docs: [c2pa_export.md](c2pa_export.md) (the C2PA layer this views),
+[`viewer/`](../../viewer/) (the existing offline verifier this extends),
+[evidence_lifecycle.md](../evidence_lifecycle.md).
+
+> One sentence: one application where a person — owner, trustee, court clerk,
+> journalist — can **verify everything** about a witness record (hash chain,
+> signatures, export receipts, C2PA Content Credentials) and then actually
+> **read it**: a timeline of events, the disclosure audit trail, and the
+> chain's health, with the verification verdict always on screen.
+
+## 1. Why this tool
+
+Verification today is real but *terminal-shaped* (`export_verify`,
+`log_verify`, `envelope_verify`), and reading the data is scattered: the HA
+timeline card shows live events, the offline HTML viewer verifies an
+envelope but barely displays it, and an export bundle — the thing you hand
+to a third party — has **no reader at all**. The moment C2PA sidecars ship
+(PR #1247), the gap widens: we produce evidence any Content Credentials tool
+can check, but offer no first-party place to *look at* what was disclosed.
+
+The unit of trust this tool serves: **"here is a file someone gave me — is
+it real, and what does it say?"** That question must be answerable by
+someone who is not the device owner, has no toolchain, and may have no
+internet.
+
+## 2. What already exists (build on it, don't duplicate it)
+
+| Piece | What it gives us | Gap |
+|---|---|---|
+| `viewer/evidence_viewer.html` + `verify_core.js` | Offline, dependency-free, single-file browser verifier: Ed25519 + full hash chain + canonical JSON, **byte-parity-tested against the Rust verifier** (`tests/fixtures/envelope/*`) | Verifies, but barely *shows*; no export-bundle browsing; no C2PA awareness |
+| `export_verify --c2pa-manifest` (Rust) | Full verification incl. C2PA `Trusted` + witness cross-binding | CLI only |
+| Event API (`witness_api`): `/events`, `/events/latest`, `/digest`, `/status`, `/export/bundle`, `POST /verify` | Token-gated live access to the running kernel | No UI consumes it except HA |
+| Lovelace timeline card | Live ✓-badged events in Home Assistant | HA-only; not for third parties |
+| `desktop/` (Tauri: Flasher/Lab) | Proven native-app patterns, Rust core reuse | No viewer role today |
+
+## 3. Product shape: one reading room, three surfaces
+
+The same mental model everywhere: **verdict bar on top, record below.**
+Verdict = three lights, each honest about what was and wasn't checked:
+
+1. **Chain** — receipts hash-chained, signatures valid under the device key
+2. **Binding** — file bytes match the receipt the chain committed to
+3. **Content Credentials** — C2PA sidecar validates (and to which anchor)
+
+### Surface A (P1): the offline Reading Room — extend `evidence_viewer.html`
+
+Target user: the person handed `export.json` (+ `export.json.c2pa` +
+`device_ca.pem`). Works from a double-clicked HTML file, air-gapped,
+nothing to install. Scope:
+
+- **Inputs**: drag-drop / file-pick the bundle, optional sidecar, optional
+  anchor PEM, optional device public key — with a "what are these files?"
+  explainer for non-technical recipients.
+- **Verify** (reusing `verify_core.js`, extended): export-bundle receipt +
+  artifact binding (already parity-serialized in `verify_core.js`), chain
+  checks, and the C2PA sidecar's **witness-binding consistency** (parse the
+  JUMBF far enough to surface the `org.securacv.witness` assertion and
+  check it names this bundle's receipt + artifact hash).
+- **Honest C2PA limit in v1**: the browser does *not* do full COSE/X.509
+  validation (that would mean vendoring the CAI WASM SDK or hand-rolling
+  cert-chain crypto — the latter is banned, the former breaks the
+  single-file zero-dependency property that makes this viewer trustworthy
+  and auditable). The C2PA light in v1 shows **"present, binding consistent
+  — signature verifiable with `export_verify` or any Content Credentials
+  tool"**, never a fake green. Full in-browser C2PA is a P3 decision
+  (§6).
+- **Read** — the new half. Three views over the decoded bundle:
+  - **Timeline**: events grouped by 10-minute bucket → zone → event type,
+    with confidence; failures/gaps rendered inline, not hidden. (The
+    privacy coarsening is a *feature* to display: "times shown are
+    10-minute buckets with deliberate jitter" as a first-class caption.)
+  - **Disclosures**: the export-receipt trail — when, under which
+    authorization (`self_export` vs `break_glass`), window, artifact hash —
+    the "who has seen what" audit.
+  - **Chain health**: entry counts, checkpoint coverage, key fingerprint
+    (randomart, matching the serial console's `l` banner), kernel/ruleset
+    versions.
+- **Ship it**: stays a committed, built single file (`build.mjs` template
+  pipeline + parity tests as today), distributed via the Lab and linked
+  from every export ("view this file at …" printed by `export_events`).
+
+### Surface B (P2): live viewer on the hub — feed the same UI from `witness_api`
+
+Same reading-room UI, but pointed at the running kernel instead of a file:
+the event API already serves `/events`, `/digest`, `/status`,
+`/export/bundle`, and `POST /verify`. P2 packages the Surface-A views as a
+small SPA served locally (token-gated, LAN-only, same zero-external-fetch
+CSP as the website), adding: live tail, "verify now" button, and one-click
+"export + C2PA + download the three files" so the handoff to a third party
+is a single gesture.
+
+### Surface C (P2/P3): native desktop for full-fat verification
+
+A `desktop/`-family Tauri app (or a mode of the existing Lab app — decision
+in §6) that reuses the **Rust** kernel + `c2pa` crate directly: full C2PA
+`Trusted` validation with anchor management, opening a `witness.db`
+read-only (seed-derived SQLCipher key) for owners, and batch-verifying a
+folder of scheduled exports. This is where the C2PA light goes fully green
+offline with no browser limitations.
+
+## 4. Non-goals (all surfaces)
+
+- **No raw media.** The reading room reads *semantic events*; PEEK frames
+  and sealed-vault evidence stay in their existing quorum-gated flows.
+- **No cloud, no accounts, no telemetry.** Surface A runs from a local
+  file; Surface B is LAN + token; nothing phones home (Principle 2).
+- **No editing.** Read-only by construction; the only "write" anywhere is
+  Surface B's export button, which goes through the normal receipted path.
+- **No second verifier implementation.** Browser surfaces extend
+  `verify_core.js` (parity-pinned); native surfaces call the Rust kernel.
+  Nothing new interprets the formats by hand.
+
+## 5. Suggested build order
+
+1. **P1a — bundle reader**: `evidence_viewer.html` accepts an export
+   bundle, shows verdict bar + Timeline + Disclosures views. (Verification
+   logic for bundles already exists in `verify_core.js`; this is mostly UI
+   + the bundle→view decode.)
+2. **P1b — C2PA awareness**: sidecar input, witness-binding consistency
+   check, honest C2PA light, `export_events` prints the "view this at…"
+   pointer.
+3. **P2 — live mode**: same views over `witness_api`, served token-gated
+   from the hub container; one-gesture verified export.
+4. **P3 — native full verification** per §6 decisions.
+
+Each step is independently shippable and none blocks the others' users.
+
+## 6. Open questions (decide before P2/P3)
+
+1. **Native home**: new Tauri app vs. a "Viewer" tab in the existing Lab
+   desktop app vs. extending `canary-vision`? Leaning: Lab tab — the
+   Flasher/Lab already owns "the native SecuraCV app on your desk" and a
+   third app dilutes that.
+2. **Full C2PA in the browser**: vendor the CAI `c2pa-js` WASM (≈ MBs,
+   ends the single-file zero-dep era, but CSP-safe since it's embedded) vs.
+   keep full validation native-only. Leaning: keep the single-file viewer
+   pure; revisit if third-party recipients actually ask for in-browser
+   COSE verification rather than using public CC tools.
+3. **Bundle format hint**: should `export_events` embed a tiny
+   `viewer_hint` field (viewer URL + minimum version) in the bundle so any
+   future reader can self-describe? (Spec change — needs the same
+   invariants review as any envelope field.)
+
+## 7. Definition of done (P1)
+
+- A non-technical recipient can open one HTML file, drop in the three
+  export files, and see: green/amber verdict lights with plain-language
+  explanations, the event timeline, and the disclosure trail — all offline.
+- Verdict semantics are byte-parity-tested against `export_verify` on the
+  same fixtures (extend `tests/fixtures/` with a bundle + sidecar pair,
+  including tamper cases).
+- The viewer still builds reproducibly (`node viewer/build.mjs` idempotent
+  in CI) and still contains zero external fetches.

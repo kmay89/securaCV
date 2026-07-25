@@ -1,0 +1,78 @@
+# securaCV hub — curated Frigate config (the pre-bake recipe)
+#
+# This is the default Frigate configuration the hub ships with. The full-stack
+# seed places it at the Frigate add-on's config path
+# (/addon_configs/ccab4aaf_frigate/config.yml) so a freshly-flashed hub boots
+# with Frigate already wired to Mosquitto and securaCV — no add-on hunting.
+#
+# go2rtc is BUILT INTO Frigate (it is not a separate add-on), so it's
+# configured here under `go2rtc:`, not installed separately.
+#
+# Detector note: this default uses the CPU detector, which works on a Pi but is
+# slow. For real-time detection use a Coral USB TPU (`type: edgetpu`) or a
+# dedicated NVIDIA Jetson running Frigate-TensorRT that publishes to this same
+# broker — see integrations/jetson-detector/. securaCV consumes Frigate over
+# MQTT, so it doesn't care which machine runs the detection.
+
+mqtt:
+  enabled: true
+  # `core-mosquitto` is the Mosquitto add-on's in-cluster hostname on HAOS.
+  host: core-mosquitto
+  port: 1883
+  topic_prefix: frigate
+  # Distinct client_id per Frigate instance: Mosquitto allows one connection per
+  # client_id, so a hub Frigate and a Jetson detector must differ or they kick
+  # each other off. (If you run BOTH, also give them distinct topic_prefixes and
+  # point securaCV's frigate.topic_prefix at each.)
+  client_id: frigate_hub
+  # The Frigate add-on injects these from its broker credentials; Frigate
+  # substitutes any {FRIGATE_*} placeholder from the environment at startup.
+  user: "{FRIGATE_MQTT_USER}"
+  password: "{FRIGATE_MQTT_PASSWORD}"
+
+detectors:
+  cpu:
+    type: cpu
+
+go2rtc:
+  streams: {}
+  # Cameras get added here as restreams, e.g.:
+  #   front_door:
+  #     - rtsp://USER:PASS@10.0.0.20:554/stream
+
+# securaCV is "claims, not recordings" — the hub emits semantic events, it does
+# NOT retain raw imagery by default. So BOTH recordings and snapshots are OFF:
+# detection and MQTT events still work fully, and no identifiable images are
+# stored. Turn either on ONLY if you deliberately accept storing raw imagery
+# (and use an NVMe/SSD if you do — continuous recording on an SD card is the
+# endurance failure this design fights). Retained imagery should ideally go
+# through the quorum-controlled vault, not sit on disk here.
+record:
+  enabled: false
+
+snapshots:
+  enabled: false
+
+# Track the same objects the securaCV kernel labels by default, so its witness
+# claims line up with what Frigate detects.
+objects:
+  track:
+    - person
+    - car
+    - dog
+    - cat
+
+# One disabled example so the config is valid out of the box. Add your camera's
+# RTSP URL, set `enabled: true`, and Frigate + securaCV pick it up automatically.
+cameras:
+  example_camera:
+    enabled: false
+    ffmpeg:
+      inputs:
+        - path: rtsp://USER:PASS@CAMERA_IP:554/stream
+          roles:
+            - detect
+    detect:
+      width: 1280
+      height: 720
+      fps: 5

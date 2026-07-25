@@ -90,8 +90,69 @@ any platform.
    **next firmware release is actually cut**. After adding a board, cut a
    release (one-click above) or it will never appear, no matter how correct
    the wiring is.
+12. **A button must know its own preconditions.** "Release the firmware" with no
+   signing key isn't a release, it's a 20-second failure in a different run with
+   the real consequence three inferences away. Preconditions the repo can check
+   belong in the plan, stated before anything is dispatched —
+   `release-targets.yml` carries `gate_var` + `gate_reason` for exactly this, and
+   `ota_key_state.py` answers the key question without needing the key.
+13. **The same fact in N files is N-1 chances to be wrong.** Each app states its
+   version three times (`tauri.conf.json` names the tag, `Cargo.toml` is what the
+   app tells the *user*) — and a guard covering two of the three is worse than
+   none, because it reads as covered. If a value must repeat, one script holds
+   them together: `desktop/scripts/check_app_versions.py`.
+14. **The two flashers do not share a frontend.** `canary-local/assets/` (browser)
+   and `desktop/src/` (desktop app) are separate UIs over the same catalog. A
+   user-facing diagnostic added to one leaves the other vague — fix both, or
+   half your users get the unhelpful version.
 
 ## Entries
+
+### 2026-07-25 — The whole pipeline was blocked on one missing key, and every button's answer to that was silence
+
+- **Symptom:** a maintainer opened the Flasher and every product read **"no
+  published release yet"**. Nothing was broken: the catalog pins
+  `fw-v<train>`, no `fw-v2.3.0` release existed, so the fetch 404'd. Underneath
+  that, `firmware-release.yml` had failed once, 20 seconds in, with
+  `OTA_SIGNING_KEY_PEM secret is not set` — and nothing anywhere connected those
+  three facts. The one-click button would have cheerfully dispatched the same
+  doomed run again; "Update everything" would have reported *releasing firmware*
+  while nothing shipped. The app's own footer said `v0.1.0` for a build released
+  as `0.2.2`, so even reporting the problem named a version that never existed.
+- **Cause:** every individual piece was correct and none of them talked. The key
+  guard fails in the *right* place but only after you press a button in a
+  different workflow; the flasher's "no release yet" copy can't tell "never
+  shipped" from "pinned to a tag nobody cut"; the version drift was invisible
+  because the guard checked two of three files and skipped the one users read;
+  and the ceremony script's own instructions omitted `flash.json`, so following
+  them exactly turned `canary-local` red on the next push.
+- **Fix:** make the preconditions part of the plan, and make every dead end name
+  itself.
+  - `firmware/scripts/ota_key_state.py` answers "is the signing key ready?" from
+    the committed public header alone — no secret needed, so any button, and any
+    human, can ask.
+  - `release-targets.yml` gained `gate_var: OTA_SIGNING_KEY_READY` +
+    `gate_reason`, so the master button reports firmware as **gated with the
+    ceremony inline** and still ships everything else. `gate_reason` exists
+    because the default gate text describes a repo *variable*, which would have
+    sent someone hunting a flag that was never the problem. Four new unit tests.
+  - `release-one-click.yml` **refuses** a firmware dispatch without the key
+    (it means "do exactly this", so skipping would be wrong), and warns when a
+    publish would overwrite an already-released app version.
+  - `desktop/scripts/check_app_versions.py` holds all three version files
+    together, for both apps, on every PR.
+  - Both flashers now name the pinned tag instead of shrugging.
+  - `setup_release_key.sh` prints the *complete* commit list (including the
+    regenerated `flash.json`), tells you to clear the clipboard after pasting a
+    master key, and explains the PEP 668 venv escape when `pip install
+    cryptography` is refused by a Homebrew Python — which is what actually
+    happened.
+  - `docs/RELEASE_BUTTONS.md`: one page saying which button, when, and when not.
+- **Applies to:** every button that fans out to another workflow. A launcher that
+  can't state why a target won't work is a launcher that turns a five-minute
+  ceremony into an afternoon of archaeology. Check the preconditions you *can*
+  check, before dispatching, and put the remediation in the message — not in a
+  doc the reader doesn't know exists yet.
 
 ### 2026-07-24 — A required store asset was missing, and the obvious gate for it would have failed for the wrong reason
 

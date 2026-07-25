@@ -78,6 +78,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Board ownership research](board_market_research.md) — installed-base numbers (ESP32 vs Pi vs Arduino vs the rest) and which boards deserve firmware first; names the classic ESP32 (ESP32-CAM / WROOM-32) as the highest-value next port
 - [Firmware OTA](firmware_ota.md) — signed pull-updates with rollback
 - [Parity by architecture](FLEET_PARITY.md) — how a fleet-wide capability (like the `/api/fleet` self-report) lives in one host-tested `common/` core so one edit reaches every board, never a per-board copy-paste
+- [Which button do I press?](RELEASE_BUTTONS.md) — the operator's index: every release button, when to press it, when not to, and the three failures that cost us time (no signing key, a dark flasher, an app version that already shipped)
 - [Release process & channels](RELEASE_PROCESS.md) — tags → releases; how the dev channel stays invisible to release devices
 - [USB evidence drive (design)](design/usb_evidence_drive.md) — the Canary as a read-only USB drive + drop-file signed updates
 - [USB onboarding (design)](design/usb_onboard.md) — "plug me in": consented HID help-launch, read-only drive, guided recovery/unsealing
@@ -110,6 +111,8 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Log verification](log_verify.md) — proving the chain, offline
 - [Timestamping](timestamping.md) — coarse time as a feature
 - [Sealed snapshot vault](sealed_snapshot_vault.md) · [scheduled exports](scheduled_exports.md)
+- [C2PA Content Credentials for exports (design)](design/c2pa_export.md) — implemented behind `c2pa-export`: `export_events --c2pa` signs an industry-standard sidecar manifest any Content Credentials tool can verify — keys derived from the device seed, reproducible device-local CA, fully offline, chain stays the root of trust
+- [The Witness Reading Room (scope)](design/witness_log_viewer.md) — scoping RFC for the log viewer + verifier: one app that verifies everything (chain, receipts, C2PA) *and* shows the record — timeline, disclosure audit, chain health; offline single-file first, live `witness_api` mode second, native full-fat verification third
 - [Vault operator UX & hardware-backed keys (v1.1 design)](design/vault_operator_ux_v1_1.md) — RFC: guided setup/enrollment, a `KeyStore` seam (file default; TPM/PKCS#11/FIDO2), and the request→approve→unseal flow — the crypto's already wired, this scopes the operator experience around it
 - [Database key rotation](db_key_rotation.md) · [post-quantum mode](pqc_mode.md)
 - [Identity & transport](identity_transport.md) — who speaks, on what wire
@@ -158,6 +161,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - **Research:** [bitchat protocol](research/bitchat_protocol_review.md) · [display market](research/display_market_research.md) · [harm-reduction prior art](research/harm_reduction_prior_art.md)
 - **Strategy series (01–17):** [strategy/README](strategy/README.md)
 - **Ecosystem & branding:** [brand & positioning](BRAND.md) — the canonical "the Canary" positioning, the one-line promise, and who we learn from · [trademark & branding policy](../TRADEMARK.md) · [trademark grants registry](trademark-grants.md) — the free "Works with SecuraCV" badge, the "… for SecuraCV" naming rule, and the public record of primary-mark grants (strategy doc 19 §5)
+- **Legal:** [legal posture — copyright, licensing & the rules](LEGAL.md) — the canonical copyright line, Apache-2.0 rationale, inbound=outbound + DCO, the trademark moat strategy, claims-discipline rules, and the counsel punch list · [encryption & export note](ENCRYPTION.md)
 - **Marketing:** [launch posts](marketing/launch_posts.md)
 
 </details>

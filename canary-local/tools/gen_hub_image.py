@@ -60,6 +60,7 @@ ADDON_CONFIG = REPO / "privacy_witness_kernel/config.yaml"
 LOVELACE_DIR = REPO / "homeassistant/lovelace"
 AUTOMATIONS_DIR = REPO / "homeassistant/automations"
 BLUEPRINTS_DIR = REPO / "docs/blueprints"
+FRIGATE_DIR = REPO / "homeassistant/frigate"
 
 # HA publishes the operating-system images as GitHub release assets under a
 # stable naming scheme; the URL is fully determined by (board, version).
@@ -218,20 +219,20 @@ def companion_addons() -> list[dict]:
                 "why": "the add-on auto-discovers it (config.yaml services: mqtt:want) and MQTT Discovery needs it",
             }
         )
-    if "go2rtc" in cfg:
-        companions.append(
-            {
-                "slug": "go2rtc",
-                "name": "go2rtc",
-                "why": "camera discovery/restreaming (config.yaml go2rtc_discovery / go2rtc_url)",
-            }
-        )
     if re.search(r"\bfrigate\b", cfg):
         companions.append(
             {
-                "slug": "frigate",
+                # The real Supervisor slug is ccab4aaf_frigate — NOT "frigate".
+                # It's a third-party store add-on, so its repository must be added
+                # before it can install.
+                "slug": "ccab4aaf_frigate",
                 "name": "Frigate NVR",
-                "why": "the recommended camera detection path (config.yaml mode: frigate)",
+                "repository": "https://github.com/blakeblackshear/frigate-hass-addons",
+                "why": (
+                    "the recommended camera-detection path (config.yaml mode: frigate). "
+                    "go2rtc — camera restreaming/discovery — is built INTO Frigate; it is not a "
+                    "separate add-on, so it is configured in the Frigate config, not installed."
+                ),
             }
         )
     return companions
@@ -356,6 +357,9 @@ def main() -> None:
             "dashboards": yaml_assets(LOVELACE_DIR, "dashboard"),
             "automations": yaml_assets(AUTOMATIONS_DIR, "automation"),
             "blueprints": yaml_assets(BLUEPRINTS_DIR, "blueprint"),
+            # The curated Frigate config the seed drops at the Frigate add-on's
+            # config path (/addon_configs/ccab4aaf_frigate/config.yml).
+            "frigate_config": yaml_assets(FRIGATE_DIR, "frigate config"),
         },
         "provisioning": {
             "wifi": (
@@ -379,6 +383,7 @@ def main() -> None:
                 "privacy_witness_kernel/config.yaml",
                 "homeassistant/lovelace/*.yaml",
                 "homeassistant/automations/*.yaml",
+                "homeassistant/frigate/*.yaml",
                 "docs/blueprints/*.yaml",
                 *(["canary-local/devices/hub_image_pins.json"] if pinned else []),
             ],

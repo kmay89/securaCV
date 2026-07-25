@@ -141,34 +141,32 @@ blueprint:
           mode: box
       default: 6
 
+# No `from:` guards on the critical triggers: a sensor returning from
+# unavailable straight to its alarming state (e.g. MQTT reconnecting while
+# a retained tamper alarm is still active) must fire too.
 trigger:
   - platform: state
     entity_id: !input tamper_entity
-    from: "off"
     to: "on"
     id: critical
 
   - platform: state
     entity_id: !input smoke_entity
-    from: "off"
     to: "on"
     id: critical
 
   - platform: state
     entity_id: !input co_entity
-    from: "off"
     to: "on"
     id: critical
 
   - platform: state
     entity_id: !input chain_entity
-    from: "on"
     to: "off"
     id: critical
 
   - platform: state
     entity_id: !input online_entity
-    from: "on"
     to: "off"
     for: !input offline_delay
     id: offline
@@ -185,72 +183,8 @@ action:
       # each drive their own beacon without clobbering each other.
       snapshot_scene_id: "{{ this.entity_id | replace('.', '_') }}_snapshot"
 
+  # ---- OFFLINE: three gentle amber pulses, then restore ----
   - choose:
-      # ---- CRITICAL: pulse red, hold red, green-blink + restore on clear ----
-      - conditions:
-          - condition: trigger
-            id: critical
-        sequence:
-          - service: scene.create
-            data:
-              scene_id: "{{ snapshot_scene_id }}"
-              snapshot_entities: !input alert_light
-
-          - repeat:
-              count: !input pulse_count
-              sequence:
-                - service: light.turn_on
-                  target:
-                    entity_id: !input alert_light
-                  data:
-                    rgb_color: [255, 0, 0]
-                    brightness: 255
-                    transition: 0
-                - delay:
-                    milliseconds: 700
-                - service: light.turn_on
-                  target:
-                    entity_id: !input alert_light
-                  data:
-                    rgb_color: [255, 0, 0]
-                    brightness: 40
-                    transition: 0
-                - delay:
-                    milliseconds: 700
-
-          - service: light.turn_on
-            target:
-              entity_id: !input alert_light
-            data:
-              rgb_color: [255, 0, 0]
-              brightness: 255
-
-          # Hold red until every configured sensor reads healthy again.
-          # Empty (unconfigured) inputs evaluate as healthy; a sensor that
-          # goes unavailable doesn't hold the light red forever — the
-          # offline signal covers reachability.
-          - wait_template: >-
-              {{ not is_state(tamper_entity, 'on')
-                 and not is_state(smoke_entity, 'on')
-                 and not is_state(co_entity, 'on')
-                 and not is_state(chain_entity, 'off') }}
-
-          # All clear: a moment of green, then back to whatever the light
-          # was doing before the alert.
-          - service: light.turn_on
-            target:
-              entity_id: !input alert_light
-            data:
-              rgb_color: [0, 190, 80]
-              brightness: 200
-              transition: 0
-          - delay:
-              seconds: 2
-          - service: scene.turn_on
-            target:
-              entity_id: "scene.{{ snapshot_scene_id }}"
-
-      # ---- OFFLINE: three gentle amber pulses, then restore ----
       - conditions:
           - condition: trigger
             id: offline
@@ -286,9 +220,89 @@ action:
             target:
               entity_id: "scene.{{ snapshot_scene_id }}"
 
+  # ---- CRITICAL: pulse red, hold red, green-blink + restore on clear ----
+  # Runs on a critical trigger — and ALSO after the offline branch above if
+  # a critical sensor went active during the amber pulses. mode: single
+  # would have silently dropped that trigger, and a retained alarm makes no
+  # further state transition to re-fire it, so we re-check here instead of
+  # letting it fall on the floor.
+  - if:
+      - condition: or
+        conditions:
+          - condition: trigger
+            id: critical
+          - condition: template
+            value_template: >-
+              {{ (tamper_entity | length > 0 and is_state(tamper_entity, 'on'))
+                 or (smoke_entity | length > 0 and is_state(smoke_entity, 'on'))
+                 or (co_entity | length > 0 and is_state(co_entity, 'on'))
+                 or (chain_entity | length > 0 and is_state(chain_entity, 'off')) }}
+    then:
+      - service: scene.create
+        data:
+          scene_id: "{{ snapshot_scene_id }}"
+          snapshot_entities: !input alert_light
+
+      - repeat:
+          count: !input pulse_count
+          sequence:
+            - service: light.turn_on
+              target:
+                entity_id: !input alert_light
+              data:
+                rgb_color: [255, 0, 0]
+                brightness: 255
+                transition: 0
+            - delay:
+                milliseconds: 700
+            - service: light.turn_on
+              target:
+                entity_id: !input alert_light
+              data:
+                rgb_color: [255, 0, 0]
+                brightness: 40
+                transition: 0
+            - delay:
+                milliseconds: 700
+
+      - service: light.turn_on
+        target:
+          entity_id: !input alert_light
+        data:
+          rgb_color: [255, 0, 0]
+          brightness: 255
+
+      # Hold red until every configured sensor reads healthy again. Each
+      # clause short-circuits on the `length` check first: an unconfigured
+      # input is `[]`, and is_state() must never see a list — it would
+      # error out and strand the light red. A sensor that goes unavailable
+      # doesn't hold the light red forever — the offline signal covers
+      # reachability.
+      - wait_template: >-
+          {{ (tamper_entity | length == 0 or not is_state(tamper_entity, 'on'))
+             and (smoke_entity | length == 0 or not is_state(smoke_entity, 'on'))
+             and (co_entity | length == 0 or not is_state(co_entity, 'on'))
+             and (chain_entity | length == 0 or not is_state(chain_entity, 'off')) }}
+
+      # All clear: a moment of green, then back to whatever the light
+      # was doing before the alert.
+      - service: light.turn_on
+        target:
+          entity_id: !input alert_light
+        data:
+          rgb_color: [0, 190, 80]
+          brightness: 200
+          transition: 0
+      - delay:
+          seconds: 2
+      - service: scene.turn_on
+        target:
+          entity_id: "scene.{{ snapshot_scene_id }}"
+
 # single + silent: while a critical episode is holding the light red, later
 # triggers are ignored rather than re-snapshotting the (already red) light —
 # the snapshot taken at the start of the episode is the one that gets
-# restored on all-clear.
+# restored on all-clear. The critical re-check after the offline branch
+# covers the one gap this policy leaves.
 mode: single
 max_exceeded: silent

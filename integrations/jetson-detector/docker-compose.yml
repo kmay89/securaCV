@@ -1,0 +1,47 @@
+# securaCV detector node — Frigate on an NVIDIA Jetson Orin Nano.
+#
+# Runs Frigate on the Jetson's GPU (TensorRT detection + NVDEC hardware decode)
+# as a DEDICATED detector that feeds a securaCV Pi hub over MQTT. The Jetson does
+# the vision; the Pi (HAOS + securaCV) is the brain. They meet on one broker —
+# the hub's Mosquitto. securaCV consumes Frigate over MQTT, so it doesn't care
+# that detection runs on a different box.
+#
+# Prereqs on the Orin (see README.md): JetPack 5 or 6, Docker + the NVIDIA
+# container runtime (both ship with JetPack), and your hub's Mosquitto host +
+# credentials in a .env file (copy .env.example).
+
+services:
+  frigate:
+    container_name: securacv-detector
+    # JetPack 6 image. On JetPack 5 use ...:stable-tensorrt-jp5 instead.
+    # Check your JetPack: `cat /etc/nv_tegra_release`.
+    image: ghcr.io/blakeblackshear/frigate:stable-tensorrt-jp6
+    restart: unless-stopped
+    runtime: nvidia            # the NVIDIA container runtime (ships with JetPack)
+    shm_size: "256mb"          # raise for many / high-res cameras
+    env_file: .env
+    environment:
+      # The TensorRT image compiles this detector model on FIRST start (a few
+      # minutes) into ./config/model_cache — every start after that is instant.
+      YOLO_MODELS: "yolov7-320"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./config:/config
+      - ./media:/media/frigate
+      - type: tmpfs            # keeps 1-second clips off the disk
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    ports:
+      # Frigate 0.14+ serves its AUTHENTICATED UI/API on 8971. Do NOT publish
+      # 5000 — that's the internal, UNauthenticated API; publishing it would put
+      # live camera feeds on the LAN for anyone. First-run admin password prints
+      # in the container logs.
+      - "8971:8971"            # Frigate UI  → http://<jetson-ip>:8971 (login required)
+      # Restream ports so the hub / Home Assistant can pull live video. Firewall
+      # these to the hub on an untrusted LAN.
+      - "8554:8554"            # go2rtc RTSP restream
+      - "8555:8555/tcp"        # WebRTC live view
+      - "8555:8555/udp"
