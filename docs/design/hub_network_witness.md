@@ -33,7 +33,12 @@ One product, three faces:
    security model already makes: a self-manifest is trusted over USB
    (you hold the cable) but *must be authenticated before trust over LAN*
    ([`flasher_experience.md`](flasher_experience.md)). Today nothing plays
-   that warden role.
+   that warden role — and, honestly stated, nothing *can* yet: the
+   self-manifest (`j`) and the attest challenge are serial-console paths,
+   Vision/Sense expose no HTTP API, and mDNS TXT data is unsigned. A
+   signed LAN attestation protocol (challenge/response endpoint on every
+   flavor) is a **firmware prerequisite** for this face, not a reusable
+   asset (open question 4).
 
 Faces 1–2 are the outward mirror of an existing internal virtue — the
 codebase already praises devices that "never phone home"
@@ -112,9 +117,17 @@ So the wrapper's contract, stated up front:
   state. No per-query retention, no timestamps finer than the existing
   coarse-time discipline, no device-identity join across households, no
   search box over history.
-- Blocklist updates are pull-only from public lists; nothing about the
-  household leaves the Hub. This is Invariant IV (Local Ownership) applied
-  to DNS.
+- Blocklist updates are pull-only from public lists, and *we* add no
+  egress: no telemetry, no log shipping, no cloud of ours. One boundary
+  must be stated honestly, though: a forwarding resolver by nature
+  discloses every **non-blocked** lookup to its configured upstream —
+  DoH/DoT encrypt the transit, not the upstream's view. So the upstream is
+  a user-visible, explicit choice (privacy-respecting defaults, QNAME
+  minimization), and a **local recursive mode** (unbound-class, no
+  third-party resolver at all) is an open question, not an assumed
+  default. Claiming "nothing leaves the Hub" without that caveat would
+  misstate the privacy boundary. This is Invariant IV (Local Ownership)
+  applied to DNS, scoped truthfully.
 
 This is not a limitation to apologize for — it is the differentiator.
 "Witnessing without watching," applied to the network itself: the one DNS
@@ -127,11 +140,14 @@ resolver with hardcoded DNS (8.8.8.8) or DNS-over-HTTPS. Honesty-first copy
 means two tiers, stated plainly:
 
 - **Tier 1 (v1, works everywhere):** the Hub becomes the LAN's advertised
-  resolver — via one guided router setting, or by the Hub taking over DHCP
-  (blocky-adjacent tooling and HAOS both support this), which needs no
-  router login at all in many homes. Catches the large majority of
-  telemetry. Known-DoH-endpoint blocklists (HaGeZi ships one) raise the
-  ceiling further.
+  resolver. The primary path is one guided router setting (the wizard's
+  router auto-detect walkthrough). Hub-as-DHCP exists as a *fallback for
+  routers that let you disable DHCP but not change DNS* — it is **not** a
+  no-router-login shortcut: the router's own DHCP server must be disabled
+  or scope-delegated first, or two authoritative DHCP servers race and
+  clients get inconsistent leases and unfiltered DNS. Catches the large
+  majority of telemetry. Known-DoH-endpoint blocklists (HaGeZi ships one)
+  raise the ceiling further.
 - **Tier 2 (future, full promise):** stubborn devices need port-53 redirect
   at the gateway — a Hub-as-gateway story we do not promise until it
   exists. Until then the copy stays present-tense about tier 1, per
@@ -150,7 +166,7 @@ itself → one obvious next step") and
 | Flasher hub image writer + "type Wi-Fi once" seeding (`desktop/hub-core/`, `wifi-memory.js`) | The add-on arrives pre-installed in the hub image; zero extra setup steps |
 | Unified wizard patterns (announce ≤2 s, Identify verb, end on proof) | The "make it your network's shield" step: router auto-detect → guided one-field change, or DHCP-takeover fallback |
 | Fleet self-report contract (`fleet_selfreport.h`, `tvos/discovery/DISCOVERY.md`) | "Blocked today" counters surface on the tvOS Witness Wall, display fleet cards, iOS app — one new field, same contract, per [`FLEET_PARITY.md`](../FLEET_PARITY.md) |
-| Self-manifest + LAN-auth rule (`firmware/common/attest/self_manifest.h`) | The warden face: periodic fleet attestation sweep, tamper/impostor flags as health claims |
+| Self-manifest + LAN-auth rule (`firmware/common/attest/self_manifest.h`) | The warden face's *vocabulary* (manifest fields, attest challenge) — but the transport is new work: today these are serial-console paths, so the sweep needs a signed LAN endpoint added to every flavor first (open question 4) |
 | Card standards (`docs/standard/CANARY_CARDS.md`) | The per-device "who it talks to / mute" card |
 
 **The proof moment** (the demo, the marketing, and the onboarding ending,
@@ -186,17 +202,26 @@ map to maintained HaGeZi/OISD lists underneath.
 
 1. Engine validation: does blocky's resolver hold up under a real
    household's query load on a Pi 4 alongside HAOS + PWK? (Bench it.)
-2. DHCP takeover vs router-setting walkthrough as the *default* path —
-   which breaks fewer homes? (The wizard can try router auto-detect first
-   and fall back.)
+2. Setup default: the router-setting walkthrough is primary; when (if
+   ever) is Hub-as-DHCP offered, and how does the wizard verify the
+   router's own DHCP is actually off before enabling it? Which failure
+   mode breaks fewer homes?
 3. The aggregate schema: exactly which counters exist, at what time
    granularity, and where they live — must pass the invariants review
    before any storage code.
-4. Warden sweep cadence and the impostor heuristic: what exactly flags a
-   device advertising `_securacv._tcp` that fails authentication?
+4. The LAN attestation protocol — the warden face's firmware
+   prerequisite: a signed challenge/response endpoint (reusing the
+   existing attest challenge + self-manifest canonical) on every flavor,
+   including Vision/Sense which expose no HTTP API today; then sweep
+   cadence and the impostor heuristic (what exactly flags a device
+   advertising `_securacv._tcp` that fails authentication?).
 5. Product name clearance (§6) — attorney search before anything public.
 6. Does the add-on ship in the default hub image or as a one-tap install?
    (Default-on witnessing with opt-in blocking is the current lean.)
+7. Local recursive resolution (unbound-class) vs a chosen forwarding
+   upstream: does the Pi carry full recursion alongside HAOS + PWK, and is
+   removing the third-party resolver worth the cold-cache latency? (§3's
+   disclosure caveat shrinks to zero only in recursive mode.)
 
 ## 8. What happens next (and what this doc is not)
 
