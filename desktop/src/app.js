@@ -1414,7 +1414,6 @@ const hub = {
   eta: { stage: null, t0: 0, done0: 0 },
   fbTimer: null, // first-boot poll
   resumeTimer: null, // resume-across-restart poll
-  sawMacWriteHint: false,
 };
 
 const HUB_HOST = "homeassistant.local:8123";
@@ -1508,15 +1507,6 @@ function hubInit() {
     $("hub-stage").textContent = HUB_STAGE_COPY[stage] || stage;
     hubRenderPills(stage);
 
-    // A one-time, calm heads-up that macOS is about to ask for disk permission,
-    // so a walked-away user knows the flash isn't frozen — it's waiting on them.
-    if (stage === "write" && hub.platform === "macos" && !hub.sawMacWriteHint) {
-      hub.sawMacWriteHint = true;
-      const el = $("hub-console");
-      el.classList.remove("hidden");
-      el.textContent += "→ macOS may now ask permission to write the disk — click Allow.\n";
-    }
-
     const fill = $("hub-bar-fill");
     if (total) {
       fill.classList.remove("indet");
@@ -1532,6 +1522,17 @@ function hubInit() {
     // what stopping mid-write means for the card.
     $("hub-stop-btn").textContent =
       stage === "write" || stage === "verify" ? "Stop (card will need a fresh flash)" : "Stop";
+  });
+  // Fired by the backend a beat BEFORE macOS's authopen prompt appears (see
+  // hub.rs). Put a prominent, by-name cue in the big status line so the Touch ID
+  // / password dialog reads as expected, not sketchy. The next progress event —
+  // the write actually moving, i.e. they approved — overwrites this via
+  // HUB_STAGE_COPY, so it clears itself.
+  listen("hub:mac-auth", () => {
+    $("hub-progress-wrap").classList.remove("hidden");
+    $("hub-stage").textContent =
+      "👆 Approve the macOS prompt — Touch ID or your password. It's “authopen”, Apple's built-in disk-writing helper (the same one Raspberry Pi Imager uses).";
+    $("hub-console").classList.remove("hidden");
   });
   $("hub-stop-btn").addEventListener("click", async () => {
     $("hub-stop-btn").disabled = true;
@@ -1761,7 +1762,7 @@ async function hubPreflight() {
     } else {
       line.textContent =
         hub.platform === "macos"
-          ? "Heads up: macOS will ask permission to write the disk — that's normal."
+          ? "Heads up: when the write starts, macOS asks for Touch ID or your password — a prompt from “authopen”, Apple's built-in disk-writing helper. That's expected; approve it and the flash continues."
           : "";
     }
   } catch (_) {
@@ -2056,7 +2057,6 @@ async function hubFlash() {
   if (!target || hub.busy) return;
   hubStopFirstBoot(); // a fresh flash supersedes any prior first-boot watch
   hub.busy = true;
-  hub.sawMacWriteHint = false;
   state.busy = true; // pause the Canary port watcher during the heavy write
   $("hub-flash-btn").disabled = true;
   $("hub-stop-btn").classList.remove("hidden");

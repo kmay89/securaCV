@@ -135,10 +135,27 @@ impl<T> SyncStorage for std::io::Cursor<T> {
 }
 
 impl SyncStorage for std::fs::File {
+    // fsync, not flush: flush() is a no-op for File and leaves the bytes in the
+    // kernel cache, where a counterfeit card's lies are invisible.
+    #[cfg(not(target_os = "macos"))]
     fn sync_storage(&mut self) -> std::io::Result<()> {
-        // fsync, not flush: flush() is a no-op for File and leaves the bytes
-        // in the kernel cache, where a counterfeit card's lies are invisible.
         self.sync_all()
+    }
+    #[cfg(target_os = "macos")]
+    fn sync_storage(&mut self) -> std::io::Result<()> {
+        // A macOS raw character device (/dev/rdiskN) is unbuffered, so fsync /
+        // F_FULLFSYNC doesn't apply to it and returns ENOTTY ("inappropriate
+        // ioctl for device", errno 25) — or ENOTSUP on some devices. The bytes
+        // already went straight to the medium (that is exactly why the writer
+        // targets rdisk), so there is nothing to flush: treat it as done rather
+        // than fail a good write. Regular files — the host tests — still sync.
+        match self.sync_all() {
+            Ok(()) => Ok(()),
+            Err(e) if matches!(e.raw_os_error(), Some(libc::ENOTTY) | Some(libc::ENOTSUP)) => {
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
     #[cfg(target_os = "linux")]
     fn drop_read_cache(&mut self) -> std::io::Result<()> {
@@ -156,13 +173,18 @@ impl SyncStorage for std::fs::File {
     fn drop_read_cache(&mut self) -> std::io::Result<()> {
         use std::os::unix::io::AsRawFd;
         // Raw rdisk I/O is already uncached; F_NOCACHE covers the /dev/disk
-        // and regular-file cases.
+        // and regular-file cases. On the raw device itself F_NOCACHE can report
+        // ENOTTY / ENOTSUP — harmless, because that device is already uncached,
+        // so tolerate it rather than fail the verify of a good write.
         let rc = unsafe { libc::fcntl(self.as_raw_fd(), libc::F_NOCACHE, 1) };
         if rc == -1 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(())
+            let e = std::io::Error::last_os_error();
+            return match e.raw_os_error() {
+                Some(libc::ENOTTY) | Some(libc::ENOTSUP) => Ok(()),
+                _ => Err(e),
+            };
         }
+        Ok(())
     }
 }
 
