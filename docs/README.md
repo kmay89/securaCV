@@ -14,7 +14,8 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 | You | Your path |
 |---|---|
 | **"I run Home Assistant."** | [Home Assistant setup](homeassistant_setup.md) → [Frigate integration](frigate_integration.md) → [the timeline card](lovelace_timeline.md) |
-| **"I have a spare Raspberry Pi."** | [Home Assistant setup](homeassistant_setup.md) (flashing + first boot are its first sections) — or click through it on [the Hub bench](https://kmay89.github.io/securaCV/canary-local/homeassistant.html) first |
+| **"I have a spare Raspberry Pi."** | [**The full stack, end to end**](full_stack_setup.md) — the golden path: flash the hub, boot it, add cameras — or click through it on [the Hub bench](https://kmay89.github.io/securaCV/canary-local/homeassistant.html) first |
+| **"I want the whole thing — hub, cameras, devices."** | [**The full stack, end to end**](full_stack_setup.md) — one page, in the right order, with the gotchas |
 | **"I run Docker / a homelab."** | [Frigate integration](frigate_integration.md) (compose quickstart) → [container guide](container.md) → [operator guide](operator_guide.md) |
 | **"I like building little devices."** | [Getting started with Canaries](getting_started_canary.md) → [hardware guides](hardware/README.md) → [the Lab](https://kmay89.github.io/securaCV/canary-local/) |
 | **"I just want to understand it."** | [Why witnessing matters](why_witnessing_matters.md) → [why it's secure](why_secure.md) → [the whitepaper](securaCV_whitepaper.md) |
@@ -44,6 +45,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 <details>
 <summary><strong>Home Assistant</strong> — the best-supported path</summary>
 
+- [**The full stack, end to end**](full_stack_setup.md) — the golden path across every piece: flash the hub → first boot → broker + securaCV → camera detection (Pi, Coral, or a Jetson) → Canaries, with what "working" looks like at each step
 - [Home Assistant setup](homeassistant_setup.md) — flashing, first boot, add-ons, entity catalog
 - [Frigate integration](frigate_integration.md) — compose quickstart, doctor check, API tokens
 - [The Verified Timeline card](lovelace_timeline.md) — ✓-badged events on your dashboard
