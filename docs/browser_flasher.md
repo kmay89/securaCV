@@ -440,11 +440,16 @@ today; use a signed release for anything a stranger will install.
 
 Two consequences worth knowing:
 
-- The images are **unsigned** while `release_pubkey` is the all-zero
-  placeholder, so `imageVerificationPolicy()` resolves to `checksum-only` and
+- The images are **unsigned only while `release_pubkey` is the all-zero
+  placeholder**, so `imageVerificationPolicy()` resolves to `checksum-only` and
   both the banner and the receipt say so. That is the honest state, not a
-  downgrade — the same manifest gains signatures the moment the ceremony lands,
-  and the policy tightens itself.
+  downgrade. Once the key ceremony lands, this workflow signs too: it reads
+  `ota_key_state.py`, and with a real key pinned it passes `--signing-key` to
+  `build_flash_manifest.py` — or **stops** if `OTA_SIGNING_KEY_PEM` is missing.
+  Publishing unsigned after the ceremony wouldn't degrade gracefully; the
+  policy becomes `require-signature`, both flashers refuse every image in the
+  manifest, and a bring-up run would have replaced a working rolling release
+  with an uninstallable one.
 - `firmware-release.yml` mirrors only *manifests* to `fw-dev-latest` (its
   binaries live at the real `fw-v*-dev.*` tag); this path has no such tag, so it
   uploads binaries there too and points the manifest at them. Each is

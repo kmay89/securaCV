@@ -89,9 +89,11 @@ jobs:
               echo "::error::channel=dev publishes the rolling fw-dev-latest prerelease from this branch's HEAD — it takes no tag. Drop the tag input, or switch to channel=release."
               exit 1
             fi
-            echo "tag=fw-dev-latest" >> "$GITHUB_OUTPUT"
-            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "tag=fw-dev-latest"
+              echo "ref=${GITHUB_SHA}"
+              echo "prerelease=true"
+            } >> "$GITHUB_OUTPUT"
             echo "Dev channel — publishing ${GITHUB_SHA} to the rolling fw-dev-latest prerelease."
             exit 0
           fi
@@ -117,9 +119,11 @@ jobs:
             echo "::error::tag '${TAG}' does not exist. This channel rebuilds an already-cut tag. To publish flashable images with no tag and no signing key, re-run with channel=dev (it publishes this branch's HEAD to the rolling fw-dev-latest prerelease)."
             exit 1
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "ref=$TAG" >> "$GITHUB_OUTPUT"
-          echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$TAG"
+            echo "ref=$TAG"
+            echo "prerelease=false"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
         with:
@@ -179,7 +183,11 @@ jobs:
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade platformio
+          # cryptography is what build_flash_manifest.py --signing-key needs
+          # (via ota_release.py). Installed unconditionally: whether this run
+          # signs depends on a secret, and discovering a missing dependency
+          # after a 40-minute build would be the worst possible moment.
+          pip install --upgrade platformio cryptography
           # esptool 4.11 imports intelhex without declaring it (same workaround
           # as the release workflow); esptool<5 keeps `merge_bin` stable for
           # make_factory.py.
@@ -332,14 +340,47 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           TAG: ${{ steps.tag.outputs.tag }}
+          OTA_SIGNING_KEY_PEM: ${{ secrets.OTA_SIGNING_KEY_PEM }}
         run: |
+          set -euo pipefail
+          # Sign IF AND ONLY IF a key is in force — and refuse to publish a
+          # manifest the flashers would reject.
+          #
+          # imageVerificationPolicy() (flash-core.js) is fail-closed: once the
+          # catalog pins a REAL release_pubkey, an official manifest with no
+          # signature returns "require-signature" and both flashers refuse
+          # every image in it. So "checksum-only" is correct only while the key
+          # is the all-zero placeholder. Publishing unsigned after the ceremony
+          # would overwrite a good manifest with one nothing can install — and
+          # on the dev channel it would do that to the rolling release every
+          # bring-up run. Three states, one decision:
+          #
+          #   placeholder key            → publish unsigned (checksum-only, honest)
+          #   real key + secret present  → sign, same scheme as the OTA path
+          #   real key + secret MISSING  → stop. Do not replace a signed
+          #                                manifest with a refusable one.
+          SIGN_ARGS=()
+          if python3 firmware/scripts/ota_key_state.py --json | jq -e '.embedded' >/dev/null; then
+            if [ -z "${OTA_SIGNING_KEY_PEM}" ]; then
+              echo "::error::A real OTA release key is pinned in the catalog, but OTA_SIGNING_KEY_PEM is not set. An unsigned manifest would be REFUSED by both flashers (imageVerificationPolicy → require-signature), so publishing it would break the channel rather than fill it. Add the secret (docs/RELEASE_BUTTONS.md § Firmware will not release) and re-run."
+              exit 1
+            fi
+            printf '%s' "$OTA_SIGNING_KEY_PEM" > /tmp/releaser.pem
+            chmod 600 /tmp/releaser.pem
+            SIGN_ARGS=(--signing-key /tmp/releaser.pem)
+            echo "Release key is in force — factory images will be signed."
+          else
+            echo "No release signing key pinned yet — publishing checksum-only images (the flasher verifies SHA-256 and reports them as unsigned)."
+          fi
           NOTES="$(awk "/^## \[${VERSION}\]/{f=1;next} /^## \[/{if(f)exit} f{print}" CHANGELOG.md | head -c 400 || true)"
           python3 firmware/scripts/build_flash_manifest.py \
             --version "$VERSION" \
             --repo "${{ github.repository }}" \
             --tag "$TAG" \
             --out-dir /tmp/release \
-            --notes "$NOTES"
+            --notes "$NOTES" \
+            "${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"}"
+          rm -f /tmp/releaser.pem
           # Checksum file scoped to what this workflow publishes (the signed
           # release, when it exists, ships its own full sha256sums.txt).
           ( cd /tmp/release && { sha256sum manifest-flash.json; sha256sum ./*-factory.bin 2>/dev/null || true; } > flasher-sha256sums.txt )

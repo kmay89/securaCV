@@ -2333,11 +2333,22 @@ function activeManifestUrl() {
   return state.devChannel ? core.DEV_FLASH_MANIFEST_URL : state.catalog.manifest_url;
 }
 
+// Every manifest fetch carries a generation stamp. Switching channels starts a
+// second fetch without cancelling the first, and the two can land in either
+// order — a slow stable response arriving after a fast dev one would repaint
+// the picker with the versions, SHA-256s and Install targets of the channel the
+// UI says is OFF. That is the silent-wrong case this whole toggle exists to
+// avoid, so a late response from a superseded generation is discarded outright.
+let manifestGeneration = 0;
+
 function ensureManifest() {
   if (state.manifest) { refreshManifestState(); return; }
+  const gen = ++manifestGeneration;
+  const stale = () => gen !== manifestGeneration;
   fetch(activeManifestUrl(), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no release manifest (HTTP " + r.status + ")"))))
     .then((m) => {
+      if (stale()) return;
       const errs = core.validateManifest(m);
       state.manifest = errs.length ? { __invalid: errs } : m;
     })
@@ -2345,9 +2356,10 @@ function ensureManifest() {
     // pinned to was never cut" look identical to a user otherwise, and the
     // second one is a maintainer bug that hid for a whole release cycle.
     .catch((err) => {
+      if (stale()) return;
       state.manifest = { __missing: true, why: String((err && err.message) || err) };
     })
-    .finally(refreshManifestState);
+    .finally(() => { if (!stale()) refreshManifestState(); });
 }
 
 // Advanced → dev channel. Switching channels invalidates the loaded manifest
@@ -2358,6 +2370,10 @@ function onDevChannelToggle(on) {
   if (state.busy) return;              // never re-point mid-write
   state.devChannel = !!on;
   state.manifest = null;
+  // Bump the generation before re-rendering: an in-flight fetch for the
+  // previous channel is now stale, and must not repaint over the new one
+  // whichever order the two responses arrive in (see ensureManifest).
+  manifestGeneration++;
   setPhase(phaseConnected());          // repaints with "Checking…" in the banner
   ensureManifest();
 }

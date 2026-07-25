@@ -107,11 +107,17 @@ is exactly what the flasher's **Advanced → dev channel** toggle reads.
 — a new board, a demo, a bring-up. It's the shortest path from "the code is on a
 branch" to "the product is installable", and it burns no version.
 
-**Don't:** point a stranger at it. Dev images are unsigned while the key
-ceremony is pending: verified by SHA-256 against the manifest, and both flashers
-say so on the banner and the receipt. Stable installs belong on a signed
-release. It also cannot reach `releases/latest` — it publishes a prerelease, on
-purpose, so the fleet's OTA URL never lands on it.
+**Don't:** point a stranger at it. Dev images are unsigned *while the key
+ceremony is pending*: verified by SHA-256 against the manifest, and both
+flashers say so on the banner and the receipt. Stable installs belong on a
+signed release. It also cannot reach `releases/latest` — it publishes a
+prerelease, on purpose, so the fleet's OTA URL never lands on it.
+
+Once the key exists this button signs like every other path, and **refuses to
+run** if the key is pinned but `OTA_SIGNING_KEY_PEM` isn't set — an unsigned
+manifest published after the ceremony isn't a weaker install, it's an
+uninstallable one (the flashers' policy becomes `require-signature` and they
+reject the whole manifest).
 
 ### Build Mac apps (Flasher + Lab)
 

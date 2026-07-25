@@ -187,3 +187,33 @@ test("dev channel: the publishing workflow targets the tag the flashers read", (
     "the dev-channel publish step must mark the release a prerelease, or " +
     "releases/latest can drift off the firmware and the fleet stops seeing updates");
 });
+
+test("flasher publishing signs once a key is in force, and refuses to ship a refusable manifest", () => {
+  // imageVerificationPolicy() is fail-closed by design: with a REAL pinned
+  // release_pubkey, an official manifest carrying no signature returns
+  // "require-signature" and both flashers refuse every image in it. So an
+  // unsigned publish is correct only while the key is the all-zero
+  // placeholder. If this workflow ever publishes unsigned after the ceremony
+  // it doesn't degrade — it replaces a good manifest with an uninstallable
+  // one, and on the dev channel it would do that on every bring-up run.
+  const wf = read(join(ROOT, ".github/workflows/flasher-release.yml"));
+
+  assert.match(wf, /ota_key_state\.py/,
+    ".github/workflows/flasher-release.yml must ask whether a release key is " +
+    "pinned before deciding to publish unsigned");
+  assert.match(wf, /--signing-key/,
+    "flasher-release.yml never passes --signing-key to build_flash_manifest.py, " +
+    "so every manifest it publishes is unsigned — refusable the moment a real " +
+    "key is pinned");
+  assert.match(wf, /OTA_SIGNING_KEY_PEM/,
+    "flasher-release.yml can't sign without reading the OTA_SIGNING_KEY_PEM secret");
+  assert.match(wf, /pip install[^\n]*cryptography/,
+    "signing needs `cryptography` (ota_release.py imports it) — install it, or " +
+    "the sign path dies after the build instead of before it");
+
+  // The script's own contract, which the above depends on: --signing-key is
+  // optional and its absence means checksum-only, not a crash.
+  const builder = read(join(ROOT, "firmware/scripts/build_flash_manifest.py"));
+  assert.match(builder, /--signing-key/,
+    "build_flash_manifest.py lost its --signing-key option");
+});
