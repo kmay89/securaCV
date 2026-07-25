@@ -37,6 +37,27 @@ constexpr TypeLadder k_ladder_heirloom = {
     &lv_font_montserrat_20,   // caption
     &lv_font_montserrat_36,   // clock
 };
+#elif defined(CD_LEAN_BUILD)
+// The 4 MB C6 nightstand: lv_conf.h drops the 36/48 faces to fit the
+// 0x1E0000 OTA slot, so the ladder's ceiling is 28. On a 172-px-wide
+// bedside glass 28 still reads as the hero from arm's reach — the sizes
+// removed were the across-the-room dash scale this board never plays at.
+constexpr TypeLadder k_ladder_default = {
+    &lv_font_montserrat_28,   // hero (28 is the lean ceiling)
+    &lv_font_montserrat_24,   // title
+    &lv_font_montserrat_16,   // body
+    &lv_font_montserrat_14,   // label
+    &lv_font_montserrat_12,   // caption
+    &lv_font_montserrat_20,   // clock
+};
+constexpr TypeLadder k_ladder_heirloom = {
+    &lv_font_montserrat_28,   // hero (28 is the lean ceiling)
+    &lv_font_montserrat_28,   // title
+    &lv_font_montserrat_20,   // body
+    &lv_font_montserrat_16,   // label
+    &lv_font_montserrat_14,   // caption
+    &lv_font_montserrat_24,   // clock
+};
 #else
 constexpr TypeLadder k_ladder_default = {
     &lv_font_montserrat_48,   // hero

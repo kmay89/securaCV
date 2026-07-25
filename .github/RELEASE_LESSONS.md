@@ -512,3 +512,37 @@ any platform.
   capability?", not just "does it have the string?". Cross-frontend constants
   (manifest URLs, channel names) belong in `desktop_parity.test.js` so the
   next divergence fails a test instead of a user.
+
+### 2026-07-25 — The C6 nightstand's first real link came out 21% bigger than the OTA slot it ships into
+
+- **Symptom:** `canary-display-nightstand-c6`'s first full build against the
+  real toolchain linked clean and then died in `checkprogsize`: 2,382,638
+  bytes into a 0x1E0000 (1,966,080-byte) A/B slot. Every earlier signal was
+  green — the env was registered, the OTA channel published, the flasher
+  catalog carried the product — because nothing before the link ever does the
+  slot arithmetic.
+- **Cause:** the env was assembled from siblings that never share its budget.
+  The graphics stack (LVGL + eight Montserrat faces + Arduino_GFX) was sized
+  on 16 MB boards with 0x330000+ slots; the BLE features were costed on
+  canary-sense, which carries no display. On the one board with BOTH a
+  display and a 4 MB flash, the two budgets met for the first time at link
+  time — the last possible moment.
+- **Fix:** measure, then cut what the board never uses — never squeeze what
+  it does. `esp-idf-size --archives` on the .map named the spend:
+  `libble_app` + the NimBLE host (~300 KB) and the 36/48 room-scale fonts
+  (~170 KB). The C6 env compiles both out, each cut documented in the env
+  with its size tag (`CD_LEAN_BUILD` in lv_conf.h + a lean type ladder in
+  character.cpp; `FEATURE_CHIRP_SCAN=0` / `FEATURE_FLEET_LINK=0` made
+  `#ifndef`-overridable in the nightstand config). Landed at 1,955,024 of
+  1,966,080 bytes — an ~11 KB margin, kept deliberately with the next two
+  cuts already scoped in the env comment. Bonus find: `fleet_link.cpp`'s
+  disabled-path stubs never compiled before (missing `<stdint.h>`) — a
+  feature flag nobody has ever turned off is a build nobody has ever tested.
+- **Applies to:** every env that pairs a rich UI stack with a 4 MB part
+  (`min_spiffs`-class slots), and every future flavors.json entry: do the
+  slot arithmetic at env-authoring time, not at first link. A flavor's
+  size_guard watches ONE binary — a new env on a smaller part must either
+  fit inside the guarded budget or document its own (checkprogsize is the
+  final backstop, but it speaks at the last moment, in bytes, without
+  naming the cuts). And when a feature flag exists, CI must compile at
+  least one env with it OFF, or the disabled path is fiction.
