@@ -9,8 +9,8 @@ clean, with a real community around it because the project is truly open.
 **Verdict up front:**
 
 1. **Seeed is already our de facto hardware partner — formalize it, cheaply and
-   without exclusivity.** Eleven of our fourteen registered boards are Seeed XIAO
-   family; every `verified`-tier board is Seeed; the Grove Vision AI V2 is a
+   without exclusivity.** Seven of our fourteen registered boards are Seeed XIAO
+   family — and all three `verified`-tier boards are Seeed; the Grove Vision AI V2 is a
    first-class Canary sensor (doc 10); Canary Vision Pro/Lite are designed around
    their reCamera; `suppliers.json` and doc 25 already name Seeed Co-Create for
    kitting. The partnership ladder in §6 starts at zero-commitment (a wiki PR and a
@@ -64,7 +64,7 @@ The current touchpoints, all already in-repo:
 | Fence Guard concept | XIAO ESP32-S3 + Wio-SX1262 LoRa | concept |
 | Vendor CAD in Board Room | `boards/vendor/` (XIAO, Grove Vision AI V2, Round Display STEPs) | shipped, with takedown clause |
 | Kitting/assembly plan | `suppliers.json` ("a kitter like Seeed who makes the XIAO"), docs 19/22/25 (Co-Create royalties, module kitting) | planned |
-| Board registry | 11 of 14 entries in `firmware/boards/boards.json` are Seeed | structural |
+| Board registry | 7 of 14 entries in `firmware/boards/boards.json` are Seeed (6 Waveshare, 1 Espressif) — and all 3 `verified`-tier boards are Seeed | structural |
 
 Two conclusions fall out immediately. First: a Seeed partnership is not a new bet,
 it is *recognizing sunk reality and getting paid for it* (co-marketing, supply
@@ -122,7 +122,7 @@ toolchain"), opposite spines:
 | Axis | SenseCraft | SecuraCV |
 |---|---|---|
 | Spine | Cloud account; device enrolls to platform | Local-first; no account exists to enroll in (`spec/invariants.md`, LICENSING.md) |
-| Output | Raw-ish inference results / frames to app or cloud | Closed vocabulary of semantic claims, Ed25519-signed, hash-chained; raw export impossible by construction |
+| Output | Raw-ish inference results / frames to app or cloud | Closed vocabulary of semantic claims, Ed25519-signed, hash-chained; no ordinary raw export by construction — the only path to raw bytes is the quorum-gated break-glass vault flow (`export_for_vault()` + `BreakGlassToken`, Invariant I) |
 | Business model | Hardware + metered cognition (prompts/analyses per month) | Hardware, attestation, support; **never** bits or privacy (doc 21) |
 | Trust story | "Trust Seeed + Azure" | Standalone verifier, TOFU-pinned keys, SLSA provenance, no phone-home |
 | Device support | Seeed boards only, hardcoded list | `boards.json` registry, tiered, any vendor via data PR (`firmware/PORTING.md`) |
@@ -305,9 +305,9 @@ vendor class, and proving neutrality with a second vendor.*
    LILYGO, Adafruit, SparkFun modules are all candidates the moment someone files
    a Hardware Test Report.
 3. **Linux-class devices & third-party systems → the Sensor Adapter Contract.**
-   `spec/sensor_adapter_contract_v0.md` is explicitly vendor-neutral, with seven
-   adapters already shipping as Cargo features (Frigate, MQTT, webhook, BLE,
-   Meshtastic, CAN). reCamera lands here — and so can *competitors'* cameras
+   `spec/sensor_adapter_contract_v0.md` is explicitly vendor-neutral, with six
+   adapters already shipping as Cargo features (Frigate, MQTT sensor, webhook,
+   BLE presence, Meshtastic, CAN bus — plus auxiliary TLS and sandbox flags). reCamera lands here — and so can *competitors'* cameras
    (ONVIF/Frigate paths), which is exactly the point: the commons is credible
    only if a Seeed rival's device is welcome. The narrow `Claim` type keeps every
    adapter inside the invariants no matter whose silicon feeds it.
@@ -377,7 +377,7 @@ user's fleet. That is the community pitch, verbatim.
 
 ## 10. Tripwires and risks
 
-- **Single-vendor concentration.** 11/14 boards, all verified tiers, one supplier
+- **Single-vendor concentration.** 7/14 boards including every verified tier, one supplier
   country. Mitigations: §7's second-vendor milestone; keep the Espressif-generic
   env verified-track; doc 25's dual-source rule. *Tripwire: if a XIAO EOL/revision
   would strand a shipping kit, the registry must already hold a compile-tested
