@@ -3,9 +3,10 @@
 **Status:** design + hardware bring-up reference. **Firmware landed** for the 172×320 portrait flavor
 (the `nightstand` flavor: `display_1in47.cpp` ST7789 HAL, `portrait_ui.cpp` face, `ambient_led.cpp`
 WS2812 beacon) and the `dash7` flavor (the 7" reusing the Dash), both compiled in CI via the
-`canary-display-nightstand-s3` and `canary-display-dash7` build envs — **compile-tested, not
-bench-validated**. Still staged (§7): the **C6 build** (toolchain-blocked on core-2.x vs 3.x graphics),
-the **emulator / Lab** wasm wiring, portrait-native **modal polish**, and true **5-point touch gestures**.
+`canary-display-nightstand-s3`, `canary-display-dash7` **and** `canary-display-nightstand-c6` build envs
+(the C6 rides the core-3.x display base, §7) — **compile-tested, not bench-validated**, and all three are
+release/flasher products. Still staged (§7): the **emulator / Lab** wasm wiring, portrait-native
+**modal polish**, and true **5-point touch gestures**.
 This doc extends the existing display design — [`display_living_canary.md`](./display_living_canary.md),
 [`display_nightstand.md`](./display_nightstand.md), [`display_care_wave.md`](./display_care_wave.md),
 [`display_character.md`](./display_character.md) — it does **not** replace them.
@@ -147,13 +148,22 @@ is **true 5-point multitouch** (the GT911 already reports up to 5; the pins carr
    modal/support surfaces (`splash`/`settings`/`commission`/`onboard`/`provision`, via a per-TU flavor alias);
    the standing fleet face is the bespoke `portrait_ui`.
 
-**Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**
+**Landed since** (the §7 follow-ups that were staged here):
 
-- **The C6 build** (`canary-display-nightstand-c6`). Toolchain-blocked, not design-blocked: the ESP32-C6 needs
-  arduino-esp32 3.x (the pioarduino fork), but `canary-display`'s graphics stack is pinned to
-  `GFX@1.4.9` — the last **core-2.x**-compatible release. A core-3.x display base (GFX@^1.5.0 + an LVGL/NimBLE
-  3.x audit) is the gating work. The firmware itself is already C6-ready (single internal buffer, RMT LED); the
-  S3 sibling carries the flavor today.
+- **The C6 build** (`canary-display-nightstand-c6`) — the core-3.x display base landed:
+  `[canary_display_c6_core3]` in `envs/platformio/canary-display.ini` pins the pioarduino platform (same
+  55.03.38-1 release line as canary-sense/canary-wap) with the core-3 library row the Arduino CI already
+  proves (`GFX@1.6.6` / `LVGL 9.x` / `NimBLE 2.x`), chain-mode LDF + an explicit `build_src_filter` for the
+  shared `common/` TUs (the canary-sense pattern). In `flavors.json` `build_envs` **and**
+  `isolated_core_envs` (the pioarduino platform cannot share a core dir with espressif32). Its own OTA
+  product `securacv-canary-display-nightstand-c6`. Still *compile-tested* — bench validation pending like
+  its siblings.
+- **Release + flasher wiring** — all three boards (`dash7`, `nightstand-s3`, `nightstand-c6`) are release
+  build targets now: `firmware-release.yml` (and the out-of-band `flasher-release.yml`) run their PlatformIO
+  envs non-blocking and stage the binaries through the same version-string/product-string guards as the
+  profile-built displays, and the flasher catalog (`gen_flash.py` → `flash.json`) carries their products.
+
+**Still staged (honestly deferred, needs a toolchain the CI container lacks or a follow-up):**
 - **Emulator + Lab** — `build.sh` `createCanaryEmuNightstand`/`…Dash7`, the `dist/*.js` + `.meta.json`
   (`fw_version == fw_train`), `registry.json` display entries (`glass{172,320,round:false,…}` / `{800,480,…}`),
   the `fleet.html` `<script>` tags, and the `app.js` `buildDisplaySheet()` **172×320 portrait sizing case**

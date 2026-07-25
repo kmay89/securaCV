@@ -312,6 +312,49 @@ jobs:
           done
           rm -f flavor_local.h
 
+      - name: Build canary-display board envs (PlatformIO, non-blocking)
+        working-directory: firmware/projects/canary-display
+        # The Nightstand Line boards (dash7 / nightstand-s3 / nightstand-c6)
+        # release from their PlatformIO envs — the same envs firmware.yml
+        # compiles on every push — because each board's pins and flash
+        # geometry live in the env, not in a sketch profile: there is no
+        # flavor_local.h staging to get wrong (the trap the `modes` profile
+        # comment above documents), and SECURACV_OTA_PRODUCT is compiled in
+        # per env so the product-string guard below stays meaningful.
+        #
+        # Non-blocking, like the profile builds above: a failed env drops
+        # those products from this release instead of sinking the signed OTA
+        # release around it.
+        #
+        # The C6 env rides the pioarduino core-3.x platform while the rest of
+        # this project is on espressif32@6.9.0 — give it its own
+        # PLATFORMIO_CORE_DIR, exactly as firmware.yml isolates it (the two
+        # platforms ship framework-arduinoespressif32 at incompatible
+        # versions and corrupt each other's core dir).
+        run: |
+          # Generic release build: placeholder secrets ON PURPOSE — same
+          # NVS-backed runtime-config scheme as canary-vision above.
+          mkdir -p secrets
+          cat > secrets/secrets.h << 'HEADER'
+          #pragma once
+          // Generic OTA release build. Real credentials live in device NVS.
+          #define WIFI_SSID "ci-placeholder"
+          #define WIFI_PASS "ci-placeholder"
+          #define MQTT_HOST "127.0.0.1"
+          #define MQTT_PORT 1883
+          #define MQTT_USER nullptr
+          #define MQTT_PASS nullptr
+          HEADER
+          for E in canary-display-dash7 canary-display-nightstand-s3; do
+            if ! pio run -e "$E"; then
+              echo "::warning::${E} build failed — its product is absent from this release"
+            fi
+          done
+          if ! PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-display-nightstand-c6" \
+              pio run -e canary-display-nightstand-c6; then
+            echo "::warning::canary-display-nightstand-c6 build failed — its product is absent from this release"
+          fi
+
       - name: Assemble, sign, and verify release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -408,8 +451,23 @@ jobs:
           # canary-display) have no sketch.yaml profile, so they have no published
           # channel yet — declared, not accidental: check_ota_channels.py holds
           # that list and fails if a NEW flavor appears with neither.
+          # Stage the PlatformIO board-env display builds (the Nightstand
+          # Line: dash7 / nightstand-s3 / nightstand-c6) into the same
+          # /tmp/display-<name>-build layout the profile builds use, so ONE
+          # loop below applies the version-string and product-string guards
+          # to every display flavor identically. A missing .pio build (its
+          # env failed above) simply stages nothing and the loop's existing
+          # "produced no binary" warning covers it.
+          for E in dash7 nightstand-s3 nightstand-c6; do
+            SRC="firmware/projects/canary-display/.pio/build/canary-display-${E}/firmware.bin"
+            if [ -s "$SRC" ]; then
+              mkdir -p "/tmp/display-${E}-build"
+              cp "$SRC" "/tmp/display-${E}-build/canary_display.ino.bin"
+            fi
+          done
+
           DISPLAY_INDEX=""
-          for D in "watch:watch" "dash:dash" "dash-modes:modes"; do
+          for D in "watch:watch" "dash:dash" "dash-modes:modes" "dash7:dash7" "nightstand-s3:nightstand-s3" "nightstand-c6:nightstand-c6"; do
             NAME="${D%%:*}"; DIR="${D##*:}"
             SRC="/tmp/display-${DIR}-build/canary_display.ino.bin"
             OUT="/tmp/release/canary-display-${NAME}-${VERSION}.bin"
