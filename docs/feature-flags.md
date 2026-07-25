@@ -88,6 +88,7 @@ Source of truth: `Cargo.toml:55-71`. Default build enables **none** of these
 | `pqc-vault` | off | exp | ML-KEM post-quantum vault sealing | promote once PQC vault is supported |
 | `pqc-tls` | off | exp | PQC-capable TLS stack | promote once PQC transport is supported |
 | `tsa` | off | stable | Online RFC 3161 TSA client for `log_anchor request` (ureq + 30s timeout). The offline query/import anchoring flow needs no feature | keep (network egress stays opt-in at build time by design — see docs/timestamping.md) |
+| `c2pa-export` | off | exp | C2PA Content Credentials sidecar sign/verify for export bundles (`export_events --c2pa`, `export_verify --c2pa-manifest`); fully offline, no HTTP backend compiled in (docs/design/c2pa_export.md) | promote to stable once the sidecar format survives a release cycle of third-party verifier use |
 
 > The full set of CI-built feature combinations is in `.github/workflows/rust.yml`
 > (`--no-default-features`, `pqc-*`, per-ingest jobs).

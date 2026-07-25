@@ -112,6 +112,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 - [Timestamping](timestamping.md) — coarse time as a feature
 - [Sealed snapshot vault](sealed_snapshot_vault.md) · [scheduled exports](scheduled_exports.md)
 - [C2PA Content Credentials for exports (design)](design/c2pa_export.md) — implemented behind `c2pa-export`: `export_events --c2pa` signs an industry-standard sidecar manifest any Content Credentials tool can verify — keys derived from the device seed, reproducible device-local CA, fully offline, chain stays the root of trust
+- [The Witness Reading Room (scope)](design/witness_log_viewer.md) — scoping RFC for the log viewer + verifier: one app that verifies everything (chain, receipts, C2PA) *and* shows the record — timeline, disclosure audit, chain health; offline single-file first, live `witness_api` mode second, native full-fat verification third
 - [Vault operator UX & hardware-backed keys (v1.1 design)](design/vault_operator_ux_v1_1.md) — RFC: guided setup/enrollment, a `KeyStore` seam (file default; TPM/PKCS#11/FIDO2), and the request→approve→unseal flow — the crypto's already wired, this scopes the operator experience around it
 - [Database key rotation](db_key_rotation.md) · [post-quantum mode](pqc_mode.md)
 - [Identity & transport](identity_transport.md) — who speaks, on what wire
