@@ -2499,16 +2499,16 @@ function phaseConfirm(product, entry) {
     // password field and remember an empty one over the real network.
     if (state.busy) return;
     go.disabled = true;
-    let wifi = null;
+    let wifi = null, mqtt = null;
     if (wifiUI) {
       const r = wifiUI.credentials();
       if (!r.ok) { go.disabled = false; return; } // invalid input — the field showed why
-      wifi = r.wifi;
+      wifi = r.wifi; mqtt = r.mqtt;
       wifiUI.clear();    // never leave the password sitting in the DOM
     }
     const dialSel = dialsUI ? dialsUI.selection() : null;
     const reflexSel = reflexUI ? reflexUI.selection() : null;
-    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi,
+    startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi, mqtt,
       detect: dialSel ? dialSel.values : null,
       detectPreset: dialSel ? dialSel.presetTitle : null,
       reflex: reflexSel ? reflexSel.values : null,
@@ -2860,21 +2860,75 @@ function renderWifiFields(box, product) {
   qrRow.append(qrBtn);
   sec.append(qrRow, qrOut);
 
+  // Home Assistant / MQTT + a device id — the SAME NVS keys the native app bakes
+  // (desktop provisioning.rs), so a usb-secrets board flashed here is addressable
+  // on your broker out of the box instead of Wi-Fi-only. Optional; nothing leaves
+  // this page. Only for usb-secrets boards (Vision/Sense learn this from the flash).
+  let mqttUI = null;
+  if (prov === "usb-secrets") {
+    const ha = el("div", "flash-mqtt");
+    ha.append(el("h3", null, "Home Assistant / MQTT (optional)"));
+    ha.append(el("p", "fineprint",
+      "Bake in your broker and a device id and the Canary reports to Home Assistant on " +
+      "its first boot — no extra setup. Leave blank to configure later. Written into the " +
+      "chip’s settings exactly the way the native app does; it goes only to the chip."));
+    const mk = (ph, type) => {
+      const i = el("input"); i.type = type || "text"; i.placeholder = ph;
+      i.autocomplete = type === "password" ? "new-password" : "off";
+      return i;
+    };
+    const devId = mk("device id (e.g. canary_vision_ab12)");
+    // Auto-suggest a stable per-family id, like the native app's onProductChosen.
+    if (product && product.id) {
+      const fam = /vision/.test(product.id) ? "canary_vision"
+        : /sense/.test(product.id) ? "canary_sense" : "canary";
+      const sfx = Array.from(crypto.getRandomValues(new Uint8Array(2)),
+        (b) => b.toString(16).padStart(2, "0")).join("");
+      devId.value = `${fam}_${sfx}`;
+    }
+    const host = mk("broker host"); host.value = "homeassistant.local";
+    const port = mk("1883"); port.value = "1883"; port.inputMode = "numeric";
+    const user = mk("username (optional)");
+    const mpass = mk("password (optional)", "password");
+    const row1 = el("div", "flash-wifi-inputs"); row1.append(devId);
+    const row2 = el("div", "flash-wifi-inputs"); row2.append(host, port);
+    const row3 = el("div", "flash-wifi-inputs"); row3.append(user, mpass);
+    ha.append(row1, row2, row3);
+    sec.append(ha);
+    mqttUI = { values: () => ({
+      deviceId: devId.value, mqttHost: host.value,
+      mqttPort: port.value ? Number(port.value) : 1883,
+      mqttUser: user.value, mqttPass: mpass.value,
+    }) };
+  }
+
   box.append(sec);
   return {
     credentials() {
       err.classList.add("flash-hidden");
-      if (!ssid.value) return { ok: true, wifi: null }; // optional — skipped
+      // Optional broker/identity (usb-secrets only) — validate up front so a bad
+      // value stops the flash with a clear message, like the Wi-Fi fields do.
+      let mqtt = null;
+      if (mqttUI) {
+        mqtt = mqttUI.values();
+        try { core.mqttProvisioningToNvs(mqtt); }
+        catch (e) {
+          err.textContent = String(e.message || e);
+          err.classList.remove("flash-hidden");
+          return { ok: false, wifi: null, mqtt: null };
+        }
+      }
+      if (!ssid.value) return { ok: true, wifi: null, mqtt }; // wifi optional — skipped
       try {
         // The builder validates lengths; run it small just for the checks.
         core.buildNvsWifiImage(ssid.value, pass.value, 4096);
         // Remember it for the next board (session always; disk if opted in).
         wifiMemory.remember({ ssid: ssid.value, pass: pass.value }, rememberChk.checked);
-        return { ok: true, wifi: { ssid: ssid.value, pass: pass.value } };
+        return { ok: true, wifi: { ssid: ssid.value, pass: pass.value }, mqtt };
       } catch (e) {
         err.textContent = String(e.message || e);
         err.classList.remove("flash-hidden");
-        return { ok: false, wifi: null };
+        return { ok: false, wifi: null, mqtt: null };
       }
     },
     clear() { pass.value = ""; },
@@ -3015,7 +3069,7 @@ async function startFlash(opts) {
     // that region, the install continues — never block a flash on a
     // convenience.
     let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null;
-    if ((opts.wifi || opts.detect || opts.reflex) && !opts.isBackup) {
+    if ((opts.wifi || opts.mqtt || opts.detect || opts.reflex) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
           bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
@@ -3025,9 +3079,12 @@ async function startFlash(opts) {
         const dInts = opts.detect ? core.detectValuesToNvs(opts.detect, dials) : { u8: {}, u32: {} };
         const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
         const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
+        // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
+        const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {} };
         const nvsImg = core.buildNvsSeedImage(
           { wifi: opts.wifi || null,
             wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
+            strings: prov.strings, u16: prov.u16,
             u8: dInts.u8, u32: { ...dInts.u32, ...rInts.u32 } }, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
