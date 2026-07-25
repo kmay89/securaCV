@@ -83,7 +83,11 @@
           "track": "vision", "label": "Camera", "accent": "#2563eb",
           "benches": [
             { "noun": "The Vision", "slug": "vision", "lab": "vision.html", "real": false, "kind": "sim", "status": "keep",
-              "desc": "On-device person detection — boxes, not pixels. SenseCraft model load + aim." }
+              "desc": "On-device person detection — boxes, not pixels. SenseCraft model load + aim.",
+              "depths": [
+                { "label": "Through Canary eyes — your webcam", "lab": "eyes.html", "real": true,
+                  "desc": "Your webcam on the sensor side of the boundary: a stand-in motion sensor stages the boxes, and the real firmware wasm makes every presence, dwell and event call after it. Frames never leave the page." }
+              ] }
           ]
         },
         {

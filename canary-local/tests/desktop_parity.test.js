@@ -89,3 +89,27 @@ test("release origin: native's download-host guard matches the catalog's manifes
       `native release-origin guard "${g}" doesn't match catalog manifest host "${catalogHost[1]}"`);
   }
 });
+
+test("provisioning NVS: the browser writes the same key-set as native build_nvs", async () => {
+  // Native build_nvs (provisioning.rs) IS the firmware contract for a provisioned
+  // board — the exact NVS keys the runtime reads. The browser must write the same
+  // set, or a board provisioned in the Lab differs from one provisioned natively.
+  const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
+  const nativeKeys = new Set(
+    [...provRs.matchAll(/writer\.(?:string|u8|u16|u32)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1])
+  );
+  assert.ok(nativeKeys.size >= 5,
+    "couldn't parse native build_nvs keys from desktop/src-tauri/src/provisioning.rs");
+
+  // The browser's usb-secrets provisioning: wifi (string scheme) + the id/broker map.
+  const { mqttProvisioningToNvs } = await import("../assets/flash-core.js");
+  const { strings, u16 } = mqttProvisioningToNvs({
+    deviceId: "d", mqttHost: "h", mqttPort: 1, mqttUser: "u", mqttPass: "p",
+  });
+  const browserKeys = new Set(["wifi_ssid", "wifi_pass", ...Object.keys(strings), ...Object.keys(u16)]);
+
+  assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
+    "browser vs native provisioning NVS key-sets diverged — reconcile " +
+    "flash-core.js:mqttProvisioningToNvs/buildNvsSeedImage with " +
+    "desktop/src-tauri/src/provisioning.rs:build_nvs");
+});
