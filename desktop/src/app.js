@@ -41,6 +41,15 @@ const releaseTagFromManifestUrl = (url) => {
   return /^fw-v/.test(tag) ? tag : null;
 };
 
+// The dev channel's one stable address: the rolling fw-dev-latest prerelease.
+// A fixed first-party constant, deliberately NOT a URL override — the toggle
+// can only ever mean this URL, and the Rust side accepts it as the ONE
+// alternative to the catalog's pinned manifest. Same constant as
+// canary-local/assets/flash-core.js DEV_FLASH_MANIFEST_URL (the two flashers
+// share no code; the desktop-parity test keeps them agreeing).
+const DEV_FLASH_MANIFEST_URL =
+  "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
+
 const POLL_MS = 1000;
 const WE2_VID = 0x1a86;
 const WE2_PID = 0x55d3;
@@ -59,6 +68,8 @@ const state = {
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
   busy: false,       // a flash is running — pause the watcher
   monitoring: false,
+  devChannel: false, // fetch fw-dev-latest instead of the pinned stable release
+  localFile: null,   // { path, name, size, sha256, esp_magic } picked under Advanced
   update: null,      // pending self-update, if any
   vision: {
     hostFlash: null,
@@ -168,6 +179,10 @@ async function boot() {
 
   $("flash-btn").addEventListener("click", onFlash);
   $("module-flash-btn").addEventListener("click", onFlashModule);
+  $("dev-channel").addEventListener("change", onDevChannelToggle);
+  $("local-pick").addEventListener("click", onPickLocalFile);
+  $("local-flash-btn").addEventListener("click", onFlashLocalFile);
+  updateLocalFlashUi();
   $("monitor-start").addEventListener("click", startMonitor);
   $("monitor-stop").addEventListener("click", stopMonitor);
   $("monitor-manifest").addEventListener("click", () =>
@@ -542,22 +557,10 @@ async function identify(portInfo) {
     setConn("connected", `Connected · ${chip} on ${port}`);
     $("recheck").classList.remove("hidden");
 
-    invoke("fetch_manifest", { manifestUrl: state.catalog.manifest_url })
-      .then((m) => {
-        state.manifest = m;
-        state.manifestError = null;
-        renderProducts();
-      })
-      // Keep WHY. Swallowing this is how every product came to read "no
-      // published release yet" — indistinguishable from "nothing has ever
-      // shipped" — when the real answer was "the release this build is pinned
-      // to was never cut". renderProducts() turns it into that sentence.
-      .catch((e) => {
-        state.manifestError = String((e && e.message) || e || "unreachable");
-        renderProducts();
-      });
+    refreshManifest();
     renderProducts();
     enableCard("step-pick");
+    updateLocalFlashUi();
   } catch (e) {
     if (port !== state.port) return;
     state.failedPort = port;
@@ -599,6 +602,7 @@ function resetSteps() {
   $("serial-monitor").classList.add("hidden");
   renderReceipts();
   maybeHatch();
+  updateLocalFlashUi();
 }
 
 let lastPortKey = "";
@@ -620,6 +624,31 @@ function syncPortSelect(usb) {
   sel.classList.toggle("hidden", usb.length <= 1);
 }
 
+// The manifest this session flashes from: the catalog's pinned stable
+// release, or — only while the Advanced toggle is on — the fixed dev constant.
+function activeManifestUrl() {
+  return state.devChannel ? DEV_FLASH_MANIFEST_URL : state.catalog.manifest_url;
+}
+
+function refreshManifest() {
+  state.manifest = null;
+  state.manifestError = null;
+  invoke("fetch_manifest", { manifestUrl: activeManifestUrl() })
+    .then((m) => {
+      state.manifest = m;
+      state.manifestError = null;
+      renderProducts();
+    })
+    // Keep WHY. Swallowing this is how every product came to read "no
+    // published release yet" — indistinguishable from "nothing has ever
+    // shipped" — when the real answer was "the release this build is pinned
+    // to was never cut". renderProducts() turns it into that sentence.
+    .catch((e) => {
+      state.manifestError = String((e && e.message) || e || "unreachable");
+      renderProducts();
+    });
+}
+
 // ── step 2: pick a firmware image (chip-guarded) ────────────────────────────
 function renderProducts() {
   const list = $("product-list");
@@ -639,7 +668,7 @@ function renderProducts() {
   // Name the tag instead, so the answer is "that release is missing", not "your
   // board, your network, or this app is broken".
   if (state.manifestError && !state.manifest) {
-    const pinned = releaseTagFromManifestUrl(state.catalog.manifest_url);
+    const pinned = releaseTagFromManifestUrl(activeManifestUrl());
     // A pinned URL that didn't load does NOT prove the release is missing: the
     // machine may be offline, or DNS/TLS may have failed, in which case telling
     // someone to "wait for the release to be cut" sends them to look at the
@@ -647,7 +676,16 @@ function renderProducts() {
     // an HTTP status means the server answered), so only claim the release is
     // uncut when we actually got a status back.
     const status = /\bHTTP (\d{3})\b/.exec(state.manifestError);
-    if (status && pinned) {
+    if (state.devChannel && status) {
+      // The dev pointer isn't a pinned fw-v* tag, so name it explicitly the
+      // same way the stable path names its pinned release — "that release
+      // doesn't exist yet", never "something is broken".
+      $("pick-sub").textContent =
+        `Images for your ${state.chip} — the dev channel points at the rolling ` +
+        `fw-dev-latest prerelease, and no dev release has been cut yet ` +
+        `(HTTP ${status[1]}). Turn the dev channel off under Advanced for the ` +
+        `stable release, or install a local file.`;
+    } else if (status && pinned) {
       $("pick-sub").textContent =
         `Images for your ${state.chip} — but this build is pinned to firmware ` +
         `release ${pinned}, and that release has no published images ` +
@@ -770,7 +808,7 @@ async function onFlash() {
     const receipt = await invoke("flash", {
       port: state.port,
       productId: state.product.id,
-      manifestUrl: state.catalog.manifest_url,
+      manifestUrl: activeManifestUrl(),
       baud: state.catalog.flash_baud || 921600,
       detectedChip: state.chip,
       provisioning,
@@ -874,6 +912,151 @@ async function onFlashModule() {
   }
 }
 
+// ── Advanced: dev channel + local file ──────────────────────────────────────
+function onDevChannelToggle() {
+  state.devChannel = $("dev-channel").checked;
+  $("dev-banner").classList.toggle("hidden", !state.devChannel);
+  logEvent("info", state.devChannel
+    ? "Dev channel on — flashing from fw-dev-latest"
+    : "Dev channel off — back to the pinned stable release");
+  // The chosen product's version belongs to the OTHER channel now — drop it
+  // and re-resolve availability from the newly-active manifest. Without a
+  // chip there's no product list to re-render yet; the toggle still sticks.
+  state.product = null;
+  if (state.chip && state.portKind === "esp32") {
+    $("step-flash").classList.add("disabled");
+    $("flash-btn").disabled = true;
+    $("flash-target").textContent = "";
+    refreshManifest();
+    renderProducts();
+  }
+}
+
+// A local file skips the catalog's chip *guard* (there's no product to
+// compare against), but never the chip-detect step — the note names exactly
+// which chip is connected so the mismatch risk stays visible, not hidden.
+function updateLocalFlashUi() {
+  const connected = !!state.chip && state.portKind === "esp32";
+  $("local-chip-note").textContent = connected
+    ? `Connected: ${state.chip} on ${state.port}. A local file skips the ` +
+      `catalog's chip guard — there's no product to compare against — so ` +
+      `make sure this build targets that chip.`
+    : "Plug in a Canary and let the chip read finish first — the file is " +
+      "written to whichever chip is connected.";
+  $("local-flash-btn").disabled = !(state.localFile && connected && !state.busy);
+}
+
+async function onPickLocalFile() {
+  let path = null;
+  try {
+    path = await window.__TAURI__.dialog.open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Firmware image", extensions: ["bin"] }],
+    });
+  } catch (e) {
+    setStatus("local-result", String(e), "err");
+    return;
+  }
+  if (!path) return;
+  setStatus("local-result", "");
+  $("local-name").textContent = "reading…";
+  try {
+    // Size + SHA-256 are computed and SHOWN before anything is written, so
+    // the confirm is over a named, fingerprinted file — never a blind path.
+    const info = await invoke("inspect_local_file", { path });
+    state.localFile = { path, name: String(path).split(/[\\/]/).pop(), ...info };
+    $("local-name").textContent = state.localFile.name;
+    $("local-size").textContent = state.localFile.size.toLocaleString() + " B";
+    $("local-sha").textContent = state.localFile.sha256;
+    const magic = $("local-magic");
+    magic.classList.toggle("hidden", state.localFile.esp_magic);
+    if (!state.localFile.esp_magic) {
+      // Advisory only: a factory/merged image starts with the bootloader
+      // image, which itself begins 0xE9 — so a missing magic is worth a
+      // sentence, never a refusal.
+      magic.textContent =
+        "⚠ This file doesn't start with 0xE9 — the ESP32's own “program " +
+        "starts here” marker, which a factory/merged image opens with. It " +
+        "can still be written; the board can't be bricked.";
+    }
+    $("local-info").classList.remove("hidden");
+  } catch (e) {
+    state.localFile = null;
+    $("local-name").textContent = "";
+    $("local-info").classList.add("hidden");
+    setStatus("local-result", String(e), "err");
+  }
+  updateLocalFlashUi();
+}
+
+async function onFlashLocalFile() {
+  const file = state.localFile;
+  if (!file || !state.chip || state.portKind !== "esp32") return;
+  // The explicit confirm every other write in this app requires: a named
+  // payload, a named target, and a yes that means yes.
+  let ok = false;
+  try {
+    ok = await window.__TAURI__.dialog.confirm(
+      `Write ${file.name} (${file.size.toLocaleString()} bytes) to the ` +
+      `${state.chip} on ${state.port}?\n\nWe can't vouch for a personal ` +
+      `file's origin — that part is on you.`,
+      { title: "Install a local file", kind: "warning" }
+    );
+  } catch (_) {
+    ok = window.confirm(`Write ${file.name} to the ${state.chip} on ${state.port}?`);
+  }
+  if (!ok) return;
+
+  const btn = $("local-flash-btn");
+  const con = $("local-console");
+  con.textContent = "";
+  con.classList.remove("hidden");
+  btn.disabled = true;
+  btn.textContent = "Writing…";
+  setStatus("local-result", "");
+  resetOutcome();
+  state.busy = true; // pause the watcher so it can't grab the port
+  await stopMonitor();
+
+  const unlisten = await listen("flash:log", (ev) => {
+    con.textContent += ev.payload + "\n";
+    con.scrollTop = con.scrollHeight;
+  });
+
+  try {
+    const receipt = await invoke("flash_local_file", {
+      port: state.port,
+      baud: state.catalog.flash_baud || 921600,
+      path: file.path,
+    });
+    state.vision.hostFlash = receipt;
+    state.vision.hostBoot = null;
+    renderReceipts();
+    setStatus(
+      "local-result",
+      `Write verified. ${file.name} is on the board — local-file ` +
+      `(fingerprint only), SHA-256 ${receipt.installed_sha256.slice(0, 16)}….`,
+      "ok"
+    );
+    logEvent("ok", `Local file ${file.name} flashed`);
+    state.busy = false;
+    // Same as the release path: the boot log should just be there.
+    startMonitor();
+  } catch (e) {
+    setStatus("local-result", String(e), "err");
+    logEvent("err", "Local-file flash failed: " + e);
+  } finally {
+    unlisten();
+    btn.textContent = "Write this file to the board";
+    state.busy = false;
+    // The board reboots after a flash; let the watcher re-sync from scratch.
+    state.chip = null;
+    state.failedPort = null;
+    updateLocalFlashUi();
+  }
+}
+
 // ── serial monitor + earned receipts ────────────────────────────────────────
 async function startMonitor() {
   if (!state.port || state.portKind !== "esp32") {
@@ -917,6 +1100,7 @@ function setMonitorButtons(running) {
 // stale green result, old receipts, a leftover certificate, or a dead monitor.
 function resetOutcome() {
   setStatus("flash-result", "");
+  setStatus("local-result", "");
   try { hideHatchCard(); } catch (_) {}
   if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; state.vision.module = null; }
   try { renderReceipts(); } catch (_) {}
@@ -957,13 +1141,15 @@ function renderReceipts(forceVision = false) {
   $("receipts").classList.toggle("hidden", !any);
   if (!any) return;
 
-  setReceipt(
-    "receipt-host-image",
-    !!host,
-    host
-      ? `✓ v${host.version} · ${host.bytes_written.toLocaleString()} B · ${host.release_verification || "SHA-256"} · ${host.installed_sha256.slice(0, 12)}…`
-      : "waiting for ESP32 flash"
-  );
+  // Name what was written honestly: a release names its version and channel
+  // (dev flashes must never read as stable); a local file has no version —
+  // only its fingerprint speaks for it.
+  const hostLabel = host
+    ? `✓ ${host.channel === "local" ? host.product_id : "v" + host.version}` +
+      `${host.channel === "dev" ? " (dev)" : ""} · ${host.bytes_written.toLocaleString()} B · ` +
+      `${host.release_verification || "SHA-256"} · ${host.installed_sha256.slice(0, 12)}…`
+    : "waiting for ESP32 flash";
+  setReceipt("receipt-host-image", !!host, hostLabel);
   setReceipt(
     "receipt-host-boot",
     !!(boot && boot.ready),

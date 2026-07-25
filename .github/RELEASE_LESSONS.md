@@ -485,3 +485,30 @@ any platform.
   signing/release capability to one target, generalize it to the siblings the
   same day: a scaffold on one app and not the app users actually run is a gap
   waiting for the worst day to surface.
+
+### 2026-07-25 — The desktop Flasher's help copy promised "Install a local file under Advanced" — a feature only the browser flasher had
+
+- **Symptom:** three separate desktop error paths (no published release, dev
+  interest, air-gapped setup) told the user to "install a local file under
+  Advanced". The desktop app had no Advanced local-file UI and no Tauri
+  command behind it — the copy had been ported from the browser flasher
+  (which really has the feature) without the feature itself. A user following
+  the app's own advice hit a dead end the app could not see.
+- **Cause:** Principle 14's failure mode in mirror image. The two flashers
+  share a catalog but no frontend; a diagnostic *message* was kept in parity
+  while the *capability* it references was not. Copy parity without feature
+  parity is worse than divergence — it turns honest advice on one frontend
+  into a false promise on the other.
+- **Fix:** the desktop app grew the real thing, mirroring the browser
+  flasher's semantics exactly: local-file install (fingerprint-only —
+  SHA-256 on the receipt, `release_verification: "local-file (fingerprint
+  only)"`, the same "we can't vouch for a personal file's origin" honesty)
+  and the dev channel (one fixed `fw-dev-latest` constant — never a general
+  manifest override — pinned identical across flash-core.js, lib.rs, and
+  app.js by a new `desktop_parity` drift test, with the same chip guard,
+  SHA-256, and fail-closed signature policy as stable).
+- **Applies to:** both flashers, forever. When one frontend's copy names a
+  capability, the drift gate question is "does the other frontend have the
+  capability?", not just "does it have the string?". Cross-frontend constants
+  (manifest URLs, channel names) belong in `desktop_parity.test.js` so the
+  next divergence fails a test instead of a user.
