@@ -77,6 +77,20 @@ if ! "$PY" -c "import cryptography" 2>/dev/null; then
     warn "The 'cryptography' Python module is required and not installed."
     echo "Install it, then re-run this script:"
     echo "    $PY -m pip install cryptography"
+    echo ""
+    echo "If that fails with 'externally-managed-environment' (PEP 668 — the"
+    echo "usual outcome on a Homebrew or system Python), use a throwaway venv."
+    echo "This script picks up whatever \`python3\` is first on PATH, so"
+    echo "activating one is all it takes:"
+    echo ""
+    echo "    python3 -m venv ~/.venvs/securacv"
+    echo "    source ~/.venvs/securacv/bin/activate"
+    echo "    pip install cryptography"
+    echo "    $0 $*"
+    echo ""
+    echo "Prefer that over 'pip --break-system-packages': this is a one-time"
+    echo "ceremony, and the venv touches nothing outside ~/.venvs/securacv"
+    echo "(delete it afterwards). Keep it active for the gen_flash.py step too."
     exit 1
 fi
 
@@ -142,15 +156,46 @@ else
 fi
 cat <<EOF
 
-  b) Commit ONLY the public header (never $KEY_PATH):
+     Then clear it — a master signing key sitting on the clipboard ends up in
+     whatever you paste into next:
+EOF
+if command -v pbcopy >/dev/null 2>&1; then
+    echo "         pbcopy < /dev/null"
+elif command -v xclip >/dev/null 2>&1; then
+    echo "         xclip -sel clip < /dev/null"
+fi
+cat <<EOF
+
+  b) Regenerate the flasher catalog, then commit the PUBLIC files (never
+     $KEY_PATH — *.pem is gitignored, but check \`git status\` anyway).
+
+     The catalog carries the public key too (\`release_pubkey\` in flash.json,
+     single-sourced from the header you just wrote), and CI has a drift gate that
+     regenerates it and fails if what's committed differs. Committing the headers
+     WITHOUT the catalog turns canary-local red — and leaves the flasher on
+     checksum-only verification instead of checking signatures.
+
+       python3 canary-local/tools/gen_flash.py
        git add firmware/common/ota/src/ota_release_key.h \\
                firmware/projects/canary-wap/arduino/canary_wap/ota_release_key.h \\
-               firmware/projects/canary-display/arduino/canary_display/ota_release_key.h
+               firmware/projects/canary-display/arduino/canary_display/ota_release_key.h \\
+               canary-local/devices/flash.json
        git commit -m "Embed OTA release public key (ceremony)"
        git push
 
-  c) Cut the release — Actions → "Firmware Release — if changed" → Run workflow
-     (or the one-click launcher). It will sign with OTA_SIGNING_KEY_PEM.
+  c) Cut the release — Actions → "Update everything (only what needs it)".
+     Before the secret exists that button reports firmware as gated and explains
+     why; once it exists, the same press releases it. It signs with
+     OTA_SIGNING_KEY_PEM.
+
+     Do (a) BEFORE (c). Between writing the header and adding the secret, a
+     release fails with "public key does not match" instead of the clearer
+     "secret is not set".
+
+     Shipping a NEW app build (so the flasher verifies signatures rather than
+     checksums only) also needs its version bumped first — an app release tag
+     that already exists gets overwritten, not re-cut. See
+     docs/RELEASE_BUTTONS.md.
 
 EOF
 warn "REMINDER: $KEY_PATH is your master signing key. Keep it offline, back it"

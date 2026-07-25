@@ -168,11 +168,20 @@ def decide(
         return make(SKIPPED, "Not selected for this run.")
 
     if target.get("gate_var") and not gate_enabled:
+        # A target can explain its own gate. Without `gate_reason` the default
+        # text describes the Apple case (a repo VARIABLE that must be 'true');
+        # with it, the target says what is actually missing and how to fix it.
+        # That matters for gates that aren't repo variables at all — the
+        # firmware's gate is "does the OTA signing key exist", where the useful
+        # message is the ceremony, not the name of a flag.
         return make(
             GATED,
-            f"{target['gate_var']} is not 'true', so this target's release workflow "
-            f"would be a no-op. Nothing dispatched — see tvos/README.md for the "
-            f"one-time Apple setup.",
+            target.get("gate_reason")
+            or (
+                f"{target['gate_var']} is not 'true', so this target's release "
+                f"workflow would be a no-op. Nothing dispatched — see "
+                f"tvos/README.md for the one-time Apple setup."
+            ),
         )
 
     # The Pages target has no version to compare; "did the published files
