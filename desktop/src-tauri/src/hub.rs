@@ -772,6 +772,21 @@ fn hub_flash_blocking(
         "→ writing to {} — do not remove the card…",
         target.path
     ));
+    // On macOS the write opens the raw disk through Apple's `authopen`, which
+    // pops a Touch ID / password prompt the instant the write starts. Announce
+    // it a beat BEFORE it appears — and name the unfamiliar "authopen" — so it
+    // reads as expected, not sketchy. Emitted before the blocking write_image
+    // call, so the UI shows the cue while authopen waits on the operator.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.emit("hub:mac-auth", true);
+        log(
+            "→ macOS is about to ask for Touch ID or your password. That's the 'authopen' \
+             prompt — Apple's built-in helper we use to write the card without running the app \
+             as administrator (the same way Raspberry Pi Imager does). Approve it to continue."
+                .to_string(),
+        );
+    }
     let receipt =
         hub_io::write::write_image(authz, &raw_path.path, &raw.sha256, cancel, &mut progress)?;
     log("✓ written and read back — the card verifiably holds the image".to_string());
