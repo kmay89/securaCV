@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### C2PA Content Credentials for export bundles (`c2pa-export` feature)
+
+`export_events --c2pa` now signs an industry-standard C2PA sidecar manifest
+(`<bundle>.c2pa`) over the exact export bytes, so any Content Credentials
+tool can verify a SecuraCV export without SecuraCV installed. Keys derive
+from the device seed with domain-separated HKDF (never stored, never the
+chain key); the credential chain is a byte-reproducible device-local CA, so
+the trust anchor can always be re-derived (`--c2pa-anchor-out` writes a
+convenience PEM). `export_verify --c2pa-manifest` requires the sidecar to validate to
+`Trusted` against the device CA (a well-formed manifest under any other
+credential is `TAMPER`) **and** enforces the cross-binding: the manifest's
+`org.securacv.witness` assertion must name exactly the receipt entry
+embedded in the bundle, with the artifact hash that receipt committed to.
+Scheduled-export pruning (`--output-dir --keep`) removes a bundle's
+`.c2pa` sidecar together with the bundle. Fully
+offline (no OpenSSL, no HTTP backend, no TSA); the hash-chained log remains
+the root of trust. Design: `docs/design/c2pa_export.md`. Tests run in CI
+(`cargo test --features c2pa-export`).
+
 ### Releasing is one button, and every dead end now names itself
 
 Following the release path as a first-time operator found the pipeline blocked on
@@ -2750,7 +2769,6 @@ FEATURE_DATA_MGMT.
 ### Fixed
 - `log_verify` now verifies break-glass receipt chain (called from `main`)
 - Receipt verification uses `[u8; 32]` device key signature input and supports `--verbose`
-
 
 All notable changes to the Privacy Witness Kernel will be documented in this file.
 

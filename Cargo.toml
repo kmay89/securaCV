@@ -27,7 +27,13 @@ log = "0.4"
 env_logger = "0.11"
 rumqttc = { package = "rumqttc-next", version = "0.33", features = ["use-rustls"] }
 hex = "0.4"
-ed25519-dalek = "3.0"
+ed25519-dalek = { version = "3.0", features = ["pkcs8", "pem"] }
+# C2PA Content Credentials export (feature `c2pa-export`): the official CAI
+# SDK, built without OpenSSL (rust_native_crypto) and without any HTTP
+# backend — signing and verification are fully offline (Principle 2).
+c2pa = { version = "0.90", default-features = false, features = ["rust_native_crypto"], optional = true }
+# X.509 generation for the device-local C2PA credential chain (CA + leaf).
+rcgen = { version = "0.14", optional = true }
 pqcrypto-mldsa = { version = "0.1", optional = true }
 pqcrypto-traits = { version = "0.3", optional = true }
 pqcrypto-mlkem = { version = "0.1", optional = true }
@@ -85,6 +91,10 @@ pqc-tls = ["rustls", "webpki-roots", "rustls-pki-types"]
 # RFC 3161 trusted timestamping: enables log_anchor's online `request`
 # subcommand (the offline query/import flow needs no feature).
 tsa = ["ureq"]
+# C2PA Content Credentials sidecar manifests for export bundles
+# (docs/design/c2pa_export.md). Fully offline; keys derived from the device
+# seed with domain separation; trust anchor is the device-local CA.
+c2pa-export = ["dep:c2pa", "dep:rcgen"]
 
 [[bin]]
 name = "witnessd"

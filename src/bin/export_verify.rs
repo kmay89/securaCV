@@ -66,6 +66,17 @@ struct Args {
     /// --bundle ...` verifies an owner self-export with the seed alone.
     #[arg(long, value_name = "SEED", env = "DEVICE_KEY_SEED")]
     device_key_seed: Option<String>,
+    /// Also verify a C2PA Content Credentials sidecar manifest against the
+    /// bundle bytes (docs/design/c2pa_export.md).
+    #[arg(long, value_name = "PATH")]
+    #[cfg(feature = "c2pa-export")]
+    c2pa_manifest: Option<String>,
+    /// Trust anchor (device CA, PEM) for the sidecar verification. When
+    /// omitted, the anchor is re-derived from --device-key-seed; one of the
+    /// two must be available.
+    #[arg(long, value_name = "PATH", requires = "c2pa_manifest")]
+    #[cfg(feature = "c2pa-export")]
+    c2pa_anchor: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -186,22 +197,27 @@ fn main() -> Result<()> {
     // including auth_mode and window, so none of it can be rewritten.
     // A bare-artifact file (no receipt wrapper) is matched by its whole-file
     // hash against the trusted chain, as older exports produced.
-    let artifact_hash: [u8; 32] = match serde_json::from_slice::<ExportBundle>(&bundle_bytes) {
-        Ok(bundle) => {
-            let _stage = ui.stage("Verify bundle receipt + artifact binding");
-            verify_export_bundle(&bundle)?;
-            if !verified_entry_hashes.contains(&bundle.receipt_entry.entry_hash) {
-                return Err(anyhow!(
-                    "TAMPER: bundle receipt entry not found in the verified export-receipt chain"
-                ));
+    #[cfg_attr(not(feature = "c2pa-export"), allow(unused_variables))]
+    let (artifact_hash, bundle_entry_hash): ([u8; 32], Option<[u8; 32]>) =
+        match serde_json::from_slice::<ExportBundle>(&bundle_bytes) {
+            Ok(bundle) => {
+                let _stage = ui.stage("Verify bundle receipt + artifact binding");
+                verify_export_bundle(&bundle)?;
+                if !verified_entry_hashes.contains(&bundle.receipt_entry.entry_hash) {
+                    return Err(anyhow!(
+                        "TAMPER: bundle receipt entry not found in the verified export-receipt chain"
+                    ));
+                }
+                if let Some(mode) = bundle.receipt_entry.receipt.auth_mode {
+                    println!("bundle authorization: {:?}", mode);
+                }
+                (
+                    bundle.receipt_entry.receipt.artifact_hash,
+                    Some(bundle.receipt_entry.entry_hash),
+                )
             }
-            if let Some(mode) = bundle.receipt_entry.receipt.auth_mode {
-                println!("bundle authorization: {:?}", mode);
-            }
-            bundle.receipt_entry.receipt.artifact_hash
-        }
-        Err(_) => Sha256::digest(&bundle_bytes).into(),
-    };
+            Err(_) => (Sha256::digest(&bundle_bytes).into(), None),
+        };
     if args.verbose {
         println!("artifact hash: {}", verify_helpers::hex32(&artifact_hash));
     }
@@ -212,6 +228,79 @@ fn main() -> Result<()> {
     };
     if !found {
         return Err(anyhow!("TAMPER: bundle hash not found in export receipts"));
+    }
+
+    #[cfg(feature = "c2pa-export")]
+    if let Some(manifest_path) = &args.c2pa_manifest {
+        use witness_kernel::c2pa_export;
+        let _stage = ui.stage("Verify C2PA sidecar");
+        let manifest_bytes = std::fs::read(manifest_path)
+            .map_err(|e| anyhow!("failed to read C2PA manifest {}: {}", manifest_path, e))?;
+        let anchor_pem = match (&args.c2pa_anchor, args.device_key_seed.as_deref()) {
+            (Some(path), _) => std::fs::read_to_string(path)
+                .map_err(|e| anyhow!("failed to read C2PA anchor {}: {}", path, e))?,
+            (None, Some(seed)) => c2pa_export::ca_anchor_from_seed(seed)?,
+            (None, None) => {
+                return Err(anyhow!(
+                    "C2PA verification needs a trust anchor: pass --c2pa-anchor <PEM> \
+                     or --device-key-seed to re-derive the device CA"
+                ))
+            }
+        };
+        let report =
+            c2pa_export::verify_export_sidecar(&manifest_bytes, &bundle_bytes, &anchor_pem)?;
+        println!(
+            "c2pa: manifest valid, state {:?}{}",
+            report.state,
+            report
+                .issuer
+                .as_deref()
+                .map(|i| format!(", issuer {i:?}"))
+                .unwrap_or_default()
+        );
+        // A `Valid` (internally consistent, wrong root) manifest is an
+        // attacker's manifest here: this tool was handed a specific anchor,
+        // so anything not chaining to it is a forgery attempt, however
+        // well-formed. Only `Trusted` passes.
+        if report.state != c2pa_export::C2paValidationState::Trusted {
+            return Err(anyhow!(
+                "TAMPER: C2PA manifest signer does not chain to the supplied trust anchor \
+                 (state {:?})",
+                report.state
+            ));
+        }
+        // The manifest must not merely be trusted — its witness binding has
+        // to point at THIS disclosure. Sidecars only exist for full
+        // ExportBundle files, and the binding must name exactly the receipt
+        // entry embedded in this bundle (already proven above to be in the
+        // verified chain), with the artifact hash that receipt committed to.
+        // Identity, not membership: a trusted manifest naming any *other*
+        // verified receipt is a graft and fails.
+        let expected_entry = bundle_entry_hash.ok_or_else(|| {
+            anyhow!(
+                "C2PA verification requires a full export bundle (this file is a bare \
+                 artifact with no embedded receipt)"
+            )
+        })?;
+        let binding = report.binding.ok_or_else(|| {
+            anyhow!("TAMPER: C2PA manifest carries no org.securacv.witness assertion")
+        })?;
+        let bound_entry: [u8; 32] = hex::decode(&binding.receipt_entry_hash)
+            .ok()
+            .and_then(|v| v.try_into().ok())
+            .ok_or_else(|| anyhow!("TAMPER: malformed receipt hash in witness assertion"))?;
+        if bound_entry != expected_entry {
+            return Err(anyhow!(
+                "TAMPER: C2PA witness assertion names a different receipt entry than the \
+                 one embedded in this bundle"
+            ));
+        }
+        if binding.artifact_hash != verify_helpers::hex32(&artifact_hash) {
+            return Err(anyhow!(
+                "TAMPER: C2PA witness assertion artifact hash does not match the receipt"
+            ));
+        }
+        println!("c2pa: witness binding matches this bundle's verified receipt");
     }
 
     println!("OK: export bundle hash verified.");

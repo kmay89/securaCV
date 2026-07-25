@@ -84,6 +84,20 @@ struct Args {
     /// UI mode for stderr progress (auto|plain|pretty)
     #[arg(long, default_value = "auto", value_name = "MODE")]
     ui: String,
+    /// Also sign a C2PA Content Credentials sidecar manifest
+    /// (`<output>.c2pa`) over the exact bundle bytes, so the artifact is
+    /// verifiable by any Content Credentials tool. Fully offline; the
+    /// signing credential derives from the device key seed
+    /// (docs/design/c2pa_export.md).
+    #[cfg(feature = "c2pa-export")]
+    #[arg(long)]
+    c2pa: bool,
+    /// With --c2pa: also write the device CA trust anchor (PEM) here, for
+    /// handing to third-party verifiers. The anchor is deterministic in the
+    /// seed, so this is a convenience copy, not state.
+    #[cfg(feature = "c2pa-export")]
+    #[arg(long, requires = "c2pa", value_name = "PATH")]
+    c2pa_anchor_out: Option<std::path::PathBuf>,
 }
 
 /// Resolve --start/--end/--last into a bucket-aligned window (floor start,
@@ -103,7 +117,9 @@ fn resolve_window(args: &Args) -> Result<Option<ExportWindow>> {
 
 /// Delete the oldest `securacv-events-<bucket>.json` files beyond `keep`
 /// (sorted by the bucket number in the filename; at least 1 is always kept).
-/// Only files matching the scheduled-export pattern are ever touched.
+/// Only files matching the scheduled-export pattern are ever touched. A
+/// pruned bundle takes its `.json.c2pa` sidecar (if any) with it — a
+/// sidecar is meaningless without the exact bytes it signs.
 fn prune_exports(dir: &std::path::Path, keep: usize) -> Result<usize> {
     let mut exports: Vec<(u64, std::path::PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(dir)? {
@@ -124,6 +140,13 @@ fn prune_exports(dir: &std::path::Path, keep: usize) -> Result<usize> {
     let excess = exports.len().saturating_sub(keep.max(1));
     for (_, path) in exports.iter().take(excess) {
         std::fs::remove_file(path)?;
+        let mut sidecar_name = path.file_name().unwrap_or_default().to_os_string();
+        sidecar_name.push(".c2pa");
+        match std::fs::remove_file(path.with_file_name(sidecar_name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
     }
     Ok(excess)
 }
@@ -202,8 +225,46 @@ fn main() -> Result<()> {
     };
     {
         let _stage = ui.stage("Write export bundle");
-        std::fs::write(&output_path, json)?;
+        std::fs::write(&output_path, &json)?;
     }
+    #[cfg(feature = "c2pa-export")]
+    let c2pa_sidecar: Option<(std::path::PathBuf, String)> = if args.c2pa {
+        use witness_kernel::c2pa_export;
+        let _stage = ui.stage("Sign C2PA sidecar");
+        let credentials = c2pa_export::credentials_from_seed(&cfg.device_key_seed)?;
+        let binding = c2pa_export::WitnessBinding {
+            receipt_entry_hash: hex::encode(bundle.receipt_entry.entry_hash),
+            artifact_hash: hex::encode(bundle.receipt_entry.receipt.artifact_hash),
+            device_public_key: hex::encode(
+                witness_kernel::verifying_key_from_seed(&cfg.device_key_seed)?.to_bytes(),
+            ),
+            auth_mode: if args.self_export {
+                "self_export".to_string()
+            } else {
+                "break_glass".to_string()
+            },
+            ruleset_id: cfg.ruleset_id.clone(),
+            kernel_version: cfg.kernel_version.clone(),
+        };
+        let manifest = c2pa_export::sign_export_sidecar(
+            &json,
+            &credentials,
+            &binding,
+            "SecuraCV witness export",
+        )?;
+        let sidecar_path = {
+            let mut name = output_path.file_name().unwrap_or_default().to_os_string();
+            name.push(".c2pa");
+            output_path.with_file_name(name)
+        };
+        std::fs::write(&sidecar_path, manifest)?;
+        if let Some(anchor_path) = &args.c2pa_anchor_out {
+            std::fs::write(anchor_path, credentials.ca_cert_pem.as_bytes())?;
+        }
+        Some((sidecar_path, credentials.ca_fingerprint()?))
+    } else {
+        None
+    };
     let pruned = match (&args.output_dir, args.keep) {
         (Some(dir), Some(keep)) => prune_exports(dir, keep)?,
         _ => 0,
@@ -237,6 +298,23 @@ fn main() -> Result<()> {
         "  receipt: signed export receipt {}… appended to the tamper-evident log",
         &hex::encode(bundle.receipt_entry.entry_hash)[..16]
     );
+    #[cfg(feature = "c2pa-export")]
+    if let Some((sidecar_path, ca_fingerprint)) = c2pa_sidecar {
+        println!(
+            "  c2pa: Content Credentials sidecar written to {}",
+            sidecar_path.display()
+        );
+        println!(
+            "  c2pa: device CA anchor fingerprint sha256:{}…",
+            &ca_fingerprint[..16]
+        );
+        if let Some(anchor_path) = &args.c2pa_anchor_out {
+            println!(
+                "  c2pa: trust anchor PEM written to {}",
+                anchor_path.display()
+            );
+        }
+    }
     if args.jitter_s > 0 {
         println!(
             "  note: exported times are coarsened to {}-minute buckets and jittered ±{}s \
@@ -298,12 +376,19 @@ mod tests {
             .expect("write");
         }
         std::fs::write(dir.path().join("unrelated.json"), b"{}").expect("write");
+        // C2PA sidecars: present for some bundles (600, 1800), absent for
+        // others — pruning a bundle must take its sidecar with it, never
+        // count sidecars as bundles, and not fail when a sidecar is absent.
+        std::fs::write(dir.path().join("securacv-events-600.json.c2pa"), b"x").expect("write");
+        std::fs::write(dir.path().join("securacv-events-1800.json.c2pa"), b"x").expect("write");
 
         let pruned = super::prune_exports(dir.path(), 2).expect("prune");
         assert_eq!(pruned, 2);
         assert!(!dir.path().join("securacv-events-600.json").exists());
+        assert!(!dir.path().join("securacv-events-600.json.c2pa").exists());
         assert!(!dir.path().join("securacv-events-1200.json").exists());
         assert!(dir.path().join("securacv-events-1800.json").exists());
+        assert!(dir.path().join("securacv-events-1800.json.c2pa").exists());
         assert!(dir.path().join("securacv-events-2400.json").exists());
         assert!(dir.path().join("unrelated.json").exists());
 
@@ -312,6 +397,7 @@ mod tests {
         let pruned = super::prune_exports(dir.path(), 0).expect("prune");
         assert_eq!(pruned, 1);
         assert!(dir.path().join("securacv-events-2400.json").exists());
+        assert!(!dir.path().join("securacv-events-1800.json.c2pa").exists());
     }
 
     #[test]
