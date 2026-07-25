@@ -1,0 +1,71 @@
+# securaCV detector — Frigate config for a Jetson Orin Nano (TensorRT).
+#
+# The hub recipe (homeassistant/frigate/config.yaml), retargeted to the Jetson's
+# GPU and pointed at your Pi hub's MQTT broker. Set FRIGATE_MQTT_* in ../.env —
+# Frigate substitutes any {FRIGATE_*} placeholder from the environment at start.
+
+mqtt:
+  enabled: true
+  host: "{FRIGATE_MQTT_HOST}"      # your Pi hub — homeassistant.local or its IP
+  port: 1883
+  topic_prefix: frigate
+  # Distinct from the hub's client_id (frigate_hub) — Mosquitto allows one
+  # connection per client_id, so they must differ or they disconnect each other.
+  # If you ALSO run Frigate on the hub, give this a distinct topic_prefix too
+  # (e.g. frigate_jetson) and set securaCV's frigate.topic_prefix to match.
+  client_id: frigate_jetson
+  user: "{FRIGATE_MQTT_USER}"
+  password: "{FRIGATE_MQTT_PASSWORD}"
+
+# GPU detection on the Orin's Ampere cores — no Coral needed. The model file is
+# compiled on first boot from the YOLO_MODELS env in docker-compose.yml.
+detectors:
+  tensorrt:
+    type: tensorrt
+    device: 0
+
+model:
+  path: /config/model_cache/tensorrt/yolov7-320.trt
+  input_tensor: nchw
+  input_pixel_format: rgb
+  width: 320
+  height: 320
+
+# Hardware-decode camera streams on the Orin's NVDEC.
+ffmpeg:
+  hwaccel_args: preset-jetson-h264   # H.265 cameras: use preset-jetson-h265
+
+go2rtc:
+  streams: {}
+
+# "Claims, not recordings": both OFF by default so no raw imagery is retained —
+# detection + MQTT events still work fully. Turn either on only if you
+# deliberately accept storing raw imagery (and the Jetson has NVMe/SSD).
+record:
+  enabled: false
+
+snapshots:
+  enabled: false
+
+# Same objects the securaCV kernel labels, so its claims line up with detections.
+objects:
+  track:
+    - person
+    - car
+    - dog
+    - cat
+
+# One disabled example so the config is valid out of the box. Add your camera's
+# RTSP URL, set enabled: true, and the hub picks it up over MQTT automatically.
+cameras:
+  example_camera:
+    enabled: false
+    ffmpeg:
+      inputs:
+        - path: rtsp://USER:PASS@CAMERA_IP:554/stream
+          roles:
+            - detect
+    detect:
+      width: 1280
+      height: 720
+      fps: 5

@@ -280,11 +280,26 @@ Raspberry Pi Imager.
     the Wi-Fi/account pre-seed (a seed stumble is already non-fatal — the
     verified write is never demoted), and the guide carries the user the last
     step from `homeassistant.local:8123`.
+  - *Full-stack payload recipe (Frigate config landed 2026-07-25):* the curated
+    Frigate config the seed will carry is committed at
+    `homeassistant/frigate/config.yaml` (go2rtc built in, MQTT→Mosquitto,
+    person/car/dog/cat to match the kernel labels, recordings OFF for SD
+    endurance) and enumerated + drift-gated into `hub_image.json`
+    (`payload.frigate_config`). This also fixed two catalog bugs: the Frigate
+    add-on slug is `ccab4aaf_frigate` (a third-party store add-on whose
+    repository must be added), not `frigate`, and go2rtc is **not** a separate
+    add-on (it's built into Frigate), so it's no longer listed as one. Because
+    securaCV consumes Frigate over MQTT, the same recipe serves a Pi-with-Coral
+    or a dedicated NVIDIA Jetson detector — see
+    [`integrations/jetson-detector/`](../../integrations/jetson-detector/README.md).
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS
-    keychain, and seed the curated **full-stack** securaCV backup (Mosquitto +
-    PWK add-on + Frigate/go2rtc + dashboards + blueprints) so first boot comes
-    up pre-wired — until then the hub boots as stock HAOS + Wi-Fi and the
-    guide carries the user from `homeassistant.local:8123`.
+    keychain, and build the **seed assembler** that carries the curated
+    **full-stack** backup (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards
+    + blueprints + the Frigate add-on repository) onto the card so first boot
+    comes up pre-wired — the config recipe now exists; what's missing is the
+    assembler + the hardware-validated restore mechanism. Until then the hub
+    boots as stock HAOS + Wi-Fi and the guide carries the user from
+    `homeassistant.local:8123`.
   - *Account pre-seed (minting + opt-in seed IMPLEMENTED 2026-07-23; HAOS
     acceptance OUTSTANDING):* the flasher collects the operator's
     name/username/password alongside the Wi-Fi (an opt-in, clearly
