@@ -74,6 +74,7 @@ Pick the row that sounds like you (same four paths as the interactive guide):
 
 - [Getting started with Canaries](getting_started_canary.md) — first device, end to end
 - [Hardware guides & BOMs](hardware/README.md) — build plans, bring-up benches, enclosures, per-device guides
+- [Board ownership research](board_market_research.md) — installed-base numbers (ESP32 vs Pi vs Arduino vs the rest) and which boards deserve firmware first; names the classic ESP32 (ESP32-CAM / WROOM-32) as the highest-value next port
 - [Firmware OTA](firmware_ota.md) — signed pull-updates with rollback
 - [Parity by architecture](FLEET_PARITY.md) — how a fleet-wide capability (like the `/api/fleet` self-report) lives in one host-tested `common/` core so one edit reaches every board, never a per-board copy-paste
 - [Release process & channels](RELEASE_PROCESS.md) — tags → releases; how the dev channel stays invisible to release devices
