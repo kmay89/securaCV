@@ -1441,3 +1441,102 @@ test("flash.html: every vendored module the flasher imports is pinned", () => {
   assert.deepStrictEqual([...vendored].map(norm).sort(), Object.keys(map).map(norm).sort(),
     "the flasher's vendored imports and the SRI integrity map have drifted apart");
 });
+
+// ── the trust layer: the badge must never outrun the check ─────────────────
+// A padlock is a security claim. These tests exist so the claim can only ever
+// be a report of a verification that actually ran.
+const REAL_KEY = "a1".repeat(32);
+const ZERO_KEY = "00".repeat(32);
+const SIG = "cd".repeat(64);
+const SHA = "ef".repeat(32);
+
+test("trustProof: green lock requires policy=verify AND a true verification", async () => {
+  const core = await import("../assets/flash-core.js");
+  const signed = core.trustProof({
+    policy: "verify", verified: true, pubkeyHex: REAL_KEY,
+    keyId: "532429078dc47c04", signatureHex: SIG, sha256Hex: SHA, size: 1234,
+  });
+  assert.strictEqual(signed.level, core.TRUST_SIGNED);
+  assert.strictEqual(signed.tone, "ok");
+  assert.strictEqual(signed.verified, true);
+
+  // The same inputs with a FAILED check must never read as signed.
+  const failed = core.trustProof({
+    policy: "verify", verified: false, pubkeyHex: REAL_KEY,
+    signatureHex: SIG, sha256Hex: SHA, size: 1234,
+  });
+  assert.strictEqual(failed.level, core.TRUST_REFUSED);
+  assert.strictEqual(failed.verified, false);
+
+  // And "we didn't check" is not "it passed" — the trap this guards.
+  for (const v of [undefined, null, "yes", 1]) {
+    const u = core.trustProof({
+      policy: "verify", verified: v, pubkeyHex: REAL_KEY,
+      signatureHex: SIG, sha256Hex: SHA, size: 1234,
+    });
+    assert.notStrictEqual(u.level, core.TRUST_SIGNED,
+      `verified=${JSON.stringify(v)} must not produce a green lock`);
+    assert.strictEqual(u.verified, false);
+  }
+});
+
+test("trustProof: no pinned key is checksum-only and says why, never signed", async () => {
+  const core = await import("../assets/flash-core.js");
+  const p = core.trustProof({
+    policy: "checksum-only", verified: false, pubkeyHex: ZERO_KEY,
+    sha256Hex: SHA, size: 99,
+  });
+  assert.strictEqual(p.level, core.TRUST_CHECKSUM);
+  assert.strictEqual(p.keyReal, false);
+  assert.match(p.why, /cannot prove WHO/);
+  // The proof chain must be honest that there is no key.
+  assert.match(p.steps.find((s) => s.id === "key").value, /all zeros/);
+});
+
+test("trustProof: a stripped signature under a live key is a refusal, not a warning", async () => {
+  const core = await import("../assets/flash-core.js");
+  const p = core.trustProof({
+    policy: "require-signature", verified: false, pubkeyHex: REAL_KEY,
+    sha256Hex: SHA, size: 99,
+  });
+  assert.strictEqual(p.level, core.TRUST_REFUSED);
+  assert.strictEqual(p.tone, "bad");
+});
+
+test("trustProof: the evidence chain shows the ACTUAL signed message bytes", async () => {
+  const core = await import("../assets/flash-core.js");
+  const size = 0x01020304;
+  const p = core.trustProof({
+    policy: "verify", verified: true, pubkeyHex: REAL_KEY,
+    signatureHex: SIG, sha256Hex: SHA, size,
+  });
+  const msg = p.steps.find((s) => s.id === "message").value.replace(/ /g, "");
+  // uint32_le(size) || sha256 — little-endian, so the low byte leads.
+  assert.strictEqual(msg.slice(0, 8), "04030201");
+  assert.strictEqual(msg.slice(8), SHA);
+  // And it must equal what the verifier itself builds, or the panel is showing
+  // one thing while the check used another.
+  const built = [...core.ed25519Message(size, core.hexToBytes(SHA))]
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+  assert.strictEqual(msg, built);
+});
+
+test("keyIdOfPubkey / keyIdFromDigestHex: the same 16 hex the ceremony prints", async () => {
+  const core = await import("../assets/flash-core.js");
+  assert.strictEqual(core.keyIdFromDigestHex("ABCDEF0123456789aabb"), "abcdef0123456789");
+  assert.strictEqual(core.keyIdFromDigestHex("short"), null);
+  assert.strictEqual(await core.keyIdOfPubkey(ZERO_KEY), null, "no key id for a placeholder key");
+  const id = await core.keyIdOfPubkey(REAL_KEY);
+  assert.match(id, /^[0-9a-f]{16}$/);
+  // Must be sha256(pubkey bytes) truncated — the same rule as
+  // firmware/scripts/ota_key_state.py, so the two surfaces agree.
+  const { createHash } = require("node:crypto");
+  const expect = createHash("sha256").update(Buffer.from(REAL_KEY, "hex")).digest("hex").slice(0, 16);
+  assert.strictEqual(id, expect);
+});
+
+test("groupHex: long hex is broken up so a human can actually compare it", async () => {
+  const core = await import("../assets/flash-core.js");
+  assert.strictEqual(core.groupHex("aabbccdd11223344", 8), "aabbccdd 11223344");
+  assert.strictEqual(core.groupHex(""), "");
+});

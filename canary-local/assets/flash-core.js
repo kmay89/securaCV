@@ -2110,3 +2110,180 @@ export function validateEpicCatalog(cat) {
   }
   return errs;
 }
+
+// ── the trust layer: click the lock and PROVE it ────────────────────────────
+// A padlock that only asserts "trust me" teaches people to trust the icon. So
+// the badge is derived from the verification that actually ran, and it carries
+// the evidence with it: the pinned key, the bytes' own measurements, the exact
+// message that was signed, the signature, and the verdict — each a value you
+// can check by hand or re-run live.
+//
+// Pure and synchronous on purpose: every value is passed in, already measured,
+// so this is host-testable and can never claim a check that didn't happen.
+// `verified` must be the RESULT of verifyImageSignature(), never an assumption.
+
+// The key's fingerprint, short form — the SAME 16 hex chars that
+// setup_release_key.sh prints at the end of the ceremony and that
+// firmware/scripts/ota_key_state.py reports. One anchor a human can compare
+// across the ceremony, the repo, the flasher, and (next) the device itself:
+// if those four agree, the key in your hand is the key in the field.
+export function keyIdFromDigestHex(digestHex) {
+  const h = String(digestHex || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+  return h.length >= 16 ? h.slice(0, 16) : null;
+}
+
+export async function keyIdOfPubkey(pubkeyHex) {
+  if (!isRealPubkey(pubkeyHex)) return null;
+  try {
+    const d = await crypto.subtle.digest("SHA-256", hexToBytes(pubkeyHex));
+    return keyIdFromDigestHex([...new Uint8Array(d)]
+      .map((b) => b.toString(16).padStart(2, "0")).join(""));
+  } catch { return null; }
+}
+
+// Group hex into readable quads so a human can actually compare two values by
+// eye — an unbroken 128-char run is not checkable, and "checkable by a person"
+// is the entire point of showing it.
+export function groupHex(hex, group = 8) {
+  const h = String(hex || "").replace(/\s+/g, "");
+  return h ? (h.match(new RegExp(`.{1,${group}}`, "g")) || []).join(" ") : "";
+}
+
+export const TRUST_SIGNED = "signed";
+export const TRUST_CHECKSUM = "checksum";
+export const TRUST_REFUSED = "refused";
+
+// Assemble the badge + its proof. `policy` comes from imageVerificationPolicy()
+// and `verified` from verifyImageSignature() — this only ever REPORTS them.
+export function trustProof({
+  policy, verified, pubkeyHex, keyId, signatureHex, sha256Hex, size,
+  selfHosted = false, version = null,
+} = {}) {
+  const keyReal = isRealPubkey(pubkeyHex);
+  const sigBytes = hexToBytes(signatureHex || "");
+  const shaBytes = hexToBytes(sha256Hex || "");
+  const message = (shaBytes.length >= 32 && Number.isFinite(size))
+    ? [...ed25519Message(size, shaBytes)]
+        .map((b) => b.toString(16).padStart(2, "0")).join("")
+    : null;
+
+  // The evidence chain, in the order the check actually runs it. Every `value`
+  // is a real measurement or a real input — nothing here is prose pretending
+  // to be data.
+  const steps = [];
+  steps.push({
+    id: "key",
+    name: "The key this build trusts",
+    value: keyReal ? (keyId || groupHex(pubkeyHex, 8)) : "all zeros — no key pinned yet",
+    detail: keyReal
+      ? "Pinned in the catalog this app shipped with, single-sourced from the " +
+        "public key compiled into the firmware. Nothing fetched it at runtime, " +
+        "so a hostile server cannot swap the key it is checked against. Compare " +
+        "this key id with the one the release ceremony printed and the one the " +
+        "device reports — all three must match."
+      : "The signing ceremony hasn't happened for this build, so there is no " +
+        "key to check a signature against. SHA-256 still runs, which catches " +
+        "corruption but cannot prove authorship.",
+  });
+  if (Number.isFinite(size)) {
+    steps.push({
+      id: "size",
+      name: "Size of the bytes you downloaded",
+      value: `${size.toLocaleString()} bytes`,
+      detail: "Measured here, from the image in memory — not read from the " +
+        "manifest. Size is part of the signed message, so padding an image " +
+        "breaks the signature.",
+    });
+  }
+  if (shaBytes.length >= 32) {
+    steps.push({
+      id: "sha",
+      name: "SHA-256 of those same bytes",
+      value: groupHex(sha256Hex, 8),
+      detail: "Computed locally from the downloaded bytes and matched against " +
+        "the published fingerprint before anything was written. Check it " +
+        "yourself: download the same release asset and run `sha256sum`.",
+    });
+  }
+  if (message) {
+    steps.push({
+      id: "message",
+      name: "The exact bytes that were signed",
+      value: groupHex(message, 8),
+      detail: "uint32_le(size) || sha256(image) — 36 bytes. The signature " +
+        "covers this, which is why the size and digest above cannot be changed " +
+        "independently. Identical scheme in ota_release.py, the device's OTA " +
+        "engine, and the desktop app.",
+    });
+  }
+  if (sigBytes.length === 64) {
+    steps.push({
+      id: "signature",
+      name: "The release signature",
+      value: groupHex(signatureHex, 8),
+      detail: "64-byte Ed25519 signature from the release manifest. Only the " +
+        "holder of the private half can produce one that verifies against the " +
+        "key above, and that key never leaves its owner's machine.",
+    });
+  }
+
+  if (policy === "require-signature") {
+    return {
+      level: TRUST_REFUSED, tone: "bad", lock: "⛔",
+      label: "Unsigned — refused",
+      headline: "A signing key is in force, but this official image carries no signature.",
+      why: "A stripped signature is exactly what an attacker would do to slip a " +
+        "substituted image past you, so a missing signature is treated as a " +
+        "failed one rather than as 'unverified'. Nothing will be written.",
+      steps, verified: false, keyReal, version,
+    };
+  }
+  if (policy === "verify" && verified === true) {
+    return {
+      level: TRUST_SIGNED, tone: "ok", lock: "🔒",
+      label: "Signed & verified",
+      headline: "These exact bytes were signed by the SecuraCV release key, and " +
+        "the signature was verified here, on your machine, before any write.",
+      why: "This is authorship, not just integrity: SHA-256 alone proves the " +
+        "bytes weren't corrupted, but anyone can publish bytes and their " +
+        "matching digest. Only the private key's holder can sign, and that key " +
+        "is not on any server that serves you this image — so a compromised " +
+        "download host, mirror, or network cannot produce firmware this check " +
+        "accepts. It is the same signature your Canary re-verifies before it " +
+        "installs an update.",
+      steps, verified: true, keyReal, version,
+    };
+  }
+  if (policy === "verify" && verified === false) {
+    return {
+      level: TRUST_REFUSED, tone: "bad", lock: "⛔",
+      label: "Signature did NOT verify",
+      headline: "This image's signature does not match the pinned key. Nothing " +
+        "will be written.",
+      why: "Either the bytes or the signature changed in transit, or the image " +
+        "was not signed by the key this build trusts. Both are refusals, not " +
+        "warnings — a failed signature is the one case where continuing is " +
+        "never the safe choice.",
+      steps, verified: false, keyReal, version,
+    };
+  }
+  return {
+    level: TRUST_CHECKSUM, tone: "warn", lock: "🔓",
+    label: "Checksum only",
+    headline: selfHosted
+      ? "You pointed this page at your own manifest, so it is checked by " +
+        "SHA-256 against what that manifest claims — not against the SecuraCV " +
+        "release key."
+      : "Verified by SHA-256 against the published fingerprint. No release " +
+        "signature was checked.",
+    why: "SHA-256 proves these bytes match the digest that was published, which " +
+      "catches corruption and truncation. It cannot prove WHO published them: " +
+      "whoever controls the manifest controls both the image and the digest. " +
+      (selfHosted
+        ? "That is the expected trade for a self-hosted or air-gapped setup — you " +
+          "are the authority instead."
+        : "Once the release signing key exists, this becomes a full signature " +
+          "check automatically, with no change to this app."),
+    steps, verified: false, keyReal, version,
+  };
+}
