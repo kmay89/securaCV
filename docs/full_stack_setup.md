@@ -1,0 +1,224 @@
+# The full stack, end to end — hub + eyes + Canaries
+
+**One page, one journey: an SD card in your hand → a self-healing hub → live
+camera detection → signed witness claims on a dashboard.**
+
+Other docs cover each piece in depth. This is the **golden path**: the order to
+do things in, what "working" looks like at each step, and the gotchas we hit so
+you don't. It is **built from real runs on real hardware** — every ✅ below was
+observed, not assumed. Steps still marked ⏳ are honest about being unproven.
+
+> **Why this order:** the hub is the brain (broker + witness kernel + dashboard).
+> Everything else — cameras, detectors, Canaries — reports *to* it. Stand up the
+> brain first and each later piece has somewhere to arrive.
+
+---
+
+## The map
+
+```
+   ┌─────────────────────────────────────────────────────────────┐
+   │  1. THE HUB  — Raspberry Pi 4/5, Home Assistant OS           │
+   │     Mosquitto (broker) + securaCV kernel + dashboards        │
+   └───────────▲─────────────────────▲───────────────────────────┘
+               │ MQTT                │ MQTT
+   ┌───────────┴───────────┐  ┌──────┴────────────────────────┐
+   │ 2. THE EYES           │  │ 3. THE CANARIES               │
+   │   Frigate detection   │  │   ESP32 devices, flashed      │
+   │   • on the Pi (CPU)   │  │   over USB-C                  │
+   │   • or a Jetson (GPU) │  │                               │
+   └───────────────────────┘  └───────────────────────────────┘
+```
+
+You need **step 1**. Steps 2 and 3 are independent — do either, both, or neither.
+
+---
+
+## What you need
+
+| For | Hardware |
+|---|---|
+| **The hub** (required) | Raspberry Pi 4 (4 GB+) or Pi 5, a **32 GB+** microSD (or NVMe/SSD on Pi 5 — far better endurance), USB-C power, ethernet or Wi-Fi |
+| **The eyes** (optional) | Any RTSP camera. Detection runs on the Pi's CPU (works, slow), a Coral USB TPU, or an **NVIDIA Jetson Orin Nano** (GPU, smoothest) |
+| **The Canaries** (optional) | An ESP32-S3 board + a USB-C data cable |
+
+---
+
+## Step 1 — Flash the hub
+
+Use the **SecuraCV Flasher** desktop app: it writes Home Assistant OS, bakes in
+your Wi-Fi, and verifies every byte it wrote.
+
+1. Get the Flasher — [`desktop/INSTALL.md`](../desktop/INSTALL.md). On macOS an
+   unsigned build needs one command on first launch (the install doc has it);
+   signed builds just open — see [`desktop/SIGNING.md`](../desktop/SIGNING.md).
+2. Open **Build a Hub**, pick your board, type your **Wi-Fi**, insert the card.
+3. The picker only ever offers **removable/external** disks — your computer's own
+   drives are never listed. Confirm the card, type `ERASE`, and go.
+4. **macOS will ask for Touch ID or your password.** That's Apple's `authopen`
+   helper — the same mechanism Raspberry Pi Imager uses — letting us write the
+   card without running as admin. Expected; approve it.
+5. It downloads → verifies the checksum → writes → **reads every byte back** and
+   re-hashes. A counterfeit card that lies about writes fails right here.
+
+**Working looks like:** "written and read back — the card verifiably holds the
+image", then the Wi-Fi seed step.
+
+> **Gotcha (fixed):** on macOS, writes used to fail at
+> `couldn't sync the device before verification: Inappropriate ioctl for device
+> (os error 25)`. Raw `/dev/rdiskN` doesn't support `fsync`; we now flush the
+> device's own cache instead. **Use a Flasher build newer than that fix** — if you
+> hit this error, your build predates it.
+
+## Step 2 — First boot
+
+Put the card in the Pi, connect power (and ethernet if you're not using Wi-Fi).
+
+- **First boot takes 10–20 minutes.** It's installing itself. The blinking light
+  is normal; walk away. The Flasher watches for it and tells you when it's up.
+- Then open **`http://homeassistant.local:8123`**.
+- Create your owner account. (If you used the experimental account pre-seed, you
+  get a **login page** instead of the setup wizard.)
+
+**Working looks like:** the Home Assistant dashboard in your browser.
+
+> **Gotcha:** if `homeassistant.local` doesn't resolve (some networks/VPNs block
+> mDNS), find the Pi's IP in your router's client list and use `http://<ip>:8123`.
+
+## Step 3 — The brain: broker + securaCV
+
+The hub needs an MQTT broker, then the securaCV kernel that turns detections into
+signed claims.
+
+1. **Mosquitto** — Settings → Add-ons → Add-on Store → **Mosquitto broker** →
+   Install → Start.
+2. **securaCV** — add this repo as an add-on repository
+   (`https://github.com/kmay89/securaCV`), then install the **Privacy Witness
+   Kernel** add-on and start it. It **auto-discovers** the broker; no MQTT config
+   to type.
+3. Open the **SecuraCV** panel in the sidebar — its wizard walks the rest.
+
+Detail: [`homeassistant_setup.md`](homeassistant_setup.md).
+
+**Working looks like:** a SecuraCV panel in the sidebar, add-on healthy.
+
+> **Why this order, in machine-readable form:** the whole provisioning sequence —
+> every step, what it does, *why it exists*, and what it buys you — is generated
+> into [`canary-local/devices/hub_seed.json`](../canary-local/devices/hub_seed.json)
+> from the repo's own sources. The installer that runs it, this guide, and the
+> flasher UI all read that one plan, so they can't drift apart. If you ever wonder
+> "what is this about to do to my house?", that file answers it line by line.
+
+## Step 4 — The eyes: camera detection
+
+Frigate does the vision; securaCV subscribes to it over MQTT and turns detections
+into identity-stripped, signed claims. **Pick where detection runs:**
+
+### Option A — on the hub (simplest)
+Install the **Frigate** add-on (its store repo:
+`https://github.com/blakeblackshear/frigate-hass-addons`, add-on slug
+`ccab4aaf_frigate`) and use our curated config as the starting point:
+[`homeassistant/frigate/config.yaml`](../homeassistant/frigate/config.yaml) →
+place it at `/addon_configs/ccab4aaf_frigate/config.yml`.
+
+Then edit the `cameras:` block — **two edits, and the second is easy to miss**:
+
+```yaml
+cameras:
+  front_door:                    # name it whatever you like
+    enabled: true                # ← the template ships `false`; you MUST flip this
+    ffmpeg:
+      inputs:
+        - path: rtsp://USER:PASS@10.0.0.20:554/stream   # ← your camera's real URL
+          roles: [detect]
+    detect: { width: 1280, height: 720, fps: 5 }
+```
+
+Restart the add-on. (The example camera ships **disabled** so the config is valid
+before you've added anything — leave it `false` and Frigate silently ignores it.)
+
+**Using a Coral USB TPU?** Plugging it in changes nothing on its own — the
+curated config selects the **CPU** detector. Swap that block too:
+
+```yaml
+detectors:
+  coral:
+    type: edgetpu
+    device: usb      # PCIe/M.2 Coral: use `pci`
+```
+
+Without this you stay on the slow CPU path with a TPU sitting idle.
+
+### Option B — on a Jetson Orin Nano (GPU, smoothest)
+A dedicated detector node — `docker compose up`, no Coral needed:
+[`integrations/jetson-detector/`](../integrations/jetson-detector/README.md).
+The Jetson does the vision on its GPU and publishes to the hub's broker. (Home
+Assistant OS doesn't run on Jetson — it's the *eyes*, not a second hub.)
+
+> **Note:** go2rtc is **built into Frigate** — it is not a separate add-on.
+> **Running both A and B?** Give each a distinct `mqtt.client_id` *and*
+> `topic_prefix` (Mosquitto allows one connection per client ID), and point
+> securaCV's `frigate.topic_prefix` at the one you want it to read.
+
+> **Privacy default:** recordings **and** snapshots ship **off** — securaCV is
+> "claims, not recordings". Detection and events work fully with no raw imagery
+> stored. Turn them on only if you deliberately want stored images (and use an
+> SSD — continuous recording destroys SD cards).
+
+**Working looks like:** the Frigate UI shows live detection boxes, and new
+witness claims appear in the SecuraCV panel when it sees a person.
+
+## Step 5 — The Canaries (optional)
+
+ESP32 devices that witness locally and report to the same hub. Flash one over
+USB-C with the same Flasher ("Flash a Canary"), then follow
+[`getting_started_canary.md`](getting_started_canary.md). Freshly-flashed devices
+appear on the Flasher's Witness Wall automatically.
+
+---
+
+## When it's all up
+
+- **Dashboard:** the SecuraCV panel + the Lovelace cards
+  ([`lovelace_timeline.md`](lovelace_timeline.md)).
+- **Automations & alerts:** [`homeassistant_automations.yaml`](homeassistant_automations.yaml)
+  and the blueprints in [`blueprints/`](blueprints/).
+- **It maintains itself:** Home Assistant OS has an immutable A/B root that rolls
+  back a failed boot, a supervisor that restarts crashed add-ons, and hands-off
+  updates. The securaCV add-on rides that same update channel — this is why the
+  hub is built on HAOS rather than a hand-rolled image.
+
+## If something's stuck
+
+| Symptom | Try |
+|---|---|
+| Flasher write fails with `Inappropriate ioctl` (macOS) | Your build predates the rdisk cache-sync fix — get a newer Flasher |
+| `homeassistant.local` won't resolve | Use the Pi's IP from your router (mDNS is often blocked) |
+| First boot seems hung | Give it the full 20 minutes before worrying |
+| securaCV can't find the broker | Start the **Mosquitto** add-on first, then restart the kernel add-on |
+| Frigate detections don't reach securaCV | Check `topic_prefix` matches on both sides; if two Frigates run, they need distinct `client_id`s |
+| Camera won't open in Frigate | Verify the RTSP URL in VLC first; check credentials and the `/stream` path |
+
+Deeper: [`frigate_integration.md`](frigate_integration.md),
+[`homeassistant_setup.md`](homeassistant_setup.md), and the design record in
+[`design/raspberry_pi_hub_flashing.md`](design/raspberry_pi_hub_flashing.md).
+
+---
+
+## Status of this guide
+
+This page is **living** — kept honest as the stack is exercised on real hardware.
+
+| Step | State |
+|---|---|
+| 1. Flash the hub | ✅ write + read-back verify proven on macOS (Pi 5, 64 GB card); the rdisk cache-sync fix is required |
+| 2. First boot | ⏳ Wi-Fi seed acceptance on real HAOS not yet confirmed end to end |
+| 3. Broker + securaCV | ⏳ documented from the shipped add-ons; not yet re-walked on a fresh flash |
+| 4a. Frigate on the hub | ⏳ curated config committed; first-boot install not yet automated (needs the seed assembler) |
+| 4b. Jetson detector | ⏳ scaffold follows Frigate's official Jetson guidance; unvalidated on an Orin |
+| 5. Canaries | ✅ shipping path, covered by its own guide |
+
+The **one-flash dream** — Frigate + Mosquitto + securaCV all pre-installed so
+first boot is already wired — needs the *seed assembler* (carrying a curated
+backup onto the card). The configs it will carry are committed; the assembler and
+its hardware validation are the remaining work.

@@ -1,0 +1,99 @@
+{
+  "$generated_by": "canary-local/tools/gen_hub_seed.py \u2014 do not edit by hand",
+  "$doc": "The securaCV hub's first-boot provisioning plan: the ordered steps that turn stock Home Assistant OS into a working hub. Generated so the on-device installer, the docs, and the flasher UI can't disagree about the sequence. Every step states why it exists and what it buys, because a user watching software configure their home should be able to answer 'what is this doing, and why?' at every line.",
+  "schema_version": 1,
+  "order_matters": "Repositories before installs (nothing installs from an unregistered repo); broker before the things that publish to it; Frigate's config before Frigate starts, or it crash-loops with nothing to do.",
+  "repositories": [
+    {
+      "url": "https://github.com/blakeblackshear/frigate-hass-addons",
+      "provides": [
+        "ccab4aaf_frigate"
+      ],
+      "why": "Frigate is a third-party add-on: Home Assistant can't see it until its store repository is registered. Installing Frigate before this step is what fails with 'add-on not found'.",
+      "api": "POST http://supervisor/store/repositories",
+      "cli_can_do_it": false
+    },
+    {
+      "url": "https://github.com/kmay89/securaCV",
+      "provides": [
+        "privacy_witness_kernel"
+      ],
+      "why": "The securaCV add-on lives in this project's own repository, added the same way.",
+      "api": "POST http://supervisor/store/repositories",
+      "cli_can_do_it": false
+    }
+  ],
+  "steps": [
+    {
+      "id": "add-repositories",
+      "title": "Register the add-on repositories",
+      "what": "Tell Home Assistant where the Frigate and securaCV add-ons come from.",
+      "why": "Home Assistant only installs add-ons from repositories it knows about. Both of ours are third-party, so nothing else in this plan can work until they're registered. The Supervisor API does this unattended; the `ha` command line cannot, which is why the by-hand path makes you click through the store UI.",
+      "for_what": "Makes the next two installs possible.",
+      "repositories": [
+        "https://github.com/blakeblackshear/frigate-hass-addons",
+        "https://github.com/kmay89/securaCV"
+      ],
+      "reversible": true
+    },
+    {
+      "id": "install-broker",
+      "title": "Install the Mosquitto broker",
+      "what": "Install and start the `core_mosquitto` add-on.",
+      "why": "MQTT is the shared language of the hub: cameras' detections and each Canary's events all arrive as MQTT messages, and Home Assistant discovers new sensors the same way. The broker is the post office they all hand messages to \u2014 nothing downstream can talk without it, which is why it goes first.",
+      "for_what": "The message bus every other piece publishes to and reads from.",
+      "addon": "core_mosquitto",
+      "start": true,
+      "reversible": true
+    },
+    {
+      "id": "install-frigate",
+      "title": "Install Frigate (the camera eyes)",
+      "what": "Install the `ccab4aaf_frigate` add-on.",
+      "why": "Frigate is what actually looks at camera video and decides 'that's a person'. securaCV deliberately does NOT re-implement detection \u2014 it subscribes to Frigate's events over MQTT and turns them into signed, identity-stripped claims. So Frigate is the eyes; securaCV is the witness that writes down what was seen.",
+      "for_what": "Turns camera video into detection events on the broker.",
+      "addon": "ccab4aaf_frigate",
+      "start": false,
+      "reversible": true
+    },
+    {
+      "id": "write-frigate-config",
+      "title": "Write Frigate's configuration",
+      "what": "Copy the curated config to `/addon_configs/ccab4aaf_frigate/config.yml`, then start Frigate.",
+      "why": "A stock Frigate knows nothing about your hub. This config points it at the Mosquitto broker (so securaCV hears its detections), tracks the same objects the witness kernel labels, and \u2014 importantly \u2014 leaves recordings AND snapshots OFF: securaCV is 'claims, not recordings', so nothing stores raw imagery unless you deliberately turn it on. It also uses a distinct MQTT client id, so a second detector (say a Jetson) can join without the two knocking each other offline.",
+      "for_what": "Makes Frigate talk to your hub instead of sitting idle.",
+      "source": "homeassistant/frigate/config.yaml",
+      "dest": "/addon_configs/ccab4aaf_frigate/config.yml",
+      "dest_note": "The Frigate add-on reads config.yml from its OWN add-on config directory \u2014 NOT /config/frigate.yml. Editing the wrong file is the classic 'I changed it and nothing happened'.",
+      "never_overwrite": true,
+      "then_start": "ccab4aaf_frigate",
+      "user_must_finish": "Add your camera's RTSP URL and set `enabled: true` on it \u2014 the shipped example camera is disabled so the config is valid before you've added anything. Frigate ignores a disabled camera silently, so this is the one edit nobody can make for you.",
+      "reversible": true
+    },
+    {
+      "id": "install-securacv",
+      "title": "Install the securaCV witness kernel",
+      "what": "Install and start the `privacy_witness_kernel` add-on.",
+      "why": "This is the part that makes the system a witness rather than a camera system. It subscribes to Frigate's detections, strips identity, and writes each one into a signed, hash-chained log that can be verified later without trusting us. It auto-discovers the broker installed above, so there's no MQTT to type.",
+      "for_what": "Turns detections into tamper-evident, privacy-preserving claims.",
+      "addon": "privacy_witness_kernel",
+      "start": true,
+      "reversible": true
+    }
+  ],
+  "user_supplied": [
+    {
+      "id": "camera",
+      "what": "Your camera's RTSP URL, and `enabled: true` on that camera.",
+      "why": "Camera addresses and credentials are yours; we can't guess them, and we won't scan your network to find out. This is the one step that is genuinely manual."
+    }
+  ],
+  "meta": {
+    "design": "docs/design/raspberry_pi_hub_flashing.md",
+    "guide": "docs/full_stack_setup.md",
+    "sources": [
+      "canary-local/devices/hub_image.json",
+      "homeassistant/frigate/config.yaml"
+    ]
+  }
+}
