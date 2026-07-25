@@ -43,18 +43,20 @@ function walk(dir, out = []) {
     if (SKIP.has(entry.name)) continue;
     const p = join(dir, entry.name);
     if (entry.isDirectory()) walk(p, out);
-    else if (/\.(js|mjs|html|css)$/.test(entry.name)) out.push(p);
+    else if (/\.(js|mjs|html|css|json)$/.test(entry.name)) out.push(p);
   }
   return out;
 }
 
 // A relative URL in a *string literal* is resolved by the browser against the
-// DOCUMENT, not the file it was written in — so a path in assets/*.js is
-// relative to the page that loads it, and every Lab page sits at canary-local/'s
-// top level. Markup resolves against its own document.
+// DOCUMENT, not the file it was written in — so a path in assets/*.js, or an
+// href in a data file like build-line.json, is relative to the page that loads
+// it, and every Lab page sits at canary-local/'s top level. Only markup
+// resolves against its own location.
 const docBase = (file) => {
   const rel = relative(CANARY, file).split(sep).join("/");
-  return rel.startsWith("assets/") ? "canary-local" : posix.dirname("canary-local/" + rel);
+  const isDocument = /\.html?$/.test(rel);
+  return isDocument ? posix.dirname("canary-local/" + rel) : "canary-local";
 };
 
 // Module specifiers are the exception: `import … from "../emulator/…"` resolves
@@ -73,7 +75,35 @@ const stripComments = (src) =>
     .map((line) => line.replace(/(^|[^:"'`\w])\/\/.*$/, "$1"))
     .join("\n");
 
+const resolveRef = (base, ref) =>
+  posix.normalize(posix.join(base, ref)).replace(/\/+$/, "");
+
+// A URL in a data file reaches the DOM exactly as written — build-line.json's
+// hrefs become the site map's anchors — so it escapes the bundle just as surely
+// as one typed into a .js file. Walk the parsed values rather than the text: a
+// VALUE that is a path is a URL, while a path mentioned inside a sentence is
+// prose (the enclosure catalog's `for` blurbs quote markdown links from the
+// library README, and the Lab renders those as textContent, never as links).
+function jsonRefs(file) {
+  const base = docBase(file);
+  const found = [];
+  const walk = (node, path) => {
+    if (Array.isArray(node)) node.forEach((v, i) => walk(v, `${path}[${i}]`));
+    else if (node && typeof node === "object")
+      for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`);
+    else if (typeof node === "string" && node.startsWith("../"))
+      found.push({
+        ref: node,
+        resolved: resolveRef(base, node),
+        where: `${relative(ROOT, file)} ${path}`,
+      });
+  };
+  walk(JSON.parse(read(file)), "");
+  return found;
+}
+
 function escapingRefs(file) {
+  if (file.endsWith(".json")) return jsonRefs(file);
   const base = docBase(file);
   const found = [];
   stripComments(read(file))
@@ -81,8 +111,11 @@ function escapingRefs(file) {
     .forEach((line, i) => {
       if (isModuleSpecifier(line)) return;
       for (const m of line.matchAll(/["'`(](\.\.\/[^"'`)\s]*)["'`)]/g)) {
-        const resolved = posix.normalize(posix.join(base, m[1])).replace(/\/+$/, "");
-        found.push({ ref: m[1], resolved, where: `${relative(ROOT, file)}:${i + 1}` });
+        found.push({
+          ref: m[1],
+          resolved: resolveRef(base, m[1]),
+          where: `${relative(ROOT, file)}:${i + 1}`,
+        });
       }
     });
   return found;
@@ -92,7 +125,14 @@ const mirrored = (p) =>
   manifest.mirror.some((m) => p === m || p.startsWith(m + "/"));
 
 test("every path the frontend reaches outside canary-local is bundled with the app", () => {
-  const escapes = walk(CANARY).flatMap(escapingRefs);
+  const files = walk(CANARY);
+  // Data files carry URLs too — build-line.json's hrefs are the site map's
+  // anchors. If the sweep stops covering them, the gate silently narrows.
+  assert.ok(
+    files.some((f) => f.endsWith("build-line.json")),
+    "the sweep no longer visits JSON manifests — URLs defined as data would escape it",
+  );
+  const escapes = files.flatMap(escapingRefs);
   // Not "there are none" — the enclosure library legitimately lives next door.
   // The invariant is that each one is mirrored into the app's web root.
   for (const e of escapes) {

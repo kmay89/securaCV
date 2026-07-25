@@ -308,6 +308,11 @@ export function buildHubWizard(container, ha) {
     net.append(document.createTextNode("Rather read it all, or truly stuck? "));
     const dl = el("a", null, "the complete written guide");
     dl.href = GH + facts.doc;
+    // New tab, always: the Lab app is one webview with no chrome and no Back,
+    // so an in-place navigation to the guide strands the user in a page they
+    // can only leave by restarting. Every other external link here does this.
+    dl.target = "_blank";
+    dl.rel = "noopener noreferrer";
     net.append(dl);
     net.append(document.createTextNode(" walks through every screen."));
     card.append(net);
