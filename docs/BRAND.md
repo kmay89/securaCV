@@ -59,6 +59,13 @@ every launch, not a buried `/lab` link.
 
 ## Naming rules (non-negotiable)
 
+- **The name is "SecuraCV" — capital S, capital CV, exactly that casing.**
+  It's an initialism: **Secure Computer Vision**. Prose, UI strings, store
+  listings, and legal filings all write `SecuraCV`. The code layer stays
+  lowercase `securacv` (domains, package names, bundle IDs, MQTT topics,
+  repo slugs) — that's convention, not a third style. Mixed forms like
+  `securaCV` in copy are typos to fix on sight; existing paths and repo
+  names are grandfathered code-layer, not precedent for prose.
 - **Never "flock."** A group of Canaries is a **fleet**. The word is banned
   in all user-facing copy, device strings, product names, identifiers, and
   comments (a company called Flock soured it). The *only* exception is the
