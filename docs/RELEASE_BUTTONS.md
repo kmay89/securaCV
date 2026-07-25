@@ -1,0 +1,234 @@
+# Which button do I press?
+
+Every way to ship SecuraCV, what it does, and — the part that costs people time —
+**when not to press it**. If you only read one line: press
+**"Update everything (only what needs it)"**. It works out what genuinely needs
+releasing, does exactly that, and explains anything it deliberately left alone.
+
+For the *why* behind firmware channels and version grammar, see
+[`RELEASE_PROCESS.md`](RELEASE_PROCESS.md). This page is the operator's index.
+For failures we have already paid for once, see
+[`.github/RELEASE_LESSONS.md`](../.github/RELEASE_LESSONS.md).
+
+---
+
+## The master button
+
+### 🟢 Update everything (only what needs it)
+
+**Actions → "Update everything (only what needs it)" → Run workflow.**
+
+Reads [`.github/release-targets.yml`](../.github/release-targets.yml), compares
+each target's **source version** against what has actually been tagged, and
+dispatches only the ones that are ahead. Everything else it reports and skips.
+
+| What it finds | What it does |
+|---|---|
+| source version newer than the newest tag | releases it (which is what cuts the tag) |
+| never released | cuts the first release |
+| same version, but watched files changed | **"bump the version first"** — ships everything else |
+| same version, nothing changed | skips ✅ |
+| site pages changed since the last deploy | redeploys the site |
+| Apple target with `ENABLE_*_BUILD` off | leaves it alone (the workflow would no-op) |
+| firmware, but no OTA signing key | reports it gated, with the ceremony |
+
+**Use it:** whenever you want the world to be current and don't want to think
+about which targets moved. Pressing it twice costs nothing the second time —
+that's the design.
+
+**Don't:** reach for a narrower button first. This one is the only thing that
+knows the whole graph.
+
+**Safe by construction.** It never re-ships a different tree under a published
+version, and it doesn't go red for telling you a version needs bumping — that's
+information, not failure. Tick **`plan_only`** to see the plan and dispatch
+nothing. The decision engine is unit-tested (`.github/scripts/test_release_plan.py`,
+47 cases) because this decision *is* the product.
+
+---
+
+## When you want exactly one thing
+
+### Release — one click (firmware + apps + web)
+
+Runs a chosen set **unconditionally**, no "does it need it?" reasoning.
+
+**Use it:** you know precisely what you want, e.g. re-cutting the apps after a
+packaging fix with no version change.
+
+**Don't:** use it as your default. It will happily publish an app whose version
+is already released, which **overwrites that release's assets instead of cutting
+a new download** — see *An app release that already exists* below.
+
+### Firmware Release
+
+Builds, signs, and publishes every board's firmware for one version. Pick
+`channel` (release/dev) and `version`; it creates the tag so the tag and the
+built commit can never disagree.
+
+**Use it:** cutting firmware and nothing else, or a dev-channel build
+(`2.4.0-dev.1`) that only dev-channel devices can see.
+
+**Don't:** use it if you haven't bumped `FIRMWARE_VERSION` / `CANARY_FW_VERSION`
+to match — the version-string guard greps each binary and fails closed. And it
+refuses a tag that already exists: bump, don't reuse.
+
+### Firmware Release — if changed
+
+The firmware-only version of the master button.
+
+**Use it:** you only care about firmware and want the "release if it moved"
+behaviour. Otherwise the master button already covers it.
+
+### Flasher Factory Images
+
+Rebuilds *only* the browser-flasher factory images and `manifest-flash.json` for
+an **existing** `fw-v*` tag, and attaches them to that release.
+
+**Use it** in two situations:
+1. A packaging-tooling fix should reach an already-cut tag without a new version.
+2. **Before the OTA key exists.** The browser flasher's integrity rests on
+   SHA-256 + same-origin, not the Ed25519 release key, so these assets can ship
+   pre-ceremony. If `Firmware Release` hard-stops on the missing key, this lights
+   the flasher up anyway.
+
+**Don't:** expect it to help a tag that doesn't exist — it checks out the tag, so
+the tag has to be there first. And read the version-burn warning below before
+creating one by hand.
+
+### Build Mac apps (Flasher + Lab)
+
+The two desktop app pipelines, nothing else. Superseded by the master button for
+most purposes; keep for a macOS-only smoke run.
+
+---
+
+## The three things that bite
+
+### Firmware will not release
+
+**Symptom.** The master button reports firmware as **gated**; or `Firmware
+Release` dies after ~20 seconds with `OTA_SIGNING_KEY_PEM secret is not set`; or
+every product in the flasher reads *"no published release yet"*.
+
+**Cause.** Signing needs both halves of the Ed25519 release key, and they live in
+different places:
+
+| half | lives in | check it |
+|---|---|---|
+| **public** | `firmware/common/ota/src/ota_release_key.h` | `python3 firmware/scripts/ota_key_state.py` |
+| **private** | the `OTA_SIGNING_KEY_PEM` Actions secret | Settings → Secrets and variables → Actions |
+
+All zeros is the shipped default and means OTA is **hard-disabled in firmware** —
+a safe default, but nothing can ship until it's replaced.
+
+**The one-time ceremony.** On your own machine — never in CI or a cloud shell,
+because this generates your master signing key:
+
+```sh
+firmware/scripts/setup_release_key.sh --key ~/securacv-releaser.pem
+```
+
+If it stops on a missing `cryptography` module and `pip` refuses with
+`externally-managed-environment` (PEP 668 — normal on Homebrew Python), use a
+throwaway venv; the script uses whatever `python3` is first on `PATH`:
+
+```sh
+python3 -m venv ~/.venvs/securacv
+source ~/.venvs/securacv/bin/activate
+pip install cryptography
+```
+
+Then, in this order:
+
+1. **Add the secret.** `pbcopy < ~/securacv-releaser.pem`, paste it as
+   `OTA_SIGNING_KEY_PEM`, then **`pbcopy < /dev/null`** — a master key left on
+   the clipboard goes wherever you paste next.
+2. **Regenerate the catalog and commit four files**, not three:
+   ```sh
+   python3 canary-local/tools/gen_flash.py
+   git add firmware/common/ota/src/ota_release_key.h \
+           firmware/projects/canary-wap/arduino/canary_wap/ota_release_key.h \
+           firmware/projects/canary-display/arduino/canary_display/ota_release_key.h \
+           canary-local/devices/flash.json
+   ```
+   `flash.json` carries the public key as `release_pubkey`, and CI regenerates
+   the catalog and fails if what's committed differs. Headers without the catalog
+   = red `canary-local`, and a flasher still on checksum-only verification.
+3. **Press the master button.**
+
+Secret *before* release: in between, a release fails with the less helpful
+"public key does not match" rather than "secret is not set".
+
+Record the **key id** the script prints — that's how you tell later which key
+signed a given build.
+
+### The flasher shows every product as unavailable
+
+The catalog pins an **exact** release tag (`gen_flash.py`
+`release_download_base()` — `/latest/` is unsafe because app releases share the
+namespace and would shadow it). If that release hasn't been cut, the fetch 404s
+and every product goes dark.
+
+Both flashers now name the tag rather than shrugging — *"pinned to firmware
+release fw-v2.3.0, which has no published images"*. `canary-local` CI also warns
+on every run while the pin is unresolvable.
+
+**Fix:** cut that firmware release (master button), or run **Flasher Factory
+Images** for the tag if the key ceremony hasn't happened yet.
+
+### An app release that already exists
+
+**Symptom.** You publish the Flasher and users see no update; a merged feature
+never reaches an installer.
+
+**Cause.** App workflows derive the tag from `tauri.conf.json`. If that version
+is already released, publishing **rewrites the existing release's assets** rather
+than cutting a new download — so nobody's updater sees anything new. Three
+`desktop/` features sat unreleased behind `flasher-v0.2.1` this way.
+
+**Fix.** Bump first. All three files, or CI fails the build:
+
+| file | authoritative for |
+|---|---|
+| `src-tauri/tauri.conf.json` | the bundle version **and the release tag** |
+| `package.json` | the npm package version |
+| `src-tauri/Cargo.toml` | `CARGO_PKG_VERSION` — **the version the app shows the user** |
+
+```sh
+python3 desktop/scripts/check_app_versions.py    # all three, both apps
+```
+
+Cargo.toml is the one that bit us: the Flasher shipped as `0.2.2` with a footer
+reading `v0.1.0`, so a bug report named a version that had never been released.
+Remember `Cargo.lock` too — it pins the crate's own version and a `--locked`
+build fails without it.
+
+The master button won't make this mistake: same version + changed files means it
+says **"bump the version first"** and ships everything else.
+
+---
+
+## Invariants that hold themselves up
+
+You don't have to remember these; CI does. Listed so a red run makes sense.
+
+| Invariant | Enforced by |
+|---|---|
+| `releases/latest` is always a `fw-v*` release — it's the URL every device polls | `.github/actions/keep-firmware-latest`, called by the app workflows + `release-latest-guard.yml` |
+| Every OTA manifest the firmware polls is one the release publishes | `firmware/scripts/check_ota_channels.py` (Regression Guards) |
+| Each app states one version across three files | `desktop/scripts/check_app_versions.py` (lint + both app workflows) |
+| A display binary carries the identity it's published under | the product-string check in `firmware-release.yml` |
+| The signing key in CI matches the committed public key | `firmware-release.yml`, fails before building |
+| The flasher's pinned release actually resolves | advisory warning in `canary-local.yml` |
+| Every updater URL in a published `latest.json` resolves | the consistency guard in `desktop-flasher-release.yml` |
+
+## Things no button can do for you
+
+- **The OTA key ceremony.** It makes your master signing key; it has to happen on
+  your machine.
+- **Apple signing.** `ENABLE_IOS_BUILD` / `ENABLE_TVOS_BUILD` plus the `APPLE_*`
+  secrets need a developer account. Until then those targets are honest no-ops.
+- **Publishing the Lab's release.** It's created as a **draft** on purpose;
+  a human clicks Publish. (`release-latest-guard.yml` then puts
+  `releases/latest` back on the firmware.)

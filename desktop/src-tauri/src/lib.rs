@@ -271,6 +271,12 @@ async fn fetch_manifest(manifest_url: String) -> Result<Value, String> {
         .send()
         .await
         .map_err(|e| format!("couldn't reach the release manifest: {e}"))?;
+    // The `HTTP <code>` token is a CONTRACT, not just prose: app.js matches it to
+    // tell "the release we're pinned to has no images" (a real answer — someone
+    // must cut that release) apart from a transport failure above (offline, DNS,
+    // TLS), which proves nothing about whether the release exists. Reword freely,
+    // but keep `HTTP <code>` in it or the UI silently falls back to the cautious
+    // wording for every failure.
     if !resp.status().is_success() {
         return Err(format!(
             "no published release yet (manifest returned HTTP {}). You can still flash a local .bin.",

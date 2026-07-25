@@ -114,6 +114,40 @@ jobs:
               core.setOutput('sha', '');
             }
 
+      - name: Is the OTA signing key ready?
+        # Firmware's gate. Reported here, before any dispatch, because the
+        # alternative is what actually happened: the button says "releasing
+        # firmware", a separate run dies 20s later on the key guard, and the
+        # consequence (flasher dark, nothing can update) is three inferences from
+        # the error. Both halves are needed and neither implies the other, so
+        # check both — and never print the secret, only whether it is set.
+        id: otakey
+        env:
+          HAS_SECRET: ${{ secrets.OTA_SIGNING_KEY_PEM != '' }}
+        run: |
+          set -euo pipefail
+          embedded=$(python3 firmware/scripts/ota_key_state.py --json \
+                     | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["embedded"]).lower())')
+          python3 firmware/scripts/ota_key_state.py
+          echo "OTA_SIGNING_KEY_PEM secret set: ${HAS_SECRET}"
+          if [ "$embedded" = "true" ] && [ "$HAS_SECRET" = "true" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Firmware is not releasable yet"
+              echo ""
+              echo "| half | state |"
+              echo "|---|---|"
+              echo "| public key committed in \`ota_release_key.h\` | $([ "$embedded" = true ] && echo 'present ✓' || echo '**all zeros — OTA hard-disabled**') |"
+              echo "| \`OTA_SIGNING_KEY_PEM\` secret | $([ "$HAS_SECRET" = true ] && echo 'set ✓' || echo '**not set**') |"
+              echo ""
+              echo "The firmware target is reported as gated below and nothing was"
+              echo "dispatched for it. See \`docs/RELEASE_BUTTONS.md\` §"
+              echo "\"Firmware will not release\"."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Build the plan
         id: plan
         env:
@@ -121,10 +155,14 @@ jobs:
           ONLY: ${{ inputs.only }}
           FORCE: ${{ inputs.force }}
           PAGES_SINCE: ${{ steps.pages.outputs.sha }}
-          # Gates are repo VARIABLES, not secrets — a target whose gate is off
-          # would only no-op, so there is no reason to spend a runner on it.
+          # Gates are preconditions, and a gated target would only no-op (or
+          # fail), so there is no reason to spend a runner on it. Two kinds:
+          # repo VARIABLES for the Apple targets (a developer account someone
+          # has to set up), and one DERIVED gate for firmware — whether the
+          # release signing key actually exists, computed in the step above.
           ENABLE_TVOS_BUILD: ${{ vars.ENABLE_TVOS_BUILD }}
           ENABLE_IOS_BUILD: ${{ vars.ENABLE_IOS_BUILD }}
+          OTA_SIGNING_KEY_READY: ${{ steps.otakey.outputs.ready }}
         run: |
           set -euo pipefail
 
@@ -140,6 +178,7 @@ jobs:
           print(json.dumps({
               "ENABLE_TVOS_BUILD": os.environ.get("ENABLE_TVOS_BUILD") == "true",
               "ENABLE_IOS_BUILD": os.environ.get("ENABLE_IOS_BUILD") == "true",
+              "OTA_SIGNING_KEY_READY": os.environ.get("OTA_SIGNING_KEY_READY") == "true",
           }))')"
 
           only_arg=""

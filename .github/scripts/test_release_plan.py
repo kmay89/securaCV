@@ -196,6 +196,41 @@ class Gating(unittest.TestCase):
                       changed=True, gate_enabled=False, force=True)
         self.assertEqual(d.decision, rp.GATED)
 
+    def test_a_target_can_explain_its_own_gate(self):
+        # The firmware gate is "does the release signing key exist" — a derived
+        # condition, not a repo variable. Naming a flag would be useless there;
+        # the useful message is the ceremony, so a target may carry its own.
+        keyed = dict(
+            VERSIONED,
+            name="firmware",
+            tag_prefix="fw-v",
+            gate_var="OTA_SIGNING_KEY_READY",
+            gate_reason="No signing key: run setup_release_key.sh, then add the secret.",
+        )
+        d = rp.decide(keyed, source_version="2.4.0", latest_version="2.3.0",
+                      changed=True, gate_enabled=False)
+        self.assertEqual(d.decision, rp.GATED)
+        self.assertFalse(d.actionable)
+        self.assertIn("setup_release_key.sh", d.reason)
+        # And it must NOT fall back to the Apple wording, which would send
+        # someone to look for a repo variable that was never the problem.
+        self.assertNotIn("tvos/README.md", d.reason)
+        self.assertNotIn("is not 'true'", d.reason)
+
+    def test_a_gate_without_a_reason_still_gets_the_default_text(self):
+        d = rp.decide(GATED_TARGET, source_version="0.3.0", latest_version="0.2.0",
+                      changed=True, gate_enabled=False)
+        self.assertIn("is not 'true'", d.reason)
+
+    def test_a_keyed_target_ships_once_the_gate_opens(self):
+        keyed = dict(
+            VERSIONED, name="firmware", tag_prefix="fw-v",
+            gate_var="OTA_SIGNING_KEY_READY", gate_reason="…",
+        )
+        d = rp.decide(keyed, source_version="2.4.0", latest_version="2.3.0",
+                      changed=True, gate_enabled=True)
+        self.assertEqual(d.decision, rp.RELEASE)
+
 
 class BuildPlan(unittest.TestCase):
     targets = [VERSIONED, PAGES, GATED_TARGET]
