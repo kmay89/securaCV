@@ -757,6 +757,48 @@ test("wifiQrString escapes the special characters and handles open networks", as
   assert.strictEqual(wifiQrString("open-net", ""), "WIFI:T:nopass;S:open-net;;");
 });
 
+test("wifiMemoryStatus: makes 'type once' visible, and honest about persistence", async () => {
+  const { wifiMemoryStatus } = await core();
+  // Nothing saved → no banner.
+  const none = wifiMemoryStatus(null, false);
+  assert.strictEqual(none.hasSaved, false);
+  assert.strictEqual(wifiMemoryStatus({ ssid: "" }, true).hasSaved, false);
+  assert.strictEqual(wifiMemoryStatus({ ssid: "   " }, false).hasSaved, false); // whitespace only
+
+  // Session-only → names the network + nudges persistence.
+  const sess = wifiMemoryStatus({ ssid: "HomeNet", pass: "x" }, false);
+  assert.strictEqual(sess.hasSaved, true);
+  assert.strictEqual(sess.persisted, false);
+  assert.strictEqual(sess.ssid, "HomeNet");
+  assert.match(sess.headline, /HomeNet/);
+  assert.match(sess.detail, /session/i);
+  assert.match(sess.detail, /Remember on this computer/i);
+
+  // Persisted → says it's kept on this computer, no persistence nudge.
+  const kept = wifiMemoryStatus({ ssid: "HomeNet", pass: "x" }, true);
+  assert.strictEqual(kept.persisted, true);
+  assert.match(kept.detail, /this computer/i);
+  assert.doesNotMatch(kept.detail, /Tick/i);
+});
+
+test("wifiBannerState: shows only while the fields still hold the saved network", async () => {
+  const { wifiBannerState } = await core();
+  const saved = { ssid: "HomeNet", pass: "s3cret" };
+  // Untouched fields (equal the saved) → banner shows and names the network.
+  const shown = wifiBannerState("HomeNet", "s3cret", saved, false);
+  assert.strictEqual(shown.show, true);
+  assert.strictEqual(shown.hasSaved, true);
+  assert.match(shown.headline, /HomeNet/);
+  // Editing the SSID or the password hides it — it must not claim a network the
+  // fields no longer carry.
+  assert.strictEqual(wifiBannerState("OtherNet", "s3cret", saved, false).show, false);
+  assert.strictEqual(wifiBannerState("HomeNet", "different", saved, false).show, false);
+  // Nothing saved → never shows.
+  assert.strictEqual(wifiBannerState("HomeNet", "s3cret", null, false).show, false);
+  // Open network (empty saved password) with the matching empty field → shows.
+  assert.strictEqual(wifiBannerState("Cafe", "", { ssid: "Cafe", pass: "" }, false).show, true);
+});
+
 test("formatters", async () => {
   const { formatBytes, formatMac } = await core();
   assert.strictEqual(formatBytes(512), "512 B");

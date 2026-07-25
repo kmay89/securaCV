@@ -929,6 +929,38 @@ export function wifiQrString(ssid, pass) {
     : `WIFI:T:nopass;S:${esc(ssid)};;`;
 }
 
+// A friendly summary of the remembered home Wi-Fi so the confirm card can SHOW
+// "you already typed this — every board gets it" instead of silently pre-filling
+// a password field the user then re-types out of doubt. This is the difference
+// between "type once" being real and merely being possible. Pure + host-tested.
+//   saved:     { ssid, pass } | null   (from wifiMemory.recall())
+//   persisted: boolean                 (from wifiMemory.isPersisted())
+export function wifiMemoryStatus(saved, persisted) {
+  const ssid = saved && typeof saved.ssid === "string" ? saved.ssid.trim() : "";
+  if (!ssid) return { hasSaved: false, persisted: false, ssid: "", headline: "", detail: "" };
+  return {
+    hasSaved: true,
+    persisted: !!persisted,
+    ssid,
+    headline: `Using your saved Wi-Fi “${ssid}”`,
+    detail: persisted
+      ? "Every board you flash gets it automatically — kept on this computer until you Forget it."
+      : "Every board this session gets it, no retyping. Tick “Remember on this computer” to keep it after you close the tab.",
+  };
+}
+
+// Whether the "using your saved Wi-Fi" banner should show RIGHT NOW, given what's
+// currently typed in the fields. It shows only while the fields still hold the
+// saved network exactly — the moment the user edits the SSID or password for this
+// board, `show` goes false so the banner can never claim a network the fields no
+// longer carry (it returns if they undo the edit). Pure + host-tested.
+export function wifiBannerState(fieldSsid, fieldPass, saved, persisted) {
+  const st = wifiMemoryStatus(saved, persisted);
+  const show = st.hasSaved &&
+    String(fieldSsid) === saved.ssid && String(fieldPass) === (saved.pass || "");
+  return { ...st, show };
+}
+
 // ── error classification (turn raw failures into an actionable first line) ──
 // Web Serial + esptool + fetch all throw wildly different messages for the
 // handful of things that actually go wrong at a USB port. Fold them into one
