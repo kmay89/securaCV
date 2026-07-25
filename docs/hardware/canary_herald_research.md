@@ -23,9 +23,10 @@ Two jobs, both already half-built elsewhere in the repo:
   Herald's **resting face**, verbatim. A display adds what a debossed plate can't: the disclosure can
   stay *true* as the fleet changes (add a camera witness → the face updates), and an optional QR
   corner can point a visitor at the verify page instead of asking them to take our word for it.
-- **The door note.** The oldest front-door interface is a piece of paper and tape: *back in 10
-  minutes, deliveries to the side door, ring softly — baby sleeping*. Herald is that piece of paper,
-  writable from the couch or the car. This is deliberately **one-way, owner → door**: it replaces
+- **The door note.** The oldest front-door interface is a piece of paper and tape: *deliveries to
+  the side door, ring softly — baby sleeping, please leave the package by the bench*. Herald is that
+  piece of paper, writable from the couch or the car. (The other classic taped-up note — "back in
+  10 minutes" — is exactly the one Herald refuses to help with; §5.) This is deliberately **one-way, owner → door**: it replaces
   the note, not the intercom. No mic listening for the courier's reply, no speaker, no camera in the
   placard itself.
 
@@ -95,9 +96,13 @@ message path is push, not poll. The display was never the power problem; the lis
 
 Three plug-in paths, in order of how often they're available at a real front door:
 
-1. **The doorbell transformer.** Most doors already have 16–24 VAC at the frame for a chime. A small
-   AC-DC buck (the commodity module every smart-doorbell retrofit uses) turns the existing wire into
-   the Herald's supply — zero new wiring, and the placard mounts where the eye already looks.
+1. **The doorbell circuit — with the same caveat every smart doorbell carries.** Most doors already
+   have 16–24 VAC for a chime, but the pair at the frame is normally a **series leg through the
+   chime**, not a free transformer feed — draw continuous power through it naïvely and the chime
+   buzzes, ghost-rings, or starves the MCU. The retrofit is still the established one: a **chime
+   bypass / power kit** (the commodity accessory every Ring/Nest install uses) across the chime, or
+   a tap on the transformer side directly. Call it *no new wire runs*, honestly not *zero install* —
+   and the AC-DC buck sizing belongs on the bench (§9).
 2. **A flat-ribbon USB-C run** from an indoor outlet through the door or window seam — the standard
    outdoor-camera trick; the [outlet cradle](./enclosure/canary_outlet_cradle.scad) family covers
    the indoor end.
@@ -136,16 +141,21 @@ phone / HA dashboard ──(LAN)──▶ HA text entity ──▶ MQTT securacv
   note).
 - **Staleness is handled, not ignored.** A door note rots fast — "please leave the package" should
   not greet the mail carrier for three days. Every note carries a **posted-at stamp rendered on the
-  face** ("posted 3:12 pm") and a default **auto-expiry (hours, owner-tunable)** back to the resting
-  disclosure face. That's the ambient-display standard's "last-known state must be labeled as such"
-  invariant, applied to paper.
+  face** and a default **auto-expiry (hours, owner-tunable)** back to the resting disclosure face.
+  That's the ambient-display standard's "last-known state must be labeled as such" invariant,
+  applied to paper. And the stamp is **coarsened to the fleet's 10-minute buckets** ("posted
+  ~3:10 pm"), per the metadata-minimization invariant (Invariant III, `AGENTS.md`) — a
+  minute-precise stamp on the exterior of the house would advertise household activity at a grain
+  the kernel itself refuses to keep, and the staleness job needs nothing finer.
 
 The one genuinely new review question this device raises — the first outward-facing, owner-authored
 free text on fleet glass — is answered by scope: the panel renders the owner's words *to the owner's
 own door*, signed content and witness claims never render here, and the firmware treats the note as
 opaque text with a stamp, never as a claim. The [standard's](../standard/AMBIENT_DISPLAY_STANDARD.md)
 §2 honesty invariants bind the *system-authored* faces (disclosure, staleness, fault), which stay
-firmware-controlled.
+firmware-controlled. How the *owner-authored* face squares with the never-advertise-absence rule is
+handled where language handling belongs — at the authoring surface, not in 240 KB of RAM — and is
+spelled out in §5.
 
 ---
 
@@ -155,8 +165,19 @@ firmware-controlled.
   delivery", no auto-derived "nobody home" — a placard that tells the street the house is empty is
   a burglary aid, full stop. Fleet-presence-driven auto states are **off by default**, and even
   opted-in they only ever move the wording *toward* "attended" ("someone's around — knock"), never
-  toward absence. The user-facing story for the note feature says this plainly. ("Says you're
-  there" is safe in exactly one direction — Herald implements that direction only.)
+  toward absence. ("Says you're there" is safe in exactly one direction — Herald implements that
+  direction only.) Enforcement is layered where each layer can actually do the job:
+  - *The system never authors absence* — no canned note, auto state, or template in the shipped
+    vocabulary implies an empty house; the curated quick-notes list is reviewed against exactly
+    this rule.
+  - *The authoring surface pushes back on it* — the hub/HA layer (which, unlike the ESP32, can
+    afford language checks) runs an absence-phrase check before publishing a free-text note and
+    makes the owner override it deliberately, the same shape as the repo's other honest-friction
+    prompts. The nudge wordlist is an open item (§9).
+  - *The last word stays the owner's* — a homeowner can tape "back in 10 minutes" to their own door
+    today, and Herald doesn't pretend a firmware censor could stop a determined owner anyway. The
+    promise the product makes is the enforceable one: Herald will never *generate, suggest, or
+    default to* absence — and it argues with you when you type it.
 - **It doesn't overclaim.** No "protected", no "monitored", no alarm-company cosplay, no third-party
   brand mimicry. Resting face = the sign plate's true sentences; stronger words would fail the
   repo's own honesty bar.
@@ -179,7 +200,7 @@ firmware-controlled.
   assume it. The Vision weatherproof enclosure set (front/back/gasket) is the pattern to copy.
 - **Cold:** wide-temp EPD panel for real winters (§2); below panel spec, refreshes pause and the
   last face persists. The *indoor* dash shows "Herald paused — too cold to refresh (last updated
-  4:40 pm)"; the door face itself is its own last-known-state label, stamp included.
+  ~4:40 pm)"; the door face itself is its own last-known-state label, coarsened stamp included.
 - **Sun:** shaded mounting guidance + UV-filter window (§2). Mono panel only for v1 — color EPD's
   minutes-long refreshes and tighter temperature windows fail the door-note job.
 - **Tamper & theft:** the standard trick from [Gatekeeper](./canary_gatekeeper_research.md)/Fence
@@ -237,8 +258,11 @@ Concept-status today; the shortest consistent path later, for the record:
   topic.
 - **No bench unit.** The real unknowns are physical: actual partial-refresh times on a wide-temp
   panel at −10 °C, ghosting accumulation outdoors, UV yellowing through the window material, and
-  whether the doorbell-transformer buck stays quiet enough not to sing. All benchable with one
-  panel and one winter.
+  the doorbell-circuit power path (chime-bypass kit + AC-DC buck sizing, and whether the chime
+  stays silent under continuous draw — §3). All benchable with one panel and one winter.
+- **The absence-nudge wordlist** (§5) needs curating — small, multilingual enough for the
+  household, and biased to under-trigger; a nudge that cries wolf on "leave the package" teaches
+  owners to click through it.
 - **The disclosure face needs a copy review** — it's the one surface strangers read; the sign
   plate's three lines are the starting point, a QR to the verify page is the candidate fourth.
 - **Auto-expiry default** (4 h? 8 h?) wants real-life tuning — long enough for "leave the package",
