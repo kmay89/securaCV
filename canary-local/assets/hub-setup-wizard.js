@@ -13,6 +13,11 @@
 
 const KEY = "hub.wizard.step.v1";
 const BROKER_PORT = 1883; // Mosquitto's standard MQTT port
+// Repo docs are linked at their source, the same way hub.js/sense.js/vision.js/
+// start.js do it. A relative "../docs/…" would walk out of the Lab's own
+// directory — which works from a repo checkout and nowhere else: the deployed
+// site and the native app both serve canary-local as a root with no parent.
+const GH = "https://github.com/kmay89/securaCV/blob/main/";
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -302,7 +307,7 @@ export function buildHubWizard(container, ha) {
     const net = el("p", "hub-wiz-net");
     net.append(document.createTextNode("Rather read it all, or truly stuck? "));
     const dl = el("a", null, "the complete written guide");
-    dl.href = "../" + facts.doc;
+    dl.href = GH + facts.doc;
     net.append(dl);
     net.append(document.createTextNode(" walks through every screen."));
     card.append(net);

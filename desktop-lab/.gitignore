@@ -1,6 +1,10 @@
 # Node
 node_modules/
 
+# Staged web root (scripts/stage-frontend.mjs mirrors canary-local + the
+# enclosure library here before every dev/build run — generated, never edited)
+dist/
+
 # Rust / Tauri build output
 src-tauri/target/
 

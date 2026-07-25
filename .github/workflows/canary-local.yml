@@ -39,6 +39,9 @@ on:
       - "desktop/src-tauri/src/lib.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop-lab/frontend-stage.json"
+      - "desktop-lab/scripts/**"
+      - "desktop-lab/src-tauri/tauri.conf.json"
       - "privacy_witness_kernel/config.yaml"
       - "homeassistant/lovelace/**"
       - "homeassistant/automations/**"
@@ -81,6 +84,9 @@ on:
       - "desktop/src-tauri/src/lib.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop-lab/frontend-stage.json"
+      - "desktop-lab/scripts/**"
+      - "desktop-lab/src-tauri/tauri.conf.json"
       - "privacy_witness_kernel/config.yaml"
       - "homeassistant/lovelace/**"
       - "homeassistant/automations/**"
@@ -143,6 +149,7 @@ jobs:
           node --test canary-local/tests/flash_epic.test.js
           node --test canary-local/tests/flash_select.test.js
           node --test canary-local/tests/desktop_parity.test.js
+          node --test canary-local/tests/lab_bundle.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
           node --test canary-local/tests/mic.test.js
