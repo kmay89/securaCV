@@ -157,6 +157,10 @@
       {
         "file": "docs/blueprints/securacv_daily_digest.yaml",
         "name": "daily digest"
+      },
+      {
+        "file": "docs/blueprints/securacv_hue_alert_light.yaml",
+        "name": "hue alert light"
       }
     ]
   },

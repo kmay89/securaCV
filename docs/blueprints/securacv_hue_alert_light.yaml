@@ -1,0 +1,294 @@
+# SecuraCV Alert Light Blueprint for Home Assistant (Philips Hue & friends)
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_hue_alert_light.yaml
+#
+# Turns any color bulb Home Assistant can control into a silent alert beacon
+# for a SecuraCV Canary. Philips Hue is the reference setup — pair the Hue
+# Bridge once via HA's built-in Hue integration (Settings > Devices &
+# Services > Add Integration > Philips Hue, press the bridge button) and the
+# bulbs show up as `light.*` entities. Any other color light HA can drive
+# (IKEA, LIFX, Zigbee direct, ...) works identically.
+#
+# Signals:
+#   - CRITICAL (tamper / smoke heard / CO heard / chain failure):
+#     snapshot the light, pulse red, then hold solid red until every
+#     configured sensor reads healthy again — then blink green and restore
+#     the light to exactly what it was doing before.
+#   - OFFLINE (device unreachable past a delay): three amber pulses, then
+#     restore. Deliberately gentle — Wi-Fi blips are common and benign.
+#
+# Notes:
+#   - Use a color-capable bulb; white-only bulbs can't render the signals.
+#   - The snapshot is runtime-only: if HA restarts mid-alert the light stays
+#     red (arguably the right failure mode for a witness alert).
+#   - Pairs well with the securacv_alerts.yaml blueprint: that one pushes to
+#     your phone, this one signals the room.
+#
+# Where to find the sensors (entity IDs follow
+# `<domain>.securacv_canary_<device_id>_<name>`):
+#   - Tamper:        binary_sensor.securacv_canary_<id>_tamper
+#   - Smoke heard:   the "Smoke Alarm Heard" binary sensor (mic builds only)
+#   - CO heard:      the "CO Alarm Heard" binary sensor (mic builds only)
+#   - Chain valid:   binary_sensor.securacv_canary_<id>_chain_valid
+#   - Online:        binary_sensor.securacv_canary_<id>_online
+
+blueprint:
+  name: "SecuraCV — Alert Light (Philips Hue)"
+  description: >-
+    Use a color smart bulb (Philips Hue or any Home Assistant color light)
+    as a silent alert beacon for a SecuraCV Canary. Critical events —
+    tamper, smoke/CO heard, witness-chain failure — snapshot the light,
+    pulse it red, then hold solid red until the sensors clear; the all-clear
+    blinks green and restores the light's previous state. A device going
+    offline gives three gentle amber pulses. Every sensor is opt-in: pick
+    the ones you want, leave the rest empty.
+  domain: automation
+  author: "ERRERlabs"
+  homeassistant:
+    min_version: "2024.6.0"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_hue_alert_light.yaml"
+
+  input:
+    alert_light:
+      name: "Alert light(s)"
+      description: >-
+        The color-capable light(s) to use as the beacon — e.g. a Philips
+        Hue bulb paired through HA's built-in Hue integration.
+      selector:
+        entity:
+          domain: light
+          multiple: true
+
+    tamper_entity:
+      name: "Tamper sensor (optional)"
+      description: >-
+        The Canary's tamper binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_tamper). Leave empty to
+        skip tamper signaling.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    smoke_entity:
+      name: "Smoke-alarm-heard sensor (optional)"
+      description: >-
+        The "Smoke Alarm Heard" binary sensor (mic builds only). Leave
+        empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    co_entity:
+      name: "CO-alarm-heard sensor (optional)"
+      description: >-
+        The "CO Alarm Heard" binary sensor (mic builds only). Leave empty
+        to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    chain_entity:
+      name: "Chain-valid sensor (optional)"
+      description: >-
+        The witness-chain integrity binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_chain_valid). Signals when
+        chain verification fails. Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: false
+      default: []
+
+    online_entity:
+      name: "Online sensor (optional)"
+      description: >-
+        The device connectivity binary sensor
+        (e.g. binary_sensor.securacv_canary_<id>_online). Gives the gentle
+        offline signal after the delay below. Leave empty to skip.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: connectivity
+          multiple: false
+      default: []
+
+    offline_delay:
+      name: "Offline delay"
+      description: "How long the device must stay offline before signaling (avoids WiFi blips)"
+      selector:
+        duration:
+      default:
+        minutes: 5
+
+    pulse_count:
+      name: "Attention pulses"
+      description: >-
+        How many red bright/dim pulses to run before settling on solid red.
+        Each pulse takes about 1.5 seconds.
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          mode: box
+      default: 6
+
+trigger:
+  - platform: state
+    entity_id: !input tamper_entity
+    from: "off"
+    to: "on"
+    id: critical
+
+  - platform: state
+    entity_id: !input smoke_entity
+    from: "off"
+    to: "on"
+    id: critical
+
+  - platform: state
+    entity_id: !input co_entity
+    from: "off"
+    to: "on"
+    id: critical
+
+  - platform: state
+    entity_id: !input chain_entity
+    from: "on"
+    to: "off"
+    id: critical
+
+  - platform: state
+    entity_id: !input online_entity
+    from: "on"
+    to: "off"
+    for: !input offline_delay
+    id: offline
+
+condition: []
+
+action:
+  - variables:
+      tamper_entity: !input tamper_entity
+      smoke_entity: !input smoke_entity
+      co_entity: !input co_entity
+      chain_entity: !input chain_entity
+      # One snapshot scene per automation instance, so several Canaries can
+      # each drive their own beacon without clobbering each other.
+      snapshot_scene_id: "{{ this.entity_id | replace('.', '_') }}_snapshot"
+
+  - choose:
+      # ---- CRITICAL: pulse red, hold red, green-blink + restore on clear ----
+      - conditions:
+          - condition: trigger
+            id: critical
+        sequence:
+          - service: scene.create
+            data:
+              scene_id: "{{ snapshot_scene_id }}"
+              snapshot_entities: !input alert_light
+
+          - repeat:
+              count: !input pulse_count
+              sequence:
+                - service: light.turn_on
+                  target:
+                    entity_id: !input alert_light
+                  data:
+                    rgb_color: [255, 0, 0]
+                    brightness: 255
+                    transition: 0
+                - delay:
+                    milliseconds: 700
+                - service: light.turn_on
+                  target:
+                    entity_id: !input alert_light
+                  data:
+                    rgb_color: [255, 0, 0]
+                    brightness: 40
+                    transition: 0
+                - delay:
+                    milliseconds: 700
+
+          - service: light.turn_on
+            target:
+              entity_id: !input alert_light
+            data:
+              rgb_color: [255, 0, 0]
+              brightness: 255
+
+          # Hold red until every configured sensor reads healthy again.
+          # Empty (unconfigured) inputs evaluate as healthy; a sensor that
+          # goes unavailable doesn't hold the light red forever — the
+          # offline signal covers reachability.
+          - wait_template: >-
+              {{ not is_state(tamper_entity, 'on')
+                 and not is_state(smoke_entity, 'on')
+                 and not is_state(co_entity, 'on')
+                 and not is_state(chain_entity, 'off') }}
+
+          # All clear: a moment of green, then back to whatever the light
+          # was doing before the alert.
+          - service: light.turn_on
+            target:
+              entity_id: !input alert_light
+            data:
+              rgb_color: [0, 190, 80]
+              brightness: 200
+              transition: 0
+          - delay:
+              seconds: 2
+          - service: scene.turn_on
+            target:
+              entity_id: "scene.{{ snapshot_scene_id }}"
+
+      # ---- OFFLINE: three gentle amber pulses, then restore ----
+      - conditions:
+          - condition: trigger
+            id: offline
+        sequence:
+          - service: scene.create
+            data:
+              scene_id: "{{ snapshot_scene_id }}"
+              snapshot_entities: !input alert_light
+
+          - repeat:
+              count: 3
+              sequence:
+                - service: light.turn_on
+                  target:
+                    entity_id: !input alert_light
+                  data:
+                    rgb_color: [255, 140, 0]
+                    brightness: 180
+                    transition: 0
+                - delay:
+                    milliseconds: 800
+                - service: light.turn_on
+                  target:
+                    entity_id: !input alert_light
+                  data:
+                    rgb_color: [255, 140, 0]
+                    brightness: 30
+                    transition: 0
+                - delay:
+                    milliseconds: 800
+
+          - service: scene.turn_on
+            target:
+              entity_id: "scene.{{ snapshot_scene_id }}"
+
+# single + silent: while a critical episode is holding the light red, later
+# triggers are ignored rather than re-snapshotting the (already red) light —
+# the snapshot taken at the start of the episode is the one that gets
+# restored on all-clear.
+mode: single
+max_exceeded: silent
