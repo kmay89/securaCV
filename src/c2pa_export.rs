@@ -48,6 +48,11 @@ use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use zeroize::Zeroizing;
 
+/// Re-exported so callers (e.g. `export_verify`) can require
+/// [`ValidationState::Trusted`] without depending on the `c2pa` crate
+/// directly.
+pub use c2pa::ValidationState as C2paValidationState;
+
 /// Assertion label binding the manifest to the witness chain.
 pub const WITNESS_ASSERTION_LABEL: &str = "org.securacv.witness";
 

@@ -117,7 +117,9 @@ fn resolve_window(args: &Args) -> Result<Option<ExportWindow>> {
 
 /// Delete the oldest `securacv-events-<bucket>.json` files beyond `keep`
 /// (sorted by the bucket number in the filename; at least 1 is always kept).
-/// Only files matching the scheduled-export pattern are ever touched.
+/// Only files matching the scheduled-export pattern are ever touched. A
+/// pruned bundle takes its `.json.c2pa` sidecar (if any) with it — a
+/// sidecar is meaningless without the exact bytes it signs.
 fn prune_exports(dir: &std::path::Path, keep: usize) -> Result<usize> {
     let mut exports: Vec<(u64, std::path::PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(dir)? {
@@ -138,6 +140,13 @@ fn prune_exports(dir: &std::path::Path, keep: usize) -> Result<usize> {
     let excess = exports.len().saturating_sub(keep.max(1));
     for (_, path) in exports.iter().take(excess) {
         std::fs::remove_file(path)?;
+        let mut sidecar_name = path.file_name().unwrap_or_default().to_os_string();
+        sidecar_name.push(".c2pa");
+        match std::fs::remove_file(path.with_file_name(sidecar_name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
     }
     Ok(excess)
 }
@@ -367,12 +376,19 @@ mod tests {
             .expect("write");
         }
         std::fs::write(dir.path().join("unrelated.json"), b"{}").expect("write");
+        // C2PA sidecars: present for some bundles (600, 1800), absent for
+        // others — pruning a bundle must take its sidecar with it, never
+        // count sidecars as bundles, and not fail when a sidecar is absent.
+        std::fs::write(dir.path().join("securacv-events-600.json.c2pa"), b"x").expect("write");
+        std::fs::write(dir.path().join("securacv-events-1800.json.c2pa"), b"x").expect("write");
 
         let pruned = super::prune_exports(dir.path(), 2).expect("prune");
         assert_eq!(pruned, 2);
         assert!(!dir.path().join("securacv-events-600.json").exists());
+        assert!(!dir.path().join("securacv-events-600.json.c2pa").exists());
         assert!(!dir.path().join("securacv-events-1200.json").exists());
         assert!(dir.path().join("securacv-events-1800.json").exists());
+        assert!(dir.path().join("securacv-events-1800.json.c2pa").exists());
         assert!(dir.path().join("securacv-events-2400.json").exists());
         assert!(dir.path().join("unrelated.json").exists());
 
@@ -381,6 +397,7 @@ mod tests {
         let pruned = super::prune_exports(dir.path(), 0).expect("prune");
         assert_eq!(pruned, 1);
         assert!(dir.path().join("securacv-events-2400.json").exists());
+        assert!(!dir.path().join("securacv-events-1800.json.c2pa").exists());
     }
 
     #[test]

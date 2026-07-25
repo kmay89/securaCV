@@ -10,10 +10,13 @@ tool can verify a SecuraCV export without SecuraCV installed. Keys derive
 from the device seed with domain-separated HKDF (never stored, never the
 chain key); the credential chain is a byte-reproducible device-local CA, so
 the trust anchor can always be re-derived (`--c2pa-anchor-out` writes a
-convenience PEM). `export_verify --c2pa-manifest` validates the sidecar to
-`Trusted` against the device CA **and** enforces the cross-binding: the
-manifest's `org.securacv.witness` assertion must name a receipt entry
-verified in the tamper-evident log, with a matching artifact hash. Fully
+convenience PEM). `export_verify --c2pa-manifest` requires the sidecar to validate to
+`Trusted` against the device CA (a well-formed manifest under any other
+credential is `TAMPER`) **and** enforces the cross-binding: the manifest's
+`org.securacv.witness` assertion must name exactly the receipt entry
+embedded in the bundle, with the artifact hash that receipt committed to.
+Scheduled-export pruning (`--output-dir --keep`) removes a bundle's
+`.c2pa` sidecar together with the bundle. Fully
 offline (no OpenSSL, no HTTP backend, no TSA); the hash-chained log remains
 the root of trust. Design: `docs/design/c2pa_export.md`. Tests run in CI
 (`cargo test --features c2pa-export`).

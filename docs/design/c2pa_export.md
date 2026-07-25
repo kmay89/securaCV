@@ -86,12 +86,23 @@ We deliberately do **not** join a public CA hierarchy in v1:
 Each manifest carries a custom assertion embedding the signed export-receipt
 entry hash, the receipt's artifact hash, the device verifying key, the
 authorization mode (`self_export` / `break_glass`), ruleset id, and kernel
-version. `export_verify --c2pa-manifest` enforces the cross-binding: the
-receipt entry named in the manifest must be one it just verified in the
-tamper-evident log under the trusted device key, and the artifact hashes
-must agree. A forged-but-internally-valid manifest therefore cannot be
-grafted onto a different device's export, and a replayed manifest cannot
-vouch for a bundle its receipt never covered.
+version. `export_verify --c2pa-manifest` enforces the cross-binding
+strictly:
+
+1. The manifest must validate to **`Trusted`** against the supplied anchor —
+   a well-formed manifest signed by any other credential is rejected as
+   `TAMPER`, not reported as "valid but unanchored".
+2. The binding must name **exactly** the receipt entry embedded in this
+   bundle (identity, not mere membership in the verified chain — a trusted
+   manifest naming any *other* verified receipt is a graft and fails), and
+   the artifact hash must match what that receipt committed to.
+3. Sidecar verification requires a full `ExportBundle` file; legacy bare
+   artifacts (which predate C2PA and never had sidecars) are rejected with
+   a clear error.
+
+A forged-but-internally-valid manifest therefore cannot be grafted onto a
+different device's export, and a replayed manifest cannot vouch for a
+bundle its receipt never covered.
 
 ### 2.6 Fully offline (Principle 2)
 
