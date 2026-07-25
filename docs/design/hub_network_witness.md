@@ -250,6 +250,20 @@ Two standing laws for the product after setup day:
   common-offender domains is product work on par with the lists
   themselves — the lists are borrowed; the understanding is ours.
 
+### Winning the existing Pi-hole owner
+
+There's a third audience beyond first-timers and makers: people already
+running a Pi-hole. They are won on *experience*, not features — they
+already have the blocking. What they don't have: a box that updates
+itself (HAOS-managed, RAUC rollback) instead of demanding SSH gardening,
+per-device verbs instead of list management, explanations instead of a
+query log, counters that can't become a household diary, and the fleet
+integration (the same box that wardens their Canaries). The switching
+cost must round to zero: accept a Pi-hole Teleporter backup during setup
+and carry over their custom allow/deny decisions in one click — their
+years of tuning arrive intact, minus the maintenance. The pitch is one
+sentence: *everything your Pi-hole does, nothing it makes you do.*
+
 ## 6. Naming, trademark, and casing
 
 - **The product name stays out of the Canary namespace.** Two reasons:
