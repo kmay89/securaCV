@@ -37,9 +37,9 @@ one gets its armor.
 
 ## 2. The license: Apache-2.0, everywhere, never walked back
 
-Everything in this repository — code, firmware, docs, hardware designs,
-BOMs, enclosures — is **Apache License 2.0** (root [`LICENSE`](../LICENSE)).
-Why Apache and not something looser or tighter:
+The project's license — the root [`LICENSE`](../LICENSE), the default for
+the tree, and the license every contribution comes in under — is **Apache
+License 2.0**. Why Apache and not something looser or tighter:
 
 - **§3 patent grant:** every contributor licenses the patents their
   contribution practices — real, automatic protection against a
@@ -50,9 +50,21 @@ Why Apache and not something looser or tighter:
 - **§6 trademark exclusion:** the license explicitly does *not* grant the
   marks — which is what makes §6 of this doc possible at all.
 
-The **only** carve-out: brand assets under [`brands/`](../brands/) are
-trademarks, governed by [`TRADEMARK.md`](../TRADEMARK.md) (the "Works with
-SecuraCV" badge stays free under that policy's rules).
+Two carve-outs, stated honestly:
+
+- **Brand assets** under [`brands/`](../brands/) are trademarks, governed
+  by [`TRADEMARK.md`](../TRADEMARK.md) (the "Works with SecuraCV" badge
+  stays free under that policy's rules).
+- **Components that carry their own license keep it.** The tree is not
+  uniformly Apache-2.0 today: `firmware/projects/canary-vision/` and
+  `firmware/common/csi/` ship **MIT** LICENSE files, and several firmware
+  sources carry MIT headers (some first-party, some vendored — e.g.
+  `qrcodegen`). **The nearest LICENSE/header governs that component**;
+  nothing in this doc relicenses anything, and MIT components convey no
+  Apache-style patent grant. Redistributors must honor the per-component
+  terms. Whether to consolidate the first-party MIT pieces to Apache-2.0
+  (possible only with every copyright holder's authorization; vendored
+  code keeps its license regardless) is a punch-list decision (§8).
 
 Walking any of this back — dual-licensing, a proprietary "pro" tier of the
 kernel, a license change — is off the table permanently, per
@@ -79,11 +91,15 @@ The moat is the marks and the trust, not the code.
    every fork. Third-party attribution requirements we take on (vendored
    code, embedded engines) get appended there, never scattered.
 5. **Vendored/embedded third-party code keeps its own headers** and its
-   license lands in the tree beside it. The dependency gate stays
-   **permissive-only** (no GPL/AGPL/EUPL in-tree — CI-enforced); engines
-   we embed rather than link (e.g. a future Apache-2.0 DNS engine per
+   license lands in the tree beside it. The dependency policy is
+   **permissive-only** (no GPL/AGPL/EUPL in-tree). Enforcement, scoped
+   honestly: today CI enforces it **for the Rust workspace only**
+   (`cargo deny check licenses` per `deny.toml`); npm and firmware/vendored
+   dependencies are policy-checked by review, not by a scanner —
+   repo-wide license CI is an open engineering item (§8). Engines we
+   embed rather than link (e.g. a future Apache-2.0 DNS engine per
    [`design/hub_network_witness.md`](design/hub_network_witness.md)) must
-   pass the same gate.
+   pass the same policy.
 
 ## 4. Contributions: provenance is protection
 
@@ -184,6 +200,14 @@ highest leverage first. Check them off here as they close, with dates.
       refresh the privacy policy date (audit M4/L3).
 - [ ] **Website footer sweep:** apply §3's approved footer everywhere;
       fix the stray "© SecuraCV" (audit M4 — lives in the website repo).
+- [ ] **License inventory & consolidation decision:** enumerate the
+      first-party MIT components (§2), decide keep-as-MIT vs relicense to
+      Apache-2.0 (needs every copyright holder's authorization; note
+      `canary-vision/LICENSE` names "SecuraCV Contributors," not Errer
+      Labs), and record the outcome per component.
+- [ ] **Repo-wide license CI:** extend the permissive-only gate beyond
+      cargo-deny to npm and the firmware/vendored tree so §3.5's policy
+      is machine-enforced everywhere (engineering, not counsel).
 
 ## 9. Standing rules for everything built next
 
