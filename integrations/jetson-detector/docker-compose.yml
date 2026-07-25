@@ -35,7 +35,13 @@ services:
         tmpfs:
           size: 1000000000
     ports:
-      - "5000:5000"            # Frigate UI  → http://<jetson-ip>:5000
+      # Frigate 0.14+ serves its AUTHENTICATED UI/API on 8971. Do NOT publish
+      # 5000 — that's the internal, UNauthenticated API; publishing it would put
+      # live camera feeds on the LAN for anyone. First-run admin password prints
+      # in the container logs.
+      - "8971:8971"            # Frigate UI  → http://<jetson-ip>:8971 (login required)
+      # Restream ports so the hub / Home Assistant can pull live video. Firewall
+      # these to the hub on an untrusted LAN.
       - "8554:8554"            # go2rtc RTSP restream
-      - "8555:8555/tcp"        # WebRTC
+      - "8555:8555/tcp"        # WebRTC live view
       - "8555:8555/udp"

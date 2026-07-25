@@ -47,8 +47,11 @@ run on Jetson); it's a dedicated detector that feeds the Pi hub.
    ```
    **First start compiles the detector model** (`yolov7-320`) for your GPU — a
    few minutes, once. After that, restarts are instant.
-5. Open the Frigate UI at **`http://<jetson-ip>:5000`**. Empty is expected until
-   you add a camera.
+5. Open the Frigate UI at **`http://<jetson-ip>:8971`** — it requires a login
+   (Frigate 0.14+ authenticates by default); the first-run **admin password
+   prints in the logs** (`docker compose logs | grep -i password`). Empty is
+   expected until you add a camera. (Don't publish port 5000 — that's Frigate's
+   *unauthenticated* internal API.)
 
 ## Add a camera
 
@@ -62,7 +65,8 @@ set `enabled: true`, and `docker compose restart`. That's the only per-user step
 - On the hub, securaCV's `frigate_bridge` already subscribes to `frigate/events`
   → new signed claims appear in the SecuraCV panel when it detects a person/car.
 - (Optional) In Home Assistant, add the **Frigate** integration pointed at
-  `http://<jetson-ip>:5000` to see the Jetson's cameras and clips inside HA.
+  `http://<jetson-ip>:8971` (with the admin login) to see the Jetson's cameras
+  and clips inside HA.
 
 ---
 

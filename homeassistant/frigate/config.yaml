@@ -20,6 +20,11 @@ mqtt:
   host: core-mosquitto
   port: 1883
   topic_prefix: frigate
+  # Distinct client_id per Frigate instance: Mosquitto allows one connection per
+  # client_id, so a hub Frigate and a Jetson detector must differ or they kick
+  # each other off. (If you run BOTH, also give them distinct topic_prefixes and
+  # point securaCV's frigate.topic_prefix at each.)
+  client_id: frigate_hub
   # The Frigate add-on injects these from its broker credentials; Frigate
   # substitutes any {FRIGATE_*} placeholder from the environment at startup.
   user: "{FRIGATE_MQTT_USER}"
@@ -35,17 +40,18 @@ go2rtc:
   #   front_door:
   #     - rtsp://USER:PASS@10.0.0.20:554/stream
 
-# Recording continuously is what kills SD cards — the exact failure this whole
-# hub design fights. So recordings are OFF by default; turn them on only with an
-# NVMe/SSD attached (the Pi 5 durable path). Snapshots below are cheap and give
-# you the review clips without hammering the card.
+# securaCV is "claims, not recordings" — the hub emits semantic events, it does
+# NOT retain raw imagery by default. So BOTH recordings and snapshots are OFF:
+# detection and MQTT events still work fully, and no identifiable images are
+# stored. Turn either on ONLY if you deliberately accept storing raw imagery
+# (and use an NVMe/SSD if you do — continuous recording on an SD card is the
+# endurance failure this design fights). Retained imagery should ideally go
+# through the quorum-controlled vault, not sit on disk here.
 record:
   enabled: false
 
 snapshots:
-  enabled: true
-  retain:
-    default: 5
+  enabled: false
 
 # Track the same objects the securaCV kernel labels by default, so its witness
 # claims line up with what Frigate detects.

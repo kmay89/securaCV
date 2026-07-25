@@ -9,6 +9,11 @@ mqtt:
   host: "{FRIGATE_MQTT_HOST}"      # your Pi hub — homeassistant.local or its IP
   port: 1883
   topic_prefix: frigate
+  # Distinct from the hub's client_id (frigate_hub) — Mosquitto allows one
+  # connection per client_id, so they must differ or they disconnect each other.
+  # If you ALSO run Frigate on the hub, give this a distinct topic_prefix too
+  # (e.g. frigate_jetson) and set securaCV's frigate.topic_prefix to match.
+  client_id: frigate_jetson
   user: "{FRIGATE_MQTT_USER}"
   password: "{FRIGATE_MQTT_PASSWORD}"
 
@@ -33,15 +38,14 @@ ffmpeg:
 go2rtc:
   streams: {}
 
-# Recordings off by default (turn on only with NVMe/SSD attached); snapshots are
-# cheap and give you the review clips.
+# "Claims, not recordings": both OFF by default so no raw imagery is retained —
+# detection + MQTT events still work fully. Turn either on only if you
+# deliberately accept storing raw imagery (and the Jetson has NVMe/SSD).
 record:
   enabled: false
 
 snapshots:
-  enabled: true
-  retain:
-    default: 5
+  enabled: false
 
 # Same objects the securaCV kernel labels, so its claims line up with detections.
 objects:
