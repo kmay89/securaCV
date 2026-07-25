@@ -3,6 +3,7 @@
   "$doc": "The securaCV hub's first-boot provisioning plan: the ordered steps that turn stock Home Assistant OS into a working hub. Generated so the on-device installer, the docs, and the flasher UI can't disagree about the sequence. Every step states why it exists and what it buys, because a user watching software configure their home should be able to answer 'what is this doing, and why?' at every line.",
   "schema_version": 1,
   "order_matters": "Repositories before installs (nothing installs from an unregistered repo); broker before the things that publish to it; Frigate's config before Frigate starts, or it crash-loops with nothing to do.",
+  "slug_note": "Each add-on step carries both `addon` (the friendly slug, for display) and `supervisor_slug` (what the Supervisor REST API answers to). They differ for third-party add-ons: a repo add-on is addressed as `<repo_hash>_<slug>`, so securaCV's `privacy_witness_kernel` becomes `d0491a67_privacy_witness_kernel`. Install by the supervisor_slug or the API returns 'add-on not found'.",
   "repositories": [
     {
       "url": "https://github.com/blakeblackshear/frigate-hass-addons",
@@ -11,7 +12,10 @@
       ],
       "why": "Frigate is a third-party add-on: Home Assistant can't see it until its store repository is registered. Installing Frigate before this step is what fails with 'add-on not found'.",
       "api": "POST http://supervisor/store/repositories",
-      "cli_can_do_it": false
+      "cli_can_do_it": false,
+      "supervisor_slug": [
+        "ccab4aaf_frigate"
+      ]
     },
     {
       "url": "https://github.com/kmay89/securaCV",
@@ -20,7 +24,10 @@
       ],
       "why": "The securaCV add-on lives in this project's own repository, added the same way.",
       "api": "POST http://supervisor/store/repositories",
-      "cli_can_do_it": false
+      "cli_can_do_it": false,
+      "supervisor_slug": [
+        "d0491a67_privacy_witness_kernel"
+      ]
     }
   ],
   "steps": [
@@ -43,6 +50,7 @@
       "why": "MQTT is the shared language of the hub: cameras' detections and each Canary's events all arrive as MQTT messages, and Home Assistant discovers new sensors the same way. The broker is the post office they all hand messages to \u2014 nothing downstream can talk without it, which is why it goes first.",
       "for_what": "The message bus every other piece publishes to and reads from.",
       "addon": "core_mosquitto",
+      "supervisor_slug": "core_mosquitto",
       "start": true,
       "reversible": true
     },
@@ -53,6 +61,7 @@
       "why": "Frigate is what actually looks at camera video and decides 'that's a person'. securaCV deliberately does NOT re-implement detection \u2014 it subscribes to Frigate's events over MQTT and turns them into signed, identity-stripped claims. So Frigate is the eyes; securaCV is the witness that writes down what was seen.",
       "for_what": "Turns camera video into detection events on the broker.",
       "addon": "ccab4aaf_frigate",
+      "supervisor_slug": "ccab4aaf_frigate",
       "start": false,
       "reversible": true
     },
@@ -67,6 +76,7 @@
       "dest_note": "The Frigate add-on reads config.yml from its OWN add-on config directory \u2014 NOT /config/frigate.yml. Editing the wrong file is the classic 'I changed it and nothing happened'.",
       "never_overwrite": true,
       "then_start": "ccab4aaf_frigate",
+      "then_start_supervisor_slug": "ccab4aaf_frigate",
       "user_must_finish": "Add your camera's RTSP URL and set `enabled: true` on it \u2014 the shipped example camera is disabled so the config is valid before you've added anything. Frigate ignores a disabled camera silently, so this is the one edit nobody can make for you.",
       "reversible": true
     },
@@ -77,6 +87,7 @@
       "why": "This is the part that makes the system a witness rather than a camera system. It subscribes to Frigate's detections, strips identity, and writes each one into a signed, hash-chained log that can be verified later without trusting us. It auto-discovers the broker installed above, so there's no MQTT to type.",
       "for_what": "Turns detections into tamper-evident, privacy-preserving claims.",
       "addon": "privacy_witness_kernel",
+      "supervisor_slug": "d0491a67_privacy_witness_kernel",
       "start": true,
       "reversible": true
     }

@@ -29,6 +29,7 @@ CI:   the same command + `git diff --exit-code canary-local/devices/hub_seed.jso
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -52,6 +53,45 @@ SUPERVISOR_REPO_API = "POST http://supervisor/store/repositories"
 
 def die(msg: str) -> None:
     sys.exit(f"gen_hub_seed.py: {msg}")
+
+
+def repo_hash(url: str) -> str:
+    """Supervisor's 8-char repository hash: sha1(lowercased URL, no trailing '/')[:8].
+
+    Verified against the two real slugs the hub uses — the frigate-hass-addons
+    repo hashes to `ccab4aaf` and this project's repo to `d0491a67`, matching the
+    `ccab4aaf_frigate` / `d0491a67_privacy_witness_kernel` add-ons a real
+    Supervisor exposes. A trailing slash changes the hash, so it is stripped.
+    """
+    return hashlib.sha1(url.rstrip("/").lower().encode("utf-8")).hexdigest()[:8]
+
+
+def supervisor_slug(addon_slug: str, repositories: list[dict]) -> str:
+    """The slug the Supervisor REST API actually answers to for `addon_slug`.
+
+    This is the single fact that makes install-by-API work rather than 404. An
+    add-on's *friendly* slug (what it calls itself in its own config.yaml, e.g.
+    `privacy_witness_kernel`) is NOT what `/store/addons/<slug>/install` wants —
+    a third-party add-on is addressed as `<repo_hash>_<friendly_slug>`. The
+    asymmetry is real in our catalog: Frigate already arrives prefixed
+    (`ccab4aaf_frigate`) while securaCV arrives bare (`privacy_witness_kernel`),
+    so without this the executor would install Frigate but fail on securaCV.
+
+    Official add-ons (`core_`/`local_`) are global and keep their slug. For a
+    third-party add-on we find the registered repository that provides it and
+    prefix its hash — unless the slug already carries that prefix (Frigate), in
+    which case it's returned unchanged.
+    """
+    if addon_slug.startswith(("core_", "local_")):
+        return addon_slug
+    for r in repositories:
+        if addon_slug in r.get("provides", []):
+            h = repo_hash(r["url"])
+            return addon_slug if addon_slug.startswith(h + "_") else f"{h}_{addon_slug}"
+    # Not official and not provided by any repo in this plan: don't invent a
+    # hash. Leaving it bare makes the executor fail loudly (add-on not found)
+    # rather than silently targeting the wrong thing.
+    return addon_slug
 
 
 def load_catalog() -> dict:
@@ -108,6 +148,18 @@ def main() -> None:
         },
     ]
 
+    # The API-addressable slug for each add-on (see supervisor_slug's docstring).
+    # Computed once, from the repositories above, so the executor, the docs, and
+    # the flasher UI all install the SAME thing. The securaCV/Frigate slug
+    # asymmetry (one bare, one already hash-prefixed) lived unnoticed until an
+    # installer had to POST it — carrying the resolved slug in the plan is what
+    # keeps that fixed everywhere at once.
+    mosquitto_sup = supervisor_slug(mosquitto["slug"], repositories)
+    frigate_sup = supervisor_slug(frigate["slug"], repositories)
+    kernel_sup = supervisor_slug(kernel["slug"], repositories)
+    for r in repositories:
+        r["supervisor_slug"] = [supervisor_slug(s, repositories) for s in r["provides"]]
+
     steps = [
         {
             "id": "add-repositories",
@@ -135,6 +187,7 @@ def main() -> None:
             ),
             "for_what": "The message bus every other piece publishes to and reads from.",
             "addon": mosquitto["slug"],
+            "supervisor_slug": mosquitto_sup,
             "start": True,
             "reversible": True,
         },
@@ -150,6 +203,7 @@ def main() -> None:
             ),
             "for_what": "Turns camera video into detection events on the broker.",
             "addon": frigate["slug"],
+            "supervisor_slug": frigate_sup,
             # Deliberately NOT started here: Frigate needs its config (next step)
             # before it has anything to do, and starting it configless just makes
             # it crash-loop and look broken.
@@ -181,6 +235,7 @@ def main() -> None:
             ),
             "never_overwrite": True,
             "then_start": frigate["slug"],
+            "then_start_supervisor_slug": frigate_sup,
             "user_must_finish": (
                 "Add your camera's RTSP URL and set `enabled: true` on it — the shipped example "
                 "camera is disabled so the config is valid before you've added anything. Frigate "
@@ -201,6 +256,7 @@ def main() -> None:
             ),
             "for_what": "Turns detections into tamper-evident, privacy-preserving claims.",
             "addon": kernel["slug"],
+            "supervisor_slug": kernel_sup,
             "start": True,
             "reversible": True,
         },
@@ -220,6 +276,13 @@ def main() -> None:
             "Repositories before installs (nothing installs from an unregistered repo); broker "
             "before the things that publish to it; Frigate's config before Frigate starts, or it "
             "crash-loops with nothing to do."
+        ),
+        "slug_note": (
+            "Each add-on step carries both `addon` (the friendly slug, for display) and "
+            "`supervisor_slug` (what the Supervisor REST API answers to). They differ for "
+            "third-party add-ons: a repo add-on is addressed as `<repo_hash>_<slug>`, so securaCV's "
+            "`privacy_witness_kernel` becomes `d0491a67_privacy_witness_kernel`. Install by the "
+            "supervisor_slug or the API returns 'add-on not found'."
         ),
         "repositories": repositories,
         "steps": steps,

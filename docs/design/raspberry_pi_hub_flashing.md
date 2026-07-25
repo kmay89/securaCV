@@ -303,6 +303,22 @@ Raspberry Pi Imager.
     config and drift-gated, so a slug fixed in the catalog can't stay wrong here;
     an add-on that vanishes fails the generator loudly rather than emitting a
     wrong plan (both behaviours verified).
+  - *Provisioning executor (landed 2026-07-25):*
+    [`canary-local/tools/hub_seed_apply.py`](../../canary-local/tools/hub_seed_apply.py)
+    is the piece that *runs* the plan, replacing `install.sh`'s punt (the `ha`
+    CLI can't register a repository, so the old path degrades to "click through
+    the store UI"). It drives the Supervisor REST API and is split the same way
+    the flasher is: a **pure** `plan_actions(seed, observed)` that decides the
+    ordered, idempotent action list, and a thin `SupervisorClient` that is the
+    only thing touching the network — so the whole planner is host-tested with no
+    Home Assistant (18 cases). It resolves each add-on's **Supervisor slug** from
+    the plan (a third-party add-on answers to `<repo_hash>_<slug>`, so securaCV is
+    `d0491a67_privacy_witness_kernel`, not the bare name — install-by-API 404s
+    otherwise; the plan now carries this, computed once in `gen_hub_seed.py`).
+    `--dry-run` narrates the full sequence — every `why`/`for_what` verbatim from
+    the plan, plus the exact API call — needing no hub, and never overwrites an
+    existing Frigate config. Real runs fail **closed**: any error stops with a
+    "safe to re-run, it's idempotent" note rather than leaving a half-built hub.
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS
     keychain, and build the **seed assembler** that carries the curated
     **full-stack** backup (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards
