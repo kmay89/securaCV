@@ -113,3 +113,15 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
     "flash-core.js:mqttProvisioningToNvs/buildNvsSeedImage with " +
     "desktop/src-tauri/src/provisioning.rs:build_nvs");
 });
+
+test("Hatchery spec: browser and native draw the whimsy from the SAME hatch.json", () => {
+  // The browser fetches devices/hatch.json; the native app embeds it at build
+  // time (build.rs). Both must be the one committed canary-local/devices/hatch.json,
+  // or the birthing moment (name + certificate) would differ between the surfaces.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.match(flashJs, /fetch\(\s*["']devices\/hatch\.json["']/,
+    "browser (flash.js) should fetch devices/hatch.json");
+  const buildRs = read(join(ROOT, "desktop/src-tauri/build.rs"));
+  assert.match(buildRs, /canary-local\/devices\/hatch\.json/,
+    "native (build.rs) should embed canary-local/devices/hatch.json — the same spec the browser fetches");
+});

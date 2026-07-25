@@ -26,6 +26,7 @@ import { phaseModule } from "./we2-flash.js";
 import { wifiMemory } from "./wifi-memory.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
+import { mintCertificate } from "./hatchery.js";
 import { chirp, chirpToggle } from "./chirp.js";
 import { mountBoardIdentity } from "./board-identity.js";
 
@@ -3217,6 +3218,63 @@ function flashError(e, opts) {
   return box;
 }
 
+// ── the Hatchery: a whimsical name + birth certificate, like the native app ──
+// One shared spec (devices/hatch.json — the same file the native app embeds),
+// fetched once; the assembly is the pure, host-tested hatchery.js. Names are
+// whimsy — the device keeps its functional id. Never throws into the flash flow.
+let _hatchSpec;                 // undefined = untried, null = unavailable, obj = loaded
+const _hatchUsed = new Set();   // base names spent this session (so names stay fresh)
+const _hatchFleet = [];         // this session's hatches, for the "Nth of its name" ordinal
+async function loadHatchSpec() {
+  if (_hatchSpec !== undefined) return _hatchSpec;
+  try {
+    _hatchSpec = await fetch("devices/hatch.json", { cache: "force-cache" })
+      .then((r) => (r.ok ? r.json() : null));
+  } catch { _hatchSpec = null; }
+  return _hatchSpec;
+}
+async function renderHatchCert(slot, opts) {
+  try {
+    const spec = await loadHatchSpec();
+    if (!spec) return;
+    let cert = mintCertificate(spec, {
+      product: opts.product, deviceId: opts.deviceId,
+      fleet: _hatchFleet, usedBases: _hatchUsed, now: Date.now(),
+    });
+    if (!cert) return;
+    _hatchUsed.add(cert.base);
+    _hatchFleet.unshift({ base: cert.base, ringId: cert.ringId });
+
+    const c = (spec.certificate) || {};
+    const paint = () => {
+      slot.textContent = "";
+      const fig = el("figure", "flash-cert");
+      fig.append(el("div", "flash-cert-kicker", c.kicker || "Certificate of Hatching"));
+      if (c.intro) fig.append(el("p", "flash-cert-intro", c.intro));
+      fig.append(el("div", "flash-cert-name", cert.name));
+      fig.append(el("div", "flash-cert-lineage", cert.lineage));
+      const meta = el("div", "flash-cert-meta");
+      meta.append(el("span", null, "Species · " + cert.species),
+                  el("span", null, "Ring · " + cert.ringId));
+      fig.append(meta);
+      if (cert.motto) fig.append(el("div", "flash-cert-motto", "“" + cert.motto + "”"));
+      if (cert.craft) fig.append(el("div", "flash-cert-craft", cert.craft));
+      if (c.foot) fig.append(el("div", "flash-cert-foot", c.foot));
+      const reroll = el("button", "ghost small flash-cert-reroll", "🎲 new name");
+      reroll.addEventListener("click", () => {
+        const next = mintCertificate(spec, {
+          product: opts.product, deviceId: opts.deviceId,
+          fleet: _hatchFleet, usedBases: _hatchUsed, avoidBase: cert.base, now: cert.ts,
+        });
+        if (next) { next.ringId = cert.ringId; cert = next; paint(); } // same bird, new whimsy
+      });
+      fig.append(reroll);
+      slot.append(fig);
+    };
+    paint();
+  } catch { /* the certificate is a delight, never a requirement */ }
+}
+
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
@@ -3237,6 +3295,18 @@ function phaseDone(opts) {
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
     : hatchNo ? `Hatchling #${hatchNo} — your Canary is awake`
     : "Installed — your Canary is awake"));
+
+  // A whimsical name + birth certificate for a real, fresh hatch — the same one
+  // the native app mints. Async: the done card renders now; the certificate
+  // appears once the shared hatch.json spec loads (or quietly not at all).
+  if (hatchNo && opts.product && !opts.isBackup && !opts.isLocal) {
+    const certSlot = el("div", "flash-cert-slot");
+    box.append(certSlot);
+    renderHatchCert(certSlot, {
+      product: opts.product,
+      deviceId: (opts.mqtt && opts.mqtt.deviceId) || "",
+    });
+  }
 
   const product = opts.product;
   if (opts.wifiSsid) {
