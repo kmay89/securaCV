@@ -19,12 +19,28 @@ on:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
       - '.github/workflows/desktop-hub-core.yml'
+      # hub-io embeds these provisioning-bundle files (include_str!) and
+      # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
+      # change to any of them must re-run this workflow or the check goes stale.
+      - 'canary-local/devices/hub_seed.json'
+      - 'canary-local/devices/hub_provision_bundle.json'
+      - 'canary-local/tools/hub_seed_apply.py'
+      - 'canary-local/tools/gen_hub_provision_bundle.py'
+      - 'homeassistant/frigate/config.yaml'
   pull_request:
     branches: [ main ]
     paths:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
       - '.github/workflows/desktop-hub-core.yml'
+      # hub-io embeds these provisioning-bundle files (include_str!) and
+      # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
+      # change to any of them must re-run this workflow or the check goes stale.
+      - 'canary-local/devices/hub_seed.json'
+      - 'canary-local/devices/hub_provision_bundle.json'
+      - 'canary-local/tools/hub_seed_apply.py'
+      - 'canary-local/tools/gen_hub_provision_bundle.py'
+      - 'homeassistant/frigate/config.yaml'
 
 # Read-only token: this workflow only checks out and runs cargo — it needs
 # nothing else. (CodeQL flags workflows that don't pin GITHUB_TOKEN scope.)

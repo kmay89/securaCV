@@ -34,6 +34,7 @@
 
 pub mod account;
 pub mod fetch;
+pub mod provision;
 pub mod seed;
 pub mod write;
 pub mod xz;
