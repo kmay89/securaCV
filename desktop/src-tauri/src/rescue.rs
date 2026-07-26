@@ -112,6 +112,39 @@ pub fn erase_flash_args(port: &str) -> Vec<String> {
     vec!["erase-flash".into(), "--port".into(), port.into()]
 }
 
+/// Pull the flash size (in bytes) out of `espflash board-info` output — the
+/// "Flash size: 8MB" line — so a full-chip backup knows how much to read. The
+/// same board-info call already names the chip; this reads the size from it, no
+/// extra round-trip. Returns None when the line is absent or unparseable (an
+/// older espflash, or a board that didn't report it), which the caller turns
+/// into an honest "reconnect and try again" rather than a wrong-sized read.
+pub fn parse_flash_size(board_info: &str) -> Option<u64> {
+    for line in board_info.lines() {
+        let lower = line.trim().to_ascii_lowercase();
+        let Some(rest) = lower.strip_prefix("flash size:") else { continue };
+        let rest = rest.trim();
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            continue;
+        }
+        let n: u64 = digits.parse().ok()?;
+        let unit = rest[digits.len()..].trim_start();
+        let mult: u64 = if unit.starts_with("mb") {
+            1 << 20
+        } else if unit.starts_with("kb") {
+            1 << 10
+        } else if unit.starts_with("gb") {
+            1 << 30
+        } else if unit.starts_with('b') {
+            1
+        } else {
+            continue;
+        };
+        return n.checked_mul(mult);
+    }
+    None
+}
+
 // ── tiny helpers (std only) ──────────────────────────────────────────────────
 fn u16le(b: &[u8], o: usize) -> u16 {
     (b[o] as u16) | ((b[o + 1] as u16) << 8)
@@ -163,6 +196,16 @@ mod tests {
         assert!(image_first_bytes_hint(&[0x32, 0x54, 0xCD, 0xAB]).unwrap().contains("description"));
         assert_eq!(image_first_bytes_hint(&[0x00, 0x01]), None);
         assert_eq!(image_first_bytes_hint(&[]), None);
+    }
+
+    #[test]
+    fn flash_size_parses_from_board_info() {
+        let info = "Chip type:         esp32s3 (revision v0.2)\nCrystal frequency: 40 MHz\nFlash size:        8MB\nMAC address:       aa:bb:cc:dd:ee:ff";
+        assert_eq!(parse_flash_size(info), Some(8 << 20));
+        assert_eq!(parse_flash_size("flash size: 4 MB"), Some(4 << 20));
+        assert_eq!(parse_flash_size("Flash size:16MB"), Some(16 << 20));
+        assert_eq!(parse_flash_size("Flash size: unknown"), None);
+        assert_eq!(parse_flash_size("Chip type: esp32c3\nno size here"), None);
     }
 
     #[test]
