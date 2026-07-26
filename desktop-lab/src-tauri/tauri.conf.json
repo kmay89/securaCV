@@ -4,12 +4,15 @@
   "version": "0.1.1",
   "identifier": "com.securacv.lab",
   "build": {
-    "frontendDist": "../../canary-local"
+    "beforeDevCommand": "node scripts/stage-frontend.mjs",
+    "beforeBuildCommand": "node scripts/stage-frontend.mjs",
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
         "title": "SecuraCV Lab",
+        "url": "canary-local/lab.html",
         "width": 1200,
         "height": 820,
         "minWidth": 880,
