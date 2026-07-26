@@ -321,12 +321,22 @@ pub async fn hub_pi_boot_start(
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut code = -1;
+        let mut hinted = false;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
                     for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
                         let _ = app2.emit("hub:pi-usb", line.to_string());
+                        // On Linux a device-open failure is almost always the
+                        // missing udev rule (macOS never hits this) — surface the
+                        // one-line fix once instead of leaving a cryptic error.
+                        if !hinted {
+                            if let Some(hint) = hub_core::hub_usbboot::access_denied_hint(line) {
+                                let _ = app2.emit("hub:pi-usb-hint", hint.to_string());
+                                hinted = true;
+                            }
+                        }
                     }
                 }
                 CommandEvent::Terminated(payload) => {

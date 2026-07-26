@@ -54,7 +54,10 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libusb-1.0-0"]
+        "depends": ["libusb-1.0-0"],
+        "files": {
+          "/usr/lib/udev/rules.d/60-rpiboot.rules": "packaging/rpiboot.rules"
+        }
       }
     }
   },
