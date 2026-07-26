@@ -142,8 +142,8 @@ release version that already exists is not a release** (bump first).
    `desktop/src-tauri/Cargo.toml` (this last one is easy to forget — it's
    `CARGO_PKG_VERSION`, the version the running app reports) — e.g. `0.3.0` →
    `0.3.1`. Run `python3 desktop/scripts/check_app_versions.py` first to confirm.
-2. Either push a tag `flasher-v0.2.3`, or Actions → Run workflow with
-   **`dry_run = false`**.
+2. Either push a tag `flasher-v0.3.1` (matching the version from step 1), or
+   Actions → Run workflow with **`dry_run = false`**.
 3. The release's `.dmg`/`.app` are now signed + notarized; users double-click to
    open. (The `xattr` step in `desktop/INSTALL.md` no longer applies to signed
    builds.)
