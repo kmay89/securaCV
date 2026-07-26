@@ -989,16 +989,6 @@ async fn run_sidecar_streaming(
     Ok(code)
 }
 
-/// Read the first `n` bytes of a file (for the "what is this image" hint).
-fn read_head(path: &str, n: usize) -> std::io::Result<Vec<u8>> {
-    use std::io::Read;
-    let mut f = std::fs::File::open(path)?;
-    let mut buf = vec![0u8; n];
-    let got = f.read(&mut buf)?;
-    buf.truncate(got);
-    Ok(buf)
-}
-
 /// Back up the whole chip to `out_path` — a full-flash read the operator keeps
 /// and can restore later. The safety copy the one-shot flow never had.
 #[tauri::command]
@@ -1030,7 +1020,15 @@ async fn backup_flash(
 }
 
 /// Write a local image to the chip at 0x0 — a restored backup, or any `.bin`.
-/// Validates the file against the chip's flash size first (mirrors the browser).
+///
+/// Guards the offset-0 write with the SAME check the Advanced local-file path
+/// uses (`check_local_image`): an app-only build has no partition table at
+/// 0x8000 and, written from 0x0, would land on the bootloader and stop the
+/// board booting. Both surfaces agree here — the browser's local-file picker
+/// gates on `core.localImageShape`, native on `check_local_image`, same refusal
+/// in the same words. A genuine full-flash backup carries that table, so it
+/// passes; only an app-only file is turned away. The flash-size fit is then
+/// checked against THIS chip, mirroring the browser's restore validation.
 #[tauri::command]
 async fn write_local_image(
     app: AppHandle,
@@ -1039,20 +1037,26 @@ async fn write_local_image(
     flash_size: Option<u64>,
     baud: u32,
 ) -> Result<(), String> {
-    let byte_len = std::fs::metadata(&path)
-        .map_err(|e| format!("couldn't read {path}: {e}"))?
-        .len();
-    match rescue::validate_restore_image(byte_len, flash_size) {
+    // A firmware image is at most one chip's flash (≤ 32 MiB), so read it once —
+    // the same bounded read `flash_local_file` does — and run the offset-0 guard
+    // before anything is written. espflash re-reads the path when it writes.
+    let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read {path}: {e}"))?;
+    // Single source of truth for "safe to write at 0x0": empty, larger than any
+    // Canary's flash, or an app-only build with no partition table at 0x8000 are
+    // all refused here, before espflash runs.
+    check_local_image(&bytes)?;
+    // Fit against the detected chip (the shape gate doesn't look at flash size):
+    // bigger than this board can't be its image; smaller writes from 0x0 and
+    // leaves the tail. Mirrors the browser's validateBackupFile.
+    match rescue::validate_restore_image(bytes.len() as u64, flash_size) {
         Err(reason) => return Err(reason),
         Ok(Some(warn)) => {
             let _ = app.emit("rescue:log", warn);
         }
         Ok(None) => {}
     }
-    if let Ok(head) = read_head(&path, 4) {
-        if let Some(hint) = rescue::image_first_bytes_hint(&head) {
-            let _ = app.emit("rescue:log", format!("→ this looks like {hint}"));
-        }
+    if let Some(hint) = rescue::image_first_bytes_hint(&bytes) {
+        let _ = app.emit("rescue:log", format!("→ this looks like {hint}"));
     }
     let _ = app.emit("rescue:log", format!("→ writing {path} to the board…"));
     let code = run_sidecar_streaming(&app, rescue::write_bin_args(&port, &path, baud), "rescue:log").await?;
