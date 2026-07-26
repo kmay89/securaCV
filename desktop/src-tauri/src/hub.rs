@@ -328,10 +328,11 @@ pub async fn hub_pi_boot_start(
                     let text = String::from_utf8_lossy(&bytes);
                     for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
                         let _ = app2.emit("hub:pi-usb", line.to_string());
-                        // On Linux a device-open failure is almost always the
-                        // missing udev rule (macOS never hits this) — surface the
-                        // one-line fix once instead of leaving a cryptic error.
-                        if !hinted {
+                        // The udev fix is Linux-only, so only look for (and
+                        // surface) it there — on macOS a device-open failure means
+                        // something else, and this hint would mislead. Surface it
+                        // once instead of leaving a cryptic error.
+                        if !hinted && cfg!(target_os = "linux") {
                             if let Some(hint) = hub_core::hub_usbboot::access_denied_hint(line) {
                                 let _ = app2.emit("hub:pi-usb-hint", hint.to_string());
                                 hinted = true;
