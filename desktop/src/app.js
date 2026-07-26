@@ -833,6 +833,12 @@ async function onFlash() {
       baud: state.catalog.flash_baud || 921600,
       detectedChip: state.chip,
       provisioning,
+      // First contact with a board we've never written: wipe the whole chip
+      // rather than only the regions we're about to write, so nothing a
+      // previous owner left in an untouched partition rides through. The
+      // browser flasher decides this by reading the board; espflash can't
+      // report what's resident, so here it's the user's answer on step 1.
+      eraseFirst: !!($("first-contact") && $("first-contact").checked),
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;

@@ -968,3 +968,62 @@ button.flash-map-key:hover { color: var(--text); }
 .flash-ble-status { min-height: 1.2em; }
 .flash-ble-card { border-left: 3px solid var(--ok); }
 .flash-ble-card h3 { color: var(--ok); margin: 0 0 6px; }
+
+/* ── cold start: the BOOT-held gesture, before the cable goes in ──────────── */
+/* Sits above the Connect button because it is the only control on the page
+   that has to happen BEFORE plugging in — everything else checks after. */
+.flash-coldstart {
+  text-align: left; margin: 14px 0 18px; padding: 14px 16px;
+  border: 1px solid rgba(255,212,79,0.32); border-radius: 12px;
+  background: rgba(255,212,79,0.06);
+}
+.flash-coldstart h3 { color: var(--canary, #ffd44f); margin: 0 0 8px; }
+.flash-coldstart p { font-size: 13.5px; margin: 0 0 8px; color: #ddd9cd; }
+.flash-coldstart-steps { margin: 8px 0 10px; }
+.flash-coldstart-row { gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.flash-coldstart-row .flash-chosen {
+  border-color: rgba(67,160,71,0.55); color: #bfe3c1; background: rgba(67,160,71,0.12);
+}
+.flash-coldstart-note:empty { display: none; }
+.flash-coldstart-note { margin: 8px 0 0; }
+
+/* ── customs: the read-only intake report ─────────────────────────────────── */
+.flash-intake { border-left: 3px solid var(--edge); }
+.flash-intake-clear { border-left-color: rgba(67,160,71,0.6); }
+.flash-intake-inconclusive,
+.flash-intake.flash-intake-attention { border-left-color: rgba(255,212,79,0.6); }
+.flash-intake.flash-intake-stop { border-left-color: #e5534b; }
+.flash-intake-head { display: flex; align-items: baseline; gap: 9px; }
+.flash-intake-head h3 { margin: 0; }
+.flash-intake-icon { font-size: 17px; }
+.flash-intake-finding {
+  display: block; margin: 9px 0 0; padding: 9px 12px; border-radius: 10px;
+  font-size: 13.5px; background: rgba(255,255,255,0.035); border: 1px solid var(--edge);
+}
+.flash-intake-finding strong { display: block; color: #e7e7e7; font-weight: 640; }
+.flash-intake-detail { display: block; margin-top: 3px; color: var(--muted, #9aa39a); }
+.flash-intake-finding.flash-intake-attention,
+.flash-intake-finding.flash-intake-inconclusive {
+  background: rgba(255,212,79,0.08); border-color: rgba(255,212,79,0.3);
+}
+.flash-intake-finding.flash-intake-stop {
+  background: rgba(229,83,75,0.1); border-color: rgba(229,83,75,0.42);
+}
+.flash-intake-verdict { margin: 12px 0 0; font-size: 13.5px; color: #cfd8cf; }
+.flash-intake-efuses { margin-top: 12px; }
+.flash-intake-efuses summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.flash-intake-efuse-list {
+  margin: 10px 0 8px; display: grid; grid-template-columns: 1fr auto; gap: 2px 14px;
+  font: 12px/1.7 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+.flash-intake-efuse { display: contents; }
+.flash-intake-efuse-key { color: var(--muted, #9aa39a); }
+.flash-intake-efuse-val { color: #7f8a7f; text-align: right; }
+.flash-intake-burned .flash-intake-efuse-key,
+.flash-intake-burned .flash-intake-efuse-val { color: #f0dca0; font-weight: 600; }
+
+/* the erase we don't let you turn off, on a board we've never met */
+.flash-forced-erase {
+  background: rgba(3,169,244,0.07); border-color: rgba(3,169,244,0.3); color: #bfe6fb;
+}
+.flash-confirm-blocked { border-left: 3px solid #e5534b; }

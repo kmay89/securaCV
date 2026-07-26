@@ -29,6 +29,7 @@ import { visionChecklistCard } from "./vision-checklist.js";
 import { mintCertificate } from "./hatchery.js";
 import { chirp, chirpToggle } from "./chirp.js";
 import { mountBoardIdentity } from "./board-identity.js";
+import * as intake from "./intake.js";
 
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
@@ -74,6 +75,12 @@ const state = {
   devChannel: false,
   manifestOverride: false, // a ?manifest= self-hosted URL is in force
   advancedOpen: false,     // keep Advanced open across a picker re-render
+  // Customs, for a board we've never met (see intake.js). `heldBoot` is what
+  // the user told us on the connect card, not something we measured — on a
+  // native-USB board the ROM and a stock firmware present the same descriptor,
+  // so the port genuinely can't tell us.
+  heldBoot: false,
+  intake: null,            // the read-only intake scan, once connected
 };
 
 // ── boot ───────────────────────────────────────────────────────────────────
@@ -635,6 +642,65 @@ function modeBadge(mode) {
   return b;
 }
 
+// ── cold start: the gesture that keeps an unknown board off your desktop ────
+// This is deliberately BEFORE the Connect button, because it is the only
+// control here that has to happen before the cable goes in. Everything else
+// the flasher does is a check after the fact; this one prevents.
+//
+// It asks rather than detects, and says so: the ROM's download mode and a
+// stock hwcdc firmware present the SAME USB descriptor on a native-USB board
+// (docs/browser_flasher.md § What the Canary is called over USB), so there is
+// nothing to measure. Claiming otherwise would be a comforting lie.
+function coldStartCard() {
+  const card = el("section", "flash-coldstart");
+  card.append(el("h3", null, "🛡 New board from a shop or marketplace? Do this first"));
+  card.append(el("p", null,
+    "It arrives running somebody else's firmware, and these chips have native " +
+    "USB — so that firmware can introduce itself to your computer as anything " +
+    "it likes, including a keyboard, the moment you plug it in. No web page can " +
+    "step in front of that; your operating system finishes with the device " +
+    "before this page even learns it exists."));
+  card.append(el("p", null,
+    "One move stops it, and it's the chip's own silicon doing the stopping:"));
+
+  const ol = el("ol", "flash-steps flash-coldstart-steps");
+  const li1 = el("li");
+  li1.append(document.createTextNode("Unplug the board, if it's plugged in."));
+  const li2 = el("li");
+  li2.append(document.createTextNode("Press and hold "), kbd("BOOT"),
+    document.createTextNode(" (marked B)."));
+  const li3 = el("li");
+  li3.append(document.createTextNode("Still holding it, plug the USB-C cable in. Then let go."));
+  ol.append(li1, li2, li3);
+  card.append(ol);
+  card.append(el("p", "fineprint",
+    "The chip comes up in its mask-ROM download mode and the firmware it shipped " +
+    "with never runs a single instruction. That's not a promise this page is " +
+    "making — it's unerasable ROM, the same property that makes the board " +
+    "impossible to brick from here."));
+
+  // What the user did — carried into the intake report, honestly labelled as
+  // their answer rather than our measurement.
+  const note = el("p", "fineprint flash-coldstart-note", "");
+  const row = el("div", "flash-row flash-coldstart-row");
+  const held = el("button", "ghost small", "✓ I held BOOT while plugging in");
+  const hot = el("button", "ghost small", "It's already plugged in");
+  const mark = (isCold) => {
+    state.heldBoot = isCold;
+    held.classList.toggle("flash-chosen", isCold);
+    hot.classList.toggle("flash-chosen", !isCold);
+    note.textContent = isCold
+      ? "Good — its own firmware never got to run."
+      : "Noted. Whatever shipped on the chip has already booted once; the erase " +
+        "below still removes it, but next time hold BOOT on the way in.";
+  };
+  held.addEventListener("click", () => mark(true));
+  hot.addEventListener("click", () => mark(false));
+  row.append(held, hot);
+  card.append(row, note);
+  return card;
+}
+
 // ── phase: connect ──────────────────────────────────────────────────────────
 function phaseConnect() {
   const box = el("section", "flash-card flash-connect");
@@ -645,6 +711,15 @@ function phaseConnect() {
     "Connect the board to this computer with a USB-C data cable. When you " +
     "click Connect, your browser asks which device — pick the one that " +
     "appears (often “USB JTAG/serial” or “USB Serial”)."));
+
+  // ── the one move that actually protects the computer ──
+  // A board bought unflashed arrives running somebody else's firmware, and an
+  // ESP32-S3 has native USB: in TinyUSB mode that firmware can enumerate as a
+  // KEYBOARD and type at the desktop the instant the cable goes in. No page
+  // can intercept that — the OS finishes enumerating before Web Serial exists.
+  // Holding BOOT is what stops it, in mask ROM: the chip lands in download
+  // mode and the resident image never executes an instruction.
+  box.append(coldStartCard());
 
   const btn = el("button", "primary flash-connect-btn", "Connect your Canary");
   btn.addEventListener("click", onConnect);
@@ -894,6 +969,7 @@ async function onConnect() {
     if (state.resumeRescue) { state.resumeRescue = false; setPhase(phaseRescue()); return; }
     await readCurrentFirmware();     // best-effort; never throws out
     await readPassport();            // the counters worth showing at hello
+    await runIntake();               // customs — read-only, before anything is written
     ensureManifest();                // kick off (async) manifest load
     chirp("hello");                  // the Nursery says hi (only if invited)
     setPhase(phaseConnected());
@@ -1102,6 +1178,64 @@ async function readCurrentFirmware() {
   }
 }
 
+// ── customs: the read-only intake check, before a byte is written ───────────
+// Everything here is a READ. The eFuse pass is a plain register read at
+// block 0 — the flasher still never issues a burn, which is what the
+// un-brickable promise rests on. Any probe may fail (an old board, a chip
+// with no verified table, a flaky cable); a probe that fails is reported as
+// "not checked" and never as "checked and clean".
+async function runIntake() {
+  state.intake = null;
+  if (!state.session) return;
+  const { esploader } = state.session;
+  const macStr = state.mac ? core.formatMac(state.mac) : null;
+  const rosterHit = core.rosterFind(state.roster, macStr);
+
+  // 1. Security eFuses — the one thing a full erase can never undo, because
+  //    eFuses are one-way. A previous owner's lockdown lives here.
+  let efuses = null;
+  try {
+    const base = esploader.chip && esploader.chip.EFUSE_BASE;
+    if (Number.isFinite(base)) {
+      const words = [];
+      for (const addr of intake.efuseBlock0Addrs(base)) {
+        words.push(await esploader.readReg(addr));
+      }
+      efuses = intake.readSecurityEfuses(state.chip, words);
+    }
+  } catch { efuses = null; }
+
+  // 2. Is the flash the size its SPI id claims? A relabelled part wraps its
+  //    address lines, so the far end mirrors the start.
+  let alias = { level: "unknown", label: "Flash size not checked" };
+  try {
+    const declared = state.flashBytes;
+    if (declared && declared > 0x2000) {
+      const head = await readFlashChunked(esploader, 0, 0x1000);
+      const tail = await readFlashChunked(esploader, declared - 0x1000, 0x1000);
+      alias = intake.flashAliasVerdict({ declaredBytes: declared, head, tail });
+    }
+  } catch { /* leave it "not checked" — never invent a clean result */ }
+
+  const cold = intake.coldBootVerdict({
+    heldBoot: state.heldBoot,
+    hadResidentFirmware: !!(state.current && !state.current.unknown),
+  });
+  const shipped = intake.shippedWith({
+    projectName: state.current && state.current.projectName,
+    blank: !state.pt,
+  });
+  const mac = intake.macChecks(macStr);
+  const dup = intake.duplicateMacCheck(state.roster, macStr);
+  const firstContact = intake.isFirstContact({ current: state.current, rosterHit });
+
+  const findings = [cold, shipped, mac, dup, alias, ...intake.efuseFindings(efuses)];
+  state.intake = {
+    efuses, alias, cold, shipped, mac, dup, firstContact,
+    verdict: intake.intakeVerdict(findings),
+  };
+}
+
 // ── the rest of the board's passport (read-only, best-effort, seconds) ──────
 // The same probes the full health check runs, trimmed to the counters worth
 // showing the moment the board says hello: how many updates it has seen, its
@@ -1238,6 +1372,10 @@ function phaseConnected() {
   hello.append(toolsNote);
   wrap.append(hello);
 
+  // Customs: what the read-only intake check found, before anything is written.
+  const customs = renderIntakeCard();
+  if (customs) wrap.append(customs);
+
   // The live voice: a board that carries real firmware BOOTS and talks,
   // right here, before anything is written. (A brand-new board has nothing
   // to say — the bootloader keeps the port and this card doesn't appear.)
@@ -1322,6 +1460,82 @@ function phaseConnected() {
   disconnect.addEventListener("click", onDisconnect);
   wrap.append(disconnect);
   return wrap;
+}
+
+// ── the intake report ───────────────────────────────────────────────────────
+// One card, in the order that matters: the verdict, then only the findings
+// worth a sentence. A board where nothing looks wrong gets a single quiet
+// line — the report has to stay cheap to read, or people stop reading it.
+function renderIntakeCard() {
+  const it = state.intake;
+  if (!it) return null;
+  const v = it.verdict;
+
+  const card = el("section", `flash-card flash-intake flash-intake-${v.level}`);
+  const head = el("div", "flash-intake-head");
+  head.append(el("span", "flash-intake-icon",
+    v.level === "stop" ? "⛔" : v.level === "attention" ? "⚠️" : "✅"));
+  head.append(el("h3", null, v.headline));
+  card.append(head);
+  card.append(el("p", "fineprint",
+    "Customs — read off the board without changing a byte: its security fuses, " +
+    "whether the flash is the size it claims, and what it arrived running."));
+
+  for (const f of v.findings) {
+    const row = el("div", `flash-intake-finding flash-intake-${f.level}`);
+    row.append(el("strong", null, f.label));
+    if (f.detail) row.append(el("span", "flash-intake-detail", f.detail));
+    card.append(row);
+  }
+
+  if (v.level === "stop") {
+    card.append(el("p", "flash-intake-verdict",
+      "Every one of those is a state a full erase cannot fix — eFuses burn one " +
+      "way only. This board can't become a Canary. If you bought it as new, " +
+      "that is worth a refund request: someone used it before you."));
+  } else if (v.level === "clear") {
+    card.append(el("p", "flash-intake-verdict",
+      "Nothing we can check looks wrong. That isn't the same as proven safe — " +
+      "no read over USB can see a modified circuit board — but the security " +
+      "fuses are untouched, so nobody has locked this chip before you."));
+  }
+
+  // The eFuse table itself, folded away: the evidence behind the verdict, for
+  // anyone who wants to see the reading rather than trust the summary.
+  if (it.efuses && it.efuses.supported && Array.isArray(it.efuses.fields) && it.efuses.fields.length) {
+    const det = el("details", "flash-intake-efuses");
+    det.append(el("summary", null,
+      it.efuses.virgin
+        ? "Security fuses: all clear — show the reading"
+        : "Security fuses: show the reading"));
+    const list = el("div", "flash-intake-efuse-list");
+    for (const f of it.efuses.fields) {
+      const r = el("div", `flash-intake-efuse${f.burned ? " flash-intake-burned" : ""}`);
+      r.append(el("span", "flash-intake-efuse-key", f.key));
+      r.append(el("span", "flash-intake-efuse-val", f.burned ? `burned (${f.value})` : "not set"));
+      list.append(r);
+    }
+    det.append(list);
+    det.append(el("p", "fineprint",
+      "Read straight out of eFuse block 0. Nothing here is ever written — the " +
+      "flasher issues no burn command at all, which is why you cannot ruin a " +
+      "board from this page."));
+    det.append(el("p", "fineprint",
+      "A factory-fresh chip reads every one of these as unset. Espressif does " +
+      "program fuses at the factory, but in other blocks — so anything set here " +
+      "was set by a person."));
+    card.append(det);
+  } else if (it.efuses && !it.efuses.supported) {
+    card.append(el("p", "fineprint",
+      `We don't have a verified fuse map for ${state.chip}, so that check was ` +
+      "skipped rather than guessed at."));
+  } else if (!it.efuses) {
+    card.append(el("p", "fineprint",
+      "The security fuses couldn't be read this time — reported as unchecked, " +
+      "not as clean."));
+  }
+
+  return card;
 }
 
 function fact(label, val, topicId) {
@@ -1667,7 +1881,9 @@ function renderPicker() {
   eraseWrap.append(erase);
   eraseWrap.append(el("span", null,
     " Erase the entire chip first — an extra-clean start that also clears any " +
-    "leftover data from a previous firmware. Use it if a board is misbehaving."));
+    "leftover data from a previous firmware. Use it if a board is misbehaving. " +
+    "(On a board the flasher is meeting for the first time this happens anyway, " +
+    "ticked or not.)"));
   const eraseHelp = helpDot("erase_all");
   if (eraseHelp) eraseWrap.append(eraseHelp);
   adv.append(eraseWrap);
@@ -2513,11 +2729,42 @@ async function onLocalFile(ev) {
 
 function phaseConfirm(product, entry) {
   // Read the Advanced toggles while the picker is still in the DOM.
-  const eraseOn = $("#flash-erase-all") && $("#flash-erase-all").checked;
   const skipBackup = $("#flash-skip-backup") && $("#flash-skip-backup").checked;
+  // First contact with a board forces the full erase, toggle or no toggle. A
+  // normal install writes only the regions it needs, so anything a previous
+  // owner left in a partition we don't touch would ride straight through onto
+  // a board the user now believes is theirs. This is the one case where the
+  // Advanced checkbox isn't the user's to decide.
+  const forcedErase = !!(state.intake && state.intake.firstContact);
+  const eraseOn = forcedErase || !!($("#flash-erase-all") && $("#flash-erase-all").checked);
 
   const box = el("section", "flash-card flash-confirm");
   box.dataset.step = "3";
+
+  // Customs said stop. Every "stop" is an eFuse a previous owner burned, and
+  // eFuses only burn one way — so this is a dead end, not a warning to click
+  // past. Say what it is and offer the way back, not a disabled button with
+  // no explanation.
+  if (state.intake && state.intake.verdict.level === "stop") {
+    box.classList.add("flash-confirm-blocked");
+    box.append(el("h2", null, "This board can't take firmware"));
+    for (const f of state.intake.verdict.findings.filter((x) => x.level === "stop")) {
+      const row = el("div", "flash-intake-finding flash-intake-stop");
+      row.append(el("strong", null, f.label));
+      if (f.detail) row.append(el("span", "flash-intake-detail", f.detail));
+      box.append(row);
+    }
+    box.append(el("p", "flash-intake-verdict",
+      "Nothing this page can do reaches that — eFuses burn one way only, and the " +
+      "flasher never burns one. Writing firmware here would either be refused by " +
+      "the chip or come back unreadable. If this board was sold to you as new, " +
+      "it wasn't."));
+    const back = el("button", "ghost", "← back");
+    back.addEventListener("click", () => setPhase(phaseConnected()));
+    box.append(back);
+    return box;
+  }
+
   box.append(el("h2", null, `Install ${product.name}?`));
   box.append(el("p", "muted", state.current && state.current.unknown
     ? "This is the one-time first setup — after it, the board is a Canary."
@@ -2565,6 +2812,20 @@ function phaseConfirm(product, entry) {
     settingsLine +
     " Safe to interrupt at any point: unplug mid-flash and nothing breaks, you just run it again."));
   box.append(promise);
+
+  // Say WHY the erase isn't optional here, rather than silently ticking a box
+  // the user can see is unticked in Advanced.
+  if (forcedErase) {
+    const why = el("p", "flash-reassure flash-forced-erase");
+    why.append(el("span", "flash-shield", "🧹"));
+    why.append(document.createTextNode(
+      "The full erase isn't optional this time: this is the first board we've " +
+      "met, so we wipe the whole chip rather than only the parts we're about to " +
+      "write. A normal install leaves untouched partitions alone — fine for a " +
+      "Canary you already own, wrong for one that arrived carrying somebody " +
+      "else's firmware."));
+    box.append(why);
+  }
 
   // WiFi (optional) — for EVERY board now: fill it in and it's baked into
   // the chip's settings region during the install, in whichever NVS scheme
