@@ -27,13 +27,20 @@ class Manifest(unittest.TestCase):
     def setUp(self):
         self.m = gb.build_manifest()
 
-    def test_carries_plan_config_executor_runner_readme(self):
+    def test_carries_plan_config_executor_runner(self):
         roles = {f["role"] for f in self.m["files"]}
-        self.assertEqual(roles, {"plan", "frigate-config", "executor", "runner", "readme"})
+        self.assertEqual(roles, {"plan", "frigate-config", "executor", "runner"})
+
+    def test_no_readme_in_bundle(self):
+        # provision.sh is self-documenting; the bundle carries no separate README,
+        # so the manifest must not declare one (else the on-card set would
+        # contradict its own inventory).
+        self.assertNotIn("readme", {f["role"] for f in self.m["files"]})
+        self.assertTrue(all(f["bundle_path"] != "README.md" for f in self.m["files"]))
 
     def test_every_shipped_file_including_generated_is_pinned(self):
-        # The manifest promises every carried file is pinned; runner + README are
-        # generated but still ship, so they must have hashes too.
+        # The manifest promises every carried file is pinned; the runner is
+        # generated but still ships, so it must have a hash too.
         for f in self.m["files"]:
             self.assertTrue(f.get("sha256"), f"{f['role']} has no sha256 pin")
 
@@ -71,9 +78,10 @@ class Bundle(unittest.TestCase):
     def test_bundle_is_complete(self):
         with tempfile.TemporaryDirectory() as tmp:
             b = self.build(Path(tmp))
-            for name in ("hub_seed.json", "hub_seed_apply.py", "provision.sh", "README.md",
+            for name in ("hub_seed.json", "hub_seed_apply.py", "provision.sh",
                          "MANIFEST.json", "homeassistant/frigate/config.yaml"):
                 self.assertTrue((b / name).exists(), f"bundle missing {name}")
+            self.assertFalse((b / "README.md").exists(), "bundle should carry no README")
 
     def test_bundled_executor_is_byte_identical_to_repo(self):
         with tempfile.TemporaryDirectory() as tmp:

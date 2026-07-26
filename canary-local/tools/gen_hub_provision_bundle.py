@@ -87,7 +87,9 @@ def runner_script() -> str:
     `sh provision.sh --dry-run` previews and `sh provision.sh` provisions."""
     return (
         "#!/bin/sh\n"
-        "# securaCV hub provisioning — one command. See README.md.\n"
+        "# securaCV hub provisioning — one command: registers the add-on repos,\n"
+        "# installs the broker + Frigate + the securaCV kernel, and starts them,\n"
+        "# narrating why at every step.\n"
         "#   preview (no hub needed):  sh provision.sh --dry-run\n"
         "#   provision (needs SUPERVISOR_TOKEN + http://supervisor):  sh provision.sh\n"
         "set -eu\n"
@@ -95,49 +97,6 @@ def runner_script() -> str:
         'exec python3 "$here/hub_seed_apply.py" --plan "$here/hub_seed.json" '
         '--assets-root "$here" "$@"\n'
     )
-
-
-def readme(files: list[dict]) -> str:
-    lines = [
-        "# securaCV hub provisioning bundle",
-        "",
-        "Everything needed to turn a freshly-flashed Home Assistant OS hub into a",
-        "working securaCV stack — the plan, the curated Frigate config, and the",
-        "executor that runs them — in one self-contained folder. No repo checkout.",
-        "",
-        "## Run it today",
-        "",
-        "From the **Advanced SSH & Web Terminal** add-on (it ships `python3` and the",
-        "`SUPERVISOR_TOKEN` this needs):",
-        "",
-        "```sh",
-        "sh provision.sh --dry-run   # read the narrated plan; changes nothing",
-        "sh provision.sh             # do it for real",
-        "```",
-        "",
-        "The dry run prints every step, *why* it happens, and the exact Supervisor",
-        "API call it will make. The real run is idempotent and fails closed — safe to",
-        "re-run if anything goes wrong.",
-        "",
-        "## What's inside",
-        "",
-    ]
-    for f in files:
-        lines.append(f"- `{f['bundle_path']}` — {f['role']}")
-    lines += [
-        f"- `{RUNNER_NAME}` — the runner above",
-        "",
-        "## First boot",
-        "",
-        "HAOS has no supported hook to auto-run a script from the boot partition, so",
-        "for now this is a one-command step, not zero-touch. Dropped onto the card's",
-        "`CONFIG/` tree it does no harm — HAOS ignores files it doesn't recognise, so",
-        "the worst case is a normal onboarding. Wiring a first-boot hook to run",
-        "`provision.sh` automatically is the on-hardware-validated frontier; see",
-        "`docs/design/raspberry_pi_hub_flashing.md`.",
-        "",
-    ]
-    return "\n".join(lines)
 
 
 def build_manifest() -> dict:
@@ -155,13 +114,12 @@ def build_manifest() -> dict:
                 "sha256": sha256_of(src),
             }
         )
-    # The runner and README are generated (deterministic), but they SHIP in the
-    # bundle, so pin their hashes too — the manifest promises every carried file
-    # is pinned, and a change to how we invoke the executor or what the README
-    # says must show up in the drift gate. (MANIFEST.json is the manifest itself
-    # and so cannot self-pin; it is verified by equality with this committed
-    # file, not by an entry inside it.)
-    source_entries = list(files)  # plan/config/executor, before the generated ones
+    # The runner is generated (deterministic) but SHIPS in the bundle, so pin its
+    # hash too — the manifest promises every carried file is pinned, and a change
+    # to how we invoke the executor must show up in the drift gate. (MANIFEST.json
+    # is the manifest itself and so cannot self-pin; it is verified by equality
+    # with this committed file, not by an entry inside it. The bundle carries no
+    # separate README — provision.sh is self-documenting.)
     files.append(
         {
             "role": "runner",
@@ -169,15 +127,6 @@ def build_manifest() -> dict:
             "bundle_path": RUNNER_NAME,
             "card_path": f"{BUNDLE_ROOT_ON_CARD}/{RUNNER_NAME}",
             "sha256": hashlib.sha256(runner_script().encode("utf-8")).hexdigest(),
-        }
-    )
-    files.append(
-        {
-            "role": "readme",
-            "generated": True,
-            "bundle_path": "README.md",
-            "card_path": f"{BUNDLE_ROOT_ON_CARD}/README.md",
-            "sha256": hashlib.sha256(readme(source_entries).encode("utf-8")).hexdigest(),
         }
     )
     return {
@@ -262,11 +211,11 @@ def build_bundle(manifest: dict, out_dir: Path) -> None:
         src = REPO / f["source"]
         # cp -L semantics: dereference so a symlinked source lands as real bytes.
         shutil.copyfile(src, dest, follow_symlinks=True)
-    # Generated files, written from the SAME functions their manifest hashes pin,
-    # so the shipped bytes always match the pin.
+    # The runner is generated, written from the SAME function its manifest hash
+    # pins, so the shipped bytes always match the pin. (No README — provision.sh
+    # documents itself.)
     (out_dir / RUNNER_NAME).write_text(runner_script(), encoding="utf-8")
     (out_dir / RUNNER_NAME).chmod(0o755)
-    (out_dir / "README.md").write_text(readme(source_files), encoding="utf-8")
     (out_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 

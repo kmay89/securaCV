@@ -337,9 +337,21 @@ Raspberry Pi Imager.
     *why* it's configuring each thing". Its landing spot is `CONFIG/securacv/` on
     the boot partition, written by the same `hub_io::seed` mechanism as the Wi-Fi
     keyfile.
+  - *Boot-partition write side (landed 2026-07-26):* `hub_io::provision` turns the
+    bundle into the `SeedFile`s the existing guarded writer drops under
+    `CONFIG/securacv/`. The payload is embedded VERBATIM from the repo
+    (`include_str!` of the plan, Frigate config, and executor) and the runner is
+    reproduced in Rust — and a **host cross-check hashes every shipped byte against
+    the Python manifest's SHA-256 pins**, so the flasher's Rust and the generator's
+    Python can't drift apart (the "Hub Core" workflow re-runs it whenever an
+    embedded file changes). Same posture as the rest of hub-io: the layout is
+    host-tested, the physical boot is not. It carries the runnable payload plus the
+    integrity manifest — the same set the generator's `--build` produces; the
+    self-documenting `provision.sh` means there's no separate README to drift.
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS keychain;
-    wire the flasher's Rust seed layer to **write the bundle** into `CONFIG/` (the
-    content half exists and is pinned; the write reuses `hub_io::seed`); and — the
+    add the app opt-in that hands `provision_seed_files()` to `seed_card` during a
+    flash (an experimental toggle like the account pre-seed — the assembler and its
+    cross-check exist; what's left is the UI + the `seed_card` call); and — the
     genuinely unresolved, on-hardware-pinned piece — the **first-boot hook** that
     auto-runs `provision.sh`. HAOS has no supported hook to run an arbitrary
     boot-partition script, so today the bundle is a one-command step (drop it via
