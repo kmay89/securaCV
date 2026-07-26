@@ -177,18 +177,18 @@
       {
         "label": "iPad and native app runbooks",
         "items": [
-          { "noun": "iPad field guide", "href": "../desktop-lab/ipad-guide.html", "purpose": "Narrated architecture guide for making the same Lab bundle feel native on iPad." },
-          { "noun": "iPad setup runbook", "href": "../desktop-lab/ipad-setup.html", "purpose": "Step-by-step Mac/Xcode path for simulator, side-load, TestFlight, and App Store builds." }
+          { "noun": "iPad field guide", "href": "https://github.com/kmay89/securaCV/blob/main/desktop-lab/ipad-guide.html", "purpose": "Narrated architecture guide for making the same Lab bundle feel native on iPad." },
+          { "noun": "iPad setup runbook", "href": "https://github.com/kmay89/securaCV/blob/main/desktop-lab/ipad-setup.html", "purpose": "Step-by-step Mac/Xcode path for simulator, side-load, TestFlight, and App Store builds." }
         ]
       },
       {
         "label": "Evidence and operator HTML",
         "items": [
-          { "noun": "Witness kernel explainer", "href": "../docs/witness-kernel.html", "purpose": "Standalone architectural explainer for the privacy witness kernel." },
-          { "noun": "Break-glass ceremony", "href": "../src/break_glass/breakglass.html", "purpose": "Local quorum unseal UI for raw-media access." },
-          { "noun": "Evidence viewer", "href": "../viewer/evidence_viewer.html", "purpose": "Offline verifier/viewer for exported witness evidence." },
-          { "noun": "Evidence viewer template", "href": "../viewer/template.html", "purpose": "Template used to package static evidence viewer exports." },
-          { "noun": "Privacy witness wizard", "href": "../privacy_witness_kernel/wizard/index.html", "purpose": "Standalone setup wizard for the privacy witness kernel prototype." }
+          { "noun": "Witness kernel explainer", "href": "https://github.com/kmay89/securaCV/blob/main/docs/witness-kernel.html", "purpose": "Standalone architectural explainer for the privacy witness kernel." },
+          { "noun": "Break-glass ceremony", "href": "https://github.com/kmay89/securaCV/blob/main/src/break_glass/breakglass.html", "purpose": "Local quorum unseal UI for raw-media access." },
+          { "noun": "Evidence viewer", "href": "https://github.com/kmay89/securaCV/blob/main/viewer/evidence_viewer.html", "purpose": "Offline verifier/viewer for exported witness evidence." },
+          { "noun": "Evidence viewer template", "href": "https://github.com/kmay89/securaCV/blob/main/viewer/template.html", "purpose": "Template used to package static evidence viewer exports." },
+          { "noun": "Privacy witness wizard", "href": "https://github.com/kmay89/securaCV/blob/main/privacy_witness_kernel/wizard/index.html", "purpose": "Standalone setup wizard for the privacy witness kernel prototype." }
         ]
       }
     ]

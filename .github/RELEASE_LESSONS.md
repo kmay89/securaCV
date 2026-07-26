@@ -589,3 +589,45 @@ any platform.
   When a product is "unavailable" everywhere at once, suspect the pinned tag
   before the wiring — `canary-local.yml` already warns on every run while the
   pin is unresolvable, and that warning was right for weeks.
+
+### 2026-07-25 — The Lab app shipped a workshop with no renders: the web root had no parent to reach into
+
+- **Symptom:** in the native **SecuraCV Lab** on macOS, the Workshop's "Start
+  from a package" card showed the WebKit broken-image glyph instead of the
+  package render, and the 3D viewport was empty for every part except the
+  handful of watch-station / dash / combo meshes. The same page in a browser —
+  same commit, same files — was perfect, so it read like a rendering or CSP
+  problem in the webview. It was neither: the pieces that worked were exactly
+  the ones whose files live *inside* `canary-local/`, and the pieces that
+  failed were exactly the ones under `docs/hardware/enclosure/`.
+- **Cause:** `frontendDist` was `../../canary-local`, so Tauri embedded that
+  directory and served it as the **entire origin**. The shared frontend
+  addresses the enclosure library as a sibling — `../docs/hardware/enclosure/…`
+  in `workshop.js`, `enclosure-lab.js`, `assembly-lab.js`, `real-shapes.js`,
+  `chooser.js` — which is correct from a repo checkout and from the deployed
+  site (`pages.yml` assembles `_site/canary-local` *and*
+  `_site/docs/hardware/enclosure`), and impossible in a bundle: the webview
+  collapses `../` at the root, requests `/docs/hardware/enclosure/…`, and 404s.
+  Nothing logged, nothing crashed — a static asset that isn't there just isn't
+  there, and only half the page knows.
+- **Fix:** stage the app's web root instead of pointing at a source directory.
+  `desktop-lab/scripts/stage-frontend.mjs` mirrors the trees named in
+  `desktop-lab/frontend-stage.json` (`canary-local` + `docs/hardware/enclosure`
+  — deliberately the same list `pages.yml` deploys) into `desktop-lab/dist/`
+  with `cp -RL` semantics, verifies its sentinels, and runs from
+  `beforeDevCommand`/`beforeBuildCommand`; `frontendDist` is `../dist` and the
+  window opens `canary-local/lab.html`. The app's root and the site's root now
+  have the same shape, so one set of relative URLs is true on both. The two
+  frontend links that pointed at repo docs rather than assets
+  (`hub-setup-wizard.js`, `site-map.html`) moved to the `GH +` source-link idiom
+  their siblings already use. `canary-local/tests/lab_bundle.test.js` is the
+  gate: it resolves every escaping URL in the shipped frontend and fails unless
+  the manifest carries it.
+- **Applies to:** every app target that wraps a web root — the Lab, its iOS/iPad
+  builds (same `tauri.conf.json`, so they inherit the fix), and any future
+  webview shell. Two rules generalize. **A bundled web root has no parent:**
+  if the frontend is shared with a site, the packaging step must reproduce the
+  site's *layout*, not just its files. And **a missing static asset is a silent
+  failure** — it produces a broken glyph, not an error, so the guard has to be
+  a test over the source, not a hope that someone clicks the right tab before
+  publishing.

@@ -35,8 +35,11 @@ The **capability layer** is the seam: in the browser it maps to WebSerial /
 ```
 desktop-lab/
   package.json                 @tauri-apps/cli
+  frontend-stage.json          what the app's web root mirrors (shared with CI)
+  scripts/stage-frontend.mjs   builds dist/ from it, before every dev/build
+  dist/                        the staged web root (generated, gitignored)
   src-tauri/
-    tauri.conf.json            frontendDist -> ../../canary-local (bundled as-is)
+    tauri.conf.json            frontendDist -> ../dist, window -> canary-local/lab.html
     Cargo.toml
     build.rs
     capabilities/default.json
@@ -45,15 +48,29 @@ desktop-lab/
 ```
 
 The frontend is **not built** — `canary-local/` is a static, committed bundle
-(vanilla JS + committed WASM `dist/`), so Tauri packages it directly.
+(vanilla JS + committed WASM `dist/`), so Tauri packages it directly. It is
+**staged**, though, and that distinction matters: Tauri serves `frontendDist` as
+the whole origin, so anything the pages reach for *outside* `canary-local/` —
+above all the enclosure library at `docs/hardware/enclosure/`, which every
+preview render, STL mesh and `.scad` download comes from — has nowhere to
+resolve if `canary-local/` is itself the root. `scripts/stage-frontend.mjs`
+mirrors those siblings at their repo-relative paths into `dist/`, so the app's
+web root has the same shape as the deployed site's, and one set of relative URLs
+works on both. The mirror list is `frontend-stage.json`;
+`canary-local/tests/lab_bundle.test.js` fails CI if the frontend starts reaching
+for something the manifest doesn't carry.
 
 ## Develop
 
 ```bash
 cd desktop-lab
 npm install
-npm run dev      # opens the Lab in a native window
+npm run dev      # stages dist/, then opens the Lab in a native window
 ```
+
+`npm run dev` re-stages on start, so an edit to `canary-local/` needs the dev
+window restarted (or `npm run stage` and a reload) to show up — the app reads
+`dist/`, not the source tree.
 
 Linux dev deps (Ubuntu/Debian):
 
