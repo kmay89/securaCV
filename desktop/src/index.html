@@ -329,6 +329,23 @@
               <p id="local-result" class="status"></p>
             </details>
 
+            <details class="hint" id="adv-health">
+              <summary>Health check — read the board’s story (changes nothing)</summary>
+              <p>Read the board’s own record straight off flash — the partition
+                map, the firmware in each slot and when it was built, update
+                history, whether it ever hard-crashed, and its witness chain —
+                and get a plain-language verdict with what to do about anything
+                off. <strong>Read-only:</strong> nothing is written, and no key
+                or Wi-Fi secret is ever read — only whether they’re present.</p>
+              <div class="row">
+                <button id="health-check-btn" class="btn btn-ghost btn-small" disabled>Run a health check</button>
+              </div>
+              <p id="health-chip-note" class="muted"></p>
+              <pre id="health-console" class="console hidden" aria-live="polite"></pre>
+              <div id="health-report" class="health-report hidden"></div>
+              <p id="health-result" class="status"></p>
+            </details>
+
             <details class="hint" id="adv-rescue">
               <summary>Rescue bench — back up, restore, or erase a board</summary>
               <p>Turn the flasher into a safety net: pull a full copy of the chip

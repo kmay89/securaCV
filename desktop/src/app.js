@@ -64,6 +64,7 @@ const state = {
   portKind: null,    // "esp32" | "we2"
   chip: null,        // identified chip for state.port, or null
   flashBytes: null,  // detected flash size (bytes) for state.chip — the rescue backup needs it
+  mac: null,         // detected MAC (for the health report + backup name), or null
   product: null,
   detecting: false,  // a detect_chip call is in flight
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
@@ -186,6 +187,7 @@ async function boot() {
   $("rescue-backup-btn").addEventListener("click", onRescueBackup);
   $("rescue-restore-btn").addEventListener("click", onRescueRestore);
   $("rescue-erase-btn").addEventListener("click", onRescueErase);
+  $("health-check-btn").addEventListener("click", onHealthCheck);
   updateLocalFlashUi();
   $("monitor-start").addEventListener("click", startMonitor);
   $("monitor-stop").addEventListener("click", stopMonitor);
@@ -559,6 +561,7 @@ async function identify(portInfo) {
     if (port !== state.port) return; // unplugged/switched while we were reading
     state.chip = info.chip;
     state.flashBytes = info.flash_bytes; // may be null if board-info didn't report it
+    state.mac = info.mac; // may be null
     setConn("connected", `Connected · ${info.chip} on ${port}`);
     $("recheck").classList.remove("hidden");
 
@@ -584,6 +587,7 @@ function onDisconnect() {
   state.portKind = null;
   state.chip = null;
   state.flashBytes = null;
+  state.mac = null;
   state.product = null;
   state.failedPort = null;
   resetSteps();
@@ -1019,6 +1023,16 @@ function updateRescueUi() {
   // restore and erase still work but backup can't.
   const backupBtn = $("rescue-backup-btn");
   if (backupBtn && !state.flashBytes) backupBtn.disabled = true;
+  // The health check reads its own sizes from the partition table, so it only
+  // needs a connection.
+  const healthBtn = $("health-check-btn");
+  if (healthBtn) healthBtn.disabled = !on;
+  const healthNote = $("health-chip-note");
+  if (healthNote) {
+    healthNote.textContent = connected
+      ? `Connected: ${state.chip} on ${state.port}${state.mac ? ` · ${state.mac}` : ""}`
+      : "Plug in a Canary and let the chip read finish first.";
+  }
 }
 
 const flashBaud = () => (state.catalog && state.catalog.flash_baud) || 921600;
@@ -1167,6 +1181,173 @@ async function onRescueErase() {
     await invoke("erase_chip", { port });
     return "Chip erased — factory-fresh. Flash any image next.";
   });
+}
+
+// ── the health check: read the board's story, change nothing ────────────────
+// Parity with the browser Lab's health report. Read-only, so no confirm — but
+// it still snapshots the target + takes the busy-lock before touching the wire,
+// like the rescue ops, so the watcher can't swap boards mid-read.
+async function onHealthCheck() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  const port = state.port, chip = state.chip, mac = state.mac, flashBytes = state.flashBytes;
+  state.busy = true;
+  rescueButtons(false);
+  const btn = $("health-check-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Reading…"; }
+  const con = $("health-console");
+  con.textContent = "";
+  con.classList.remove("hidden");
+  $("health-report").classList.add("hidden");
+  setStatus("health-result", "");
+  resetOutcome();
+  await stopMonitor();
+  const unlisten = await listen("health:log", (ev) => {
+    con.textContent += ev.payload + "\n";
+    con.scrollTop = con.scrollHeight;
+  });
+  try {
+    const report = await invoke("health_check", { port, chip, mac, flashBytes, baud: flashBaud() });
+    report.generatedAt = new Date().toISOString(); // the browser stamps this too
+    renderHealthReport(report);
+    const v = report.verdict || {};
+    setStatus("health-result", `Verdict: ${v.headline || "read complete"}.`,
+      v.level === "attn" ? "err" : "ok");
+    logEvent("ok", "Health check read");
+  } catch (e) {
+    setStatus("health-result", String(e), "err");
+    logEvent("err", "Health check failed: " + e);
+  } finally {
+    unlisten();
+    state.busy = false; // read-only — the board wasn't touched, keep the detected chip
+    if (btn) btn.textContent = "Run a health check";
+    updateRescueUi();
+  }
+}
+
+// Build the report DOM from the object the backend returns. Everything read off
+// flash (project names, versions, labels) goes in via textContent, never HTML.
+function renderHealthReport(r) {
+  const box = $("health-report");
+  box.textContent = "";
+  box.classList.remove("hidden");
+
+  const h = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const row = (label, value, tone) => {
+    const d = h("div", "health-row" + (tone ? " health-" + tone : ""));
+    d.append(h("span", "health-row-k", label), h("span", "health-row-v", value));
+    box.append(d);
+  };
+  const section = (title) => box.append(h("h3", "health-h", title));
+
+  // Verdict + self-heal findings first — the point of the whole thing.
+  const v = r.verdict || {};
+  const vBox = h("div", "health-verdict health-" + (v.level || "ok"));
+  vBox.append(h("strong", "health-verdict-h", `${v.level === "ok" ? "✓" : "⚠"} ${v.headline || ""}`));
+  for (const f of (v.findings || [])) {
+    const fEl = h("div", "health-finding");
+    fEl.append(h("p", "health-finding-t", f.title));
+    if (f.fix) fEl.append(h("p", "health-finding-fix muted", f.fix));
+    vBox.append(fEl);
+  }
+  box.append(vBox);
+
+  // Facts.
+  if (r.chip) row("Chip", r.chip);
+  if (r.mac) row("ID (MAC)", r.mac);
+  if (r.flashBytes) row("Flash", `${Math.round(r.flashBytes / (1 << 20))} MB`);
+
+  if (r.blank) {
+    box.append(h("p", "muted", "No partition table at 0x8000 — this chip looks blank."));
+    appendSaveReport(box, r);
+    return;
+  }
+
+  if (r.slots && r.slots.length) {
+    section("Firmware on the board");
+    for (const s of r.slots) {
+      const val = s.empty
+        ? "empty"
+        : `${s.project || "?"} ${s.version || ""}`.trim() + (s.built ? ` · built ${s.built}` : "");
+      row(s.label + (s.active ? " — running now" : ""), val, s.active ? "ok" : null);
+    }
+  }
+
+  if (r.ota) {
+    section("Update history");
+    if (r.ota.fresh) {
+      row("Over-the-air updates", "none yet — factory image");
+    } else {
+      row("Updates recorded", String(r.ota.updatesSeen));
+      row("Boot state", r.ota.stateText, r.ota.pendingVerify ? "warn" : null);
+    }
+  }
+
+  section("Health");
+  if (r.coredump) {
+    r.coredump.present
+      ? row("Crash dump", `found (${r.coredump.size} bytes) — the board hard-crashed`, "warn")
+      : row("Crash dump", "none stored", "ok");
+  }
+  if (r.witness && r.witness.boots != null) row("Lifetime boots", String(r.witness.boots));
+  if (r.witness && r.witness.tamper) row("Tamper flag", `set (${r.witness.tamper})`, "warn");
+
+  if (r.witness) {
+    section("Witness chain");
+    if (r.witness.seq != null) row("Records chained", String(r.witness.seq), "ok");
+    if (r.witness.chainHeadFp) row("Chain head", r.witness.chainHeadFp + "…");
+    row("Device identity", r.witness.provisioned ? "provisioned" : "not provisioned",
+      r.witness.provisioned ? "ok" : null);
+    row("Wi-Fi settings", r.witness.wifiConfigured ? "stored" : "none");
+    box.append(h("p", "muted",
+      "Presence only — the identity key and Wi-Fi password are never read off the chip."));
+  }
+
+  if (r.partitions && r.partitions.length) {
+    section("Flash map");
+    for (const p of r.partitions) {
+      row(p.label || p.kind,
+        `${p.kind} · ${Math.round(p.size / 1024)} KB @ 0x${(p.offset >>> 0).toString(16)}`);
+    }
+  }
+
+  appendSaveReport(box, r);
+}
+
+function appendSaveReport(box, r) {
+  const rowDiv = document.createElement("div");
+  rowDiv.className = "row";
+  const save = document.createElement("button");
+  save.className = "btn btn-ghost btn-small";
+  save.textContent = "Save report (.json)…";
+  save.addEventListener("click", () => onSaveHealthReport(r));
+  rowDiv.append(save);
+  box.append(rowDiv);
+}
+
+async function onSaveHealthReport(r) {
+  const stamp = (r.mac || "").replace(/[^0-9a-fA-F]/g, "").slice(-6).toLowerCase() || "canary";
+  let out = null;
+  try {
+    out = await window.__TAURI__.dialog.save({
+      defaultPath: `canary-${stamp}-report.json`,
+      filters: [{ name: "Health report", extensions: ["json"] }],
+    });
+  } catch (e) {
+    setStatus("health-result", String(e), "err");
+    return;
+  }
+  if (!out) return;
+  try {
+    await invoke("save_text_file", { path: out, contents: JSON.stringify(r, null, 2) });
+    setStatus("health-result", "Report saved.", "ok");
+  } catch (e) {
+    setStatus("health-result", "Couldn't save the report: " + e, "err");
+  }
 }
 
 async function onPickLocalFile() {
