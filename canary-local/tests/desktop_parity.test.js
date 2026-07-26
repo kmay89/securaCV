@@ -322,3 +322,104 @@ test("rescue bench: both flashers can back up, restore, and erase — native wir
   assert.match(browser, /onRestoreFile|takeBackup|standalone backup/i,
     "browser Lab lost its backup/restore entry points");
 });
+
+// ── customs: the unflashed-board posture, on BOTH flashers ──────────────────
+// A board bought unflashed arrives running somebody else's firmware. Two
+// controls answer that, and CLAUDE.md's "two flashers, two frontends" rule
+// means a user-facing safety instruction on one is a bug on the other:
+//
+//   1. the cold-start gesture — hold BOOT while plugging in, so the resident
+//      firmware never executes. It's the only instruction that has to land
+//      BEFORE the cable goes in, and no app can substitute for it: the OS
+//      finishes enumerating USB before either frontend hears about the device.
+//   2. the forced full erase on first contact — a normal write only covers the
+//      regions the image occupies, so anything a previous owner left in an
+//      untouched partition survives unless the whole chip is erased.
+//
+// This gate fails the instant one frontend has them and the other doesn't.
+test("cold-start guidance ships on both flashers", () => {
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  // The gesture itself, spelled out where the user reads it before plugging in.
+  assert.match(browser, /coldStartCard\s*\(/,
+    "browser flasher lost the cold-start card (hold BOOT before plugging in)");
+  assert.match(browser, /Still holding it, plug the USB-C cable in/,
+    "browser flasher's cold-start card no longer states the gesture");
+  assert.match(html, /id="coldstart"/,
+    "desktop flasher is missing the cold-start card — half the users lose the " +
+    "one instruction that has to happen before the cable goes in");
+  assert.match(html, /Still holding it, plug the USB-C cable in/,
+    "desktop flasher's cold-start card no longer states the gesture");
+
+  // Both must say plainly that an app cannot intercept USB enumeration —
+  // this is the claim we must never let drift into "our app shields you".
+  for (const [what, src] of [["browser", browser], ["desktop", html]]) {
+    assert.match(src, /No (web page|app) can/i,
+      `${what} flasher no longer admits that software can't intercept the plug-in`);
+  }
+});
+
+test("first contact forces a full erase on both flashers", () => {
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  // Browser: decided by reading the board (intake.isFirstContact), and the
+  // Advanced checkbox must not be able to turn it back off.
+  assert.match(browser, /forcedErase/,
+    "browser flasher no longer forces the erase on a first-contact board");
+  assert.match(browser, /const eraseOn = forcedErase \|\|/,
+    "browser flasher's forced erase can be overridden by the Advanced toggle — " +
+    "the force must win over the checkbox, not the other way round");
+
+  // Desktop: espflash can't report resident firmware, so it asks — but it must
+  // ask, must default to erasing, and must actually pass the answer through.
+  assert.match(html, /id="first-contact"[^>]*checked/,
+    "desktop flasher's first-contact erase must default to ON — the safe default " +
+    "for a board of unknown provenance is to wipe it");
+  assert.match(appJs, /eraseFirst:/,
+    "desktop flasher never passes eraseFirst to the native flash command");
+  assert.match(libRs, /erase_first/,
+    "desktop/src-tauri/src/lib.rs ignores erase_first — the checkbox does nothing");
+  assert.match(libRs, /erase_first\.unwrap_or\(false\)/,
+    "erase_first must fail closed to 'no erase' only when explicitly absent");
+
+  // The safe default has to be restored for EVERY board, not once per app
+  // launch. Unticking it to reflash a known Canary must not carry over to the
+  // next board plugged in — which is exactly the marketplace board that needs
+  // the wipe.
+  assert.match(appJs, /function resetSteps\b[\s\S]*?first-contact"\)\.checked = true/,
+    "desktop resetSteps must re-arm the first-contact erase for each attached " +
+    "board, or an untick leaks from one board to the next");
+});
+
+test("the board's own firmware claim never waives the first-contact erase", () => {
+  // A board bought unflashed is untrusted, and its esp_app_desc_t project name
+  // lives in writable flash — so an image that calls itself a known SecuraCV
+  // product must not thereby skip the erase that would remove it. Only our own
+  // session roster or an explicit human claim may waive it.
+  const intakeJs = read(join(CANARY, "assets/intake.js"));
+  const body = /export function isFirstContact\(([\s\S]*?)\n}/.exec(intakeJs);
+  assert.ok(body, "isFirstContact vanished from canary-local/assets/intake.js");
+  assert.ok(!/current|productName|projectName/.test(body[1]),
+    "isFirstContact reads the board's own firmware claim again — that string is " +
+    "attacker-controlled on an untrusted board, so it cannot gate the erase");
+  assert.match(body[1], /rosterHit/, "our own session history must still waive it");
+  assert.match(body[1], /ownerClaimed/, "an explicit human claim must still waive it");
+});
+
+test("the eFuse gap between the two flashers is stated, not hidden", () => {
+  // The browser reads the chip's security fuses; espflash has no fuse-read
+  // command, so the desktop app genuinely cannot. That's acceptable — silently
+  // omitting it is not, because a missing check reads as a passed check.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  assert.match(browser, /efuseBlock0Addrs|readSecurityEfuses/,
+    "browser flasher lost its security-fuse read");
+  assert.match(html, /id="coldstart-efuse"/,
+    "desktop flasher must say the fuse check is browser-only rather than leave " +
+    "the user assuming it ran");
+  assert.match(html, /browser-only/,
+    "desktop flasher's fuse-gap note no longer names the gap");
+});

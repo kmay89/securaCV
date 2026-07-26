@@ -688,3 +688,31 @@ kbd {
 /* Your Fleet — the embedded Witness Wall (isolated iframe) */
 #fleet-view { padding: 0; height: 100%; min-height: 0; }
 .witness-frame { width: 100%; height: 100%; min-height: 72vh; border: 0; border-radius: 12px; background: transparent; display: block; }
+
+/* ── cold start: the BOOT-held gesture, before the cable goes in ──────────── */
+/* Mirrors the browser flasher's .flash-coldstart. It sits inside step 1
+   because it is the only instruction on the page that has to be followed
+   BEFORE plugging in — everything else the app does is a check afterwards. */
+.coldstart {
+  margin: 14px 0 4px; padding: 14px 16px;
+  border: 1px solid var(--canary); border-radius: 12px;
+  background: var(--canary-soft);
+}
+.coldstart h3 { margin: 0 0 8px; font-size: 15px; font-weight: 650; color: var(--canary-dark); }
+.coldstart p { margin: 0 0 8px; font-size: 13.5px; color: var(--text-secondary); }
+.coldstart ol { margin: 8px 0 10px 20px; font-size: 13.5px; color: var(--text-secondary); }
+.coldstart ol li { margin: 3px 0; }
+.coldstart .fineprint { font-size: 12.5px; color: var(--text-muted); }
+.coldstart kbd {
+  font: 600 11.5px/1 ui-monospace, Menlo, Consolas, monospace;
+  padding: 2px 6px; border: 1px solid var(--border-strong); border-radius: 5px;
+  background: var(--surface); color: var(--text);
+}
+.coldstart code { font: 12px/1 ui-monospace, Menlo, Consolas, monospace; }
+.coldstart-ask {
+  display: flex; gap: 9px; align-items: flex-start; margin: 12px 0 10px;
+  padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--surface); font-size: 13px; color: var(--text-secondary);
+  cursor: pointer;
+}
+.coldstart-ask input { margin-top: 2px; flex: 0 0 auto; }

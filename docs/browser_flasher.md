@@ -41,6 +41,14 @@ On top of the silicon guarantee, the page adds:
   one the WAP first-boot lesson teaches) is one panel away throughout, and a
   non-Chromium browser is met with the guided PlatformIO/Arduino path instead
   of a dead end.
+- **Customs, for a board it has never met.** Before a byte is written, the page
+  reads the chip's security eFuses (is it locked to a previous owner's key?),
+  checks the flash really is the size its id claims, and names what the board
+  arrived running — then forces a full chip erase on first contact, because a
+  normal install only overwrites the regions it needs. See
+  [unflashed_board_intake.md](unflashed_board_intake.md), which also explains
+  the one control that has to happen *before* the cable goes in and why no web
+  page can substitute for it.
 
 ## Browsers and cables
 

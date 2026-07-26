@@ -40,6 +40,10 @@ on:
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/provisioning.rs"
       - "desktop/src-tauri/build.rs"
+      # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
+      # the two flashers in step (CLAUDE.md "two flashers, two frontends")
+      - "desktop/src/index.html"
+      - "desktop/src/app.js"
       - "desktop-lab/frontend-stage.json"
       - "desktop-lab/scripts/**"
       - "desktop-lab/src-tauri/tauri.conf.json"
@@ -86,6 +90,10 @@ on:
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/provisioning.rs"
       - "desktop/src-tauri/build.rs"
+      # the desktop frontend: desktop_parity.test.js reads its HTML/JS to keep
+      # the two flashers in step (CLAUDE.md "two flashers, two frontends")
+      - "desktop/src/index.html"
+      - "desktop/src/app.js"
       - "desktop-lab/frontend-stage.json"
       - "desktop-lab/scripts/**"
       - "desktop-lab/src-tauri/tauri.conf.json"
@@ -157,6 +165,7 @@ jobs:
           node --test canary-local/tests/mode.test.js
           node --test canary-local/tests/mic.test.js
           node --test canary-local/tests/board_facts.test.mjs
+          node --test canary-local/tests/intake.test.mjs
       - name: Enclosure catalog drift (JSON only — preview meshes vary by openscad build)
         run: |
           python3 canary-local/tools/gen_enclosures.py

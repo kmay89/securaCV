@@ -604,6 +604,12 @@ function resetSteps() {
   setStatus("flash-result", "");
   $("provisioning").classList.add("hidden");
   $("host-flash-controls").classList.remove("hidden");
+  // Re-arm the first-contact erase for every board that attaches. The checkbox
+  // starts ticked in the markup, but that only happens once per app launch —
+  // so unticking it to reflash a known Canary would silently carry over to the
+  // next board plugged in, which is precisely the marketplace board that needs
+  // the wipe. The safe default has to be restored per board, not per session.
+  if ($("first-contact")) $("first-contact").checked = true;
   $("module-flow").classList.add("hidden");
   $("serial-monitor").classList.add("hidden");
   renderReceipts();
@@ -833,6 +839,12 @@ async function onFlash() {
       baud: state.catalog.flash_baud || 921600,
       detectedChip: state.chip,
       provisioning,
+      // First contact with a board we've never written: wipe the whole chip
+      // rather than only the regions we're about to write, so nothing a
+      // previous owner left in an untouched partition rides through. The
+      // browser flasher decides this by reading the board; espflash can't
+      // report what's resident, so here it's the user's answer on step 1.
+      eraseFirst: !!($("first-contact") && $("first-contact").checked),
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;

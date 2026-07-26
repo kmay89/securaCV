@@ -371,6 +371,7 @@ async fn flash(
     baud: u32,
     detected_chip: String,
     provisioning: Option<Provisioning>,
+    erase_first: Option<bool>,
 ) -> Result<FlashReceipt, String> {
     let emit = |app: &AppHandle, line: String| {
         let _ = app.emit("flash:log", line);
@@ -551,6 +552,32 @@ async fn flash(
             &installed_sha[..16]
         ),
     );
+
+    // 2b) First contact: wipe the WHOLE chip before writing. `write-bin` only
+    //     touches the regions the image covers, so a board that arrived
+    //     carrying somebody else's firmware would keep whatever sat in the
+    //     partitions we don't write — on a board the user now believes is
+    //     theirs. Erasing first is the only way that leftover goes away.
+    //
+    //     This mirrors the browser flasher, which forces the same erase on a
+    //     board it has never written (canary-local/assets/intake.js:
+    //     isFirstContact). The browser decides it by reading the board;
+    //     espflash reports nothing about resident firmware, so here it comes
+    //     from the step-1 checkbox.
+    if erase_first.unwrap_or(false) {
+        emit(
+            &app,
+            "→ first contact with this board — erasing the whole chip before writing".into(),
+        );
+        let code =
+            run_sidecar_streaming(&app, rescue::erase_flash_args(&port), "flash:log").await?;
+        if code != 0 {
+            return Err(format!(
+                "the full erase failed (espflash exit {code}). Nothing was written. The board can't be bricked — put it back in download mode and try again."
+            ));
+        }
+        emit(&app, "✓ chip erased — nothing of the old firmware is left".into());
+    }
 
     // 3) Flash the merged factory image at 0x0. A factory image already carries
     //    the bootloader/partition table at their real offsets, so 0x0 is right.
