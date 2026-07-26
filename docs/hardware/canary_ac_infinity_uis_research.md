@@ -262,12 +262,39 @@ your witness device. An optocoupler is a few cents and removes the Canary from
 that conversation entirely. On a device whose entire pitch is trustworthiness,
 this is not a place to save a part.
 
+**The output stage must fail to OFF.** This is the part to get right, and it is
+easy to get backwards. The Canary is not the only thing that can stop working:
+it boots, it resets, it can lose power or hang with the GPIO floating, and an
+ESP32 GPIO is a high-impedance input at reset. Every one of those states leaves
+the optocoupler dark. **Dark must mean relay open**, or a crashed or unpowered
+witness device silently energizes a 15 A load.
+
+So the opto transistor **sources** the ADA3's 10 V onto the control line when
+lit, and a pull-down resistor holds the line at GND when it isn't. Do *not*
+idle the control line pulled up to the 10 V rail — that inverts the failure
+mode into "everything broken = load on."
+
 ```
-  Canary GPIO ──[R 220Ω]──▶ opto LED ┊ opto transistor ──▶ UIS control line
-        GND ─────────────────────────┊                     (pulled to the
-                                     ┊                      ADA3's own 10 V
-                            isolation barrier               through R_pull)
+                              ┊ isolation barrier
+                              ┊         ADA3's own 10 V rail
+                              ┊                 │
+  Canary GPIO ─[R 220Ω]─▶ LED ┊  ┌── opto transistor ──┐
+        GND ────────────────  ┊  │                     ├──▶ UIS control line
+                              ┊  └─────────────────────┘    │
+                              ┊                          [R_pd]  pull-DOWN
+                              ┊                             │
+                              ┊                          ADA3 GND
+
+  GPIO high → opto lit → line pulled to ~10 V → relay closed
+  GPIO low / floating / Canary unpowered → opto dark → R_pd holds line at 0 V
+                                                     → relay OPEN  ← fail-safe
 ```
+
+Two corollaries worth checking on the bench: size `R_pd` low enough that it
+actually holds the line below the *release* threshold measured in §5.1 step 3
+against the opto's dark leakage, and pick a control GPIO that is **not** a
+strapping pin and has no boot-time pull-up (D5/GPIO6 satisfies both on the
+ESP32-S3).
 
 Because the ADA3 is binary (§3.1), **no PWM is required** — hold the line above
 the latch threshold for on, at 0 V for off. Keep the LEDC/PWM option in reserve
@@ -306,11 +333,25 @@ those reads as "on."
 This project already has a name for the difference between what a system claims
 and what it can show. Applying it here: **measure the load.**
 
-**Recommended: a split-core current transformer** (e.g. SCT-013 class) clamped
-around one conductor of the appliance's cord, into an ADC pin through the usual
-burden resistor and mid-rail bias network. It never touches mains — it clamps
-around insulated cable — so it is safe to specify in a maker BOM, and it is the
-only option here that distinguishes "relay closed" from "load running."
+**Recommended: a split-core current transformer** (e.g. SCT-013 class) into an
+ADC pin through the usual burden resistor and mid-rail bias network. It never
+touches mains — it clamps around insulated cable — and it is the only option
+here that distinguishes "relay closed" from "load running."
+
+> **⚠️ A CT clamped around the appliance cord reads zero.** This is the standard
+> way to get this wrong, and it fails in the direction that matters: a jacketed
+> cord carries line and neutral together, their fields oppose and cancel, and
+> the CT reports ~0 A **while the appliance is happily running** — a verification
+> path that lies in exactly the "it's off" direction you built it to catch.
+>
+> A CT must enclose **one conductor only**. Get that with a commercial
+> **line-splitter / current-splitter adapter** rated for the circuit (the AC-ADA3
+> is a 15 A device) — a plug-through accessory that separates the conductors and
+> presents one of them for clamping, often with a ×10 turn to help at low
+> currents. **Do not slit, split, or otherwise modify a mains cord's jacket to
+> reach a conductor.** Buying the adapter is the whole fix; it is the difference
+> between a non-contact measurement and a modified mains cable in someone's
+> home.
 
 That distinction is worth more than binary on/off. A CT sees the *shape* of
 consumption, which means a Canary could witness "the equipment on this outlet is
@@ -395,7 +436,8 @@ Ordered by how much they block progress.
 A USB-C breakout board (one that brings out all pins to headers), a multimeter,
 and the ADA3 you already have. That is enough for steps 1–3, which answer
 questions 1–3 above and turn the speculative half of this document into a
-measured one. The optocoupler, CT clamp, and a scope only matter after that.
+measured one. The optocoupler, the CT clamp **and its line-splitter adapter**
+(§6 — the CT is useless without it), and a scope only matter after that.
 
 ---
 
