@@ -85,12 +85,38 @@ Two formats on the release page — take your pick:
 
 ### Serial permission (one time)
 
-Flashing needs access to the USB serial device. On most distros, add yourself
-to the `dialout` group and log back in:
+Flashing a **Canary** needs access to the USB serial device. On most distros,
+add yourself to the `dialout` group and log back in:
 
 ```sh
 sudo usermod -aG dialout "$USER"   # then log out and back in
 ```
+
+### Flash a Pi over USB-C (Linux) — one-time udev rule
+
+Flashing a **Raspberry Pi through its own USB-C** (the "Wait for my Pi" button —
+no card reader) uses `rpiboot`, which must open the Pi's boot-ROM USB device.
+Linux blocks that for a normal user unless a udev rule grants access — without
+it, "Wait for my Pi" waits forever and the Pi never appears as a disk. (macOS
+needs nothing here, which is why it just works there.)
+
+- **`.deb` users:** the rule ships with the package
+  (`/usr/lib/udev/rules.d/60-rpiboot.rules`) — just **replug the Pi** after
+  installing.
+- **AppImage / other users:** add it once:
+
+  ```sh
+  sudo tee /etc/udev/rules.d/60-rpiboot.rules >/dev/null <<'EOF'
+  SUBSYSTEM=="usb", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2763", MODE="0666", TAG+="uaccess"
+  SUBSYSTEM=="usb", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2764", MODE="0666", TAG+="uaccess"
+  SUBSYSTEM=="usb", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2711", MODE="0666", TAG+="uaccess"
+  SUBSYSTEM=="usb", ATTRS{idVendor}=="0a5c", ATTRS{idProduct}=="2712", MODE="0666", TAG+="uaccess"
+  EOF
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+
+  Then replug the Pi. `2712` is Pi 5, `2711` is Pi 4; if `lsusb` shows a
+  different `0a5c:` id while the Pi is in boot mode, add that one too.
 
 ---
 

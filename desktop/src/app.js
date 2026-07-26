@@ -1947,6 +1947,11 @@ function hubInit() {
     // rpiboot's own narration, one line at a time — the last line is the state.
     $("hub-pi-usb-status").textContent = e.payload;
   });
+  listen("hub:pi-usb-hint", (e) => {
+    // A recognised failure (on Linux, almost always the missing udev rule) — show
+    // the actionable fix in the persistent hint line so "done" can't bury it.
+    $("hub-pi-usb-hint").textContent = e.payload;
+  });
   listen("hub:pi-usb-done", (e) => {
     hub.piUsbWaiting = false;
     $("hub-pi-usb-btn").textContent = "Wait for my Pi";

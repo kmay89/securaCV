@@ -631,3 +631,32 @@ any platform.
   failure** — it produces a broken glyph, not an error, so the guard has to be
   a test over the source, not a hope that someone clicks the right tab before
   publishing.
+
+### 2026-07-26 — A bundled native USB tool needs its Linux access rule shipped
+
+- **Symptom:** the Flasher's "Wait for my Pi" (flash a Pi over USB-C, no card
+  reader) did nothing on Linux — the Pi never appeared as a disk, so the app
+  looked like it "wasn't receiving the USB connection". Worked on macOS.
+- **Cause:** the bundled `rpiboot` sidecar runs as the user and opens the Pi's
+  boot-ROM USB device (`0a5c:2712` on a Pi 5) over libusb. Linux denies a
+  non-root process access to a USB device without a **udev rule**, and we shipped
+  none — so `libusb_open()` failed, rpiboot never served the mass-storage gadget,
+  and nothing enumerated. macOS has no udev equivalent (it grants USB access
+  freely), which is exactly why the same build worked there — a classic
+  works-on-mac-fails-on-linux gap for any bundled USB tool.
+- **Fix:** ship the rule. `desktop/src-tauri/packaging/rpiboot.rules` grants
+  access to the Pi boot device (Broadcom `0a5c`, product ids 2711/2712/2763/2764;
+  `TAG+="uaccess"` + `0666`), and `tauri.conf.json`'s `deb.files` installs it to
+  `/usr/lib/udev/rules.d/`. INSTALL.md documents the manual add for AppImage
+  users (no package to install it). Belt: `hub_core::hub_usbboot` (host-tested)
+  recognises rpiboot's device-open failures so the app shows the fix in-line
+  instead of a silent wait, gated to Linux where it applies.
+- **Applies to:** **every bundled native tool that opens a USB device** — today
+  `rpiboot`, tomorrow anything similar. Two rules generalize. **macOS "just
+  works" for USB is a trap:** it needs no udev, so a Linux access rule is easy to
+  forget, and its absence fails *silently* (the device just never opens). If a
+  target ships a native USB tool, ship (deb) **and** document (AppImage/manual)
+  its Linux access rule — the serial tools already do this via the `dialout`
+  group; device-mode USB tools need a udev rule instead. And **a permission
+  failure that reads like "nothing happened" needs an in-app hint**, or the user
+  has no way to know a one-line fix exists.
