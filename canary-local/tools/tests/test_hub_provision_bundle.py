@@ -27,9 +27,15 @@ class Manifest(unittest.TestCase):
     def setUp(self):
         self.m = gb.build_manifest()
 
-    def test_carries_plan_config_executor_and_runner(self):
+    def test_carries_plan_config_executor_runner_readme(self):
         roles = {f["role"] for f in self.m["files"]}
-        self.assertEqual(roles, {"plan", "frigate-config", "executor", "runner"})
+        self.assertEqual(roles, {"plan", "frigate-config", "executor", "runner", "readme"})
+
+    def test_every_shipped_file_including_generated_is_pinned(self):
+        # The manifest promises every carried file is pinned; runner + README are
+        # generated but still ship, so they must have hashes too.
+        for f in self.m["files"]:
+            self.assertTrue(f.get("sha256"), f"{f['role']} has no sha256 pin")
 
     def test_sha256_pins_match_the_real_files(self):
         # The whole point of the manifest: it can't silently carry stale code.
@@ -110,6 +116,55 @@ class Bundle(unittest.TestCase):
                 env={"PATH": __import__("os").environ["PATH"]},  # no SUPERVISOR_TOKEN
             )
             self.assertNotEqual(r.returncode, 0)
+
+    def test_shipped_bytes_match_every_manifest_pin(self):
+        # End-to-end: the bytes actually written (including the generated runner
+        # and README) hash to exactly what the manifest pins.
+        with tempfile.TemporaryDirectory() as tmp:
+            m = gb.build_manifest()
+            b = self.build(Path(tmp))
+            for f in m["files"]:
+                got = hashlib.sha256((b / f["bundle_path"]).read_bytes()).hexdigest()
+                self.assertEqual(got, f["sha256"], f"{f['bundle_path']} bytes != pin")
+
+
+class SafeBuildDir(unittest.TestCase):
+    """--build must never recursively delete a directory that isn't our bundle."""
+
+    def test_refuses_non_empty_non_bundle_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "notabundle"
+            target.mkdir()
+            keep = target / "keepme.txt"
+            keep.write_text("precious")
+            with self.assertRaises(SystemExit):
+                gb.build_bundle(gb.build_manifest(), target)
+            self.assertTrue(keep.exists(), "refused build must not delete existing files")
+
+    def test_allows_empty_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "empty"
+            target.mkdir()
+            gb.build_bundle(gb.build_manifest(), target)
+            self.assertTrue((target / "provision.sh").exists())
+
+    def test_rebuilds_into_a_prior_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "b"
+            gb.build_bundle(gb.build_manifest(), target)  # first build
+            gb.build_bundle(gb.build_manifest(), target)  # rebuild is allowed
+            self.assertTrue((target / "MANIFEST.json").exists())
+
+
+class ManifestOutputPath(unittest.TestCase):
+    def test_out_of_repo_manifest_path_does_not_crash(self):
+        # relative_to(REPO) must not blow up the success message for an absolute
+        # --manifest outside the checkout.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "m.json"  # tmp is outside the repo
+            rc = gb.main(["--manifest", str(out)])
+            self.assertEqual(rc, 0)
+            self.assertTrue(out.exists())
 
 
 if __name__ == "__main__":

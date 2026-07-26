@@ -155,8 +155,13 @@ def build_manifest() -> dict:
                 "sha256": sha256_of(src),
             }
         )
-    # The runner is generated (deterministic), so pin its hash too — a change to
-    # how we invoke the executor should show up in the drift gate.
+    # The runner and README are generated (deterministic), but they SHIP in the
+    # bundle, so pin their hashes too — the manifest promises every carried file
+    # is pinned, and a change to how we invoke the executor or what the README
+    # says must show up in the drift gate. (MANIFEST.json is the manifest itself
+    # and so cannot self-pin; it is verified by equality with this committed
+    # file, not by an entry inside it.)
+    source_entries = list(files)  # plan/config/executor, before the generated ones
     files.append(
         {
             "role": "runner",
@@ -164,6 +169,15 @@ def build_manifest() -> dict:
             "bundle_path": RUNNER_NAME,
             "card_path": f"{BUNDLE_ROOT_ON_CARD}/{RUNNER_NAME}",
             "sha256": hashlib.sha256(runner_script().encode("utf-8")).hexdigest(),
+        }
+    )
+    files.append(
+        {
+            "role": "readme",
+            "generated": True,
+            "bundle_path": "README.md",
+            "card_path": f"{BUNDLE_ROOT_ON_CARD}/README.md",
+            "sha256": hashlib.sha256(readme(source_entries).encode("utf-8")).hexdigest(),
         }
     )
     return {
@@ -209,24 +223,61 @@ def build_manifest() -> dict:
     }
 
 
+# Files that unmistakably mark a directory as one of our own bundles — the only
+# case in which --build is allowed to recursively clear a non-empty target.
+BUNDLE_SENTINELS = frozenset({"MANIFEST.json", RUNNER_NAME, "hub_seed_apply.py"})
+
+
+def _prepare_build_dir(out_dir: Path) -> None:
+    """Leave out_dir as an empty directory to build into — WITHOUT ever recursively
+    deleting something that isn't one of our own bundles. `--build .` or a path full
+    of unrelated files must fail loudly, never wipe the user's working tree or data.
+    """
+    if not out_dir.exists():
+        out_dir.mkdir(parents=True)
+        return
+    if not out_dir.is_dir():
+        die(f"--build target {out_dir} exists and is not a directory")
+    entries = {p.name for p in out_dir.iterdir()}
+    if not entries:
+        return  # empty directory: safe to build into
+    if BUNDLE_SENTINELS.issubset(entries):
+        # Unmistakably a previous bundle of ours — safe to replace.
+        shutil.rmtree(out_dir)
+        out_dir.mkdir(parents=True)
+        return
+    die(
+        f"refusing to overwrite non-empty {out_dir}: it is not a securaCV bundle "
+        f"(missing {', '.join(sorted(BUNDLE_SENTINELS))}). Pass a new or empty directory."
+    )
+
+
 def build_bundle(manifest: dict, out_dir: Path) -> None:
     """Assemble a real, runnable bundle into out_dir from the manifest."""
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-    out_dir.mkdir(parents=True)
-    for f in manifest["files"]:
+    _prepare_build_dir(out_dir)
+    source_files = [f for f in manifest["files"] if not f.get("generated")]
+    for f in source_files:
         dest = out_dir / f["bundle_path"]
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if f.get("generated"):
-            continue  # written below
         src = REPO / f["source"]
         # cp -L semantics: dereference so a symlinked source lands as real bytes.
         shutil.copyfile(src, dest, follow_symlinks=True)
+    # Generated files, written from the SAME functions their manifest hashes pin,
+    # so the shipped bytes always match the pin.
     (out_dir / RUNNER_NAME).write_text(runner_script(), encoding="utf-8")
     (out_dir / RUNNER_NAME).chmod(0o755)
-    source_files = [f for f in manifest["files"] if not f.get("generated")]
     (out_dir / "README.md").write_text(readme(source_files), encoding="utf-8")
     (out_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def _display(p: Path) -> str:
+    """Path for status messages: repo-relative when it is under the repo, else the
+    path as given — so an out-of-repo --manifest never crashes on relative_to."""
+    resolved = p.resolve()
+    try:
+        return str(resolved.relative_to(REPO))
+    except ValueError:
+        return str(p)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,12 +290,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.build:
         build_bundle(manifest, args.build)
-        n = len(manifest["files"]) + 2  # + README + MANIFEST
-        print(f"built bundle at {args.build} — {n} files, root-on-card {BUNDLE_ROOT_ON_CARD}")
+        n = len(manifest["files"]) + 1  # bundle files + MANIFEST.json
+        print(f"built bundle at {_display(args.build)} — {n} files, root-on-card {BUNDLE_ROOT_ON_CARD}")
         return 0
 
     args.manifest.write_text(json.dumps(manifest, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
-    print(f"wrote {args.manifest.relative_to(REPO)} — {len(manifest['files'])} files in the bundle")
+    print(f"wrote {_display(args.manifest)} — {len(manifest['files'])} files in the bundle")
     return 0
 
 
