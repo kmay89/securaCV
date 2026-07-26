@@ -217,3 +217,15 @@ test("flasher publishing signs once a key is in force, and refuses to ship a ref
   assert.match(builder, /--signing-key/,
     "build_flash_manifest.py lost its --signing-key option");
 });
+
+test("Hatchery spec: browser and native draw the whimsy from the SAME hatch.json", () => {
+  // The browser fetches devices/hatch.json; the native app embeds it at build
+  // time (build.rs). Both must be the one committed canary-local/devices/hatch.json,
+  // or the birthing moment (name + certificate) would differ between the surfaces.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.match(flashJs, /fetch\(\s*["']devices\/hatch\.json["']/,
+    "browser (flash.js) should fetch devices/hatch.json");
+  const buildRs = read(join(ROOT, "desktop/src-tauri/build.rs"));
+  assert.match(buildRs, /canary-local\/devices\/hatch\.json/,
+    "native (build.rs) should embed canary-local/devices/hatch.json — the same spec the browser fetches");
+});

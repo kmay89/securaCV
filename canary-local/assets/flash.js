@@ -26,6 +26,7 @@ import { phaseModule } from "./we2-flash.js";
 import { wifiMemory } from "./wifi-memory.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
+import { mintCertificate } from "./hatchery.js";
 import { chirp, chirpToggle } from "./chirp.js";
 import { mountBoardIdentity } from "./board-identity.js";
 
@@ -3161,7 +3162,7 @@ async function startFlash(opts) {
     // settings region in the same pass as the firmware. If we can't locate
     // that region, the install continues — never block a flash on a
     // convenience.
-    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null;
+    let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "";
     if ((opts.wifi || opts.mqtt || opts.detect || opts.reflex) && !opts.isBackup) {
       try {
         const { entries } = core.parsePartitionTable(
@@ -3183,6 +3184,9 @@ async function startFlash(opts) {
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
         seededDials = opts.detect || null;
         seededReflex = opts.reflex || null;
+        // Only a device id that was actually written to NVS may appear as the
+        // certificate's Ring ID (this line is reached only on a successful bake).
+        bakedDeviceId = prov.strings.dev_id || "";
       } catch (e) {
         box.stage("Couldn’t bake the settings (" + String(e.message || e) +
           ") — continuing; everything is still tunable after boot");
@@ -3245,7 +3249,7 @@ async function startFlash(opts) {
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
-      wifiSsid, seededDials, seededReflex, wifi: null }));
+      wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId, wifi: null }));
   } catch (e) {
     state.busy = false;
     // Self-heal write-time failures too: a flaky cable can sync at 921600 but
@@ -3310,6 +3314,71 @@ function flashError(e, opts) {
   return box;
 }
 
+// ── the Hatchery: a whimsical name + birth certificate, like the native app ──
+// One shared spec (devices/hatch.json — the same file the native app embeds),
+// fetched once; the assembly is the pure, host-tested hatchery.js. Names are
+// whimsy — the device keeps its functional id. Never throws into the flash flow.
+let _hatchSpec;                 // undefined = untried, null = unavailable, obj = loaded
+const _hatchUsed = new Set();   // base names spent this session (so names stay fresh)
+const _hatchFleet = [];         // this session's hatches, for the "Nth of its name" ordinal
+async function loadHatchSpec() {
+  if (_hatchSpec !== undefined) return _hatchSpec;
+  try {
+    _hatchSpec = await fetch("devices/hatch.json", { cache: "force-cache" })
+      .then((r) => (r.ok ? r.json() : null));
+  } catch { _hatchSpec = null; }
+  return _hatchSpec;
+}
+async function renderHatchCert(slot, opts) {
+  try {
+    const spec = await loadHatchSpec();
+    if (!spec) return;
+    let cert = mintCertificate(spec, {
+      product: opts.product, deviceId: opts.deviceId,
+      fleet: _hatchFleet, usedBases: _hatchUsed, now: Date.now(),
+    });
+    if (!cert) return;
+    _hatchUsed.add(cert.base);
+    _hatchFleet.unshift({ base: cert.base, ringId: cert.ringId });
+
+    const c = (spec.certificate) || {};
+    const paint = () => {
+      slot.textContent = "";
+      const fig = el("figure", "flash-cert");
+      fig.append(el("div", "flash-cert-kicker", c.kicker || "Certificate of Hatching"));
+      if (c.intro) fig.append(el("p", "flash-cert-intro", c.intro));
+      fig.append(el("div", "flash-cert-name", cert.name));
+      fig.append(el("div", "flash-cert-lineage", cert.lineage));
+      const meta = el("div", "flash-cert-meta");
+      meta.append(el("span", null, "Species · " + cert.species),
+                  el("span", null, "Ring · " + cert.ringId));
+      fig.append(meta);
+      if (cert.motto) fig.append(el("div", "flash-cert-motto", "“" + cert.motto + "”"));
+      if (cert.craft) fig.append(el("div", "flash-cert-craft", cert.craft));
+      if (c.foot) fig.append(el("div", "flash-cert-foot", c.foot));
+      const reroll = el("button", "ghost small flash-cert-reroll", "🎲 new name");
+      reroll.addEventListener("click", () => {
+        const next = mintCertificate(spec, {
+          product: opts.product, deviceId: opts.deviceId,
+          fleet: _hatchFleet, usedBases: _hatchUsed, avoidBase: cert.base, now: cert.ts,
+        });
+        if (!next) return;
+        next.ringId = cert.ringId;                 // same bird, new whimsy
+        // Record the accepted base and replace (not stack) this hatch's fleet
+        // entry, so a further reroll can't repeat a name and the next board
+        // can't reuse this base while still calling itself "the First".
+        _hatchUsed.add(next.base);
+        if (_hatchFleet[0]) _hatchFleet[0] = { base: next.base, ringId: cert.ringId };
+        cert = next;
+        paint();
+      });
+      fig.append(reroll);
+      slot.append(fig);
+    };
+    paint();
+  } catch { /* the certificate is a delight, never a requirement */ }
+}
+
 // ── phase: done — celebration + watch it boot ───────────────────────────────
 function phaseDone(opts) {
   const box = el("section", "flash-card flash-done");
@@ -3330,6 +3399,18 @@ function phaseDone(opts) {
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
     : hatchNo ? `Hatchling #${hatchNo} — your Canary is awake`
     : "Installed — your Canary is awake"));
+
+  // A whimsical name + birth certificate for a real, fresh hatch — the same one
+  // the native app mints. Async: the done card renders now; the certificate
+  // appears once the shared hatch.json spec loads (or quietly not at all).
+  if (hatchNo && opts.product && !opts.isBackup && !opts.isLocal) {
+    const certSlot = el("div", "flash-cert-slot");
+    box.append(certSlot);
+    renderHatchCert(certSlot, {
+      product: opts.product,
+      deviceId: opts.provDeviceId || "", // only the id actually written to NVS becomes the Ring ID
+    });
+  }
 
   const product = opts.product;
   if (opts.wifiSsid) {

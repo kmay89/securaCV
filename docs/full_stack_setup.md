@@ -107,7 +107,10 @@ Detail: [`homeassistant_setup.md`](homeassistant_setup.md).
 > into [`canary-local/devices/hub_seed.json`](../canary-local/devices/hub_seed.json)
 > from the repo's own sources. The installer that runs it, this guide, and the
 > flasher UI all read that one plan, so they can't drift apart. If you ever wonder
-> "what is this about to do to my house?", that file answers it line by line.
+> "what is this about to do to my house?", that file answers it line by line — and
+> [`hub_seed_apply.py --dry-run`](../canary-local/tools/hub_seed_apply.py) prints
+> it back to you, step by step with the exact API call each one makes, changing
+> nothing.
 
 ## Step 4 — The eyes: camera detection
 
@@ -214,11 +217,13 @@ This page is **living** — kept honest as the stack is exercised on real hardwa
 | 1. Flash the hub | ✅ write + read-back verify proven on macOS (Pi 5, 64 GB card); the rdisk cache-sync fix is required |
 | 2. First boot | ⏳ Wi-Fi seed acceptance on real HAOS not yet confirmed end to end |
 | 3. Broker + securaCV | ⏳ documented from the shipped add-ons; not yet re-walked on a fresh flash |
-| 4a. Frigate on the hub | ⏳ curated config committed; first-boot install not yet automated (needs the seed assembler) |
+| 4a. Frigate on the hub | ⏳ curated config committed **and** an executor that installs it via the Supervisor API (`hub_seed_apply.py`, host-tested, idempotent); unattended *first boot* still needs the seed assembler to invoke it |
 | 4b. Jetson detector | ⏳ scaffold follows Frigate's official Jetson guidance; unvalidated on an Orin |
 | 5. Canaries | ✅ shipping path, covered by its own guide |
 
 The **one-flash dream** — Frigate + Mosquitto + securaCV all pre-installed so
 first boot is already wired — needs the *seed assembler* (carrying a curated
-backup onto the card). The configs it will carry are committed; the assembler and
-its hardware validation are the remaining work.
+backup onto the card). Two of its three pieces now exist: the configs it will
+carry are committed, and [`hub_seed_apply.py`](../canary-local/tools/hub_seed_apply.py)
+can install the whole stack unattended via the Supervisor API. What's left is the
+assembler that runs it at first boot, and hardware validation on a real Pi.
