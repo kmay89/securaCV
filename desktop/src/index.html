@@ -289,6 +289,25 @@
               <pre id="local-console" class="console hidden" aria-live="polite"></pre>
               <p id="local-result" class="status"></p>
             </details>
+
+            <details class="hint" id="adv-rescue">
+              <summary>Rescue bench — back up, restore, or erase a board</summary>
+              <p>Turn the flasher into a safety net: pull a full copy of the chip
+                to a file you keep, write a saved copy (or any factory
+                <span class="mono">.bin</span>) back, or wipe the chip to a clean
+                slate. A backup holds <strong>everything</strong> on the board —
+                its Ed25519 identity key and saved Wi-Fi included — so store the
+                file like a house key. None of this can brick the board: the
+                ESP32’s first-stage bootloader is mask ROM.</p>
+              <div class="row">
+                <button id="rescue-backup-btn" class="btn btn-ghost btn-small" disabled>Back up this chip…</button>
+                <button id="rescue-restore-btn" class="btn btn-ghost btn-small" disabled>Restore / write a .bin…</button>
+                <button id="rescue-erase-btn" class="btn btn-ghost btn-small" disabled>Erase the whole chip…</button>
+              </div>
+              <p id="rescue-chip-note" class="muted"></p>
+              <pre id="rescue-console" class="console hidden" aria-live="polite"></pre>
+              <p id="rescue-result" class="status"></p>
+            </details>
           </section>
         </section>
 
