@@ -1,0 +1,67 @@
+{
+  "$generated_by": "canary-local/tools/gen_hub_provision_bundle.py \u2014 do not edit by hand",
+  "$doc": "The securaCV hub provisioning bundle: the self-contained payload (plan + curated Frigate config + executor + runner) that provisions a freshly-flashed hub with one command. Generated so the bundle can never carry stale code \u2014 each file's SHA-256 is pinned, and CI regenerates this manifest and fails on drift.",
+  "schema_version": 1,
+  "bundle_root_on_card": "CONFIG/securacv",
+  "runner": {
+    "file": "provision.sh",
+    "runs": "python3 hub_seed_apply.py --plan hub_seed.json --assets-root .",
+    "dry_run": "sh provision.sh --dry-run"
+  },
+  "files": [
+    {
+      "role": "plan",
+      "source": "canary-local/devices/hub_seed.json",
+      "bundle_path": "hub_seed.json",
+      "card_path": "CONFIG/securacv/hub_seed.json",
+      "sha256": "42fd1792f490feee85e131842335b86b2f41197f1d471ccd980f01c5a82a6990"
+    },
+    {
+      "role": "frigate-config",
+      "source": "homeassistant/frigate/config.yaml",
+      "bundle_path": "homeassistant/frigate/config.yaml",
+      "card_path": "CONFIG/securacv/homeassistant/frigate/config.yaml",
+      "sha256": "863ac2b33f70b8814d85bb92dbe656f796ab7054ab8a40c662df0109df75feef"
+    },
+    {
+      "role": "executor",
+      "source": "canary-local/tools/hub_seed_apply.py",
+      "bundle_path": "hub_seed_apply.py",
+      "card_path": "CONFIG/securacv/hub_seed_apply.py",
+      "sha256": "016ae5b7de1f2479cfdd1b3b2ef3674339c561048be6a1221d5ba3a3f4ff52f2"
+    },
+    {
+      "role": "runner",
+      "generated": true,
+      "bundle_path": "provision.sh",
+      "card_path": "CONFIG/securacv/provision.sh",
+      "sha256": "320d0c3333494013f9ed65e1315aea03f6df230f45f100d8bc98571e606c580a"
+    },
+    {
+      "role": "readme",
+      "generated": true,
+      "bundle_path": "README.md",
+      "card_path": "CONFIG/securacv/README.md",
+      "sha256": "77b3703245114b32be44ece37f5c50df793d72ff69fa01a7f62f529cd6a65d12"
+    }
+  ],
+  "first_boot": {
+    "status": "planned",
+    "what_works_today": "From the Advanced SSH & Web Terminal add-on (python3 + SUPERVISOR_TOKEN present): copy this bundle and run `sh provision.sh` \u2014 `--dry-run` first to preview.",
+    "candidate_hooks": [
+      "A curated HA package/automation seeded into CONFIG/ that shells out to the runner on first HA start (HA Core can reach http://supervisor with its own token).",
+      "A first-boot provisioner add-on the flasher pre-registers, which runs the bundle."
+    ],
+    "note": "HAOS ignores boot-partition files it doesn't recognise, so a bundle that isn't auto-run is harmless \u2014 worst case is a normal onboarding, never a broken boot. The write side is hub_io::seed (the CONFIG/ tree, already used for Wi-Fi); which hook actually auto-runs the bundle is what on-hardware validation pins."
+  },
+  "meta": {
+    "design": "docs/design/raspberry_pi_hub_flashing.md",
+    "guide": "docs/full_stack_setup.md",
+    "executor": "canary-local/tools/hub_seed_apply.py",
+    "sources": [
+      "canary-local/devices/hub_seed.json",
+      "homeassistant/frigate/config.yaml",
+      "canary-local/tools/hub_seed_apply.py"
+    ]
+  }
+}

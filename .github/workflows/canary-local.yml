@@ -188,7 +188,15 @@ jobs:
             exit 1
           fi
 
-      - name: Hub seed executor tests (pure planner + fail-closed execution, no HA needed)
+      - name: Hub provision bundle drift (the assembled payload's SHA-256 pins ride the plan/config/executor)
+        run: |
+          python3 canary-local/tools/gen_hub_provision_bundle.py
+          if ! git diff --exit-code -- canary-local/devices/hub_provision_bundle.json; then
+            echo "::error::provision bundle manifest stale — the plan, Frigate config, or executor changed. Run canary-local/tools/gen_hub_provision_bundle.py and commit (the bundle must not carry stale bytes)"
+            exit 1
+          fi
+
+      - name: Hub seed executor + provision-bundle tests (pure planner, fail-closed exec, self-contained bundle — no HA needed)
         run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 
       - name: Hub seed executor dry-run smoke (the plan the installer would run)
