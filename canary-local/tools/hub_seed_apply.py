@@ -65,7 +65,12 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+# parents[2] is the repo root when this lives at canary-local/tools/. In a
+# provisioning bundle the script is relocated (and the runner always passes
+# --plan/--assets-root, so this default is unused there) — guard against a
+# shallow path so import never IndexErrors when relocated.
+_here = Path(__file__).resolve()
+REPO = _here.parents[2] if len(_here.parents) > 2 else _here.parent
 DEFAULT_PLAN = REPO / "canary-local/devices/hub_seed.json"
 DEFAULT_BASE_URL = os.environ.get("SUPERVISOR_URL", "http://supervisor")
 

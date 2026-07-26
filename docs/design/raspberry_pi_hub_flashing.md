@@ -323,13 +323,29 @@ Raspberry Pi Imager.
     a setup wizard, so without that the "unattended" install would come up
     producing no claims. Real runs fail **closed**: any error stops with a "safe
     to re-run, it's idempotent" note rather than leaving a half-built hub.
-  - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS
-    keychain, and build the **seed assembler** that carries the curated
-    **full-stack** backup (Mosquitto + PWK add-on + Frigate/go2rtc + dashboards
-    + blueprints + the Frigate add-on repository) onto the card so first boot
-    comes up pre-wired — the config recipe now exists; what's missing is the
-    assembler + the hardware-validated restore mechanism. Until then the hub
-    boots as stock HAOS + Wi-Fi and the guide carries the user from
+  - *Provisioning bundle — the assembler's content half (landed 2026-07-26):*
+    [`gen_hub_provision_bundle.py`](../../canary-local/tools/gen_hub_provision_bundle.py)
+    assembles the self-contained payload the card will carry — the plan, the
+    curated Frigate config, the executor, and a one-line `provision.sh` runner —
+    and emits a drift-gated manifest
+    ([`hub_provision_bundle.json`](../../canary-local/devices/hub_provision_bundle.json))
+    that **pins each file's SHA-256**, so the bundle can't silently ship stale
+    code. A built bundle runs its own `sh provision.sh --dry-run` with no repo and
+    no hub — host-tested for self-containment. This deliberately supersedes the
+    early "curated HA *backup*" idea: a narrated, idempotent, auditable executor is
+    a better fit than an opaque blob for a stack whose whole point is "understand
+    *why* it's configuring each thing". Its landing spot is `CONFIG/securacv/` on
+    the boot partition, written by the same `hub_io::seed` mechanism as the Wi-Fi
+    keyfile.
+  - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS keychain;
+    wire the flasher's Rust seed layer to **write the bundle** into `CONFIG/` (the
+    content half exists and is pinned; the write reuses `hub_io::seed`); and — the
+    genuinely unresolved, on-hardware-pinned piece — the **first-boot hook** that
+    auto-runs `provision.sh`. HAOS has no supported hook to run an arbitrary
+    boot-partition script, so today the bundle is a one-command step (drop it via
+    the SSH add-on, `sh provision.sh`), not zero-touch; HAOS ignores files it
+    doesn't recognise, so an un-run bundle is harmless. Until the hook is pinned
+    the hub boots as stock HAOS + Wi-Fi and the guide carries the user from
     `homeassistant.local:8123`.
   - *Account pre-seed (minting + opt-in seed IMPLEMENTED 2026-07-23; HAOS
     acceptance OUTSTANDING):* the flasher collects the operator's
