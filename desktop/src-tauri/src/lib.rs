@@ -1163,7 +1163,15 @@ async fn read_region(
             log.trim()
         ));
     }
-    std::fs::read(tmp.path()).map_err(|e| format!("couldn't read back region 0x{offset:x}: {e}"))
+    let data = std::fs::read(tmp.path())
+        .map_err(|e| format!("couldn't read back region 0x{offset:x}: {e}"))?;
+    // A region read can carry secrets — the NVS/settings partition holds the
+    // Ed25519 private key and saved Wi-Fi. We parse them in memory with an
+    // allow-list and never surface the values, but espflash had to write the raw
+    // bytes to this temp file first. Overwrite it with zeros before it's removed
+    // so nothing recoverable is left on the host disk.
+    let _ = std::fs::write(tmp.path(), vec![0u8; data.len()]);
+    Ok(data)
 }
 
 /// Write UTF-8 text to a path the user just chose in the OS save panel — the
@@ -1269,6 +1277,12 @@ async fn health_check(
             "fresh": ota.fresh, "activeOta": ota.active_ota, "updatesSeen": ota.updates_seen,
             "stateText": ota.state_text, "pendingVerify": ota.pending_verify,
         });
+    }
+    // No otadata partition at all → a factory-only layout; the ESP32 boots the
+    // factory app, so mark it running (otherwise the verdict falsely warns that
+    // nothing is bootable).
+    if active_label.is_none() {
+        active_label = apps.iter().find(|a| a.subtype == 0x00).map(|a| a.label.clone());
     }
 
     // Mark the booted slot.

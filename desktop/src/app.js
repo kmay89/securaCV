@@ -1279,7 +1279,7 @@ function renderHealthReport(r) {
 
   if (r.ota) {
     section("Update history");
-    if (r.ota.fresh) {
+    if (r.ota.fresh && !r.ota.updatesSeen) {
       row("Over-the-air updates", "none yet — factory image");
     } else {
       row("Updates recorded", String(r.ota.updatesSeen));
@@ -1304,7 +1304,8 @@ function renderHealthReport(r) {
       r.witness.provisioned ? "ok" : null);
     row("Wi-Fi settings", r.witness.wifiConfigured ? "stored" : "none");
     box.append(h("p", "muted",
-      "Presence only — the identity key and Wi-Fi password are never read off the chip."));
+      "Presence only — the identity key and Wi-Fi password are never shown or saved; " +
+      "the report notes only whether they exist."));
   }
 
   if (r.partitions && r.partitions.length) {

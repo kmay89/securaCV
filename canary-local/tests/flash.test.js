@@ -367,6 +367,17 @@ test("parseOtaData: fresh otadata → factory default; valid seq → active slot
   const r2 = parseOtaData(new Uint8Array(two), 2);
   assert.strictEqual(r2.activeOta, 1);
   assert.strictEqual(r2.pendingVerify, true);
+  // Rollback: newest (seq 6, INVALID) doesn't boot → the previous good image
+  // (seq 5) runs, so activeOta must exclude the rolled-back slot.
+  const rolled = Buffer.concat([
+    otaEntry(5, 0x2 /* valid */, crc32EspRom),
+    otaEntry(6, 0x3 /* invalid — rolled back */, crc32EspRom),
+  ]);
+  const r3 = parseOtaData(new Uint8Array(rolled), 2);
+  assert.strictEqual(r3.updatesSeen, 6); // the attempt is still counted
+  assert.strictEqual(r3.activeOta, (5 - 1) % 2); // = 0, previous good — NOT (6-1)%2 = 1
+  assert.ok(/rolled back/.test(r3.stateText));
+  assert.strictEqual(r3.pendingVerify, false);
   // A corrupt CRC is ignored, falling back to the other sector.
   const bad = Buffer.concat([otaEntry(9, 0x2, crc32EspRom), Buffer.alloc(0x1000, 0xff)]);
   bad.writeUInt32LE(0xdeadbeef, 28); // stomp the CRC

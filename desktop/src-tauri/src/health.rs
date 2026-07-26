@@ -203,8 +203,13 @@ fn ota_state_text(state: u32) -> String {
 }
 
 /// Two `esp_ota_select_entry_t` records at buffer 0x0 and 0x1000: seq u32 @0,
-/// state u32 @24, crc u32 @28. CRC validates over the first 4 bytes only. The
-/// booted slot = `(highest-valid-seq - 1) % ota_slot_count`.
+/// state u32 @24, crc u32 @28. CRC validates over the first 4 bytes only.
+///
+/// The booted slot is the highest-seq entry the bootloader will actually START:
+/// CRC-valid AND not marked invalid(0x3)/aborted(0x4). When the newest update
+/// rolled back, the bootloader runs the previous good image — so `active_ota`
+/// must exclude the rolled-back entry, even though `state_text`/`updates_seen`
+/// still report the newest so the rollback is surfaced.
 pub fn parse_ota_data(bytes: &[u8], ota_slot_count: u32) -> OtaInfo {
     let fresh = || OtaInfo {
         fresh: true,
@@ -213,7 +218,7 @@ pub fn parse_ota_data(bytes: &[u8], ota_slot_count: u32) -> OtaInfo {
         state_text: "factory default".into(),
         pending_verify: false,
     };
-    let mut best: Option<(u32, u32)> = None; // (seq, state) with the highest seq
+    let mut valid: Vec<(u32, u32)> = Vec::new(); // (seq, state): CRC-ok, not erased
     for &off in &[0x0usize, 0x1000] {
         if off + 32 > bytes.len() {
             break;
@@ -222,21 +227,38 @@ pub fn parse_ota_data(bytes: &[u8], ota_slot_count: u32) -> OtaInfo {
         let state = u32le(bytes, off + 24);
         let crc = u32le(bytes, off + 28);
         if seq != 0xffff_ffff && crc == crc32_esp_rom(&bytes[off..off + 4]) {
-            match best {
-                Some((bseq, _)) if bseq >= seq => {}
-                _ => best = Some((seq, state)),
-            }
+            valid.push((seq, state));
         }
     }
-    match best {
-        Some((seq, state)) if ota_slot_count != 0 => OtaInfo {
+    if ota_slot_count == 0 {
+        return fresh();
+    }
+    let newest = match valid.iter().max_by_key(|(seq, _)| *seq) {
+        Some(&n) => n,
+        None => return fresh(),
+    };
+    // Rollback states (INVALID / ABORTED) don't boot — pick from the rest.
+    let bootable = valid
+        .iter()
+        .copied()
+        .filter(|(_, st)| *st != 0x3 && *st != 0x4)
+        .max_by_key(|(seq, _)| *seq);
+    match bootable {
+        Some((bseq, _)) => OtaInfo {
             fresh: false,
-            active_ota: (seq - 1) % ota_slot_count,
-            updates_seen: seq,
-            state_text: ota_state_text(state),
-            pending_verify: state == 0x1,
+            active_ota: (bseq - 1) % ota_slot_count,
+            updates_seen: newest.0,
+            state_text: ota_state_text(newest.1),
+            pending_verify: newest.1 == 0x1,
         },
-        _ => fresh(),
+        // Every update rolled back → the bootloader falls back to the factory app.
+        None => OtaInfo {
+            fresh: true,
+            active_ota: 0,
+            updates_seen: newest.0,
+            state_text: ota_state_text(newest.1),
+            pending_verify: false,
+        },
     }
 }
 
@@ -646,6 +668,18 @@ mod tests {
         assert_eq!(ota.state_text, "pending verify");
         // All-erased otadata → factory default.
         assert!(parse_ota_data(&vec![0xff; 0x2000], 2).fresh);
+
+        // Rollback: newest (seq 3) is INVALID → the bootloader runs the previous
+        // good image (seq 2), so the running slot must exclude the rolled-back one.
+        let mut rb = vec![0xffu8; 0x2000];
+        rb[0..32].copy_from_slice(&rec(2, 0x2)); // seq 2, valid → slot (2-1)%2 = 1
+        rb[0x1000..0x1000 + 32].copy_from_slice(&rec(3, 0x3)); // seq 3, invalid (rolled back)
+        let ro = parse_ota_data(&rb, 2);
+        assert!(!ro.fresh);
+        assert_eq!(ro.updates_seen, 3); // the attempt is still counted
+        assert_eq!(ro.active_ota, (2 - 1) % 2); // = 1, the previous good slot — NOT (3-1)%2 = 0
+        assert!(ro.state_text.contains("rolled back"));
+        assert!(!ro.pending_verify);
     }
 
     #[test]
