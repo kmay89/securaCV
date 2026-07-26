@@ -22,6 +22,7 @@
 mod hub;
 mod provisioning;
 mod release;
+mod rescue;
 mod serial_monitor;
 mod we2;
 
@@ -952,6 +953,132 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart()
 }
 
+// ── the rescue bench: back up / restore / erase / flash a local image ────────
+// The espflash I/O around the pure `rescue` module (host-tested). Each streams
+// the sidecar's output over `rescue:log` so the UI is a live console, and none
+// can brick the board — the ESP32's first-stage bootloader is mask ROM.
+
+/// Spawn the espflash sidecar with `args`, streaming each non-empty line over
+/// `event`, and return its exit code.
+async fn run_sidecar_streaming(
+    app: &AppHandle,
+    args: Vec<String>,
+    event: &'static str,
+) -> Result<i32, String> {
+    let cmd = app
+        .shell()
+        .sidecar(ESPFLASH)
+        .map_err(|e| format!("bundled espflash missing: {e}"))?
+        .args(args);
+    let (mut rx, _child) = cmd
+        .spawn()
+        .map_err(|e| format!("could not start espflash: {e}"))?;
+    let mut code = -1;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                for line in text.split(['\r', '\n']).filter(|l| !l.trim().is_empty()) {
+                    let _ = app.emit(event, line.to_string());
+                }
+            }
+            CommandEvent::Terminated(payload) => code = payload.code.unwrap_or(-1),
+            _ => {}
+        }
+    }
+    Ok(code)
+}
+
+/// Read the first `n` bytes of a file (for the "what is this image" hint).
+fn read_head(path: &str, n: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut buf = vec![0u8; n];
+    let got = f.read(&mut buf)?;
+    buf.truncate(got);
+    Ok(buf)
+}
+
+/// Back up the whole chip to `out_path` — a full-flash read the operator keeps
+/// and can restore later. The safety copy the one-shot flow never had.
+#[tauri::command]
+async fn backup_flash(
+    app: AppHandle,
+    port: String,
+    out_path: String,
+    flash_size: u64,
+    baud: u32,
+) -> Result<(), String> {
+    if flash_size == 0 {
+        return Err("couldn't read this chip's flash size — reconnect and try again".into());
+    }
+    let _ = app.emit(
+        "rescue:log",
+        format!("→ reading {} of flash → {out_path}…", rescue::human_bytes(flash_size)),
+    );
+    let code =
+        run_sidecar_streaming(&app, rescue::read_flash_args(&port, flash_size, &out_path, baud), "rescue:log")
+            .await?;
+    if code == 0 {
+        let _ = app.emit("rescue:log", "✓ backup saved — keep it safe; restore it any time.".to_string());
+        Ok(())
+    } else {
+        Err(format!(
+            "espflash exited with code {code} while reading the chip. Nothing on the board changed — try again."
+        ))
+    }
+}
+
+/// Write a local image to the chip at 0x0 — a restored backup, or any `.bin`.
+/// Validates the file against the chip's flash size first (mirrors the browser).
+#[tauri::command]
+async fn write_local_image(
+    app: AppHandle,
+    port: String,
+    path: String,
+    flash_size: Option<u64>,
+    baud: u32,
+) -> Result<(), String> {
+    let byte_len = std::fs::metadata(&path)
+        .map_err(|e| format!("couldn't read {path}: {e}"))?
+        .len();
+    match rescue::validate_restore_image(byte_len, flash_size) {
+        Err(reason) => return Err(reason),
+        Ok(Some(warn)) => {
+            let _ = app.emit("rescue:log", warn);
+        }
+        Ok(None) => {}
+    }
+    if let Ok(head) = read_head(&path, 4) {
+        if let Some(hint) = rescue::image_first_bytes_hint(&head) {
+            let _ = app.emit("rescue:log", format!("→ this looks like {hint}"));
+        }
+    }
+    let _ = app.emit("rescue:log", format!("→ writing {path} to the board…"));
+    let code = run_sidecar_streaming(&app, rescue::write_bin_args(&port, &path, baud), "rescue:log").await?;
+    if code == 0 {
+        let _ = app.emit("rescue:log", "✓ written — the board is rebooting into it.".to_string());
+        Ok(())
+    } else {
+        Err(format!(
+            "espflash exited with code {code}. The board can't be bricked — put it in download mode and try again."
+        ))
+    }
+}
+
+/// Erase the whole chip — a truly clean slate before a fresh install.
+#[tauri::command]
+async fn erase_chip(app: AppHandle, port: String) -> Result<(), String> {
+    let _ = app.emit("rescue:log", "→ erasing the whole chip…".to_string());
+    let code = run_sidecar_streaming(&app, rescue::erase_flash_args(&port), "rescue:log").await?;
+    if code == 0 {
+        let _ = app.emit("rescue:log", "✓ chip erased — factory-fresh. Flash any image next.".to_string());
+        Ok(())
+    } else {
+        Err(format!("espflash exited with code {code} while erasing. Nothing is bricked — try again."))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1031,6 +1158,9 @@ pub fn run() {
             serial_monitor::start_serial_monitor,
             serial_monitor::serial_monitor_send,
             serial_monitor::stop_serial_monitor,
+            backup_flash,
+            write_local_image,
+            erase_chip,
             check_update,
             install_update
         ])

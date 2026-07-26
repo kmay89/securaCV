@@ -18,12 +18,14 @@ on:
     paths:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
+      - 'desktop/src-tauri/src/rescue.rs'
       - '.github/workflows/desktop-hub-core.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
+      - 'desktop/src-tauri/src/rescue.rs'
       - '.github/workflows/desktop-hub-core.yml'
 
 # Read-only token: this workflow only checks out and runs cargo — it needs
@@ -64,3 +66,18 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
       - name: Test
         run: cargo test
+
+  # Self-contained pure modules that live inside the release-only tauri crate
+  # (desktop/src-tauri) but depend on nothing but `std`, so `rustc --test` runs
+  # their unit tests on a plain runner — the footgun logic (rescue backup/restore
+  # validation, espflash arg building) can't rot silently between releases, even
+  # though the full app only builds on release tags.
+  tauri-pure-modules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: rescue.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/rescue.rs -o /tmp/rescue_test
+          /tmp/rescue_test
