@@ -67,6 +67,13 @@ const state = {
   report: null,         // last health-check result
   busy: false,
   ble: null,            // { device, characteristic } while a BLE console is open
+  // Which manifest the picker is reading. `devChannel` is STICKY session state,
+  // not a re-read of the URL: `?channel=dev` only seeds it (boot), and the
+  // Advanced toggle owns it from then on — the Lab app has no address bar, so
+  // a URL-only dev channel is unreachable there (see onDevChannelToggle).
+  devChannel: false,
+  manifestOverride: false, // a ?manifest= self-hosted URL is in force
+  advancedOpen: false,     // keep Advanced open across a picker re-render
 };
 
 // ── boot ───────────────────────────────────────────────────────────────────
@@ -141,6 +148,9 @@ async function boot() {
     footBtn.hidden = false;
     footBtn.addEventListener("click", openSettings);
   }
+
+  // `?channel=dev` SEEDS the channel; the Advanced toggle owns it afterwards.
+  state.devChannel = core.channelFromSearch(location.search) === "dev";
 
   renderVersionStrip();
   setPhase(phaseConnect());
@@ -1595,9 +1605,45 @@ function renderPicker() {
     card.append(bk);
   }
 
-  // Advanced: local file, erase toggle, skip-backup, restore.
+  // Advanced: dev channel, local file, erase toggle, skip-backup, restore.
   const adv = el("details", "flash-advanced");
+  // The dev toggle below re-renders the whole picker, which would otherwise
+  // snap Advanced shut under the user's cursor. Remember whether it was open.
+  adv.open = !!state.advancedOpen;
+  adv.addEventListener("toggle", () => { state.advancedOpen = adv.open; });
   adv.append(el("summary", null, "Advanced options — you can skip all of this"));
+
+  // Dev channel — the same Advanced control the desktop Flasher has had
+  // (desktop/src/index.html #adv-dev). Parity is not cosmetic here: the Lab
+  // app renders this page in a webview with NO address bar, so `?channel=dev`
+  // was unreachable for every Lab user — the dev channel existed and could
+  // not be switched on. The toggle can only ever mean DEV_FLASH_MANIFEST_URL;
+  // it is not a way to point at an arbitrary manifest.
+  const devWrap = el("label", "flash-erase");
+  const devBox = el("input");
+  devBox.type = "checkbox";
+  devBox.id = "flash-dev-channel";
+  devBox.checked = !!state.devChannel;
+  // A ?manifest= override already replaced the manifest; offering a channel
+  // switch that the override would silently outrank would be a lie.
+  devBox.disabled = !!state.manifestOverride;
+  devBox.addEventListener("change", () => onDevChannelToggle(devBox.checked));
+  devWrap.append(devBox);
+  devWrap.append(el("span", null,
+    " Use the dev channel — install from the rolling " +
+    "fw-dev-latest prerelease instead of the pinned stable release. Dev " +
+    "images are cut ahead of stable and checked exactly the same way (chip " +
+    "guard, SHA-256 against the manifest, and the release signature once the " +
+    "signing ceremony lands). It's also where a board shows up first: a " +
+    "product with no stable release yet is often already on dev."));
+  adv.append(devWrap);
+  // A disabled checkbox with no reason beside it reads as a broken control.
+  if (devBox.disabled) {
+    adv.append(el("p", "fineprint",
+      "The dev channel is unavailable while this page is pointed at a " +
+      "self-hosted manifest (?manifest=). Drop that from the address to use it."));
+  }
+
   const local = el("div", "flash-local");
   const localP = el("p", "muted",
     "Install a firmware file from your computer (a .bin you built, or one for " +
@@ -1674,11 +1720,11 @@ function renderPicker() {
 }
 
 // ── the displays: boards that SHOW, previewed by their own firmware ─────────
-// Display builds aren't on the release channel yet (they build from source),
-// so they aren't installable rows — but the flasher still knows them, names
-// them off the wire, and can boot the REAL firmware (the same WASM build
-// fleet.html runs) so the glass is seen before it exists. 1:1 — framebuffer
-// out, touch in, LVGL and all.
+// The display products ARE installable rows now (they ride the release train
+// like everything else — build_flash_manifest.py packages all six). This
+// teaser is the extra thing only a screen can offer: booting the REAL
+// firmware in the browser (the same WASM build fleet.html runs) so the glass
+// is seen before it exists. 1:1 — framebuffer out, touch in, LVGL and all.
 
 function displaysTeaser() {
   // Both display hosts are ESP32-S3 boards — on other silicon the teaser
@@ -2278,21 +2324,32 @@ function productRow(p) {
 function activeManifestUrl() {
   // `?manifest=<url>` lets a self-hosted / air-gapped user point at their own
   // manifest — but only if it's same-origin or a private/LAN host (see
-  // manifestOverrideUrl). `?channel=dev` switches to the rolling dev
-  // prerelease manifest (a fixed first-party URL, never user-supplied).
-  // Otherwise: the signed stable release.
+  // manifestOverrideUrl); it outranks the channel. Otherwise the channel
+  // decides: state.devChannel (seeded by `?channel=dev`, then owned by the
+  // Advanced toggle) reads the rolling dev prerelease — a fixed first-party
+  // URL, never user-supplied — and the default is the stable release.
   const override = core.manifestOverrideUrl(location.search, location.origin);
   state.manifestOverride = !!override;
-  state.devChannel = !override && core.channelFromSearch(location.search) === "dev";
-  if (override) return override;
+  if (override) { state.devChannel = false; return override; }
   return state.devChannel ? core.DEV_FLASH_MANIFEST_URL : state.catalog.manifest_url;
 }
 
+// Every manifest fetch carries a generation stamp. Switching channels starts a
+// second fetch without cancelling the first, and the two can land in either
+// order — a slow stable response arriving after a fast dev one would repaint
+// the picker with the versions, SHA-256s and Install targets of the channel the
+// UI says is OFF. That is the silent-wrong case this whole toggle exists to
+// avoid, so a late response from a superseded generation is discarded outright.
+let manifestGeneration = 0;
+
 function ensureManifest() {
   if (state.manifest) { refreshManifestState(); return; }
+  const gen = ++manifestGeneration;
+  const stale = () => gen !== manifestGeneration;
   fetch(activeManifestUrl(), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no release manifest (HTTP " + r.status + ")"))))
     .then((m) => {
+      if (stale()) return;
       const errs = core.validateManifest(m);
       state.manifest = errs.length ? { __invalid: errs } : m;
     })
@@ -2300,9 +2357,26 @@ function ensureManifest() {
     // pinned to was never cut" look identical to a user otherwise, and the
     // second one is a maintainer bug that hid for a whole release cycle.
     .catch((err) => {
+      if (stale()) return;
       state.manifest = { __missing: true, why: String((err && err.message) || err) };
     })
-    .finally(refreshManifestState);
+    .finally(() => { if (!stale()) refreshManifestState(); });
+}
+
+// Advanced → dev channel. Switching channels invalidates the loaded manifest
+// wholesale (versions, SHA-256s and availability all belong to the OTHER
+// release), so drop it and re-render the picker from scratch rather than
+// leaving stale versions on rows the new channel may not even carry.
+function onDevChannelToggle(on) {
+  if (state.busy) return;              // never re-point mid-write
+  state.devChannel = !!on;
+  state.manifest = null;
+  // Bump the generation before re-rendering: an in-flight fetch for the
+  // previous channel is now stale, and must not repaint over the new one
+  // whichever order the two responses arrive in (see ensureManifest).
+  manifestGeneration++;
+  setPhase(phaseConnected());          // repaints with "Checking…" in the banner
+  ensureManifest();
 }
 
 function refreshManifestState() {
@@ -2319,7 +2393,9 @@ function refreshManifestState() {
     const note = el("p", "flash-note flash-note-soft");
     note.textContent = m.__invalid
       ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
-      : "No signed firmware release is published yet. When the maintainer cuts one, the official images appear here automatically. Until then, use Advanced → install a local file.";
+      : state.devChannel
+        ? "The dev channel has nothing published yet — no rolling prerelease has been cut. Turn the dev channel off under Advanced for the stable release, or install a local file."
+        : "No signed firmware release is published yet. When the maintainer cuts one, the official images appear here automatically. Until then, try Advanced → dev channel (products often land there first), or install a local file.";
     banner.append(note);
     // Name the release we were pinned to. Every product reading "unavailable"
     // because a tag was bumped but never released is indistinguishable from
@@ -2341,7 +2417,12 @@ function refreshManifestState() {
   }
   if (state.devChannel) {
     const note = el("p", "flash-note flash-note-soft");
-    note.textContent = "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same key but not yet promoted to stable. Remove ?channel=dev from the address bar to go back to release firmware.";
+    // Say what's actually true of THESE images. Claiming "signed" while the
+    // signing ceremony hasn't happened would be the one lie this banner exists
+    // to prevent — the per-image line below reports the real verification.
+    note.textContent = core.isRealPubkey(state.catalog.release_pubkey)
+      ? "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same key but not yet promoted to stable. Turn it off under Advanced to go back to release firmware."
+      : "DEV CHANNEL — these images come from the rolling dev prerelease, ahead of stable. No release signing key is in force yet, so they're verified by SHA-256 against the manifest, not by signature. Turn it off under Advanced to go back to release firmware.";
     banner.append(note);
   }
   // The headline answer, before any list: should THIS board be updated?

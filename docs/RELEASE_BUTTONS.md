@@ -82,8 +82,10 @@ behaviour. Otherwise the master button already covers it.
 
 ### Flasher Factory Images
 
-Rebuilds *only* the browser-flasher factory images and `manifest-flash.json` for
-an **existing** `fw-v*` tag, and attaches them to that release.
+Rebuilds *only* the browser-flasher factory images and `manifest-flash.json`, and
+attaches them to a release. Pick a `channel`.
+
+**`channel: release`** — an **existing** `fw-v*` tag.
 
 **Use it** in two situations:
 1. A packaging-tooling fix should reach an already-cut tag without a new version.
@@ -93,8 +95,29 @@ an **existing** `fw-v*` tag, and attaches them to that release.
    the flasher up anyway.
 
 **Don't:** expect it to help a tag that doesn't exist — it checks out the tag, so
-the tag has to be there first. And read the version-burn warning below before
-creating one by hand.
+the tag has to be there first. It now fails with that sentence rather than a raw
+git error, and points you at `channel: dev`. Read the version-burn warning below
+before creating a tag by hand.
+
+**`channel: dev`** — **no tag, no version, no signing key.** Builds the branch
+you dispatch from and publishes to the rolling `fw-dev-latest` prerelease, which
+is exactly what the flasher's **Advanced → dev channel** toggle reads.
+
+**Use it:** hardware is on the bench and you need a real flashable image *today*
+— a new board, a demo, a bring-up. It's the shortest path from "the code is on a
+branch" to "the product is installable", and it burns no version.
+
+**Don't:** point a stranger at it. Dev images are unsigned *while the key
+ceremony is pending*: verified by SHA-256 against the manifest, and both
+flashers say so on the banner and the receipt. Stable installs belong on a
+signed release. It also cannot reach `releases/latest` — it publishes a
+prerelease, on purpose, so the fleet's OTA URL never lands on it.
+
+Once the key exists this button signs like every other path, and **refuses to
+run** if the key is pinned but `OTA_SIGNING_KEY_PEM` isn't set — an unsigned
+manifest published after the ceremony isn't a weaker install, it's an
+uninstallable one (the flashers' policy becomes `require-signature` and they
+reject the whole manifest).
 
 ### Build Mac apps (Flasher + Lab)
 
@@ -175,7 +198,11 @@ release fw-v2.3.0, which has no published images"*. `canary-local` CI also warns
 on every run while the pin is unresolvable.
 
 **Fix:** cut that firmware release (master button), or run **Flasher Factory
-Images** for the tag if the key ceremony hasn't happened yet.
+Images** for the tag if the key ceremony hasn't happened yet. If the tag itself
+was never created — the usual case, and what makes this look like "nothing
+works" rather than "one release is missing" — run **Flasher Factory Images**
+with `channel: dev` instead: it needs no tag, and the images land on the channel
+the flasher's **Advanced → dev channel** toggle reads.
 
 ### An app release that already exists
 

@@ -139,6 +139,85 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
     "desktop/src-tauri/src/provisioning.rs:build_nvs");
 });
 
+test("dev channel: BOTH flashers give the user a control, not just a constant", () => {
+  // RELEASE_LESSONS 2026-07-24: copy parity without CAPABILITY parity is worse
+  // than divergence. The dev channel had the reverse problem — the browser
+  // flasher owned the constant and the fetch, but its ONLY switch was
+  // `?channel=dev` in the address bar. The Lab desktop app renders that exact
+  // page in a webview with no address bar, so for every Lab user the dev
+  // channel existed and could not be turned on. A reachable control on each
+  // frontend is the capability; assert the control, not the string.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const nativeHtml = read(join(ROOT, "desktop/src/index.html"));
+
+  assert.match(browser, /id\s*=\s*"flash-dev-channel"/,
+    "the browser flasher has no dev-channel control — ?channel=dev is unreachable " +
+    "inside the Lab app (no address bar). Add the Advanced toggle to canary-local/assets/flash.js");
+  assert.match(browser, /function onDevChannelToggle/,
+    "canary-local/assets/flash.js has a dev-channel checkbox with nothing behind it");
+  assert.match(nativeHtml, /id="dev-channel"/,
+    "the desktop Flasher has no dev-channel control — see desktop/src/index.html #adv-dev");
+
+  // Both must re-resolve the manifest when the channel changes; a toggle that
+  // leaves the previous channel's versions on screen is the silent-wrong case.
+  assert.match(browser, /onDevChannelToggle[\s\S]{0,400}state\.manifest\s*=\s*null/,
+    "the browser toggle doesn't drop the loaded manifest — the other channel's " +
+    "versions and SHA-256s would stay on the picker rows");
+  assert.match(read(join(ROOT, "desktop/src/app.js")), /onDevChannelToggle/,
+    "desktop/src/app.js lost its dev-channel handler");
+});
+
+test("dev channel: the publishing workflow targets the tag the flashers read", () => {
+  // The flashers' DEV_FLASH_MANIFEST_URL and flasher-release.yml's dev channel
+  // are two independent spellings of one release. If they drift, the workflow
+  // publishes to a release nothing reads and every product stays "unavailable"
+  // with no error anywhere — the exact silent failure this file exists to stop.
+  const wf = read(join(ROOT, ".github/workflows/flasher-release.yml"));
+  const url = read(join(CANARY, "assets/flash-core.js"))
+    .match(/DEV_FLASH_MANIFEST_URL[^"]*"(https:\/\/[^"]+)"/);
+  assert.ok(url, "couldn't parse DEV_FLASH_MANIFEST_URL from flash-core.js");
+  const tag = url[1].match(/\/releases\/download\/([^/]+)\//)[1];
+
+  assert.match(wf, new RegExp(`tag=${tag}\\b`),
+    `.github/workflows/flasher-release.yml doesn't publish its dev channel to "${tag}" — ` +
+    `the tag the flashers' DEV_FLASH_MANIFEST_URL reads`);
+  // The rolling pointer must never become releases/latest: that URL is what
+  // every fielded Canary polls for OTA (see .github/actions/keep-firmware-latest).
+  assert.match(wf, /prerelease:\s*true/,
+    "the dev-channel publish step must mark the release a prerelease, or " +
+    "releases/latest can drift off the firmware and the fleet stops seeing updates");
+});
+
+test("flasher publishing signs once a key is in force, and refuses to ship a refusable manifest", () => {
+  // imageVerificationPolicy() is fail-closed by design: with a REAL pinned
+  // release_pubkey, an official manifest carrying no signature returns
+  // "require-signature" and both flashers refuse every image in it. So an
+  // unsigned publish is correct only while the key is the all-zero
+  // placeholder. If this workflow ever publishes unsigned after the ceremony
+  // it doesn't degrade — it replaces a good manifest with an uninstallable
+  // one, and on the dev channel it would do that on every bring-up run.
+  const wf = read(join(ROOT, ".github/workflows/flasher-release.yml"));
+
+  assert.match(wf, /ota_key_state\.py/,
+    ".github/workflows/flasher-release.yml must ask whether a release key is " +
+    "pinned before deciding to publish unsigned");
+  assert.match(wf, /--signing-key/,
+    "flasher-release.yml never passes --signing-key to build_flash_manifest.py, " +
+    "so every manifest it publishes is unsigned — refusable the moment a real " +
+    "key is pinned");
+  assert.match(wf, /OTA_SIGNING_KEY_PEM/,
+    "flasher-release.yml can't sign without reading the OTA_SIGNING_KEY_PEM secret");
+  assert.match(wf, /pip install[^\n]*cryptography/,
+    "signing needs `cryptography` (ota_release.py imports it) — install it, or " +
+    "the sign path dies after the build instead of before it");
+
+  // The script's own contract, which the above depends on: --signing-key is
+  // optional and its absence means checksum-only, not a crash.
+  const builder = read(join(ROOT, "firmware/scripts/build_flash_manifest.py"));
+  assert.match(builder, /--signing-key/,
+    "build_flash_manifest.py lost its --signing-key option");
+});
+
 test("Hatchery spec: browser and native draw the whimsy from the SAME hatch.json", () => {
   // The browser fetches devices/hatch.json; the native app embeds it at build
   // time (build.rs). Both must be the one committed canary-local/devices/hatch.json,

@@ -547,6 +547,49 @@ any platform.
   naming the cuts). And when a feature flag exists, CI must compile at
   least one env with it OFF, or the disabled path is fiction.
 
+### 2026-07-25 — The dev channel had no button and no publisher: unreachable in the Lab, and unfillable without the OTA key
+
+- **Symptom:** every product in the Lab's flasher read *"no published release
+  yet"* — displays included, on hardware sitting wired up on the bench. Three
+  facts stacked into one dead end. (1) The catalog pins `manifest_url` to an
+  exact tag, `fw-v2.3.0`, which was never cut; the newest firmware release was
+  `fw-v2.2.0`, published before the display sketch existed, so even reaching it
+  would have offered zero display products. (2) `firmware-release.yml` — the
+  only thing that publishes `manifest-flash.json` on its own — hard-stops in 20
+  seconds without `OTA_SIGNING_KEY_PEM`. (3) `flasher-release.yml`, the
+  documented no-key escape hatch, checks the tag *out*, so it could not help a
+  tag that had never been created. The one remaining route, the dev channel,
+  was reachable only as `?channel=dev` — and the Lab desktop app renders that
+  page in a webview with **no address bar**. Every exit was closed, and each
+  one closed for a different, individually reasonable reason.
+- **Cause:** the dev channel was built as a *destination* with neither a road
+  in nor a road out. Its constant was drift-gated across all three frontends
+  (`desktop_parity.test.js`), its banner copy was written, its device-side NVS
+  override was documented — but nothing could publish to `fw-dev-latest`
+  without the signing key, and one of the two flashers had no control to select
+  it. Both gaps were invisible to CI because both were about *absent*
+  capability, and the drift gates all compared strings that were present and
+  identical.
+- **Fix:** a road at each end. `flasher-release.yml` gained `channel: dev` —
+  builds the dispatch ref's HEAD onto the rolling `fw-dev-latest` prerelease,
+  no tag, no version bump, no signing key, `prerelease: true` so
+  `releases/latest` can never drift off the firmware. The browser flasher gained
+  the **Advanced → dev channel** toggle the desktop Flasher already had, with
+  `?channel=dev` demoted to seeding it. The banner stopped claiming dev images
+  are "signed with the same key" when no key exists — it now reports
+  checksum-only verification, matching what `imageVerificationPolicy()`
+  actually returns. And `channel: release` now names a missing tag in its own
+  error instead of dying inside `actions/checkout`.
+- **Applies to:** every escape hatch, forever. A fallback path is only real if
+  something can *fill* it and someone can *reach* it — assert both, not the
+  constant between them. `desktop_parity.test.js` now checks that each frontend
+  has a user-reachable dev-channel control (not just the URL), and that the
+  workflow publishes to the same tag the frontends read; a publisher and a
+  consumer naming the same release in two files is two chances to be wrong.
+  When a product is "unavailable" everywhere at once, suspect the pinned tag
+  before the wiring — `canary-local.yml` already warns on every run while the
+  pin is unresolvable, and that warning was right for weeks.
+
 ### 2026-07-25 — The Lab app shipped a workshop with no renders: the web root had no parent to reach into
 
 - **Symptom:** in the native **SecuraCV Lab** on macOS, the Workshop's "Start

@@ -151,9 +151,13 @@ source can never disagree.
   catalog itself (every workflow it names must exist, every version file it
   points at must be readable).
 - **Actions → "Flasher Factory Images"** rebuilds *only* the browser-flasher
-  factory images + `manifest-flash.json` for an existing tag (e.g. after a
-  packaging-tooling fix) without cutting a new version. Blank tag = the
-  current `releases/latest`.
+  factory images + `manifest-flash.json` without cutting a new version.
+  `channel: release` targets an existing tag (blank = the current
+  `releases/latest`) — e.g. after a packaging-tooling fix. `channel: dev`
+  targets no tag at all: it builds the dispatch branch's HEAD onto the rolling
+  `fw-dev-latest` prerelease, needing neither a version bump nor
+  `OTA_SIGNING_KEY_PEM`. That is the bring-up path — bench hardware flashable
+  from a branch, unsigned and honest about it.
 
 Which products appear (flashable) in the in-browser flasher is decided by
 `manifest-flash.json` in the release the page reads — the stable channel's
@@ -176,9 +180,18 @@ override lives in the device's own NVS, the choice is local, per-device, and
 invisible to every other device. HA update entities announce only what the
 device's channel manifest offers.
 
-The Lab flasher's dev toggle (`flash.html?channel=dev`) reads the same
-`fw-dev-latest` flash manifest, with a visible banner. The default page is
-release-only.
+Both flashers read the same `fw-dev-latest` flash manifest, with a visible
+banner, from **Advanced → dev channel** (the browser page also accepts
+`flash.html?channel=dev`, which now only *seeds* the toggle). The default is
+release-only. The toggle is the reachable control: the Lab desktop app renders
+`flash.html` in a webview with no address bar, so the query parameter alone left
+every Lab user unable to switch channels at all.
+
+`fw-dev-latest` is populated two ways: **Firmware Release** on a `-dev.N` /
+`-rc.N` version mirrors its manifests there (signed, needs the OTA key), and
+**Flasher Factory Images** with `channel: dev` publishes flasher images there
+straight from a branch (unsigned, needs no key). The second is the bring-up
+path — see [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md).
 
 ## Rollback (when a stable release goes wrong)
 
