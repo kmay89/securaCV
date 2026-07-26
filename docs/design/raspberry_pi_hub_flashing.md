@@ -345,8 +345,9 @@ Raspberry Pi Imager.
     the Python manifest's SHA-256 pins**, so the flasher's Rust and the generator's
     Python can't drift apart (the "Hub Core" workflow re-runs it whenever an
     embedded file changes). Same posture as the rest of hub-io: the layout is
-    host-tested, the physical boot is not. What it carries is the runnable payload
-    plus the integrity manifest; the human `README` stays in the repo.
+    host-tested, the physical boot is not. It carries the runnable payload plus the
+    integrity manifest — the same set the generator's `--build` produces; the
+    self-documenting `provision.sh` means there's no separate README to drift.
   - *Remaining:* upgrade the typed-once Wi-Fi persist store to the OS keychain;
     add the app opt-in that hands `provision_seed_files()` to `seed_card` during a
     flash (an experimental toggle like the account pre-seed — the assembler and its

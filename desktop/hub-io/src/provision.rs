@@ -44,7 +44,9 @@ pub fn provision_runner() -> String {
     // Keep in exact lockstep with gen_hub_provision_bundle.py::runner_script().
     concat!(
         "#!/bin/sh\n",
-        "# securaCV hub provisioning — one command. See README.md.\n",
+        "# securaCV hub provisioning — one command: registers the add-on repos,\n",
+        "# installs the broker + Frigate + the securaCV kernel, and starts them,\n",
+        "# narrating why at every step.\n",
         "#   preview (no hub needed):  sh provision.sh --dry-run\n",
         "#   provision (needs SUPERVISOR_TOKEN + http://supervisor):  sh provision.sh\n",
         "set -eu\n",
@@ -59,9 +61,9 @@ pub fn provision_runner() -> String {
 /// [`crate::seed::write_account_seed`] (which drops them into `CONFIG/`).
 ///
 /// Carries the runnable essentials plus the integrity manifest: the plan, the
-/// curated Frigate config, the executor, the runner, and `MANIFEST.json`. The
-/// bundle's human `README.md` is deliberately left in the repo/docs rather than
-/// on the card — the seed is the runnable payload, not documentation.
+/// curated Frigate config, the executor, the runner, and `MANIFEST.json` — the
+/// same set the generator's `--build` produces. `provision.sh` is
+/// self-documenting, so the bundle ships no separate README.
 pub fn provision_seed_files() -> Vec<SeedFile> {
     let f = |rel: &str, contents: String| SeedFile {
         relative_path: format!("{PROVISION_ROOT}/{rel}"),
@@ -142,9 +144,6 @@ mod tests {
                 "homeassistant/frigate/config.yaml" => Some(FRIGATE_CONFIG.to_string()),
                 "hub_seed_apply.py" => Some(EXECUTOR.to_string()),
                 "provision.sh" => Some(provision_runner()),
-                // README is pinned in the manifest but intentionally not carried
-                // on the card (docs live in the repo), so it is not cross-checked.
-                "README.md" => None,
                 other => panic!("unexpected pinned file {other} — teach this test about it"),
             }
         };

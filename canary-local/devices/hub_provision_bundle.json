@@ -35,14 +35,7 @@
       "generated": true,
       "bundle_path": "provision.sh",
       "card_path": "CONFIG/securacv/provision.sh",
-      "sha256": "320d0c3333494013f9ed65e1315aea03f6df230f45f100d8bc98571e606c580a"
-    },
-    {
-      "role": "readme",
-      "generated": true,
-      "bundle_path": "README.md",
-      "card_path": "CONFIG/securacv/README.md",
-      "sha256": "77b3703245114b32be44ece37f5c50df793d72ff69fa01a7f62f529cd6a65d12"
+      "sha256": "7f41bee866d7a12aec0022f3aab0994e397224296d6ff879b367308747b8a2ee"
     }
   ],
   "first_boot": {
