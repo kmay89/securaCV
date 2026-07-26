@@ -21,7 +21,7 @@ const {
   EFUSE_BLOCK0_RD_OFFSET, EFUSE_BLOCK0_WORDS, efuseBlock0Addrs, efuseField,
   securityFieldsFor, readSecurityEfuses, looksUniform, flashAliasVerdict,
   macChecks, parseMac, duplicateMacCheck, shippedWith, intakeVerdict, efuseFindings,
-  coldBootVerdict, isFirstContact, KNOWN_STOCK,
+  coldBootVerdict, isFirstContact, KNOWN_STOCK, oddParity, flashAliasCandidates,
 } = mod;
 
 // A virgin block 0: six zero words. Everything below starts here and burns in
@@ -158,25 +158,55 @@ test("efuseFindings stays silent on a virgin board and on an unsupported chip", 
   }
 });
 
-test("flash encryption counts by set bits, not by being non-zero", () => {
-  // SPI_BOOT_CRYPT_CNT: 1/3/7 = enabled; 0 and the even counts = disabled.
-  const state = (v) => readSecurityEfuses("ESP32-S3", burn(virgin(), 82, v, 3))
-    .fields.find((f) => f.key === "SPI_BOOT_CRYPT_CNT");
-  assert.equal(state(0).burned, false);
-  assert.equal(state(1).burned, true);
-  assert.equal(state(3).burned, true);
-  assert.equal(state(7).burned, true);
-  // An even count means it was enabled and then disabled again — not active.
-  assert.equal(state(2).burned, false);
+test("oddParity counts BITS, which is what the eFuse docs mean", () => {
+  // The trap: ESP-IDF's "enabled when 1 or 3 bits are set" counts bits, not
+  // values. Reading it as the values 1 and 3 inverts the common 0b011 case.
+  assert.equal(oddParity(0b000), false);
+  assert.equal(oddParity(0b001), true);
+  assert.equal(oddParity(0b010), true);
+  assert.equal(oddParity(0b011), false);
+  assert.equal(oddParity(0b100), true);
+  assert.equal(oddParity(0b111), true);
 });
 
-test("SOFT_DIS_JTAG is odd-parity, not merely non-zero", () => {
-  const state = (v) => readSecurityEfuses("ESP32-S3", burn(virgin(), 48, v, 3))
-    .fields.find((f) => f.key === "SOFT_DIS_JTAG");
-  assert.equal(state(0).burned, false);
-  assert.equal(state(1).burned, true);
-  assert.equal(state(2).burned, false);
-  assert.equal(state(7).burned, true);
+test("flash encryption is live only on an ODD number of set bits", () => {
+  // ESP-IDF walks the bits and flips a flag per set bit (esp_efuse_fields.c),
+  // so the burn ladder 0 → 0b001 → 0b011 → 0b111 alternates on/off/on.
+  const f = (v) => readSecurityEfuses("ESP32-S3", burn(virgin(), 82, v, 3))
+    .fields.find((x) => x.key === "SPI_BOOT_CRYPT_CNT");
+  assert.equal(f(0b000).state, "clean");
+  assert.equal(f(0b001).state, "active");   // one bit  → encryption ON
+  assert.equal(f(0b011).state, "touched");  // two bits → turned back OFF
+  assert.equal(f(0b111).state, "active");   // three    → ON again
+  assert.equal(f(0b010).state, "active");   // one bit, whichever bit it is
+  assert.equal(f(0b110).state, "touched");
+});
+
+test("an encrypted board is refused, a formerly-encrypted one is flagged", () => {
+  const scan = (v) => readSecurityEfuses("ESP32-S3", burn(virgin(), 82, v, 3));
+  // Live encryption: the board can't take our firmware at all.
+  assert.equal(intakeVerdict(efuseFindings(scan(0b001))).level, "stop");
+  // Burned then undone: usable, but this chip has been through somebody's
+  // provisioning and must not read as factory-fresh.
+  const undone = intakeVerdict(efuseFindings(scan(0b011)));
+  assert.equal(undone.level, "attention");
+  assert.match(undone.findings[0].label, /undone/);
+  assert.equal(scan(0b011).virgin, false);
+});
+
+test("JTAG lock bits are reported as touched, without claiming a live state", () => {
+  // We could not confirm SOFT_DIS_JTAG's parity rule against IDF source the
+  // way we did for the crypt counter, so the claim is only the one that holds
+  // either way: a factory board reads zero and this one doesn't.
+  const f = (v) => readSecurityEfuses("ESP32-S3", burn(virgin(), 48, v, 3))
+    .fields.find((x) => x.key === "SOFT_DIS_JTAG");
+  assert.equal(f(0).burned, false);
+  for (const v of [1, 2, 3, 7]) {
+    assert.equal(f(v).burned, true, `SOFT_DIS_JTAG=${v} should read as touched`);
+  }
+  const table = securityFieldsFor("ESP32-S3").find((x) => x.key === "SOFT_DIS_JTAG");
+  assert.ok(!/JTAG is (off|disabled) (right )?now/i.test(table.meaning),
+    "the copy must not assert the current JTAG state we can't verify");
 });
 
 test("an anti-rollback floor set by a previous owner is caught", () => {
@@ -201,28 +231,66 @@ test("the USB-JTAG field really does move between chips", () => {
 
 // ── the flash-size lie ──────────────────────────────────────────────────────
 
-test("a relabelled flash chip is caught by its wraparound", () => {
-  const head = Uint8Array.from({ length: 64 }, (_, i) => i);   // real content
-  const v = flashAliasVerdict({ declaredBytes: 16 * 1024 * 1024, head, tail: head.slice() });
+const MB = 1024 * 1024;
+const HEAD = Uint8Array.from({ length: 64 }, (_, i) => i);   // distinguishable content
+const OTHER = new Uint8Array(64).fill(0xa5);
+
+test("the probe addresses are the candidate capacities, not the declared end", () => {
+  // The whole check turns on WHERE we read. On a 4 MB die claiming 16 MB,
+  // "declared - 4KB" wraps to 0x3FF000 — the top of the real part, which does
+  // NOT mirror offset zero. Only the capacity boundaries alias the head.
+  const c = flashAliasCandidates(16 * MB);
+  assert.ok(c.includes(4 * MB), "4 MB must be probed — it's the classic fake");
+  assert.ok(c.includes(8 * MB));
+  assert.ok(!c.includes(16 * MB), "the declared size itself can't alias");
+  assert.ok(!c.some((x) => x > 16 * MB));
+  assert.ok(!c.includes(16 * MB - 0x1000),
+    "declared-minus-a-sector is the address that does NOT work");
+  assert.deepEqual(flashAliasCandidates(256 * 1024), []);
+});
+
+test("a 4 MB part sold as 16 MB is caught, and named at its real size", () => {
+  // Physical 4 MB: reads at 4, 8 and 12 MB all wrap to offset zero.
+  const probes = flashAliasCandidates(16 * MB).map((at) => ({
+    atBytes: at, bytes: at % (4 * MB) === 0 ? HEAD.slice() : OTHER.slice(),
+  }));
+  const v = flashAliasVerdict({ declaredBytes: 16 * MB, head: HEAD, probes });
   assert.equal(v.level, "stop");
-  assert.match(v.label, /16 MB/);
+  assert.match(v.label, /4 MB/);
+  assert.match(v.label, /not the 16 MB/);
+});
+
+test("the naive probe this replaced would have missed it", () => {
+  // Regression guard for the original bug: comparing the head against the
+  // last sector of the DECLARED size reads real-part content, not a mirror,
+  // so it looks clean. That single non-matching probe must not say "clear"
+  // by itself — the candidate boundaries are what carry the verdict.
+  const naive = [{ atBytes: 16 * MB - 0x1000, bytes: OTHER.slice() }];
+  assert.equal(flashAliasVerdict({ declaredBytes: 16 * MB, head: HEAD, probes: naive }).level,
+    "clear");
+  const real = flashAliasCandidates(16 * MB).map((at) => ({
+    atBytes: at, bytes: at % (4 * MB) === 0 ? HEAD.slice() : OTHER.slice(),
+  }));
+  assert.equal(flashAliasVerdict({ declaredBytes: 16 * MB, head: HEAD, probes: real }).level,
+    "stop");
 });
 
 test("a genuinely sized chip reads clear", () => {
-  const head = Uint8Array.from({ length: 64 }, (_, i) => i);
-  const tail = new Uint8Array(64).fill(0xff);
-  assert.equal(flashAliasVerdict({ declaredBytes: 8 * 1024 * 1024, head, tail }).level, "clear");
+  const probes = flashAliasCandidates(8 * MB).map((at) => ({ atBytes: at, bytes: OTHER.slice() }));
+  assert.equal(flashAliasVerdict({ declaredBytes: 8 * MB, head: HEAD, probes }).level, "clear");
 });
 
 test("a blank chip is inconclusive, never an accusation", () => {
   const blank = new Uint8Array(64).fill(0xff);
-  const v = flashAliasVerdict({ declaredBytes: 4 * 1024 * 1024, head: blank, tail: blank.slice() });
+  const probes = flashAliasCandidates(4 * MB).map((at) => ({ atBytes: at, bytes: blank.slice() }));
+  const v = flashAliasVerdict({ declaredBytes: 4 * MB, head: blank, probes });
   assert.equal(v.level, "inconclusive");
   assert.match(v.detail, /after firmware is written/);
 });
 
 test("missing evidence is 'not checked', which never fails the verdict", () => {
   assert.equal(flashAliasVerdict({}).level, "unknown");
+  assert.equal(flashAliasVerdict({ declaredBytes: 4 * MB, head: HEAD, probes: [] }).level, "unknown");
   assert.equal(intakeVerdict([flashAliasVerdict({})]).level, "clear");
 });
 
@@ -286,6 +354,18 @@ test("firmware with no readable descriptor is flagged, not assumed blank", () =>
   assert.equal(shippedWith({}).level, "attention");
 });
 
+test("a failed read is unchecked, never 'arrived erased'", () => {
+  // The inversion to avoid: a chip we could not read at all reporting as the
+  // single cleanest outcome on the page.
+  const failed = shippedWith({ read: "failed" });
+  assert.equal(failed.kind, "unread");
+  assert.equal(failed.level, "inconclusive");
+  assert.notEqual(failed.kind, "blank");
+  assert.equal(intakeVerdict([failed]).level, "inconclusive");
+  // And a read that DID succeed on an empty chip is still the clean answer.
+  assert.equal(shippedWith({ read: "ok", blank: true }).level, "clear");
+});
+
 // ── cold boot + first contact ───────────────────────────────────────────────
 
 test("cold boot is reported as what the user did, not as a measurement", () => {
@@ -301,13 +381,27 @@ test("cold boot is reported as what the user did, not as a measurement", () => {
   assert.equal(coldBootVerdict({ heldBoot: false, hadResidentFirmware: false }).level, "clear");
 });
 
-test("first contact is any board we have not written ourselves", () => {
-  assert.equal(isFirstContact({ current: null }), true);
-  assert.equal(isFirstContact({ current: { unknown: true } }), true);
-  assert.equal(isFirstContact({ current: { projectName: "micropython" } }), true);
-  assert.equal(isFirstContact({ current: { productName: "Canary Sense", version: "2.3.0" } }), false);
-  // Already onboarded this session → not first contact, even if the read failed.
-  assert.equal(isFirstContact({ current: { unknown: true }, rosterHit: { n: 1 } }), false);
+test("first contact is waived only by evidence the board can't forge", () => {
+  assert.equal(isFirstContact({}), true);
+  // Our own session history — we wrote this exact MAC.
+  assert.equal(isFirstContact({ rosterHit: { n: 1 } }), false);
+  // A human explicitly claiming the board.
+  assert.equal(isFirstContact({ ownerClaimed: true }), false);
+});
+
+test("a hostile image cannot talk its way out of the erase", () => {
+  // The bug this replaced: the resident esp_app_desc_t project name waived
+  // the erase, so an image only had to call itself a known SecuraCV product
+  // to skip the wipe that would have removed it. That string lives in
+  // writable flash on an untrusted board, so it must not be an input at all.
+  for (const claim of ["canary-wap", "Canary Sense", "canary-vision"]) {
+    assert.equal(
+      isFirstContact({ current: { productName: claim, projectName: claim, version: "2.3.0" } }),
+      true,
+      `a board announcing itself as "${claim}" must still be first contact`);
+  }
+  assert.ok(!/\bcurrent\b/.test(isFirstContact.toString()),
+    "isFirstContact must not read the board's own firmware claim");
 });
 
 // ── the overall verdict ─────────────────────────────────────────────────────

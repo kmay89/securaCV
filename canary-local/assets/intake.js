@@ -56,6 +56,18 @@ export function efuseField(words, bit, width) {
   return out >>> 0;
 }
 
+// Several ESP32 counter eFuses are read by the PARITY of their set bits, not
+// by their numeric value: ESP-IDF's flash-encryption check walks the bits and
+// flips a flag for each one set (esp_efuse_fields.c), so 0b001 and 0b111 are
+// "enabled" while 0b011 is "disabled again". The CSV comment
+// "…when 1 or 3 bits are set" counts BITS, not values — reading it as the
+// values 1 and 3 gets the common 0b011 case exactly backwards.
+export function oddParity(v) {
+  let odd = false;
+  for (let x = v >>> 0; x; x >>>= 1) if (x & 1) odd = !odd;
+  return odd;
+}
+
 // The security fields, with block-0 bit offsets taken verbatim from ESP-IDF's
 // components/efuse/<chip>/esp_efuse_table.csv. Only fields that are ZERO on a
 // factory-fresh part are listed: Espressif does burn eFuses at the factory
@@ -72,8 +84,13 @@ const COMMON_EFUSES = [
   { key: "SPI_BOOT_CRYPT_CNT", bit: 82, width: 3, severity: "stop",
     label: "Flash encryption",
     meaning: "Flash is encrypted with a key burned into this chip. Reads come back as ciphertext and a plaintext image won't boot. Not reversible.",
-    // 1 or 3 bits set = enabled; 0 and the even counts mean disabled.
-    enabled: (v) => [1, 3, 7].includes(v) },
+    // Odd number of BITS set = encryption on (0b001, 0b111); an even count
+    // means it was turned on and then off again (0b011). Both mean a person
+    // was here, so an even count is still worth saying out loud — just not
+    // a reason to refuse the board.
+    active: (v) => oddParity(v),
+    touched: { severity: "attention",
+      meaning: "Flash encryption was switched on and then off again by a previous owner. It isn't active now, so the board still works — but this chip has been through somebody's provisioning, and the counter can only be burned a couple more times." } },
   { key: "DIS_DOWNLOAD_MODE", bit: 128, width: 1, severity: "stop",
     label: "Download mode disabled",
     meaning: "Somebody burned away the USB recovery path. This is the one state a Canary cannot be flashed out of." },
@@ -89,10 +106,17 @@ const COMMON_EFUSES = [
   { key: "DIS_PAD_JTAG", bit: 51, width: 1, severity: "attention",
     label: "JTAG permanently disabled",
     meaning: "Hardware debug was burned off. Harmless to run, but a factory-fresh board never has this set." },
+  // Also a bit-counter, and ESP-IDF's "odd number 1 means disable" wording
+  // suggests the same parity rule as the crypt counter — but we could not
+  // confirm that against IDF source the way we did for SPI_BOOT_CRYPT_CNT.
+  // It doesn't matter for what we actually claim: we are not reporting
+  // whether JTAG is off right now, we are reporting that a factory-fresh
+  // board reads zero here and this one doesn't. Any non-zero value is a
+  // person's fingerprint whichever way the parity falls, so that is the
+  // claim the copy makes.
   { key: "SOFT_DIS_JTAG", bit: 48, width: 3, severity: "attention",
-    label: "JTAG soft-disabled",
-    meaning: "Debug access was locked in software-reversible form by a previous owner.",
-    enabled: (v) => (v & 1) === 1 },
+    label: "JTAG lock bits",
+    meaning: "Somebody burned the JTAG soft-disable bits. A factory-fresh board reads zero here. (We don't claim what state debug is in right now — only that this chip left the factory untouched and isn't untouched any more.)" },
   { key: "SECURE_VERSION", bit: 142, width: 16, severity: "attention",
     label: "Anti-rollback floor",
     meaning: "An anti-rollback minimum was burned in. The board will refuse firmware it considers older — including, possibly, ours." },
@@ -135,11 +159,23 @@ export function readSecurityEfuses(chip, words) {
   if (!Array.isArray(words) || words.length < EFUSE_BLOCK0_WORDS) {
     return { supported: true, chip, fields: [], burned: [], virgin: null, unread: true };
   }
+  // Three states, not two. "active" is the dangerous reading (encryption on,
+  // secure boot on). "touched" is a field that was burned but isn't currently
+  // in force — it can't hurt the install, but it proves a person was here, and
+  // silently folding it into "clean" would hand a used board a clean bill of
+  // health. Only fields that can actually be un-set declare a `touched` rule;
+  // for everything else burned means active.
   const fields = table.map((f) => {
     const value = efuseField(words, f.bit, f.width);
-    const enabled = f.enabled ? f.enabled(value) : value > 0;
-    return { key: f.key, label: f.label, meaning: f.meaning, severity: f.severity,
-             value, burned: !!enabled };
+    const active = f.active ? f.active(value) : value > 0;
+    const touched = value > 0;
+    let state = "clean", severity = null, meaning = null;
+    if (active) { state = "active"; severity = f.severity; meaning = f.meaning; }
+    else if (touched && f.touched) {
+      state = "touched"; severity = f.touched.severity; meaning = f.touched.meaning;
+    }
+    return { key: f.key, label: f.label, value, state, severity, meaning,
+             burned: state !== "clean" };
   });
   const burned = fields.filter((f) => f.burned);
   return { supported: true, chip, words: words.slice(0, EFUSE_BLOCK0_WORDS),
@@ -153,7 +189,9 @@ export function efuseFindings(scan) {
   if (!scan || !scan.supported) return [];
   return (scan.burned || []).map((f) => ({
     level: f.severity,
-    label: `${f.label} is already burned in`,
+    label: f.state === "active"
+      ? `${f.label} is already burned in`
+      : `${f.label} was burned and undone`,
     detail: f.meaning,
     key: f.key,
   }));
@@ -182,22 +220,42 @@ function sameBytes(a, b) {
   return true;
 }
 
-export function flashAliasVerdict({ declaredBytes, head, tail } = {}) {
-  if (!declaredBytes || !head || !tail) {
+// WHERE you read matters, and getting it wrong makes the check useless. If a
+// 4 MB part claims 16 MB, address 0xFFF000 (declared − 4 KB) wraps modulo the
+// REAL 4 MB to 0x3FF000 — the top of the real part, which holds something
+// different from offset 0, so a naive "compare the two ends" probe sees two
+// unequal blocks and happily calls a counterfeit genuine.
+//
+// The addresses that actually alias offset 0 are the candidate capacities
+// themselves: on a real 4 MB die, address 0x400000 IS address 0. So we probe
+// each power-of-two capacity below the declared size and look for the one
+// that mirrors the head.
+export function flashAliasCandidates(declaredBytes) {
+  const out = [];
+  for (let size = 256 * 1024; size < declaredBytes; size *= 2) out.push(size);
+  return out;
+}
+
+export function flashAliasVerdict({ declaredBytes, head, probes } = {}) {
+  if (!declaredBytes || !head || !Array.isArray(probes) || !probes.length) {
     return { level: "unknown", label: "Flash size not checked" };
   }
   if (looksUniform(head)) {
     return { level: "inconclusive",
       label: "Flash size can't be confirmed yet — the chip is blank",
-      detail: "There's nothing at the start of the chip to compare the far end against. " +
-              "The check becomes conclusive after firmware is written." };
+      detail: "Every byte at the start of the chip is the same, so there's no pattern to " +
+              "look for further up. On a blank part a mirror and an honest chip read " +
+              "identically. The check becomes conclusive after firmware is written." };
   }
-  if (sameBytes(head, tail)) {
+  // The smallest aliasing candidate is the real capacity: a 4 MB die mirrors
+  // at 4, 8 and 12 MB, so the first hit is the true size.
+  const hit = probes.find((p) => p && p.bytes && sameBytes(head, p.bytes));
+  if (hit) {
     return { level: "stop",
-      label: `Flash is smaller than the ${formatSize(declaredBytes)} it claims`,
-      detail: "The far end of the chip reads back identical to the start — the address " +
-              "lines are wrapping around, which is what a relabelled flash part does. " +
-              "Firmware written past the real capacity would be silently lost." };
+      label: `Flash is ${formatSize(hit.atBytes)}, not the ${formatSize(declaredBytes)} it claims`,
+      detail: `Reading at ${formatSize(hit.atBytes)} returns the same bytes as offset zero — ` +
+              "the address lines are wrapping, which is exactly what a relabelled flash " +
+              "part does. Anything written past the real capacity would be silently lost." };
   }
   return { level: "clear", label: `Flash reads a genuine ${formatSize(declaredBytes)}` };
 }
@@ -268,7 +326,20 @@ export const KNOWN_STOCK = [
   { match: /^(hello[-_ ]?world|blink)/i, name: "a factory test sketch" },
 ];
 
-export function shippedWith({ projectName, blank } = {}) {
+// `read` is the outcome of actually pulling the partition sector off the chip:
+// "ok" (we got bytes), or "failed" (the read threw). These must stay distinct
+// from what we found in those bytes — treating a failed read as an empty chip
+// would turn missing evidence into the single cleanest verdict on the page,
+// which is the exact inversion this whole module exists to avoid.
+export function shippedWith({ projectName, blank, read = "ok" } = {}) {
+  if (read !== "ok") {
+    return { level: "inconclusive", kind: "unread",
+      label: "We couldn't read what's on the chip",
+      detail: "The partition sector wouldn't come back over USB, so we don't know what " +
+              "this board arrived running — that's unchecked, not clean. Worth a retry " +
+              "on a different cable or port. The full erase below removes whatever is " +
+              "there either way." };
+  }
   if (blank) {
     return { level: "clear", kind: "blank", label: "The chip arrived erased",
       detail: "Nothing was on it to run. This is the cleanest state a board can arrive in." };
@@ -344,12 +415,26 @@ export function coldBootVerdict({ heldBoot, hadResidentFirmware } = {}) {
             "while the cable goes in and it never gets the chance." };
 }
 
-// A board is on its "first contact" if we have never written to it: no
-// SecuraCV firmware read back, and not one we onboarded earlier this session.
+// A board is on its "first contact" until something WE trust says otherwise.
 // First contact is what makes the full erase mandatory — a normal install
-// writes only the regions it needs, so anything sitting in a partition we
-// don't touch would survive.
-export function isFirstContact({ current, rosterHit } = {}) {
+// writes only the regions the image covers, so anything sitting in a
+// partition we don't touch would survive onto a board the user now believes
+// is theirs.
+//
+// Note what is deliberately NOT consulted here: the firmware already on the
+// chip. An earlier version of this waived the erase when the resident
+// `esp_app_desc_t` named a known SecuraCV product — but that string sits in
+// writable flash on an untrusted board, so a hostile image only had to call
+// itself "canary-wap" to skip the very erase that would have removed it. The
+// check was doing the attacker's work for them.
+//
+// Two things can waive it, and both originate outside the board:
+//   - `rosterHit`    — this exact MAC was onboarded by US, earlier this session
+//   - `ownerClaimed` — the human said "this is my board, keep its data"
+// Everything else, including a board confidently announcing itself as one of
+// ours, is first contact.
+export function isFirstContact({ rosterHit, ownerClaimed } = {}) {
   if (rosterHit) return false;
-  return !current || !!current.unknown || !current.productName;
+  if (ownerClaimed) return false;
+  return true;
 }

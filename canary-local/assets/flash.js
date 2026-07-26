@@ -81,6 +81,12 @@ const state = {
   // so the port genuinely can't tell us.
   heldBoot: false,
   intake: null,            // the read-only intake scan, once connected
+  ptRead: null,            // "ok" | "failed" — did the partition sector read at all
+  // The user's explicit "this board is already mine, keep its data". The ONLY
+  // thing besides our own session roster that waives the first-contact erase;
+  // the board's own claim about what firmware it runs never does, because on
+  // an untrusted board that claim is attacker-controlled.
+  ownerClaimed: false,
 };
 
 // ── boot ───────────────────────────────────────────────────────────────────
@@ -1143,11 +1149,19 @@ async function readFlashChunked(esploader, offset, size, onProgress) {
 async function readCurrentFirmware() {
   state.current = null;
   state.pt = null;
+  // Did the partition sector actually come off the chip? "ok" means we got
+  // bytes (whatever was in them); "failed" means the read threw. The intake
+  // check needs these apart — an unread chip must never render as an empty
+  // one, or missing evidence becomes the cleanest verdict on the page.
+  state.ptRead = "failed";
   const { esploader } = state.session;
   try {
     const ptBytes = await readFlashChunked(esploader, 0x8000, 0xc00);
+    state.ptRead = "ok";
     const { entries, apps } = core.parsePartitionTable(ptBytes);
-    state.pt = { entries, apps };
+    // An erased chip reads back as 0xFF with no valid table — that's a
+    // successfully-read blank, not a partition map, so leave state.pt null.
+    if (entries && entries.length) state.pt = { entries, apps };
     // The verdict must judge the slot the bootloader actually runs, so read
     // otadata (best-effort) before choosing which descriptor to trust.
     let otadata = null;
@@ -1206,14 +1220,20 @@ async function runIntake() {
   } catch { efuses = null; }
 
   // 2. Is the flash the size its SPI id claims? A relabelled part wraps its
-  //    address lines, so the far end mirrors the start.
+  //    address lines, so reading AT a candidate capacity returns offset zero
+  //    again. Probing "declared − 4 KB" would not do it: on a 4 MB die
+  //    pretending to be 16 MB that address wraps to 0x3FF000, the top of the
+  //    real part, which holds something other than the head.
   let alias = { level: "unknown", label: "Flash size not checked" };
   try {
     const declared = state.flashBytes;
     if (declared && declared > 0x2000) {
       const head = await readFlashChunked(esploader, 0, 0x1000);
-      const tail = await readFlashChunked(esploader, declared - 0x1000, 0x1000);
-      alias = intake.flashAliasVerdict({ declaredBytes: declared, head, tail });
+      const probes = [];
+      for (const at of intake.flashAliasCandidates(declared)) {
+        probes.push({ atBytes: at, bytes: await readFlashChunked(esploader, at, 0x1000) });
+      }
+      alias = intake.flashAliasVerdict({ declaredBytes: declared, head, probes });
     }
   } catch { /* leave it "not checked" — never invent a clean result */ }
 
@@ -1223,11 +1243,18 @@ async function runIntake() {
   });
   const shipped = intake.shippedWith({
     projectName: state.current && state.current.projectName,
-    blank: !state.pt,
+    // A partition sector we READ and found empty is a blank chip; one we
+    // couldn't read at all is unknown. state.ptRead keeps those apart —
+    // `!state.pt` alone would call a failed read the cleanest possible result.
+    blank: state.ptRead === "ok" && !state.pt,
+    read: state.ptRead,
   });
   const mac = intake.macChecks(macStr);
   const dup = intake.duplicateMacCheck(state.roster, macStr);
-  const firstContact = intake.isFirstContact({ current: state.current, rosterHit });
+  // Only OUR history waives the mandatory erase — never the board's own
+  // account of itself, which an untrusted image controls. `ownerClaimed` is
+  // the user's explicit "this is my board" on the confirm card.
+  const firstContact = intake.isFirstContact({ rosterHit, ownerClaimed: state.ownerClaimed });
 
   const findings = [cold, shipped, mac, dup, alias, ...intake.efuseFindings(efuses)];
   state.intake = {
@@ -2724,7 +2751,12 @@ async function onLocalFile(ev) {
       phaseConnected));
     return;
   }
-  startFlash({ localBytes: bytes, label: file.name, isLocal: true, skipBackup: skip });
+  // Advanced → local file goes straight to startFlash without passing through
+  // phaseConfirm, so it has to apply the first-contact erase itself. It is
+  // exactly the same board and exactly the same leftover partitions; picking
+  // your own .bin isn't a statement about the board's history.
+  startFlash({ localBytes: bytes, label: file.name, isLocal: true, skipBackup: skip,
+    eraseAll: !!(state.intake && state.intake.firstContact) });
 }
 
 function phaseConfirm(product, entry) {
@@ -2816,14 +2848,36 @@ function phaseConfirm(product, entry) {
   // Say WHY the erase isn't optional here, rather than silently ticking a box
   // the user can see is unticked in Advanced.
   if (forcedErase) {
-    const why = el("p", "flash-reassure flash-forced-erase");
-    why.append(el("span", "flash-shield", "🧹"));
-    why.append(document.createTextNode(
-      "The full erase isn't optional this time: this is the first board we've " +
-      "met, so we wipe the whole chip rather than only the parts we're about to " +
-      "write. A normal install leaves untouched partitions alone — fine for a " +
-      "Canary you already own, wrong for one that arrived carrying somebody " +
-      "else's firmware."));
+    const why = el("div", "flash-reassure flash-forced-erase");
+    const line = el("p");
+    line.append(el("span", "flash-shield", "🧹"));
+    line.append(document.createTextNode(
+      "The full erase isn't optional this time: this is a board we haven't " +
+      "written before, so we wipe the whole chip rather than only the parts " +
+      "we're about to write. A normal install leaves untouched partitions " +
+      "alone — fine for a Canary you already own, wrong for one that arrived " +
+      "carrying somebody else's firmware."));
+    why.append(line);
+    // The board saying "I'm already a Canary" is NOT enough to skip this — on
+    // an untrusted board that claim lives in writable flash. A human saying it
+    // is, so this is the one way out, and it's a deliberate click.
+    if (state.current && !state.current.unknown) {
+      const claim = el("p", "fineprint");
+      claim.append(document.createTextNode(
+        "It reports itself as " +
+        (state.current.productName || state.current.projectName || "SecuraCV firmware") +
+        ", but that text sits in flash the board controls, so it can't be the thing " +
+        "that decides. If this is genuinely your own Canary and you want to keep its " +
+        "identity key and settings, say so: "));
+      const mine = el("button", "ghost small", "it's mine — keep its data");
+      mine.addEventListener("click", () => {
+        state.ownerClaimed = true;
+        if (state.intake) state.intake.firstContact = false;
+        setPhase(phaseConfirm(product, entry));
+      });
+      claim.append(mine);
+      why.append(claim);
+    }
     box.append(why);
   }
 

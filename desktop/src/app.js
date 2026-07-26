@@ -604,6 +604,12 @@ function resetSteps() {
   setStatus("flash-result", "");
   $("provisioning").classList.add("hidden");
   $("host-flash-controls").classList.remove("hidden");
+  // Re-arm the first-contact erase for every board that attaches. The checkbox
+  // starts ticked in the markup, but that only happens once per app launch —
+  // so unticking it to reflash a known Canary would silently carry over to the
+  // next board plugged in, which is precisely the marketplace board that needs
+  // the wipe. The safe default has to be restored per board, not per session.
+  if ($("first-contact")) $("first-contact").checked = true;
   $("module-flow").classList.add("hidden");
   $("serial-monitor").classList.add("hidden");
   renderReceipts();

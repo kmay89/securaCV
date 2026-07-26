@@ -384,6 +384,29 @@ test("first contact forces a full erase on both flashers", () => {
     "desktop/src-tauri/src/lib.rs ignores erase_first — the checkbox does nothing");
   assert.match(libRs, /erase_first\.unwrap_or\(false\)/,
     "erase_first must fail closed to 'no erase' only when explicitly absent");
+
+  // The safe default has to be restored for EVERY board, not once per app
+  // launch. Unticking it to reflash a known Canary must not carry over to the
+  // next board plugged in — which is exactly the marketplace board that needs
+  // the wipe.
+  assert.match(appJs, /function resetSteps\b[\s\S]*?first-contact"\)\.checked = true/,
+    "desktop resetSteps must re-arm the first-contact erase for each attached " +
+    "board, or an untick leaks from one board to the next");
+});
+
+test("the board's own firmware claim never waives the first-contact erase", () => {
+  // A board bought unflashed is untrusted, and its esp_app_desc_t project name
+  // lives in writable flash — so an image that calls itself a known SecuraCV
+  // product must not thereby skip the erase that would remove it. Only our own
+  // session roster or an explicit human claim may waive it.
+  const intakeJs = read(join(CANARY, "assets/intake.js"));
+  const body = /export function isFirstContact\(([\s\S]*?)\n}/.exec(intakeJs);
+  assert.ok(body, "isFirstContact vanished from canary-local/assets/intake.js");
+  assert.ok(!/current|productName|projectName/.test(body[1]),
+    "isFirstContact reads the board's own firmware claim again — that string is " +
+    "attacker-controlled on an untrusted board, so it cannot gate the erase");
+  assert.match(body[1], /rosterHit/, "our own session history must still waive it");
+  assert.match(body[1], /ownerClaimed/, "an explicit human claim must still waive it");
 });
 
 test("the eFuse gap between the two flashers is stated, not hidden", () => {

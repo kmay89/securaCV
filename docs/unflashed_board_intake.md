@@ -87,8 +87,8 @@ Fields that mean **stop** — the board can't become a Canary, and no erase will
 change that, because eFuses burn one way only:
 
 - `SECURE_BOOT_EN` — locked to somebody else's signing key
-- `SPI_BOOT_CRYPT_CNT` (odd parity) — flash encrypted with a key burned into
-  this chip
+- `SPI_BOOT_CRYPT_CNT` with an **odd number of bits set** — flash encrypted
+  with a key burned into this chip
 - `DIS_DOWNLOAD_MODE` — the USB recovery path is gone
 - `ENABLE_SECURITY_DOWNLOAD` — reduced command set, so we can't even verify
   what's on it
@@ -97,6 +97,31 @@ Fields that mean **not factory-fresh** — worth knowing, not fatal:
 `SECURE_BOOT_AGGRESSIVE_REVOKE`, `DIS_DOWNLOAD_MANUAL_ENCRYPT`, `DIS_PAD_JTAG`,
 `SOFT_DIS_JTAG`, the USB-JTAG disables, and a non-zero `SECURE_VERSION`
 (an anti-rollback floor that may refuse our firmware).
+
+#### Counters are read by bit parity, and this is easy to get wrong
+
+`SPI_BOOT_CRYPT_CNT` is three bits, and encryption is on when an **odd number
+of bits** are set — ESP-IDF walks the bits and flips a flag for each one
+(`esp_efuse_fields.c`). The standard burn ladder is `0b000 → 0b001 → 0b011 →
+0b111`, so it goes on, *off*, on.
+
+The CSV comment reads "Enables flash encryption when 1 or 3 bits are set", and
+that sentence counts **bits, not values**. Reading it as "the values 1 and 3"
+inverts the most common case: `0b011` is encryption *disabled*, and treating it
+as enabled would refuse a perfectly good board, while `0b010` — one bit, so
+genuinely encrypted — would be waved through. This module got that wrong on the
+first pass; `oddParity()` and its test exist so it can't come back.
+
+The counter also gets a third state, because two isn't enough. **Active** (odd
+parity) is a stop. **Touched** — burned but currently off — is not a stop, but
+it isn't clean either: this chip went through somebody's provisioning, and
+folding that into "clean" would hand a used board a clean bill of health.
+
+`SOFT_DIS_JTAG` is worded the same way, but we could not confirm its parity
+rule against IDF source the way we did for the crypt counter — so we don't
+claim one. The report says only what holds under either reading: a
+factory-fresh board reads zero here, and this one doesn't. We report the
+fingerprint, not the live JTAG state.
 
 Two deliberate omissions, both to avoid crying wolf on honest boards:
 
@@ -115,13 +140,23 @@ clean.
 ### 2. Is the flash the size it claims?
 
 A flash die reports its capacity in its JEDEC id, and a relabelled part simply
-lies: address lines above the real capacity wrap, so the top of the "16 MB"
-chip mirrors the bottom of the real 4 MB one. We read 4 KB from each end and
-compare — no writing.
+lies: address lines above the real capacity wrap, so a read past the end comes
+back as a mirror of the start.
+
+**Where you read decides whether this works at all.** The obvious probe —
+compare offset 0 against `declared − 4 KB` — does not: on a 4 MB die claiming
+16 MB, address `0xFFF000` wraps modulo the real 4 MB to `0x3FF000`, which is
+the *top of the real part* and holds something other than the head. Two unequal
+blocks, counterfeit declared genuine. The first version of this shipped that
+bug; the addresses that actually alias offset 0 are the **candidate capacities
+themselves**, because on a real 4 MB die address `0x400000` *is* address 0. So
+we read 4 KB at each power-of-two capacity below the declared size and look for
+the one that mirrors the head. The smallest hit is the true size, and we name
+it.
 
 The probe is only conclusive when offset 0 holds something distinguishable. On
-a blank chip both ends are `0xFF` and match legitimately, so the verdict is
-**inconclusive**, never an accusation.
+a blank chip every read is `0xFF` and a mirror is indistinguishable from an
+honest chip, so the verdict is **inconclusive**, never an accusation.
 
 ### 3. The MAC
 
@@ -136,7 +171,11 @@ address is a far louder signal than any vendor list.
 ### 4. What it arrived running
 
 Matched on the `esp_app_desc_t` project name — a real string read off the
-board. MicroPython, CircuitPython, ESP-AT, Arduino, ESPHome, Tasmota and the
+board. (Read for *description*, never for a trust decision: see the
+first-contact rule below for why that distinction matters.) A partition sector
+we read and found empty is a blank chip; one we could not read at all is
+reported **unchecked**, because letting a failed read render as "arrived
+erased" would turn missing evidence into the cleanest verdict on the page. MicroPython, CircuitPython, ESP-AT, Arduino, ESPHome, Tasmota and the
 usual factory blink sketches are named as known stock. Anything else is
 reported as *unrecognized*, which is an invitation to look at the backup before
 erasing, not an accusation.
@@ -152,9 +191,28 @@ if a board is misbehaving." A normal install writes only the regions the image
 covers, so anything a previous owner left in a partition we don't touch would
 ride straight through onto a board the user now believes is theirs.
 
-On **first contact** — a board with no SecuraCV firmware we can read, and not
-one onboarded earlier this session — the full chip erase is now mandatory and
-the Advanced toggle cannot turn it off. The confirm card says why.
+On **first contact** the full chip erase is mandatory, the Advanced toggle
+cannot turn it off, and the local-file path in Advanced applies it too —
+choosing your own `.bin` says nothing about the board's history.
+
+**What counts as first contact is the subtle part.** The first version asked
+the board: if the resident `esp_app_desc_t` named a known SecuraCV product, the
+erase was waived. That is exactly backwards on an untrusted board. The app
+descriptor lives in writable flash, so a hostile image needed only to call
+itself `canary-wap` to skip the very erase that would have removed it — the
+check was doing the attacker's work.
+
+Only evidence originating **outside the board** may waive it:
+
+- the MAC is in **our session roster** — we wrote this exact board ourselves; or
+- the **human says so**. The confirm card shows what the board claims to be,
+  says plainly that the claim sits in flash the board controls, and offers a
+  deliberate "it's mine — keep its data" button. That preserves reflashing your
+  own Canary without losing its identity key, and puts the decision with the
+  one party a hostile image can't impersonate.
+
+A board's own confident announcement that it is already a Canary now buys it
+nothing.
 
 ## Where the two flashers differ, and why we say so
 
@@ -174,7 +232,7 @@ a reading. The safe default for a board of unknown provenance is to wipe it.
 
 **Known gap:** the desktop app's *local-file* flash path
 (`flash_local_file`) does not yet take the first-contact erase. The catalog
-flash path does. Tracked as a follow-up.
+flash path does, and the browser flasher applies it on both paths. Tracked as a follow-up.
 
 ## After the flash
 
