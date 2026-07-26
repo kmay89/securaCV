@@ -262,10 +262,19 @@ async fn run_sidecar_capture(app: &AppHandle, args: Vec<String>) -> Result<(i32,
     Ok((code, buf))
 }
 
-/// Ask the connected board which ESP32 it is. This is the "you can't pick the
-/// wrong image" guard: the UI only offers products whose `chip` matches.
+/// What `detect_chip` reports: the canonical chip name — the "you can't pick the
+/// wrong image" guard, since the UI only offers products whose `chip` matches —
+/// plus the flash size in bytes when board-info named it, which the rescue
+/// bench's full-chip backup needs. Both come from the one board-info call.
+#[derive(Serialize)]
+pub struct ChipInfo {
+    chip: String,
+    flash_bytes: Option<u64>,
+}
+
+/// Ask the connected board which ESP32 it is (and how much flash it carries).
 #[tauri::command]
-async fn detect_chip(app: AppHandle, port: String) -> Result<String, String> {
+async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
     let (code, out) =
         run_sidecar_capture(&app, vec!["board-info".into(), "--port".into(), port]).await?;
     // Check the exit code before parsing: a *failed* board-info can still print
@@ -278,7 +287,10 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<String, String> {
         ));
     }
     match canonical_chip(&out) {
-        Some(chip) => Ok(chip.to_string()),
+        Some(chip) => Ok(ChipInfo {
+            chip: chip.to_string(),
+            flash_bytes: rescue::parse_flash_size(&out),
+        }),
         None => Err(format!(
             "couldn't recognize the chip from espflash's output:\n{}",
             out.trim()

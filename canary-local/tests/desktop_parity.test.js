@@ -279,3 +279,38 @@ test("offset-0 write guard: both flashers refuse an app-only image before writin
       `before the write (desktop/src-tauri/src/lib.rs)`);
   }
 });
+
+test("rescue bench: both flashers can back up, restore, and erase — native wired end-to-end", () => {
+  // CLAUDE.md: the two frontends share no UI code, so a rescue capability on one
+  // must exist on the other or half the users lose it. The browser Lab has had
+  // backup / restore / full-erase for a while; this asserts the native Mac app
+  // reached parity AND that its controls are actually wired to the backend
+  // commands (a button with nothing behind it is the silent-broken case).
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+
+  for (const id of ["rescue-backup-btn", "rescue-restore-btn", "rescue-erase-btn"]) {
+    assert.match(html, new RegExp(`id="${id}"`),
+      `desktop/src/index.html is missing the rescue control #${id}`);
+  }
+  for (const fn of ["onRescueBackup", "onRescueRestore", "onRescueErase"]) {
+    assert.match(appJs, new RegExp(`function ${fn}\\b`),
+      `desktop/src/app.js is missing ${fn} — a rescue button with no handler`);
+  }
+  // Every rescue command the backend exposes must actually be invoked, or the
+  // native bench is decorative. (write_local_image is also checked by the
+  // offset-0 guard test above; here we assert it's reachable from the UI.)
+  for (const cmd of ["backup_flash", "write_local_image", "erase_chip"]) {
+    assert.match(appJs, new RegExp(`invoke\\(\\s*["']${cmd}["']`),
+      `desktop/src/app.js never invokes ${cmd} — the native rescue bench is unreachable`);
+    assert.match(libRs, new RegExp(`fn ${cmd}\\b`),
+      `desktop/src-tauri/src/lib.rs is missing the ${cmd} command the UI calls`);
+  }
+
+  // The other direction: the browser must keep the same three capabilities.
+  const browser = read(join(CANARY, "assets/flash.js"));
+  assert.match(browser, /flash-erase-all/, "browser Lab lost its full-erase control");
+  assert.match(browser, /isBackup:\s*true/, "browser Lab lost its restore-a-backup path");
+  assert.match(browser, /onRestoreFile|takeBackup|standalone backup/i,
+    "browser Lab lost its backup/restore entry points");
+});

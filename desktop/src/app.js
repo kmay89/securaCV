@@ -63,6 +63,7 @@ const state = {
   portInfo: null,
   portKind: null,    // "esp32" | "we2"
   chip: null,        // identified chip for state.port, or null
+  flashBytes: null,  // detected flash size (bytes) for state.chip — the rescue backup needs it
   product: null,
   detecting: false,  // a detect_chip call is in flight
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
@@ -182,6 +183,9 @@ async function boot() {
   $("dev-channel").addEventListener("change", onDevChannelToggle);
   $("local-pick").addEventListener("click", onPickLocalFile);
   $("local-flash-btn").addEventListener("click", onFlashLocalFile);
+  $("rescue-backup-btn").addEventListener("click", onRescueBackup);
+  $("rescue-restore-btn").addEventListener("click", onRescueRestore);
+  $("rescue-erase-btn").addEventListener("click", onRescueErase);
   updateLocalFlashUi();
   $("monitor-start").addEventListener("click", startMonitor);
   $("monitor-stop").addEventListener("click", stopMonitor);
@@ -551,10 +555,11 @@ async function identify(portInfo) {
   setConn("reading", `Found ${label} — reading chip…`);
   $("download-mode").classList.add("hidden");
   try {
-    const chip = await invoke("detect_chip", { port });
+    const info = await invoke("detect_chip", { port });
     if (port !== state.port) return; // unplugged/switched while we were reading
-    state.chip = chip;
-    setConn("connected", `Connected · ${chip} on ${port}`);
+    state.chip = info.chip;
+    state.flashBytes = info.flash_bytes; // may be null if board-info didn't report it
+    setConn("connected", `Connected · ${info.chip} on ${port}`);
     $("recheck").classList.remove("hidden");
 
     refreshManifest();
@@ -578,6 +583,7 @@ function onDisconnect() {
   state.portInfo = null;
   state.portKind = null;
   state.chip = null;
+  state.flashBytes = null;
   state.product = null;
   state.failedPort = null;
   resetSteps();
@@ -970,6 +976,164 @@ function updateLocalFlashUi() {
     : "Plug in a Canary and let the chip read finish first — the file is " +
       "written to whichever chip is connected.";
   $("local-flash-btn").disabled = !(state.localFile && connected && !state.busy);
+  // The rescue bench sits in the same Advanced card and gates on the same
+  // connection, so refresh it on every pass through here.
+  updateRescueUi();
+}
+
+// ── the rescue bench (Advanced): back up / restore / erase ──────────────────
+// Parity with the browser Lab's rescue tools, over the native espflash sidecar
+// (backup_flash / write_local_image / erase_chip stream `rescue:log`). Nothing
+// here can brick the board — the ESP32's first-stage bootloader is mask ROM.
+function rescueButtons(enabled) {
+  for (const id of ["rescue-backup-btn", "rescue-restore-btn", "rescue-erase-btn"]) {
+    const b = $(id);
+    if (b) b.disabled = !enabled;
+  }
+}
+
+function updateRescueUi() {
+  const connected = !!state.chip && state.portKind === "esp32";
+  const note = $("rescue-chip-note");
+  if (note) {
+    note.textContent = connected
+      ? `Connected: ${state.chip} on ${state.port}` +
+        (state.flashBytes ? ` · ${Math.round(state.flashBytes / (1 << 20))} MB flash` : "")
+      : "Plug in a Canary and let the chip read finish first.";
+  }
+  const on = connected && !state.busy;
+  rescueButtons(on);
+  // A backup is a full-chip read, so it needs the flash size; without it,
+  // restore and erase still work but backup can't.
+  const backupBtn = $("rescue-backup-btn");
+  if (backupBtn && !state.flashBytes) backupBtn.disabled = true;
+}
+
+// The shared plumbing for one rescue operation: a fresh console, the rescue:log
+// stream, the busy-lock that keeps the port watcher off the wire, and an honest
+// result line. `op` runs the actual invoke and returns the success message; a
+// throw becomes the error line. A write/erase reboots or wipes the board, so by
+// default the detected chip is dropped afterward to force a clean re-read;
+// keepChip:true is for the read-only backup, which leaves the board untouched.
+async function runRescue(label, op, { keepChip = false } = {}) {
+  if (state.busy) return;
+  const con = $("rescue-console");
+  con.textContent = "";
+  con.classList.remove("hidden");
+  setStatus("rescue-result", "");
+  resetOutcome();
+  rescueButtons(false);
+  state.busy = true;
+  await stopMonitor();
+  const unlisten = await listen("rescue:log", (ev) => {
+    con.textContent += ev.payload + "\n";
+    con.scrollTop = con.scrollHeight;
+  });
+  try {
+    const okMsg = await op();
+    setStatus("rescue-result", okMsg, "ok");
+    logEvent("ok", `${label} ✓`);
+  } catch (e) {
+    setStatus("rescue-result", String(e), "err");
+    logEvent("err", `${label} failed: ` + e);
+  } finally {
+    unlisten();
+    state.busy = false;
+    if (!keepChip) {
+      state.chip = null;
+      state.flashBytes = null;
+      state.failedPort = null;
+    }
+    updateRescueUi();
+  }
+}
+
+async function onRescueBackup() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  if (!state.flashBytes) {
+    setStatus("rescue-result",
+      "Couldn't read this chip's flash size — reconnect in download mode and try again.", "err");
+    return;
+  }
+  const suggested = `securacv-${state.chip}-backup.bin`.replace(/[^\w.-]+/g, "-");
+  let out = null;
+  try {
+    out = await window.__TAURI__.dialog.save({
+      defaultPath: suggested,
+      filters: [{ name: "Flash backup", extensions: ["bin"] }],
+    });
+  } catch (e) {
+    setStatus("rescue-result", String(e), "err");
+    return;
+  }
+  if (!out) return;
+  // Read-only: the board isn't rebooted, so keep the detected chip.
+  await runRescue("Backup", async () => {
+    await invoke("backup_flash", {
+      port: state.port,
+      outPath: out,
+      flashSize: state.flashBytes,
+      baud: (state.catalog && state.catalog.flash_baud) || 921600,
+    });
+    return "Backup saved. Store the file like a house key — it holds the board's " +
+      "identity key and saved Wi-Fi.";
+  }, { keepChip: true });
+}
+
+async function onRescueRestore() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  let path = null;
+  try {
+    path = await window.__TAURI__.dialog.open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Firmware image or backup", extensions: ["bin"] }],
+    });
+  } catch (e) {
+    setStatus("rescue-result", String(e), "err");
+    return;
+  }
+  if (!path) return;
+  const name = String(path).split(/[\\/]/).pop();
+  let ok = false;
+  try {
+    ok = await window.__TAURI__.dialog.confirm(
+      `Write ${name} to the ${state.chip} on ${state.port}?\n\nThis overwrites the ` +
+      `whole chip from offset 0. A backup or a merged factory .bin is right; an ` +
+      `app-only build is refused before anything is written.`,
+      { title: "Restore / write a .bin", kind: "warning" });
+  } catch (_) {
+    ok = window.confirm(`Write ${name} to the ${state.chip} on ${state.port}?`);
+  }
+  if (!ok) return;
+  await runRescue("Restore", async () => {
+    await invoke("write_local_image", {
+      port: state.port,
+      path,
+      flashSize: state.flashBytes || null, // optional fit-check; the shape guard runs regardless
+      baud: (state.catalog && state.catalog.flash_baud) || 921600,
+    });
+    return `${name} written — the board is rebooting into it. Run a health check next.`;
+  });
+}
+
+async function onRescueErase() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  let ok = false;
+  try {
+    ok = await window.__TAURI__.dialog.confirm(
+      `Erase the entire ${state.chip} on ${state.port}?\n\nThis wipes everything — ` +
+      `including the board's Ed25519 identity key and saved Wi-Fi. Do this before ` +
+      `selling or giving a board away. Back it up first if you might want any of it back.`,
+      { title: "Erase the whole chip", kind: "warning" });
+  } catch (_) {
+    ok = window.confirm(`Erase the entire ${state.chip}? This destroys the identity key.`);
+  }
+  if (!ok) return;
+  await runRescue("Erase", async () => {
+    await invoke("erase_chip", { port: state.port });
+    return "Chip erased — factory-fresh. Flash any image next.";
+  });
 }
 
 async function onPickLocalFile() {
