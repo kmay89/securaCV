@@ -1009,21 +1009,28 @@ function updateRescueUi() {
   if (backupBtn && !state.flashBytes) backupBtn.disabled = true;
 }
 
-// The shared plumbing for one rescue operation: a fresh console, the rescue:log
-// stream, the busy-lock that keeps the port watcher off the wire, and an honest
-// result line. `op` runs the actual invoke and returns the success message; a
-// throw becomes the error line. A write/erase reboots or wipes the board, so by
-// default the detected chip is dropped afterward to force a clean re-read;
-// keepChip:true is for the read-only backup, which leaves the board untouched.
+const flashBaud = () => (state.catalog && state.catalog.flash_baud) || 921600;
+
+// Release the busy-lock a rescue handler took before opening its dialog, when
+// the user cancels out. The watcher resumes and the buttons re-enable.
+function cancelRescue() {
+  state.busy = false;
+  updateRescueUi();
+}
+
+// The shared plumbing for one CONFIRMED rescue operation: a fresh console, the
+// rescue:log stream, and releasing the busy-lock. The caller has already
+// snapshotted the target and set state.busy (so the port watcher can't swap the
+// board out while a dialog is open), so `op` runs the invoke against that
+// snapshot and returns the success line; a throw becomes the error line. A
+// write/erase reboots or wipes the board, so the detected chip is dropped
+// afterward to force a clean re-read; keepChip:true is for the read-only backup.
 async function runRescue(label, op, { keepChip = false } = {}) {
-  if (state.busy) return;
   const con = $("rescue-console");
   con.textContent = "";
   con.classList.remove("hidden");
   setStatus("rescue-result", "");
   resetOutcome();
-  rescueButtons(false);
-  state.busy = true;
   await stopMonitor();
   const unlisten = await listen("rescue:log", (ev) => {
     con.textContent += ev.payload + "\n";
@@ -1055,26 +1062,28 @@ async function onRescueBackup() {
       "Couldn't read this chip's flash size — reconnect in download mode and try again.", "err");
     return;
   }
-  const suggested = `securacv-${state.chip}-backup.bin`.replace(/[^\w.-]+/g, "-");
+  // Snapshot the target and take the busy-lock BEFORE the save sheet opens: the
+  // 1 s port watcher is otherwise free to swap in a different board while the
+  // dialog sits open, and the write must land on the board the user is looking
+  // at — never whatever got plugged in mid-dialog.
+  const port = state.port, chip = state.chip, flashBytes = state.flashBytes;
+  state.busy = true;
+  rescueButtons(false);
   let out = null;
   try {
     out = await window.__TAURI__.dialog.save({
-      defaultPath: suggested,
+      defaultPath: `securacv-${chip}-backup.bin`.replace(/[^\w.-]+/g, "-"),
       filters: [{ name: "Flash backup", extensions: ["bin"] }],
     });
   } catch (e) {
     setStatus("rescue-result", String(e), "err");
+    cancelRescue();
     return;
   }
-  if (!out) return;
+  if (!out) { cancelRescue(); return; }
   // Read-only: the board isn't rebooted, so keep the detected chip.
   await runRescue("Backup", async () => {
-    await invoke("backup_flash", {
-      port: state.port,
-      outPath: out,
-      flashSize: state.flashBytes,
-      baud: (state.catalog && state.catalog.flash_baud) || 921600,
-    });
+    await invoke("backup_flash", { port, outPath: out, flashSize: flashBytes, baud: flashBaud() });
     return "Backup saved. Store the file like a house key — it holds the board's " +
       "identity key and saved Wi-Fi.";
   }, { keepChip: true });
@@ -1082,6 +1091,11 @@ async function onRescueBackup() {
 
 async function onRescueRestore() {
   if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  // Snapshot + lock before the picker and the confirm, so the board named in
+  // the confirmation is the exact board written — not one swapped in meanwhile.
+  const port = state.port, chip = state.chip, flashBytes = state.flashBytes;
+  state.busy = true;
+  rescueButtons(false);
   let path = null;
   try {
     path = await window.__TAURI__.dialog.open({
@@ -1091,27 +1105,28 @@ async function onRescueRestore() {
     });
   } catch (e) {
     setStatus("rescue-result", String(e), "err");
+    cancelRescue();
     return;
   }
-  if (!path) return;
+  if (!path) { cancelRescue(); return; }
   const name = String(path).split(/[\\/]/).pop();
   let ok = false;
   try {
     ok = await window.__TAURI__.dialog.confirm(
-      `Write ${name} to the ${state.chip} on ${state.port}?\n\nThis overwrites the ` +
-      `whole chip from offset 0. A backup or a merged factory .bin is right; an ` +
-      `app-only build is refused before anything is written.`,
+      `Write ${name} to the ${chip} on ${port}?\n\nThis overwrites the whole chip ` +
+      `from offset 0. A backup or a merged factory .bin is right; an app-only ` +
+      `build is refused before anything is written.`,
       { title: "Restore / write a .bin", kind: "warning" });
   } catch (_) {
-    ok = window.confirm(`Write ${name} to the ${state.chip} on ${state.port}?`);
+    ok = window.confirm(`Write ${name} to the ${chip} on ${port}?`);
   }
-  if (!ok) return;
+  if (!ok) { cancelRescue(); return; }
   await runRescue("Restore", async () => {
     await invoke("write_local_image", {
-      port: state.port,
+      port,
       path,
-      flashSize: state.flashBytes || null, // optional fit-check; the shape guard runs regardless
-      baud: (state.catalog && state.catalog.flash_baud) || 921600,
+      flashSize: flashBytes || null, // optional fit-check; the shape guard runs regardless
+      baud: flashBaud(),
     });
     return `${name} written — the board is rebooting into it. Run a health check next.`;
   });
@@ -1119,19 +1134,25 @@ async function onRescueRestore() {
 
 async function onRescueErase() {
   if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  // Erase is the most dangerous of the three — it destroys the identity key —
+  // so snapshotting the target under the busy-lock before the confirm matters
+  // most here: approving must wipe the named board, never a mid-dialog swap-in.
+  const port = state.port, chip = state.chip;
+  state.busy = true;
+  rescueButtons(false);
   let ok = false;
   try {
     ok = await window.__TAURI__.dialog.confirm(
-      `Erase the entire ${state.chip} on ${state.port}?\n\nThis wipes everything — ` +
-      `including the board's Ed25519 identity key and saved Wi-Fi. Do this before ` +
-      `selling or giving a board away. Back it up first if you might want any of it back.`,
+      `Erase the entire ${chip} on ${port}?\n\nThis wipes everything — including ` +
+      `the board's Ed25519 identity key and saved Wi-Fi. Do this before selling ` +
+      `or giving a board away. Back it up first if you might want any of it back.`,
       { title: "Erase the whole chip", kind: "warning" });
   } catch (_) {
-    ok = window.confirm(`Erase the entire ${state.chip}? This destroys the identity key.`);
+    ok = window.confirm(`Erase the entire ${chip}? This destroys the identity key.`);
   }
-  if (!ok) return;
+  if (!ok) { cancelRescue(); return; }
   await runRescue("Erase", async () => {
-    await invoke("erase_chip", { port: state.port });
+    await invoke("erase_chip", { port });
     return "Chip erased — factory-fresh. Flash any image next.";
   });
 }

@@ -273,10 +273,18 @@ test("offset-0 write guard: both flashers refuse an app-only image before writin
   // …and EVERY native command that writes a user-chosen file from offset 0 routes
   // through it. Pin both, so a future 0x0-write path can't skip the gate.
   for (const fn of ["flash_local_file", "write_local_image"]) {
-    assert.match(nativeFnBody(libRs, fn), /check_local_image\s*\(/,
+    const body = nativeFnBody(libRs, fn);
+    assert.match(body, /check_local_image\s*\(/,
       `native ${fn} writes a local image at 0x0 without calling check_local_image — ` +
       `an app-only .bin would overwrite the bootloader. Call check_local_image(&bytes)? ` +
       `before the write (desktop/src-tauri/src/lib.rs)`);
+    // …and it must write the bytes it validated, not re-read the path: a file
+    // swapped between the check and espflash's own read would slip unvalidated
+    // bytes past the guard. Staging the validated bytes closes that TOCTOU.
+    assert.match(body, /stage_firmware\s*\(/,
+      `native ${fn} hands the on-disk path to espflash instead of staging the ` +
+      `validated bytes — a file changed after the check would bypass the shape/size ` +
+      `guards. Stage with stage_firmware(&bytes, …) and write the staged temp.`);
   }
 });
 
