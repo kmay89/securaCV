@@ -31,6 +31,20 @@ const we2Core = read(join(CANARY, "assets/we2-core.js"));
 // The same fold the browser (flash-core.js:normalizeChip) and the native guard use.
 const normChip = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
 
+// The text of a top-level native fn (col-0 `fn`/`async fn`), from its signature
+// to the next top-level item. Reads source, not compiled Rust — enough to assert
+// which guard a command routes through without a desktop toolchain.
+const nativeFnBody = (src, name) => {
+  const sig = new RegExp(`\\n(?:pub\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`);
+  const m = sig.exec(src);
+  assert.ok(m, `couldn't find fn ${name} in desktop/src-tauri/src/lib.rs`);
+  const after = src.slice(m.index + 1);
+  // Stop at the next top-level item — its `fn`, its attribute (#[…]), or the doc
+  // comment (///) that precedes it — so a body can't bleed into the next command.
+  const next = after.search(/\n(?:pub\s+)?(?:async\s+)?fn\s+\w|\n\s*#\[|\n\s*\/\/\//);
+  return next >= 0 ? after.slice(0, next) : after;
+};
+
 test("chip guard: native recognizes every ESP32 chip the catalog guards", () => {
   // native canonical_chip() maps espflash's raw string → canonical via a hardcoded
   // ("esp32s3","ESP32-S3")-style table. Pull the canonical spellings out of it.
@@ -228,4 +242,40 @@ test("Hatchery spec: browser and native draw the whimsy from the SAME hatch.json
   const buildRs = read(join(ROOT, "desktop/src-tauri/build.rs"));
   assert.match(buildRs, /canary-local\/devices\/hatch\.json/,
     "native (build.rs) should embed canary-local/devices/hatch.json — the same spec the browser fetches");
+});
+
+test("offset-0 write guard: both flashers refuse an app-only image before writing 0x0", () => {
+  // A merged factory image and an app-only PlatformIO build BOTH open with the
+  // 0xE9 image magic, so byte 0 can't tell them apart — the only honest
+  // discriminator is the partition table at 0x8000. Anything written from offset
+  // 0 without that table lands on the bootloader and the board won't boot. This
+  // is a shared SAFETY contract: both surfaces must gate their offset-0 local
+  // writes on it, and EVERY native command that does such a write must route
+  // through the one guard. (The native rescue bench's write_local_image shipped
+  // without it once — a full-flash restore is safe, but "or any .bin" wasn't.)
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+
+  // Browser: the shape check exists, keys on 0x8000, and the local-file picker uses it.
+  assert.match(flashCore, /function localImageShape\b/,
+    "browser lost flash-core.js:localImageShape — the app-only-build refusal");
+  assert.match(flashCore, /localImageShape[\s\S]{0,400}0x8000/,
+    "browser localImageShape no longer checks the 0x8000 partition table");
+  assert.match(flashJs, /localImageShape/,
+    "the browser local-file path (flash.js:onLocalFile) no longer gates on core.localImageShape");
+
+  // Native: the shape check exists and keys on the 0x8000 partition table…
+  assert.match(libRs, /fn check_local_image\b/,
+    "native lost lib.rs:check_local_image — the app-only-build refusal");
+  assert.match(libRs, /check_local_image[\s\S]*?PARTITION_TABLE_OFFSET/,
+    "native check_local_image no longer checks the partition table at 0x8000");
+
+  // …and EVERY native command that writes a user-chosen file from offset 0 routes
+  // through it. Pin both, so a future 0x0-write path can't skip the gate.
+  for (const fn of ["flash_local_file", "write_local_image"]) {
+    assert.match(nativeFnBody(libRs, fn), /check_local_image\s*\(/,
+      `native ${fn} writes a local image at 0x0 without calling check_local_image — ` +
+      `an app-only .bin would overwrite the bootloader. Call check_local_image(&bytes)? ` +
+      `before the write (desktop/src-tauri/src/lib.rs)`);
+  }
 });
