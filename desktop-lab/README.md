@@ -92,8 +92,10 @@ npm run build
 Pushing a tag like `app-v0.1.0` runs
 [`.github/workflows/desktop-release.yml`](../.github/workflows/desktop-release.yml),
 which builds macOS (universal `.dmg`/`.app`) and Linux (`.AppImage`/`.deb`)
-and publishes them to a **draft GitHub Release**. Bump `version` in both
-`package.json` and `tauri.conf.json`, tag, and the installers appear on the
+and publishes them to a **draft GitHub Release**. Bump `version` in **all three**
+files that must agree — `package.json`, `src-tauri/tauri.conf.json`, and
+`src-tauri/Cargo.toml` (the release gate `../desktop/scripts/check_app_versions.py`
+fails the build if any drift) — tag, and the installers appear on the
 [releases page](https://github.com/kmay89/securaCV/releases) — which is where
 the website's Download page sends people.
 

@@ -70,7 +70,9 @@ desktop/
 ## Releasing
 
 CI does the whole thing — see `.github/workflows/desktop-flasher-release.yml`.
-Bump `version` in `src-tauri/tauri.conf.json` and `package.json`, then push a
+Bump `version` in **all three** files that must agree — `src-tauri/tauri.conf.json`,
+`package.json`, and `src-tauri/Cargo.toml` (the release gate
+`scripts/check_app_versions.py` fails the build if any drift) — then push a
 matching tag:
 
 ```sh
