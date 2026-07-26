@@ -39,6 +39,7 @@ on:
       - "desktop/src-tauri/src/lib.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop/src-tauri/build.rs"
       - "desktop-lab/frontend-stage.json"
       - "desktop-lab/scripts/**"
       - "desktop-lab/src-tauri/tauri.conf.json"
@@ -84,6 +85,7 @@ on:
       - "desktop/src-tauri/src/lib.rs"
       - "desktop/src-tauri/src/we2.rs"
       - "desktop/src-tauri/src/provisioning.rs"
+      - "desktop/src-tauri/build.rs"
       - "desktop-lab/frontend-stage.json"
       - "desktop-lab/scripts/**"
       - "desktop-lab/src-tauri/tauri.conf.json"
@@ -149,6 +151,7 @@ jobs:
           node --test canary-local/tests/flash_epic.test.js
           node --test canary-local/tests/flash_select.test.js
           node --test canary-local/tests/desktop_parity.test.js
+          node --test canary-local/tests/hatchery.test.js
           node --test canary-local/tests/lab_bundle.test.js
           node --test canary-local/tests/playground.test.js
           node --test canary-local/tests/mode.test.js
@@ -184,6 +187,37 @@ jobs:
             echo "::error::generated hub seed plan stale — a source moved (add-on slugs/repositories in hub_image.json, or homeassistant/frigate/config.yaml). Run canary-local/tools/gen_hub_seed.py and commit"
             exit 1
           fi
+
+      - name: Hub seed executor tests (pure planner + fail-closed execution, no HA needed)
+        run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
+
+      - name: Hub seed executor dry-run smoke (the plan the installer would run)
+        # The executor is what turns hub_seed.json into a provisioned hub. Prove
+        # its dry-run stays runnable AND that the facts that make it actually
+        # work on a real Supervisor are present: the hashed add-on slugs (a bare
+        # slug 404s), the exact repo-registration endpoint the `ha` CLI can't
+        # reach, and the "claims, not recordings" privacy note.
+        run: |
+          set -euo pipefail
+          out="$(python3 canary-local/tools/hub_seed_apply.py --dry-run)"
+          echo "$out"
+          for needle in \
+            "d0491a67_privacy_witness_kernel" \
+            "ccab4aaf_frigate" \
+            "POST http://supervisor/store/repositories" \
+            '{"mode":"frigate"}' \
+            "recordings AND snapshots OFF"; do
+            if ! printf '%s' "$out" | grep -qF -- "$needle"; then
+              echo "::error::hub_seed_apply.py --dry-run no longer mentions '$needle' — the executor and the plan have drifted apart"
+              exit 1
+            fi
+          done
+          # A real run without a token must refuse, not silently no-op.
+          if python3 canary-local/tools/hub_seed_apply.py >/dev/null 2>&1; then
+            echo "::error::hub_seed_apply.py ran a real provision with no SUPERVISOR_TOKEN — it must fail closed"
+            exit 1
+          fi
+
       - name: Get Started data drift (rides the Hub snapshot + README install strings)
         run: |
           python3 canary-local/tools/gen_start.py
