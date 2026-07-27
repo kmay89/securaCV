@@ -57,7 +57,7 @@ jobs:
         # bare Xcode_16.app never matches; pick the newest 16.x, fall back to
         # the image default, and always print what we got.
         run: |
-          latest="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)"
+          latest="$(find /Applications -maxdepth 1 -name 'Xcode_16*.app' 2>/dev/null | sort -V | tail -1)"
           if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
           xcodebuild -version
 
