@@ -36,6 +36,7 @@ Modes:
     python3 firmware/scripts/pin_budget.py --board <id>   # one board
     python3 firmware/scripts/pin_budget.py --write        # regen the doc
     python3 firmware/scripts/pin_budget.py --check        # CI: fail on drift
+    python3 firmware/scripts/pin_budget.py --json         # machine-readable
 
 The generated doc is firmware/boards/PIN_BUDGET.md — generated AND
 committed (same philosophy as the website's .glb models): edit a pins.h,
@@ -85,9 +86,12 @@ MCUS = {
         "periph": {"SPI": 1, "I2C": 1, "UART": 2, "RMT TX": 2, "LEDC": 6},
     },
     "ESP32-S3": {
+        # Package GPIOs; the in-module flash (26-32) and, on octal-PSRAM
+        # modules, the PSRAM lines (33-37 — matches the PIN_RESERVED_PSRAM_*
+        # headers) are subtracted in bucketize() before anything is counted.
         "usable": set(range(0, 22)) | set(range(26, 49)),
         "flash_reserved": set(range(26, 33)),
-        "octal_psram_reserved": {35, 36, 37},
+        "octal_psram_reserved": set(range(33, 38)),
         "strapping": {0, 3, 45, 46},
         "adc": set(range(1, 21)),         # ADC1 1-10, ADC2 11-20 (Wi-Fi caveat)
         "usb": {19, 20},                  # native USB / USB-Serial/JTAG
@@ -169,8 +173,16 @@ def is_soft(name: str) -> bool:
 
 def bucketize(board, functional, flags):
     mcu = MCUS[board["mcu"]]
-    usable = set(mcu["usable"])
-    if board["mcu"] == "ESP32-S3" and board.get("psram_mb", 0) >= 8:
+    # Never offer module-reserved copper: flash lines always, PSRAM lines
+    # on octal-PSRAM modules. (A gauge that lists GPIO26-32 as free would
+    # invite wiring that hangs or corrupts the module.) Quad PSRAM shares
+    # the flash bus and takes no extra GPIOs — the interface comes from
+    # boards.json psram_type (matching the env's memory_type: qio_opi =
+    # octal, qio_qspi = quad); with PSRAM present but no psram_type we
+    # assume octal, because under-offering is the safe failure.
+    usable = set(mcu["usable"]) - mcu.get("flash_reserved", set())
+    if (board["mcu"] == "ESP32-S3" and board.get("psram_mb", 0) > 0
+            and board.get("psram_type", "octal") == "octal"):
         usable -= mcu["octal_psram_reserved"]
 
     # I2C is hard copper when something onboard rides the bus (touch, an
@@ -198,6 +210,9 @@ def bucketize(board, functional, flags):
             why.append("USB-Serial/JTAG — free only if you give up USB")
         if gpio in mcu["uart0"]:
             why.append("UART0 console — free only if you give up the serial log")
+        if gpio in mcu["strapping"]:
+            why.append("strapping pin — must not be driven at reset; "
+                       "check the boot-mode level before repurposing")
         if not why and gpio in functional and all(
                 group_of(n) in USB_GROUPS for n in functional[gpio]):
             why.append("USB data line")
@@ -233,9 +248,12 @@ def periph_usage(functional):
     for names in functional.values():
         for n in names:
             groups.setdefault(group_of(n), set()).add(n)
+    # Count SPI buses by distinct clock pins, but only from groups that are
+    # actually SPI — a mic/I2S/camera clock is not another SPI controller.
+    spi_bus_groups = {"SPI", "TFT", "SD", "EPD", "LORA"}
     spi_clk_pins = set()
     for gpio, names in functional.items():
-        if any(n.endswith(("_SCK", "_CLK")) and group_of(n) not in ("I2C",)
+        if any(n.endswith(("_SCK", "_CLK")) and group_of(n) in spi_bus_groups
                for n in names):
             spi_clk_pins.add(gpio)
     used = {
@@ -386,7 +404,37 @@ def main():
                     help=f"write {DOC_PATH.relative_to(REPO_ROOT)}")
     ap.add_argument("--check", action="store_true",
                     help="fail if the committed doc drifts from the pin maps")
+    ap.add_argument("--json", action="store_true",
+                    help="emit the full budget as JSON (for tooling)")
     args = ap.parse_args()
+
+    if args.json:
+        entries = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        if isinstance(entries, dict):
+            entries = entries.get("boards", entries)
+        data = []
+        for board in sorted(entries, key=lambda e: e["id"]):
+            pins_h = BOARDS_DIR / board["id"] / "pins" / "pins.h"
+            functional, aliases, flags, unresolved = parse_pins(pins_h)
+            usable, committed, assigned, conditional, free = bucketize(
+                board, functional, flags)
+            mcu = MCUS[board["mcu"]]
+            data.append({
+                "id": board["id"],
+                "mcu": board["mcu"],
+                "usable": sorted(usable),
+                "committed": {g: sorted(set(n)) for g, n in committed.items()},
+                "assigned": {g: sorted(set(n)) for g, n in assigned.items()},
+                "conditional": dict(conditional),
+                "free": free,
+                "free_adc": [g for g in free if g in mcu["adc"]],
+                "broken_out": sorted(aliases),
+                "unresolved_defines": unresolved,
+                "capabilities": flags,
+                "thermal_notes": board.get("thermal_notes", ""),
+            })
+        print(json.dumps(data, indent=2))
+        return
 
     if args.board:
         entries = json.loads(REGISTRY.read_text(encoding="utf-8"))

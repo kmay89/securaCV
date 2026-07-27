@@ -36,21 +36,21 @@ README stays the narrative source for those stories.
 
 | board | MCU | usable GPIOs | committed | assigned | conditional | free |
 |---|---|---|---|---|---|---|
-| `esp32-c3` | ESP32-C3 | 15 | 2 (13%) | 7 | 4 | 2 |
+| `esp32-c3` | ESP32-C3 | 15 | 2 (13%) | 6 | 5 | 2 |
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | 24 | 10 (42%) | 2 | 4 | 8 |
-| `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 4 | 13 |
-| `waveshare-esp32s3-lcd147` | ESP32-S3 | 42 | 11 (26%) | 1 | 4 | 26 |
-| `waveshare-esp32s3-lcd43` | ESP32-S3 | 42 | 24 (57%) | 0 | 4 | 14 |
-| `waveshare-esp32s3-lcd43b` | ESP32-S3 | 42 | 30 (71%) | 0 | 2 | 10 |
-| `waveshare-esp32s3-lcd43c` | ESP32-S3 | 42 | 28 (67%) | 0 | 2 | 12 |
-| `waveshare-esp32s3-lcd7` | ESP32-S3 | 42 | 23 (55%) | 0 | 4 | 15 |
-| `xiao-esp32c3` | ESP32-C3 | 15 | 1 (7%) | 5 | 4 | 5 |
-| `xiao-esp32c3-sentinel-lite` | ESP32-C3 | 15 | 2 (13%) | 0 | 4 | 9 |
-| `xiao-esp32c6-mr60` | ESP32-C6 | 24 | 2 (8%) | 2 | 4 | 16 |
-| `xiao-esp32c6-sentinel` | ESP32-C6 | 24 | 2 (8%) | 0 | 4 | 18 |
-| `xiao-esp32s3` | ESP32-S3 | 42 | 3 (7%) | 6 | 4 | 29 |
-| `xiao-esp32s3-round` | ESP32-S3 | 42 | 13 (31%) | 0 | 2 | 27 |
-| `xiao-esp32s3-sense` | ESP32-S3 | 42 | 24 (57%) | 4 | 2 | 12 |
+| `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 7 | 10 |
+| `waveshare-esp32s3-lcd147` | ESP32-S3 | 38 | 11 (29%) | 1 | 6 | 20 |
+| `waveshare-esp32s3-lcd43` | ESP32-S3 | 33 | 24 (73%) | 0 | 4 | 5 |
+| `waveshare-esp32s3-lcd43b` | ESP32-S3 | 33 | 30 (91%) | 0 | 2 | 1 |
+| `waveshare-esp32s3-lcd43c` | ESP32-S3 | 33 | 28 (85%) | 0 | 2 | 3 |
+| `waveshare-esp32s3-lcd7` | ESP32-S3 | 33 | 23 (70%) | 0 | 4 | 6 |
+| `xiao-esp32c3` | ESP32-C3 | 15 | 1 (7%) | 4 | 6 | 4 |
+| `xiao-esp32c3-sentinel-lite` | ESP32-C3 | 15 | 2 (13%) | 0 | 7 | 6 |
+| `xiao-esp32c6-mr60` | ESP32-C6 | 24 | 2 (8%) | 2 | 8 | 12 |
+| `xiao-esp32c6-sentinel` | ESP32-C6 | 24 | 2 (8%) | 0 | 9 | 13 |
+| `xiao-esp32s3` | ESP32-S3 | 33 | 3 (9%) | 5 | 7 | 18 |
+| `xiao-esp32s3-round` | ESP32-S3 | 33 | 13 (39%) | 0 | 4 | 16 |
+| `xiao-esp32s3-sense` | ESP32-S3 | 33 | 24 (73%) | 3 | 5 | 1 |
 
 ## Per-board budgets
 
@@ -58,13 +58,13 @@ README stays the narrative source for those stories.
 
 ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](esp32-c3/pins/pins.h)
 
-**2/15 committed** · 7 assigned · 4 conditional · **2 free** (2 ADC-capable)
+**2/15 committed** · 6 assigned · 5 conditional · **2 free** (2 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | **free** | — | ADC, sleep-wake |
 | 1 | **free** | — | ADC, sleep-wake |
-| 2 | assigned | BUZZER_PIN_DEFAULT | ADC, sleep-wake, strap⚠ |
+| 2 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing; (declared as BUZZER_PIN_DEFAULT) | ADC, sleep-wake, strap⚠ |
 | 3 | assigned | EXT_LED_PIN_DEFAULT | ADC, sleep-wake |
 | 4 | assigned | I2C_PIN_SDA | ADC, sleep-wake |
 | 5 | assigned | I2C_PIN_SCL, SPI_PIN_MOSI | ADC, sleep-wake |
@@ -131,7 +131,7 @@ Capabilities off (room to grow): `HAS_BATTERY`, `HAS_CAMERA`, `HAS_MICROPHONE`, 
 
 ESP32-C6 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](waveshare-esp32c6-lcd169/pins/pins.h)
 
-**7/24 committed** · 0 assigned · 4 conditional · **13 free** (6 ADC-capable)
+**7/24 committed** · 0 assigned · 7 conditional · **10 free** (4 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -139,11 +139,11 @@ ESP32-C6 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](waveshare-esp32c
 | 1 | **free** | — | ADC, sleep-wake |
 | 2 | **free** | — | ADC, sleep-wake |
 | 3 | **free** | — | ADC, sleep-wake |
-| 4 | **free** | — | ADC, sleep-wake, strap⚠ |
-| 5 | **free** | — | ADC, sleep-wake, strap⚠ |
+| 4 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
+| 5 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
 | 6 | committed | TFT_PIN_MOSI | ADC, sleep-wake |
 | 7 | committed | TFT_PIN_SCK | sleep-wake |
-| 8 | **free** | — | strap⚠ |
+| 8 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 9 | committed | BOOT_BUTTON_PIN | strap⚠ |
 | 10 | **free** | — |  |
 | 11 | **free** | — |  |
@@ -173,14 +173,14 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `H
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-lcd147/pins/pins.h)
 
-**11/42 committed** · 1 assigned · 4 conditional · **26 free** (14 ADC-capable)
+**11/38 committed** · 1 assigned · 6 conditional · **20 free** (13 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | committed | BOOT_BUTTON_PIN | sleep-wake, strap⚠ |
 | 1 | **free** | — | ADC, sleep-wake |
 | 2 | **free** | — | ADC, sleep-wake |
-| 3 | **free** | — | ADC, sleep-wake, strap⚠ |
+| 3 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
 | 4 | **free** | — | ADC, sleep-wake |
 | 5 | **free** | — | ADC, sleep-wake |
 | 6 | **free** | — | ADC, sleep-wake |
@@ -199,15 +199,11 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_DM_PIN) | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_DP_PIN) | ADC, sleep-wake |
 | 21 | **free** | — | sleep-wake |
-| 26 | **free** | — |  |
-| 27 | **free** | — |  |
-| 28 | **free** | — |  |
-| 29 | **free** | — |  |
-| 30 | **free** | — |  |
-| 31 | **free** | — |  |
-| 32 | **free** | — |  |
 | 33 | **free** | — |  |
 | 34 | **free** | — |  |
+| 35 | **free** | — |  |
+| 36 | **free** | — |  |
+| 37 | **free** | — |  |
 | 38 | committed | RGBLED_PIN |  |
 | 39 | committed | TFT_PIN_RST |  |
 | 40 | committed | TFT_PIN_SCK |  |
@@ -216,7 +212,7 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 43 | conditional | UART0 console — free only if you give up the serial log |  |
 | 44 | conditional | UART0 console — free only if you give up the serial log |  |
 | 45 | committed | TFT_PIN_MOSI | strap⚠ |
-| 46 | **free** | — | strap⚠ |
+| 46 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 47 | **free** | — |  |
 | 48 | committed | TFT_PIN_BL |  |
 
@@ -233,7 +229,7 @@ Capabilities off (room to grow): `HAS_BATTERY`, `HAS_CAMERA`, `HAS_MICROPHONE`, 
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-lcd43/pins/pins.h)
 
-**24/42 committed** · 0 assigned · 4 conditional · **14 free** (5 ADC-capable)
+**24/33 committed** · 0 assigned · 4 conditional · **5 free** (5 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -259,15 +255,6 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
 | 21 | committed | LCD_PIN_G7 | sleep-wake |
-| 26 | **free** | — |  |
-| 27 | **free** | — |  |
-| 28 | **free** | — |  |
-| 29 | **free** | — |  |
-| 30 | **free** | — |  |
-| 31 | **free** | — |  |
-| 32 | **free** | — |  |
-| 33 | **free** | — |  |
-| 34 | **free** | — |  |
 | 38 | committed | LCD_PIN_B4 |  |
 | 39 | committed | LCD_PIN_G2 |  |
 | 40 | committed | LCD_PIN_R7 |  |
@@ -293,7 +280,7 @@ Capabilities off (room to grow): `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_CAMERA
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-lcd43b/pins/pins.h)
 
-**30/42 committed** · 0 assigned · 2 conditional · **10 free** (1 ADC-capable)
+**30/33 committed** · 0 assigned · 2 conditional · **1 free** (1 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -319,15 +306,6 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DN) | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DP) | ADC, sleep-wake |
 | 21 | committed | LCD_PIN_G7 | sleep-wake |
-| 26 | **free** | — |  |
-| 27 | **free** | — |  |
-| 28 | **free** | — |  |
-| 29 | **free** | — |  |
-| 30 | **free** | — |  |
-| 31 | **free** | — |  |
-| 32 | **free** | — |  |
-| 33 | **free** | — |  |
-| 34 | **free** | — |  |
 | 38 | committed | LCD_PIN_B4 |  |
 | 39 | committed | LCD_PIN_G2 |  |
 | 40 | committed | LCD_PIN_R7 |  |
@@ -353,7 +331,7 @@ Capabilities off (room to grow): `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_CAMERA
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-lcd43c/pins/pins.h)
 
-**28/42 committed** · 0 assigned · 2 conditional · **12 free** (3 ADC-capable)
+**28/33 committed** · 0 assigned · 2 conditional · **3 free** (3 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -379,15 +357,6 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
 | 21 | committed | LCD_PIN_G7 | sleep-wake |
-| 26 | **free** | — |  |
-| 27 | **free** | — |  |
-| 28 | **free** | — |  |
-| 29 | **free** | — |  |
-| 30 | **free** | — |  |
-| 31 | **free** | — |  |
-| 32 | **free** | — |  |
-| 33 | **free** | — |  |
-| 34 | **free** | — |  |
 | 38 | committed | LCD_PIN_B4 |  |
 | 39 | committed | LCD_PIN_G2 |  |
 | 40 | committed | LCD_PIN_R7 |  |
@@ -413,7 +382,7 @@ Capabilities off (room to grow): `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_CAMERA
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-lcd7/pins/pins.h)
 
-**23/42 committed** · 0 assigned · 4 conditional · **15 free** (6 ADC-capable)
+**23/33 committed** · 0 assigned · 4 conditional · **6 free** (6 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -439,15 +408,6 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
 | 21 | committed | LCD_PIN_G7 | sleep-wake |
-| 26 | **free** | — |  |
-| 27 | **free** | — |  |
-| 28 | **free** | — |  |
-| 29 | **free** | — |  |
-| 30 | **free** | — |  |
-| 31 | **free** | — |  |
-| 32 | **free** | — |  |
-| 33 | **free** | — |  |
-| 34 | **free** | — |  |
 | 38 | committed | LCD_PIN_B4 |  |
 | 39 | committed | LCD_PIN_G2 |  |
 | 40 | committed | LCD_PIN_R7 |  |
@@ -473,19 +433,19 @@ Capabilities off (room to grow): `HAS_BACKLIGHT_PWM`, `HAS_BATTERY`, `HAS_CAMERA
 
 ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c3/pins/pins.h)
 
-**1/15 committed** · 5 assigned · 4 conditional · **5 free** (5 ADC-capable)
+**1/15 committed** · 4 assigned · 6 conditional · **4 free** (4 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | **free** | — | ADC, sleep-wake |
 | 1 | **free** | — | ADC, sleep-wake |
-| 2 | **free** | — | ADC, sleep-wake, strap⚠ |
+| 2 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
 | 3 | assigned | EXT_LED_PIN_DEFAULT | ADC, sleep-wake |
 | 4 | **free** | — | ADC, sleep-wake |
 | 5 | **free** | — | ADC, sleep-wake |
 | 6 | assigned | I2C_PIN_SDA |  |
 | 7 | assigned | I2C_PIN_SCL |  |
-| 8 | assigned | SPI_PIN_SCK | strap⚠ |
+| 8 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing; (declared as SPI_PIN_SCK) | strap⚠ |
 | 9 | committed | BOOT_BUTTON_PIN, SPI_PIN_MISO | strap⚠ |
 | 10 | assigned | SPI_PIN_MOSI |  |
 | 18 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DN) |  |
@@ -493,7 +453,7 @@ ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c3/pin
 | 20 | conditional | UART0 console — free only if you give up the serial log; (declared as UART1_PIN_RX) |  |
 | 21 | conditional | UART0 console — free only if you give up the serial log; (declared as UART1_PIN_TX) |  |
 
-Physically broken out (from `PIN_D*/PIN_A*/PIN_GPIO*` aliases): [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21] — of the free pins, **[2, 4, 5]** reach a header.
+Physically broken out (from `PIN_D*/PIN_A*/PIN_GPIO*` aliases): [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21] — of the free pins, **[4, 5]** reach a header.
 
 Peripheral demand (declared pin map vs MCU): SPI 1/1 · I2C 1/1 · UART 1/2 · RMT TX 0/2 · LEDC 0/6.
 
@@ -506,20 +466,20 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_MICROPHONE`
 
 ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c3-sentinel-lite/pins/pins.h)
 
-**2/15 committed** · 0 assigned · 4 conditional · **9 free** (5 ADC-capable)
+**2/15 committed** · 0 assigned · 7 conditional · **6 free** (4 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | **free** | — | ADC, sleep-wake |
 | 1 | **free** | — | ADC, sleep-wake |
-| 2 | **free** | — | ADC, sleep-wake, strap⚠ |
+| 2 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
 | 3 | committed | PIR_PIN | ADC, sleep-wake |
 | 4 | **free** | — | ADC, sleep-wake |
 | 5 | **free** | — | ADC, sleep-wake |
 | 6 | **free** | — |  |
 | 7 | **free** | — |  |
-| 8 | **free** | — | strap⚠ |
-| 9 | **free** | — | strap⚠ |
+| 8 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 9 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 10 | committed | LED_USER_PIN |  |
 | 18 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
@@ -537,7 +497,7 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_MMWAVE_RAD
 
 ESP32-C6 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c6-mr60/pins/pins.h)
 
-**2/24 committed** · 2 assigned · 4 conditional · **16 free** (6 ADC-capable)
+**2/24 committed** · 2 assigned · 8 conditional · **12 free** (4 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -545,18 +505,18 @@ ESP32-C6 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c6-mr6
 | 1 | committed | LED_WS2812_PIN | ADC, sleep-wake |
 | 2 | **free** | — | ADC, sleep-wake |
 | 3 | **free** | — | ADC, sleep-wake |
-| 4 | **free** | — | ADC, sleep-wake, strap⚠ |
-| 5 | **free** | — | ADC, sleep-wake, strap⚠ |
+| 4 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
+| 5 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
 | 6 | **free** | — | ADC, sleep-wake |
 | 7 | **free** | — | sleep-wake |
-| 8 | **free** | — | strap⚠ |
+| 8 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 9 | committed | BOOT_BUTTON_PIN | strap⚠ |
 | 10 | **free** | — |  |
 | 11 | **free** | — |  |
 | 12 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
 | 13 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
 | 14 | **free** | — |  |
-| 15 | **free** | — | strap⚠ |
+| 15 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 16 | conditional | UART0 console — free only if you give up the serial log |  |
 | 17 | conditional | UART0 console — free only if you give up the serial log |  |
 | 18 | **free** | — |  |
@@ -577,7 +537,7 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_PSRAM`, `H
 
 ESP32-C6 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c6-sentinel/pins/pins.h)
 
-**2/24 committed** · 0 assigned · 4 conditional · **18 free** (5 ADC-capable)
+**2/24 committed** · 0 assigned · 9 conditional · **13 free** (3 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -585,18 +545,18 @@ ESP32-C6 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c6-sen
 | 1 | committed | LED_WS2812_PIN | ADC, sleep-wake |
 | 2 | committed | PIR_PIN | ADC, sleep-wake |
 | 3 | **free** | — | ADC, sleep-wake |
-| 4 | **free** | — | ADC, sleep-wake, strap⚠ |
-| 5 | **free** | — | ADC, sleep-wake, strap⚠ |
+| 4 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
+| 5 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
 | 6 | **free** | — | ADC, sleep-wake |
 | 7 | **free** | — | sleep-wake |
-| 8 | **free** | — | strap⚠ |
-| 9 | **free** | — | strap⚠ |
+| 8 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 9 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 10 | **free** | — |  |
 | 11 | **free** | — |  |
 | 12 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
 | 13 | conditional | USB-Serial/JTAG — free only if you give up USB |  |
 | 14 | **free** | — |  |
-| 15 | **free** | — | strap⚠ |
+| 15 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 16 | conditional | UART0 console — free only if you give up the serial log |  |
 | 17 | conditional | UART0 console — free only if you give up the serial log |  |
 | 18 | **free** | — |  |
@@ -617,14 +577,14 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_PSRAM`, `H
 
 ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3/pins/pins.h)
 
-**3/42 committed** · 6 assigned · 4 conditional · **29 free** (11 ADC-capable)
+**3/33 committed** · 5 assigned · 7 conditional · **18 free** (11 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | committed | BOOT_BUTTON_PIN | sleep-wake, strap⚠ |
 | 1 | committed | VBAT_PIN | ADC, sleep-wake |
 | 2 | **free** | — | ADC, sleep-wake |
-| 3 | assigned | EXT_LED_PIN_DEFAULT | ADC, sleep-wake, strap⚠ |
+| 3 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing; (declared as EXT_LED_PIN_DEFAULT) | ADC, sleep-wake, strap⚠ |
 | 4 | **free** | — | ADC, sleep-wake |
 | 5 | assigned | I2C_PIN_SDA | ADC, sleep-wake |
 | 6 | assigned | I2C_PIN_SCL | ADC, sleep-wake |
@@ -643,15 +603,6 @@ ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3/pin
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DN) | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DP) | ADC, sleep-wake |
 | 21 | committed | LED_BUILTIN | sleep-wake |
-| 26 | **free** | — |  |
-| 27 | **free** | — |  |
-| 28 | **free** | — |  |
-| 29 | **free** | — |  |
-| 30 | **free** | — |  |
-| 31 | **free** | — |  |
-| 32 | **free** | — |  |
-| 33 | **free** | — |  |
-| 34 | **free** | — |  |
 | 38 | **free** | — |  |
 | 39 | **free** | — |  |
 | 40 | **free** | — |  |
@@ -659,8 +610,8 @@ ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3/pin
 | 42 | **free** | — |  |
 | 43 | conditional | UART0 console — free only if you give up the serial log; (declared as UART1_PIN_TX) |  |
 | 44 | conditional | UART0 console — free only if you give up the serial log; (declared as UART1_PIN_RX) |  |
-| 45 | **free** | — | strap⚠ |
-| 46 | **free** | — | strap⚠ |
+| 45 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 46 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 47 | **free** | — |  |
 | 48 | **free** | — |  |
 
@@ -677,7 +628,7 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_MICROPHONE`
 
 ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3-round/pins/pins.h)
 
-**13/42 committed** · 0 assigned · 2 conditional · **27 free** (9 ADC-capable)
+**13/33 committed** · 0 assigned · 4 conditional · **16 free** (9 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -703,15 +654,6 @@ ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3-rou
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB | ADC, sleep-wake |
 | 21 | committed | LED_STATUS_PIN | sleep-wake |
-| 26 | **free** | — |  |
-| 27 | **free** | — |  |
-| 28 | **free** | — |  |
-| 29 | **free** | — |  |
-| 30 | **free** | — |  |
-| 31 | **free** | — |  |
-| 32 | **free** | — |  |
-| 33 | **free** | — |  |
-| 34 | **free** | — |  |
 | 38 | **free** | — |  |
 | 39 | **free** | — |  |
 | 40 | **free** | — |  |
@@ -719,8 +661,8 @@ ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3-rou
 | 42 | **free** | — |  |
 | 43 | committed | TFT_PIN_BL |  |
 | 44 | committed | TOUCH_PIN_INT |  |
-| 45 | **free** | — | strap⚠ |
-| 46 | **free** | — | strap⚠ |
+| 45 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 46 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 47 | **free** | — |  |
 | 48 | **free** | — |  |
 
@@ -737,14 +679,14 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_MICROPHONE`.
 
 ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3-sense/pins/pins.h)
 
-**24/42 committed** · 4 assigned · 2 conditional · **12 free** (1 ADC-capable)
+**24/33 committed** · 3 assigned · 5 conditional · **1 free** (1 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | committed | BOOT_BUTTON_PIN | sleep-wake, strap⚠ |
 | 1 | committed | VBAT_PIN | ADC, sleep-wake |
 | 2 | **free** | — | ADC, sleep-wake |
-| 3 | assigned | EXT_LED_PIN_DEFAULT | ADC, sleep-wake, strap⚠ |
+| 3 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing; (declared as EXT_LED_PIN_DEFAULT) | ADC, sleep-wake, strap⚠ |
 | 4 | assigned | TAMPER_PIN_DEFAULT | ADC, sleep-wake |
 | 5 | assigned | I2C_PIN_SDA | ADC, sleep-wake |
 | 6 | assigned | I2C_PIN_SCL | ADC, sleep-wake |
@@ -763,15 +705,6 @@ ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3-sen
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DN) | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DP) | ADC, sleep-wake |
 | 21 | committed | LED_BUILTIN, SD_PIN_CS | sleep-wake |
-| 26 | **free** | — |  |
-| 27 | **free** | — |  |
-| 28 | **free** | — |  |
-| 29 | **free** | — |  |
-| 30 | **free** | — |  |
-| 31 | **free** | — |  |
-| 32 | **free** | — |  |
-| 33 | **free** | — |  |
-| 34 | **free** | — |  |
 | 38 | committed | CAM_PIN_VSYNC |  |
 | 39 | committed | CAM_PIN_SIOC |  |
 | 40 | committed | CAM_PIN_SIOD |  |
@@ -779,14 +712,14 @@ ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3-sen
 | 42 | committed | MIC_PIN_CLK |  |
 | 43 | committed | GNSS_PIN_TX, UART1_PIN_TX |  |
 | 44 | committed | GNSS_PIN_RX, UART1_PIN_RX |  |
-| 45 | **free** | — | strap⚠ |
-| 46 | **free** | — | strap⚠ |
+| 45 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
+| 46 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | strap⚠ |
 | 47 | committed | CAM_PIN_HREF |  |
 | 48 | committed | CAM_PIN_D7 |  |
 
 Physically broken out (from `PIN_D*/PIN_A*/PIN_GPIO*` aliases): [1, 2, 3, 4, 5, 6, 7, 8, 9, 43, 44] — of the free pins, **[2]** reach a header.
 
-Peripheral demand (declared pin map vs MCU): SPI 2/2 · I2C 1/2 · UART 1/3 · RMT TX 0/4 · LEDC 0/8.
+Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 1/3 · RMT TX 0/4 · LEDC 0/8.
 
 Capabilities on: `HAS_BLE`, `HAS_CAMERA`, `HAS_GNSS_UART`, `HAS_MICROPHONE`, `HAS_PSRAM`, `HAS_SD_CARD`, `HAS_TAMPER_INPUT`, `HAS_USB_CDC`, `HAS_WIFI`.
 Capabilities off (room to grow): —.

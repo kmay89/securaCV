@@ -14,7 +14,8 @@
       "canary-wap"
     ],
     "notes": "Primary witness board: camera, PDM mic, microSD, 8 MB octal PSRAM. External u.FL antenna required — WiFi and BLE (pairing + offline console) need it seated; without it Bluetooth may not work at all.",
-    "thermal_notes": "Camera PEEK + Wi-Fi bursts are the heat sources; sustained capture warms the sensor (image noise). Runtime gauge is the die-temp watchdog (FEATURE_DIAGNOSTICS). In enclosures, give the camera ribbon and u.FL antenna airspace and derate PEEK cadence before the watchdog throttles."
+    "thermal_notes": "Camera PEEK + Wi-Fi bursts are the heat sources; sustained capture warms the sensor (image noise). Runtime gauge is the die-temp watchdog (FEATURE_DIAGNOSTICS). In enclosures, give the camera ribbon and u.FL antenna airspace and derate PEEK cadence before the watchdog throttles.",
+    "psram_type": "octal"
   },
   {
     "id": "xiao-esp32s3",
@@ -30,7 +31,8 @@
       "canary-vision"
     ],
     "notes": "Grove Vision AI V2 Kit pairing; external u.FL antenna required.",
-    "thermal_notes": "Light duty — inference runs on the Vision AI module, not this host. Die-temp watchdog covers it; no special measures."
+    "thermal_notes": "Light duty — inference runs on the Vision AI module, not this host. Die-temp watchdog covers it; no special measures.",
+    "psram_type": "octal"
   },
   {
     "id": "xiao-esp32c3",
@@ -94,7 +96,8 @@
       "canary-display"
     ],
     "notes": "Watch-puck fleet display: GC9A01 240x240 round LCD, CST816S touch, PCF8563 RTC, battery. External u.FL antenna required for reliable WiFi/BLE (the BLE 5 long-range fleet scan needs it seated). Bench validation pending — run docs/hardware/display_bench_bringup.md Track W to promote.",
-    "thermal_notes": "Backlight + battery charging share one small puck; charging warms the PCF8563 crystal (clock drift). Dim the panel while charging."
+    "thermal_notes": "Backlight + battery charging share one small puck; charging warms the PCF8563 crystal (clock drift). Dim the panel while charging.",
+    "psram_type": "octal"
   },
   {
     "id": "waveshare-esp32s3-lcd43",
@@ -110,7 +113,8 @@
       "canary-display"
     ],
     "notes": "Dash fleet display: 800x480 RGB565 parallel panel, GT911 5-point touch, CH422G IO expander. Bench validation pending — run docs/hardware/display_bench_bringup.md Track D to promote.",
-    "thermal_notes": "The 800x480 backlight dominates the budget; full brightness in a case raises die temp — night dimming doubles as the thermal relief valve."
+    "thermal_notes": "The 800x480 backlight dominates the budget; full brightness in a case raises die temp — night dimming doubles as the thermal relief valve.",
+    "psram_type": "octal"
   },
   {
     "id": "waveshare-esp32s3-lcd43b",
@@ -126,7 +130,8 @@
       "canary-display"
     ],
     "notes": "Industrial-IO dash SKU + dev playground host: same 800x480 panel/GT911/CH422G as the 4.3, plus isolated DI0/DI1 + DO0/DO1, RS485, dedicated CAN, I2C sensor header, 6-36 V supply. Playground bring-up doc: docs/hardware/dev_playground_43b.md.",
-    "thermal_notes": "Same panel thermals as the 4.3, plus the isolated DI/DO, RS485, and CAN transceivers add standing dissipation from the 6-36 V supply — ventilate the enclosure."
+    "thermal_notes": "Same panel thermals as the 4.3, plus the isolated DI/DO, RS485, and CAN transceivers add standing dissipation from the 6-36 V supply — ventilate the enclosure.",
+    "psram_type": "octal"
   },
   {
     "id": "waveshare-esp32s3-lcd43c",
@@ -142,7 +147,8 @@
       "canary-display"
     ],
     "notes": "The mic-bearing 'AI voice' dash sibling (sold as 4.3C-BOX, cased, mic grille on top): same 800x480 panel family (ST7701 controller - VERIFY init) + GT911 + CH422G, plus an ES8311/ES7210 audio stack fronting a dual-MIC array, a PCF85063 RTC (register map differs from the family PCF8563 - driver follow-up), and a BOX-edition terminal strip with functions to VERIFY. A DISTINCT privacy surface: own env (canary-display-dash-mic), own OTA product, mic off by default, alarm-pattern scalars only, hard mute = driver uninstalled, on-glass indicator while listening. Contract: docs/hardware/display_mic_variant.md.",
-    "thermal_notes": "Cased BOX edition traps heat from the backlight + ES8311/ES7210 audio stack. Hold brightness headroom so the on-glass mic indicator stays readable, and ventilate the case."
+    "thermal_notes": "Cased BOX edition traps heat from the backlight + ES8311/ES7210 audio stack. Hold brightness headroom so the on-glass mic indicator stays readable, and ventilate the case.",
+    "psram_type": "octal"
   },
   {
     "id": "xiao-esp32c6-sentinel",
@@ -216,7 +222,8 @@
       "canary-display"
     ],
     "notes": "Nightstand Line display (USB-A stick): SAME ST7789 172x320 panel as the C6 sibling but every display pin differs; 1x WS2812 ambient LED (GPIO38, RMT), dual-core S3 with 8 MB PSRAM, native USB. Wired as the canary-display 'nightstand' flavor (env canary-display-nightstand-s3): display_1in47.cpp HAL + portrait_ui.cpp + ambient_led.cpp. Bench validation pending (docs/hardware/display_nightstand_line.md).",
-    "thermal_notes": "USB-A stick body: S3 + octal PSRAM heat-soak into a small stick that plugs into an already-warm port. The double-buffered animation budget is the throttle knob; die-temp watchdog is the gauge."
+    "thermal_notes": "USB-A stick body: S3 + octal PSRAM heat-soak into a small stick that plugs into an already-warm port. The double-buffered animation budget is the throttle knob; die-temp watchdog is the gauge.",
+    "psram_type": "quad"
   },
   {
     "id": "waveshare-esp32s3-lcd7",
@@ -232,6 +239,7 @@
       "canary-display"
     ],
     "notes": "Nightstand Line big glass: 7\" 800x480 RGB565 parallel + GT911 5-point touch + CH422G IO expander (backlight + touch-reset) — electrically the 4.3\" Canary Dash at 7\", so it reuses the dash RGB HAL/GT911/CH422G. Requires the 8 MB octal PSRAM for the 768 KB framebuffer. Wired as the canary-display 'dash7' flavor (env canary-display-dash7): dash config + pins only, same HAL/UI. Full 5-point touch gestures + bench validation pending (docs/hardware/display_nightstand_line.md).",
-    "thermal_notes": "The hottest board in the fleet: a 7\" backlight plus continuous 800x480 RGB refresh out of octal PSRAM. Backlight duty (via the CH422G) is the main relief valve and the die-temp watchdog (FEATURE_DIAGNOSTICS) the gauge; keep the GT911 glass out of direct sun — capacitive touch drifts when hot."
+    "thermal_notes": "The hottest board in the fleet: a 7\" backlight plus continuous 800x480 RGB refresh out of octal PSRAM. Backlight duty (via the CH422G) is the main relief valve and the die-temp watchdog (FEATURE_DIAGNOSTICS) the gauge; keep the GT911 glass out of direct sun — capacitive touch drifts when hot.",
+    "psram_type": "octal"
   }
 ]
