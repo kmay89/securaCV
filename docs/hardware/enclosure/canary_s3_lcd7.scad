@@ -81,7 +81,11 @@ face_t = 3.0;    // bezel face
 back_t = 3.0;    // rear tray floor
 r_out  = 6.0;    // outer corner radius
 
-/* [Fasteners] — M3 x 10 into outboard corner lobes (outside the glass) */
+/* [Fasteners] — M3 x 16–20 from the FRONT, through the bezel lobes, self-tapping
+   into FULL-HEIGHT corner posts in the back tray (the posts bridge the whole
+   cavity, so the screw threads into solid material the entire way — not across
+   an empty gap). Heads sit in a counterbore on the bezel's outboard ears,
+   clear of the glass. */
 lob_d = 9.0;  lob_o = 3.0;   // lobe Ø / diagonal offset outboard of the cavity corner
 lob_pilot = 2.7;  screw_c = 3.4;  cb_d = 6.0;  cb_h = 2.0;
 
@@ -107,7 +111,7 @@ view_w = aa_w;  view_h = aa_h;
 assert(bez_lip >= 2.0, "bezel lip < 2 mm won't retain a 7in slab");
 assert(aa_w < glass_w && aa_h < glass_h, "active area must sit inside the glass");
 assert(m3_dx + lob_d < xo && m3_dy + lob_d < yo, "M3 pattern doesn't fit the shell");
-assert(cb_h + 1.0 <= back_t, "counterbore deeper than the back floor");
+assert(cb_h + 1.0 <= bez_h, "counterbore deeper than the bezel ear");
 echo(str("Canary 7in touch v0.1-dev — outer ", xo, " x ", yo, " x ", bez_h + cav_d + back_t,
          " mm, window ", view_w, " x ", view_h, ", vent area ~",
          round(vent_back ? vent_rows*vent_cols*vent_slot_w*vent_slot_l/100 : 0), " cm2",
@@ -139,9 +143,12 @@ module bezel() {
         translate([0, aa_dy, -0.1]) linear_extrude(face_t + 0.2) rrect2d(aa_w, aa_h, 3);
         // glass cavity behind the face ledge
         translate([0, 0, face_t]) linear_extrude(bez_h) rrect2d(xc, yc, r_in);
-        // M3 pilots down into the lobes
-        for (p = lobes())
-            translate([p[0], p[1], face_t]) cylinder(d = lob_pilot, h = bez_h);
+        // M3 clearance through each ear + a head counterbore on the front face
+        // (the screw threads into the back tray's full-height corner post)
+        for (p = lobes()) translate([p[0], p[1], -0.1]) {
+            cylinder(d = cb_d,    h = cb_h + 0.1);      // head counterbore (front)
+            cylinder(d = screw_c, h = bez_h + 0.2);     // shank clearance through
+        }
     }
 }
 module bezel_print() { bezel(); }
@@ -166,9 +173,11 @@ module back() {
     difference() {
         union() {
             linear_extrude(back_t) outline2d();                       // floor + lobes
-            // side walls up to meet the bezel (full cavity height)
+            // side walls + FULL-HEIGHT corner posts up to meet the bezel
+            // (outline2d, not rrect2d(xo,yo): the corner ears run the whole
+            // cavity so the case screw threads into solid material all the way)
             translate([0, 0, back_t - 0.01]) linear_extrude(cav_d + 0.01)
-                difference() { rrect2d(xo, yo, r_out); rrect2d(xc, yc, r_in); }
+                difference() { outline2d(); rrect2d(xc, yc, r_in); }
             // PCB standoff bosses at the M3 pattern
             for (sx = [1,-1], sy = [1,-1])
                 translate([sx*m3_dx/2, sy*m3_dy/2, back_t - 0.01])
@@ -177,11 +186,10 @@ module back() {
         // M3 boss pilots
         for (sx = [1,-1], sy = [1,-1])
             translate([sx*m3_dx/2, sy*m3_dy/2, back_t + comp_h - 6]) cylinder(d = m3_pilot, h = 6.2);
-        // case screws: counterbore + clearance through the floor into the lobes
-        for (p = lobes()) translate([p[0], p[1], -0.1]) {
-            cylinder(d = cb_d, h = cb_h + 0.1);
-            cylinder(d = screw_c, h = back_t + 0.2);
-        }
+        // case-screw self-tap pilots down the TOP of each full-height corner post
+        // (the bezel's counterbored ear delivers the M3 into these)
+        for (p = lobes())
+            translate([p[0], p[1], back_t + cav_d - 12]) cylinder(d = lob_pilot, h = 12.1);
         // HEAT: back grille
         if (vent_back) vent_grille();
         // bottom-edge connector channel (−Y wall)
