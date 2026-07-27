@@ -19,6 +19,8 @@ on:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
       - 'desktop/src-tauri/src/rescue.rs'
+      - 'desktop/src-tauri/src/port_hint.rs'
+      - 'desktop/src-tauri/src/health.rs'
       - '.github/workflows/desktop-hub-core.yml'
       # hub-io embeds these provisioning-bundle files (include_str!) and
       # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
@@ -34,6 +36,8 @@ on:
       - 'desktop/hub-core/**'
       - 'desktop/hub-io/**'
       - 'desktop/src-tauri/src/rescue.rs'
+      - 'desktop/src-tauri/src/port_hint.rs'
+      - 'desktop/src-tauri/src/health.rs'
       - '.github/workflows/desktop-hub-core.yml'
       # hub-io embeds these provisioning-bundle files (include_str!) and
       # cross-checks their bytes against the Python manifest's SHA-256 pins, so a
@@ -97,3 +101,11 @@ jobs:
         run: |
           rustc --edition 2021 --test desktop/src-tauri/src/rescue.rs -o /tmp/rescue_test
           /tmp/rescue_test
+      - name: port_hint.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/port_hint.rs -o /tmp/port_hint_test
+          /tmp/port_hint_test
+      - name: health.rs unit tests
+        run: |
+          rustc --edition 2021 --test desktop/src-tauri/src/health.rs -o /tmp/health_test
+          /tmp/health_test

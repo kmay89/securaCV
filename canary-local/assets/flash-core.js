@@ -380,13 +380,24 @@ export function parseOtaData(bytes, otaSlotCount) {
     // Fresh otadata: the bootloader falls back to factory, else ota_0.
     return { fresh: true, activeOta: 0, updatesSeen: 0, stateText: "factory default" };
   }
-  const best = valid.reduce((a, b) => (b.seq > a.seq ? b : a));
+  const newest = valid.reduce((a, b) => (b.seq > a.seq ? b : a));
+  // The booted slot is the highest-seq entry the bootloader will actually START:
+  // valid AND not invalid(0x3)/aborted(0x4). If the newest rolled back, the
+  // previous good image runs — so activeOta must exclude it, even though
+  // stateText/updatesSeen still report the newest so the rollback is surfaced.
+  const bootable = valid.filter((e) => e.state !== 0x3 && e.state !== 0x4);
+  const stateText = OTA_STATE[newest.state] || `0x${newest.state.toString(16)}`;
+  if (!bootable.length) {
+    // Every update rolled back → the bootloader falls back to factory.
+    return { fresh: true, activeOta: 0, updatesSeen: newest.seq, stateText, pendingVerify: false };
+  }
+  const best = bootable.reduce((a, b) => (b.seq > a.seq ? b : a));
   return {
     fresh: false,
     activeOta: (best.seq - 1) % otaSlotCount,
-    updatesSeen: best.seq,
-    stateText: OTA_STATE[best.state] || `0x${best.state.toString(16)}`,
-    pendingVerify: best.state === 0x1,
+    updatesSeen: newest.seq,
+    stateText,
+    pendingVerify: newest.state === 0x1,
   };
 }
 
@@ -1043,7 +1054,9 @@ export function classifyFlashError(err) {
     return { kind: "port-busy", title: "That port is busy",
       hint: "Another program or browser tab is holding the board. Close the Arduino " +
         "IDE / PlatformIO serial monitor and any other flasher tab, then unplug, " +
-        "replug, and try again." };
+        "replug, and try again. On Linux the holder is often ModemManager probing a " +
+        "just-plugged board — wait ~30 s, or add the udev rule from the desktop " +
+        "flasher's INSTALL.md (Linux section) so it ignores Canaries for good." };
 
   // Cable pulled or board vanished mid-operation.
   if (has("device has been lost", "device lost", "no device", "disconnected",

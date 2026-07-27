@@ -414,6 +414,48 @@ esp_err_t securacv_ota_get_manifest_url(char *buf, size_t buf_len);
 /** @brief True if the manifest URL is an NVS override (not the default). */
 bool securacv_ota_manifest_url_is_override(void);
 
+/**
+ * @brief Update channel — which rolling release address this device follows
+ *
+ * RELEASE (the default) polls the compiled-in manifest URL, which rides
+ * GitHub's `releases/latest` — an address the release pipeline guarantees
+ * is always a signed stable firmware release. DEV polls the same product's
+ * manifest on the rolling `fw-dev-latest` prerelease, which each dev-channel
+ * firmware release re-points (see docs/RELEASE_PROCESS.md). Both channels
+ * carry the same Ed25519 manifest signatures from the same release key;
+ * the channel changes WHICH release is followed, never how it is verified.
+ *
+ * The channel applies only while no explicit manifest-URL override is set:
+ * an override (securacv_ota_set_manifest_url) names an exact server and
+ * wins outright, so a bench/local setup can't be silently re-channeled.
+ *
+ * Switching DEV -> RELEASE does not downgrade: the anti-rollback floor
+ * keeps the device on its current build until the release channel moves
+ * past it.
+ */
+typedef enum {
+    SECURACV_OTA_CHANNEL_RELEASE = 0,
+    SECURACV_OTA_CHANNEL_DEV     = 1,
+} securacv_ota_channel_t;
+
+/** @brief Persist the update channel in NVS (default RELEASE). */
+esp_err_t securacv_ota_set_channel(securacv_ota_channel_t channel);
+securacv_ota_channel_t securacv_ota_get_channel(void);
+
+/**
+ * @brief Derive a channel's manifest URL from the compiled-in default
+ *
+ * Pure logic (host-tested). For DEV, rewrites the one canonical release
+ * segment `/releases/latest/download/` to the rolling dev prerelease's
+ * `/releases/download/fw-dev-latest/`. Returns false — and copies nothing —
+ * when the base URL doesn't carry that segment (a custom server has no
+ * GitHub channel structure to point into) or the result would not fit;
+ * callers then stay on @p base_url unchanged.
+ */
+bool securacv_ota_channel_manifest_url(const char *base_url,
+                                       securacv_ota_channel_t channel,
+                                       char *buf, size_t buf_len);
+
 /** @brief Persisted auto-update opt-in (default false). */
 esp_err_t securacv_ota_set_auto_update(bool enabled);
 bool securacv_ota_get_auto_update(void);

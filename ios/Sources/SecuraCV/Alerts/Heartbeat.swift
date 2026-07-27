@@ -37,6 +37,13 @@ final class Heartbeat: ObservableObject {
         state = .alive(secondsAgo: 0)
     }
 
+    /// Forget everything (e.g. leaving demo mode) — back to "Not yet
+    /// verified", never a green check that wasn't earned end-to-end.
+    func reset() {
+        lastVerified = nil
+        state = .unknown
+    }
+
     /// Re-evaluate liveness; call on a timer and on foreground.
     func tick(now: Date = Date()) {
         guard let last = lastVerified else { state = .unknown; return }

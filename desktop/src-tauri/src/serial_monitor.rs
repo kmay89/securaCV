@@ -107,6 +107,7 @@ fn connect(
     first: bool,
 ) -> Option<(String, Box<dyn serialport::SerialPort>)> {
     let mut announced = false;
+    let mut open_hint_shown = false;
     while !cancel.load(Ordering::Relaxed) {
         if let Some(name) = matching_port(preferred_port, vid, pid) {
             match serialport::new(&name, baud)
@@ -114,7 +115,21 @@ fn connect(
                 .open()
             {
                 Ok(port) => return Some((name, port)),
-                Err(_) => std::thread::sleep(Duration::from_millis(350)),
+                Err(error) => {
+                    // The retry loop is right for a port that's about to
+                    // re-enumerate, but on Linux two failures deserve words
+                    // instead of silence: permission denied never heals by
+                    // itself, and "busy" is usually ModemManager holding the
+                    // port (and possibly resetting the board). Without this,
+                    // the user watches "Waiting…" forever with no clue.
+                    if !open_hint_shown && cfg!(target_os = "linux") {
+                        if let Some(hint) = crate::port_hint::linux_open_hint(&error.to_string()) {
+                            open_hint_shown = true;
+                            let _ = app.emit("serial:status", hint.to_string());
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(350));
+                }
             }
         } else {
             if !announced {

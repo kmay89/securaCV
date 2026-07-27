@@ -19,7 +19,9 @@
 //! Everything the user watches scroll by during a flash is `espflash`'s own
 //! output, relayed verbatim over the `flash:log` event.
 
+mod health;
 mod hub;
+mod port_hint;
 mod provisioning;
 mod release;
 mod rescue;
@@ -28,7 +30,7 @@ mod we2;
 
 use provisioning::Provisioning;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_shell::process::CommandEvent;
@@ -163,6 +165,59 @@ struct AppInfo {
     fw_train: Option<String>,
 }
 
+// The Wi-Fi network this computer is on right now — the network a new Canary
+// almost always wants — so the SSID field starts filled and joining is one
+// password away. Best-effort: any failure just means no prefill.
+#[tauri::command]
+fn current_ssid() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        for iface in ["en0", "en1"] {
+            if let Ok(out) = std::process::Command::new("networksetup")
+                .args(["-getairportnetwork", iface])
+                .output()
+            {
+                // "Current Wi-Fi Network: <name>" — anything else (off,
+                // not a Wi-Fi interface) has no colon-name to take.
+                let text = String::from_utf8_lossy(&out.stdout);
+                if let Some((_, name)) = text.split_once(": ") {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(out) = std::process::Command::new("iwgetid").arg("-r").output() {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        if let Ok(out) = std::process::Command::new("nmcli")
+            .args(["-t", "-f", "active,ssid", "dev", "wifi"])
+            .output()
+        {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if let Some(ssid) = line.strip_prefix("yes:") {
+                    if !ssid.is_empty() {
+                        return Some(ssid.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
+}
+
 #[tauri::command]
 fn app_info() -> AppInfo {
     let fw_train = serde_json::from_str::<Value>(EMBEDDED_CATALOG)
@@ -270,6 +325,7 @@ async fn run_sidecar_capture(app: &AppHandle, args: Vec<String>) -> Result<(i32,
 pub struct ChipInfo {
     chip: String,
     flash_bytes: Option<u64>,
+    mac: Option<String>,
 }
 
 /// Ask the connected board which ESP32 it is (and how much flash it carries).
@@ -281,6 +337,16 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
     // a chip name in its error text, which would otherwise read as a false
     // positive detection.
     if code != 0 {
+        // On Linux, a failed board-info is more often the OS refusing or
+        // holding the port than a board out of download mode — when the
+        // output names that cause, lead with its real fix instead of the
+        // BOOT/RESET ritual (which can't help and reads as the board's
+        // fault). Linux-only: the hint text is a Linux fix.
+        if cfg!(target_os = "linux") {
+            if let Some(hint) = port_hint::linux_open_hint(&out) {
+                return Err(format!("{hint}\n\nespflash said:\n{}", out.trim()));
+            }
+        }
         return Err(format!(
             "couldn't read the chip (espflash exit {code}). Put the board in download mode (hold BOOT, tap RESET, release BOOT) and try again.\n\nespflash said:\n{}",
             out.trim()
@@ -290,6 +356,7 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
         Some(chip) => Ok(ChipInfo {
             chip: chip.to_string(),
             flash_bytes: rescue::parse_flash_size(&out),
+            mac: rescue::parse_mac(&out),
         }),
         None => Err(format!(
             "couldn't recognize the chip from espflash's output:\n{}",
@@ -1130,6 +1197,230 @@ async fn erase_chip(app: AppHandle, port: String) -> Result<(), String> {
     }
 }
 
+// ── the health check: read the board's story, change nothing ─────────────────
+// Reads a handful of flash regions with the espflash sidecar and feeds their
+// bytes to the pure `health` parsers (host-tested), then assembles the same
+// report the browser Lab produces. Every read is to a private temp file we read
+// back — `espflash read-flash` writes a file, not stdout.
+
+/// Read one flash region into memory: a quiet sidecar run to a private 0600 temp
+/// file (auto-removed), read back. Quiet on purpose — a health check does many
+/// small reads, and streaming each one's progress bar would bury the console.
+async fn read_region(
+    app: &AppHandle,
+    port: &str,
+    offset: u32,
+    size: u32,
+    baud: u32,
+) -> Result<Vec<u8>, String> {
+    let tmp = tempfile::Builder::new()
+        .prefix("securacv-health-")
+        .suffix(".bin")
+        .tempfile()
+        .map_err(|e| format!("couldn't create a temp file for the read: {e}"))?;
+    let out = tmp.path().to_string_lossy().to_string();
+    let (code, log) =
+        run_sidecar_capture(app, rescue::read_region_args(port, offset, size, &out, baud)).await?;
+    if code != 0 {
+        return Err(format!(
+            "espflash exited with code {code} reading 0x{offset:x}: {}",
+            log.trim()
+        ));
+    }
+    let data = std::fs::read(tmp.path())
+        .map_err(|e| format!("couldn't read back region 0x{offset:x}: {e}"))?;
+    // A region read can carry secrets — the NVS/settings partition holds the
+    // Ed25519 private key and saved Wi-Fi. We parse them in memory with an
+    // allow-list and never surface the values, but espflash had to write the raw
+    // bytes to this temp file first. Overwrite it with zeros before it's removed
+    // so nothing recoverable is left on the host disk.
+    let _ = std::fs::write(tmp.path(), vec![0u8; data.len()]);
+    Ok(data)
+}
+
+/// Write UTF-8 text to a path the user just chose in the OS save panel — the
+/// health report's JSON export. No FS plugin, no ambient access: the frontend
+/// hands over a path the save dialog already blessed.
+#[tauri::command]
+async fn save_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| format!("couldn't save {path}: {e}"))
+}
+
+fn verdict_json(v: &health::Verdict) -> Value {
+    json!({
+        "level": v.level,
+        "headline": v.headline,
+        "findings": v.findings.iter().map(|f| json!({
+            "severity": f.severity, "title": f.title, "fix": f.fix,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// Read the connected board's health: partition map, the firmware in each slot,
+/// update history, crash dump, and the witness chain — read-only. Returns the
+/// same report shape the browser renders, plus a self-heal verdict.
+#[tauri::command]
+async fn health_check(
+    app: AppHandle,
+    port: String,
+    chip: String,
+    mac: Option<String>,
+    flash_bytes: Option<u64>,
+    baud: u32,
+) -> Result<Value, String> {
+    let emit = |m: &str| {
+        let _ = app.emit("health:log", m.to_string());
+    };
+
+    emit("→ reading the partition map…");
+    let pt = read_region(&app, &port, 0x8000, 0xc00, baud).await?;
+    let entries = health::parse_partition_table(&pt);
+    if entries.is_empty() {
+        let verdict = health::report_verdict(&health::VerdictInput { blank: true, ..Default::default() });
+        emit("✓ read complete — the chip looks blank.");
+        return Ok(json!({
+            "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+            "blank": true, "partitions": [], "verdict": verdict_json(&verdict),
+        }));
+    }
+
+    let partitions: Vec<Value> = entries
+        .iter()
+        .map(|e| json!({
+            "label": e.label,
+            "kind": health::partition_kind(e.ptype, e.subtype),
+            "offset": e.offset,
+            "size": e.size,
+        }))
+        .collect();
+
+    // App slots + their descriptors.
+    let apps = health::app_partitions(&entries);
+    let ota_slots: Vec<&health::Partition> =
+        apps.iter().filter(|a| (0x10..0x20).contains(&a.subtype)).collect();
+    emit("→ reading the firmware in each slot…");
+    let mut slots: Vec<Map<String, Value>> = Vec::new();
+    for app_p in &apps {
+        let desc = read_region(&app, &port, app_p.offset + health::APP_DESC_OFFSET, 256, baud)
+            .await
+            .ok()
+            .and_then(|b| health::parse_app_descriptor(&b));
+        let mut m = Map::new();
+        let label = if app_p.label.is_empty() {
+            health::partition_kind(app_p.ptype, app_p.subtype)
+        } else {
+            app_p.label.clone()
+        };
+        m.insert("label".into(), json!(label));
+        m.insert("subtype".into(), json!(app_p.subtype));
+        m.insert("empty".into(), json!(desc.is_none()));
+        if let Some(d) = &desc {
+            let built = format!("{} {}", d.date, d.time).trim().to_string();
+            m.insert("project".into(), json!(d.project_name));
+            m.insert("version".into(), json!(d.version));
+            m.insert("built".into(), if built.is_empty() { Value::Null } else { json!(built) });
+            m.insert("idf".into(), json!(d.idf_ver));
+        }
+        slots.push(m);
+    }
+
+    // otadata → which slot is booting, and how many updates it has seen.
+    let mut ota_json = Value::Null;
+    let mut active_label: Option<String> = None;
+    if let Some(otap) = entries.iter().find(|e| health::is_ota_data(e)) {
+        emit("→ reading update history…");
+        let ob = read_region(&app, &port, otap.offset, otap.size.min(0x2000), baud).await?;
+        let ota = health::parse_ota_data(&ob, ota_slots.len() as u32);
+        if !ota.fresh {
+            active_label = ota_slots.get(ota.active_ota as usize).map(|s| s.label.clone());
+        } else {
+            let first = apps.iter().find(|a| a.subtype == 0x00).or_else(|| ota_slots.first().copied());
+            active_label = first.map(|a| a.label.clone());
+        }
+        ota_json = json!({
+            "fresh": ota.fresh, "activeOta": ota.active_ota, "updatesSeen": ota.updates_seen,
+            "stateText": ota.state_text, "pendingVerify": ota.pending_verify,
+        });
+    }
+    // No otadata partition at all → a factory-only layout; the ESP32 boots the
+    // factory app, so mark it running (otherwise the verdict falsely warns that
+    // nothing is bootable).
+    if active_label.is_none() {
+        active_label = apps.iter().find(|a| a.subtype == 0x00).map(|a| a.label.clone());
+    }
+
+    // Mark the booted slot.
+    let mut has_running = false;
+    if let Some(al) = &active_label {
+        for m in slots.iter_mut() {
+            if m.get("label").and_then(|v| v.as_str()) == Some(al.as_str()) {
+                m.insert("active".into(), json!(true));
+                has_running = true;
+            }
+        }
+    }
+
+    // Crash dump.
+    let mut coredump_present = false;
+    let coredump_json = if let Some(cd) = entries.iter().find(|e| health::is_coredump(e)) {
+        let cb = read_region(&app, &port, cd.offset, 16, baud).await?;
+        let c = health::parse_coredump_header(&cb, cd.size);
+        coredump_present = c.present;
+        json!({ "present": c.present, "size": c.size })
+    } else {
+        Value::Null
+    };
+
+    // Witness chain (NVS), presence-only for secrets.
+    let mut witness_json = Value::Null;
+    let mut tamper: Option<u64> = None;
+    let mut provisioned = false;
+    if let Some(nv) = entries.iter().find(|e| health::is_nvs(e)) {
+        emit("→ reading the witness chain…");
+        let nb = read_region(&app, &port, nv.offset, nv.size, baud).await?;
+        let items = health::parse_nvs(&nb, &[health::WITNESS_CHAIN_BLOB_KEY]);
+        if let Some(w) = health::witness_summary(&items) {
+            tamper = w.tamper;
+            provisioned = w.provisioned;
+            witness_json = json!({
+                "seq": w.seq, "boots": w.boots, "tamper": w.tamper, "logSeq": w.log_seq,
+                "chainHeadFp": w.chain_head_fp, "provisioned": w.provisioned,
+                "wifiConfigured": w.wifi_configured,
+            });
+        }
+    }
+    let witness_log_json = entries
+        .iter()
+        .find(|e| health::is_witness_log(e))
+        .map(|e| json!({ "label": e.label, "size": e.size }))
+        .unwrap_or(Value::Null);
+
+    let rolled_back = ota_json
+        .get("stateText")
+        .and_then(|v| v.as_str())
+        .map(|s| s.contains("rolled back"))
+        .unwrap_or(false);
+    let verdict = health::report_verdict(&health::VerdictInput {
+        blank: false,
+        coredump_present,
+        ota_pending_verify: ota_json.get("pendingVerify").and_then(|v| v.as_bool()).unwrap_or(false),
+        ota_rolled_back: rolled_back,
+        tamper,
+        has_running_slot: has_running,
+        provisioned,
+    });
+
+    emit("✓ health check complete.");
+    Ok(json!({
+        "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+        "partitions": partitions,
+        "slots": slots.into_iter().map(Value::Object).collect::<Vec<_>>(),
+        "ota": ota_json, "coredump": coredump_json,
+        "witness": witness_json, "witnessLog": witness_log_json,
+        "verdict": verdict_json(&verdict),
+    }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1189,6 +1480,7 @@ pub fn run() {
             load_catalog,
             load_hatch,
             app_info,
+            current_ssid,
             list_ports,
             detect_chip,
             fetch_manifest,
@@ -1212,6 +1504,8 @@ pub fn run() {
             backup_flash,
             write_local_image,
             erase_chip,
+            health_check,
+            save_text_file,
             check_update,
             install_update
         ])

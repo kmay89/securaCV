@@ -101,7 +101,18 @@ where
         let port = serialport::new(port_name, BAUD)
             .timeout(Duration::from_millis(40))
             .open()
-            .map_err(|e| format!("could not open the Vision module port: {e}"))?;
+            .map_err(|e| {
+                let mut message = format!("could not open the Vision module port: {e}");
+                // Linux-only: permission-denied / busy opens have a Linux
+                // fix the raw errno string doesn't teach (dialout/udev rule,
+                // ModemManager) — append it so the error card is actionable.
+                if cfg!(target_os = "linux") {
+                    if let Some(hint) = crate::port_hint::linux_open_hint(&message) {
+                        message = format!("{message}\n{hint}");
+                    }
+                }
+                message
+            })?;
         Ok(Self {
             port,
             log,
@@ -283,7 +294,21 @@ where
     fn at_command(&mut self, body: &str, timeout: Duration) -> Result<Option<Value>, String> {
         self.write_all(format!("AT+{body}\r").as_bytes())?;
         let expected = body.split('=').next().unwrap_or(body);
-        let deadline = Instant::now() + timeout;
+        self.read_reply(0, expected, body, Instant::now() + timeout)
+    }
+
+    // Scan the wire for one matching SSCMA JSON frame. `kind` 0 is a command
+    // ack; `kind` 1 is an EVENT — detection results (boxes, and the image when
+    // INVOKE's result_only flag is 0) arrive ONLY as type-1 events after the
+    // ack (guide §8), so a caller that needs what the model saw must read for
+    // type 1: the ack's data never contains it.
+    fn read_reply(
+        &mut self,
+        kind_want: i64,
+        expected: &str,
+        body: &str,
+        deadline: Instant,
+    ) -> Result<Option<Value>, String> {
         let mut frame = Vec::new();
         let mut collecting = false;
         while Instant::now() < deadline {
@@ -307,7 +332,7 @@ where
                 if let Ok(value) = serde_json::from_slice::<Value>(json_bytes) {
                     let kind = value.get("type").and_then(Value::as_i64);
                     let name = value.get("name").and_then(Value::as_str).unwrap_or("");
-                    if kind == Some(0)
+                    if kind == Some(kind_want)
                         && (name == expected || name == body || body.starts_with(name))
                     {
                         return Ok(Some(value));
@@ -322,6 +347,63 @@ where
             }
         }
         Ok(None)
+    }
+
+    // Run one INVOKE (with image) and return its type-1 detection event.
+    // Frame-scans like read_reply, but judges both SSCMA frame types in a
+    // single pass — see the call site for why two sequential scans lose.
+    fn invoke_event(&mut self, deadline: Instant) -> Result<Value, String> {
+        self.write_all(b"AT+INVOKE=1,0,0\r")?;
+        let mut frame = Vec::new();
+        let mut collecting = false;
+        let mut acked = false;
+        while Instant::now() < deadline {
+            let Some(byte) = self.read_byte_until(deadline)? else {
+                break;
+            };
+            if !collecting {
+                if byte == b'\r' {
+                    frame.clear();
+                    collecting = true;
+                }
+                continue;
+            }
+            if frame.is_empty() && byte != b'{' {
+                collecting = byte == b'\r';
+                continue;
+            }
+            frame.push(byte);
+            if byte == b'\n' && frame.get(frame.len().saturating_sub(2)) == Some(&b'}') {
+                let json_bytes = &frame[..frame.len() - 1];
+                if let Ok(value) = serde_json::from_slice::<Value>(json_bytes) {
+                    let kind = value.get("type").and_then(Value::as_i64);
+                    if value.get("name").and_then(Value::as_str) == Some("INVOKE") {
+                        match (kind, at_ok(&value)) {
+                            (Some(1), true) => return Ok(value),
+                            (Some(0), true) => acked = true,
+                            (Some(0), false) => {
+                                return Err(
+                                    "SSCMA answered AT, but the pinned model did not accept INVOKE"
+                                        .to_string(),
+                                )
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                frame.clear();
+                collecting = false;
+            }
+            if frame.len() > 2 * 1024 * 1024 {
+                frame.clear();
+                collecting = false;
+            }
+        }
+        Err(if acked {
+            "the module accepted INVOKE but its detection event never arrived".to_string()
+        } else {
+            "SSCMA answered AT, but the pinned model did not complete an inference".to_string()
+        })
     }
 
     fn prove(
@@ -353,12 +435,19 @@ where
         });
         let info_base64 = base64::engine::general_purpose::STANDARD.encode(info.to_string());
         let _ = self.at_command(&format!("INFO=\"{info_base64}\""), Duration::from_secs(3))?;
-        let inference = self
-            .at_command("INVOKE=1,0,1", Duration::from_secs(8))?
-            .filter(at_ok)
-            .ok_or_else(|| {
-                "SSCMA answered AT, but the pinned model did not complete an inference".to_string()
-            })?;
+        // INVOKE=<times>,<differed>,<result_only> — the third arg MUST be 0
+        // here: 1 means "no image", and this one attended frame is the app's
+        // entire detection preview (there is no live bench on the desktop, so
+        // with =1 the preview element simply never appeared). The event grows
+        // by one base64 JPEG (~tens of KB at 921600 baud), well inside the
+        // timeout. Guide: docs/hardware/grove_vision_ai_v2_guide.md §8.
+        // The detection itself — boxes and the preview frame — is the type-1
+        // EVENT; a type-0 ack MAY precede it, depending on the SSCMA firmware
+        // build (the browser bench documents the same: success is EITHER
+        // signal, we2-flash.js). One scan, so an event that arrives without
+        // an ack is never consumed and discarded while waiting for one: an ok
+        // ack means keep reading, an error ack fails fast, the event wins.
+        let inference = self.invoke_event(Instant::now() + Duration::from_secs(8))?;
         Ok((version_reply, id_reply, inference))
     }
 }

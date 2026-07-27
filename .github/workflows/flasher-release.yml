@@ -228,6 +228,12 @@ jobs:
 
       - name: Build canary-sense (release)
         working-directory: firmware/projects/canary-sense
+        # canary-sense is on the pioarduino core-3.x platform; the official
+        # espressif32 builds above have already populated ~/.platformio with
+        # an incompatible `framework-arduinoespressif32`, which makes
+        # pioarduino fail with FRAMEWORK_DIR=None on a cold cache. Isolated
+        # core dir, same as the nightstand-c6 env below (and
+        # firmware-release.yml's canary-sense step).
         run: |
           mkdir -p secrets
           cat > secrets/secrets.h << 'HEADER'
@@ -240,7 +246,8 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          pio run -e canary-sense-default -e canary-sense-wellbeing
+          PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
+            pio run -e canary-sense-default -e canary-sense-wellbeing
 
       - name: Install Arduino CLI + ESP32 core (cached)
         uses: ./.github/actions/setup-arduino-esp32
@@ -325,8 +332,19 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
+          # PlatformIO wipes the whole .pio/build workspace when the project
+          # checksum changes — and the C6 run's PLATFORMIO_CORE_DIR below
+          # changes exactly that (the same wipe that cost fw-v2.3.0 its dash7
+          # and nightstand-s3 assets in firmware-release.yml). Stage each
+          # env's outputs the moment it builds, and restore after the C6 run
+          # so build_flash_manifest reads the same .pio/build paths as always.
+          STAGE=/tmp/pio-display-staged
+          mkdir -p "$STAGE"
           for E in canary-display-dash7 canary-display-nightstand-s3 canary-display-touch169; do
-            if ! pio run -e "$E"; then
+            if pio run -e "$E"; then
+              rm -rf "${STAGE:?}/$E"
+              cp -R ".pio/build/$E" "$STAGE/$E"
+            else
               echo "::warning::${E} build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
             fi
           done
@@ -334,6 +352,8 @@ jobs:
               pio run -e canary-display-nightstand-c6; then
             echo "::warning::canary-display-nightstand-c6 build failed (or this tag predates the env) — absent from the browser flasher this rebuild"
           fi
+          mkdir -p .pio/build
+          cp -R "$STAGE"/. .pio/build/
           cd "$GITHUB_WORKSPACE"
 
       - name: Build factory images + manifest-flash.json

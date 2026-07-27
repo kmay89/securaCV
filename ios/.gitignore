@@ -4,6 +4,11 @@
 *.xcodeproj
 *.xcworkspace
 
+# Local overrides (signing team etc.) — seeded by scripts/heal.sh from
+# $APPLE_DEVELOPMENT_TEAM and merged at generate time via .local-spec.yml.
+local.yml
+.local-spec.yml
+
 # Build output
 build/
 DerivedData/

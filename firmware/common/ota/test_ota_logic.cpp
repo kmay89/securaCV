@@ -242,6 +242,42 @@ static int test_friendly_strings()
     return 0;
 }
 
+static int test_channel_manifest_url()
+{
+    char buf[160];
+
+    // DEV rewrites exactly the canonical release segment, keeping the
+    // product manifest name — the published dev channel mirrors every
+    // per-product manifest under fw-dev-latest with the same filenames.
+    CHECK(securacv_ota_channel_manifest_url(
+        "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary-display-dash7.json",
+        SECURACV_OTA_CHANNEL_DEV, buf, sizeof(buf)));
+    CHECK(strcmp(buf,
+        "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-canary-display-dash7.json") == 0);
+
+    // RELEASE derives nothing: the compiled-in default IS the release channel.
+    CHECK(!securacv_ota_channel_manifest_url(
+        "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary.json",
+        SECURACV_OTA_CHANNEL_RELEASE, buf, sizeof(buf)));
+
+    // A custom server has no GitHub channel structure to point into —
+    // callers stay on the configured URL rather than guessing.
+    CHECK(!securacv_ota_channel_manifest_url(
+        "https://updates.example.com/canary/manifest.json",
+        SECURACV_OTA_CHANNEL_DEV, buf, sizeof(buf)));
+
+    // An undersized buffer refuses instead of truncating a fetch URL.
+    char tiny[32];
+    CHECK(!securacv_ota_channel_manifest_url(
+        "https://github.com/kmay89/securaCV/releases/latest/download/manifest-canary.json",
+        SECURACV_OTA_CHANNEL_DEV, tiny, sizeof(tiny)));
+
+    CHECK(!securacv_ota_channel_manifest_url(NULL, SECURACV_OTA_CHANNEL_DEV, buf, sizeof(buf)));
+    CHECK(!securacv_ota_channel_manifest_url("x", SECURACV_OTA_CHANNEL_DEV, NULL, 0));
+
+    return 0;
+}
+
 int main()
 {
     if (test_version_compare()) return 1;
@@ -251,6 +287,7 @@ int main()
     if (test_hex_to_bytes()) return 1;
     if (test_manifest_message_cross_language_fixture()) return 1;
     if (test_friendly_strings()) return 1;
+    if (test_channel_manifest_url()) return 1;
 
     printf("ALL %d OTA LOGIC CHECKS PASSED\n", tests_run);
     return 0;

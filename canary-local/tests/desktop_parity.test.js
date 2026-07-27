@@ -135,17 +135,24 @@ test("provisioning NVS: the browser writes the same key-set as native build_nvs"
   // set, or a board provisioned in the Lab differs from one provisioned natively.
   const provRs = read(join(ROOT, "desktop/src-tauri/src/provisioning.rs"));
   const nativeKeys = new Set(
-    [...provRs.matchAll(/writer\.(?:string|u8|u16|u32)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1])
+    [...provRs.matchAll(/writer\.(?:string|u8|u16|u32|blob)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1])
   );
   assert.ok(nativeKeys.size >= 5,
     "couldn't parse native build_nvs keys from desktop/src-tauri/src/provisioning.rs");
 
-  // The browser's usb-secrets provisioning: wifi (string scheme) + the id/broker map.
+  // The browser's provisioning: wifi in BOTH schemes native now writes too —
+  // string (sense/vision/display) and blob + wifi_en (canary/wap, flash-core's
+  // blob branch) — plus the usb-secrets id/broker map. Assert the browser
+  // really has the blob-scheme enable key rather than hardcoding trust.
+  const flashCoreSrc = read(join(CANARY, "assets/flash-core.js"));
+  assert.match(flashCoreSrc, /writeInt\("wifi_en"/,
+    "flash-core.js buildNvsSeedImage lost the blob-scheme wifi_en write (canary/wap)");
   const { mqttProvisioningToNvs } = await import("../assets/flash-core.js");
   const { strings, u16 } = mqttProvisioningToNvs({
     deviceId: "d", mqttHost: "h", mqttPort: 1, mqttUser: "u", mqttPass: "p",
   });
-  const browserKeys = new Set(["wifi_ssid", "wifi_pass", ...Object.keys(strings), ...Object.keys(u16)]);
+  const browserKeys = new Set(["wifi_ssid", "wifi_pass", "wifi_en",
+    ...Object.keys(strings), ...Object.keys(u16)]);
 
   assert.deepStrictEqual([...browserKeys].sort(), [...nativeKeys].sort(),
     "browser vs native provisioning NVS key-sets diverged — reconcile " +
@@ -422,4 +429,57 @@ test("the eFuse gap between the two flashers is stated, not hidden", () => {
     "the user assuming it ran");
   assert.match(html, /browser-only/,
     "desktop flasher's fuse-gap note no longer names the gap");
+});
+
+test("health check: native parsers pin the browser's byte-magics, and the UI reaches the command", () => {
+  // The native health parsers (health.rs) reimplement the browser's flash-core
+  // parsers. Their magics/offsets/namespaces MUST match byte-for-byte, or the
+  // same chip reads differently on each surface. Pin the shared constants.
+  const healthRs = read(join(ROOT, "desktop/src-tauri/src/health.rs"));
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+
+  const hexOf = (src, re, what) => {
+    const m = src.match(re);
+    assert.ok(m, `couldn't read ${what} from source`);
+    return parseInt(m[1].replace(/_/g, ""), 16); // Rust allows 0xabcd_5432
+  };
+  assert.strictEqual(
+    hexOf(healthRs, /PARTITION_MAGIC:\s*u16\s*=\s*(0x[0-9a-fA-F_]+)/, "health.rs PARTITION_MAGIC"),
+    hexOf(flashCore, /PARTITION_MAGIC\s*=\s*(0x[0-9a-fA-F]+)/, "flash-core PARTITION_MAGIC"),
+    "partition-table magic drifted between health.rs and flash-core.js");
+  assert.strictEqual(
+    hexOf(healthRs, /APP_DESC_MAGIC:\s*u32\s*=\s*(0x[0-9a-fA-F_]+)/, "health.rs APP_DESC_MAGIC"),
+    hexOf(flashCore, /APP_DESC_MAGIC\s*=\s*(0x[0-9a-fA-F]+)/, "flash-core APP_DESC_MAGIC"),
+    "app-descriptor magic drifted");
+  assert.strictEqual(
+    hexOf(healthRs, /APP_DESC_OFFSET:\s*u32\s*=\s*(0x[0-9a-fA-F_]+)/, "health.rs APP_DESC_OFFSET"),
+    hexOf(flashCore, /APP_DESC_OFFSET\s*=\s*(0x[0-9a-fA-F]+)/, "flash-core APP_DESC_OFFSET"),
+    "app-descriptor offset drifted");
+  for (const [reRs, reJs, what] of [
+    [/WITNESS_NVS_NAMESPACE:\s*&str\s*=\s*"([^"]+)"/, /WITNESS_NVS_NAMESPACE\s*=\s*"([^"]+)"/, "witness namespace"],
+    [/WITNESS_CHAIN_BLOB_KEY:\s*&str\s*=\s*"([^"]+)"/, /WITNESS_CHAIN_BLOB_KEY\s*=\s*"([^"]+)"/, "witness chain key"],
+  ]) {
+    const a = healthRs.match(reRs), b = flashCore.match(reJs);
+    assert.ok(a && b, `couldn't read ${what} from both sources`);
+    assert.strictEqual(a[1], b[1], `${what} drifted between health.rs and flash-core.js`);
+  }
+
+  // Both surfaces keep the health check + its parsers.
+  assert.match(flashJs, /function runHealthCheck\b/, "browser Lab lost runHealthCheck");
+  for (const fn of ["parsePartitionTable", "parseAppDescriptor", "parseOtaData", "parseCoredumpHeader", "witnessSummary"]) {
+    assert.match(flashCore, new RegExp(`function ${fn}\\b`), `browser flash-core lost ${fn}`);
+  }
+  for (const fn of ["parse_partition_table", "parse_app_descriptor", "parse_ota_data", "parse_coredump_header", "witness_summary", "report_verdict"]) {
+    assert.match(healthRs, new RegExp(`fn ${fn}\\b`), `native health.rs lost ${fn}`);
+  }
+
+  // The native command exists and the UI actually reaches it.
+  assert.match(libRs, /fn health_check\b/, "native lib.rs lost the health_check command");
+  assert.match(html, /id="health-check-btn"/, "index.html lost the Health check button");
+  assert.match(appJs, /function onHealthCheck\b/, "app.js lost the onHealthCheck handler");
+  assert.match(appJs, /invoke\(\s*["']health_check["']/,
+    "app.js never invokes health_check — the health button is dead");
 });

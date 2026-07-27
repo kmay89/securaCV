@@ -83,14 +83,37 @@ Two formats on the release page — take your pick:
   sudo apt install ./SecuraCV-Flasher_*_amd64.deb
   ```
 
-### Serial permission (one time)
+### Serial access (one time)
 
-Flashing a **Canary** needs access to the USB serial device. On most distros,
-add yourself to the `dialout` group and log back in:
+Flashing a **Canary** needs two things from Linux that macOS grants for free:
+permission to open the USB serial device, and **ModemManager keeping its hands
+off it**. ModemManager probes a just-plugged board (or one re-enumerating
+after the post-flash reset) as if it were a modem — it can hold the port for
+~30 s and its probing can reset the board mid-boot, so the flash verifies but
+the live boot receipt never arrives.
 
-```sh
-sudo usermod -aG dialout "$USER"   # then log out and back in
-```
+- **`.deb` users:** the rule ships with the package
+  (`/usr/lib/udev/rules.d/61-securacv-canary.rules`) and fixes both — just
+  **replug the board** after installing.
+- **AppImage / other users:** add it once:
+
+  ```sh
+  sudo tee /etc/udev/rules.d/61-securacv-canary.rules >/dev/null <<'EOF'
+  ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+  ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+  EOF
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+
+  Then replug the board. (`303a` is the Canary's own ESP32-S3 USB port;
+  `1a86:55d3` is the Grove Vision AI V2 camera module.)
+
+- **Fallback for the permission half only:** add yourself to the `dialout`
+  group and log back in — but note this does *not* stop ModemManager:
+
+  ```sh
+  sudo usermod -aG dialout "$USER"   # then log out and back in
+  ```
 
 ### Flash a Pi over USB-C (Linux) — one-time udev rule
 

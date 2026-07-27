@@ -718,6 +718,13 @@ static void display_serial_write(const char* str) {
 }
 
 void setup() {
+#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
+  // First visible sign of life: the behind-the-glass beacon lights bright
+  // canary yellow before ANYTHING else — before serial settles, before the
+  // panel initializes — so power-on is answered instantly. The first render
+  // tick replaces it with the real state (or honest darkness).
+  canary::hal::ambient_led_init();
+#endif
   Serial.begin(115200);
   delay(600);
 
@@ -841,11 +848,6 @@ void setup() {
   // "listening" state beats a black disc while WiFi retries.
   g_display_ok = canary::hal::display_init();
   if (g_display_ok) g_display_ok = canary::ui::lvgl_port_init();
-#if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
-  // The across-room state beacon comes up dark and stays dark until the first
-  // render tick colors it — no boot flash on a nightstand.
-  canary::hal::ambient_led_init();
-#endif
   if (g_display_ok) {
     // Boot splash, then face, then the curtain lift. splash_play() ends by
     // dropping an opaque curtain over the glass instead of fading into the

@@ -64,6 +64,7 @@ const state = {
   portKind: null,    // "esp32" | "we2"
   chip: null,        // identified chip for state.port, or null
   flashBytes: null,  // detected flash size (bytes) for state.chip — the rescue backup needs it
+  mac: null,         // detected MAC (for the health report + backup name), or null
   product: null,
   detecting: false,  // a detect_chip call is in flight
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
@@ -186,6 +187,7 @@ async function boot() {
   $("rescue-backup-btn").addEventListener("click", onRescueBackup);
   $("rescue-restore-btn").addEventListener("click", onRescueRestore);
   $("rescue-erase-btn").addEventListener("click", onRescueErase);
+  $("health-check-btn").addEventListener("click", onHealthCheck);
   updateLocalFlashUi();
   $("monitor-start").addEventListener("click", startMonitor);
   $("monitor-stop").addEventListener("click", stopMonitor);
@@ -559,6 +561,7 @@ async function identify(portInfo) {
     if (port !== state.port) return; // unplugged/switched while we were reading
     state.chip = info.chip;
     state.flashBytes = info.flash_bytes; // may be null if board-info didn't report it
+    state.mac = info.mac; // may be null
     setConn("connected", `Connected · ${info.chip} on ${port}`);
     $("recheck").classList.remove("hidden");
 
@@ -569,8 +572,19 @@ async function identify(portInfo) {
   } catch (e) {
     if (port !== state.port) return;
     state.failedPort = port;
-    setConn("failed", `Found ${port} — couldn't read the chip. Put it in download mode.`);
-    $("download-mode").classList.remove("hidden");
+    // detect_chip's error names the real cause when it knows one — on Linux,
+    // "permission denied" and "port held by ModemManager" have a one-line OS
+    // fix, and coaching the BOOT/RESET ritual for those sends the user to the
+    // wrong fix forever. Show the backend's first line for an OS-level
+    // failure (and hide the download-mode coaching); blame download mode only
+    // when nothing else was named. (The browser flasher makes the same call
+    // in classifyFlashError — two frontends, same diagnostic.)
+    const firstLine = String(e).split("\n")[0].trim();
+    const osLevel = /Linux blocked opening|holding the board's serial port/i.test(firstLine);
+    setConn("failed", osLevel
+      ? `Found ${port} — ${firstLine}`
+      : `Found ${port} — couldn't read the chip. Put it in download mode.`);
+    $("download-mode").classList.toggle("hidden", osLevel);
     $("recheck").classList.remove("hidden");
   } finally {
     state.detecting = false;
@@ -584,6 +598,7 @@ function onDisconnect() {
   state.portKind = null;
   state.chip = null;
   state.flashBytes = null;
+  state.mac = null;
   state.product = null;
   state.failedPort = null;
   resetSteps();
@@ -768,8 +783,29 @@ function onProductChosen(p, ver) {
   $("module-flow").classList.add("hidden");
   $("host-flash-controls").classList.remove("hidden");
   $("serial-monitor").classList.remove("hidden");
-  $("provisioning").classList.toggle("hidden", p.provisioning !== "usb-secrets");
-  if (p.provisioning === "usb-secrets" && !$("device-id").value) {
+  // Wi-Fi preload is standard on EVERY board (each firmware reads the same
+  // NVS namespace, catalog wifi_nvs says in which encoding) — so the network
+  // fields always show. Identity + broker stay usb-secrets-only: the other
+  // firmwares configure that part themselves (AP portal / on-glass).
+  const usbSecrets = p.provisioning === "usb-secrets";
+  $("provisioning").classList.remove("hidden");
+  document.querySelectorAll("#provisioning .usb-only").forEach((n) => {
+    n.classList.toggle("hidden", !usbSecrets);
+    const input = n.querySelector("input");
+    if (input) input.required = usbSecrets && ["device-id", "mqtt-host", "mqtt-port"].includes(input.id);
+  });
+  $("wifi-ssid").required = usbSecrets;
+  $("provision-note").textContent = usbSecrets
+    ? "The verified release image is generic. These values are written directly into this board's settings partition, never logged and never saved by the app."
+    : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.";
+  // Offer the network this computer is on — the common case — so joining is
+  // one Tab and a password away (which Keychain/password managers can fill).
+  if (!$("wifi-ssid").value) {
+    invoke("current_ssid").then((ssid) => {
+      if (ssid && !$("wifi-ssid").value) $("wifi-ssid").value = ssid;
+    }).catch(() => {});
+  }
+  if (usbSecrets && !$("device-id").value) {
     const family = p.id.includes("vision")
       ? "canary_vision"
       : p.id.includes("sense")
@@ -797,7 +833,9 @@ function showModuleFlow() {
   $("module-flow").classList.remove("hidden");
   $("console").textContent = "";
   $("console").classList.remove("hidden");
-  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable.");
+  setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable." +
+    (state.vision.hostFlash ? "" :
+      " (The demo takes two boards — the XIAO host gets the Canary Vision firmware through its own USB-C port, before or after this one.)"));
   renderReceipts(true);
 }
 
@@ -809,7 +847,11 @@ async function onFlash() {
   // holds by the time the flash finishes.
   const product = state.product;
   const manifestUrl = activeManifestUrl();
+  // false = the user TYPED provisioning values that don't validate — abort so
+  // the install can't succeed while silently dropping the Wi-Fi they asked
+  // for. null = intentionally skipped (wifi-only board, empty SSID): flash on.
   const provisioning = readProvisioning(product);
+  if (provisioning === false) return;
   if (product.provisioning === "usb-secrets" && !provisioning) return;
   persistProv();
   const btn = $("flash-btn");
@@ -852,12 +894,21 @@ async function onFlash() {
     renderReceipts();
     announceToWitness(product);   // instant, so the wall reacts right away
     discoverAndPopulate(product); // then replace with the REAL fleet off the LAN
+    // The Vision is a TWO-board Canary: the ESP32 host just flashed here, and
+    // the Grove Vision AI V2 camera module loads its model through its OWN
+    // USB-C port. Say the next move out loud, or the demo dies half-done with
+    // a module that never got a brain.
+    const moduleNext = product.id && product.id.includes("vision") && !state.vision.module
+      ? " Board 1 of 2 done — now move the USB cable to the CAMERA MODULE's own USB-C port " +
+        "(the wide port on the carrier board, next to the Grove socket — not the XIAO's). " +
+        "I'll recognize the module and offer its model below."
+      : "";
     if (requiresLiveReceipt(product)) {
-      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…", "ok");
+      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…" + moduleNext, "ok");
       state.busy = false;
       await startMonitor();
     } else {
-      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓", "ok");
+      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓" + moduleNext, "ok");
       maybeHatch();
       // The serial monitor should just work — start it automatically so the
       // live boot log is right there, no "Start" click. It reconnects on its
@@ -881,35 +932,112 @@ async function onFlash() {
 }
 
 function readProvisioning(product) {
-  if (!product || product.provisioning !== "usb-secrets") return null;
-  const fields = ["device-id", "wifi-ssid", "wifi-pass", "mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"];
+  if (!product) return null;
+  const usbSecrets = product.provisioning === "usb-secrets";
+  // Wi-Fi-only boards: an empty SSID just means "skip the preload" — the
+  // board's own setup path still works, so nothing to validate or write.
+  if (!usbSecrets && !$("wifi-ssid").value) return null;
+  const fields = usbSecrets
+    ? ["device-id", "wifi-ssid", "wifi-pass", "mqtt-host", "mqtt-port", "mqtt-user", "mqtt-pass"]
+    : ["wifi-ssid", "wifi-pass"];
   for (const id of fields) {
     const input = $(id);
     if (!input.checkValidity()) {
       input.reportValidity();
-      return null;
+      return false; // typed but invalid — the caller must NOT flash without it
     }
   }
   const wifiPass = $("wifi-pass").value;
   if (wifiPass && (new TextEncoder().encode(wifiPass).length < 8 ||
                    new TextEncoder().encode(wifiPass).length > 63)) {
     setStatus("flash-result", "Wi-Fi password must be 8–63 UTF-8 bytes (or empty for an open network).", "err");
-    return null;
+    return false; // same: an answer the user gave, not an answer to drop
   }
   return {
-    deviceId: $("device-id").value.trim(),
+    deviceId: usbSecrets ? $("device-id").value.trim() : "",
     wifiSsid: $("wifi-ssid").value,
     wifiPass,
-    mqttHost: $("mqtt-host").value.trim(),
-    mqttPort: Number($("mqtt-port").value),
-    mqttUser: $("mqtt-user").value,
-    mqttPass: $("mqtt-pass").value,
+    mqttHost: usbSecrets ? $("mqtt-host").value.trim() : "",
+    mqttPort: usbSecrets ? Number($("mqtt-port").value) : 1883,
+    mqttUser: usbSecrets ? $("mqtt-user").value : "",
+    mqttPass: usbSecrets ? $("mqtt-pass").value : "",
+    // Which NVS encoding this firmware reads (catalog, from the source):
+    // "blob" for canary/wap, "string" for sense/vision/display.
+    wifiNvs: product.wifi_nvs || "string",
   };
 }
 
 function clearSecretFields() {
   $("wifi-pass").value = "";
   $("mqtt-pass").value = "";
+}
+
+// ── module inference preview: the frame WITH its detections drawn ───────────
+// The receipt's `boxes` are SSCMA detections — [x, y, w, h, score, target],
+// x/y the box CENTER in frame pixels, score already a 0-100 percent. Geometry,
+// identity colors, and confidence bands mirror the browser bench (the source
+// of truth is canary-local/assets/we2-core.js stylizeDetections; the two
+// flashers share no code, so per the two-flashers rule the paint lives here
+// too). Garbage boxes are dropped, never thrown on.
+const MODULE_CLASSES = ["person"];
+const PREVIEW_HUES = [140, 45, 200, 320, 20, 260, 80, 175];
+
+function moduleDetections(boxes) {
+  const out = [];
+  for (const b of boxes || []) {
+    if (!Array.isArray(b) || b.length < 6) continue;
+    const [x, y, w, h, score, target] = b;
+    if (![x, y, w, h].every((n) => typeof n === "number" && Number.isFinite(n))) continue;
+    const pct = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+    out.push({ x, y, w, h, score: pct, label: MODULE_CLASSES[target] || "object" });
+  }
+  return out;
+}
+
+function moduleSummary(boxes) {
+  const dets = moduleDetections(boxes);
+  if (!dets.length) return "nothing in frame";
+  const top = dets.reduce((m, d) => Math.max(m, d.score), 0);
+  const word = dets[0].label + (dets.length > 1 ? "s" : "");
+  return `${dets.length} ${word} · top ${top}%`;
+}
+
+function renderModulePreview(receipt) {
+  const cv = $("module-preview");
+  if (!receipt || !receipt.preview_image || !cv.getContext) return;
+  const img = new Image();
+  img.onload = () => {
+    cv.width = img.width; cv.height = img.height;
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    moduleDetections(receipt.boxes).forEach((d, i) => {
+      const hue = PREVIEW_HUES[i % PREVIEW_HUES.length];
+      const band = d.score >= 60 ? "ok" : d.score >= 35 ? "soft" : "faint";
+      const color = `hsl(${hue} 90% ${band === "ok" ? 66 : 58}%)`;
+      const x = d.x - d.w / 2, y = d.y - d.h / 2;
+      ctx.lineWidth = band === "ok" ? 3 : 2;
+      ctx.strokeStyle = color;
+      ctx.strokeRect(x, y, d.w, d.h);
+      // corner ticks make thin boxes readable on busy frames
+      ctx.lineWidth = band === "ok" ? 5 : 3;
+      const t = Math.min(14, d.w / 4, d.h / 4);
+      ctx.beginPath();
+      for (const [cx, cy, dx, dy] of [[x, y, 1, 1], [x + d.w, y, -1, 1], [x, y + d.h, 1, -1], [x + d.w, y + d.h, -1, -1]]) {
+        ctx.moveTo(cx + dx * t, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + dy * t);
+      }
+      ctx.stroke();
+      const text = `#${i + 1} ${d.label} · ${d.score}%`;
+      ctx.font = "700 13px ui-monospace, Menlo, monospace";
+      const tw = ctx.measureText(text).width + 10;
+      const ly = y - 20 >= 0 ? y - 20 : y + d.h + 1;
+      ctx.fillStyle = `hsl(${hue} 65% 14% / ${band === "ok" ? 0.92 : 0.85})`;
+      ctx.fillRect(x, ly, tw, 19);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x + 5, ly + 14);
+    });
+    cv.classList.remove("hidden");
+  };
+  img.src = "data:image/jpeg;base64," + receipt.preview_image;
 }
 
 async function onFlashModule() {
@@ -929,12 +1057,14 @@ async function onFlashModule() {
       manifestUrl: state.catalog.we2_module.manifest_url,
     });
     state.vision.module = receipt;
-    $("module-progress").textContent = "100% · inference proved";
-    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓", "ok");
-    if (receipt.preview_image) {
-      $("module-preview").src = "data:image/jpeg;base64," + receipt.preview_image;
-      $("module-preview").classList.remove("hidden");
-    }
+    $("module-progress").textContent = "100% · inference proved · " + moduleSummary(receipt.boxes);
+    // Mirror of the host-side nudge: whichever board flashed first, the
+    // other one is named — with its port — before this counts as done.
+    const hostNext = state.vision.hostFlash ? "" :
+      " Board 1 of 2 done — the XIAO host still needs the Canary Vision firmware: " +
+      "move the cable to the XIAO's own USB-C port and pick Canary Vision above.";
+    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓" + hostNext, "ok");
+    renderModulePreview(receipt);
     renderReceipts(true);
     maybeHatch();
   } catch (e) {
@@ -1019,6 +1149,16 @@ function updateRescueUi() {
   // restore and erase still work but backup can't.
   const backupBtn = $("rescue-backup-btn");
   if (backupBtn && !state.flashBytes) backupBtn.disabled = true;
+  // The health check reads its own sizes from the partition table, so it only
+  // needs a connection.
+  const healthBtn = $("health-check-btn");
+  if (healthBtn) healthBtn.disabled = !on;
+  const healthNote = $("health-chip-note");
+  if (healthNote) {
+    healthNote.textContent = connected
+      ? `Connected: ${state.chip} on ${state.port}${state.mac ? ` · ${state.mac}` : ""}`
+      : "Plug in a Canary and let the chip read finish first.";
+  }
 }
 
 const flashBaud = () => (state.catalog && state.catalog.flash_baud) || 921600;
@@ -1167,6 +1307,174 @@ async function onRescueErase() {
     await invoke("erase_chip", { port });
     return "Chip erased — factory-fresh. Flash any image next.";
   });
+}
+
+// ── the health check: read the board's story, change nothing ────────────────
+// Parity with the browser Lab's health report. Read-only, so no confirm — but
+// it still snapshots the target + takes the busy-lock before touching the wire,
+// like the rescue ops, so the watcher can't swap boards mid-read.
+async function onHealthCheck() {
+  if (state.busy || !state.chip || state.portKind !== "esp32") return;
+  const port = state.port, chip = state.chip, mac = state.mac, flashBytes = state.flashBytes;
+  state.busy = true;
+  rescueButtons(false);
+  const btn = $("health-check-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Reading…"; }
+  const con = $("health-console");
+  con.textContent = "";
+  con.classList.remove("hidden");
+  $("health-report").classList.add("hidden");
+  setStatus("health-result", "");
+  resetOutcome();
+  await stopMonitor();
+  const unlisten = await listen("health:log", (ev) => {
+    con.textContent += ev.payload + "\n";
+    con.scrollTop = con.scrollHeight;
+  });
+  try {
+    const report = await invoke("health_check", { port, chip, mac, flashBytes, baud: flashBaud() });
+    report.generatedAt = new Date().toISOString(); // the browser stamps this too
+    renderHealthReport(report);
+    const v = report.verdict || {};
+    setStatus("health-result", `Verdict: ${v.headline || "read complete"}.`,
+      v.level === "attn" ? "err" : "ok");
+    logEvent("ok", "Health check read");
+  } catch (e) {
+    setStatus("health-result", String(e), "err");
+    logEvent("err", "Health check failed: " + e);
+  } finally {
+    unlisten();
+    state.busy = false; // read-only — the board wasn't touched, keep the detected chip
+    if (btn) btn.textContent = "Run a health check";
+    updateRescueUi();
+  }
+}
+
+// Build the report DOM from the object the backend returns. Everything read off
+// flash (project names, versions, labels) goes in via textContent, never HTML.
+function renderHealthReport(r) {
+  const box = $("health-report");
+  box.textContent = "";
+  box.classList.remove("hidden");
+
+  const h = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const row = (label, value, tone) => {
+    const d = h("div", "health-row" + (tone ? " health-" + tone : ""));
+    d.append(h("span", "health-row-k", label), h("span", "health-row-v", value));
+    box.append(d);
+  };
+  const section = (title) => box.append(h("h3", "health-h", title));
+
+  // Verdict + self-heal findings first — the point of the whole thing.
+  const v = r.verdict || {};
+  const vBox = h("div", "health-verdict health-" + (v.level || "ok"));
+  vBox.append(h("strong", "health-verdict-h", `${v.level === "ok" ? "✓" : "⚠"} ${v.headline || ""}`));
+  for (const f of (v.findings || [])) {
+    const fEl = h("div", "health-finding");
+    fEl.append(h("p", "health-finding-t", f.title));
+    if (f.fix) fEl.append(h("p", "health-finding-fix muted", f.fix));
+    vBox.append(fEl);
+  }
+  box.append(vBox);
+
+  // Facts.
+  if (r.chip) row("Chip", r.chip);
+  if (r.mac) row("ID (MAC)", r.mac);
+  if (r.flashBytes) row("Flash", `${Math.round(r.flashBytes / (1 << 20))} MB`);
+
+  if (r.blank) {
+    box.append(h("p", "muted", "No partition table at 0x8000 — this chip looks blank."));
+    appendSaveReport(box, r);
+    return;
+  }
+
+  if (r.slots && r.slots.length) {
+    section("Firmware on the board");
+    for (const s of r.slots) {
+      const val = s.empty
+        ? "empty"
+        : `${s.project || "?"} ${s.version || ""}`.trim() + (s.built ? ` · built ${s.built}` : "");
+      row(s.label + (s.active ? " — running now" : ""), val, s.active ? "ok" : null);
+    }
+  }
+
+  if (r.ota) {
+    section("Update history");
+    if (r.ota.fresh && !r.ota.updatesSeen) {
+      row("Over-the-air updates", "none yet — factory image");
+    } else {
+      row("Updates recorded", String(r.ota.updatesSeen));
+      row("Boot state", r.ota.stateText, r.ota.pendingVerify ? "warn" : null);
+    }
+  }
+
+  section("Health");
+  if (r.coredump) {
+    r.coredump.present
+      ? row("Crash dump", `found (${r.coredump.size} bytes) — the board hard-crashed`, "warn")
+      : row("Crash dump", "none stored", "ok");
+  }
+  if (r.witness && r.witness.boots != null) row("Lifetime boots", String(r.witness.boots));
+  if (r.witness && r.witness.tamper) row("Tamper flag", `set (${r.witness.tamper})`, "warn");
+
+  if (r.witness) {
+    section("Witness chain");
+    if (r.witness.seq != null) row("Records chained", String(r.witness.seq), "ok");
+    if (r.witness.chainHeadFp) row("Chain head", r.witness.chainHeadFp + "…");
+    row("Device identity", r.witness.provisioned ? "provisioned" : "not provisioned",
+      r.witness.provisioned ? "ok" : null);
+    row("Wi-Fi settings", r.witness.wifiConfigured ? "stored" : "none");
+    box.append(h("p", "muted",
+      "Presence only — the identity key and Wi-Fi password are never shown or saved; " +
+      "the report notes only whether they exist."));
+  }
+
+  if (r.partitions && r.partitions.length) {
+    section("Flash map");
+    for (const p of r.partitions) {
+      row(p.label || p.kind,
+        `${p.kind} · ${Math.round(p.size / 1024)} KB @ 0x${(p.offset >>> 0).toString(16)}`);
+    }
+  }
+
+  appendSaveReport(box, r);
+}
+
+function appendSaveReport(box, r) {
+  const rowDiv = document.createElement("div");
+  rowDiv.className = "row";
+  const save = document.createElement("button");
+  save.className = "btn btn-ghost btn-small";
+  save.textContent = "Save report (.json)…";
+  save.addEventListener("click", () => onSaveHealthReport(r));
+  rowDiv.append(save);
+  box.append(rowDiv);
+}
+
+async function onSaveHealthReport(r) {
+  const stamp = (r.mac || "").replace(/[^0-9a-fA-F]/g, "").slice(-6).toLowerCase() || "canary";
+  let out = null;
+  try {
+    out = await window.__TAURI__.dialog.save({
+      defaultPath: `canary-${stamp}-report.json`,
+      filters: [{ name: "Health report", extensions: ["json"] }],
+    });
+  } catch (e) {
+    setStatus("health-result", String(e), "err");
+    return;
+  }
+  if (!out) return;
+  try {
+    await invoke("save_text_file", { path: out, contents: JSON.stringify(r, null, 2) });
+    setStatus("health-result", "Report saved.", "ok");
+  } catch (e) {
+    setStatus("health-result", "Couldn't save the report: " + e, "err");
+  }
 }
 
 async function onPickLocalFile() {
@@ -1333,7 +1641,13 @@ function resetOutcome() {
   setStatus("flash-result", "");
   setStatus("local-result", "");
   try { hideHatchCard(); } catch (_) {}
-  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; state.vision.module = null; }
+  // Host receipts belong to the image being overwritten — clear them. The
+  // MODULE receipt survives: the model lives in the camera module's own
+  // 16 MB flash and persists across every host reflash, so a module-first
+  // session must still count it after the host is flashed (wiping it here
+  // sent the user back to reflash a module that was already done, and the
+  // two-board hatch could never fire).
+  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; }
   try { renderReceipts(); } catch (_) {}
   const con = $("serial-console");
   if (con) con.textContent = "";
@@ -1379,7 +1693,9 @@ function renderReceipts(forceVision = false) {
     ? `✓ ${host.channel === "local" ? host.product_id : "v" + host.version}` +
       `${host.channel === "dev" ? " (dev)" : ""} · ${host.bytes_written.toLocaleString()} B · ` +
       `${host.release_verification || "SHA-256"} · ${host.installed_sha256.slice(0, 12)}…`
-    : "waiting for ESP32 flash";
+    : vision
+      ? "waiting for ESP32 flash — plug the XIAO's own USB-C port"
+      : "waiting for ESP32 flash";
   setReceipt("receipt-host-image", !!host, hostLabel);
   setReceipt(
     "receipt-host-boot",
@@ -1401,7 +1717,7 @@ function renderReceipts(forceVision = false) {
       !!(module && module.inference_ok),
       module && module.inference_ok
         ? `✓ v${module.version} · inference · ${module.sha256.slice(0, 12)}…`
-        : "waiting for WE2 model + AT inference"
+        : "waiting for WE2 model — plug the module's own USB-C port (wide port by the Grove socket)"
     );
   }
 }
