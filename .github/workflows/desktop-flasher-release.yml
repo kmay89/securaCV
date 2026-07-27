@@ -536,6 +536,47 @@ jobs:
           fi
           echo "updater manifest is self-consistent"
 
+      - name: Publish the rolling flasher-latest updater pointer
+        # The app's updater endpoint cannot ride releases/latest: that URL is
+        # deliberately owned by the FIRMWARE releases (keep-firmware-latest
+        # below — it's the address every Canary polls for OTA), so a firmware
+        # release carries no latest.json and every installed Flasher's update
+        # check failed with "Could not fetch a valid release JSON from the
+        # remote". The updater instead polls the rolling `flasher-latest`
+        # PRERELEASE (a prerelease can never become releases/latest, so the
+        # two rolling pointers can't collide), and this step re-points it at
+        # every publish with the hardened manifest — whose platform URLs are
+        # the stable name-based links into the real ${TAG} release, so nothing
+        # is duplicated. Runs after the consistency guard on purpose: the
+        # pointer only ever advances to a manifest whose URLs all resolve.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANIFEST: ${{ env.MANIFEST }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VER: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="Rolling pointer for the desktop Flasher's self-updater — the
+          app polls this prerelease's latest.json (tauri.conf.json
+          \`plugins.updater.endpoints\`). Not an install: download the Flasher
+          from the versioned flasher-v* releases. Currently: **${VER}**
+          (${TAG}). \`releases/latest\` stays on the firmware on purpose —
+          see docs/RELEASE_BUTTONS.md."
+          if gh release view flasher-latest >/dev/null 2>&1; then
+            gh release edit flasher-latest --prerelease --notes "$notes" \
+              --title "SecuraCV Flasher — updater pointer (rolling)"
+          else
+            gh release create flasher-latest --prerelease --notes "$notes" \
+              --title "SecuraCV Flasher — updater pointer (rolling)"
+          fi
+          ok=0
+          for i in 1 2 3 4 5; do
+            if gh release upload flasher-latest "$MANIFEST" --clobber; then ok=1; break; fi
+            echo "flasher-latest upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+          done
+          [ "$ok" -eq 1 ] || { echo "::error::could not update the flasher-latest pointer"; exit 1; }
+
   # ── give the fleet its update URL back ──────────────────────────────────────
   # Publishing this app release makes it GitHub's `releases/latest`, which is the
   # URL every Canary in the field polls for its OTA manifest (config.h
