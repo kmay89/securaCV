@@ -832,7 +832,11 @@ async function onFlash() {
   // holds by the time the flash finishes.
   const product = state.product;
   const manifestUrl = activeManifestUrl();
+  // false = the user TYPED provisioning values that don't validate — abort so
+  // the install can't succeed while silently dropping the Wi-Fi they asked
+  // for. null = intentionally skipped (wifi-only board, empty SSID): flash on.
   const provisioning = readProvisioning(product);
+  if (provisioning === false) return;
   if (product.provisioning === "usb-secrets" && !provisioning) return;
   persistProv();
   const btn = $("flash-btn");
@@ -925,14 +929,14 @@ function readProvisioning(product) {
     const input = $(id);
     if (!input.checkValidity()) {
       input.reportValidity();
-      return null;
+      return false; // typed but invalid — the caller must NOT flash without it
     }
   }
   const wifiPass = $("wifi-pass").value;
   if (wifiPass && (new TextEncoder().encode(wifiPass).length < 8 ||
                    new TextEncoder().encode(wifiPass).length > 63)) {
     setStatus("flash-result", "Wi-Fi password must be 8–63 UTF-8 bytes (or empty for an open network).", "err");
-    return null;
+    return false; // same: an answer the user gave, not an answer to drop
   }
   return {
     deviceId: usbSecrets ? $("device-id").value.trim() : "",
