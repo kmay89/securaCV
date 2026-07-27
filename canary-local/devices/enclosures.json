@@ -513,6 +513,17 @@
    "scad": "canary_c6_display.scad"
   },
   {
+   "id": "7-touch-dashboard-case",
+   "name": "7″ touch dashboard case",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on moulded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Big convection grille (~52 cm² back + side chimney vents — print in PETG/ASA, this panel runs hot), bottom connector channel + side USB/CAN/RS485/battery slots, optional 20° desk cradle. Connector centres are NOMINAL — measure yours",
+   "status": "in-development",
+   "note": "glass drops in, bezel lip 3.0, M3 corners",
+   "device": null,
+   "preview": "preview_dev_lcd7.png",
+   "parts": [],
+   "scad": "canary_s3_lcd7.scad"
+  },
+  {
    "id": "vehicle-mount-kit",
    "name": "Vehicle mount kit",
    "for": "VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors",
@@ -6213,6 +6224,244 @@
        "name": "lip_w",
        "default": "(lcm_w - aa_w)/2",
        "comment": "short-side lip (X)"
+      }
+     ]
+    }
+   ]
+  },
+  "canary_s3_lcd7.scad": {
+   "title": "Canary — 7\" TOUCH DASHBOARD CASE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "groups": [
+    {
+     "name": "What to render",
+     "note": "",
+     "params": [
+      {
+       "name": "part",
+       "default": "all",
+       "enum": [
+        "bezel",
+        "back",
+        "stand",
+        "all"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Glass slab",
+     "note": "bonded touch panel, from the Waveshare drawing (mm)",
+     "params": [
+      {
+       "name": "glass_w",
+       "default": "192.96",
+       "comment": "touch-glass width  (X)"
+      },
+      {
+       "name": "glass_h",
+       "default": "110.76",
+       "comment": "touch-glass height (Y)"
+      },
+      {
+       "name": "glass_t",
+       "default": "4.0",
+       "comment": "glass + LCD module thickness at the edge — MEASURE"
+      },
+      {
+       "name": "aa_w",
+       "default": "154.88",
+       "comment": "active area width"
+      },
+      {
+       "name": "aa_h",
+       "default": "86.72",
+       "comment": "active area height"
+      },
+      {
+       "name": "aa_dy",
+       "default": "-1.02",
+       "comment": "AA centre offset from glass centre (top border 13.04, bottom 11.00)"
+      }
+     ]
+    },
+    {
+     "name": "PCB stack behind the glass",
+     "note": "",
+     "params": [
+      {
+       "name": "pcb_standoff",
+       "default": "5.0",
+       "comment": "glass back → PCB front (the white M3 standoffs) — MEASURE"
+      },
+      {
+       "name": "pcb_t",
+       "default": "1.6"
+      },
+      {
+       "name": "comp_h",
+       "default": "11.0",
+       "comment": "tallest thing behind the PCB (USB-C / terminals / batt JST) — MEASURE"
+      },
+      {
+       "name": "pcb_w",
+       "default": "165.72",
+       "comment": "PCB outline width  (X) — from the drawing"
+      },
+      {
+       "name": "pcb_h",
+       "default": "97.60",
+       "comment": "PCB outline height (Y)"
+      }
+     ]
+    },
+    {
+     "name": "Board mounts",
+     "note": "4x M3 corner standoffs carry the PCB (nominal pattern)",
+     "params": [
+      {
+       "name": "m3_dx",
+       "default": "165.72",
+       "comment": "M3 hole pattern width  — MEASURE (drawing: 165.72 span)"
+      },
+      {
+       "name": "m3_dy",
+       "default": "88.0",
+       "comment": "M3 hole pattern height — MEASURE"
+      },
+      {
+       "name": "m3_pilot",
+       "default": "2.7",
+       "comment": "self-tap pilot for M3 into printed bosses"
+      }
+     ]
+    },
+    {
+     "name": "Screen",
+     "note": "",
+     "params": [
+      {
+       "name": "bez_lip",
+       "default": "3.0",
+       "comment": "bezel overlap onto the glass border (big slab → wider lip)"
+      },
+      {
+       "name": "opt_bottom_ports",
+       "default": "true"
+      },
+      {
+       "name": "opt_side_ports",
+       "default": "true"
+      }
+     ]
+    },
+    {
+     "name": "Ventilation",
+     "note": "MUST let the backlight/SoC heat convect out",
+     "params": [
+      {
+       "name": "vent_back",
+       "default": "true",
+       "comment": "large grille in the back plate"
+      },
+      {
+       "name": "vent_rows",
+       "default": "11",
+       "comment": "grille rows"
+      },
+      {
+       "name": "vent_cols",
+       "default": "22",
+       "comment": "grille columns"
+      },
+      {
+       "name": "vent_slot_w",
+       "default": "2.4",
+       "comment": "slot width"
+      },
+      {
+       "name": "vent_slot_l",
+       "default": "9.0",
+       "comment": "slot length"
+      },
+      {
+       "name": "vent_pitch_x",
+       "default": "7.0",
+       "comment": "column pitch"
+      },
+      {
+       "name": "vent_pitch_y",
+       "default": "8.0",
+       "comment": "row pitch"
+      },
+      {
+       "name": "vent_sides",
+       "default": "true",
+       "comment": "extra chimney slots high on the side walls"
+      },
+      {
+       "name": "vent_side_n",
+       "default": "6"
+      }
+     ]
+    },
+    {
+     "name": "Shell",
+     "note": "",
+     "params": [
+      {
+       "name": "wall",
+       "default": "3.0",
+       "comment": "side wall thickness (big case → thicker)"
+      },
+      {
+       "name": "face_t",
+       "default": "3.0",
+       "comment": "bezel face"
+      },
+      {
+       "name": "back_t",
+       "default": "3.0",
+       "comment": "rear tray floor"
+      },
+      {
+       "name": "r_out",
+       "default": "6.0",
+       "comment": "outer corner radius"
+      }
+     ]
+    },
+    {
+     "name": "Stand",
+     "note": "",
+     "params": [
+      {
+       "name": "opt_stand",
+       "default": "true"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "cav_d",
+       "default": "glass_t + pcb_standoff + pcb_t + comp_h",
+       "comment": "glass front ledge → back floor"
+      },
+      {
+       "name": "bez_h",
+       "default": "face_t + glass_t + 1.0",
+       "comment": "bezel just retains the glass (the deep box is the back)"
+      },
+      {
+       "name": "r_in",
+       "default": "max(1.0, r_out - wall)"
+      },
+      {
+       "name": "z_pcb_front",
+       "default": "glass_t + pcb_standoff",
+       "comment": "from the glass ledge (back frame)"
       }
      ]
     }
