@@ -660,3 +660,37 @@ any platform.
   group; device-mode USB tools need a udev rule instead. And **a permission
   failure that reads like "nothing happened" needs an in-app hint**, or the user
   has no way to know a one-line fix exists.
+
+### 2026-07-27 — Mixed-platform release job: a warm cache masked a core-dir conflict until GitHub evicted it
+
+- **Symptom:** the first signed firmware release (fw-v2.3.0) failed in
+  `canary-sense-default` with `TypeError: expected str, bytes or os.PathLike
+  object, not NoneType` at pioarduino's `arduino.py` (`FRAMEWORK_DIR=None`)
+  before compiling a single file — twice, deterministically — while
+  `canary-sense-wellbeing` (same board, same platform pin) built fine seconds
+  later in the same job.
+- **Cause:** the release job builds every project sequentially in one shared
+  `~/.platformio`. canary/canary-vision (official `espressif32` platform) run
+  first and install `framework-arduinoespressif32` 2.0.x; canary-sense rides
+  the pioarduino core-3.x fork, whose platform ships a package with the **same
+  name** at 3.3.8. pioarduino sees the official copy "installed", skips its
+  own, and dies with `FRAMEWORK_DIR=None` — the exact failure
+  `firmware.yml`'s `isolated_core_envs` comment documents. It never bit the
+  release workflow before because the PlatformIO cache (keyed on an unchanged
+  file) stayed warm with both versions resolvable; GitHub evicted the cache
+  after 7 days of no saves, and the first cold run exposed it. The
+  nightstand-c6 env in the *same job* already had the isolation; sense didn't.
+- **Fix:** run canary-sense under its own
+  `PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense"` in both
+  `firmware-release.yml` and `flasher-release.yml` (the flasher factory-image
+  job has the same sequential shape and was one cache eviction away from the
+  same failure).
+- **Applies to:** **every job that builds more than one PlatformIO project in
+  sequence.** If any project pins the pioarduino fork while another uses the
+  official platform, the pioarduino build MUST get an isolated
+  `PLATFORMIO_CORE_DIR` — sharing the core dir only appears to work while a
+  cache is warm. And more generally: **a step that only ever ran against a
+  restored cache has never actually been proven** — the cache is a
+  performance layer, not part of the contract, and GitHub deletes it after 7
+  idle days. If a build breaks only when the cache misses, the build is
+  broken.

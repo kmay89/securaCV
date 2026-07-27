@@ -228,6 +228,12 @@ jobs:
 
       - name: Build canary-sense (release)
         working-directory: firmware/projects/canary-sense
+        # canary-sense is on the pioarduino core-3.x platform; the official
+        # espressif32 builds above have already populated ~/.platformio with
+        # an incompatible `framework-arduinoespressif32`, which makes
+        # pioarduino fail with FRAMEWORK_DIR=None on a cold cache. Isolated
+        # core dir, same as the nightstand-c6 env below (and
+        # firmware-release.yml's canary-sense step).
         run: |
           mkdir -p secrets
           cat > secrets/secrets.h << 'HEADER'
@@ -240,7 +246,8 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          pio run -e canary-sense-default -e canary-sense-wellbeing
+          PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
+            pio run -e canary-sense-default -e canary-sense-wellbeing
 
       - name: Install Arduino CLI + ESP32 core (cached)
         uses: ./.github/actions/setup-arduino-esp32
