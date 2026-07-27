@@ -356,8 +356,21 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
+          # PlatformIO wipes the whole .pio/build workspace when the project
+          # checksum changes — and the C6 run's PLATFORMIO_CORE_DIR below
+          # changes exactly that. fw-v2.3.0 shipped without dash7 and
+          # nightstand-s3 this way: both compiled SUCCESS, then the C6 build
+          # cleaned the workspace and the packaging step found no binaries
+          # ("produced no binary", non-blocking, gone). Stage each env's
+          # outputs the moment it builds, and restore them after the C6 run
+          # so the packaging steps read the same .pio/build paths as always.
+          STAGE=/tmp/pio-display-staged
+          mkdir -p "$STAGE"
           for E in canary-display-dash7 canary-display-nightstand-s3; do
-            if ! pio run -e "$E"; then
+            if pio run -e "$E"; then
+              rm -rf "${STAGE:?}/$E"
+              cp -R ".pio/build/$E" "$STAGE/$E"
+            else
               echo "::warning::${E} build failed — its product is absent from this release"
             fi
           done
@@ -365,6 +378,8 @@ jobs:
               pio run -e canary-display-nightstand-c6; then
             echo "::warning::canary-display-nightstand-c6 build failed — its product is absent from this release"
           fi
+          mkdir -p .pio/build
+          cp -R "$STAGE"/. .pio/build/
 
       - name: Assemble, sign, and verify release artifacts
         env:
