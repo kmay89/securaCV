@@ -34,6 +34,11 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
+    # The hand-written Support/*.plist files carry only what we author;
+    # Xcode generates and MERGES the required identity boilerplate
+    # (CFBundleIdentifier/Executable/PackageType) for every target — without
+    # this the built .app has no bundle identifier and won't install or test.
+    GENERATE_INFOPLIST_FILE: YES
     DEVELOPMENT_TEAM: "$(APPLE_DEVELOPMENT_TEAM)"   # supplied by env / CI, never committed
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
