@@ -32,12 +32,16 @@ struct KeysView: View {
                     }
                 }
 
-                Section("Vault") {
+                // Section has no title-string + footer initializer — spell
+                // the header out (SwiftUI API shape, not a style choice).
+                Section {
                     NavigationLink {
                         UnsealView()
                     } label: {
                         Label("Unseal a snapshot", systemImage: "lock.open.rotation")
                     }
+                } header: {
+                    Text("Vault")
                 } footer: {
                     Text("Sealed snapshots are encrypted to your key. The Canary holds only the public half — it's structurally unable to open them. Only this phone can, in the Secure Enclave.")
                 }
