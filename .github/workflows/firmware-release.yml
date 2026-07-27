@@ -233,6 +233,16 @@ jobs:
 
       - name: Build canary-sense (release)
         working-directory: firmware/projects/canary-sense
+        # canary-sense rides the pioarduino core-3.x platform, but this job
+        # builds canary/canary-vision on the official espressif32 platform
+        # first — and the two ship a package literally named
+        # `framework-arduinoespressif32` at incompatible versions (2.0.x vs
+        # 3.3.8). Sharing ~/.platformio, pioarduino sees the official copy
+        # already "installed", skips its own, and fails with
+        # FRAMEWORK_DIR=None before any compile. A warm cache masked this
+        # until the cache was evicted (fw-v2.3.0, 2026-07-27). Isolate the
+        # core dir, exactly as the nightstand-c6 env below and firmware.yml's
+        # isolated_core_envs already do.
         run: |
           # Generic release build: placeholder secrets ON PURPOSE — same
           # NVS-backed runtime-config scheme as canary-vision above.
@@ -247,7 +257,8 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          pio run -e canary-sense-default -e canary-sense-wellbeing
+          PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
+            pio run -e canary-sense-default -e canary-sense-wellbeing
 
       - name: Install Arduino CLI + ESP32 core (cached)
         uses: ./.github/actions/setup-arduino-esp32
