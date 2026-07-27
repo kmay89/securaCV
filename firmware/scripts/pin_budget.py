@@ -175,9 +175,14 @@ def bucketize(board, functional, flags):
     mcu = MCUS[board["mcu"]]
     # Never offer module-reserved copper: flash lines always, PSRAM lines
     # on octal-PSRAM modules. (A gauge that lists GPIO26-32 as free would
-    # invite wiring that hangs or corrupts the module.)
+    # invite wiring that hangs or corrupts the module.) Quad PSRAM shares
+    # the flash bus and takes no extra GPIOs — the interface comes from
+    # boards.json psram_type (matching the env's memory_type: qio_opi =
+    # octal, qio_qspi = quad); with PSRAM present but no psram_type we
+    # assume octal, because under-offering is the safe failure.
     usable = set(mcu["usable"]) - mcu.get("flash_reserved", set())
-    if board["mcu"] == "ESP32-S3" and board.get("psram_mb", 0) >= 8:
+    if (board["mcu"] == "ESP32-S3" and board.get("psram_mb", 0) > 0
+            and board.get("psram_type", "octal") == "octal"):
         usable -= mcu["octal_psram_reserved"]
 
     # I2C is hard copper when something onboard rides the bus (touch, an
@@ -405,6 +410,8 @@ def main():
 
     if args.json:
         entries = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        if isinstance(entries, dict):
+            entries = entries.get("boards", entries)
         data = []
         for board in sorted(entries, key=lambda e: e["id"]):
             pins_h = BOARDS_DIR / board["id"] / "pins" / "pins.h"

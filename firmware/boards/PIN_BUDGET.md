@@ -39,7 +39,7 @@ README stays the narrative source for those stories.
 | `esp32-c3` | ESP32-C3 | 15 | 2 (13%) | 6 | 5 | 2 |
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | 24 | 10 (42%) | 2 | 4 | 8 |
 | `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 7 | 10 |
-| `waveshare-esp32s3-lcd147` | ESP32-S3 | 33 | 11 (33%) | 1 | 6 | 15 |
+| `waveshare-esp32s3-lcd147` | ESP32-S3 | 38 | 11 (29%) | 1 | 6 | 20 |
 | `waveshare-esp32s3-lcd43` | ESP32-S3 | 33 | 24 (73%) | 0 | 4 | 5 |
 | `waveshare-esp32s3-lcd43b` | ESP32-S3 | 33 | 30 (91%) | 0 | 2 | 1 |
 | `waveshare-esp32s3-lcd43c` | ESP32-S3 | 33 | 28 (85%) | 0 | 2 | 3 |
@@ -173,7 +173,7 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_NATIVE_USB`, `HAS_PSRAM`, `H
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-lcd147/pins/pins.h)
 
-**11/33 committed** · 1 assigned · 6 conditional · **15 free** (13 ADC-capable)
+**11/38 committed** · 1 assigned · 6 conditional · **20 free** (13 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
@@ -199,6 +199,11 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_DM_PIN) | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_DP_PIN) | ADC, sleep-wake |
 | 21 | **free** | — | sleep-wake |
+| 33 | **free** | — |  |
+| 34 | **free** | — |  |
+| 35 | **free** | — |  |
+| 36 | **free** | — |  |
+| 37 | **free** | — |  |
 | 38 | committed | RGBLED_PIN |  |
 | 39 | committed | TFT_PIN_RST |  |
 | 40 | committed | TFT_PIN_SCK |  |
