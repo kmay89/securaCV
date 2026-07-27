@@ -799,7 +799,7 @@ function showModuleFlow() {
   $("console").classList.remove("hidden");
   setStatus("flash-result", "Use the module button below. The host firmware receipt is kept while you move the cable." +
     (state.vision.hostFlash ? "" :
-      " (This is board 2 of 2 — the XIAO host takes the Canary Vision firmware through its own USB-C port, before or after this; the demo needs both.)"));
+      " (The demo takes two boards — the XIAO host gets the Canary Vision firmware through its own USB-C port, before or after this one.)"));
   renderReceipts(true);
 }
 
@@ -1349,7 +1349,13 @@ function resetOutcome() {
   setStatus("flash-result", "");
   setStatus("local-result", "");
   try { hideHatchCard(); } catch (_) {}
-  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; state.vision.module = null; }
+  // Host receipts belong to the image being overwritten — clear them. The
+  // MODULE receipt survives: the model lives in the camera module's own
+  // 16 MB flash and persists across every host reflash, so a module-first
+  // session must still count it after the host is flashed (wiping it here
+  // sent the user back to reflash a module that was already done, and the
+  // two-board hatch could never fire).
+  if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; }
   try { renderReceipts(); } catch (_) {}
   const con = $("serial-console");
   if (con) con.textContent = "";

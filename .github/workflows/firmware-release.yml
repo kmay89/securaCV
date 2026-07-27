@@ -722,13 +722,30 @@ jobs:
       # the dispatch explicitly instead; the event trigger stays for the
       # human-publish path, and the workflow's per-tag concurrency group
       # de-dupes if both ever fire.
-      - name: Attach the pinned Vision model asset (chained dispatch)
+      - name: Attach the pinned Vision model asset (chained dispatch, verified)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
+          set -euo pipefail
           gh workflow run vision-model-release.yml \
             --repo "${{ github.repository }}" --ref "${{ github.ref_name }}" \
-            -f tag="${{ steps.ver.outputs.tag }}"
+            -f tag="$TAG"
+          # `gh workflow run` is fire-and-forget; a green firmware run with a
+          # 404ing model manifest is the exact failure this chain exists to
+          # prevent. So wait for the asset to actually land on the release
+          # before calling the release done. The model build is a few minutes
+          # (30-min timeout on its side); poll well past that before going red.
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" --json assets \
+                 -q '.assets[].name' | grep -qx "manifest-vision-model.json"; then
+              echo "manifest-vision-model.json attached to $TAG"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::vision model asset never landed on $TAG — the chained vision-model-release.yml run failed or stalled. The firmware is published but the Vision module flasher will 404 until it is attached; re-run via Actions → Vision Model Asset with tag=$TAG."
+          exit 1
 
       # The dev channel's stable address. Only the MANIFESTS are mirrored —
       # each manifest's binary URL points at the real fw-v*-dev.* tag's
