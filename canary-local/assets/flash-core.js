@@ -1054,7 +1054,9 @@ export function classifyFlashError(err) {
     return { kind: "port-busy", title: "That port is busy",
       hint: "Another program or browser tab is holding the board. Close the Arduino " +
         "IDE / PlatformIO serial monitor and any other flasher tab, then unplug, " +
-        "replug, and try again." };
+        "replug, and try again. On Linux the holder is often ModemManager probing a " +
+        "just-plugged board — wait ~30 s, or add the udev rule from the desktop " +
+        "flasher's INSTALL.md (Linux section) so it ignores Canaries for good." };
 
   // Cable pulled or board vanished mid-operation.
   if (has("device has been lost", "device lost", "no device", "disconnected",

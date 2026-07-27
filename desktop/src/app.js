@@ -572,8 +572,19 @@ async function identify(portInfo) {
   } catch (e) {
     if (port !== state.port) return;
     state.failedPort = port;
-    setConn("failed", `Found ${port} — couldn't read the chip. Put it in download mode.`);
-    $("download-mode").classList.remove("hidden");
+    // detect_chip's error names the real cause when it knows one — on Linux,
+    // "permission denied" and "port held by ModemManager" have a one-line OS
+    // fix, and coaching the BOOT/RESET ritual for those sends the user to the
+    // wrong fix forever. Show the backend's first line for an OS-level
+    // failure (and hide the download-mode coaching); blame download mode only
+    // when nothing else was named. (The browser flasher makes the same call
+    // in classifyFlashError — two frontends, same diagnostic.)
+    const firstLine = String(e).split("\n")[0].trim();
+    const osLevel = /Linux blocked opening|holding the board's serial port/i.test(firstLine);
+    setConn("failed", osLevel
+      ? `Found ${port} — ${firstLine}`
+      : `Found ${port} — couldn't read the chip. Put it in download mode.`);
+    $("download-mode").classList.toggle("hidden", osLevel);
     $("recheck").classList.remove("hidden");
   } finally {
     state.detecting = false;

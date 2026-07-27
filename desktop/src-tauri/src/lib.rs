@@ -21,6 +21,7 @@
 
 mod health;
 mod hub;
+mod port_hint;
 mod provisioning;
 mod release;
 mod rescue;
@@ -336,6 +337,16 @@ async fn detect_chip(app: AppHandle, port: String) -> Result<ChipInfo, String> {
     // a chip name in its error text, which would otherwise read as a false
     // positive detection.
     if code != 0 {
+        // On Linux, a failed board-info is more often the OS refusing or
+        // holding the port than a board out of download mode — when the
+        // output names that cause, lead with its real fix instead of the
+        // BOOT/RESET ritual (which can't help and reads as the board's
+        // fault). Linux-only: the hint text is a Linux fix.
+        if cfg!(target_os = "linux") {
+            if let Some(hint) = port_hint::linux_open_hint(&out) {
+                return Err(format!("{hint}\n\nespflash said:\n{}", out.trim()));
+            }
+        }
         return Err(format!(
             "couldn't read the chip (espflash exit {code}). Put the board in download mode (hold BOOT, tap RESET, release BOOT) and try again.\n\nespflash said:\n{}",
             out.trim()

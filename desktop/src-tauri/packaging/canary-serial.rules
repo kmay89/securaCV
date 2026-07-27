@@ -1,0 +1,22 @@
+# securaCV Flasher — Canary serial access + ModemManager opt-out (Linux).
+#
+# Two Linux-only problems this rule removes for every Canary flow (detect,
+# flash, live boot receipt, Vision module burn). macOS has neither, which is
+# why the identical app "just works" there:
+#
+# 1) Permissions: opening /dev/ttyACM* needs membership in `dialout` unless a
+#    udev rule grants access. TAG+="uaccess" grants the logged-in user access
+#    on systemd systems; MODE=0666 is the universal fallback (same pattern as
+#    60-rpiboot.rules).
+# 2) ModemManager: a just-plugged board — or one re-enumerating after the
+#    post-flash reset — looks like a modem. ModemManager opens the port,
+#    probes it with AT commands and toggles its control lines, which the
+#    ESP32-S3's USB-Serial/JTAG can take as a reset request. Symptom: the
+#    flash verifies, then the port stays busy for ~30 s and/or the board is
+#    knocked over mid-boot, so the live boot receipt never arrives. The
+#    ID_MM_*_IGNORE marks tell ModemManager to leave these devices alone.
+#
+# 303a       = Espressif native USB-Serial/JTAG (every Canary's own USB-C port)
+# 1a86:55d3  = WCH CH343 (the Grove Vision AI V2 camera module's port)
+ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
