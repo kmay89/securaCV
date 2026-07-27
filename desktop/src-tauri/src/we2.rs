@@ -283,7 +283,21 @@ where
     fn at_command(&mut self, body: &str, timeout: Duration) -> Result<Option<Value>, String> {
         self.write_all(format!("AT+{body}\r").as_bytes())?;
         let expected = body.split('=').next().unwrap_or(body);
-        let deadline = Instant::now() + timeout;
+        self.read_reply(0, expected, body, Instant::now() + timeout)
+    }
+
+    // Scan the wire for one matching SSCMA JSON frame. `kind` 0 is a command
+    // ack; `kind` 1 is an EVENT — detection results (boxes, and the image when
+    // INVOKE's result_only flag is 0) arrive ONLY as type-1 events after the
+    // ack (guide §8), so a caller that needs what the model saw must read for
+    // type 1: the ack's data never contains it.
+    fn read_reply(
+        &mut self,
+        kind_want: i64,
+        expected: &str,
+        body: &str,
+        deadline: Instant,
+    ) -> Result<Option<Value>, String> {
         let mut frame = Vec::new();
         let mut collecting = false;
         while Instant::now() < deadline {
@@ -307,7 +321,7 @@ where
                 if let Ok(value) = serde_json::from_slice::<Value>(json_bytes) {
                     let kind = value.get("type").and_then(Value::as_i64);
                     let name = value.get("name").and_then(Value::as_str).unwrap_or("");
-                    if kind == Some(0)
+                    if kind == Some(kind_want)
                         && (name == expected || name == body || body.starts_with(name))
                     {
                         return Ok(Some(value));
@@ -353,11 +367,25 @@ where
         });
         let info_base64 = base64::engine::general_purpose::STANDARD.encode(info.to_string());
         let _ = self.at_command(&format!("INFO=\"{info_base64}\""), Duration::from_secs(3))?;
-        let inference = self
-            .at_command("INVOKE=1,0,1", Duration::from_secs(8))?
+        // INVOKE=<times>,<differed>,<result_only> — the third arg MUST be 0
+        // here: 1 means "no image", and this one attended frame is the app's
+        // entire detection preview (there is no live bench on the desktop, so
+        // with =1 the preview element simply never appeared). The event grows
+        // by one base64 JPEG (~tens of KB at 921600 baud), well inside the
+        // timeout. Guide: docs/hardware/grove_vision_ai_v2_guide.md §8.
+        let _ack = self
+            .at_command("INVOKE=1,0,0", Duration::from_secs(8))?
             .filter(at_ok)
             .ok_or_else(|| {
-                "SSCMA answered AT, but the pinned model did not complete an inference".to_string()
+                "SSCMA answered AT, but the pinned model did not accept INVOKE".to_string()
+            })?;
+        // The detection itself — boxes and the preview frame — is the type-1
+        // EVENT that follows the ack; the ack's data never carries it.
+        let inference = self
+            .read_reply(1, "INVOKE", "INVOKE", Instant::now() + Duration::from_secs(8))?
+            .filter(at_ok)
+            .ok_or_else(|| {
+                "the module accepted INVOKE but its detection event never arrived".to_string()
             })?;
         Ok((version_reply, id_reply, inference))
     }
