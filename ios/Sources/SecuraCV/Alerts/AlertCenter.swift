@@ -20,11 +20,13 @@ enum AlertLevel {
     case important     // time-sensitive
     case critical      // life-safety; bypasses silent/Focus if entitled
 
-    var interruption: UNNotificationInterruptionLevel {
+    /// The caller passes the entitlement state in (AlertCenter owns it on the
+    /// main actor; this enum stays nonisolated and pure).
+    func interruption(critical entitled: Bool) -> UNNotificationInterruptionLevel {
         switch self {
         case .digest: return .passive
         case .important: return .timeSensitive
-        case .critical: return AlertCenter.hasCriticalEntitlement ? .critical : .timeSensitive
+        case .critical: return entitled ? .critical : .timeSensitive
         }
     }
 }
@@ -54,7 +56,8 @@ final class AlertCenter: ObservableObject {
     @Published private(set) var authorized = false
 
     /// True once Apple grants the Critical Alert entitlement AND the user
-    /// allows it. Read by AlertLevel to decide whether .critical is real.
+    /// allows it. Handed to AlertLevel.interruption(critical:) to decide
+    /// whether .critical is real.
     static var hasCriticalEntitlement = false
 
     private let center = UNUserNotificationCenter.current()
@@ -90,12 +93,9 @@ final class AlertCenter: ObservableObject {
         content.title = title
         content.body = body
         content.threadIdentifier = threadID
-        content.interruptionLevel = level.interruption
-        if level.interruption == .critical {
-            content.sound = .defaultCritical
-        } else {
-            content.sound = .default
-        }
+        let interruption = level.interruption(critical: Self.hasCriticalEntitlement)
+        content.interruptionLevel = interruption
+        content.sound = interruption == .critical ? .defaultCritical : .default
         let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         center.add(req)
     }
